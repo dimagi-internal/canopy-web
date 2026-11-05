@@ -8,7 +8,7 @@ AS THE VIEWER — but only for an `{agent, name}` pair the view declares here.
 The declaration is checked when the view is written, not on every draw: each
 agent must be one of the view's workspace's agents, and the person saving it must
 be someone who may dispatch to that agent themselves (the editor role in its
-workspace, and THE rule, `access.decide`, not refusing them). So a view cannot
+workspace, and THE rule, `turn_context.resolve_turn_context`, not refusing them). So a view cannot
 name an agent its author could not ask.
 
 At run time the server's own gate on `POST /api/agent-tasks/` decides for the

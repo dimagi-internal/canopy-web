@@ -7,7 +7,7 @@ from __future__ import annotations
 import pytest
 from django.contrib.auth.models import User
 
-from apps.agents import access, roles
+from apps.agents import access, roles, turn_context
 from apps.agents.interface import InterfaceError, parse
 from apps.agents.models import Agent, AgentAdmin, AgentGrant
 from apps.workspaces.models import Workspace
@@ -54,9 +54,9 @@ def _support(w):
 
 def test_editor_who_is_only_a_user_is_confined_to_ask_with_no_manual_cap(w):
     _support(w)
-    d = access.decide(w["agent"], w["editor"], verified=True)
-    assert (d.access, d.capability, d.basis) == (access.CONFINED, "ask", "capability:ask")
-    assert d.manual_only is False and d.may_request_auto is False
+    d = turn_context.for_asker(w["agent"], w["editor"], verified=True)
+    assert (d.access, d.stamped, d.basis) == (access.CONFINED, "ask", "capability:ask")
+    assert d.review.manual_only is False and d.review.may_request_auto is False
     row = next(r for r in access.roster(w["agent"]) if r["user_id"] == w["editor"].pk)
     assert (row["access"], row["capabilities"], row["manual_only"]) == ("confined", ["ask"], False)
 
@@ -64,8 +64,8 @@ def test_editor_who_is_only_a_user_is_confined_to_ask_with_no_manual_cap(w):
 def test_editor_given_an_editor_line_is_full(w):
     _support(w)
     editors_run(w["agent"], manual_only=False)
-    d = access.decide(w["agent"], w["editor"], verified=True)
-    assert (d.access, d.manual_only) == (access.FULL, False)
+    d = turn_context.for_asker(w["agent"], w["editor"], verified=True)
+    assert (d.access, d.review.manual_only) == (access.FULL, False)
 
 
 def test_an_editor_whose_line_names_another_capability_is_refused_ask(w):
@@ -73,31 +73,31 @@ def test_an_editor_whose_line_names_another_capability_is_refused_ask(w):
     AgentGrant.objects.create(agent=w["agent"], kind=AgentGrant.WORKSPACE,
                               subject_workspace_id=w["agent"].workspace_id, at_least="editor",
                               capability="data")
-    d = access.decide(w["agent"], w["editor"], verified=True, capability="data")
-    assert (d.access, d.capability) == (access.CONFINED, "data")
-    assert d.agent_role is None and d.permissions == {roles.use("data")}      # a door, not a role
-    assert access.decide(w["agent"], w["editor"], verified=True).access == access.NONE   # no `ask` line
+    d = turn_context.for_asker(w["agent"], w["editor"], verified=True, requested="data")
+    assert (d.access, d.stamped) == (access.CONFINED, "data")
+    assert d.standing.agent_role is None and d.standing.permissions == {roles.use("data")}      # a door, not a role
+    assert turn_context.for_asker(w["agent"], w["editor"], verified=True).access == turn_context.REFUSED   # no `ask` line
 
 
 def test_editors_who_run_the_agent_are_full_and_manual(w):
     declare(w["agent"], ASK)
     allow(w["agent"], role=roles.READ_ONLY)
     editors_run(w["agent"])
-    d = access.decide(w["agent"], w["editor"], verified=True)
-    assert (d.access, d.manual_only) == (access.FULL, True)
+    d = turn_context.for_asker(w["agent"], w["editor"], verified=True)
+    assert (d.access, d.review.manual_only) == (access.FULL, True)
 
 
 @pytest.mark.parametrize("who", ["owner", "admin"])
 def test_owner_and_admins_unaffected(w, who):
     _support(w)
-    d = access.decide(w["agent"], w[who], verified=True)
-    assert d.access == access.FULL and d.manual_only is False and d.may_request_auto is True
+    d = turn_context.for_asker(w["agent"], w[who], verified=True)
+    assert d.access == access.FULL and d.review.manual_only is False and d.review.may_request_auto is True
 
 
 def test_viewer_unaffected_by_the_editor_line(w):
     declare(w["agent"], ASK)
     allow(w["agent"], role=roles.READ_ONLY)
-    before = access.decide(w["agent"], w["viewer"], verified=True)
+    before = turn_context.for_asker(w["agent"], w["viewer"], verified=True)
     _editors_are_users(w["agent"])
-    assert access.decide(w["agent"], w["viewer"], verified=True) == before
-    assert before.access == access.CONFINED and before.capability == "ask"
+    assert turn_context.for_asker(w["agent"], w["viewer"], verified=True) == before
+    assert before.access == access.CONFINED and before.stamped == "ask"

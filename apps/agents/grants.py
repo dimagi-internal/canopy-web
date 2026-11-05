@@ -11,7 +11,7 @@ of the lines that name them; this module is the only thing that reads the lines.
 The agent's own lines are joined by the lines of its workspace and the workspaces above
 it (a workspace-wide or Dimagi-wide default, set once), unless the agent opts out
 (`Agent.inherit_workspace_defaults`). The agent's owner and its admins (`Agent.is_admin`)
-are not lines here yet: `access.decide` asks them first.
+are not lines here yet: `turn_context.resolve_turn_context` asks them first.
 """
 from __future__ import annotations
 

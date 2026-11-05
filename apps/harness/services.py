@@ -49,7 +49,7 @@ def _apply_capability(turn: Turn, requested: str | None = None) -> None:
     """Decide which profile a new turn runs in, inside the transaction that
     creates it — so no runner can claim it before the decision is recorded.
 
-    THE rule, `apps.agents.access.decide` (docs/architecture/access.md): FULL
+    THE rule, `apps.agents.turn_context.resolve_turn_context` (docs/architecture/access.md): FULL
     for its owner, admins, canopy's own turns and an editor on its access list (whose
     turn runs manual if their line says so — `turn_mode.editor_cap`); a user or a viewer
     gets the capability their role may use. Anyone

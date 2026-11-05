@@ -13,14 +13,16 @@ There are two ladders, and they are different questions:
   invite people, create content, reshape agents);
 * an **agent role** says what a person may make one *agent* do.
 
-THE rule that joins them is one function, `apps/agents/access.decide(agent, who,
-*, verified, origin, capability=None, turn=None, standing=None, lines=None)`, which returns a
-keyword-only `Decision(relationship, access, capability, may_request_auto, may_pin_runner,
-manual_only, basis, reason, agent_role, source, via, permissions)`; `relationship` is how canopy
+THE rule that joins them is one function, `apps/agents/turn_context.resolve_turn_context(session_ctx, asker,
+agent, *, requested=None, turn=None, stamp=None, runner=None)`, which returns a frozen `TurnContext(standing,
+access, profile, basis, session_key_suffix, review, stamped, refusal, trace)`; its design is
+`docs/superpowers/specs/2026-11-05-turn-context-design.md`. `turn_context.for_turn(turn, agent, requested)` and
+`for_asker(agent, who, *, verified, requested, turn, standing, lines)` are how an entry point asks it.
+In `standing`, `relationship` is how canopy
 knows the asker (`owner | admin | member | contact | system`), `agent_role` is the named role their
 lines give. Every entry point that makes an agent do work asks it (see "Where it
 is asked" below); `tests/test_access_matrix.py` asks it through every entry point. Don't write a
-second predicate for "may this person make this agent do X" — ask `decide`.
+second predicate for "may this person make this agent do X" — ask the rule.
 
 This page is the glossary, the roles, the access list, access levels, capabilities, the decision
 table, triggers and turn mode. The rest is split by subject:
@@ -44,7 +46,7 @@ Slack threads, what agents know about a person); the HCP service is [hcp-service
 | **workspace default** | A line set once on a workspace; every agent in it, and in the workspaces below it, inherits it unless the agent opts out. | `AgentGrant.workspace`, `Agent.inherit_workspace_defaults` |
 | **read mode** | What a person with `read` and not `write` gets: the agent answers them in a confined session that **exists on every agent from the start**. One per agent: canopy's default profile (`interface.default_read_profile`, built from the agent, pinned by `tests/test_default_read_profile.py`, shown on the agent's Settings → Read mode and doors), or the agent's own published `ask`, which replaces the default whole. `read` and `ask` are the same thing (`interface.is_read_mode`, the only place that says so); a turn is stamped with the name actually run (`read` for the default, `ask` for an override). | `apps/agents/interface.py`, `interface_default.py` |
 | **connected site** (in code and on the wire, a *capability* or *door*) | A named, sandboxed profile an agent publishes (ACE's `connect`): which tools, paths and sites a confined session may touch, for a place or a list of people. Rare. It never says who may use it: that is the access list's job (`read` opens read mode; a line can name any door). `ask` is the override of read mode, not a door. | the agent's interface, `apps/agents/interface.py` |
-| **entry point** | A way work reaches an agent: the harness API, a canopy-web chat, Slack, email. Every one asks `decide`. | "Where it is asked" |
+| **entry point** | A way work reaches an agent: the harness API, a canopy-web chat, Slack, email. Every one asks the rule. | "Where it is asked" |
 | **role** vs **source** | A role is what someone can do; a source is why they have it (`owner`, `admin`, `system`, `session`, `list:<line>`). Never the same word. | `Decision.agent_role`, `Decision.source` |
 | **contact** | Not a role. How canopy knows someone who is not a workspace member: an emailer, a Slack person outside the workspace, a widget visitor (who may have no address at all). A contact has an agent role only if a line names them; with no line they are refused. | `apps/contacts` |
 | **verified** | THIS message proves the sender's address: a signed-in request, mail that is DMARC-aligned or DKIM-signed by its own From: domain, a full member of our own Slack. An embedded site's visitor is never verified (the host vouches for them, not the human). | `caller_context.is_verified` |
@@ -92,7 +94,7 @@ for a touch. An `auto` turn may ask to act as the person to read only
   another agent admin's laptop would let them open it) — and to nothing else: never under the vault key,
   so no workspace member, agent admin or license holder reads it, nor canopy-web, nor the person it came
   from (they replace or withdraw it, `/settings`). It is the agent's to use in any turn
-  `decide` lets run in the full profile (never a caller's confined turn); a box gets it
+  the rule lets run in the full profile (never a caller's confined turn); a box gets it
   only in its own resolve's `delegated` field, proved by its device key. canopy gives it
   no expiry: the provider's own is shown as information. → `vault.md` § Whose account
   an entry is
@@ -256,7 +258,7 @@ and the two fixed roles, strongest first:
   the vocabularies (`read`, `write` here; `logs.read`, `members.manage` there) are not.
 * `system` is not in the table (see "The words"). Another agent's login is not `system`: it is
   graded like any person, or agent A could steer all of agent B.
-* **What `decide` reads.** `decide` unions the permissions of every matching line
+* **What the rule reads.** the rule unions the permissions of every matching line
   (`Resolution.permissions`) and asks one question: do they hold `write` (`roles.holds(…, WRITE)`)?
   Then they get the whole agent. Otherwise they get a capability, chosen by what their lines open
   (`roles.can_use`: `write` opens all, `read` opens read mode, `use:<name>` opens `<name>`; `use:ask` and `use:read` are read-mode lines). What each change to
@@ -443,7 +445,7 @@ whole agent. It says what each one *is*, and nothing about who may use it.
 
 ## The rule (the decision table)
 
-`access.decide` asks in this order; the first row that matches decides.
+`turn_context.resolve_turn_context` asks in this order; the first row that matches decides.
 
 | # | Who | Access | Mode | May request `auto` | May pin a runner |
 |---|---|---|---|---|---|
@@ -535,7 +537,7 @@ Rules:
   access list.
 * **Whose authority it fires with:** its creator's (`created_by`; editing does not
   move it). Its turn is a SYSTEM turn (`initiator.system`) accountable to the creator,
-  so `access.decide` gives it the agent's profile and the turn mode is bounded by the
+  so `turn_context.resolve_turn_context` gives it the agent's profile and the turn mode is bounded by the
   creator (`turn_mode._accountable_cap`: manual unless they are an agent admin). A
   trigger's own `turn_mode` is a rung above the routing rules
   (`turn_mode.trigger_posture`): `manual` always holds; `auto` only while the creator

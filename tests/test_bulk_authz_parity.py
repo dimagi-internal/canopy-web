@@ -5,8 +5,8 @@ fact once — `wsvc.member_roles_of` for roles, `access.Standings` for an agent'
 grants — and asks the rule with what it read, instead of a membership read per
 pair (which made the agent topology N² queries). That is a second way to reach
 the same facts, so this file holds it to the first: every role
-`member_roles_of` reports is `member_role`'s, and every `decide` from a
-`Standings` is `decide` reading for itself, over a tree with inherited owners
+`member_roles_of` reports is `member_role`'s, and every the rule from a
+`Standings` is the rule reading for itself, over a tree with inherited owners
 and admins, weaker direct rows, a separate tree, a capped caller, explicit
 grants and each kind of interface. The same holds for the tree walks
 (`ancestor_chains`, `descendant_map`) and the runner reads
@@ -20,7 +20,7 @@ import itertools
 import pytest
 from django.contrib.auth import get_user_model
 
-from apps.agents import access, roles
+from apps.agents import access, roles, turn_context
 from apps.agents.models import Agent, AgentAdmin
 from apps.harness import routing
 from apps.harness.models import Runner, RunnerAdmin
@@ -90,7 +90,7 @@ def test_decide_from_standings_is_decide_reading_for_itself(world):
     users, _, agents = world
     standings = access.Standings(users, agents)
     for u, a in itertools.product(users, agents):
-        assert access.decide(a, u, verified=True, standing=standings.of(u, a)) == access.decide(a, u, verified=True), \
+        assert turn_context.for_asker(a, u, verified=True, standing=standings.of(u, a)) == turn_context.for_asker(a, u, verified=True), \
             (u.email, a.slug)
 
 

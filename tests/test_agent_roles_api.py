@@ -139,11 +139,11 @@ def test_a_role_defined_on_the_child_is_listed_there_and_not_above(w):
 def test_editing_a_role_changes_what_its_holders_get_and_closes_the_set(w):
     row = make_role(w["root"], "connector", {"read", "use:connect"})
     AgentGrant.objects.create(agent=w["agent"], kind=G.PERSON, user=w["ed"], role="connector")
-    assert access.decide(w["agent"], w["ed"], verified=True).access != access.FULL
+    assert turn_context.for_asker(w["agent"], w["ed"], verified=True).access != access.FULL
     r = _json(_c(w["boss"]), "patch", f"{BASE}/connector", {"permissions": ["agent_edit"], "label": "Pilot"})
     assert r.status_code == 200, r.content
     assert set(r.json()["permissions"]) == {"read", "write", "agent_edit"} and r.json()["in_use"]["lines"] == 1
-    assert access.decide(w["agent"], w["ed"], verified=True).access == access.FULL
+    assert turn_context.for_asker(w["agent"], w["ed"], verified=True).access == access.FULL
     change = SettingChange.objects.latest("pk")
     assert "1 access-list line(s)" in change.summary and "1 agent(s)" in change.summary
     assert change.changes[0]["before"]["permissions"] == ["read", "use:connect"]

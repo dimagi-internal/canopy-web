@@ -17,7 +17,7 @@ from .standings import Standings
 
 def edit_rights(agents=None) -> list[dict]:
     """One row per (agent, person) who may change the agent today: `before` is the old rule,
-    `after` is `may_edit_agent`, `via` says what the new rule found (`decide`'s `source`)."""
+    `after` is `may_edit_agent`, `via` says what the new rule found (the rule's `source`)."""
     agents = list(agents if agents is not None else Agent.objects.select_related("workspace", "owner"))
     members = {ws: wsvc.effective_memberships(ws) for ws in {a.workspace_id for a in agents}}
     standings = Standings([m.user for ms in members.values() for m in ms], agents)

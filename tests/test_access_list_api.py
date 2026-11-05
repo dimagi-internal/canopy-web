@@ -8,7 +8,7 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.test import Client
 
-from apps.agents import access, roles
+from apps.agents import access, roles, turn_context
 from apps.agents.models import Agent, AgentAdmin, AgentGrant
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -82,11 +82,11 @@ def test_only_the_agents_admins_add_lines(w, who, status):
 
 
 def test_a_line_takes_effect_at_once(w):
-    assert access.decide(w["agent"], w["vw"], verified=True).access == access.NONE
+    assert turn_context.for_asker(w["agent"], w["vw"], verified=True).access == turn_context.REFUSED
     r = _post(w, "owner", {"kind": "person", "role": "editor", "email": "VW@dimagi.com"})
     assert r.status_code == 201 and r.json()["who"] == "vw@dimagi.com"
-    d = access.decide(w["agent"], w["vw"], verified=True)
-    assert (d.access, d.agent_role) == (access.FULL, roles.EDITOR)
+    d = turn_context.for_asker(w["agent"], w["vw"], verified=True)
+    assert (d.access, d.standing.agent_role) == (access.FULL, roles.EDITOR)
 
 
 def test_a_group_line_for_another_workspace_the_adder_is_in(w):
@@ -182,7 +182,7 @@ def test_a_subtree_line_reaches_a_person_only_in_a_child_workspace(w):
     r = _post(w, "boss", {"kind": "workspace", "role": "read_write", "workspace": "dimagi", "include_below": True})
     assert r.status_code == 201 and r.json()["include_below"] is True
     assert r.json()["who"] == "Everyone in dimagi or any workspace below it"
-    assert access.decide(w["agent"], w["vw"], verified=True).access == access.FULL      # only in connect
+    assert turn_context.for_asker(w["agent"], w["vw"], verified=True).access == access.FULL      # only in connect
 
 
 def test_an_inherited_line_is_not_changed_from_the_agent(w):
@@ -236,8 +236,8 @@ def test_a_default_reaches_the_agent_and_removing_it_takes_it_back(w):
     r = _post(w, "boss", {"kind": "workspace", "role": "read_only", "workspace": "dimagi"},
               "/api/workspaces/dimagi/agent-defaults")
     assert r.status_code == 201
-    d = access.decide(w["agent"], w["out"], verified=True)          # `out` is in dimagi, not connect
-    assert (d.access, d.capability, d.agent_role) == (access.CONFINED, "ask", roles.READ_ONLY)
+    d = turn_context.for_asker(w["agent"], w["out"], verified=True)          # `out` is in dimagi, not connect
+    assert (d.access, d.stamped, d.standing.agent_role) == (access.CONFINED, "ask", roles.READ_ONLY)
     listed = _c(w["owner"]).get("/api/agents/hal/access-list").json()["lines"]
     assert [ln["scope"] for ln in listed] == ["workspace"]
     assert _c(w["boss"]).delete(f"/api/workspaces/dimagi/agent-defaults/{r.json()['id']}").status_code == 204

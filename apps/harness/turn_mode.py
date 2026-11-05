@@ -2,7 +2,7 @@
 
 `manual` / `auto`, the ladder below, and who may ask for which are defined in
 `docs/architecture/access.md`; the person-side half (who may request `auto`,
-whose turns are capped to manual) is `apps/agents/access.decide`.
+whose turns are capped to manual) is `apps/agents/turn_context.resolve_turn_context`.
 
 A routing rule (`RunnerAssignment` with a non-empty `source`) already answers
 "which box runs this person's work on this channel". Spec 2026-09-23 lets the
@@ -41,7 +41,7 @@ give `write` runs the agent's full profile, but when every line that gives them
 `write` is marked `manual_only`, the turn is manual whatever a rule or the agent's
 switch says, and its basis says why: acting outbound unreviewed is for the agent's
 owner and admins (`editor_cap`). A line not marked `manual_only` sets no cap.
-Decided at every claim (`access.decide_for_turn`), so editing the line, or making
+Decided at every claim (`turn_context.for_turn`), so editing the line, or making
 the person an admin while the turn is queued, takes effect. The same holds for a
 turn canopy starts on someone's behalf: a schedule's occurrence is bounded by its
 creator, so a schedule is not a way around the cap.
@@ -152,7 +152,7 @@ def _accountable_cap(turn, agent) -> Resolved | None:
     """The editor cap for a turn CANOPY started on someone's behalf — a schedule
     firing (or run now, or a one-off) for its creator, a drill for whoever ran it.
 
-    `access.decide` gives a SYSTEM turn the agent's whole profile and no cap,
+    `turn_context.resolve_turn_context` gives a SYSTEM turn the agent's whole profile and no cap,
     which is right for canopy itself but let an editor launder their work into
     `auto`: create a schedule, and every occurrence ran as SYSTEM, past the cap
     their own dispatch would hit. So the turn is bounded by the person recorded

@@ -12,7 +12,7 @@ Hal's admin list and the workspace's members side by side — and the answer
 for Ada was "the `ask` capability", which needs an email thread, so every
 direct Ada→Hal dispatch failed for a week while each screen looked fine.
 
-Every cell is decided by THE rule a real turn is (`access.decide`, see
+Every cell is decided by THE rule a real turn is (`turn_context.resolve_turn_context`, see
 docs/architecture/access.md), for a request made signed in with a token —
 verified by construction. A login that is a workspace EDITOR of B reaches B
 whole but only in manual mode (basis `editor`); making it an admin lifts that. A board card someone approves is a different path (it runs as
@@ -109,7 +109,7 @@ def build(root: Workspace, viewer, visible: Callable[[str], bool] = lambda _s: T
 
     # Every fact the cells are decided from, read once: each workspace's members,
     # then the roles and agent grants of everyone judged — the agents' logins
-    # (every edge) and the members (every roster). Each cell is then `decide`
+    # (every edge) and the members (every roster). Each cell is then the rule
     # over these, with no read of its own; the per-pair reads made this N² queries.
     members = {slug: wsvc.effective_memberships(slug) for slug in {a.workspace_id for a in ordered}}
     people = {a.user for a in ordered if a.user_id} | {m.user for ms in members.values() for m in ms}

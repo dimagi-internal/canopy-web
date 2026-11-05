@@ -256,7 +256,7 @@ def check_requested_turn_mode(request, payload: TurnIn, agent, initiator) -> Non
 
 def check_access(request, payload: TurnIn, agent, initiator) -> None:
     """Refuse at enqueue a turn the runner would refuse, saying what the caller
-    CAN do — THE rule (`apps.agents.access.decide`), asked of the requester.
+    CAN do — THE rule (`apps.agents.turn_context.resolve_turn_context`), asked of the requester.
 
     The editor gate above already ran, so a person reaching this is a workspace
     editor or above and is refused only by a future tightening; it is asked here

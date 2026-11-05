@@ -1,7 +1,7 @@
 """Two rules the design states that a SYSTEM turn and a chat turn used to escape.
 
 1. **A workspace editor's work is always manual** (docs/architecture/access.md).
-   A schedule's occurrence is a SYSTEM turn, and `access.decide` caps nothing for
+   A schedule's occurrence is a SYSTEM turn, and `turn_context.resolve_turn_context` caps nothing for
    SYSTEM — so an editor's schedule ran `auto` where their own dispatch could
    not. The occurrence is now bounded by its accountable person (the creator).
 2. **A box holds an agent only if its owner is one of the agent's admins**

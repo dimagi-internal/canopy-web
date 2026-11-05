@@ -408,7 +408,7 @@ def _need(user, ws, cap):
 
 
 def _agent_full(user, route) -> None:
-    """THE rule (`access.decide`) decides what a person may make this agent do; mail needs FULL."""
+    """THE rule (`turn_context.resolve_turn_context`) decides what a person may make this agent do; mail needs FULL."""
     if route is None:
         raise HttpError(409, "this address no longer exists")
     if not route.agent_id:

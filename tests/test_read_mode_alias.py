@@ -11,7 +11,7 @@ from django.contrib.auth import get_user_model
 from apps.admission import evaluate
 from apps.admission import rules as admission_rules
 from apps.admission.models import AdmissionRule
-from apps.agents import access, interface, roles
+from apps.agents import access, interface, roles, turn_context
 from apps.agents.interface import is_read_mode, parse
 from apps.agents.models import Agent
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -86,10 +86,10 @@ def test_a_use_ask_or_use_read_line_reaches_the_published_ask():
     agent = Agent.objects.create(slug="hal", name="Hal", workspace=ws, owner=owner, interface=parse(IFACE))
     for cap in ("ask", "read"):
         line = allow(agent, capability=cap)
-        d = access.decide(agent, vw, verified=True)
-        assert (d.access, d.capability) == (access.CONFINED, "ask"), cap     # stamped with what runs
+        d = turn_context.for_asker(agent, vw, verified=True)
+        assert (d.access, d.stamped) == (access.CONFINED, "ask"), cap     # stamped with what runs
         line.delete()
     # Asking by the other name reaches the same published capability.
     allow(agent, role=roles.READ_ONLY)
-    assert access.decide(agent, vw, verified=True, capability="read").capability == "ask"
-    assert access.decide(agent, vw, verified=True, capability="canopy").access == access.NONE
+    assert turn_context.for_asker(agent, vw, verified=True, requested="read").stamped == "ask"
+    assert turn_context.for_asker(agent, vw, verified=True, requested="canopy").access == turn_context.REFUSED

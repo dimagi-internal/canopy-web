@@ -17,7 +17,7 @@ the same 404 as a missing agent and never a 403 (no existence leak):
 * `agent_for_edit`  — `access.may_edit_agent` (`agent_edit` on this agent): may change the agent itself.
 * `agent_for_admin` — `Agent.is_admin`: may change its secrets / identity.
 
-Who may make an agent DO what is `apps.agents.access.decide`, not this module;
+Who may make an agent DO what is `apps.agents.turn_context.resolve_turn_context`, not this module;
 these gates answer only "may this caller reach this agent's API at all".
 """
 from __future__ import annotations

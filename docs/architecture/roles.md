@@ -11,7 +11,7 @@ There are six tiers. Each contains the one below it.
 |---|---|---|
 | **Link reader** | *no account* — a link you were sent | Read what was shared: a storyboard, a narrative, a walkthrough, a session transcript, the public explainer. |
 | **Viewer** | workspace member, `viewer` | Read the board and the turns you started; answer a blocked question, approve or decline a task. Talk to an agent only as far as its access list lets you (a read_only line opens `ask`, a line naming a capability opens that one; nothing is open by being in the workspace). Cannot change what an agent *is*, or anything else. |
-| **Editor** | workspace member, `editor` | Create and edit agents, send turns to them (`POST /api/harness/turns/` needs this role **and** `access.decide` giving you the agent; the whole profile needs a line on its access list that gives `write` (read_write or editor), and a line may make every such turn `manual`), edit schedules, route work (never in `auto`), **delete an agent**; create and change every product surface (projects, walkthroughs, shareouts, reviews, DDD, storyboards, issues). |
+| **Editor** | workspace member, `editor` | Create and edit agents, send turns to them (`POST /api/harness/turns/` needs this role **and** `turn_context.resolve_turn_context` giving you the agent; the whole profile needs a line on its access list that gives `write` (read_write or editor), and a line may make every such turn `manual`), edit schedules, route work (never in `auto`), **delete an agent**; create and change every product surface (projects, walkthroughs, shareouts, reviews, DDD, storyboards, issues). |
 | **Workspace admin** | workspace member, `admin` | Run the workspace: read every LOG (the event log, every turn's prompt / ledger / transcript / caller context, runner drills, connected-site health); invite, re-role and remove members **strictly below themselves**; the integrations (inbound mailboxes + push config, Slack history + sync, Test connection); the default runner order, retention, admission rules, and starting or declining a proposed project. Holds no keys. |
 | **Owner** | workspace member, `owner` | The keys: make admins and owners, the shared vault, every agent's credentials (a workspace owner is every agent's admin), the Slack app itself, registering or changing a connected site, deleting or moving the workspace; hold or stop the workspace's work (`control`). Gets the workspace's alert and access-request email. |
 | **Superuser** | workspace member, `superuser` | Everything an owner can do, in the workspace and every one below it, as oversight: none of the owner's email. Owners and superusers manage each other. The system superuser (`User.is_superuser`, Supervisor → Runners → System superusers) is the same idea for the whole fleet, with no workspace access. |
@@ -296,14 +296,14 @@ Deliberately off the ladder:
 A view that asks the same question of many (person, workspace) or (person, agent) pairs — the
 agent topology, an agent's roster, a list filtered by what the viewer may do — reads the facts
 once and answers every pair from them. It never calls `member_role`, `perms.can`,
-`Agent.is_admin` or `access.decide` per pair in a loop: each of those reads memberships and walks
+`Agent.is_admin` or `turn_context.resolve_turn_context` per pair in a loop: each of those reads memberships and walks
 the tree, so a loop over pairs is N² queries (the agent topology was 6,000+ for 24 agents).
 
 - **One person, many workspaces:** `perms.slugs_with(user, permission, within=…)` — one
   `wsvc.member_roles` read.
 - **Many people, their roles:** `wsvc.member_roles_of(users)`, then `perms.role_allows`.
 - **Many people × agents:** `access.Standings(users, agents)` (every role and every agent grant,
-  in a fixed number of queries), passed to `access.decide(…, standing=)`, `Standings.is_admin`,
+  in a fixed number of queries), passed to `turn_context.for_asker(…, standing=)`, `Standings.is_admin`,
   `Agent.is_admin(user, role=, granted=)` or `access.roster(…)`. Everyone who administers one agent:
   `Agent.admin_user_ids()`.
 - **Many runners:** `routing.runner_tenant_slugs_of(runners)` (the tenant rule — prefetch

@@ -22,7 +22,7 @@ from django.contrib.auth import get_user_model
 from django.test import override_settings
 from django.utils import timezone
 
-from apps.agents import access, grants, interface, roles, sensitive_data
+from apps.agents import answering_snapshot, grants, interface, roles, sensitive_data, turn_context
 from apps.agents.answering_snapshot import probe_turn
 from apps.agents.models import Agent, AgentAdmin, AgentGrant
 from apps.canopy_sessions.models import Session
@@ -35,7 +35,7 @@ from apps.host_grants import execution, site_agents
 from apps.tokens.models import AppCredential
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
-from . import legacy_interface
+from . import legacy_decide, legacy_interface
 
 pytestmark = pytest.mark.django_db
 
@@ -47,13 +47,24 @@ RETIRED = "retired_probe"
 #: copy or the fixture moves, and neither should: see the module docstring.
 FROZEN_ANSWERS = "1877f8032a283484c7a5ec18e667fe5cba2eb51e24006dd9fd68b1cc7acc657f"
 
+def _as_decision(ctx):
+    """A Turn Context in the frozen copy's shape, so the two compare field by field."""
+    answer = answering_snapshot.answer_of(ctx)
+    del answer["stamp"]
+    return legacy_decide.Decision(**{**answer, "permissions": frozenset(answer["permissions"])})
+
+
+def _real_decide(agent, who, *, verified, capability, turn):
+    return _as_decision(turn_context.for_asker(agent, who, verified=verified, requested=capability, turn=turn))
+
+
 REAL = SimpleNamespace(
     profile=interface.profile, envelope_profile=caller_context._profile, reachable=interface.reachable,
     page_sites=interface.page_sites, site_ceiling=interface.site_ceiling, own_login_of=interface.own_login_of,
     page_turn=interface.page_turn, page_site_of=interface.page_site_of,
     handles_sensitive=sensitive_data.handles_sensitive, as_claim=sensitive_data.as_claim,
     sensitive_capabilities=sensitive_data.sensitive_capabilities, facts_for=execution.facts_for,
-    site_capabilities=site_agents.site_capabilities, agent_entry=site_agents.agent_entry, decide=access.decide,
+    site_capabilities=site_agents.site_capabilities, agent_entry=site_agents.agent_entry, decide=_real_decide,
 )
 
 
@@ -235,7 +246,7 @@ def test_the_fixture_has_the_shape_the_spec_counts_on(world):
 
 
 def test_a_saved_turn_on_a_real_session_gets_the_same_answers(world):
-    """The same comparison through what a claim reads: a saved session and turn, `decide_for_turn`,
+    """The same comparison through what a claim reads: a saved session and turn, `turn_context.for_turn`,
     the envelope's profile and standing, and the statement for it."""
     ace = next(agent for agent, _row in world.agents if agent.slug == "ace")
     labsdata = next(agent for agent, _row in world.agents if agent.slug == "labsdata")
@@ -246,7 +257,7 @@ def test_a_saved_turn_on_a_real_session_gets_the_same_answers(world):
             turn = Turn.objects.create(chat_session=session, origin=Turn.ORIGIN_CANOPY_WEB_CHAT,
                                        initiator_kind="user", initiator_user=person, initiator_assurance="session",
                                        prompt="hello", idempotency_key=f"{agent.slug}-{person.pk}")
-            real = access.decide_for_turn(turn, agent)
+            real = _as_decision(turn_context.for_turn(turn, agent))
             frozen = legacy_interface.decide(agent, person, verified=True, turn=turn)
             assert dataclasses.asdict(real) == dataclasses.asdict(frozen)
             turn.capability = real.stamp or ""

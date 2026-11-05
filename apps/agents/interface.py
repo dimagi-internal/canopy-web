@@ -14,7 +14,7 @@ Who may use which capability is NOT here: it is the agent's access list
 (`apps/agents/grants.py`, `docs/superpowers/specs/2026-10-30-agent-roles-and-access-list-design.md`).
 This says only what each capability IS — its tools, paths and sites — and never who may use
 it (a capability no longer carries a `role:`). THE rule that decides who gets which is
-`apps/agents/access.decide`; every term is defined in `docs/architecture/access.md`.
+`apps/agents/turn_context.resolve_turn_context`; every term is defined in `docs/architecture/access.md`.
 
 An agent's owner and admins reach its full working session; so does anyone the access list
 gives `write`. Everyone else — a `read_only` line, a line naming one capability — reaches only
@@ -107,7 +107,6 @@ from apps.agents.interface_default import (  # noqa: F401  (re-exported)
     is_read_mode,
 )
 from apps.canopy_sessions.models import SessionParticipant
-from apps.harness import initiator as who
 from apps.harness import invocations
 
 logger = logging.getLogger(__name__)
@@ -115,7 +114,7 @@ logger = logging.getLogger(__name__)
 #: The fallback capability for a free-form channel (email, chat, Slack, a widget on a
 #: page that declared nothing). Named capabilities are for callers that ask for
 #: something specific, or for a page whose declared resource matches one's
-#: `pages` — see `_page_capability`.
+#: `pages` — see `page_entry`.
 ASK = "ask"
 
 #: canopy's gateway to a Connected site's own tools, added to every capability
@@ -384,10 +383,6 @@ def session_resource(session) -> str:
     return resource if isinstance(resource, str) else ""
 
 
-def _page_capability(turn, iface: dict, opens) -> str | None:
-    return page_entry(_declared_resource(turn), iface, opens)
-
-
 def page_entry(resource: str, iface: dict, opens) -> str | None:
     """The capability whose `pages` match what this conversation's page declared.
 
@@ -426,10 +421,6 @@ def session_site(session) -> str:
     meta = (getattr(session, "metadata", None) or {}) if session is not None else {}
     site = meta.get("embed_app")
     return site.strip() if isinstance(site, str) else ""
-
-
-def _site_capability(turn, iface: dict, opens) -> str | None:
-    return site_entry(_conversation_site(turn), iface, opens)
 
 
 def site_entry(site: str, iface: dict, opens) -> str | None:
@@ -524,42 +515,22 @@ def is_review_turn(turn) -> bool:
     return session_access.is_review_conversation(session_access.turn_conversation(turn))
 
 
-def session_writer(turn, agent) -> str | None:
-    """The asker's role in the session this turn continues, when someone who
-    holds the agent's whole profile STARTED that session and gave the asker an
-    owner/editor participant row in it — else None.
-
-    A person let into the owner's conversation is part of it: their turn
-    continues the SAME session, in its profile. Confining them to a capability
-    instead keys their turn to a separate `cx-` session on the runner, so a
-    colleague replying in the owner's Slack thread landed in a fresh session the
-    owner never saw (Jonathan, 2026-10-01: "if the user has access to my
-    session, it should come back in the session I already started").
-
-    Both halves are load-bearing. The creator must be the agent's owner or an
-    admin: otherwise any member could start their own chat with the agent and
-    be "the owner of a session", which would undo the interface for everyone.
-    And the grant must be an explicit row: `role_for` also makes every tenant
-    member an editor of a runner-discovered session, a convenience for the web
-    UI rather than anyone being let into this conversation.
-    """
-    if agent is None or turn.initiator_kind != who.USER or not getattr(turn, "chat_session_id", None):
-        return None
-    user, session = turn.initiator_user, turn.chat_session
-    creator = session.created_by
-    if user is None or creator is None:
-        return None
-    if creator.pk != agent.owner_id and not agent.is_admin(creator):
-        return None
-
-    role = (SessionParticipant.objects.filter(session=session, user=user)
-            .values_list("role", flat=True).first())
-    return role if role in (SessionParticipant.OWNER, SessionParticipant.EDITOR) else None
-
-
 def session_writers(session, agent) -> list[tuple[int, str]]:
-    """Everyone `session_writer` is true of in `session`: `(user_id, role)`. The same two halves: the
-    agent's owner or an admin started it, and an explicit owner/editor row lets them in."""
+    """Who in `session` holds the agent's whole profile by being in it, as `(user_id, role)`: someone
+    who holds it STARTED the session and gave them an owner/editor participant row in it.
+
+    A person let into the owner's conversation is part of it: their turn continues the SAME session, in
+    its profile. Confining them to a capability instead keys their turn to a separate `cx-` session on
+    the runner, so a colleague replying in the owner's Slack thread landed in a fresh session the owner
+    never saw (Jonathan, 2026-10-01: "if the user has access to my session, it should come back in the
+    session I already started").
+
+    Both halves are load-bearing. The creator must be the agent's owner or an admin: otherwise any
+    member could start their own chat with the agent and be "the owner of a session", which would undo
+    the interface for everyone. And the grant must be an explicit row: `role_for` also makes every
+    tenant member an editor of a runner-discovered session, a convenience for the web UI rather than
+    anyone being let into this conversation.
+    """
     creator = session.created_by
     if creator is None:
         return []

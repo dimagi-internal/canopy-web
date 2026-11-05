@@ -4,7 +4,7 @@
 
 Taken before and after each step of replacing the interface's YAML with plain settings
 (`docs/superpowers/specs/2026-11-04-agent-settings-replace-the-interface-design.md`), so that a step
-that changes an answer shows up as a diff. It holds, per agent: `profile()` per stamp, the `decide()`
+that changes an answer shows up as a diff. It holds, per agent: `profile()` per stamp, the the rule's
 matrix, the access list and roster, `facts_for` when the agent is sensitive, and its A2A cards; per
 registered site, what the site-agents API would sign; per workspace tree, the topology edges; and
 `shape`, the stored facts that design counts on, checked rather than assumed.
@@ -199,7 +199,7 @@ def _lines(lines) -> list[dict]:
 
 def probe_turn(*, user=None, contact=None, site: str = "", sensitive: bool = False, stamp: str = "",
                runner=None) -> Turn:
-    """A turn in memory, never saved: what `decide` and `facts_for` would be handed for a conversation
+    """A turn in memory, never saved: what the rule and `facts_for` would be handed for a conversation
     on `site`, sensitive or not, started by `user` or `contact`."""
     metadata = {}
     if site:

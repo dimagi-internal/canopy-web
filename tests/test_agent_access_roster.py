@@ -2,7 +2,7 @@
 
 The roster composes four sources (owner, explicit admins, implicit workspace-owner
 admins, the agent's access list). It must say exactly what the harness would
-do, so the parity test below checks it against `access.decide_for_turn` for a
+do, so the parity test below checks it against `turn_context.for_turn` for a
 real signed-in turn of every member.
 """
 from __future__ import annotations
@@ -11,7 +11,7 @@ import pytest
 from django.contrib.auth.models import User
 from django.test import Client
 
-from apps.agents import access, interface, roles
+from apps.agents import interface, roles, turn_context
 from apps.agents.models import Agent, AgentAdmin
 from apps.harness import initiator as who
 from apps.harness.models import Turn
@@ -144,7 +144,7 @@ def test_roster_agrees_with_the_harness_for_a_signed_in_turn(world, published):
         user = world[key]
         turn = Turn(agent=a, prompt="hi", initiator_kind=who.USER,
                     initiator_assurance=who.SESSION, initiator_user=user)
-        decided = access.decide_for_turn(turn, a).stamp
+        decided = turn_context.for_turn(turn, a).stamped
         row = rows[user.email]
         if decided == interface.FULL:
             assert row["access"] == "full", user.email

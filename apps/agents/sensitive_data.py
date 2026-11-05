@@ -20,7 +20,7 @@ What it buys, and what reads it:
 
 * **confinement for everyone** — a turn in such a capability, or any turn in a
   sensitive conversation, runs the capability's confined profile whoever asked
-  (`access.decide`);
+  (`turn_context.resolve_turn_context`);
 * **a sensitive conversation's host data** — the gateway calls a host for a
   sensitive conversation only from such a capability (`host_gateway`);
 * **canopy vouches for it to the host** — the gateway's `Canopy-Execution`

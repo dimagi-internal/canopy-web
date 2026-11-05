@@ -1,6 +1,6 @@
 # Access: direct use, admission rules and the caller envelope
 
-How a person who is not the agent's owner uses an agent directly, what a caller's turn tells the owner, the admission rules a workspace's admins write to refuse or let turns run `auto`, and the caller envelope an agent receives with a caller's turn. The words and the one rule (`apps/agents/access.decide`) are defined in [access.md](access.md).
+How a person who is not the agent's owner uses an agent directly, what a caller's turn tells the owner, the admission rules a workspace's admins write to refuse or let turns run `auto`, and the caller envelope an agent receives with a caller's turn. The words and the one rule (`apps/agents/turn_context.resolve_turn_context`) are defined in [access.md](access.md).
 
 **See also:** [access.md](access.md) (glossary, roles, access list, decision table), [access-confinement-and-act-as.md](access-confinement-and-act-as.md), [access-sessions-and-people.md](access-sessions-and-people.md), [roles.md](roles.md).
 
@@ -46,7 +46,7 @@ direct (a direct turn).
   The cap rides on the user object (`apps/workspaces/role_cap.py`) and is honoured
   where roles are read — `member_role`/`member_roles`/`membership`,
   `Agent.is_admin`, `relationship_for_user`, `caller_runs_agent` — so a capped owner or agent
-  admin is neither, and `decide` gives them only what the access list does (their own lines,
+  admin is neither, and the rule gives them only what the access list does (their own lines,
   and any workspace line at the lowered workspace role). It only ever lowers, so anyone may ask
   for it with no proof. It is how anyone, an agent included, runs the path of someone who is
   not an agent admin for real.
@@ -65,7 +65,7 @@ direct (a direct turn).
   initiator (verified, `via=local`), it is RUNNING from the start and never
   claimed, and it carries the same caller envelope a runner turn gets
   (`trigger.private_runner` names the machine; `trigger.runner` is null).
-* **Who may.** Exactly whom `decide` gives the WHOLE agent (rows 1–3): its owner
+* **Who may.** Exactly whom the rule gives the WHOLE agent (rows 1–3): its owner
   or an agent admin, anyone whose lines give `write`. A read_only or capability line, or a contact, is refused
   (403) and keeps the confined path through canopy.
 * **Mode.** `manual`, always — except an agent admin who asks for `auto`. Stamped
@@ -77,17 +77,17 @@ direct (a direct turn).
   (No agent turn holds the agent either: an agent is not a lane.)
 * A **license** (`AgentLicense`, `apps/agents/credentials/licenses.py`) is person × agent: the
   record that someone uses the agent directly. The access list decides who MAY
-  (`decide`, in [access.md](access.md)); the license is who DOES. Requested on the first direct turn and
-  issued at once when `decide` gives the whole agent (basis `owner`, `admin` or
+  (the rule, in [access.md](access.md)); the license is who DOES. Requested on the first direct turn and
+  issued at once when the rule gives the whole agent (basis `owner`, `admin` or
   `grant:<line>`, an editor line); anyone else gets a `requested` row the agent's admins
   see, and a refusal. An agent admin **revokes** it per person without editing the
   rule, and a revoked license is never re-issued automatically; **approve**
-  reinstates it, re-asking `decide`, so it cannot license someone the access list
+  reinstates it, re-asking the rule, so it cannot license someone the access list
   does not give the whole agent. `GET /api/agents/{slug}/licenses` (any member)
   lists holders, their private runners, direct turns, credential reads and last use;
   the agent's Settings → Roles → Direct use shows it.
 * **Credentials.** `/credentials/resolve` has a third principal beside `runner` and
-  `admin`: **`license`** — an ACTIVE license (re-checked against `decide` on every
+  `admin`: **`license`** — an ACTIVE license (re-checked against the rule on every
   read) AND one of the caller's OWN live turns on that agent named in
   `X-Canopy-Turn-Id`: their running direct turn, or — on their private runner's
   token — a turn of theirs that runner claimed. No turn, no secrets. A request naming

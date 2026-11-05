@@ -27,7 +27,7 @@ At each Start, the runner runs the newest good version if its **trust surface** 
 
 ## How a run acts as the person
 
-The app holds no credential. The host calls `/api/harness/runners/{runner}/local-apps/…`, under the runner protocol's existing path, so `runner_auth` gained no new door. Each call is allowed by an installation the person made while signed in. The agent comes from that row, a `sessions.send` reaches only sessions the run opened and still asks the session ACL, and only ops the manifest declares work. Each heartbeat and Canopy call re-checks the version and `access.decide`, including that the person is still in the agent's workspace, so losing access stops a running copy. These runner routes aren't MCP tools, and an agent acting for a person can't install, configure or accept. Runs store numeric counts and ids, never anything said.
+The app holds no credential. The host calls `/api/harness/runners/{runner}/local-apps/…`, under the runner protocol's existing path, so `runner_auth` gained no new door. Each call is allowed by an installation the person made while signed in. The agent comes from that row, a `sessions.send` reaches only sessions the run opened and still asks the session ACL, and only ops the manifest declares work. Each heartbeat and Canopy call re-checks the version and `turn_context.resolve_turn_context`, including that the person is still in the agent's workspace, so losing access stops a running copy. These runner routes aren't MCP tools, and an agent acting for a person can't install, configure or accept. Runs store numeric counts and ids, never anything said.
 
 ## What it doesn't protect against
 

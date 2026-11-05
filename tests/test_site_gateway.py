@@ -247,10 +247,10 @@ def test_the_interface_parses_sites_and_ceiling_and_refuses_nonsense(w):
 
 
 def test_a_conversation_on_the_site_selects_the_site_capability(w):
-    from apps.agents.access import decide_for_turn
+    from apps.agents.turn_context import for_turn
 
     def capability_for(turn, agent):
-        return decide_for_turn(turn, agent).stamp
+        return for_turn(turn, agent).stamped
 
     turn = Turn(agent=w["agent"], chat_session=w["session"], prompt="x",
                 initiator_contact=w["contact"], initiator_kind="contact")

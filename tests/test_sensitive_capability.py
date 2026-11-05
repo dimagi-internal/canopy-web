@@ -12,7 +12,7 @@ import pytest
 from django.contrib.auth.models import User
 from django.test import Client
 
-from apps.agents import access, roles, sensitive_data
+from apps.agents import access, roles, sensitive_data, turn_context
 from apps.agents.interface import InterfaceError, is_read_mode, parse, published
 from apps.agents.models import Agent, AgentAdmin
 from apps.canopy_sessions.models import Session
@@ -206,29 +206,29 @@ def _turn(w, user, session=None, **kw):
     t = Turn.objects.create(chat_session=session, prompt="how many visits?",
                             initiator_user=user, initiator_kind=who.USER,
                             idempotency_key=f"{user.pk}-{time.monotonic_ns()}", **kw)
-    return access.decide_for_turn(t, w["agent"])
+    return turn_context.for_turn(t, w["agent"])
 
 
 @pytest.mark.parametrize("who_", ["owner", "admin", "editor"])
 def test_on_the_site_the_sensitive_door_confines_even_the_owner(w, who_):
     _declare(w["agent"], w["owner"])
     d = _turn(w, w[who_], _site_session(w))
-    assert (d.access, d.capability, d.basis) == (access.CONFINED, "data", "sensitive:data")
-    assert d.stamp == "data"
+    assert (d.access, d.stamped, d.basis) == (access.CONFINED, "data", "sensitive:data")
+    assert d.stamped == "data"
 
 
 def test_the_owner_keeps_their_role_and_mode_rights_when_confined(w):
     _declare(w["agent"], w["owner"])
     d = _turn(w, w["owner"], _site_session(w))
-    assert d.relationship == access.OWNER and d.may_pin_runner
+    assert d.standing.relationship == access.OWNER and d.review.may_pin_runner
 
 
 def test_naming_a_sensitive_capability_confines_the_owner_anywhere(w):
     _declare(w["agent"], w["owner"])
-    d = access.decide(w["agent"], w["owner"], verified=True, capability="data")
-    assert (d.access, d.capability) == (access.CONFINED, "data")
+    d = turn_context.for_asker(w["agent"], w["owner"], verified=True, requested="data")
+    assert (d.access, d.stamped) == (access.CONFINED, "data")
     # Not naming it, off the site: the owner's full profile, as ever.
-    assert access.decide(w["agent"], w["owner"], verified=True).access == access.FULL
+    assert turn_context.for_asker(w["agent"], w["owner"], verified=True).access == access.FULL
 
 
 def test_a_sensitive_conversation_with_no_sensitive_door_is_refused_even_for_the_owner(w):
@@ -236,7 +236,7 @@ def test_a_sensitive_conversation_with_no_sensitive_door_is_refused_even_for_the
     _let_in(w["agent"], "member", "ask")
     editors_run(w["agent"])
     d = _turn(w, w["owner"], _site_session(w, {"runner_requirements": ["sensitive_data"]}))
-    assert d.access == access.NONE and "handles sensitive data" in d.reason
+    assert d.access == turn_context.REFUSED and "handles sensitive data" in d.refusal.why
 
 
 def test_a_sensitive_conversation_runs_only_in_its_sensitive_door(w):
@@ -244,7 +244,7 @@ def test_a_sensitive_conversation_runs_only_in_its_sensitive_door(w):
     sensitive = {"runner_requirements": ["sensitive_data"]}
     for who_ in ("owner", "editor", "viewer"):
         d = _turn(w, w[who_], _site_session(w, sensitive))
-        assert (d.access, d.capability) == (access.CONFINED, "data"), who_
+        assert (d.access, d.stamped) == (access.CONFINED, "data"), who_
 
 
 def test_a_sensitive_caller_the_sensitive_door_does_not_list_is_refused(w):
@@ -253,7 +253,7 @@ def test_a_sensitive_caller_the_sensitive_door_does_not_list_is_refused(w):
         "data": {**DATA},
         "ask": {"tools": ["Read"]}}}, who_={"data": ["contact"], "ask": ["member"]})
     d = _turn(w, w["viewer"], _site_session(w, {"runner_requirements": ["sensitive_data"]}))
-    assert d.access == access.NONE and "'data' does not list you" in d.reason
+    assert d.access == turn_context.REFUSED and "'data' does not list you" in d.refusal.why
 
 
 def test_without_sensitive_nothing_changes(w):
