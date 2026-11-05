@@ -9,7 +9,7 @@ from ninja.errors import HttpError
 from apps.agents import services as agent_services
 from apps.api.route_gates import gate
 from apps.embedding import delegation
-from apps.harness import clis
+from apps.harness import acting_person, clis
 from apps.harness import initiator as who
 from apps.harness import sensitivity
 from apps.harness.models import Runner
@@ -18,6 +18,7 @@ from apps.workspaces import services as wsvc
 
 from . import (
     access,
+    content_deletion,
     control,
     conversation_keys,
     doors,
@@ -41,6 +42,7 @@ from .schemas import (
     ResetSummaryOut,
     SendIn,
     SendOut,
+    SessionContentDeletedOut,
     SessionCreateIn,
     SessionMoveIn,
     SessionNotifyIn,
@@ -450,6 +452,53 @@ def close_session(request: HttpRequest, session_id: uuid.UUID):
     outcome = control.close_session(session=session)
     ok = outcome in ("closing", "closed")
     return {"ok": ok, "closing": outcome == "closing", "reason": "" if ok else outcome}
+
+
+@router.delete("/{session_id}/content", response=SessionContentDeletedOut,
+               summary="Permanently delete your session's stored words")
+# Only the person, as themselves: `acting_person` refuses an agent's login, any turn's
+# token and a runner; `delegated` (a site's token for its visitor) is refused beside it.
+# `owns_words` gives no role an override, workspace owners and agent admins included.
+@gate("session-acl", kind="conversation")
+def delete_session_content(request: HttpRequest, session_id: uuid.UUID):
+    """Delete everything canopy stores of what was said in your own session: its messages
+    (sealed ones and their key included), transcript rows, attachments, drafts, its turns'
+    prompts, notes and logs, and its title. It cannot be undone. The session's row and ids
+    stay, so analytics does not change, and it is archived.
+
+    Your runner will not upload it again: the session stops being asked of your computer and
+    anything it still ships is dropped, whether or not a coach reviews you. The copy on your
+    own computer is untouched, as is anything already read out of canopy, such as a coach's
+    notes and logs.
+
+    Only the person whose session it is may do this, signed in as themselves: 403 for anyone
+    else, and for an agent's login or a token issued to a turn; no admin can override it. 409
+    while a turn is running, while it is being moved, when someone else is or was in the
+    conversation, or while a fork holds a copy. Deleting again does nothing. 503 when a file's
+    stored copy could not be removed: nothing has changed, and you can try again."""
+    session = _session_or_404(request, session_id)
+    if acting_person.refusal(request) is not None or delegation.acting_app(request) is not None:
+        raise HttpError(403, "Only the person whose session this is can delete it, signed in as "
+                             "themselves. An agent or a token given to a turn cannot.")
+    if not access.owns_words(request.user, session):
+        raise HttpError(403, "Only the person whose session this is can delete it. Nobody else "
+                             "can, admins included.")
+    if access.is_content_deleted(session):
+        return {"deleted_at": session.content_deleted_at, "messages": 0, "attachments": 0, "turns": 0}
+    if access.others_in_it(request.user, session):
+        raise HttpError(409, "Other people are or were in this conversation, so it is theirs too. "
+                             "It can only be deleted while it is yours alone.")
+    if (why := content_deletion.blocker(session)) is not None:
+        raise HttpError(409, content_deletion.REFUSALS[why])
+    try:
+        counts = content_deletion.delete_content(session, by=request.user)
+    except content_deletion.BytesRemain:
+        raise HttpError(503, "A file attached to this session could not be removed, so nothing "
+                             "else was deleted. Try again.") from None
+    except ValueError as exc:  # it started working in between
+        raise HttpError(409, content_deletion.REFUSALS.get(str(exc), str(exc))) from None
+    session.refresh_from_db(fields=["content_deleted_at"])
+    return {"deleted_at": session.content_deleted_at, **counts}
 
 
 @router.post("/{session_id}/stop", response=dict,

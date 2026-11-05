@@ -138,6 +138,7 @@ def session_out(session: Session, *, reply: bool = False, viewer=None) -> dict:
             else ((binding.session_key if (binding and binding.session_key) else "") or session.title)
         ),
         "status": session.status,
+        "content_deleted_at": session.content_deleted_at,
         "opening": transcript_read.opening_of(session),
         "origin_resource": session.origin_resource,
         "created_at": session.created_at,
@@ -217,6 +218,9 @@ def session_out(session: Session, *, reply: bool = False, viewer=None) -> dict:
         # none of these is ever written with its words (`sensitivity.seal`), and a
         # list must not start reading them if that ever changes.
         **({"title": "", "opening": "", "last_reply": ""} if sensitive else {}),
+        # Its task name is kept to recognise the task on the box (`content_deletion`), and
+        # a task name can say what the session was about, so it is not served.
+        **({"title": "", "session_key": ""} if session.content_deleted_at else {}),
     }
 
 

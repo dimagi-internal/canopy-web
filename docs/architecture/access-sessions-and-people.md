@@ -32,8 +32,8 @@ chat-session ACL.
 | **Panel** (an embedded widget) | the visitor (a contact: `contact_session_q`) | the visitor |
 | **An agent's own work** (an alarm, a scheduled turn) | the agent's admins (`Agent.is_admin`) | the agent's admins |
 | **Work an agent starts for you** (a dispatched session) | you + the parent conversation's people (`services._inherit_participants`) | the same |
-| **Coaching** | + the agent the person granted (`SessionReviewGrant`), read-only, never a sensitive one | no — it reads what is already uploaded |
-| **One session, asked from its page** | + the coach the person asked (`SessionReviewAsk`), read-only, only inside the chat the ask opened, never a sensitive one | no — it reads what is already uploaded |
+| **Coaching** | + the agent the person granted (`SessionReviewGrant`), read-only, never a sensitive one, never one whose words its person deleted | no — it reads what is already uploaded |
+| **One session, asked from its page** | + the coach the person asked (`SessionReviewAsk`), read-only, only inside the chat the ask opened, never a sensitive one, never one whose words its person deleted | no — it reads what is already uploaded |
 
 **Every session says who can see it.** `GET /api/canopy-sessions/{id}` carries `audience`
 (`{label, extras, count}`, `apps/canopy_sessions/audience.py`) — e.g. "Only you", "You and 2

@@ -115,6 +115,7 @@ Each is enforced or load-bearing across the codebase; the pointer says where.
 **Chat**
 - **Turn status is derived once, server-side** (`apps/harness/turn_status.py`); every channel renders it, never invents its own. A new socket frame needs an explicit passthrough in `apps/canopy_sessions/agui.py` or it is dropped silently. → `docs/architecture/chat-sessions.md`
 - **Every session transition is one `session.*` event** (`apps/canopy_sessions/lifecycle.py`): a `save()` of a session's status, workspace or metadata and every `SessionParticipant` row are observed for free; a queryset `update()` of those columns calls `lifecycle.record_many` beside it. Ids only, never content. → `docs/architecture/chat-sessions.md` § A session's lifecycle is in the event log
+- **A session's deleted words stay deleted.** `Session.content_deleted_at` is a tombstone every writer of a session's words honours (`transcript_ingest.refuses_ship` for what a runner ships), or the next ship restores what its person deleted; only that person, as themselves, may delete (`access.owns_words`). A new table holding what was said is placed in `tests/test_session_content_deletion.py`. → `docs/architecture/tenancy.md` § Deleting your own session's content
 - **An agent chat's worktree project is `Session.emdash_project`, not `Session.project`** (blank for agent chats); send the bare `project` to a runner and it silently skips the session. → `docs/architecture/chat-sessions.md`
 
 **Frontend**

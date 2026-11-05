@@ -64,6 +64,11 @@ export function cachedMessages(id: string): Message[] | null {
   return k && !k.sensitive && k.messages?.length ? k.messages : null
 }
 
+/** This session's words were deleted: this tab must not paint its copy of them. */
+export function forget(id: string): void {
+  known.delete(id)
+}
+
 /** Tests only. */
 export function forgetAll(): void {
   known.clear()

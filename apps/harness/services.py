@@ -238,6 +238,9 @@ def enqueue_turn(
         if not (job and job_repo) or agent is None or session is not None or project:
             raise ValueError("a job turn names its job and repo and targets an agent")
         routing, prompt = Turn.CLOUD_ONLY, ""
+    # A conversation whose words its person deleted takes no more, from any door.
+    if session is not None and session.content_deleted_at is not None:
+        raise ValueError("this session's content was deleted")
     # Looked up inside the target's workspace: another workspace holding the
     # same key is no business of this one (and cannot pre-claim it).
     scope = Turn.scope_for(agent=agent, session=session, workspace=workspace)

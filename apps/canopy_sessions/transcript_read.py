@@ -733,6 +733,8 @@ def request_backfill(session) -> str:
     binding = RunnerBinding.objects.select_related("runner").filter(session=session).first()
     if backfill_refused(binding):
         raise BackfillRefusedError(SENSITIVE_BOX_BACKFILL_REFUSAL)
+    if session.content_deleted_at is not None:
+        return "unavailable"  # its person deleted it: nothing is asked of its runner again
     # A runner only has to be REACHABLE to ship a transcript — not ready to run
     # turns (`Runner.is_reachable`). Gating on ONLINE alone made backfill
     # impossible whenever emdash's CDP port was down: the runner marks itself

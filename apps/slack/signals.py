@@ -11,6 +11,7 @@ import logging
 from django.dispatch import receiver
 
 from apps.harness.signals import (
+    session_content_deleted,
     session_menu_changed,
     sessions_closed,
     sessions_reported,
@@ -19,7 +20,19 @@ from apps.harness.signals import (
     turn_status_changed,
 )
 
+from .models import SlackChoicePost, SlackMenuPost, SlackTurnPost
+
 logger = logging.getLogger(__name__)
+
+
+@receiver(session_content_deleted, dispatch_uid="slack_forget_deleted_session")
+def _forget_deleted_session(sender, session, turn_ids, **kwargs):
+    """What canopy kept of a session's Slack posts goes with its words (in the deleting
+    transaction); the posts themselves are Slack's. A session still bound to a thread
+    cannot get here (`access.others_in_it`), but one that was can."""
+    SlackTurnPost.objects.filter(turn_id__in=turn_ids).update(rendered="", prefix="")
+    SlackMenuPost.objects.filter(session=session).update(question="")
+    SlackChoicePost.objects.filter(session=session).update(actions=[], chosen={})
 
 
 @receiver(turn_events_appended, dispatch_uid="slack_relay_replies")

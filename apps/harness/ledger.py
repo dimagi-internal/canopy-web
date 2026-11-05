@@ -49,6 +49,9 @@ def append_events(turn: Turn, events: list[dict]) -> int:
         locked = (Turn.objects.select_for_update(of=("self",))
                   .select_related("chat_session", "canopy_session", "parent_session")
                   .get(pk=turn.pk))
+        # A late flush must not put back what retention or its person removed.
+        if locked.content_purged_at is not None:
+            return 0
         sensitive = sensitivity.is_sensitive(locked)
         events = _stripped(sensitive, sensitivity.conversation_of(locked))
         current = (
@@ -158,9 +161,11 @@ def append_transcript(turn: Turn, raw_lines: list[str], *, batch_id: str = "") -
     """
     from . import sensitivity
 
-    if sensitivity.is_sensitive(turn):
-        # A sensitive conversation keeps no transcript (spec 2026-10-22-sensitive-data-agents
-        # §4). The runner still gets its success, so it never retries.
+    # A sensitive conversation keeps no transcript (spec 2026-10-22-sensitive-data-agents §4),
+    # and a late flush must not put back what retention or its person removed. The runner
+    # still gets its success, so it never retries.
+    if sensitivity.is_sensitive(turn) or (
+            Turn.objects.filter(pk=turn.pk).values_list("content_purged_at", flat=True).first() is not None):
         return TurnTranscript(turn=turn, line_count=0, bytes_raw=0, truncated=False)
 
     # Drop truly-empty elements (see docstring) before both the count and the

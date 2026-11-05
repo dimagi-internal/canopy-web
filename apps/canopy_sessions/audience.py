@@ -78,7 +78,7 @@ def _own_login(session) -> set[int]:
 def _coaches(session) -> dict[int, str]:
     """Leg 5: the logins of agents the session's person let review their sessions
     (`access.sessions_of_q`), never a sensitive or a contact's session. {user id: agent name}."""
-    if session.contact_id or sensitivity.is_sensitive(session):
+    if session.contact_id or session.content_deleted_at or sensitivity.is_sensitive(session):
         return {}
     person = session.created_by_id
     if person is None and _discovered(session) and not session.agent_id:

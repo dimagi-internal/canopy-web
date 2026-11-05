@@ -429,7 +429,16 @@ class NoisePurgeOut(NoiseReportOut):
     deleted: int
 
 
+class SessionContentDeletedOut(Schema):
+    deleted_at: dt.datetime
+    messages: int
+    attachments: int
+    turns: int
+
+
 class SessionOut(Schema):
+    # Set once its person deleted this session's words: the row stays and takes no more.
+    content_deleted_at: dt.datetime | None = None
     # A requested full-history ship is still outstanding (the runner has not sent
     # its final chunk). Lets "Load full session" wait on an exact signal rather
     # than on a timer or on rows-stopped-growing, neither of which can tell "still
@@ -628,6 +637,10 @@ class SessionDetailOut(SessionOut):
     # The page offers "Move to workspace…" only when this is true and you can
     # edit in more than one workspace; the server enforces it regardless.
     can_move: bool = False
+    # Is this session's content yours to delete (`DELETE /{id}/content`)? The person whose
+    # session it is (`access.owns_words`). The page offers the action on this alone; other
+    # refusals (a live turn, someone else in the conversation) come back from the route.
+    can_delete_content: bool = False
     # Tail-first cursor: the transcript ships the last N messages by default;
     # these tell the client whether earlier history exists and where the loaded
     # window starts, for scroll-back / "load full". See transcript_read.SESSION_TAIL_DEFAULT.

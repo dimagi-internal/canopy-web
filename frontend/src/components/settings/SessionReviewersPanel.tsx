@@ -29,7 +29,9 @@ export function coachLabel({ agent, name }: CoachNames): string {
 // - no pull: access.may_pull.
 // - logs: apps/harness/turn_access.py; the turn's session: access.visible_session_q legs 3, 4, 6.
 // - mail: apps/mail/api.py (`@gate("member")` on threads; a sent copy is stored).
-// - deleting: no route deletes a session's messages; `reset` re-ships them, `archive` keeps them.
+// - deleting: apps/canopy_sessions/content_deletion.py and `DELETE /{id}/content`, whose tombstone
+//   `coaching.full_upload_session_ids` and every ship path honour; `access.others_in_it` for shared
+//   ones; `archive` keeps a session's rows.
 // - weekly limit, record, replies, forget: the coach's own repo (config/coach.json,
 //   bin/trellis-coach-ledger, bin/trellis-friction, bin/trellis-email).
 // - the backup's readers: apps/harness/agent_state.py (Agent.is_admin includes a workspace owner).
@@ -72,8 +74,8 @@ const CONSENT_ACTIONS: ((name: string) => string)[] = [
     'Reply "pause" to any note: no notes for four weeks. Reply "wrong" or "already knew" and that habit is not raised with you again. Replies are read at the next weekly pass.',
   (n) =>
     `Untick the box (Settings, Account, Who can review your sessions): ${n}'s access stops at once. On its next check your computer stops uploading finished sessions, unless another agent still reviews you. Sessions still active keep syncing, as they do for everyone in the repos you switched on. Notes stay in your inbox and in ${n}'s mailbox, and its logs and record stay.`,
-  () =>
-    'Sessions already uploaded stay on canopy. You cannot delete one yourself today: archiving only takes it off your active list, and it stays stored and readable. Only a workspace retention rule, where one is on, can remove them.',
+  (n) =>
+    `Sessions already uploaded stay on canopy until you delete them: open a session and choose "Delete this session's content" from its menu. That removes what canopy stores of it for good, ${n} can no longer read it, and your computer does not upload it again, even if ${n} still reviews you. It keeps the session on your computer, what ${n} already read into its notes and logs, and the counts in analytics. You can delete a session only while it is not working and only if it is yours alone: nobody else is or was in the conversation. Archiving only takes a session off your active list, and it stays stored and readable.`,
   (n) =>
     `Have ${n} forget you ("forget my coaching record") in a full session with it, not read mode, or ask one of its admins: that deletes your record, its backup copy (at once, or at its next full run if the backup cannot be reached then) and the pattern notes that came from you. It cannot unsend email, clear its logs or mailbox, remove canopy's records that a note went out and how you replied, or delete your sessions from canopy.`,
 ]

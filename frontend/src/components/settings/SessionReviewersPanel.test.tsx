@@ -31,7 +31,7 @@ describe('SessionReviewersPanel', () => {
     expect(screen.getByText(/upload those sessions in full/)).toBeTruthy()
     // Says who else can read it (the mailbox, the logs), and what cannot be undone.
     expect(screen.getByText(/any member of its workspace can open it/)).toBeTruthy()
-    expect(screen.getByText(/You cannot delete one yourself today/)).toBeTruthy()
+    expect(screen.getByText(/stay on canopy until you delete them/)).toBeTruthy()
     fireEvent.click(box)
     await waitFor(() => expect(addMySessionReviewer).toHaveBeenCalledWith('trellis'))
     await waitFor(() => expect(box.checked).toBe(true))

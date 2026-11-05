@@ -18,6 +18,7 @@ from apps.harness import services as harness_services
 from apps.harness.models import Turn
 
 from . import (
+    access,
     authorship,
     control,
     conversation_keys,
@@ -177,6 +178,10 @@ def send_message(
     is unarchived first (`control.unarchive_session`)."""
     from apps.events import activity
 
+    # Before anything else. Read fresh, as a door's instance may predate the delete.
+    # ValueError: every door's refused send (`doors.send_from`).
+    if Session.objects.filter(pk=session.pk, content_deleted_at__isnull=False).exists():
+        raise ValueError(access.CONTENT_DELETED_REFUSAL)
     # A send into an archived session brings it back: the turn it starts is one
     # somebody is waiting on, and it must be where they can see it answered.
     control.unarchive_session(session, user=user, reason="sent to")

@@ -249,6 +249,7 @@ def get_session(request: HttpRequest, session_id: uuid.UUID, full: bool = False)
     data["can_add_people"] = access.can_add_people(request.user, session)
     data["audience"] = audience.summary(session, request.user)
     data["can_move"] = filing.can_move(request.user, session)
+    data["can_delete_content"] = access.owns_words(request.user, session)
     # A sensitive conversation's key, for the reader's browser to open `sealed` with.
     data["sealed_key"] = sensitivity.sealed_key_for(
         session, user=request.user, chat_surface=sensitivity.request_is_chat_surface(request),
@@ -288,7 +289,7 @@ def _info_binding(binding, *, sensitive: bool = False) -> dict | None:
         "runner_kind": runner.kind if runner else None,
         "host": binding.host,
         "emdash_project": binding.emdash_project,
-        "session_key": binding.session_key,
+        "session_key": "" if binding.session.content_deleted_at else binding.session_key,
         "thread_key": binding.thread_key,
         "transcript_id": binding.transcript_id,
         "task_uid": binding.task_uid,
