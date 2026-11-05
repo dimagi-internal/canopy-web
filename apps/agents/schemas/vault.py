@@ -93,12 +93,6 @@ class ZkTargetOut(StrictModel):
     label: str = ""
     device_kind: str = ""
     email: str = ""
-    #: A workspace vault's page only, for a machine: whose it is, which agents this vault
-    #: serves that it runs, and why it waits (`unendorsed`: its person never confirmed it,
-    #: so no keeper will pass it the key — an admin's grant is the way in).
-    person_email: str = ""
-    serves: list[str] = Field(default_factory=list)
-    waiting_reason: str = ""
 
 
 class VaultMemberOut(StrictModel):

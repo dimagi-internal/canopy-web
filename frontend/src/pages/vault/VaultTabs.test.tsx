@@ -66,31 +66,6 @@ describe('vault page', () => {
     await waitFor(() => expect(api.attachWorkspaceVault).toHaveBeenCalledWith('v1', { project: 'dimagi/canopy-support' }))
   })
 
-  it('lists a machine waiting through an agent it serves, says it is unconfirmed, and grants only that machine', async () => {
-    // Shared, 2026-11-05: attached to the dimagi workspace (no runner row), DIM-SA-W175 waiting.
-    const pending = [
-      { kind: 'device', target: 'dk175', public_jwk: {}, runner: 'r175', runner_name: 'DIM-SA-W175',
-        person_email: 'idiene@dimagi.com', serves: ['gshubdesk'], waiting_reason: 'unendorsed' },
-      { kind: 'device', target: 'dk153', public_jwk: {}, runner: 'r153', runner_name: 'DIM-W153',
-        person_email: 'x@dimagi.com', serves: ['ace'], waiting_reason: 'waiting_for_keeper' },
-      { kind: 'member', target: '9', public_jwk: {}, email: 'ed@dimagi.com' },
-    ]
-    api.getWorkspaceVaultZk.mockResolvedValue({ pending })
-    ops.grantWorkspaceVaultPending.mockResolvedValue({})
-    const c = ctx()
-    render(<MemoryRouter><VaultOverviewTab {...c} /></MemoryRouter>)
-    const row = (await screen.findByTestId('vault-machine-waiting-dk175')).textContent
-    expect(screen.getByTestId('vault-machines-waiting').textContent).toContain('2 machines are waiting')
-    expect(row).toContain("DIM-SA-W175 — idiene@dimagi.com's · runs gshubdesk")
-    expect(screen.getByTestId('vault-machine-unendorsed-dk175').textContent).toContain('no keeper will pass it the key')
-    expect(screen.queryByTestId('vault-machine-unendorsed-dk153')).toBeNull()
-    fireEvent.click(screen.getByTestId('vault-machine-grant-dk175'))
-    await waitFor(() => expect(ops.grantWorkspaceVaultPending).toHaveBeenCalledTimes(1))
-    const only = ops.grantWorkspaceVaultPending.mock.calls[0][2] as (t: unknown) => boolean
-    expect(pending.filter(only).map((t) => t.target)).toEqual(['dk175'])
-    await waitFor(() => expect(screen.queryByTestId('vault-machine-waiting-dk175')).toBeNull())
-  })
-
   it('lists its runners under Members: where each key lives, its access, and Give access for that runner only', async () => {
     const waiting = [
       { kind: 'device', target: 'k2', public_jwk: {}, runner: 'r2', runner_name: 'demo-a' },
