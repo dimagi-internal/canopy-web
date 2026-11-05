@@ -36,7 +36,7 @@ const CONSENT: { title: string; body: (name: string) => string }[] = [
   {
     title: 'What it reads',
     body: (n) =>
-      `The canopy sessions you already have, in workspaces ${n} belongs to: chats you started, and the Claude Code sessions on your own computer for the repos you switched on under Settings, Runners, Opted-in repos. It reads whole sessions: what you typed, what anyone else wrote in that chat, what the agent answered, and what the tools returned. It never reads a conversation marked sensitive, and a computer set up as sensitive-data uploads nothing. This box covers only you. ${n} reads nobody who has not let it in; the other ways in are a person approving one look with their passkey, and an admin giving it the sessions shared in a Slack channel.`,
+      `The canopy sessions you already have, in workspaces ${n} belongs to: chats you started, and the Claude Code sessions on your own computer for the repos you switched on under Settings, Runners, Opted-in repos. It reads whole sessions: what you typed, what anyone else wrote in that chat, what the agent answered, and what the tools returned. It never reads a conversation marked sensitive, and a computer set up as sensitive-data uploads nothing. This box covers only you. ${n} reads nobody who has not let it in; the other ways in are a person asking it to review one session from that session's page, a person approving one look with their passkey, and an admin giving it the sessions shared in a Slack channel.`,
   },
   {
     title: 'What your computer does',

@@ -31,7 +31,7 @@ from apps.embedding import defaults as agent_defaults
 from apps.workspaces import services as wsvc
 from apps.tokens import kinds
 
-from . import hcp, people, session_reviewers, viewers
+from . import hcp, people, session_review_asks, session_reviewers, viewers
 from . import services as contact_services
 from .models import MemoryCollection, Person, PersonAccess, PersonAddress, PersonFact, PersonGrant
 from .people_schemas import (
@@ -68,6 +68,7 @@ from .people_schemas import (
     SessionMemoryOut,
     SessionReviewerIn,
     SessionReviewersOut,
+    SessionReviewStateOut,
     SharedPagesOut,
     WorkspaceAddressesOut,
 )
@@ -1055,6 +1056,51 @@ def remove_my_session_reviewer(request: HttpRequest, agent_slug: str) -> dict:
     if agent is None or not session_reviewers.revoke(person, agent, user=request.user):
         raise _not_found("That agent cannot review your sessions")
     return _session_reviewers(person, request.user)
+
+
+def _session_for_review(request: HttpRequest, session_id: uuid.UUID):
+    from apps.canopy_sessions import access  # noqa: PLC0415 — as this module's other lazy imports
+
+    session = access.readable_sessions(request.user).filter(pk=session_id).first()
+    if session is None:
+        raise _not_found("Session not found")
+    return session
+
+
+@router.get("/me/session-reviewers/sessions/{session_id}/", response=SessionReviewStateOut,
+            summary="Whether a coach can be asked to review this session")
+@gate("self")  # only the person; a session that is not their own has no offer
+def get_my_session_review(request: HttpRequest, session_id: uuid.UUID) -> dict:
+    """The coach you could ask to review this one session, why you cannot if you
+    cannot, and your live ask if you made one. Only you see this."""
+    _the_person_themself(request)
+    return {"offer": session_review_asks.state(request.user, _session_for_review(request, session_id))}
+
+
+@router.post("/me/session-reviewers/sessions/{session_id}/", response=SessionReviewStateOut,
+             summary="Ask a coach to review this one session")
+@gate("self", setting=True)  # who may read this session
+def ask_my_session_review(request: HttpRequest, session_id: uuid.UUID) -> dict:
+    """Your act: for 7 days the coach may read this session, and only inside the chat
+    this opens, where it replies to you. It enrols you in nothing and reads nothing else
+    of yours, and it can change, send or share nothing. Never a sensitive conversation.
+    On your audit. Asking again renews it."""
+    person = _the_person_themself(request)
+    session = _session_for_review(request, session_id)
+    session_review_asks.ask(request, person, session)
+    return {"offer": session_review_asks.state(request.user, session)}
+
+
+@router.delete("/me/session-reviewers/sessions/{session_id}/", response=SessionReviewStateOut,
+               summary="Withdraw your ask for a review of this session")
+@gate("self", setting=True)  # who may read this session
+def withdraw_my_session_review(request: HttpRequest, session_id: uuid.UUID) -> dict:
+    """At once: the coach's next read of this session is "not found". Only you can do this."""
+    person = _the_person_themself(request)
+    session = _session_for_review(request, session_id)
+    if not session_review_asks.withdraw(person, session, user=request.user):
+        raise _not_found("You have no live ask about this session")
+    return {"offer": session_review_asks.state(request.user, session)}
 
 
 @router.get("/session-reviewers/granted-to-me/", response=SessionGrantersOut,

@@ -14,7 +14,7 @@ someone merely for being in the same workspace:
   a participant removed from the workspace loses the session with it, the
   same as every other tenant surface in canopy. Which workspace that is — the
   filing rule for a new runner session, and moving one — is `filing.py`.
-* **Then one of seven legs** (`visible_session_q`): you created it; you were
+* **Then one of eight legs** (`visible_session_q`): you created it; you were
   made a participant; it is a runner-discovered session on a box YOU OWN (a
   laptop session is its owner's alone); it is the own thread of an agent you
   run; you are an agent's own login and its person let that agent review
@@ -22,7 +22,9 @@ someone merely for being in the same workspace:
   you administer the runner it sits on (`RunnerAdmin`, read-only, so a box
   can be emptied — `may_move`); or its box owner shared their laptop sessions
   in this project's repo with the project's team and you are on it
-  (`ProjectSessionShare`, read + write + pull).
+  (`ProjectSessionShare`, read + write + pull); or you are an agent's own login,
+  in the conversation a person opened by asking it to review this one session of
+  theirs, with that person as the turn's asker (`SessionReviewAsk`, read-only).
 * **Writing** (sending, answering, stopping, archiving, page actions,
   attachments) needs a role of owner or editor. A `viewer` participant reads.
 * **Sharing** — adding or removing a participant — is the OWNER's: the
@@ -79,6 +81,7 @@ A box with no owner gives the leg to nobody (it fails closed).
 from __future__ import annotations
 
 from django.db.models import Exists, OuterRef, Q
+from django.utils import timezone
 
 from apps.agents.models import Agent, AgentProject
 from apps.harness import runner_requirements as rr
@@ -90,6 +93,7 @@ from .models import (
     RunnerBinding,
     Session,
     SessionParticipant,
+    SessionReviewAsk,
     SessionReviewGrant,
 )
 
@@ -100,7 +104,7 @@ def visible_session_q(user) -> Q:
     Tenancy is a separate and prior gate (`_visible_slugs`) — this narrows
     inside it and must never be used as the only check.
 
-    Seven ways in, and no eighth:
+    Eight ways in, and no ninth:
 
     1. you created it;
     2. you were made a participant — `SessionParticipant` is what "multiplayer"
@@ -144,6 +148,12 @@ def visible_session_q(user) -> Q:
        never an agent's own login. The person's explicit, revocable choice, per
        project; you work in it as an editor and may pull. Never a sensitive one,
        never an agent's own work.
+    8. you are an agent's own login and its person asked THAT agent to review this
+       one session (a live `SessionReviewAsk`), and this request is made inside a
+       turn of the conversation that ask opened, whose asker is that same person
+       (`_review_ask_q`). No other turn of the agent reads it: not an admin's, not a
+       schedule's, not that person's in another chat. Read-only, no pull, never a
+       sensitive one or a contact's.
 
     **Known consequence — an orphaned session becomes invisible.**
     `Session.created_by` is `on_delete=SET_NULL`, so deleting a user leaves
@@ -162,6 +172,7 @@ def visible_session_q(user) -> Q:
         | _review_grant_q(user)
         | _runner_admin_q(user)
         | _project_share_q(user)
+        | _review_ask_q(user)
     )
 
 
@@ -357,6 +368,24 @@ def _review_grant_q(user) -> Q:
             & Q(contact__isnull=True) & _not_sensitive_q())
 
 
+def _review_ask_q(user) -> Q:
+    """Leg 8: the one session a person asked this agent to review, for a request made
+    inside the conversation that ask opened, by a turn answering to that person. Unlike
+    leg 5, `unattended` and `operator` get nothing: nobody but the person asked."""
+    if not getattr(user, "is_authenticated", False):
+        return Q(pk__in=[])
+    from apps.harness import turn_asker  # noqa: PLC0415 — harness imports this module
+
+    stand = turn_asker.standing(user)
+    if stand is None or stand.person_id is None or not stand.conversation_id:
+        return Q(pk__in=[])
+    asks = SessionReviewAsk.objects.filter(
+        session_id=OuterRef("pk"), agent__user=user, user_id=stand.person_id,
+        review_session_id=stand.conversation_id, revoked_at__isnull=True, expires_at__gt=timezone.now())
+    return (sessions_of_q([stand.person_id]) & Q(contact__isnull=True) & _not_sensitive_q()
+            & Q(Exists(asks)))
+
+
 def _agent_admin_q(user) -> Q:
     """Sessions whose agent `user` is an admin of. The same three ways in as
     `Agent.is_admin`; `tests/test_session_acl.py` checks the two agree.
@@ -402,7 +431,7 @@ def _tenant_slugs(user) -> set:
 
 
 def readable_sessions(user, *, workspace_slugs=None):
-    """Every session `user` may read — the tenant gate AND the seven legs.
+    """Every session `user` may read — the tenant gate AND the eight legs.
 
     `workspace_slugs` narrows further (a pinned `/api/w/{ws}/` route); it can
     never widen past the caller's own workspaces.

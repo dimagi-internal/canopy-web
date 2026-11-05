@@ -71,8 +71,9 @@ SLACK_REBOUND = "session.slack_rebound"
 PARTICIPANT_ADDED = "session.participant_added"
 PARTICIPANT_REMOVED = "session.participant_removed"
 PARTICIPANT_ROLE_CHANGED = "session.participant_role_changed"
-#: A person's project-level sharing switch (`ProjectSessionShare`) or a coach's review
-#: grant (`SessionReviewGrant`) — a change to who can see many sessions at once.
+#: A person's project-level sharing switch (`ProjectSessionShare`), a coach's review
+#: grant (`SessionReviewGrant`), or one session's review ask (`SessionReviewAsk`): a change
+#: to who can see a person's sessions, or this one.
 SHARING_CHANGED = "session.sharing_changed"
 SENSITIVITY_CHANGED = "session.sensitivity_changed"
 RESET = "session.reset"

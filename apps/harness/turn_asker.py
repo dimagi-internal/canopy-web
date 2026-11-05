@@ -291,12 +291,14 @@ class Standing:
     (its verified human asker, or the person it was started on behalf of), or `unattended`
     (canopy or another agent started it and no person is behind it: a schedule, a trigger,
     a dispatch with no person stamped). `operator`: that person administers the agent
-    itself (`Agent.is_admin`), who runs it for everyone it serves."""
+    itself (`Agent.is_admin`), who runs it for everyone it serves. `conversation_id`: the
+    chat session a person's turn runs in, "" when none."""
 
     turn_id: str
     person_id: int | None = None
     unattended: bool = False
     operator: bool = False
+    conversation_id: str = ""
 
 
 def remember(user, credential: dict | None) -> None:
@@ -344,7 +346,8 @@ def _standing_of(turn: Turn, agent: Agent) -> Standing | None:
         person = turn.initiator_user
     if person is not None:
         acting_cap(turn)  # their `acts_as` lowers their administering too, as on their turn
-        return Standing(str(turn.pk), person_id=person.pk, operator=agent.is_admin(person))
+        return Standing(str(turn.pk), person_id=person.pk, operator=agent.is_admin(person),
+                        conversation_id=_conversation_id(turn))
     if turn.initiator_kind in (who.SYSTEM, who.AGENT):
         return Standing(str(turn.pk), unattended=True)
     ref = turn.origin_ref if isinstance(turn.origin_ref, dict) else {}
@@ -353,6 +356,11 @@ def _standing_of(turn: Turn, agent: Agent) -> Standing | None:
         # Another agent's dispatch, from a turn nobody asked for (`dispatch_stamp`).
         return Standing(str(turn.pk), unattended=True)
     return None  # a contact, an unvouched chain, or nobody established
+
+
+def _conversation_id(turn: Turn) -> str:
+    ref = turn.origin_ref if isinstance(turn.origin_ref, dict) else {}
+    return str(turn.chat_session_id or ref.get("chat_session_id") or "")
 
 
 def dispatch_stamp(user) -> dict:

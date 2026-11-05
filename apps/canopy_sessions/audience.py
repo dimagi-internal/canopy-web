@@ -14,12 +14,14 @@ thread, the Slack channel, the machine, the project team, the agent — and says
 """
 from __future__ import annotations
 
+from django.utils import timezone
+
 from apps.agents.models import Agent, AgentAdmin, AgentProject, ProjectParticipant
 from apps.harness import sensitivity
 from apps.harness.models import Runner, RunnerAdmin
 from apps.workspaces import services as wsvc
 
-from .models import ProjectSessionShare, RunnerBinding, Session, SessionReviewGrant
+from .models import ProjectSessionShare, RunnerBinding, Session, SessionReviewAsk, SessionReviewGrant
 
 #: Where an email-born session keeps its thread (`harness.session_sync.EMAIL_THREAD_KEY`).
 EMAIL_THREAD_KEY = "email_thread_key"
@@ -89,6 +91,24 @@ def _coaches(session) -> dict[int, str]:
     return {g.agent.user_id: (g.agent.name or g.agent.slug) for g in grants}
 
 
+def _asked_reviewers(session) -> dict[int, str]:
+    """Leg 8: the logins of agents the session's person asked to review this one session,
+    never a sensitive or a contact's session. {user id: agent name}."""
+    if session.contact_id or sensitivity.is_sensitive(session):
+        return {}
+    person = session.created_by_id
+    if person is None and _discovered(session) and not session.agent_id:
+        b = _binding(session)
+        person = b.runner.owner_id if (b is not None and b.runner_id) else None
+    if person is None:
+        return {}
+    asks = (SessionReviewAsk.objects
+            .filter(session=session, user_id=person, revoked_at__isnull=True, expires_at__gt=timezone.now(),
+                    agent__user__isnull=False, review_session__isnull=False)
+            .select_related("agent"))
+    return {a.agent.user_id: (a.agent.name or a.agent.slug) for a in asks}
+
+
 def _runner_admins(session) -> set[int]:
     """Leg 6: admins of the box a discovered session is bound to."""
     b = _binding(session) if _discovered(session) else None
@@ -125,6 +145,7 @@ def pieces(session) -> dict:
     members = wsvc.member_user_ids(session.workspace_id)
     within = lambda ids: set(ids) & members  # noqa: E731
     coaches = _coaches(session)
+    asked = _asked_reviewers(session)
     return {
         "creator": within({session.created_by_id} if session.created_by_id else set()),
         "participants": within(session.participants.values_list("user_id", flat=True)),
@@ -132,6 +153,7 @@ def pieces(session) -> dict:
         "agent_admins": within(_agent_admins(session)),
         "own_login": within(_own_login(session)),
         "coaches": {uid: name for uid, name in coaches.items() if uid in members},
+        "asked_reviewers": {uid: name for uid, name in asked.items() if uid in members},
         "runner_admins": within(_runner_admins(session)),
         "project_teams": {name: within(team) for name, team in _project_teams(session).items()},
     }
@@ -142,7 +164,7 @@ def readers(session) -> set[int]:
     session (the panel) has no member readers beyond these."""
     p = pieces(session)
     out = p["creator"] | p["participants"] | p["box_owner"] | p["agent_admins"] | p["own_login"]
-    out |= set(p["coaches"]) | p["runner_admins"]
+    out |= set(p["coaches"]) | set(p["asked_reviewers"]) | p["runner_admins"]
     for team in p["project_teams"].values():
         out |= team
     return out
@@ -202,6 +224,8 @@ def summary(session, viewer) -> dict:
         extras.append(f"The {name} project team")
     for name in sorted(set(p["coaches"].values())):
         extras.append(f"{name} may review (coaching)")
+    for name in sorted(set(p["asked_reviewers"].values())):
+        extras.append(f"{name} may review this one session (asked from its page)")
     if p["runner_admins"] - p["box_owner"]:
         extras.append("This machine's admins can read it, to move it")
     return {"label": label, "extras": extras, "count": total}

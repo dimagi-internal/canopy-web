@@ -28,6 +28,7 @@ import { ShareSecretForm } from "./ShareSecret";
 import { MoveWorkspaceForm, type MoveTarget } from "./MoveWorkspaceForm";
 import { MemoryDots, SessionMemoryPanel, memorySummary, type SessionMemoryControl } from "./SessionMemoryToggles";
 import { SessionInfoPanel } from "./SessionInfoPanel";
+import { SessionReviewPanel, useSessionReviewOffer } from "./SessionReview";
 
 const TYPING_LABEL: Record<TypingVisibility, string> = { live: "My text", typing: "Typing…", hidden: "Nothing" };
 
@@ -147,7 +148,8 @@ export function ChatSessionMenu({
   toolRows?: ToolRowsView;
   onToolRowsChange?: (view: ToolRowsView) => void;
 }) {
-  const [panel, setPanel] = useState<"people" | "info" | "slack" | "secret" | "move" | "memory" | null>(null);
+  const [panel, setPanel] = useState<"people" | "info" | "slack" | "secret" | "move" | "memory" | "review" | null>(null);
+  const [reviewOffer, setReviewOffer] = useSessionReviewOffer(sessionId, myRole === "owner");
   const [copied, setCopied] = useState<"yes" | "blocked" | null>(null);
   useEffect(() => {
     if (!copied) return;
@@ -240,6 +242,11 @@ export function ChatSessionMenu({
               </span>
             </DropdownMenuItem>
           )}
+          {reviewOffer && (
+            <DropdownMenuItem inset data-testid="session-review" onClick={() => setPanel("review")}>
+              {reviewOffer.ask ? `${reviewOffer.name} is reviewing this…` : `Ask ${reviewOffer.name} to review this…`}
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem inset data-testid="share-secret" onClick={() => setPanel("secret")}>
             Secrets…
           </DropdownMenuItem>
@@ -322,12 +329,17 @@ export function ChatSessionMenu({
                 ? "Session info"
               : panel === "memory"
                 ? "Your memory in this conversation"
+              : panel === "review"
+                ? `Ask ${reviewOffer?.name ?? "a coach"} to review this`
               : panel === "secret"
                 ? "Secrets"
                 : panel === "move"
                   ? "Move to workspace"
                   : "Connect to Slack"}
           </DialogTitle>
+          {panel === "review" && reviewOffer && (
+            <SessionReviewPanel sessionId={sessionId} offer={reviewOffer} onChange={setReviewOffer} />
+          )}
           {panel === "secret" && (
             <ShareSecretForm sessionId={sessionId} agentSlug={agentSlug} onDone={() => setPanel(null)} />
           )}
