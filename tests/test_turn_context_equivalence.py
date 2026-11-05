@@ -21,7 +21,7 @@ from django.contrib.auth import get_user_model
 
 from apps.agents import answering_snapshot, grants, interface, roles, session_context, turn_context
 from apps.agents.models import Agent, AgentAdmin, AgentGrant
-from apps.agents.standings import Standings
+from apps.agents.standings import Standing, Standings
 from apps.canopy_sessions.models import REVIEW_METADATA_KEY, Session, SessionParticipant
 from apps.contacts.models import Contact
 from apps.harness import caller_context
@@ -38,7 +38,7 @@ pytestmark = pytest.mark.django_db
 FIXTURE = pathlib.Path(__file__).parent / "fixtures" / "answering_interfaces.json"
 RETIRED = "retired_probe"
 #: `test_the_walk_has_not_shrunk`.
-WALK = 45234
+WALK = 48189
 M = WorkspaceMembership
 HAL = {"ask": {"description": "Ask", "tools": ["Read"]}}
 TWO_DOORS = {"ask": {"description": "Ask", "tools": ["Read"]}, "status": {"description": "Status", "tools": ["Read"]}}
@@ -128,7 +128,10 @@ def _matrix_agents(p) -> list:
     agent = _agent("all-kinds", ws, p, {"capabilities": EVERYTHING}, user=p.own_login)
     AgentGrant.objects.create(agent=agent, kind=AgentGrant.PERSON, user=p.viewer, role=roles.READ_ONLY)
     AgentGrant.objects.create(agent=agent, kind=AgentGrant.PERSON, user=p.editor, role=roles.EDITOR)
+    # One person with both a page's entry and a site's, and a line naming an entry that is gone.
     AgentGrant.objects.create(agent=agent, kind=AgentGrant.PERSON, user=p.ws_admin, capability="connect")
+    AgentGrant.objects.create(agent=agent, kind=AgentGrant.PERSON, user=p.ws_admin, capability="stock")
+    AgentGrant.objects.create(agent=agent, kind=AgentGrant.PERSON, user=p.ws_admin, capability=RETIRED)
     AgentGrant.objects.create(agent=agent, kind=AgentGrant.CONTACT, capability="data", domain="partner.org", verified=False)
     AgentGrant.objects.create(agent=agent, kind=AgentGrant.CONTACT, capability="connect", domain="dimagi.com", verified=True)
     out.append(agent)
@@ -178,6 +181,10 @@ def _askers(agent, p) -> list[SimpleNamespace]:
     # What a caller says and what the message proves can differ, as the snapshot's probes do.
     out += [SimpleNamespace(**{**vars(user(p.owner, "")), "verified": True}),
             SimpleNamespace(**{**vars(contact("staff@dimagi.com", Contact.AUTH_DMARC)), "verified": False})]
+    # A contact's turn that also names a person: the rule reads that person only on a user's turn.
+    out += [SimpleNamespace(**{**vars(contact("staff@dimagi.com", Contact.AUTH_DMARC)),
+                               "fields": {"initiator_contact": Contact(email="staff@dimagi.com"), "initiator_user": p.viewer,
+                                          "initiator_assurance": Contact.AUTH_DMARC}})]
     # Canopy itself, another agent, canopy on someone's behalf, and nobody at all.
     out += [SimpleNamespace(who=None, verified=True, kind=who_mod.SYSTEM, fields={}),
             SimpleNamespace(who=None, verified=True, kind=who_mod.AGENT, fields={"initiator_agent": "other"}),
@@ -196,6 +203,7 @@ def _conversations(agent) -> list[dict]:
     for page in {getattr(agent, "_page_resource", ""), *(p.replace("*", "1") for c in (agent.interface.get("capabilities") or {}).values()
                                                          for p in c.get("pages") or [])} - {""}:
         out += [{"page": page}, {"page": page, "sensitive": True}]
+        out += [{"page": page, "site": site} for site in sites]     # a page's entry comes before a site's
     return out
 
 
@@ -320,6 +328,7 @@ def test_every_kind_of_session_writer(people, creator, role, sensitive):
     session = _chat(agent, getattr(people, creator, None), role=role, user=people.outsider, sensitive=sensitive)
     for ask in (None, "connect", "data"):
         new = _same(_turn_in(session, people.outsider, f"sw-{ask}"), agent, ask)
+        _same(_turn_in(session, people.viewer, f"sw-someone-else-{ask}"), agent, ask)   # a grant is for its own person
     if creator in ("owner", "admin") and role in (SessionParticipant.OWNER, SessionParticipant.EDITOR) and not sensitive:
         assert new["basis"] == "sensitive:data"     # the last ask: a writer is confined to it, like the owner
         assert _same(_turn_in(session, people.outsider, "sw-plain"), agent)["basis"] == f"session:{role}"
@@ -347,6 +356,18 @@ def test_a_turn_with_no_session_inherits_sensitivity_and_a_review_from_where_it_
                                 initiator_assurance=who_mod.SESSION, prompt="hi", idempotency_key="named",
                                 origin_ref={"chat_session_id": str(review.pk)})
     assert _same(named, agent)["capability"] == interface.SESSION_REVIEW
+
+
+def test_a_stale_standing_handed_in_with_a_turn_answers_as_it_did(people):
+    # The relationship is read fresh from the turn, whether they are an admin from what was handed in.
+    agent = _matrix_agents(people)[-1]
+    session = _chat(agent, people.owner)
+    for user in (people.owner, people.admin):
+        turn = _turn_in(session, user, f"stale-{user.pk}")
+        stale = Standing(None, False)
+        old = _old_answer(reference.decide(agent, user, verified=True, turn=turn, standing=stale))
+        new = _new_answer(turn_context.for_asker(agent, user, verified=True, turn=turn, standing=stale))
+        assert old == new, _differs(old, new)
 
 
 def test_acting_as_a_lower_role_is_judged_as_that_role(people):

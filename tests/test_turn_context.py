@@ -17,6 +17,7 @@ from django.utils import timezone
 from apps.agents import answering_snapshot, interface, roles, session_context, turn_context
 from apps.agents.credentials import for_turn as credentials_for_turn
 from apps.agents.models import Agent, AgentAdmin, AgentGrant
+from apps.agents.standings import Standings
 from apps.canopy_sessions.models import REVIEW_METADATA_KEY, Session, SessionParticipant
 from apps.harness import caller_context, sensitivity
 from apps.harness import initiator as who
@@ -249,6 +250,18 @@ def test_each_profile_kind(w):
     assert turn_context.PROFILE_KINDS == {"whole_agent", "read_mode", "connected_site", "session_review", "deny_all", "no_agent"}
 
 
+def test_an_entry_on_two_sites_names_the_one_this_conversation_is_on(w):
+    w.agent.interface["capabilities"]["two"] = {"tools": ["Read"], "sites": ["site-a", "site-b"]}
+    w.agent.save(update_fields=["interface"])
+    turn = _turn(w, w.owner, _chat(w, embed_app="site-b"))
+    assert turn_context.for_turn(turn, w.agent, "two").access == turn_context.FULL   # the owner keeps the whole agent
+    AgentGrant.objects.create(agent=w.agent, kind=AgentGrant.PERSON, user=w.member, capability="two")
+    on_b = turn_context.for_turn(_turn(w, w.member, _chat(w, embed_app="site-b")), w.agent, "two")
+    assert (on_b.profile.kind, on_b.profile.site) == (turn_context.CONNECTED_SITE, "site-b")
+    elsewhere = turn_context.for_asker(w.agent, w.member, verified=True, requested="two")
+    assert elsewhere.profile.site == "site-a"
+
+
 def test_a_read_mode_profile_says_which_default_it_ran_under(w):
     declare(w.agent, None)
     profile = turn_context.for_asker(w.agent, w.reader, verified=True).profile
@@ -282,6 +295,23 @@ def test_a_session_someone_else_started_grants_nothing(w):
     assert turn_context.for_turn(_turn(w, w.stranger, session), w.agent).refused
 
 
+def test_a_session_grant_is_only_for_the_person_it_names(w):
+    session = _chat(w)
+    SessionParticipant.objects.create(session=session, user=w.member, role=SessionParticipant.EDITOR)
+    assert turn_context.for_turn(_turn(w, w.member, session), w.agent).access == turn_context.FULL
+    assert turn_context.for_turn(_turn(w, w.stranger, session), w.agent).refused
+
+
+def test_a_view_judging_many_pairs_reads_nothing_per_pair(w, django_assert_num_queries):
+    # Handed what `Standings` read once, the rule itself asks the database nothing.
+    standings = Standings([w.owner, w.reader, w.stranger], [w.agent])
+    asked = [(user, standings.of(user, w.agent), standings.lines_of(w.agent)) for user in (w.owner, w.reader, w.stranger)]
+    w.agent.owner  # noqa: B018 — the refusal names them, and that is not the rule's to read
+    with django_assert_num_queries(0):
+        for user, standing, lines in asked:
+            turn_context.for_asker(w.agent, user, verified=True, standing=standing, lines=lines)
+
+
 def test_a_viewer_row_grants_nothing(w):
     session = _chat(w)
     SessionParticipant.objects.create(session=session, user=w.stranger, role=SessionParticipant.VIEWER)
@@ -294,6 +324,11 @@ def test_the_trace_names_every_rule_it_asked_ending_at_the_deciding_one(w):
     assert ctx.trace[-2].outcome == "ask"
     assert [e.rule for e in turn_context.for_asker(w.agent, w.owner, verified=True).trace] == ["trusted_without_a_list", "sensitive"]
     assert turn_context.for_asker(w.agent, w.owner, verified=True).trace[0].outcome == "owner"
+
+
+def test_the_review_rule_runs_before_the_sensitive_rule_in_that_order_in_the_trace(w):
+    ctx = turn_context.for_turn(_turn(w, w.owner, _chat(w, **{REVIEW_METADATA_KEY: "x"})), w.agent)
+    assert [e.rule for e in ctx.trace] == ["trusted_without_a_list", "review_chat", "sensitive"]
 
 
 def test_every_refusal_carries_a_code_from_the_closed_set_and_who_can_fix_it(w):
