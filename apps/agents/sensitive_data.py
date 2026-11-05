@@ -83,7 +83,7 @@ def structural_refusals(name: str, cap: dict) -> list[str]:
     return out
 
 
-def sensitive_capabilities(iface: dict | None) -> list[str]:
+def sensitive_profiles(iface: dict | None) -> list[str]:
     return sorted(n for n, c in ((iface or {}).get("capabilities") or {}).items()
                   if (c or {}).get("data") == SENSITIVE)
 

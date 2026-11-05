@@ -154,7 +154,7 @@ def stamp_words(stamp: str) -> str:
     return f"the connected site '{stamp}'"
 
 
-def published_capability(iface: dict | None, name: str) -> tuple[str, dict] | tuple[None, None]:
+def published_profile(iface: dict | None, name: str) -> tuple[str, dict] | tuple[None, None]:
     """`(published name, profile)` for `name`, with `read` and `READ_MODE_STAMP` standing for each other
     (`is_read_mode`), or `(None, None)`. The published name is what a turn is stamped with."""
     caps = (iface or {}).get("capabilities") or {}
@@ -606,7 +606,7 @@ def profile(agent, name: str) -> dict | None:
         return {"name": SESSION_REVIEW, "entry": None, "tools": list(SESSION_REVIEW_TOOLS), "bash": [],
                 "description": f"{agent.slug} reviews one session someone asked it to, and replies to them.",
                 "read_paths": ["{cwd}/**"], "write_paths": []}
-    _published, cap = published_capability(getattr(agent, "interface", None), name)
+    _published, cap = published_profile(getattr(agent, "interface", None), name)
     default_version = None
     if cap is None and is_read_mode(name):
         # Read mode on an agent that published no read mode of its own: canopy's own default, built from the agent

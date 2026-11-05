@@ -114,7 +114,7 @@ def _reaching(lines: list, name: str) -> list:
     return [ln for ln in lines if iface_mod.opens(ln.permissions, name)]
 
 
-def public_capabilities(agent) -> list[str]:
+def public_profiles(agent) -> list[str]:
     """Profiles someone outside the agent's workspace could use."""
     lines = _outsider_lines(agent)
     return sorted(n for n in _profiles(agent) if _reaching(lines, n))
@@ -247,7 +247,7 @@ def _interfaces(agent, caps: dict, public_names: list[str]) -> list[A2AAgentInte
 
 def public_card(agent) -> A2AAgentCardOut | None:
     """The card anyone may read, or None when the agent offers outsiders nothing."""
-    names = public_capabilities(agent)
+    names = public_profiles(agent)
     if not names:
         return None
     caps = _profiles(agent)
@@ -261,7 +261,7 @@ def extended_card(agent, user) -> A2AAgentCardOut | None:
     an agent that does not exist."""
     caps = dict(_profiles(agent))
     mine = set(iface_mod.offered_to(user, agent))
-    public_names = public_capabilities(agent)
+    public_names = public_profiles(agent)
     names = sorted(mine | set(public_names))
     if not names:
         return None

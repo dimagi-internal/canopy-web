@@ -139,7 +139,7 @@ def _person(user) -> str:
     return (user.get_full_name() or "").strip() or user.email or ""
 
 
-def site_capabilities(agent: Agent, site: str) -> list[dict]:
+def site_profiles(agent: Agent, site: str) -> list[dict]:
     """The agent's published profiles that name `site` in `sites:`, as listed."""
     out = []
     caps = ((agent.interface or {}).get("capabilities") or {})
@@ -172,7 +172,7 @@ def _runners(agent: Agent) -> tuple[list[Runner], list[Runner]]:
 
 
 def agent_entry(app, agent: Agent) -> dict:
-    profiles = site_capabilities(agent, app.name)
+    profiles = site_profiles(agent, app.name)
     takers, ready_runners = _runners(agent)
     available = sorted(set().union(*(in_force(r) for r in takers))) if takers else []
     ready_with = {f: any(f in in_force(r) for r in ready_runners) for f in sorted(contract.RUNNER_FLAGS)}

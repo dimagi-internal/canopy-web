@@ -141,7 +141,7 @@ def _default_read_mode(w):
 
 
 def _connected_site(w):
-    return _chat(w, creator=w.door, embed_app="connect-labs"), w.door, w.box, "connected_site"
+    return _chat(w, creator=w.site_user, embed_app="connect-labs"), w.site_user, w.box, "connected_site"
 
 
 def _session_review(w):
@@ -185,8 +185,8 @@ def test_a_claim_records_what_it_ran_as_and_nothing_seeded(world, make, grants_o
 
 
 def test_a_stamp_that_no_longer_resolves_is_recorded_as_deny_all_with_nothing_seeded(world):
-    session = _chat(world, creator=world.door, embed_app="connect-labs")
-    turn = _enqueue(world.door, session, box=world.box)
+    session = _chat(world, creator=world.site_user, embed_app="connect-labs")
+    turn = _enqueue(world.site_user, session, box=world.box)
     assert turn.capability == "connect"
     world.agent.interface = {"capabilities": {"ask": world.agent.interface["capabilities"]["ask"]}}
     world.agent.save(update_fields=["interface"])

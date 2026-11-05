@@ -150,7 +150,7 @@ def decide(agent, who=None, *, verified: bool, origin: str = "", capability: str
 
 
 def _review_rule(d: Decision) -> Decision:
-    """A turn in a one-session review's chat runs in its door, for everyone with any access at
+    """A turn in a one-session review's chat runs in its review profile, for everyone with any access at
     all: owner, admin, editor and canopy too. It only narrows, as `_sensitive_rule` does. That
     chat holds a transcript someone may have written to steer whoever reads it, so no later
     message there picks up the agent's whole profile, nor a login, a token or a send."""
@@ -177,7 +177,7 @@ def _sensitive_capability(agent, iface: dict, capability: str | None, turn) -> s
     if capability:
         # `read` and `ask` are one thing: naming either finds the agent's published read-mode
         # profile, and if that handles sensitive data, naming `read` must not dodge the rule.
-        published, cap = iface_mod.published_capability(iface, capability)
+        published, cap = iface_mod.published_profile(iface, capability)
         return published if (cap or {}).get("data") == sensitive_data.SENSITIVE else None
     if turn is None:
         return None
@@ -258,22 +258,22 @@ def _capability_for(agent, iface: dict, permissions, capability, turn):
     """The capability someone confined is held to: the one named, else the page's or the
     site's, else read mode — among those their permissions open.
 
-    Read mode (`read`/`ask`, one thing: `interface.is_read_mode`) exists on every agent. It is
-    the agent's own published `ask` when it has one (the stamp is that name), else canopy's
-    default (`interface.default_read_profile`, stamped `read`). Any other name is a door and
-    must be published; an unknown or retired door is refused here, never widened."""
+    Read mode (`read` and `READ_MODE_STAMP`, one thing: `interface.is_read_mode`) exists on every agent. It is
+    the agent's own published read mode when it has one (the stamp is that name), else canopy's
+    default (`interface.default_read_profile`, stamped `read`). Any other name is a connected site and
+    must be published; an unknown or retired one is refused here, never widened."""
     def opens(name, cap):
         return iface_mod.opens(permissions, name)
 
     if capability == iface_mod.SESSION_REVIEW:
-        # Canopy's own door, for a turn in a review chat only (`decide`): `read` opens it.
+        # Canopy's own profile, for a turn in a review chat only (`decide`): `read` opens it.
         is_review = turn is not None and iface_mod.is_review_turn(turn)
         return (capability, {}) if is_review and roles.holds(permissions, roles.READ) else (None, None)
     name = capability
     if name is None and turn is not None:
         name = _page_capability(turn, iface, opens) or _site_capability(turn, iface, opens)
     name = name or iface_mod.READ_MODE_STAMP
-    published, cap = iface_mod.published_capability(iface, name)
+    published, cap = iface_mod.published_profile(iface, name)
     if published is None and iface_mod.is_read_mode(name):
         published, cap = iface_mod.READ_MODE, {}   # {}: canopy's default, built at claim (`profile`)
     return (published, cap) if cap is not None and opens(published, cap) else (None, None)
@@ -302,7 +302,7 @@ def _from_access_list(agent, d: Decision, who, *, verified: bool, capability, tu
     name, _cap = _capability_for(agent, iface, got.permissions, capability, turn)
     if name is None:
         return d
-    # The review door is opened by `read`; `line_opening` knows only named capabilities and read mode.
+    # The review profile is opened by `read`; `line_opening` knows only connected sites and read mode.
     line = got.line_for(roles.READ) if name == iface_mod.SESSION_REVIEW else got.line_opening(name)
     return Decision(relationship=d.relationship, access=CONFINED, capability=name, may_request_auto=False,
                     may_pin_runner=False, manual_only=False, basis=f"capability:{name}",
@@ -388,7 +388,7 @@ def _held_permissions(d, stamped: str | None) -> list[str]:
         return sorted(held)
     name = stamped or d.capability
     if iface_mod.is_read_mode(name):
-        # Read mode is `read`, not a door: nothing is named after it (no `use:read`, no `use:ask`).
+        # Read mode is `read`, not a connected site: nothing is named after it (no `use:read`, no `use:` + its stamp).
         return [roles.READ]
     kept = {p for p in held if p == roles.READ or (p.startswith(f"{roles.USE}:") and p != f"{roles.USE}:*")}
     if name:

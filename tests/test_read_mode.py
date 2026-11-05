@@ -118,7 +118,7 @@ def test_the_public_card_does_not_list_read_mode(w):
     allow(w["agent"], role=roles.READ_ONLY, contact=True, domain="dimagi.com", verified=True)
     Contact.objects.create(workspace=w["ws"], email="x@dimagi.com")
     assert agent_card.public_card(w["agent"]) is None
-    assert agent_card.public_capabilities(w["agent"]) == []
+    assert agent_card.public_profiles(w["agent"]) == []
 
 
 def test_topology_edge_names_read_mode(w):

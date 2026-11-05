@@ -22,18 +22,18 @@ CAPS = {
 
 def make_world():
     make = lambda name: get_user_model().objects.create_user(name, f"{name}@dimagi.com", "pw")  # noqa: E731
-    owner, admin, editor, reader, door, stranger, member = map(
-        make, ("owner", "admin", "editor", "reader", "door", "stranger", "member"))
+    owner, admin, editor, reader, site_user, stranger, member = map(
+        make, ("owner", "admin", "editor", "reader", "site_user", "stranger", "member"))
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=owner)
-    for user in (owner, admin, editor, reader, door, member):
+    for user in (owner, admin, editor, reader, site_user, member):
         M.objects.create(user=user, workspace=ws, role=M.VIEWER)
     agent = Agent.objects.create(slug="agent", name="Agent", workspace=ws, owner=owner, turn_mode="auto",
                                  interface={"capabilities": CAPS})
     AgentAdmin.objects.create(agent=agent, user=admin, granted_by=owner)
     AgentGrant.objects.create(agent=agent, kind=AgentGrant.PERSON, user=editor, role=roles.EDITOR)
     AgentGrant.objects.create(agent=agent, kind=AgentGrant.PERSON, user=reader, role=roles.READ_ONLY)
-    AgentGrant.objects.create(agent=agent, kind=AgentGrant.PERSON, user=door, capability="connect")
-    return SimpleNamespace(ws=ws, agent=agent, owner=owner, admin=admin, editor=editor, reader=reader, door=door,
+    AgentGrant.objects.create(agent=agent, kind=AgentGrant.PERSON, user=site_user, capability="connect")
+    return SimpleNamespace(ws=ws, agent=agent, owner=owner, admin=admin, editor=editor, reader=reader, site_user=site_user,
                            stranger=stranger, member=member)
 
 

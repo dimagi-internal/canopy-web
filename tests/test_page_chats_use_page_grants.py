@@ -230,7 +230,7 @@ def test_a_site_any_profile_opens_unnarrowed_is_unnarrowed_for_a_full_turn():
 
 
 @pytest.mark.parametrize("own,match", [
-    ({"elsewhere": ["X"]}, "not one of this capability's `sites:`"),
+    ({"elsewhere": ["X"]}, "not one of this profile's `sites:`"),
     ({"connect-labs": ["NOT A NAME"]}, "not a credential name"),
     (["LABS_MCP_TOKEN"], "must be a mapping"),
 ])

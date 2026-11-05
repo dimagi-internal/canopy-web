@@ -35,7 +35,7 @@ def runner_may_hold_agent(runner, agent, *, standings=None) -> bool:
     answers the admin question from one read, for a caller asking many pairs."""
     if getattr(runner, "owner_id", None) is None:
         return False
-    if is_sensitive_data_box(runner) and not sensitive_data.sensitive_capabilities(agent.interface):
+    if is_sensitive_data_box(runner) and not sensitive_data.sensitive_profiles(agent.interface):
         return False
     if standings is not None:
         return standings.is_admin(runner.owner, agent)

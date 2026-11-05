@@ -70,8 +70,8 @@ REAL = SimpleNamespace(
     page_sites=interface.page_sites, site_ceiling=interface.site_ceiling, own_login_of=interface.own_login_of,
     page_turn=interface.page_turn, page_site_of=interface.page_site_of,
     handles_sensitive=sensitive_data.handles_sensitive, as_claim=sensitive_data.as_claim,
-    sensitive_capabilities=sensitive_data.sensitive_capabilities, facts_for=execution.facts_for,
-    site_capabilities=site_agents.site_capabilities, agent_entry=site_agents.agent_entry, decide=_real_decide,
+    sensitive_capabilities=sensitive_data.sensitive_profiles, facts_for=execution.facts_for,
+    site_capabilities=site_agents.site_profiles, agent_entry=site_agents.agent_entry, decide=_real_decide,
 )
 
 
@@ -121,7 +121,7 @@ def world():
     ordinary = _box(owner, "ordinary")
     sensitive = _box(owner, "sensitive", sensitive=True)
     for agent, _row in agents:
-        box = sensitive if sensitive_data.sensitive_capabilities(agent.interface) else ordinary
+        box = sensitive if sensitive_data.sensitive_profiles(agent.interface) else ordinary
         RunnerAssignment.objects.create(agent=agent, runner=box, rank=1, enabled=True)
     return SimpleNamespace(agents=agents, apps=apps, owner=owner, admin=admin, editor=editor, reader=reader,
                            member=member, data=data)

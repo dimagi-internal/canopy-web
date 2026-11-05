@@ -184,7 +184,7 @@ def _agent(agent, members, standings, workspace_sites: set[str]) -> dict:
                                         "via", "manual_only", "may_request_auto")} for row in roster],
         "a2a": _cards(agent, members, roster),
     }
-    if sensitive_data.sensitive_capabilities(agent.interface):
+    if sensitive_data.sensitive_profiles(agent.interface):
         out["facts_for"] = _statements(agent, stamps)
     return out
 

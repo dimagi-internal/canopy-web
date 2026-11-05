@@ -355,7 +355,7 @@ def _entry_for(iface: dict, permissions, requested, session_ctx, trace: list) ->
         name, how = _selected_entry(iface, opens, session_ctx), "page or site"
     if name is None:
         name, how = iface_mod.READ_MODE_STAMP, "read mode"
-    published, cap = iface_mod.published_capability(iface, name)
+    published, cap = iface_mod.published_profile(iface, name)
     if published is None and iface_mod.is_read_mode(name):
         published, cap = iface_mod.READ_MODE, {}   # {}: canopy's default, built when it is read
     allowed = cap is not None and opens(published, cap)
@@ -388,7 +388,7 @@ def _base_stage(agent, reach: _Reach, asker: Asker, requested, session_ctx, turn
     trace.append(TraceEntry("access_list", ",".join(sorted(got.permissions)), got.basis))
     name = _entry_for(iface, got.permissions, requested, session_ctx, trace)
     if name is None:
-        published = bool(requested) and (iface_mod.published_capability(iface, requested)[0] is not None
+        published = bool(requested) and (iface_mod.published_profile(iface, requested)[0] is not None
                                          or iface_mod.is_read_mode(requested) or requested == iface_mod.SESSION_REVIEW)
         return replace(reach, code=PROFILE_NOT_OPEN, facts=(("name", requested), ("published", published)))
     # The review entry is opened by `read`; `line_opening` knows only named entries and read mode.
@@ -417,7 +417,7 @@ def _sensitive_entry(iface: dict, requested, session_ctx) -> str | None:
     if requested:
         # `read` and `READ_MODE_STAMP` are one thing: naming either finds the agent's published read-mode
         # profile, and if that handles sensitive data, naming `read` must not dodge the rule.
-        published, cap = iface_mod.published_capability(iface, requested)
+        published, cap = iface_mod.published_profile(iface, requested)
         return published if (cap or {}).get("data") == sensitive_data.SENSITIVE else None
     for name, cap in (iface.get("capabilities") or {}).items():
         if cap.get("data") != sensitive_data.SENSITIVE:
@@ -495,7 +495,7 @@ def stamped_profile(agent, stamp: str, session_ctx) -> Profile:
         return Profile(kind=WHOLE_AGENT, _agent=agent)
     if stamp == iface_mod.SESSION_REVIEW:
         return _profile_of(agent, stamp, session_ctx)
-    published, _cap = iface_mod.published_capability(getattr(agent, "interface", None), stamp)
+    published, _cap = iface_mod.published_profile(getattr(agent, "interface", None), stamp)
     if published is None and (not iface_mod.is_read_mode(stamp) or session_ctx.sensitive):
         return Profile(kind=DENY_ALL, name=stamp, _agent=agent)
     # Stamped under its own name: an agent that later publishes the other read-mode name keeps the key.

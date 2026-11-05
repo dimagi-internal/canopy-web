@@ -119,11 +119,11 @@ def test_profile_not_open_says_which_entry_and_what_opens_it(w):
     assert unknown.refusal.why == "agent has no connected site called 'nope' for your place on its access list to open"
     assert unknown.refusal.how_to_fix.startswith("Send without naming 'nope'")
     # Holding only one connected site, and naming nothing on no page: read mode is not theirs.
-    bare = turn_context.for_asker(w.agent, w.door, verified=True)
+    bare = turn_context.for_asker(w.agent, w.site_user, verified=True)
     _assert_whole(bare.refusal, Code.PROFILE_NOT_OPEN)
     assert "opens neither read mode" in bare.refusal.why and "read only role" in bare.refusal.how_to_fix
     # Read mode named by either of its names is "read mode", never the stored name.
-    read = turn_context.for_asker(w.agent, w.door, verified=True, requested="ask")
+    read = turn_context.for_asker(w.agent, w.site_user, verified=True, requested="ask")
     assert read.refusal.why == "your place on agent's access list does not open read mode"
 
 
@@ -225,7 +225,7 @@ def test_every_refusal_the_rule_makes_across_the_world_is_whole(w):
                 _chat(w, embed_app="data-site", **{rr.METADATA_KEY: [rr.SENSITIVE_DATA]})]
     contact = Contact.objects.create(email="c@example.org", workspace=w.ws)
     seen = set()
-    for person in (w.owner, w.admin, w.editor, w.reader, w.door, w.stranger, w.member, contact):
+    for person in (w.owner, w.admin, w.editor, w.reader, w.site_user, w.stranger, w.member, contact):
         for session in sessions:
             for requested in (None, "ask", "read", "connect", "stock", "data", "bare", "nope"):
                 for verified in (True, False):
