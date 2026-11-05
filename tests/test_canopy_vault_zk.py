@@ -1849,3 +1849,22 @@ def test_an_unendorsed_machine_is_mailed_to_its_own_person_not_the_admins(fleet,
     mailoutbox.clear()
     zk_notify.sweep(t0 + 2 * zk_notify.GRACE)
     assert not [m for m in mailoutbox if "isma3-laptop" in m.subject]
+
+
+def test_the_vault_page_lists_a_machine_waiting_through_an_agent_and_why(fleet):
+    # Shared (2026-11-05): reached through an agent, not a runner attachment, so the page had
+    # no row for it and its admin could not grant it.
+    vault, ed, priv, key, ecdh, c = _unendorsed_member_machine(fleet, "isma4")
+    state = fleet.client.get(f"/api/vaults/{vault.pk}/zk").json()
+    [row] = [p for p in state["pending"] if p["kind"] == "device" and p["target"] == str(key.pk)]
+    assert row["runner_name"] == "isma4-laptop" and row["person_email"] == "isma4@dimagi.com"
+    assert row["serves"] == ["eva"] and row["waiting_reason"] == "unendorsed"
+    # The admin's grant (what the page's Give access sends) is accepted.
+    wrap = ref.wrap_ecdh_es(os.urandom(32), ecdh.public_key(),
+                            ref.device_info(state["agent_id"], 1, key.ecdh_jkt),
+                            ec.generate_private_key(ec.SECP256R1()), os.urandom(12))
+    res = fleet.client.post(f"/api/vaults/{vault.pk}/zk/wraps", content_type="application/json",
+                            data={"kv": 1, "wraps": [{"kind": "device", "target": str(key.pk), "wrap": wrap}]})
+    assert res.status_code == 200, res.content
+    state = fleet.client.get(f"/api/vaults/{vault.pk}/zk").json()
+    assert not [p for p in state["pending"] if p["target"] == str(key.pk)]

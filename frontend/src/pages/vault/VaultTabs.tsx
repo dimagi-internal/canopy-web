@@ -85,6 +85,10 @@ export function VaultOverviewTab({ vault: v, onChange, reload, unlock }: VaultOu
   }, [manages, v.vault_id, v.kv])
   // People waiting are granted from the key line; each runner from its row under Who can open them.
   const peopleWaiting = pending.filter((p) => p.kind !== 'device')
+  // Machines that reach this vault through an agent, workspace or project it serves have
+  // no runner row below: list them here, each with its own grant (Shared, 2026-11-05).
+  const attachedRunners = new Set(v.attachments.filter((a) => a.runner).map((a) => a.runner))
+  const machinesWaiting = pending.filter((p) => p.kind === 'device' && !attachedRunners.has(p.runner))
   const served = v.attachments.filter((a) => !a.runner)
   const grant = (only: (t: ZkTargetOut) => boolean) => run(async () => {
     await grantWorkspaceVaultPending(v.vault_id, await unlock(), only)
@@ -126,6 +130,40 @@ export function VaultOverviewTab({ vault: v, onChange, reload, unlock }: VaultOu
                 Change the key
               </Button>
             )}
+          </div>
+        )}
+        {manages && v.kv > 0 && machinesWaiting.length > 0 && (
+          <div className="mt-3" data-testid="vault-machines-waiting">
+            <p className="mb-1 text-[12px] text-foreground">
+              {machinesWaiting.length === 1 ? '1 machine is' : `${machinesWaiting.length} machines are`} waiting for
+              this vault&rsquo;s key
+            </p>
+            <ul className="divide-y divide-border text-[12px]">
+              {machinesWaiting.map((p) => (
+                <li key={p.target} data-testid={`vault-machine-waiting-${p.target}`}
+                  className="flex flex-col gap-1 py-1.5 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <span className="font-medium text-foreground">{p.runner_name || 'A machine'}</span>
+                    <span className="text-muted-foreground">
+                      {p.person_email ? ` — ${p.person_email}'s` : ''}
+                      {p.serves.length ? ` · runs ${p.serves.join(', ')}` : ''}
+                    </span>
+                    {p.waiting_reason === 'unendorsed' && (
+                      <p className="text-warning" data-testid={`vault-machine-unendorsed-${p.target}`}>
+                        Not confirmed by {p.person_email || 'its person'}, so no keeper will pass it the key. Your
+                        grant is the way in.
+                      </p>
+                    )}
+                  </div>
+                  <button type="button" disabled={busy} className={buttonClass}
+                    data-testid={`vault-machine-grant-${p.target}`}
+                    title="Your passkey gives this machine a copy of this vault's key"
+                    onClick={() => void grant((t) => t.kind === 'device' && t.target === p.target)}>
+                    Give access
+                  </button>
+                </li>
+              ))}
+            </ul>
           </div>
         )}
       </Sub>

@@ -32337,6 +32337,18 @@ export interface components {
              * @default
              */
             readonly email: string;
+            /**
+             * Person Email
+             * @default
+             */
+            readonly person_email: string;
+            /** Serves */
+            readonly serves?: readonly string[];
+            /**
+             * Waiting Reason
+             * @default
+             */
+            readonly waiting_reason: string;
         };
         /** ZkWrapOut */
         readonly ZkWrapOut: {

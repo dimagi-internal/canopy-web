@@ -317,12 +317,37 @@ def pending_targets(vault: Vault) -> list[dict]:
     return engine.pending_targets(_store(vault), has_key=bool(vault.kv))
 
 
+def describe_waiting_machines(vault: Vault, pending: list[dict]) -> list[dict]:
+    """`pending`, each waiting MACHINE annotated for the vault's page: whose it is, which
+    agents this vault serves that it runs, and why no keeper has passed it the key
+    (`machine_waits.why_waiting` — `unendorsed` means its person never confirmed it, so
+    only a grant here lets it in). A machine reaching the vault through an agent,
+    workspace or project attachment had no row anywhere on the page (Shared, 2026-11-05)."""
+    from .machine_waits import why_waiting  # noqa: PLC0415 — machine_waits imports this module
+
+    ids = [t["target"] for t in pending if t.get("kind") == "device"]
+    keys = {str(k.pk): k for k in RunnerDeviceKey.objects.filter(pk__in=ids)
+            .select_related("runner__owner", "approved_by")}
+    agents = vault_members.attached_agents(vault) if keys else []
+    out = []
+    for t in pending:
+        k = keys.get(str(t.get("target"))) if t.get("kind") == "device" else None
+        if k is not None:
+            person = k.runner.owner if k.runner.owner_id else k.approved_by
+            why = why_waiting(vault, k) or {}
+            t = {**t, "person_email": getattr(person, "email", "") or "",
+                 "serves": sorted(a.slug for a in agents if device_keys.runner_serves_agent(k.runner, a)),
+                 "waiting_reason": why.get("reason", "")}
+        out.append(t)
+    return out
+
+
 def state(vault: Vault, *, include_values: bool = False) -> dict:
     """The agent-vault `ZkStateOut` shape, so the browser and the CLI drive either:
     `agent` is the vault's name and `agent_id` its binding id."""
     wraps = engine.wrap_rows(_store(vault))
     out = {"agent": vault.name, "agent_id": binding_id(vault), "enabled": vault.kv > 0, "kv": vault.kv,
-           "wraps": wraps, "pending": pending_targets(vault),
+           "wraps": wraps, "pending": describe_waiting_machines(vault, pending_targets(vault)),
            "rotation_recommended": engine.rotation_recommended(wraps),
            "values": None, "sealed": []}
     if include_values:
