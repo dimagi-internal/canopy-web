@@ -329,7 +329,10 @@ jobs:
   test-backend-postgres:
     name: Backend pytest (PostgreSQL)
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: the 26.04 image's pg_dump (18) writes `SET
+    # transaction_timeout` into the archive, which the PG16 service rejects on
+    # restore — even for a dump built on that same image. 24.04's client is 16.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     services:
       postgres:
