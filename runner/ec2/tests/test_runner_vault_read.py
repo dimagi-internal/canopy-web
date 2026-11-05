@@ -29,15 +29,14 @@ VAULTED = {"key": "t1", "kind": "token", "vault_secret": "claude-token:t1"}
 EMPTY = {"key": "t2", "kind": "token", "vault_secret": ""}
 
 
-def _cli(cr, monkeypatch, values=None, *, fail=None, shut=(), why=""):
+def _cli(cr, monkeypatch, values=None, *, fail=None, shut=()):
     calls = []
 
     def run(runner_id):
         calls.append(runner_id)
         if fail:
             raise RuntimeError(fail)
-        layers = [{"vault": "box vault", "opened": True}] + [
-            {"vault": v, "opened": False, **({"why": why} if why else {})} for v in shut]
+        layers = [{"vault": "box vault", "opened": True}] + [{"vault": v, "opened": False} for v in shut]
         return {"values": dict(values or {}), "vault_layers": layers}
 
     monkeypatch.setattr(cr, "_run_vault_cli", run)
@@ -69,18 +68,7 @@ def test_a_vault_that_cannot_be_read_says_why_and_the_box_moves_on(cr, monkeypat
 def test_a_vault_the_box_holds_no_key_to_is_named(cr, monkeypatch):
     _cli(cr, monkeypatch, {}, shut=("box vault",))
     cr._with_vault_values("rid", _bundle(VAULTED))
-    detail = cr._HEALTH["claude.vault"]["detail"]
-    assert "holds no copy of the key to box vault — box vault: no copy of its key" in detail
-    assert "zk keep" not in detail
-
-
-def test_a_shut_vault_says_why_and_who_fixes_it(cr, monkeypatch):
-    # canopy-web's `waiting.fix`, as the CLI reports it: the box's own person confirms it.
-    fix = ("box is waiting for isma@dimagi.com to confirm it: canopy-web Settings → Device keys → box → "
-           "Confirm access (passkey). Running `canopy vault zk keep` elsewhere will not help.")
-    _cli(cr, monkeypatch, {}, shut=("Shared",), why=fix)
-    cr._with_vault_values("rid", _bundle(VAULTED))
-    assert f"Shared: {fix}" in cr._HEALTH["claude.vault"]["detail"]
+    assert "grant it on the vault's page" in cr._HEALTH["claude.vault"]["detail"]
 
 
 def test_the_five_minute_reread_is_not_a_vault_read(cr, monkeypatch):

@@ -19,11 +19,6 @@ where granting is one passkey touch.
   DIM-SI-W021"), and is not mentioned at all while its person is waiting too:
   granting the person is the question, and one Grant pending covers both.
 
-* A machine of a workspace vault that nobody has CONFIRMED (signed for, zk-v1 §7) is
-  not the admins' question at all: no keeper ever grants it, and the one person who
-  can fix it for good is the machine's own (Settings → Device keys → Confirm access).
-  That notice goes to them, not to the admins (`machine_waits`).
-
 * After a grace period (GRACE): approving a device usually grants it in the
   same click (`approveAndGrant`), and a keeper (a canopy runner that holds the
   key, `canopy vault zk keep`) grants every endorsed target within a minute or
@@ -47,9 +42,7 @@ from dataclasses import dataclass
 from functools import partial
 from html import escape
 
-from django.contrib.auth import get_user_model
 from django.core.cache import cache
-from django.core.mail import EmailMultiAlternatives
 from django.utils import timezone
 
 from apps.harness.models import RunnerDeviceKey
@@ -58,7 +51,7 @@ from apps.push.services import send_to_user
 from apps.workspaces import links as wslinks
 
 from ..models import Agent, AgentVaultWrap, Vault, VaultKeyWrap, ZkGrantNotice
-from . import machine_waits, vault_members, workspace_vaults, zk
+from . import vault_members, workspace_vaults, zk
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +80,6 @@ class _Waiting:
     pending: Callable[[], list]
     holders: Callable[[], list]
     had_copy: Callable[[int], bool]    # did this person ever hold a copy (any kv)?
-    vault: Vault | None = None         # the workspace vault itself (None: an agent's own)
 
 
 def _vaults():
@@ -100,8 +92,7 @@ def _vaults():
         yield _Waiting(f"the {v.name} vault", v.kv,
                        wslinks.scoped_url(v.workspace, f"/vaults/{v.pk}"), {"vault": v},
                        partial(workspace_vaults.pending_targets, v), partial(workspace_holders, v),
-                       lambda uid, v=v: VaultKeyWrap.objects.filter(vault=v, kind="member", user_id=uid).exists(),
-                       v)
+                       lambda uid, v=v: VaultKeyWrap.objects.filter(vault=v, kind="member", user_id=uid).exists())
 
 
 def sweep(now=None) -> int:
@@ -147,79 +138,11 @@ def sweep(now=None) -> int:
                     notice.save(update_fields=["notified", "notified_at"])
                     continue
                 why, machine = _MACHINE, t.get("runner_name") or notice.label
-                waits = _machine_why(w, target)
-                if waits and waits["reason"] == machine_waits.UNENDORSED:
-                    # No keeper ever grants a machine nobody signed for, and the one
-                    # person who can sign is the machine's own: tell THEM, not the
-                    # vault's admins (ada fix brief 2026-11-05, DIM-SA-W175).
-                    notice.notified = _notify_machine_person(w, person_id, waits)
-                    notice.notified_at = now
-                    notice.save(update_fields=["notified", "notified_at"])
-                    told += 1
-                    continue
             notice.notified = _notify(w, notice, why=why, person=person, machine=machine, new_key=new_key)
             notice.notified_at = now
             notice.save(update_fields=["notified", "notified_at"])
             told += 1
     return told
-
-
-def _machine_why(w: _Waiting, device_pk: str) -> dict | None:
-    """`machine_waits.why_waiting` for a waiting machine of a workspace vault; None for
-    an agent's own vault (a member there is offered Confirm access on approval)."""
-    if w.vault is None:
-        return None
-    k = RunnerDeviceKey.objects.filter(pk=device_pk).select_related("runner__owner", "approved_by").first()
-    return machine_waits.why_waiting(w.vault, k) if k is not None else None
-
-
-def _machine_person_message(w: _Waiting, waits: dict) -> tuple[str, str]:
-    machine = waits["machine"]
-    return (f"Canopy vault · confirm your machine {machine} so it can read {w.what}",
-            f"Your machine {machine} is approved but can't open {w.what}'s secrets yet: no one has "
-            f"confirmed it, and the runners that hold {w.what}'s key only pass it to a machine its "
-            f"person has confirmed. Only you can do that: canopy-web Settings → Device keys → "
-            f"{machine} → Confirm access (one passkey touch). A keeper then hands it the key within "
-            f"a couple of minutes. Asking someone to run `canopy vault zk keep` will not help.")
-
-
-def _notify_machine_person(w: _Waiting, person_id: int | None, waits: dict) -> dict:
-    """Email + Web Push to the machine's OWN person, deep-linking to Device keys. Never
-    raises. The vault's admins are not asked: they could grant it by hand, but the fix
-    that lasts is the person's own confirmation."""
-    result: dict = {"emailed": [], "failed": [], "not_configured": False, "pushed": 0,
-                    "why": machine_waits.UNENDORSED, "to": "machine_person"}
-    try:
-        user = get_user_model().objects.filter(pk=person_id, is_active=True).first() if person_id else None
-        if user is None:
-            result["no_person"] = True
-            return result
-        subject, detail = _machine_person_message(w, waits)
-        link = wslinks.public_url(waits["link"])
-        footer = "You're getting this because the machine is yours. One notice per machine and vault key."
-        text = f"{detail}\n\n{link}\n\n{footer}\n"
-        html = (f"<p>{escape(detail)}</p><p><a href=\"{escape(link)}\">Confirm access</a></p>"
-                f"<p style=\"color:#78716c;font-size:13px\">{escape(footer)}</p>")
-        if user.email:
-            message = EmailMultiAlternatives(subject=subject, body=text, to=[user.email])
-            message.attach_alternative(html, "text/html")
-            try:
-                if message.send():
-                    result["emailed"].append(user.email)
-                else:
-                    result["not_configured"] = True
-            except Exception:  # noqa: BLE001
-                logger.exception("zk machine notice email failed: user=%s", user.pk)
-                result["failed"].append(user.email)
-        try:
-            result["pushed"] += send_to_user(user, subject.removeprefix("Canopy vault · "), detail[:180],
-                                             waits["link"])
-        except Exception:  # noqa: BLE001
-            logger.exception("zk machine notice push failed: user=%s", user.pk)
-    except Exception:  # noqa: BLE001
-        logger.exception("zk machine notice failed for %s", w.what)
-        result["error"] = True
-    return result
 
 
 def _label(t: dict) -> str:
@@ -306,6 +229,8 @@ def _notify(w: _Waiting, notice, *, why: str, person: str = "", machine: str = "
     """Email + Web Push to each admin of the vault who holds its key. Never raises.
     `new_key`: when the person started over with a new vault key — the grant is then
     also the confirmation that the new key is theirs."""
+    from django.core.mail import EmailMultiAlternatives
+
     result: dict = {"emailed": [], "failed": [], "not_configured": False, "pushed": 0, "why": why}
     try:
         subject, detail = _message(w, why, person, machine, new_key)
