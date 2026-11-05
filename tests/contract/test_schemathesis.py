@@ -161,9 +161,9 @@ _PROTECTED_TOKEN_IDS = _own_token_ids() if _schema_available else set()
 #: A token id no row has, swapped in for the suite's own token's.
 _ABSENT_TOKEN_ID = 2**31 - 1
 
-# The workspace the nightly job gives the CI user (contract-nightly.yml), so a
-# create resolves to it ("your sole workspace") and runs its real path instead of
-# answering 422 workspace-required. The suite must keep it the SOLE one, intact:
+# The CI user's one workspace (contract-nightly.yml makes sure there is exactly
+# one), so a create resolves to it ("your sole workspace") and runs its real path
+# instead of answering 422 workspace-required. The suite keeps it SOLE and intact:
 _CI_WORKSPACE = os.environ.get("SCHEMATHESIS_CI_WORKSPACE", "")
 _ABSENT_WORKSPACE = "contract-ci-absent"
 #: Routes that could delete it, or remove or demote the CI user in it.
