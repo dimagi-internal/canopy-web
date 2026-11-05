@@ -794,8 +794,8 @@ def _discard_grant(p: providers.Provider, subject: Subject, token: providers.Tok
 
 # ---- disconnecting -----------------------------------------------------------
 
-def disconnect(conn: Connection, *, by, revoke_now: bool = True,
-               lapsed: bool = False) -> Literal["revoking", "deleted", "revoked"]:
+def disconnect(conn: Connection, *, by, revoke_now: bool = True, lapsed: bool = False,
+               unfinished: bool = False) -> Literal["revoking", "deleted", "revoked"]:
     """Disconnect `conn`, and say which of the outcomes below happened (spec §4.5).
 
     When canopy-web's own key can open it (`server_tokens.may_revoke`) or a cloud box still heard
@@ -815,7 +815,8 @@ def disconnect(conn: Connection, *, by, revoke_now: bool = True,
     `revoke_now` false: the caller is in a transaction, where a network call must not be, or is
     disconnecting many at once, so canopy-web's revoke waits for the sweep. A failed revoke never raises
     out of here. `lapsed`: nobody asked, its time ran out; only the sweep says so, and it passes
-    `revoke_now` false too, then retries the revoke itself (`keeper._server_revokes`).
+    `revoke_now` false too, then retries the revoke itself (`keeper._server_revokes`). `unfinished`:
+    an agent's connect nobody completed; only the sweep says so, in the same way.
 
     Records `disconnected` (in the app's workspace too, for a moved agent's) and
     `grant_revoked` for every agent it was lent to. Disconnecting a row already
@@ -845,7 +846,8 @@ def disconnect(conn: Connection, *, by, revoke_now: bool = True,
         else:
             row.delete()  # its grants go with it (CASCADE)
     summary = (f"{subject.owner}'s {subject.provider} ({subject.account_label}) ended: its time ran out" if lapsed
-               else f"{subject.owner} disconnected {subject.provider} ({subject.account_label})")
+               else f"{subject.owner}'s {subject.provider} ({subject.account_label}) ended: the connect never finished"
+               if unfinished else f"{subject.owner} disconnected {subject.provider} ({subject.account_label})")
     record(subject, "disconnected", by=by, summary=summary)
     # A moved agent's connection belongs to the app's workspace as much as the
     # agent's: the admins removing that app see it go too.

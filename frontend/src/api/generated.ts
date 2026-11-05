@@ -7266,7 +7266,8 @@ export interface paths {
          *     its own workspace has set up, which are what it connects with. Its own works
          *     only while it is in the workspace whose app made it: one made before the agent
          *     moved is listed with `usable` false. A lent one works only while its grant is in
-         *     force (`usable` false otherwise). Only the agent's admins can see them.
+         *     force (`usable` false otherwise). A connect still waiting on its owner's passkey is not
+         *     listed: until that finishes the agent isn't connected. Only the agent's admins can see them.
          */
         readonly get: operations["agent_connections"];
         readonly put?: never;

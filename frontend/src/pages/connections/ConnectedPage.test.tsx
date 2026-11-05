@@ -67,7 +67,7 @@ function open(query = BACK, strict = false) {
 }
 const arrive = (strict = false) => open(`${BACK}&just_connected=1`, strict)
 const href = (name: string | RegExp) => screen.getByRole('link', { name }).getAttribute('href')
-const STORED = "Connected Eva as jj@dimagi.com and stored in Eva's vault. Eva can use it now."
+const STORED = 'Connected Eva as jj@dimagi.com. Eva can use it now.'
 
 beforeEach(() => {
   getShareState.mockResolvedValue(STATE)
@@ -168,18 +168,27 @@ describe('ConnectedPage, a person’s connection', () => {
 })
 
 describe('ConnectedPage, an agent’s connection', () => {
-  it('names the machines before the store and after it, with no prompt until the button', async () => {
+  beforeEach(() => getShareState.mockResolvedValue(AGENT_STATE))
+
+  it('names the machines once it has finished, and asks for nothing else', async () => {
     getShareState.mockResolvedValue(AGENT_STATE)
-    open()
-    expect(await screen.findByText("It goes to Eva's approved machines: eva-cloud.")).toBeTruthy()
-    expect(unlock).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: 'Give Eva access' }))
-    expect(await screen.findByText("Stored on Eva's machines: eva-cloud.")).toBeTruthy()
+    arrive()
+    expect(await screen.findByText("It's on Eva's machines: eva-cloud.")).toBeTruthy()
+    expect(screen.getByRole('heading').textContent).toBe('Connected')
     expect(unlock).toHaveBeenCalledTimes(1)
     expect(screen.queryByRole('link', { name: /Share/ })).toBeNull()
+    expect(screen.queryByRole('button')).toBeNull()
   })
 
-  beforeEach(() => getShareState.mockResolvedValue(AGENT_STATE))
+  it('an unfinished connect says it failed, never that it is connected', async () => {
+    getShareState.mockResolvedValue(AGENT_STATE)
+    unlock.mockRejectedValueOnce(new DOMException('not allowed', 'NotAllowedError'))
+    arrive()
+    expect(await screen.findByText("Connecting Eva didn't finish, so Eva can't use jj@dimagi.com.")).toBeTruthy()
+    expect(screen.getByRole('heading').textContent).toBe('Not connected')
+    expect(screen.queryByRole('link', { name: 'Done' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy()
+  })
 
   it('agent stores automatically on arrival with no click', async () => {
     arrive()
@@ -193,7 +202,7 @@ describe('ConnectedPage, an agent’s connection', () => {
   it('shows what it is doing while it stores', async () => {
     unlock.mockReturnValue(new Promise(() => {}))
     arrive()
-    expect(await screen.findByText("Connected Eva as jj@dimagi.com. Storing it in Eva's vault…")).toBeTruthy()
+    expect(await screen.findByText("Signed in as jj@dimagi.com. Finishing the connection for Eva…")).toBeTruthy()
   })
 
   it('shares with only the agent and no computers, canopy-web only when the row has it on', async () => {
@@ -228,18 +237,18 @@ describe('ConnectedPage, an agent’s connection', () => {
 
   it("a reload without just_connected doesn't prompt", async () => {
     open()
-    expect(await screen.findByRole('button', { name: "Give Eva access" })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: 'Try again' })).toBeTruthy()
     expect(unlock).not.toHaveBeenCalled()
-    expect(href('Later')).toBe('/settings/connections')
+    expect(href('Cancel')).toBe('/settings/connections')
   })
 
-  it("a refused or dismissed passkey shows Give Eva access, and the button works", async () => {
+  it("a refused or dismissed passkey shows Try again, and the button works", async () => {
     unlock.mockRejectedValueOnce(new DOMException('not allowed', 'NotAllowedError'))
     arrive()
-    const button = await screen.findByRole('button', { name: "Give Eva access" })
-    expect(screen.getByText('Connected Eva as jj@dimagi.com.')).toBeTruthy()
+    const button = await screen.findByRole('button', { name: 'Try again' })
+    expect(screen.getByText("Connecting Eva didn't finish, so Eva can't use jj@dimagi.com.")).toBeTruthy()
     expect(screen.queryByRole('alert')).toBeNull()
-    expect(href('Later')).toBe('/settings/connections')
+    expect(href('Cancel')).toBe('/settings/connections')
     expect(putShare).not.toHaveBeenCalled()
     fireEvent.click(button)
     expect(await screen.findByText(STORED)).toBeTruthy()
@@ -250,21 +259,21 @@ describe('ConnectedPage, an agent’s connection', () => {
     putShare.mockRejectedValueOnce(new Error('The server said no.'))
     arrive()
     expect((await screen.findByText('The server said no.'))).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: "Give Eva access" }))
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
     expect(await screen.findByText(STORED)).toBeTruthy()
   })
 
   it('an already unlocked vault makes no button at all', async () => {
     arrive()
     await screen.findByText(STORED)
-    expect(screen.queryByRole('button', { name: /Give Eva access/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Try again/ })).toBeNull()
     expect(screen.queryByText(/passkey/i)).toBeNull()
   })
 
   it('a trust question links to Share rather than guessing', async () => {
     trustFor.mockResolvedValue(ASK_TRUST)
     arrive()
-    expect(await screen.findByText(/needs a decision from you/)).toBeTruthy()
+    expect(await screen.findByText(/It needs a decision from you first/)).toBeTruthy()
     expect(href('Open the Share screen')).toBe('/w/dimagi/connections/c1/share?return_to=%2Fsettings%2Fconnections')
     expect(buildShare).not.toHaveBeenCalled()
     expect(putShare).not.toHaveBeenCalled()
@@ -274,7 +283,7 @@ describe('ConnectedPage, an agent’s connection', () => {
     getShareState.mockResolvedValue({ ...AGENT_STATE, candidates: [] })
     trustFor.mockResolvedValue({ ...READY_TRUST, assessments: new Map([['12', { endorsers: [], sealTo: [] }]]) })
     arrive()
-    expect(await screen.findByText("None of Eva's machines are ready yet. Try again once one is online.")).toBeTruthy()
+    expect(await screen.findByText("Connecting Eva didn't finish, so Eva can't use jj@dimagi.com. None of Eva's machines are ready. Try again once one is online.")).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy()
     expect(href('Open the Share screen')).toContain('/connections/c1/share')
     expect(buildShare).not.toHaveBeenCalled()
@@ -305,7 +314,7 @@ describe('ConnectedPage, an agent’s connection', () => {
   it('an earlier choice that is no longer choosable goes to Share instead of narrowing it', async () => {
     openForOwner.mockResolvedValue({ account: {}, statement: { agents: ['99'], my_computers: [], canopy_web: 'T' } })
     arrive()
-    expect(await screen.findByText(/needs a decision from you/)).toBeTruthy()
+    expect(await screen.findByText(/It needs a decision from you first/)).toBeTruthy()
     expect(buildShare).not.toHaveBeenCalled()
     expect(href('Open the Share screen')).toContain('/connections/c1/share')
   })
@@ -313,21 +322,21 @@ describe('ConnectedPage, an agent’s connection', () => {
   it('project screens on but not nameable goes to Share, never turning them off silently', async () => {
     getShareState.mockResolvedValue({ ...AGENT_STATE, server: { ...SERVER, statements_enabled: false } })
     arrive()
-    expect(await screen.findByText(/needs a decision from you/)).toBeTruthy()
+    expect(await screen.findByText(/It needs a decision from you first/)).toBeTruthy()
     expect(buildShare).not.toHaveBeenCalled()
   })
 
   it('a row with project screens off still stores with no key at all', async () => {
     getShareState.mockResolvedValue({ ...AGENT_STATE, server: { available: false, provider_calls: false, on: false, reachable: false } })
     arrive()
-    await screen.findByText(/stored in Eva's vault/)
+    await screen.findByText(/Eva can use it now/)
     expect(buildShare.mock.calls[0][2]).toEqual({ agents: ['12'], myComputers: [], canopyWeb: false })
   })
 
   it("a changed canopy-web key goes to Share rather than being signed", async () => {
     openForOwner.mockResolvedValue({ account: {}, statement: { agents: ['12'], my_computers: [], canopy_web: 'OLD' } })
     arrive()
-    expect(await screen.findByText(/needs a decision from you/)).toBeTruthy()
+    expect(await screen.findByText(/It needs a decision from you first/)).toBeTruthy()
     expect(buildShare).not.toHaveBeenCalled()
   })
 
@@ -335,14 +344,14 @@ describe('ConnectedPage, an agent’s connection', () => {
     // Before: no canopy-web. Now the row has it on, so the share would differ from what was signed.
     openForOwner.mockResolvedValue({ account: {}, statement: { agents: ['12'], my_computers: [] } })
     arrive()
-    expect(await screen.findByText(/needs a decision from you/)).toBeTruthy()
+    expect(await screen.findByText(/It needs a decision from you first/)).toBeTruthy()
     expect(buildShare).not.toHaveBeenCalled()
   })
 
   it('the arrival try never opens the passphrase dialog; the button may', async () => {
     unlock.mockRejectedValueOnce(new DOMException('no', 'NotAllowedError'))
     arrive()
-    fireEvent.click(await screen.findByRole('button', { name: "Give Eva access" }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Try again' }))
     await screen.findByText(STORED)
     expect(unlock.mock.calls[0][0]).toEqual({ passkeyOnly: true })
     expect(unlock.mock.calls[1][0]).toEqual({ passkeyOnly: false })
@@ -353,7 +362,7 @@ describe('ConnectedPage, an agent’s connection', () => {
     arrive()
     await screen.findByText('The server said no.')
     const before = getShareState.mock.calls.length
-    fireEvent.click(screen.getByRole('button', { name: "Give Eva access" }))
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
     await screen.findByText(STORED)
     expect(getShareState.mock.calls.length).toBeGreaterThan(before)
   })

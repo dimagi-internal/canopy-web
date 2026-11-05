@@ -712,3 +712,41 @@ def test_a_stored_connection_with_no_readable_envelope_is_deleted_at_once(world)
     conn = _stored({"agent": world.eva}, world.person, app=sf_app(world.ws))
     services.disconnect(conn, by=world.person)
     assert not Connection.objects.exists()
+
+
+def _unfinished(world) -> Connection:
+    return sealed_to_owner({"agent": world.eva}, world.person, app=world.app)
+
+
+def _age(conn: Connection, **ago) -> None:
+    Connection.objects.filter(pk=conn.pk).update(updated_at=timezone.now() - timedelta(**ago))
+
+
+def test_an_agents_connect_nobody_finished_goes_after_an_hour(world):
+    conn = _unfinished(world)
+    _age(conn, minutes=59)
+    assert keeper.sweep()["unfinished"] == 0 and Connection.objects.filter(pk=conn.pk).exists()
+    _age(conn, minutes=61)
+    assert keeper.sweep()["unfinished"] == 1 and not Connection.objects.filter(pk=conn.pk).exists()
+    assert Event.objects.filter(source="connections", summary__contains="the connect never finished").exists()
+
+
+def test_the_unfinished_sweep_leaves_shared_rows_reconnects_and_people_alone(world):
+    shared = world.shared(world.evas(), agents=[world.eva])
+    person = world.persons()
+    _age(shared, days=2)
+    _age(person, days=2)
+    assert keeper.sweep()["unfinished"] == 0
+    assert Connection.objects.filter(pk=shared.pk, state=Connection.ACTIVE).exists()
+    assert Connection.objects.filter(pk=person.pk).exists()
+    # A reconnect keeps its statement while unshared: it needs a reconnect, not removing.
+    Connection.objects.filter(pk=shared.pk).update(state=Connection.UNSHARED)
+    assert keeper.sweep()["unfinished"] == 0 and Connection.objects.filter(pk=shared.pk).exists()
+
+
+def test_an_unfinished_connect_is_not_in_the_agents_list(world, client):
+    _unfinished(world)
+    client.force_login(world.person)
+    r = client.get(f"/api/agents/{world.eva.slug}/connections", HTTP_X_CANOPY_WORKSPACE="w")
+    assert r.status_code == 200, r.content
+    assert r.json()["connections"] == []

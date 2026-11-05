@@ -503,9 +503,11 @@ def agent_connections(request: HttpRequest, slug: str) -> ConnectionsOut:
     its own workspace has set up, which are what it connects with. Its own works
     only while it is in the workspace whose app made it: one made before the agent
     moved is listed with `usable` false. A lent one works only while its grant is in
-    force (`usable` false otherwise). Only the agent's admins can see them."""
+    force (`usable` false otherwise). A connect still waiting on its owner's passkey is not
+    listed: until that finishes the agent isn't connected. Only the agent's admins can see them."""
     agent = agent_for_admin(request, slug)
-    own = (services.connections_for(("agent", agent.pk))
+    unfinished = Connection.objects.unfinished().values("pk")
+    own = (services.connections_for(("agent", agent.pk)).exclude(pk__in=unfinished)
            .select_related("connected_by", "agent", "app__workspace")
            .prefetch_related("grants__agent"))
     granted = (Connection.objects.filter(grants__agent=agent).exclude(state=Connection.REVOKING)

@@ -39,6 +39,8 @@ from .wire import WireError
 
 #: How long a `revoking` row waits for a holder to confirm before the sweep deletes it.
 REVOKE_GRACE = timedelta(days=7)
+#: How long an agent's connect may wait on its owner's passkey before it counts as failed and goes.
+UNFINISHED_AFTER = timedelta(hours=1)
 #: canopy-web's own revokes in one sweep, and how long a row waits before it is tried again: each
 #: can cost KMS and provider timeouts, and the tick is shared.
 SERVER_REVOKES_PER_TICK = 25
@@ -182,9 +184,10 @@ def sweep(now: datetime | None = None) -> dict:
     disconnecting any still live there (one that slipped past `remove_app`), so a
     removal always finishes. First, every lend whose time has run out is disconnected, so a
     holder revokes it at the provider, or canopy-web does: many at once, so with no revoke in that
-    call, and `_server_revokes` below takes it this same tick and retries it on later ones. Expired
-    operation leases go too, up to `OPERATIONS_PER_TICK`. Returns the counts `{lapsed, revoke_unconfirmed,
-    apps_deleted, operations_expired}`."""
+    call, and `_server_revokes` below takes it this same tick and retries it on later ones. An agent's
+    connect nobody finished within `UNFINISHED_AFTER` goes the same way. Expired operation leases go too,
+    up to `OPERATIONS_PER_TICK`. Returns the counts `{lapsed, unfinished, revoke_unconfirmed, apps_deleted,
+    operations_expired}`."""
     now = now or timezone.now()
     operations = _expired_operations(now)
     temporary.sweep(now)
@@ -193,6 +196,11 @@ def sweep(now: datetime | None = None) -> dict:
                  .select_related("app__workspace", "agent__workspace").order_by("pk")):
         services.disconnect(conn, by=None, revoke_now=False, lapsed=True)
         lapsed += 1
+    unfinished = 0
+    for conn in (Connection.objects.unfinished().filter(updated_at__lte=now - UNFINISHED_AFTER)
+                 .select_related("app__workspace", "agent__workspace").order_by("pk")):
+        services.disconnect(conn, by=None, revoke_now=False, unfinished=True)
+        unfinished += 1
     gone = 0
     _server_revokes()
     for conn in (Connection.objects.filter(state=Connection.REVOKING)
@@ -212,7 +220,8 @@ def sweep(now: datetime | None = None) -> dict:
                                 + ("no machine confirmed revoking it" if stale else "no machine holds it any more"))
     apps = sum(_finish_removal(app)
                for app in list(ConnectionApp.objects.filter(removed_at__isnull=False).order_by("pk")))
-    return {"lapsed": lapsed, "revoke_unconfirmed": gone, "apps_deleted": apps, "operations_expired": operations}
+    return {"lapsed": lapsed, "unfinished": unfinished, "revoke_unconfirmed": gone, "apps_deleted": apps,
+            "operations_expired": operations}
 
 
 def _expired_operations(now: datetime) -> int:
