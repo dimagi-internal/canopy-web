@@ -165,7 +165,6 @@ class Profile:
     name: str = ""
     #: The site a `connected_site` serves, None for one with no site.
     site: str | None = None
-    #: The envelope's account of a sensitive turn that lost its entry (`caller_context._profile`).
     _agent: object = field(default=None, compare=False, repr=False)
 
     @cached_property
@@ -173,6 +172,7 @@ class Profile:
         if self.kind in (WHOLE_AGENT, NO_AGENT):
             return None
         if self.kind == DENY_ALL:
+            # What the envelope already gives a stamp that no longer resolves (`caller_context._profile`).
             return {"name": self.name, "description": "", "entry": None, "tools": [], "bash": [],
                     "read_paths": [], "write_paths": []}
         return iface_mod.profile(self._agent, self.name)

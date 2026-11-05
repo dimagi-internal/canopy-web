@@ -84,10 +84,14 @@ roster, topology, `may_edit_agent`, licenses) also goes through it, with an empt
 
 A frozen dataclass from `apps/agents/turn_context.py`:
 
-* `standing`: `relationship`, `permissions`, `agent_role`, `source`, `via`.
+* `standing`: `relationship`, `permissions`, `agent_role`, `source`, `via`. On a refusal from the rule these are what it
+  always reported: `permissions` empty and `agent_role` and `source` blank, even for someone who holds `read` and named what
+  it does not open (the `trace` says what they held). `via` is not cleared by a sensitive refusal. A stage 0 refusal keeps the
+  whole standing: who they are is still true.
 * `access`: `full | confined | refused`.
+* `basis`: why, in one word (`owner | admin | system | session:<role> | grant:<line> | capability:<name> | sensitive:<name> | refused | no-interface`). The list above left it out, but `caller_tokens.is_caller_scoped`, `licenses`, and the envelope's `granted_by` read it.
 * `profile`: a `Profile`, or `None` only when refused.
-* `session_key_suffix`: from the profile, see section 6.
+* `session_key_suffix`: `#<name>` for a confined profile, empty otherwise, see section 6.
 * `credentials`: a true statement of what this turn gets, by name and kind, never a value (see stage 3).
 * `review`: turn mode, its basis, and `manual_only`, `may_request_auto`, `may_pin_runner`.
 * `stamped`: for a real turn, the profile name stored on `Turn.capability`, see "Two moments".
@@ -95,28 +99,38 @@ A frozen dataclass from `apps/agents/turn_context.py`:
 * `trace`: an ordered list of `{rule, outcome, detail}`, one per rule the resolver asked, ending at the deciding
   rule. This is the "why" the UI shows.
 
-`Profile`: `{kind, name, description, entry, tools, bash, read_paths, write_paths, data, default_profile_version}`.
+`Profile`: `{kind, name, site, description, entry, tools, bash, read_paths, write_paths, data, default_profile_version}`.
+Its contents are read when asked, and so is `credentials`: canopy's default read profile queries the agent's skills, the roster
+asks the rule once per member, and `credentials/for_turn.py` asks functions that ask the rule (`is_caller_scoped`).
 For `whole_agent`, the allow-lists are absent, because nothing is enumerated: `kind` alone says it. An absent
 list on any other kind means deny, as today.
 
 ### 3.3 The resolver
 
-`resolve_turn_context(session_ctx, asker, agent, *, requested=None, turn=None) -> TurnContext`
+`resolve_turn_context(session_ctx, asker, agent, *, requested=None, turn=None, stamp=None, runner=None) -> TurnContext`
+
+`stamp` and `runner` are the claim's inputs ("Two moments" below). `for_turn(turn, agent, requested)` and `for_asker(agent, who, *,
+verified, requested, turn, standing, lines, channel)` are how an entry point asks it. `Asker` carries `standing` and `lines` when
+the caller read them in bulk, so a view judging many pairs still reads once. `session_context.build(session, turn=None, *, agent=None)`:
+the agent is who a session's grants are about, and a caller may ask about an agent the turn does not name.
 
 Pure: **it must not write**. `caller_context.build` writes a `PersonAccess` row and creates a `Person`; those stay
 in the envelope's `person` block, outside the resolver. A test wraps the resolver in a read-only guard.
 
 **Stage 0, can this session take a message from them.** Blocks that sit outside the access rule today and already stop a
-send: deleted content (`api.py:84`), `can_write` ("you can read this session but not act in it", `api.py:86`), the sensitive
-not-in-it rule and the CLI refusal (`harness/doors.py:97-106`). The owner's principle is that reaching a session without being
+send: deleted content (`canopy_sessions/api.py:84`), `can_write` ("you can read this session but not act in it",
+`canopy_sessions/api.py:86`), the CLI refusal and the sensitive not-in-it rule (`canopy_sessions/doors.py:97-106`, the module this
+spec first placed in `harness`). The owner's principle is that reaching a session without being
 able to take a turn must be explained, so these are `refused` Turn Contexts with their own codes, and the preview tells the
 truth. **They change nobody's access:** the routes keep refusing as they do, using the same check. Skipped for a question
-with no session. The equivalence test compares stages 1 and 2 against `decide`, and separately pins each block to its route.
+with no session, **and for a real turn**: it is already past its door, and these blocks are only asked at some doors. Asking them
+at enqueue would newly refuse an email, a schedule or a dispatch into a session no door refuses it from today. So stage 0 runs
+only for a preview. `can_write` is asked only of a signed-in person, since a contact's send has its own door. The equivalence test compares stages 1 and 2 against `decide`, and separately pins each block to its route.
 
 **Stage 1, standing** (first match, same order as `_decide` + `_from_access_list` today):
 
-1. Canopy itself, the agent's own login, an approved dispatch: `system`.
-2. `Agent.owner`, `Agent.is_admin`.
+1. Canopy itself, another agent, an approved dispatch: `system`.
+2. `Agent.owner`, then the agent's own login (also `system`), then `Agent.is_admin`, in that order (`relationship_for_user`).
 3. `session_grants` (3.4).
 4. The access list (`grants.resolve`).
 5. Otherwise, nothing.
@@ -127,9 +141,10 @@ with no session. The equivalence test compares stages 1 and 2 against `decide`, 
 |---|---|---|
 | Owner, admin, system, a session grant, or holds `write` | `whole_agent` | `full` |
 | Holds nothing | none | `refused` |
-| Named a profile, or their page or site selects one, and their permissions open it | that `connected_site`, or `read_mode` if that is what was named | `confined` |
-| Named or selected one they can't open, or one retired | none. **No fall-through to read mode** | `refused` |
-| Nothing named or selected, and holds `read` | `read_mode` | `confined` |
+| Named a profile and their permissions open it | that `connected_site`, or `read_mode` if that is what was named | `confined` |
+| Named one they can't open, or one retired | none. **No fall-through to read mode** | `refused` |
+| Named none, and their page or site selects one their permissions open (page first) | that `connected_site` | `confined` |
+| Named none, and holds `read` | `read_mode`. **A page's or site's entry they can't open is skipped, not fatal**: someone with `read` on a connected site gets read mode there, today and after this | `confined` |
 | Otherwise | none | `refused` |
 
 | Narrowing | Effect |
@@ -165,11 +180,12 @@ runner, close the turn themselves, and aren't changed here. The snapshot records
 The owner's direction: being added to a session *could* pass additional information that raises someone's access, but
 it is not yet known how or if that will be used. The design must allow it without a redesign.
 
-So `SessionContext.session_grants` is a list of `{kind, user, role, source}`, and stage 1 asks it in one rule.
+So `SessionContext.session_grants` is a list of `{kind, user_id, role, source}`, and stage 1 asks it in one rule.
 
 **Exactly one kind exists today:** `session_writer`, the existing rule (`interface.session_writer`): a participant
-with role owner or editor in a session created by the agent's owner or an admin holds the whole agent. **It stays,
-unchanged**, because this project changes no one's access. It becomes visible in the trace as a named rule.
+with role owner or editor in a session created by the agent's owner or an admin holds the whole agent. It is read from a turn's
+`chat_session` only, never `canopy_session`. `interface.session_writers(session, agent)` lists them, replacing the per-asker
+question. **It stays, unchanged**, because this project changes no one's access. It becomes visible in the trace as a named rule.
 
 `granted_by` is computed live and not stored, so Stage 1's report on how much this rule is used is an **approximation**: turns in
 the last 90 days whose initiator was a non-admin participant (owner or editor role) in an admin-created session and who holds
@@ -188,6 +204,14 @@ from `git grep decide\(` and `.capability`: `harness/services._apply_capability`
 `agents/credentials/{licenses,delegations}`, `agents/agent_edit_check`, `agents/answering_snapshot`,
 `admission/evaluate`, `host_grants/{host_gateway,execution}`, `slack/{services,status}`,
 `contacts/session_review_asks`, `connections/api_turns`. The builder re-derives this list.
+
+Stage 1's grep found that list too wide and too narrow. What called `decide`, `decide_for_turn` or read a `Decision`, and moved:
+`agents/{access (the roster and may_edit_agent), agent_edit_check, answering_snapshot, credentials/licenses, interface (grant_facts,
+offered_to), topology}`, `contacts/session_review_asks`, `dynamic_views/declared_tasks`, `harness/{caller_tokens, services, turn_gates,
+turn_mode}`, `local_apps/{api, services}`, `mail/api`, `meetings/services`, `slack/services`. The rest of the original list
+(`harness/claim*`, `act_as`, `owner_ask`, `routing_orders`, `clis`, `turn_agent_tokens`, `admission/evaluate`, `host_grants/*`,
+`slack/status`, `connections/api_turns`, `credentials/delegations`) reads the stamp `Turn.capability`, not a `Decision`, and needed no
+change. `admission/evaluate.decide` is a different function, of its own rules.
 
 **`access.md` remains THE rule's documentation,** rewritten around this model in Stage 5.
 
@@ -263,8 +287,9 @@ Each stage is one or more PRs, deployable alone. **The gate for every stage:** `
 on a fixture and, after deploy, in production; `tests/test_access_matrix.py` green; no change in who gets what.
 
 The snapshot hashes `dataclasses.asdict(Decision)`, so when `Decision` goes, `answering_snapshot.py` keeps a small explicit
-projection of the Turn Context to that same shape (`access: "none"`, `reason`, `basis`, `stamp`), so the hash means the same
-thing. Trellis's live edit and #2559 already moved the baseline: Stage 1 takes a new production baseline **before** it deploys.
+projection of the Turn Context to that same shape (`answer_of`: `access: "none"`, `capability`, `reason`, `basis`, `stamp`), so the hash
+means the same thing. A roster row keeps saying `none` too: the access API, the vault and the frontend read that word. It is the
+one other place, and a Turn Context's own word is `refused`. Trellis's live edit and #2559 already moved the baseline: Stage 1 takes a new production baseline **before** it deploys.
 **Stage 4 is the one named re-baseline:** refusal wording changes `reason`, and that PR shows the diff is only `reason`.
 
 | Stage | Work | Check |
@@ -297,3 +322,20 @@ thing. Trellis's live edit and #2559 already moved the baseline: Stage 1 takes a
 
 Module layout, naming below the public objects, how `Decision` consumers migrate in order, whether the context route's
 snapshot is inline, and the exact UI layout within the existing panel's style.
+
+## 12. What building Stage 1 corrected
+
+The code was the reference, and these are the differences it found. Each is folded into the section named.
+
+| Section | The spec said | The code does |
+|---|---|---|
+| 3.3, stage 2 | A selected profile they can't open is refused, with no fall-through | Selected entries they can't open are skipped: `read` on a connected site gets read mode. Only a *named* one refuses |
+| 3.3, stage 0 | Skipped only for a question with no session | Also skipped for a real turn, or it would refuse turns no door refuses today |
+| 3.3, stage 0 | `harness/doors.py` | `canopy_sessions/doors.py`, and the CLI check comes before the sensitive one |
+| 3.3, stage 1 | System first, then owner and admin, with the agent's own login under system | For a person: owner, then own login, then admin |
+| 3.2 | No `basis` on the Turn Context | It needs one: `granted_by`, `licenses` and `is_caller_scoped` read it |
+| 3.2 | `standing` is what the asker holds | On a refusal from the rule it is blank, as `Decision` was |
+| 3.3 | Signature with `requested` and `turn` only | Also `stamp` and `runner`, the claim's inputs |
+| 3.4 | `session_writer` is asked of a turn | It is a list per session now, from `chat_session` only |
+| 4 | The consumer list | See the corrected list in section 4 |
+| 8 | Only the snapshot keeps `none` | A roster row does as well |

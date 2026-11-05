@@ -4,6 +4,7 @@ send block against the route that refuses it. Design: `docs/superpowers/specs/20
 """
 from __future__ import annotations
 
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -79,6 +80,27 @@ def _every_fact(ctx):
     sc = ctx._session_ctx
     for attr in ("runner_bound", "sensitive_requirement", "audience", "participants", "session_grants", "send_blocks"):
         getattr(sc, attr)
+
+
+# --- the old names are gone ------------------------------------------------------------------------
+
+def test_nothing_of_the_old_rule_is_left_behind():
+    from apps.agents import access
+
+    for name in ("decide", "decide_for_turn", "Decision", "NONE", "_decide", "_stamp", "_from_access_list"):
+        assert not hasattr(access, name), name
+
+
+def test_nothing_compares_a_turn_context_to_the_old_word_for_refused():
+    # `.access == "none"` would now be false for everyone, which reads as allowing them.
+    from tests._source import ROOT
+
+    wrong = []
+    for path in (ROOT / "apps").rglob("*.py"):
+        text = path.read_text()
+        if "turn_context" in text and re.search(r"""\.access\s*(==|!=)\s*["']none["']""", text):
+            wrong.append(str(path))
+    assert not wrong
 
 
 # --- it writes nothing ----------------------------------------------------------------------------
