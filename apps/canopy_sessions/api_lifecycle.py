@@ -135,7 +135,7 @@ def create_session(request: HttpRequest, payload: SessionCreateIn):
     if payload.runner_id:
         # The stash is consumed on the first send WITHOUT asking who may choose
         # (placement._resolve_placement), so the choice is decided here, by the one
-        # placement rule every door asks (`placement.may_place`): for a chat with
+        # placement rule every route asks (`placement.may_place`): for a chat with
         # an agent its admins may pin any box, anyone else only a box they
         # administer; for a project chat, only someone who administers the box.
         # An id that names no runner is left as before — the first send ignores

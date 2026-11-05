@@ -1,7 +1,7 @@
 """A turn's leading plugin command, read in one place.
 
 A prompt whose first line is `/<plugin>:<skill> <args>` asks the agent CLI to run
-that skill of that plugin — `/echo:turn`, `/ace:ask --thread 7`. canopy-web keeps
+that skill of that plugin — `/echo:turn`, `/ace:answer-caller --thread 7`. canopy-web keeps
 and shows the prompt exactly as written (the canonical text, which is also how a
 person types one into a chat), and hands the claiming runner the parsed
 `Invocation` beside it, so each turn executor renders it in its own CLI's terms —

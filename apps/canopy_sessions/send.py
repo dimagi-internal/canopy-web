@@ -1,6 +1,6 @@
 """Sending into a chat: staged attachments, a send's origin, the ledger and
 transcript-sourced send paths (`send_message`), the queued list, withdrawing
-or re-placing a queued send, and the dev stub's inline executor. Doors call
+or re-placing a queued send, and the dev stub's inline executor. Send paths call
 `send_paths.send_from`, not this module.
 """
 from __future__ import annotations
@@ -178,8 +178,8 @@ def send_message(
     is unarchived first (`control.unarchive_session`)."""
     from apps.events import activity
 
-    # Before anything else. Read fresh, as a door's instance may predate the delete.
-    # ValueError: every door's refused send (`send_paths.send_from`).
+    # Before anything else. Read fresh, as a send path's instance may predate the delete.
+    # ValueError: every send path's refused send (`send_paths.send_from`).
     if Session.objects.filter(pk=session.pk, content_deleted_at__isnull=False).exists():
         raise ValueError(access.CONTENT_DELETED_REFUSAL)
     # A send into an archived session brings it back: the turn it starts is one

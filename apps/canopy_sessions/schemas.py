@@ -1110,7 +1110,7 @@ class PageActionSpec(Schema):
     # Two spellings in, one out, rather than two fields that can disagree.
     # canopy publishes these declarations as MCP tools, so a host author
     # reading the MCP spec writes `inputSchema`; while only `parameters` was
-    # accepted, such a declaration was dropped HERE, at the door — the action
+    # accepted, such a declaration was dropped HERE, at the way in — the action
     # still published, with no schema, and a missing required argument then
     # waited out the full 20s timeout and came back as "the page is probably
     # closed", which is neither true nor actionable.

@@ -841,7 +841,7 @@ def profile_q(runner) -> Q:
     """Restricted turns only for a runner that can confine them.
 
     A caller's turn (`Turn.capability` set) claimed by a runner that cannot
-    enforce the capability's profile would run in the agent's FULL profile —
+    enforce that profile would run in the agent's FULL profile —
     the exact outcome the declared interface exists to prevent, and silently.
     So a runner that has not reported `profiles` (an older laptop runner, the
     cloud runner today) never sees one. Deliberately NOT bypassable by a pin:

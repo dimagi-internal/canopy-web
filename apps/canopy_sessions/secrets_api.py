@@ -32,7 +32,7 @@ router = Router(auth=session_auth, tags=["chat"])
 
 def _keyed(request: HttpRequest):
     # A token that authenticated the request (`auth_method` set by the bearer
-    # door), not merely a header: a cookie plus `Authorization: Bearer junk` is a
+    # way in), not merely a header: a cookie plus `Authorization: Bearer junk` is a
     # browser, and a browser never gets a chat secret.
     if not getattr(request, "auth_method", None):
         raise HttpError(403, "chat secrets are given only to a bearer token, never a browser session")

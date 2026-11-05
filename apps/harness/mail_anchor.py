@@ -12,7 +12,7 @@ An anchor retires when BOTH hold:
 
 * every turn on it is terminal (none queued / claimed / running / needs_human), and
 * every work session those turns handed off to is archived (or no turn ever handed
-  off — e.g. every turn was refused at the door).
+  off — e.g. every turn was refused on the way in).
 
 Retirement is signal-driven (`close_turn`, a refused enqueue, and `sessions_closed`
 for the work session) with a periodic sweep as the backstop that also backfills
@@ -70,7 +70,7 @@ def work_sessions(anchor) -> set:
 
     Joined two ways, because neither alone sees every turn: the turn's `session_key`
     on the runner that claimed it (`RunnerBinding.session_key`, the close-out join),
-    and the runner's own thread key — the Gmail thread id, `#<capability>` for a
+    and the runner's own thread key — the Gmail thread id, `#<Turn.capability>` for a
     confined caller (`session_naming.restricted_key`) — on the anchor's agent."""
     ids = set()
     keyed = (Turn.objects.filter(chat_session=anchor, claimed_by__isnull=False)

@@ -387,7 +387,7 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
             user_message_id = await database_sync_to_async(self._commit_and_send)(text, client_id)
         except conversation_keys.CannotHold as exc:
             # A sensitive conversation is sealed to its people's vault keys: say so,
-            # in the sentence the REST door gives as a 422.
+            # in the sentence the REST route gives as a 422.
             await self._error("cannot_hold", str(exc), detail={"client_id": client_id})
             return
         except send_paths.NotInIt as exc:
@@ -867,7 +867,7 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
 
 def _socket_context(scope) -> dict:
     """A WebSocket's provenance context: client=websocket, its user agent and
-    address, and the door that authenticated it (`channels_auth`)."""
+    address, and the way in that authenticated it (`channels_auth`)."""
     from apps.common import request_context as rc
     from apps.common.client_ip import from_scope
 

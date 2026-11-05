@@ -126,7 +126,7 @@ AGENT_CHAT_PLACEMENT_REFUSED = (
 
 
 def may_place(user, session: Session, runner) -> bool:
-    """May `user` choose `runner` for this chat's turns? The ONE rule every door
+    """May `user` choose `runner` for this chat's turns? The ONE rule every route
     that chooses a box asks — a send with `placement`, re-pinning a queued turn
     (`place_queued_turn`), moving queued turns (`move_queued_turns`, and Slack's
     move-to-cloud through it) and the cloud offer (`available_cloud_runner`).
@@ -494,7 +494,7 @@ def fork_session(*, session: Session, turn_index: int, user) -> Session:
     before a transfer), RuntimeError when the cut would fall in a turn still running.
     """
     if session_access.is_review_conversation(session):
-        # A fork copies what a one-session review read into a session that is not in its door.
+        # A fork copies what a one-session review read into a session that is not in its profile.
         raise ValueError("a one-session review's chat cannot be forked")
     binding = getattr(session, "runner_binding", None)
     if binding is None or not binding.session_key or binding.runner is None:

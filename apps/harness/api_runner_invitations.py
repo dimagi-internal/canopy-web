@@ -274,7 +274,7 @@ def approve_runner_invitation(request: HttpRequest, invitation_id: uuid.UUID):
 
 # ---- the box pairs: `POST /api/harness/runners/pair-by-role` --------------------------
 #
-# Anonymous at the door (`auth=None`, and the path is public in
+# Anonymous at the way in (`auth=None`, and the path is public in
 # `apps/common/middleware.py`): the box holds no token. Its instance role's proof
 # is the identity, and an invitation its creator APPROVED behind a passkey is the
 # authority. Nothing the box sends can approve anything: it is let in by what a
@@ -305,7 +305,7 @@ def _ecdh_of(payload: RunnerPairByRoleIn) -> tuple[dict, str]:
 
 @pair_router.post("", response={200: RunnerPairByRoleOut, 201: RunnerPairByRoleOut, 202: RunnerPairByRoleOut},
                   auth=None, summary="A new cloud box pairs by its instance role (no token)")
-# anonymous door: the box's instance-role proof, plus an invitation its creator
+# anonymous route: the box's instance-role proof, plus an invitation its creator
 # approved (or that role's existing, approved runner); one uniform 401 otherwise
 # the invited box pairing: only what its creator approved (runner.paired activity)
 @gate("invited-role", kind="runner-protocol")

@@ -133,7 +133,7 @@ def offered(agent) -> list[str]:
 
 def refusal(agent, cli: str) -> str | None:
     """Why a conversation, turn or schedule may not choose `cli` for `agent`, or
-    None when it may (blank = no choice: the agent's default decides). Every door
+    None when it may (blank = no choice: the agent's default decides). Every route
     that takes a chosen CLI asks this, so a choice nothing can run is refused when
     it is made, never left to wait in the queue: the agent must be set up for it,
     and some runner serving its workspace must have it (`available`)."""
@@ -226,7 +226,7 @@ def conversation_refusal_of(session):
 
 
 def conversation_refusal(session) -> str | None:
-    """`conversation_refusal_of`, as the sentences a send door says. None when it can."""
+    """`conversation_refusal_of`, as the sentences a send path says. None when it can."""
     refused = conversation_refusal_of(session)
     return None if refused is None else refused.message
 
@@ -243,7 +243,7 @@ def pin_conversation(session_ids, cli: str) -> None:
 
 
 def confines(report: CliReport) -> bool:
-    """Whether a box can hold a caller's turn to its capability on this CLI: its
+    """Whether a box can hold a caller's turn to its profile on this CLI: its
     guard and envelope versions for it are the ones `routing.profile_q` requires."""
     from .routing import (  # noqa: PLC0415 — routing imports the models, which import this module
         ENVELOPE_VERSION,

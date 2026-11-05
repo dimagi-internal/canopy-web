@@ -97,7 +97,7 @@ def delete(key: str) -> None:
 def http_response(attachment):
     """An attachment's bytes as the response every reader gets — the browser's
     thumbnail and the runner's download stream the same thing, with the same
-    headers, whichever door let them in.
+    headers, whichever route let them in.
 
     The caller decides WHO may read; this only serves. 503 when no bucket is
     configured, never a half-response.

@@ -1,4 +1,4 @@
-"""Live chat sessions — the interactive front-door to a durable harness Turn.
+"""Live chat sessions — the interactive way in to a durable harness Turn.
 
 A Session is a conversation thread. A "send" enqueues a harness Turn (target=
 session); the assistant's output lands in the TurnEvent ledger and is projected

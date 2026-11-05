@@ -2,7 +2,7 @@
 
 The other half of `page_state.py`. That module lets a page say what it is
 showing; this one makes the saying *stay true*, by notifying every attached page
-when the data behind it changes — **whoever changed it, through whatever door**.
+when the data behind it changes — **whoever changed it, through whatever route**.
 
 **The bug.** Ask canopy "close the ones I'm looking at" on an agent's task list
 and what you see used to depend on which tool the agent picked: a page action

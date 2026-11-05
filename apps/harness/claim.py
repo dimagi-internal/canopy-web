@@ -410,7 +410,7 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         # it would give to a model. Only a cloud box that reports `jobs` takes one, and
         # above the pin, the binding and the order like the checks around it: a pin
         # places work, it does not make a box able. Every claim comes through here —
-        # REST and the socket — so this is the only door.
+        # REST and the socket — so this is the only way in.
         if (why := job_refusal(runner, turn)) is not None:
             skips[turn.pk] = why
             continue

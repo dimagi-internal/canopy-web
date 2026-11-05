@@ -1,7 +1,7 @@
 """`POST /api/harness/runners/box-egress` — root on a cloud box reads the egress lock
 people set for its runners (`apps/harness/egress.py`).
 
-Anonymous at the door (`auth=None`, public in `apps/common/middleware.py`): root
+Anonymous at the way in (`auth=None`, public in `apps/common/middleware.py`): root
 holds no canopy token — its runners do, and a runner must not be the one relaying its
 own lock, or a runner could loosen it. Root proves the box's instance role instead
 (IMDS is closed to runners), and gets the settings of every live runner on that
@@ -29,7 +29,7 @@ box_egress_router = Router(auth=None, tags=["harness"])
 
 @box_egress_router.post("", response=BoxEgressOut, auth=None,
                         summary="A cloud box reads its runners' egress lock (instance role, no token)")
-# anonymous door: the box's instance-role proof is the identity; it reads only its
+# anonymous route: the box's instance-role proof is the identity; it reads only its
 # own runners' settings, and the answer can only add to what the box enforces
 @gate("device-proof", kind="runner-protocol")
 def box_egress(request: HttpRequest, payload: BoxEgressIn):

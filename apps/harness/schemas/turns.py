@@ -335,7 +335,7 @@ class ClaimedTurnOut(TurnOut):
     chat_key: str | None = None
     # True when the turn is in a chat whose conversation holds a host's sensitive
     # data (`sensitivity.is_sensitive`). Such a conversation's turns are all confined
-    # to the same capability, so a sensitive-data runner resumes the Claude session
+    # to the same profile, so a sensitive-data runner resumes the Claude session
     # it kept for the conversation's previous turn rather than start fresh.
     sensitive_conversation: bool = False
     # For a turn in a sensitive conversation: {Claude session id: how many of that

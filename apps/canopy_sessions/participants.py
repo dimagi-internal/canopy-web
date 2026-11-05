@@ -11,7 +11,7 @@ of its people is what `reads_content` admits, so a person joins one only by its
 owner's browser act, which wraps the conversation's key to them
 (`POST /{id}/participants`). `ensure_participant` adds nobody to one who is not its
 creator and holds no wrap of its key — a Slack reply, a dispatch's asker or any
-door to come.
+send path to come.
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from .models import Session, SessionKeyWrap, SessionParticipant
 
 
 def may_join_implicitly(session: Session, user) -> bool:
-    """Whether a door may add `user` to `session` without its owner's act: any
+    """Whether a send path may add `user` to `session` without its owner's act: any
     ordinary conversation; a sensitive one only for its creator, or someone who
     already holds a wrap of its key (a dispatched or forked conversation carries
     its people's wraps, `conversation_keys.copy_key`)."""

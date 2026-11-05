@@ -38,7 +38,7 @@ by `tests/test_act_as_you_on_canopy.py`:
 * **One list of what it never reaches** (`EXCLUDED_PREFIXES`, `EXCLUDED_PATTERNS`,
   `EXCLUDED_TOOLS`): minting or rotating tokens, the person's memory switches and grants,
   passkeys, vaults, keys and secrets, act-as and host-grant approvals, agent-login
-  acceptance, and the runner protocol. `route_refusal` is the one check both doors ask —
+  acceptance, and the runner protocol. `route_refusal` is the one check both routes ask —
   REST (`tokens.middleware._authenticate_act_as_token`) and MCP (`mcp.act_as_scope`, and
   again inside the in-process request, `tokens.middleware._authenticate_mcp_call`).
 * **Attributed "<agent> as <person>".** Every request it makes is a row in the MCP call log
@@ -84,7 +84,7 @@ REASON_MAX = 500
 _RUNNER = "the runner protocol and its enrolment"
 
 # --- what an act-as token never reaches -------------------------------------------------
-# ONE list, for both doors. Paths are FLAT (`/api/…`, the tenant prefix `/api/w/<ws>`
+# ONE list, for both routes. Paths are FLAT (`/api/…`, the tenant prefix `/api/w/<ws>`
 # stripped first); a route MCP does not serve as a tool is refused before these are asked.
 
 #: Path prefixes: every route under them, every method, every scope.
@@ -311,7 +311,7 @@ def attended_by(turn, person, *, live: bool) -> bool:
     All of: the turn is a message the person typed in the canopy-web chat
     (`origin=canopy_web_chat`, asker kind `user` and that very person — not a chain on their
     behalf, a schedule, an inbound email, Slack, a dispatch or another agent), it is not
-    confined to a caller capability, the asker is verified, and it belongs to a chat
+    a confined turn (read mode or a connected site), the asker is verified, and it belongs to a chat
     session. `live` (asking) also needs the person present in that session right now
     (`presence.is_present`); approving does not, since the approval page is where they
     go — the permission still dies with the conversation (`held`)."""

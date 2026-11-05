@@ -4,11 +4,11 @@ canopy tells a host "this is the person's own View, no agent acting" with a sign
 statement (`Canopy-View`, `apps/host_grants/host_gateway.py`), and a host may give that
 View more than it gives an agent (Connect Labs: the rows of a sensitive result). So the
 question is asked of the PRINCIPAL, from the credential the request authenticated with —
-never of the transport: MCP is the REST API, and a door is not who is asking.
+never of the transport: MCP is the REST API, and a route is not who is asking.
 
 A person acting as themselves: a browser session, a site's delegated (widget) token, a
 contact's token, the person's own PAT or OAuth sign-in. Never one of these, whatever
-door it uses:
+route it uses:
 
 * a conversation's caller token — a turn acting as the person who asked;
 * a login canopy-web issued for one turn (`TurnAgentToken`), or any request naming the

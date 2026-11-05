@@ -13,7 +13,7 @@ Two writers, so no path can forget:
   unarchived), `workspace` (moved), the Slack thread in `metadata` (bound /
   detached), the sensitivity requirement (sensitivity changed), creation and
   deletion, and every `SessionParticipant` row added, re-roled or removed. Any
-  `save()` anywhere — a route, Slack's front door, the runner report, a contact's
+  `save()` anywhere — a route, Slack's channel, the runner report, a contact's
   archive — is covered without a call at its site.
 * **Everything else is called where it happens** (`record`): queryset `update()`s
   the row never sees (the runner report's closes, staleness, an agent's re-home),
