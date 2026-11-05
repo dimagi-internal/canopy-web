@@ -31,7 +31,7 @@ class SlackReinstallOut(StrictModel):
 
 class SlackHistoryOut(StrictModel):
     # `--history <minutes>`: may an ask hand the agent the channel's recent
-    # past, and how far back a time window may reach (a `--msgs` count has no
+    # past, and how far back a time window may reach (a `--msgs` or `--threads` count has no
     # time limit). This workspace's own policy.
     enabled: bool
     max_minutes: int
