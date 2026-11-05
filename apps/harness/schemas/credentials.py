@@ -374,6 +374,19 @@ class OpenSignInRequestOut(Schema):
     expires_at: dt.datetime
 
 
+class VaultWaitOut(Schema):
+    """Why this machine holds no copy of a vault's key, and who can fix it
+    (`credentials.machine_waits.why_waiting`). `reason`: `unendorsed` (its own person
+    confirms it on Device keys — no keeper grants it), `waiting_for_keeper`,
+    `key_not_approved` or `not_a_member`. `fix` is the sentence to show as is."""
+
+    reason: str
+    machine: str = ""
+    person_email: str = ""
+    fix: str = ""
+    link: str = ""
+
+
 class RunnerVaultLayerOut(Schema):
     """One vault serving a runner, in the shape an agent's resolve gives its workspace
     vault layers (`ResolveVaultLayerOut`), so `canopy` opens both with one function."""
@@ -385,6 +398,8 @@ class RunnerVaultLayerOut(Schema):
     kv: int
     wrap: dict[str, Any] | None = None
     values: dict[str, str] = Field(default_factory=dict)
+    #: Set when `wrap` is null: why this box has no copy, and who can fix it.
+    waiting: VaultWaitOut | None = None
 
 
 class RunnerVaultOut(Schema):

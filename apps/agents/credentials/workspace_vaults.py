@@ -416,9 +416,17 @@ def _layers(vaults, device_key, wanted: set[str] | None) -> list[dict]:
         qs = VaultSecret.objects.filter(vault=v)
         if wanted is not None:
             qs = qs.filter(name__in=sorted(wanted))
-        out.append({"vault_id": str(v.pk), "name": v.name, "workspace": v.workspace_id,
-                    "binding_id": binding_id(v), "kv": v.kv, "wrap": mine.wrap if mine else None,
-                    "values": dict(qs.values_list("name", "value_zk")) if mine else {}})
+        layer = {"vault_id": str(v.pk), "name": v.name, "workspace": v.workspace_id,
+                 "binding_id": binding_id(v), "kv": v.kv, "wrap": mine.wrap if mine else None,
+                 "values": dict(qs.values_list("name", "value_zk")) if mine else {}}
+        if mine is None and device_key is not None:
+            # Why this machine has no copy and who can fix it, so the turn that reads
+            # it is not left to guess (`machine_waits`): an unendorsed machine is its
+            # own person's to confirm — no keeper, and no `zk keep`, ever grants it.
+            from .machine_waits import why_waiting  # noqa: PLC0415 — keeps this module's imports flat
+
+            layer["waiting"] = why_waiting(v, device_key)
+        out.append(layer)
     return out
 
 
