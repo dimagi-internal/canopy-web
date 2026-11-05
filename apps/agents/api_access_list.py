@@ -114,7 +114,7 @@ def _create(scope: dict, fields: dict, actor) -> AgentGrant:
     line.subject_key = AgentGrant.key_of(
         line.kind, user_id=line.user_id, subject_workspace=line.subject_workspace_id,
         at_least=line.at_least, domain=line.domain, include_below=line.include_below,
-        capability=line.capability)
+        site=line.capability)
     if AgentGrant.objects.filter(**scope, subject_key=line.subject_key).exists():
         raise HttpError(409, f"{grants.describe(line)} is already on the list — change that line instead")
     try:

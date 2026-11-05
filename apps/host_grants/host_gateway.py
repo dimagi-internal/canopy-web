@@ -10,9 +10,9 @@ what those tools do:
    argument the agent supplied.
 2. **Refuse** unless every one of these holds, each with a sentence the agent
    can say to the visitor: the conversation was held on a live connected site
-   that issues host grants; the turn's capability names that site in `sites:` (or,
-   for a full-profile turn — the owner's, an admin's, an editor's — some capability
-   of the agent does: a chat on a page reaches that site only as the person who
+   that issues host grants; the turn's profile names that site in `sites:` (or,
+   for a full-profile turn — the owner's, an admin's, an editor's — some connected
+   site of the agent does: a chat on a page reaches that site only as the person who
    sent, owners included);
    this visitor holds a grant for it; the grant is unexpired, for the site's
    current resource, and bound to canopy's current DPoP key; and the tool is
@@ -36,7 +36,7 @@ tools the grant's scopes map to, under that person's own ACL. So what a turn may
 call is what the host lists for this token. canopy adds a narrowing only on the
 agent owner's word:
 
-* the owner's per-site **ceiling** (`ceiling:` on the capability) — OPTIONAL. Absent
+* the owner's per-site **ceiling** (`ceiling:` on the connected site) — OPTIONAL. Absent
   or empty, canopy adds nothing and the host's grant decides; present, it narrows
   (an owner keeping an agent off part of a site). It can never widen: the host
   still refuses anything outside the grant.
@@ -239,7 +239,7 @@ def resolve(turn_id: str, *, reason: str = "") -> SiteContext:
     from apps.agents import interface  # noqa: PLC0415 — as the model reads above: loads with a call
 
     if turn.capability:
-        # A confined turn: its own capability must name the site.
+        # A confined turn: its own profile must name the site.
         cap = ((agent.interface or {}).get("capabilities") or {}).get(turn.capability)
         if not cap or site not in (cap.get("sites") or []):
             raise GatewayRefusal("site_not_in_capability",
@@ -250,7 +250,7 @@ def resolve(turn_id: str, *, reason: str = "") -> SiteContext:
         # on a site's page: it reaches the site the same way a visitor's does — as the
         # person who sent, under their act-as-you permission for the page, never with
         # the agent's own login there (withheld from the turn, `interface.own_login_of`).
-        # Only on a site the agent is set up for (some capability lists it).
+        # Only on a site the agent is set up for (some connected site lists it).
         if interface.page_site_of(turn, agent) != site:
             raise GatewayRefusal("site_not_in_capability",
                                  f"I am not set up to use {site}'s tools in this conversation")
@@ -293,7 +293,7 @@ def resolve(turn_id: str, *, reason: str = "") -> SiteContext:
         raise GatewayRefusal(
             "runner_requirements",
             f"this conversation must run on a {rr.describe(effective)} runner, and this one is not")
-    # A sensitive conversation's data reaches only a capability its interface says
+    # A sensitive conversation's data reaches only a connected site its interface says
     # handles sensitive data (`data: sensitive`; spec 2026-10-22-sensitive-data-agents §6).
     if rr.SENSITIVE_DATA in effective and not sensitive_data.handles_sensitive(agent, turn.capability):
         raise GatewayRefusal(
@@ -848,7 +848,7 @@ def readable_link(ctx: SiteContext, uri: str) -> None:
 async def read_resource(ctx: SiteContext, uri: str) -> dict:
     """`resources/read` for the AGENT (`site_read`), as the visitor — the read twin of
     `call_tool`, with the same resolution behind it (`resolve`: the conversation's
-    runner requirements, a capability naming the site, the visitor's live grant) and
+    runner requirements, a connected site naming the site, the visitor's live grant) and
     this turn's `Canopy-Execution` statement on every request. Only a link a site tool
     returned in this conversation, under a scheme the site declares, from a tool inside
     the owner's ceiling (`readable_link`); the host's own ACL then decides what the

@@ -1,6 +1,6 @@
 """What is left before an agent can do its job — THE list, computed from real state.
 
-One definition for every door: the agent's Settings page renders it, the create wizard
+One definition for every entry point: the agent's Settings page renders it, the create wizard
 lands on it, and because every route is an MCP tool (`agent_setup`), a Claude Code session
 finishing `/canopy:create-agent` can ask the same question instead of keeping its own copy.
 

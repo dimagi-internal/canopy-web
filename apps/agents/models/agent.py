@@ -393,8 +393,8 @@ class AgentGrant(models.Model):
     verified = models.BooleanField(default=True)
     workspace_delete_hint = "Remove the workspace's default access lines (Settings → Agent defaults) first."
 
-    #: What the line grants: ONE role (`apps/agents/roles.py`) or, instead, ONE named capability
-    #: (the scoped permission `use:<capability>`). Exactly one of the two is set.
+    #: What the line grants: ONE role (`apps/agents/roles.py`) or, instead, ONE named connected site
+    #: (the scoped permission `use:<site>`, stored in `capability`). Exactly one of the two is set.
     role = models.CharField(max_length=40, blank=True, default="")
     #: The role's row: what the line grants is the ROW's permissions, so editing the role changes its
     #: holders and nothing else moves. `role` is the row's key, kept as a copy (the envelope, the
@@ -441,7 +441,7 @@ class AgentGrant(models.Model):
 
     @staticmethod
     def key_of(kind, *, user_id=None, subject_workspace=None, at_least="", domain="",
-               include_below=False, capability="") -> str:
+               include_below=False, site="") -> str:
         if kind == AgentGrant.PERSON:
             key = f"person:{user_id}"
         else:
@@ -453,13 +453,13 @@ class AgentGrant(models.Model):
                 key = f"contact:{d}"
             else:
                 key = f"domain:{d}"
-        # A capability line is one line per capability: the same subject can hold a role line and
-        # several capability lines, so the capability is part of what makes a line unique.
-        return f"{key}#use:{capability}" if capability else key
+        # A connected-site line is one line per site: the same subject can hold a role line and
+        # several site lines, so the site is part of what makes a line unique.
+        return f"{key}#use:{site}" if site else key
 
     @property
     def permissions(self) -> frozenset[str]:
-        """What the line grants: its role's ROW (closed), or the one `use:<capability>`. Read the
+        """What the line grants: its role's ROW (closed), or the one `use:<site>`. Read the
         lines with `select_related("role_def")` (`grants.lines_for*`) so this is no query."""
         if not self.role:
             return frozenset({roles.use(self.capability)})
@@ -471,7 +471,7 @@ class AgentGrant(models.Model):
         self.subject_key = self.key_of(
             self.kind, user_id=self.user_id, subject_workspace=self.subject_workspace_id,
             at_least=self.at_least, domain=self.domain, include_below=self.include_below,
-            capability=self.capability)
+            site=self.capability)
         if self.domain:
             self.domain = self.domain.lower()
         kwargs = self._link_role(kwargs)

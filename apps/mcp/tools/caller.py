@@ -64,7 +64,7 @@ def _envelope_sync(user_id, turn_id: str, credential: dict | None = None) -> dic
             .filter(pk=pk).first())
     user = User.objects.filter(pk=user_id).first() if user_id is not None else None
     if user is not None and credential:
-        # The agent's per-turn login, as the REST door notes it (`turn_asker.remember`).
+        # The agent's per-turn login, as the REST route notes it (`turn_asker.remember`).
         from apps.harness import turn_asker  # noqa: PLC0415 — as its neighbours: tools load before apps
 
         turn_asker.remember(user, credential)

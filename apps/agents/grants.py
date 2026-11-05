@@ -5,7 +5,7 @@ One list per agent says `(who, what)` — see
 vocabulary and `docs/superpowers/specs/2026-11-02-agent-permissions-and-roles-design.md` for
 roles and permissions. `who` is a person, everyone in a workspace (optionally "at least editor"
 there, optionally also every workspace below it), or anyone whose address is at a domain. `what`
-is ONE role (`roles.py`) or, rarely, ONE named capability. A person's permissions are the union
+is ONE role (`roles.py`) or, rarely, ONE named connected site. A person's permissions are the union
 of the lines that name them; this module is the only thing that reads the lines.
 
 The agent's own lines are joined by the lines of its workspace and the workspaces above
@@ -76,7 +76,7 @@ class Resolution:
 
     role: str | None                     # the strongest ROLE line's role; None = no role line names them
     manual_only: bool = False            # every line that gives `write` demands approval (one without it frees them)
-    lines: tuple[AgentGrant, ...] = ()   # every line that matched, strongest first (role lines, then capability lines)
+    lines: tuple[AgentGrant, ...] = ()   # every line that matched, strongest first (role lines, then connected-site lines)
     #: The union of what every matching line grants, closed under the dependency rule.
     permissions: frozenset[str] = frozenset()
 
@@ -88,9 +88,9 @@ class Resolution:
         """The strongest matching line that holds `permission`."""
         return next((ln for ln in self.lines if roles.holds(ln.permissions, permission)), None)
 
-    def line_opening(self, capability: str) -> AgentGrant | None:
-        """The strongest matching line that opens `capability`."""
-        return next((ln for ln in self.lines if roles.can_use(ln.permissions, capability)), None)
+    def line_opening(self, name: str) -> AgentGrant | None:
+        """The strongest matching line that opens the profile `name`."""
+        return next((ln for ln in self.lines if roles.can_use(ln.permissions, name)), None)
 
 
 def lines_for(agent) -> list[AgentGrant]:
@@ -157,7 +157,7 @@ def resolve(agent, asker: Asker, lines: list[AgentGrant] | None = None) -> Resol
     found = [ln for ln in (lines_for(agent) if lines is None else lines) if matches(ln, asker)]
     if not found:
         return Resolution(None)
-    # Role lines first, strongest first; then the capability lines by name.
+    # Role lines first, strongest first; then the connected-site lines by name.
     # The strongest role is the one that allows the most (permissions after closure), ties by key; it
     # is for display and the envelope. `permissions` carries the decision.
     found.sort(key=lambda ln: (bool(ln.capability), -len(ln.permissions), ln.role, ln.capability))
@@ -175,12 +175,12 @@ class LineError(ValueError):
 
 
 _DOMAIN = re.compile(r"^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}$")
-_CAPABILITY = re.compile(r"^[a-z][a-z0-9_]{0,40}$")
+_SITE_NAME = re.compile(r"^[a-z][a-z0-9_]{0,40}$")
 # The roles a line can give are the catalog's (`rolecatalog`): the built-ins and whatever a workspace
 # defined, visible down its chain. `admin` and `owner` are never among them: `Agent.is_admin` and
 # `Agent.owner`, not lines.
 #: Kinds whose members are identified only by an address a message can claim. They can give
-#: `read_only` or open a named capability; they can never give a role that contains `write`
+#: `read_only` or open a named connected site; they can never give a role that contains `write`
 #: (that takes a named person or a workspace's people), whatever that role is called.
 #: (Rules published before the list are carried over as they were.)
 ADDRESS_ONLY = (AgentGrant.DOMAIN, AgentGrant.CONTACT)
@@ -238,7 +238,7 @@ def check_line(actor, *, home, kind, role=None, capability=None, user_id=None, e
     if bool(role) == bool(capability):
         raise LineError("a line gives either a role or one connected site, not both and not neither")
     if capability:
-        if not _CAPABILITY.match(capability):
+        if not _SITE_NAME.match(capability):
             raise LineError(f"{capability!r} is not the name of a connected site")
         role = ""
     else:

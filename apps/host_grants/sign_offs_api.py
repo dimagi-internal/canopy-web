@@ -1,4 +1,4 @@
-"""Site sign-offs' doors (`sign_offs.py`).
+"""Site sign-offs' routes (`sign_offs.py`).
 
 A connected site, signed with its own key: `POST /api/sites/sign-offs` asks, and
 `GET /api/sites/sign-offs/{id}` reads one request back. The approver, in canopy's web

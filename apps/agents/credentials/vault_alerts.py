@@ -1,7 +1,7 @@
 """Read-anomaly alerts on an agent's secrets (Canopy Vault Phase 1b, canopy-web#1549).
 
 When an agent resolves its secrets from canopy-web, `/credentials/resolve` is
-the only door to their values, so it is where a misuse shows. Four things are
+the only way to their values, so it is where a misuse shows. Four things are
 worth a person's attention, and each is told to the agent's OWNER (or, with no
 owner, its explicit admins) the way canopy tells an admin about an access
 request: an email and a Web Push, each linking to the agent's Credentials.

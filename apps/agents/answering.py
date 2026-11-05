@@ -72,7 +72,7 @@ def _row(name: str, entry: dict, site: str) -> dict:
 
 
 def connected_sites_of(agent) -> list[dict]:
-    """One row per site, by site. Read mode is never a row, even if a stored `ask` names a site."""
+    """One row per site, by site. Read mode is never a row, even if a stored `READ_MODE_STAMP` entry names a site."""
     rows = [_row(name, entry or {}, site) for name, entry in _entries(agent).items()
             if not iface_mod.is_read_mode(name) for site in (entry or {}).get("sites") or []]
     return sorted(rows, key=lambda r: (r["site"], r["key"]))
@@ -204,7 +204,7 @@ def set_site(agent, site: str, fields: dict, *, by, dry_run: bool = False):
 
 def remove_site(agent, site: str, *, by, dry_run: bool = False):
     """Take `site`'s row away. A turn already stamped with it gets the deny-all profile, as for any
-    capability that is gone, and an access line naming it opens nothing."""
+    profile that is gone, and an access line naming it opens nothing."""
     def change(doc):
         name = _name_for_site(doc["capabilities"], site)
         if name is None:

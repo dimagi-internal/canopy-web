@@ -21,7 +21,7 @@ from .schemas import A2AAgentCardOut
 router = Router(tags=["a2a"])
 
 # Cards change when an owner republishes an interface, which is rare; five
-# minutes bounds how long a card can advertise a capability after it is
+# minutes bounds how long a card can advertise a profile after it is
 # withdrawn (and advertising grants nothing — every turn is authorized when it
 # is enqueued). The extended card is per-person, so `private` + `Vary`.
 PUBLIC_CACHE = "public, max-age=300"

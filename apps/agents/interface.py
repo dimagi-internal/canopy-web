@@ -1,42 +1,41 @@
-"""An agent's DECLARED CAPABILITIES: what it offers people who are not its admins.
+"""An agent's PUBLISHED PROFILES: what it offers people who are not its admins.
 
-"Capability" has five meanings in canopy; this module is (a):
-  (a) interface capability: a door an agent publishes (here; `docs/architecture/access.md`);
-  (b) workspace permission: a right a role holds (`apps/workspaces/permissions.py`,
-      `docs/architecture/roles.md`);
-  (c) cloud capability: a leased machine or pool slot (`apps/capabilities`,
-      `docs/architecture/capabilities.md`);
-  (d) `Runner.capabilities`: the JSON a box reports about itself
-      (`apps/harness/models.py`, `docs/architecture/runners.md`);
-  (e) `Storyboard.capability`: the level a share link grants (`apps/storyboards/models.py`).
+A profile is one entry of the agent's published document (stored under its `capabilities` key):
+read mode, or a connected site. Other things canopy names "capability" are different concepts:
+a workspace permission (`apps/workspaces/permissions.py`, `docs/architecture/roles.md`); a leased
+cloud machine or pool slot (`apps/capabilities`, `docs/architecture/capabilities.md`);
+`Runner.capabilities`, the JSON a box reports about itself (`apps/harness/models.py`,
+`docs/architecture/runners.md`); and `Storyboard.capability`, the level a share link grants
+(`apps/storyboards/models.py`).
 
-Who may use which capability is NOT here: it is the agent's access list
+Who may use which profile is NOT here: it is the agent's access list
 (`apps/agents/grants.py`, `docs/superpowers/specs/2026-10-30-agent-roles-and-access-list-design.md`).
-This says only what each capability IS — its tools, paths and sites — and never who may use
-it (a capability no longer carries a `role:`). THE rule that decides who gets which is
+This says only what each profile IS — its tools, paths and sites — and never who may use
+it (a profile no longer carries a `role:`). THE rule that decides who gets which is
 `apps/agents/turn_context.resolve_turn_context`; every term is defined in `docs/architecture/access.md`.
 
 An agent's owner and admins reach its full working session; so does anyone the access list
-gives `write`. Everyone else — a `read_only` line, a line naming one capability — reaches only
-a capability. It is LIVE STATE
+gives `write`. Everyone else — a `read_only` line, a line naming one connected site — reaches only
+a confined profile. It is LIVE STATE
 held by canopy-web, never a file in the agent's repo, and canopy enforces it.
 
 **Allowlist by construction.** Restricting a fully-powered agent per caller —
 instructions, a policy file, a hook with a denylist — leaks. So a caller turn
-runs in its capability's profile, where everything not listed is denied:
+runs in its profile, where everything not listed is denied (read mode's override is stored
+under `READ_MODE_STAMP`):
 
     capabilities:
-      ask:                                  # the free-form capability every channel uses
+      ask:                                  # read mode, the free-form profile every channel uses
         description: Ask ACE about your programme.
-        entry: /ace:ask --thread {thread_id}  # the session's prompt (optional)
+        entry: /ace:answer-caller --thread {thread_id}  # the session's prompt (optional)
         tools: [Read, Grep, "mcp__canopy-web__who_is_asking"]
         bash: ["canopy email read --repo . {thread_id}"]
         read_paths: ["{cwd}/**"]
-        write_paths: ["{cwd}/.ace-ask/*"]    # where Write/Edit may land (none → no writes)
+        write_paths: ["{cwd}/.ace-read/*"]   # where Write/Edit may land (none → no writes)
 
-**A page can pick the capability.** A capability may name the resources it serves,
+**A page can pick the profile.** A profile may name the resources it serves,
 and a conversation held on a page that declared one of them runs there instead
-of in `ask`:
+of in read mode:
 
     capabilities:
       marketplace:
@@ -46,8 +45,8 @@ of in `ask`:
 
 This exists because an embedded page already publishes a contract — `setPageState`
 says what it is showing and which tool resolves those rows — and until now nothing
-could answer it. Every free-form channel collapsed to `ask`, so an agent embedded
-in a page had one capability shared with its email, and the only way to give the page
+could answer it. Every free-form channel collapsed to read mode, so an agent embedded
+in a page had one profile shared with its email, and the only way to give the page
 what it needed was to give an email stranger the same thing. That is the wrong
 trade in both directions: the page's conversation is under-equipped and the
 mailbox is over-exposed.
@@ -61,7 +60,7 @@ registered origin, to open a conversation at all.
 **`pages:` is superseded by `sites:` + `ceiling:`** (host grant contract v1,
 2026-09-26) and kept only so interfaces already published keep working. A
 per-page tool list had to be written by hand, page by page, and every tool on it
-ran as the AGENT. A site capability instead names a registered Connected site:
+ran as the AGENT. A connected site's profile instead names a registered Connected site:
 
     capabilities:
       connect:
@@ -69,7 +68,7 @@ ran as the AGENT. A site capability instead names a registered Connected site:
         # ceiling: ["mcp__*connect_labs__marketplace_*"]   # OPTIONAL narrowing
 
 A conversation held on that site (its server-owned `embed_app`) selects the
-capability, and its confined profile gains canopy's gateway tools (`site_tools`,
+profile, and its confined profile gains canopy's gateway tools (`site_tools`,
 `site_call`, `site_read`) and the page's own actions (`page_*`) automatically.
 Through the gateway the agent calls the host's tools AS THE VISITOR, with a grant
 the host issued for the page they are on — so what one turn may call is what the
@@ -81,15 +80,16 @@ granted. The page's `backing_tool` tells the agent where to read the rows on
 screen; it is not a filter (until 2026-09-29 it was).
 
 **Read mode is on for every agent.** Every agent HAS an interface; until its owner changes it, it is
-the default (`default_interface()`: no capability). Someone whose lines give `read` and not
+the default (`default_interface()`: no profile). Someone whose lines give `read` and not
 `write` is answered in READ MODE, a confined session that exists from the start: the agent's own
-published `ask` when it has one (an override that replaces the default whole), else canopy's
-`default_read_profile`. `read` and `ask` are the same thing (`is_read_mode`). Any OTHER capability
-is a door and must be published: a line can only open a door that exists, and an unknown or retired
-name yields the empty deny-all profile. A capability with no `pages` is never selected by a page.
+published read mode when it has one (an override that replaces the default whole), else canopy's
+`default_read_profile`. `read` and `READ_MODE_STAMP` are the same thing (`is_read_mode`). Any OTHER
+profile is a connected site and must be published: a line can only open a site that exists, and an
+unknown or retired name yields the empty deny-all profile. A profile with no `pages` is never selected
+by a page.
 
-A capability carries no `role:`, `full:`, `callers:`, `callers_default:` or `editors:`: who may use
-one is an access-list line (a role, or one that names the capability). A published interface that
+A profile carries no `role:`, `full:`, `callers:`, `callers_default:` or `editors:`: who may use
+one is an access-list line (a role, or one that names the connected site). A published interface that
 still carries them is refused with a message pointing at the access list.
 """
 from __future__ import annotations
@@ -112,23 +112,23 @@ from apps.harness import invocations
 
 logger = logging.getLogger(__name__)
 
-#: canopy's gateway to a Connected site's own tools, added to every capability
+#: canopy's gateway to a Connected site's own tools, added to every profile
 #: that names `sites:` (apps/mcp/tools/site.py).
 GATEWAY_TOOLS = ("mcp__*canopy-web__site_tools", "mcp__*canopy-web__site_call",
                  "mcp__*canopy-web__site_read")
 
 #: The actions the conversation's own page declares (`apps/mcp/page_tools.py`), also
-#: added to every capability that names `sites:`: a site conversation is held on a
-#: page, and what that page offers is part of the capability. Each runs in the visitor's
+#: added to every profile that names `sites:`: a site conversation is held on a
+#: page, and what that page offers is part of the profile. Each runs in the visitor's
 #: own tab, as them; a confined turn reaches only its own conversation's page.
 PAGE_TOOLS = ("mcp__*canopy-web__page_*",)
 
-#: The door every turn of a one-session review runs in, whoever asks: canopy's, built here, on
+#: The profile every turn of a one-session review runs in, whoever asks: canopy's, built here, on
 #: every agent, never publishable (`parse`) and never widened by a published one. It reads the
 #: asked session and replies, because that transcript is text someone may have aimed at it.
 SESSION_REVIEW = "session_review"
 #: What it holds. No Bash, no Write, no other canopy tool. `read_asked_session` takes no
-#: session id; canopy reads the one the conversation's live ask names.
+#: session id; canopy reads the one the conversation's live review request names.
 SESSION_REVIEW_TOOLS = ("Read", "ToolSearch", "mcp__*canopy-web__who_is_asking",
                         "mcp__*canopy-web__read_asked_session")
 
@@ -137,9 +137,9 @@ SESSION_REVIEW_TOOLS = ("Read", "ToolSearch", "mcp__*canopy-web__who_is_asking",
 FULL = ""
 
 def read_mode_override(iface: dict | None) -> str | None:
-    """The name of the agent's own published read-mode profile (`ask`, else `read`), or None
-    when it published none. While read mode resolves only through a published capability this
-    is the one a `read`-named ask finds."""
+    """The name of the agent's own published read-mode profile (`READ_MODE_STAMP`, else `read`), or
+    None when it published none. While read mode resolves only through a published profile this
+    is the one a `read`-named lookup finds."""
     caps = (iface or {}).get("capabilities") or {}
     return next((n for n in READ_MODE_NAMES if n in caps), None)
 
@@ -155,7 +155,7 @@ def stamp_words(stamp: str) -> str:
 
 
 def published_capability(iface: dict | None, name: str) -> tuple[str, dict] | tuple[None, None]:
-    """`(published name, capability)` for `name`, with `read` and `ask` standing for each other
+    """`(published name, profile)` for `name`, with `read` and `READ_MODE_STAMP` standing for each other
     (`is_read_mode`), or `(None, None)`. The published name is what a turn is stamped with."""
     caps = (iface or {}).get("capabilities") or {}
     if name in caps:
@@ -166,9 +166,9 @@ def published_capability(iface: dict | None, name: str) -> tuple[str, dict] | tu
 
 
 def opens(permissions, name: str) -> bool:
-    """May someone holding `permissions` (the union of their access-list lines) use the capability
-    `name`? `write` opens every capability, `read` opens `ask`, a `use:<name>` line opens `<name>`.
-    A capability does not say what it takes: that is the access list's business
+    """May someone holding `permissions` (the union of their access-list lines) use the profile
+    `name`? `write` opens every profile, `read` opens read mode, a `use:<name>` line opens `<name>`.
+    A profile does not say what it takes: that is the access list's business
     (`apps/agents/grants.py`)."""
     return roles.can_use(permissions, name)
 
@@ -179,7 +179,7 @@ _MAX_PATTERN = 300
 
 class InterfaceError(ValueError):
     """A refused interface. `path` says which field it is about (`full`,
-    `ask.tools`, `ask`), so a form can show the message next to that field; it is
+    `<name>.tools`, `<name>`), so a form can show the message next to that field; it is
     read off the message's leading `where:`/`where ` when the raiser gave none."""
 
     def __init__(self, message: str, path: str | None = None):
@@ -234,7 +234,7 @@ def parse(doc) -> dict:
     if doc.get("callers_default", "none") != "none":
         raise InterfaceError("callers_default is gone: nobody is let in by default")
     # Fields nothing reads any more. Published interfaces still carry them (`version: 1` and a
-    # capability's `input: {}` were written by every save), and a republish must not 422, so they
+    # profile's `input: {}` were written by every save), and a republish must not 422, so they
     # are accepted, ignored and not written back.
     ignored = sorted(k for k in ("callers_default", "version") if k in doc)
     caps = doc.get("capabilities") or {}
@@ -289,7 +289,7 @@ _SITE = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
 
 
 def _data(value, name: str, cap: dict) -> str:
-    """`data:` — what a capability may serve. `sensitive` is an author's
+    """`data:` — what a profile may serve. `sensitive` is an author's
     declaration that it handles sensitive data, refused when its profile shows it
     cannot (spec 2026-10-22-sensitive-data-agents §5; `apps/agents/sensitive_data.py`)."""
     from . import sensitive_data
@@ -355,7 +355,7 @@ def _own_login(value, name: str, sites: list[str]) -> dict[str, list[str]]:
 
 
 def _pages(value, cap: str) -> list[str]:
-    """Resource patterns a capability serves, e.g. `labs-marketplace://*`.
+    """Resource patterns a profile serves, e.g. `labs-marketplace://*`.
 
     An embedded page already declares what it is showing (`setPageState`), and
     that declaration is server-stored and server-versioned. This is how an agent
@@ -389,13 +389,13 @@ def session_resource(session) -> str:
 
 
 def page_entry(resource: str, iface: dict, opens) -> str | None:
-    """The capability whose `pages` match what this conversation's page declared.
+    """The profile whose `pages` match what this conversation's page declared.
 
-    Checked before falling back to `ask`, so a conversation held on a page the
-    agent has declared a capability for gets THAT capability, and every other channel is
-    unaffected. Names are tried in order for determinism; a capability the
+    Checked before falling back to read mode, so a conversation held on a page the
+    agent has declared a profile for gets THAT profile, and every other channel is
+    unaffected. Names are tried in order for determinism; a profile the
     caller's class is not listed for is skipped rather than refusing outright,
-    because `ask` may still admit them.
+    because read mode may still admit them.
 
     This cannot widen anything on the host's word: the page supplies only the
     resource it is showing, and every tool in the profile was chosen by the
@@ -429,10 +429,10 @@ def session_site(session) -> str:
 
 
 def site_entry(site: str, iface: dict, opens) -> str | None:
-    """The capability whose `sites` include the site this conversation is on.
+    """The connected site whose `sites` include the site this conversation is on.
 
-    Tried after `page_entry` (a page-specific capability is the narrower one)
-    and before falling back to `ask`. A capability the caller's class is not
+    Tried after `page_entry` (a page-specific profile is the narrower one)
+    and before falling back to read mode. A profile the caller's class is not
     listed for is skipped, exactly as for pages.
     """
     if not site:
@@ -445,7 +445,7 @@ def site_entry(site: str, iface: dict, opens) -> str | None:
 
 # --- the sites an agent serves on pages ------------------------------------------
 #
-# An agent is set up for a Connected site when some capability of its published
+# An agent is set up for a Connected site when some profile of its published
 # interface lists the site in `sites:`. A conversation held on that site's page
 # (`embed_app`) then reaches the site ONLY as the person who sent, under their
 # act-as-you permission for the page (their host grant, `host_grants.lookup`) —
@@ -454,7 +454,7 @@ def site_entry(site: str, iface: dict, opens) -> str | None:
 
 
 def page_sites(agent) -> set[str]:
-    """The Connected sites `agent` serves on pages: every site some capability of its
+    """The Connected sites `agent` serves on pages: every site some profile of its
     interface lists in `sites:`."""
     caps = ((getattr(agent, "interface", None) or {}).get("capabilities") or {}).values()
     return {site for cap in caps for site in (cap.get("sites") or [])}
@@ -478,8 +478,8 @@ def page_site_of(turn, agent=None) -> str:
 
 def site_ceiling(agent, site: str) -> list[str]:
     """The owner's narrowing of `site`'s tools for a FULL-profile turn on its page: the
-    union of the ceilings of the capabilities that list it, or none (the host's grant
-    decides) when any of them sets none — a full turn gets the widest capability the owner
+    union of the ceilings of the profiles that list it, or none (the host's grant
+    decides) when any of them sets none — a full turn gets the widest profile the owner
     opened on that site, never more."""
     caps = _caps_for_site(agent, site)
     if not caps or any(not cap.get("ceiling") for cap in caps):
@@ -489,7 +489,7 @@ def site_ceiling(agent, site: str) -> list[str]:
 
 def own_login_of(agent, site: str) -> list[str]:
     """The names of the agent's own credentials that are its login at `site`
-    (`own_login:` of every capability that lists the site). Withheld from every turn
+    (`own_login:` of every profile that lists the site). Withheld from every turn
     held on that site's page."""
     return sorted({n for cap in _caps_for_site(agent, site)
                    for n in (cap.get("own_login") or {}).get(site) or []})
@@ -508,7 +508,7 @@ def page_turn(turn, agent=None) -> dict | None:
 
 
 def published(iface: dict) -> bool:
-    """Whether the agent has declared a capability. An interface with none says nothing
+    """Whether the agent has published a profile. An interface with none says nothing
     and is treated as none."""
     return bool(iface.get("capabilities"))
 
@@ -525,7 +525,7 @@ def session_writers(session, agent) -> list[tuple[int, str]]:
     who holds it STARTED the session and gave them an owner/editor participant row in it.
 
     A person let into the owner's conversation is part of it: their turn continues the SAME session, in
-    its profile. Confining them to a capability instead keys their turn to a separate `cx-` session on
+    its profile. Confining them to a profile instead keys their turn to a separate `cx-` session on
     the runner, so a colleague replying in the owner's Slack thread landed in a fresh session the owner
     never saw (Jonathan, 2026-10-01: "if the user has access to my session, it should come back in the
     session I already started").
@@ -561,9 +561,9 @@ def grant_facts(turn, agent, *, context=None) -> dict:
 
 
 def reachable(permissions, iface: dict | None) -> list[str]:
-    """The capability names someone confined by `permissions` can use: the published ones their
-    lines open, plus read mode itself (`read`) when they hold it and the agent published no `ask`
-    of its own, since read mode exists on every agent. One list for the roster, the topology and the
+    """The profile names someone confined by `permissions` can use: the published ones their
+    lines open, plus read mode itself (`read`) when they hold it and the agent published no read
+    mode of its own, since read mode exists on every agent. One list for the roster, the topology and the
     extended card, so none reads "published nothing" as "offers nothing"."""
     caps = (iface or {}).get("capabilities") or {}
     names = [n for n in caps if opens(permissions, n)]
@@ -573,10 +573,10 @@ def reachable(permissions, iface: dict | None) -> list[str]:
 
 
 def offered_to(user, agent) -> list[str]:
-    """The capabilities `user` may use on `agent` directly — their extended A2A card.
+    """The profiles `user` may use on `agent` directly — their extended A2A card.
 
     Everything for anyone whose turns run in the whole agent anyway (owner, admins, editors);
-    for anyone else, the capabilities their role on the agent's access list may use. Nothing
+    for anyone else, the profiles their role on the agent's access list may use. Nothing
     for someone the list does not name.
     """
     iface = getattr(agent, "interface", None) or {}
@@ -593,29 +593,29 @@ def offered_to(user, agent) -> list[str]:
     return []
 
 
-def profile(agent, capability: str) -> dict | None:
-    """The capability's profile as the runner and the guard see it, or None for FULL.
+def profile(agent, name: str) -> dict | None:
+    """The profile as the runner and the guard see it, or None for FULL.
 
-    A capability that has since been unpublished yields an EMPTY profile —
+    A profile that has since been unpublished yields an EMPTY profile —
     deny everything — never the full one: a turn that was restricted when it
     was queued must not become unrestricted because the file changed.
     """
-    if capability == FULL:
+    if name == FULL:
         return None
-    if capability == SESSION_REVIEW:
+    if name == SESSION_REVIEW:
         return {"name": SESSION_REVIEW, "entry": None, "tools": list(SESSION_REVIEW_TOOLS), "bash": [],
                 "description": f"{agent.slug} reviews one session someone asked it to, and replies to them.",
                 "read_paths": ["{cwd}/**"], "write_paths": []}
-    _published, cap = published_capability(getattr(agent, "interface", None), capability)
+    _published, cap = published_capability(getattr(agent, "interface", None), name)
     default_version = None
-    if cap is None and is_read_mode(capability):
-        # Read mode on an agent that published no `ask`: canopy's own default, built from the agent
+    if cap is None and is_read_mode(name):
+        # Read mode on an agent that published no read mode of its own: canopy's own default, built from the agent
         # as it stands now (a skill added or removed changes the next turn, never a stored one).
         cap, default_version = default_read_profile(agent), READ_PROFILE_VERSION
     cap = cap or {"description": "", "entry": None,
                   "tools": [], "bash": [], "read_paths": [], "write_paths": [],
                   "pages": [], "sites": [], "ceiling": []}
-    out = {"name": capability, **{k: cap.get(k) for k in
+    out = {"name": name, **{k: cap.get(k) for k in
                                   ("description", "entry", "tools", "bash", "read_paths",
                                    "write_paths")}}
     if default_version is not None:
@@ -624,9 +624,9 @@ def profile(agent, capability: str) -> dict | None:
     if cap.get("data"):
         out["data"] = cap["data"]
     if cap.get("sites"):
-        # A site capability reaches its host ONLY through canopy's gateway, so
+        # A connected site's profile reaches its host ONLY through canopy's gateway, so
         # the gateway is part of the profile by construction — an owner cannot
-        # publish a site capability and forget the one tool that opens it. The host's
+        # publish a connected site and forget the one tool that opens it. The host's
         # own MCP server is not added: a visitor turn does not call it directly.
         # The page's own actions likewise: they are the page's, not the host's
         # (`site_call` refuses them by name and points here).

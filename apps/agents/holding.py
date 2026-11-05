@@ -26,7 +26,7 @@ def runner_may_hold_agent(runner, agent, *, standings=None) -> bool:
     Fails closed on a runner with no owner.
 
     A sensitive-data box (`is_sensitive_data_box`) is dedicated: it holds only an
-    agent with a capability that handles sensitive data, whoever owns it — so no
+    agent with a connected site that handles sensitive data, whoever owns it — so no
     other agent's full profile, secrets or GitHub identity ever shares a box with a
     sensitive conversation (spec
     2026-10-22-sensitive-data-agents §1, "A dedicated box").

@@ -224,10 +224,10 @@ def _probe_person(role: str) -> tuple:
     return user, Standing(None, False, {}, [line], {}), [line]
 
 
-def _probe_contact(capability: str) -> tuple:
+def _probe_contact(site: str) -> tuple:
     contact = Contact(email=f"contact@{_PROBE_DOMAIN}")
-    line = AgentGrant(kind=AgentGrant.CONTACT, domain=_PROBE_DOMAIN, capability=capability, verified=False,
-                      subject_key=f"probe:use:{capability}")
+    line = AgentGrant(kind=AgentGrant.CONTACT, domain=_PROBE_DOMAIN, capability=site, verified=False,
+                      subject_key=f"probe:use:{site}")
     return contact, None, [line]
 
 

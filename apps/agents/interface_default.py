@@ -32,7 +32,7 @@ READ_MODE_NAMES = (READ_MODE_STAMP, READ_MODE)
 def is_read_mode(name: str | None) -> bool:
     """THE one place that says `read` and `READ_MODE_STAMP` are the same thing. The decision, `opens`,
     `profile`, the envelope and admission matching all ask this; the enforcement layers never
-    read a capability's name, so it is a decision-time alias only. Stored names are never
+    read a profile's name, so it is a decision-time alias only. Stored names are never
     rewritten."""
     return name in READ_MODE_NAMES
 
@@ -55,7 +55,7 @@ def default_read_profile(agent, *, skills=None) -> dict:
 
     A pure function of the agent: its slug (the scratch folders and its mail script), whether it has
     a mailbox (`email`) and whether its published skill catalog has `answer-caller` (`skills`: the bare skill names; read from `agent.skills` when not
-    given). Same fields as a published capability, so the runner, the guard and the caller token
+    given). Same fields as a published profile, so the runner, the guard and the caller token
     read it unchanged.
     """
     slug = agent.slug

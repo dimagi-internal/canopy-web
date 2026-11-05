@@ -26,7 +26,7 @@ PAT_SCOPES = ["canopy:user"]
 
 
 def _lookup_user(raw: str):
-    """A PAT (or OAuth access token) through the one resolver every door uses
+    """A PAT (or OAuth access token) through the one resolver every entry point uses
     (`apps/tokens/principal.py`) — stamped exactly as REST stamps it. Returns
     (user, token) or (None, None)."""
     from apps.tokens import principal as P
@@ -49,7 +49,7 @@ def _user_agent() -> str:
 
 
 #: Scope for a CONFINED session's caller token (harness.caller_tokens): tools run
-#: as the caller, limited to the capability — see apps/mcp/turn_scope.py.
+#: as the caller, limited to its profile — see apps/mcp/turn_scope.py.
 TURN_SCOPES = ["canopy:turn"]
 
 

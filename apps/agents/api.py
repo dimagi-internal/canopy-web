@@ -103,7 +103,7 @@ router = Router(auth=session_auth, tags=["agents"])
 
 def _can(request: HttpRequest, workspace, capability: str) -> bool:
     """May the caller exercise `capability` in `workspace`? The request-shaped
-    door to `apps/workspaces/permissions.py`, the one table of what each role
+    way in to `apps/workspaces/permissions.py`, the one table of what each role
     may do. This module names capabilities, never roles."""
     return perms.can(request.user, workspace, capability)
 

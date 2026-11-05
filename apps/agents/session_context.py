@@ -7,7 +7,7 @@ table, no write, nothing about the asker.
 The turn is an input because some facts only a turn holds: a sessionless turn dispatched from a
 sensitive parent is sensitive through its ancestors, and its conversation can be `canopy_session`
 rather than `chat_session`. Each fact below asks the function that already answers it, the same way
-every door asks it today.
+every entry point asks it today.
 
 The facts the rule always reads are read at build. The ones it reads only sometimes, or only a
 screen wants, are read when first asked (`cached_property`), so asking the rule about a turn costs
@@ -218,7 +218,7 @@ def _send_blocks(session) -> tuple[SendBlock, ...]:
     if session_access.is_content_deleted(session):
         blocks.append(SendBlock(refusal_of(CONTENT_DELETED, agent=agent, session=session), ANYONE,
                                 lambda asker: True))
-    # Only a signed-in person: a contact's send goes through its own door, with its own ACL.
+    # Only a signed-in person: a contact's send goes through its own route, with its own ACL.
     blocks.append(SendBlock(refusal_of(CANNOT_WRITE, agent=agent, session=session), SOME_PEOPLE,
                             lambda asker: asker.user is not None
                             and not session_access.can_write(asker.user, session)))
