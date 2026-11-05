@@ -30,10 +30,13 @@ jobs:
           # What the rest of the suite does to this box: every core busy.
           for i in 1 2 3 4; do (timeout 600 python3 -c 'while True: pass') & done
           uv run --with pytest --with pytest-timeout --with pytest-xdist pytest -q -n 4 \
-            tests/test_plain_jobs.py -k test_a_new_daemon_ends_the_old_ones_job -s 2>&1 \
-            | grep -E 'DIAG|passed|failed' | cut -c1-400 | tail -80 || true
+            tests/test_plain_jobs.py -k test_a_new_daemon_ends_the_old_ones_job 2>&1 \
+            | grep -E '[0-9]+ (passed|failed)' | cut -c1-200 || true
+          wc -l /tmp/diag.txt || true
+          cut -c1-700 /tmp/diag.txt | head -40 || true
 
   chat:
+    if: false
     name: DIAG chat suite (${{ matrix.n }})
     runs-on: ubuntu-latest
     timeout-minutes: 25

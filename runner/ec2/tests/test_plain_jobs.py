@@ -1015,8 +1015,9 @@ def test_a_new_daemon_ends_the_old_ones_job(jobs, rep):
             break
         time.sleep(0.05)
     if _alive(jobs):
-        print("DIAG FAIL rep", rep, "closed_at", round(closed_at, 3), "after", round(time.monotonic() - closed_at, 3),
-              "polls", len(jobs._diag_seen), "seen", jobs._diag_seen[-6:], flush=True)
+        with open("/tmp/diag.txt", "a") as f:
+            print("DIAG FAIL rep", rep, "after", round(time.monotonic() - closed_at, 3),
+                  "polls", len(jobs._diag_seen), "seen", [(rc, line) for _, rc, line in jobs._diag_seen[-3:]], file=f)
         pytest.fail("DIAG")
     jobs._box.holders.pop().close()      # and the daemon's death closed its hold on the slot
     for _ in range(400):
