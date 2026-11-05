@@ -183,7 +183,7 @@ report of which features work, sent on every heartbeat; the list shows a red/amb
 
 | check | fails / warns when |
 |---|---|
-| `code_clone` | the runner's own clone (`RUNNER_SRC_DIR`, default `/opt/canopy-runner/src`) could not be synced to origin/main |
+| `code_clone` | the runner's own clone (`RUNNER_SRC_DIR`, default `/opt/canopy-runner/src`) could not be synced to its deployed sha (warn: no build-info sha, so it tracks origin/main) |
 | `packages.transcripts` | `canopy_transcript` did not import — chat sessions write no durable rows |
 | `packages.inbox` | `canopy_runner` did not import — the box reads no mail; the Gmail doorbell does nothing |
 | `packages.acp` | (`RUNNER_EXECUTOR=acp` only) `canopy_acp` did not import — no stop, turns fall back to `claude -p` |
@@ -214,8 +214,11 @@ the box reports a newer bootstrap.
 turns, and on 2026-09-22 one left it on a local branch: the next start's
 `git pull --ff-only` failed and the three packages above were never loaded, while
 the box read online + ready for six hours. `RUNNER_SRC_DIR` belongs to the runner
-alone and is RESET to origin/main on every start (never merged into), and a clone
-that cannot sync is still loaded as it was. `/opt/canopy-web` stays for the
+alone and is RESET on every start (never merged into) to the commit in
+`build-info.json` — the deployed cloud sha, whose path list covers every package
+it loads, so the packages always match the `cloud_runner.py` running them and a
+rollback rolls them back too. Only a box with no stamp tracks origin/main (its
+`code_clone` check warns). A clone that cannot sync is still loaded as it was. `/opt/canopy-web` stays for the
 auto-updater, which only ever `git show`s from it, and its `pre-commit` hook
 refuses commits there (#1131).
 

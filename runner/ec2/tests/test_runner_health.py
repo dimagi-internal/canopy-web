@@ -32,17 +32,95 @@ def origin(tmp_path):
     return src
 
 
-def _point_at(cr, monkeypatch, origin, dest):
+def _point_at(cr, monkeypatch, origin, dest, *, stamp_sha: str | None = None):
     monkeypatch.setattr(cr, "CANOPY_WEB_REPO_URL", str(origin))
     monkeypatch.setattr(cr, "RUNNER_SRC_DIR", str(dest))
     monkeypatch.setattr(cr.sys, "path", list(cr.sys.path))
     monkeypatch.setattr(cr, "_install_acp_adapter", lambda: None)
+    stamp = dest.parent / "build-info.json"
+    if stamp_sha is not None:
+        stamp.write_text(cr.json.dumps({"sha": stamp_sha, "committed_at": 1}))
+    monkeypatch.setattr(cr, "BUILD_INFO_FILE", stamp)
+    monkeypatch.setattr(cr, "_BUILD_INFO", None)
+
+
+def _commit(src, name, body="x"):
+    (src / name).write_text(body)
+    _git("-c", "user.email=t@t", "-c", "user.name=t", "add", "-A", cwd=src)
+    _git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", name, cwd=src)
+    return subprocess.run(["git", "rev-parse", "HEAD"], cwd=src, check=True,
+                          capture_output=True, text=True).stdout.strip()
+
+
+def _head(dest):
+    return subprocess.run(["git", "rev-parse", "HEAD"], cwd=dest, check=True,
+                          capture_output=True, text=True).stdout.strip()
+
+
+# ── the clone is the DEPLOYED commit, not whatever main is at restart ─────────
+
+def test_the_clone_is_pinned_to_the_deployed_sha_not_main(
+        cloud_runner, monkeypatch, origin, tmp_path):
+    deployed = _commit(origin, "deployed.txt")
+    _commit(origin, "undeployed.txt")          # merged to main, never deployed
+    dest = tmp_path / "src"
+    _point_at(cloud_runner, monkeypatch, origin, dest, stamp_sha=deployed)
+
+    assert cloud_runner.sync_runner_src() is True
+    assert _head(dest) == deployed
+    assert not (dest / "undeployed.txt").exists()
+    check = cloud_runner._HEALTH["code_clone"]
+    assert check["status"] == "ok" and deployed[:12] in check["detail"]
+
+
+def test_a_rollback_rolls_the_clone_back_too(cloud_runner, monkeypatch, origin, tmp_path):
+    older = _commit(origin, "v1.txt")
+    newer = _commit(origin, "v2.txt")
+    dest = tmp_path / "src"
+    _point_at(cloud_runner, monkeypatch, origin, dest, stamp_sha=newer)
+    cloud_runner.sync_runner_src()
+    assert _head(dest) == newer
+
+    _point_at(cloud_runner, monkeypatch, origin, dest, stamp_sha=older)   # redeployed older
+    assert cloud_runner.sync_runner_src() is True
+    assert _head(dest) == older and not (dest / "v2.txt").exists()
+
+
+def test_every_package_the_box_imports_moves_the_deployed_sha(cloud_runner, monkeypatch):
+    # The clone is checked out at the deployed sha, so a package outside the sha's
+    # path list would neither restart a box when it changes nor roll back with it.
+    import pathlib
+    import re
+    workflow = (pathlib.Path(cloud_runner.__file__).resolve().parents[2]
+                / ".github" / "workflows" / "deploy-labs.yml").read_text()
+    paths = re.search(r'^\s*PATHS="([^"]+)"', workflow, re.M).group(1).split()
+    exposed = []
+    monkeypatch.setattr(cloud_runner, "_expose_repo_package",
+                        lambda repo, name, purpose, parent="packages": exposed.append(f"{parent}/{name}"))
+    cloud_runner._expose_repo_packages(pathlib.Path("/nowhere"))
+    assert exposed
+    for pkg in exposed:
+        assert any(p == pkg or p.startswith(pkg + "/") for p in paths), f"{pkg} not in cloud_sha PATHS"
+
+
+def test_no_stamp_falls_back_to_main_and_says_so(
+        cloud_runner, monkeypatch, origin, tmp_path, capsys):
+    tip = _commit(origin, "tip.txt")
+    dest = tmp_path / "src"
+    _point_at(cloud_runner, monkeypatch, origin, dest)
+
+    assert cloud_runner.sync_runner_src() is True
+    assert _head(dest) == tip
+    assert cloud_runner._HEALTH["code_clone"]["status"] == "warn"
+    assert "names no sha" in capsys.readouterr().out
 
 
 def test_a_branch_left_in_the_clone_no_longer_disables_the_packages(
         cloud_runner, monkeypatch, origin, tmp_path):
     dest = tmp_path / "src"
-    _point_at(cloud_runner, monkeypatch, origin, dest)
+    main = subprocess.run(["git", "rev-parse", "HEAD"], cwd=origin, check=True,
+                          capture_output=True, text=True).stdout.strip()
+    _point_at(cloud_runner, monkeypatch, origin, dest, stamp_sha=main)
     assert cloud_runner.sync_runner_src() is True
     # Exactly what an agent turn did to /opt/canopy-web: a local branch with a
     # commit origin does not have. `pull --ff-only` refused this.
@@ -52,7 +130,7 @@ def test_a_branch_left_in_the_clone_no_longer_disables_the_packages(
     _git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "spec", cwd=dest)
 
     assert cloud_runner.sync_runner_src() is True
-    assert not (dest / "spec.md").exists()  # reset to origin/main, not merged
+    assert not (dest / "spec.md").exists()  # reset to the deployed sha, not merged
     assert str(dest / "packages" / "canopy_transcript") in cloud_runner.sys.path
     assert cloud_runner._HEALTH["code_clone"]["status"] == "ok"
 

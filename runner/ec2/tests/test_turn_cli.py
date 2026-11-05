@@ -29,7 +29,7 @@ def test_claude_starts_on_the_turns_model(cloud_runner):
 def test_a_turn_for_another_cli_is_refused(cloud_runner, monkeypatch):
     finished = []
     monkeypatch.setattr(cloud_runner, "_api",
-                        lambda method, path, body=None, **kw: finished.append((path, body)))
+                        lambda method, path, body=None, **kw: (finished.append((path, body)), (200, None))[1])
     assert cloud_runner._cli_refusal({"cli": "claude-code"}) is None
     assert cloud_runner._cli_refusal({}) is None, "a server that names no CLI means Claude Code"
     cloud_runner._run_turn("runner-1", {"id": TID, "cli": "codex", "prompt": "/echo:turn"})
