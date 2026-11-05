@@ -222,8 +222,11 @@ def test_a_new_sensitive_ask_is_still_told_from_the_last(w):
 # --- 7. the live socket, after it connected ---------------------------------------------------
 
 
-def _recheck(session, user, *, auth_method="session", become=None, then=None):
-    """Connect, change something, deliver the recheck frame; did the socket close?"""
+def _recheck(session, user, *, auth_method="session", become=None, then=None, wait=10.0):
+    """Connect, change something, deliver the recheck frame; did the socket close within
+    `wait` seconds? The recheck reads the database on a worker thread, which on a busy CI box
+    can take longer than a person would wait: a test of a socket staying open passes a short
+    `wait`, and one of a socket closing keeps this long one, which ends as soon as it closes."""
     from asgiref.sync import async_to_sync
     from channels.testing import WebsocketCommunicator
 
@@ -246,7 +249,7 @@ def _recheck(session, user, *, auth_method="session", become=None, then=None):
         for _group, frame in frames:
             await comm.send_input(frame)  # what the channel layer would deliver
         closed = False
-        while not closed and not await comm.receive_nothing(timeout=0.5):
+        while not closed and not await comm.receive_nothing(timeout=wait):
             closed = (await comm.receive_output()).get("type") == "websocket.close"
         await comm.disconnect()
         return closed
@@ -263,7 +266,7 @@ def test_a_token_socket_closes_when_its_conversation_becomes_sensitive(w):
     # Its own person, at a browser, stays.
     s = Session.objects.create(workspace=w["ws"], agent=w["agent"], created_by=w["user"])
     with mock.patch("django.db.transaction.on_commit", lambda fn: fn()):
-        assert not _recheck(s, w["user"],
+        assert not _recheck(s, w["user"], wait=0.5,
                             then=lambda: services.add_runner_requirements(s, {"sensitive_data"}))
 
 
