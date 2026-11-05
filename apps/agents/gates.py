@@ -141,11 +141,12 @@ def listed_agent_workspaces(request: HttpRequest) -> set[str]:
     return wsvc.request_workspace_slugs(request)
 
 
-def project_or_404(agent: Agent, ref: str):
-    """One of `agent`'s projects by ref, else 404. Gate the agent first."""
+def project_or_404(request: HttpRequest, agent: Agent, ref: str):
+    """One of `agent`'s projects by ref, if the caller may read it; else 404. Gate
+    the agent first."""
 
     project = services.get_project(agent, ref)
-    if project is None:
+    if project is None or not services.may_read_project(request.user, project):
         raise HttpError(404, f"project {ref} not found")
     return project
 
@@ -179,7 +180,9 @@ def shared_with_caller(request: HttpRequest, project) -> bool:
 
 def task_in_reach(request: HttpRequest, task) -> bool:
     """May the caller see this task's workspace — or is it in a project shared
-    with a workspace they belong to?"""
+    with a workspace they belong to? Either way, one in a project they may read."""
+    if task.project_id is not None and not services.may_read_project(request.user, task.project):
+        return False
     if task.workspace_id in visible_agent_workspaces(request):
         return True
     return task.project_id is not None and shared_with_caller(request, task.project)
@@ -222,10 +225,11 @@ def require_task_edit(request: HttpRequest, task) -> None:
 def project_ws_or_404(request: HttpRequest, workspace: str, handle: str):
     """A project by address, if the caller may see its workspace or its lead
     agent's (a dimagi agent leading connect's project reads it as the dimagi
-    member it is); else 404 — the same for "no such project"."""
+    member it is), and may read it; else 404 — the same for "no such project"."""
     project = services.get_workspace_project(workspace, handle)
     if project is None or (workspace not in set(listed_agent_workspaces(request))
-                           and not project_in_reach(request, project)):
+                           and not project_in_reach(request, project)) \
+            or not services.may_read_project(request.user, project):
         raise HttpError(404, f"project {workspace}/{handle} not found")
     return project
 
@@ -233,7 +237,10 @@ def project_ws_or_404(request: HttpRequest, workspace: str, handle: str):
 def project_in_reach(request: HttpRequest, project) -> bool:
     """May the caller read `project`: a member of its workspace or of its lead
     agent's, or of a workspace it is shared with? (A MEMBER agent's workspace
-    is not enough — reaching an agent does not open every project it works on.)"""
+    is not enough — reaching an agent does not open every project it works on.)
+    And it is one they may read at all."""
+    if not services.may_read_project(request.user, project):
+        return False
     visible = visible_agent_workspaces(request)
     if project.workspace_id in visible:
         return True

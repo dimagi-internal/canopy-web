@@ -35,6 +35,7 @@ from .gates import (
     project_agent_login,
     project_ws_or_404,
     require_project_edit,
+    task_in_reach,
     task_or_404,
     visible_agent_workspaces,
 )
@@ -109,14 +110,16 @@ def _turn_of(task: AgentTask) -> TaskTurnOut | None:
 
 def task_detail(request: HttpRequest, task: AgentTask) -> TaskDetailOut:
     task = work.task_rows(AgentTask.objects.filter(pk=task.pk)).get()
-    subtasks = list(work.task_rows(task.subtasks.all()).order_by("rank", "id"))
+    subtasks = list(work.task_rows(task.subtasks.filter(services.task_read_q(request.user))).order_by("rank", "id"))
+    parent = task.parent if task.parent_id and task_in_reach(request, task.parent) else None
     return TaskDetailOut(
         **AgentTaskOut.model_validate(task).model_dump(),
         actions=[AgentTaskActionOut.model_validate(a) for a in task.actions.select_related("agent", "task")],
         events=[_event_out(e) for e in work.events_of(task)],
-        relations=[TaskRelationOut(kind=r["kind"], task=_brief(r["task"])) for r in work.relations_of(task)],
+        relations=[TaskRelationOut(kind=r["kind"], task=_brief(r["task"])) for r in work.relations_of(task)
+                   if task_in_reach(request, r["task"])],
         subtasks=[AgentTaskOut.model_validate(t) for t in subtasks],
-        parent=_brief(task.parent) if task.parent_id else None,
+        parent=_brief(parent) if parent else None,
         turn=_turn_of(task),
         blocked=work.is_blocked(task),
         may_edit=may_edit_task(request, task),
@@ -240,7 +243,8 @@ def list_triage(request: HttpRequest, workspace: str = "", project: str = "",
     listed = listed_agent_workspaces(request)
     scope = [workspace] if workspace and workspace in listed else list(listed)
     tasks = services.filter_tasks(
-        work.task_rows(AgentTask.objects.filter(workspace_id__in=scope, status=AgentTask.SUGGESTED)),
+        work.task_rows(AgentTask.objects.filter(services.task_read_q(request.user), workspace_id__in=scope,
+                                                status=AgentTask.SUGGESTED)),
         user=request.user, project=project, snoozed="hide",
     ).filter(Q(origin_ref__kind__isnull=True) | ~Q(origin_ref__kind=proposals.DECISION))
     stances = {r["task_id"]: r for r in ProjectBacking.objects.filter(task__in=tasks).values("task_id").annotate(
@@ -254,7 +258,8 @@ def list_triage(request: HttpRequest, workspace: str = "", project: str = "",
         passes=stances.get(t.pk, {}).get("p", 0), ask_kind=t.ask_kind, confidence=t.confidence,
         priority=t.priority, human_why=t.human_why) for t in tasks.order_by("created_at", "id")[:clamp_limit(limit)]]
     if not project:
-        projects = list(AgentProject.objects.filter(workspace_id__in=scope, status=AgentProject.PROPOSED)
+        projects = list(AgentProject.objects.filter(services.project_read_q(request.user), workspace_id__in=scope,
+                                                    status=AgentProject.PROPOSED)
                         .select_related("agent").annotate(
                             b=Count("backings", filter=~Q(backings__stance=ProjectBacking.PASSES)),
                             p=Count("backings", filter=Q(backings__stance=ProjectBacking.PASSES))))

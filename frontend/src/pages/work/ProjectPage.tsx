@@ -127,7 +127,9 @@ export function ProjectPage(): JSX.Element {
       <UpdatesSection detail={detail} workspace={workspace} handle={handle} onChanged={reload} />
       <ProjectWork detail={detail} workspace={workspace} handle={handle} address={address} onChanged={reload} />
       <ProjectServices detail={detail} workspace={workspace} handle={handle} onChanged={reload} />
-      <ProjectShares detail={detail} workspace={workspace} handle={handle} onChanged={reload} />
+      {detail.visibility !== 'personal' && (
+        <ProjectShares detail={detail} workspace={workspace} handle={handle} onChanged={reload} />
+      )}
 
       {detail.proposal && (
         <Section id="project-proposal" title="Proposal" description="This project was proposed. Start it or decline it here.">

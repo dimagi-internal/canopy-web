@@ -75,7 +75,7 @@ def project_team(request: HttpRequest, slug: str, ref: str) -> dict:
     people, each tallied over the same ideas. No task cards, numbers, rationale
     or notes. `may_edit` says the caller may use the work board."""
     agent = agent_for_read(request, slug)
-    project = project_or_404(agent, ref)
+    project = project_or_404(request, agent, ref)
     return idea_svc.team(project, request.user)
 
 
@@ -98,7 +98,7 @@ def create_idea(request: HttpRequest, slug: str, ref: str, payload: IdeaIn) -> S
     told. To record someone ELSE's words, create a task with `kind: "idea"` and
     `human_why` (`POST /tasks/`, the editor/agent tier)."""
     agent = agent_for_read(request, slug)
-    project = project_or_404(agent, ref)
+    project = project_or_404(request, agent, ref)
     if agent.is_own_login(request.user):
         raise HttpError(422, "an agent has no ideas of its own: record a person's words as a task "
                              "with kind=idea and human_why")
@@ -127,7 +127,7 @@ def project_ideas(request: HttpRequest, slug: str, ref: str) -> dict:
     An agent sees contributor-page content (goals, quotes) only for people who
     let agents use what they learned."""
     agent = agent_for_read(request, slug)
-    project = project_or_404(agent, ref)
+    project = project_or_404(request, agent, ref)
     return svc.board(project, svc.reader_of(request.user))
 
 
@@ -140,7 +140,7 @@ def contributor_page(request: HttpRequest, slug: str, ref: str, person: str) -> 
     project's ideas whose person they are), plus wants not yet recorded as ideas. Read it before building on — or against —
     their idea. `person` is an id or an email address."""
     agent = agent_for_read(request, slug)
-    project = project_or_404(agent, ref)
+    project = project_or_404(request, agent, ref)
     who = _person(project, person)
     reader = svc.reader_of(request.user)
     # Anyone the workspace deals with has a page, if only an empty one: it says
@@ -171,7 +171,7 @@ def put_contributor_summary(request: HttpRequest, slug: str, ref: str, person: s
     them and has granted it, or for the person themself — anyone else is 403.
     Makes them a participant (source `summary`) if they were not one."""
     agent = agent_for_read(request, slug)
-    project = project_or_404(agent, ref)
+    project = project_or_404(request, agent, ref)
     who = _person(project, person)
     reader = svc.reader_of(request.user)
     allowed, why_not = svc.may_write_summary(who, reader)
@@ -194,7 +194,7 @@ def delete_contributor_summary(request: HttpRequest, slug: str, ref: str, person
     """The person themself, the agent's admins, or the agent that wrote it.
     Leaves them a participant; their ideas stay on the board."""
     agent = agent_for_read(request, slug)
-    project = project_or_404(agent, ref)
+    project = project_or_404(request, agent, ref)
     who = _person(project, person)
     row = (ProjectParticipant.objects.select_related("person", "project__agent", "summary_by_agent")
            .filter(project=project, person=who).first())

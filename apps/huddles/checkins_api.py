@@ -22,6 +22,7 @@ from django.utils import timezone
 from ninja import Router, Status
 from ninja.errors import HttpError
 
+from apps.agents import services as agent_services
 from apps.agents.models import AgentProject, AgentTask
 from apps.api.auth import session_auth
 from apps.api.route_gates import gate
@@ -99,7 +100,7 @@ def _qs():
 def _project(request: HttpRequest, slug: str, ref: str) -> AgentProject:
     from apps.agents.gates import agent_for_read, project_or_404
 
-    return project_or_404(agent_for_read(request, slug), ref)
+    return project_or_404(request, agent_for_read(request, slug), ref)
 
 
 def _checkin_or_404(project: AgentProject, name: str) -> ProjectCheckin:
@@ -117,7 +118,15 @@ def _require_writer(request: HttpRequest, project: AgentProject) -> None:
                              "can change its check-ins")
 
 
+def _refuse_personal(project: AgentProject) -> None:
+    try:
+        agent_services.refuse_on_personal(project, "check-ins")
+    except agent_services.ProjectScopeError as e:
+        raise HttpError(e.status, str(e)) from e
+
+
 def _save(request: HttpRequest, project: AgentProject, data: dict, checkin: ProjectCheckin | None = None):
+    _refuse_personal(project)
     try:
         return checkins.save(project=project, by=request.user, data=data, checkin=checkin)
     except checkins.CheckinError as e:
@@ -233,6 +242,7 @@ def run_project_checkin_now(request: HttpRequest, slug: str, ref: str, name: str
     project = _project(request, slug, ref)
     c = _checkin_or_404(project, name)
     _require_writer(request, project)
+    _refuse_personal(project)
     if c.schedule is None:
         raise HttpError(409, f"{c.name} has no schedule — save it again")
     run, _ = checkins.announce(c.schedule, timezone.now(), manual=True)
@@ -261,17 +271,18 @@ def list_project_checkin_runs(request: HttpRequest, slug: str, ref: str, limit: 
         row["tasks"] = [{"agent": t.agent.slug, "ref": t.ext_id, "title": t.title, "status": t.status,
                          "url": checkins.project_path(project), "spawned": proposals.spawned_of(t)}
                         for t in sorted(by_run.get(r.pk, []), key=lambda t: t.pk)]
-        row["projects"] = _huddle_projects(r)
+        row["projects"] = _huddle_projects(r, request.user)
         out.append(row)
     return out
 
 
-def _huddle_projects(r: CheckinRun) -> list[dict]:
+def _huddle_projects(r: CheckinRun, user) -> list[dict]:
     if not r.huddle_id:
         return []
     tail = Q(source_url__endswith=f"/huddles/{r.huddle_id}") | Q(source_url__endswith=f"/huddles/{r.huddle_id}/")
     tree = checkins._tree(r.project.agent.workspace_id)
-    rows = (AgentProject.objects.select_related("agent").filter(tail, workspace_id__in=tree)
+    rows = (AgentProject.objects.select_related("agent")
+            .filter(agent_services.project_read_q(user), tail, workspace_id__in=tree)
             .order_by("agent__slug", "pk"))
     return [{"agent": p.agent.slug, "ref": p.ext_id, "name": p.name, "status": p.status,
              "url": checkins.project_path(p)} for p in rows]
@@ -285,7 +296,8 @@ def _huddle_projects(r: CheckinRun) -> list[dict]:
 def list_checkins(request: HttpRequest) -> list[dict]:
     """Every check-in on a project in your workspaces — a navigation view; each
     one's record lives on its project's page."""
-    rows = (_qs().filter(project__workspace_id__in=wsvc.request_workspace_slugs(request))
+    rows = (_qs().filter(agent_services.project_read_q(request.user, "project__"),
+                         project__workspace_id__in=wsvc.request_workspace_slugs(request))
             .order_by("project__name", "name"))
     return [checkin_out(c, request.user) for c in rows]
 
@@ -296,7 +308,8 @@ def _run_qs():
 
 def _run_or_404(request: HttpRequest, run_id: int) -> CheckinRun:
     r = (_run_qs().filter(pk=run_id)
-         .filter(project__workspace_id__in=wsvc.request_workspace_slugs(request)).first())
+         .filter(agent_services.project_read_q(request.user, "project__"),
+                 project__workspace_id__in=wsvc.request_workspace_slugs(request)).first())
     if r is None:
         raise HttpError(404, f"check-in run {run_id} not found")
     return r

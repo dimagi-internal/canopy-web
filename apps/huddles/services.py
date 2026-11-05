@@ -27,6 +27,7 @@ import re
 
 from django.db.models import Exists, OuterRef, Q
 
+from apps.agents.services import project_read_q, task_read_q
 from apps.agents.models import AgentProject, AgentTask
 from apps.agents.proposals import huddle_of_url
 from apps.harness import ledger
@@ -123,11 +124,12 @@ def _rounds_qs(visible_qs, huddle_ids):
     return visible_qs.filter(origin_ref__kind="huddle_round", origin_ref__huddle__in=list(huddle_ids))
 
 
-def _outputs_qs(workspaces):
+def _outputs_qs(workspaces, user):
     """Board tasks pointing at a huddle page, filed by an agent in any of
-    `workspaces` (the caller's own) — a huddle's members span workspaces."""
+    `workspaces` (the caller's own) — a huddle's members span workspaces — and in
+    no project, or one `user` may read."""
     return AgentTask.objects.select_related("agent", "project").filter(
-        workspace_id__in=list(workspaces), source_url__contains="/huddles/")
+        task_read_q(user), workspace_id__in=list(workspaces), source_url__contains="/huddles/")
 
 
 def _base(anchor, *, rounds_dispatched: int, outcome_count: int) -> dict:
@@ -146,7 +148,7 @@ def _base(anchor, *, rounds_dispatched: int, outcome_count: int) -> dict:
     }
 
 
-def summaries(anchor_rows, visible_qs, workspaces) -> list[dict]:
+def summaries(anchor_rows, visible_qs, workspaces, *, user) -> list[dict]:
     """One summary per anchor, in the order given — a fixed handful of queries
     for the whole list, not several per huddle. `workspaces` are the caller's own:
     a huddle's outcomes count tasks from any of them, not just the anchor's."""
@@ -161,8 +163,8 @@ def summaries(anchor_rows, visible_qs, workspaces) -> list[dict]:
 
         # A huddle's outcomes: its proposed projects, and (filed before those
         # existed) its loose tasks.
-        urls = list(_outputs_qs(workspaces).values_list("source_url", flat=True))
-        urls += AgentProject.objects.filter(workspace_id__in=list(workspaces),
+        urls = list(_outputs_qs(workspaces, user).values_list("source_url", flat=True))
+        urls += AgentProject.objects.filter(project_read_q(user), workspace_id__in=list(workspaces),
                                             source_url__contains="/huddles/").values_list("source_url", flat=True)
         for url in urls:
             h = huddle_of_url(url)
@@ -248,7 +250,7 @@ def detail(anchor, *, user, visible_qs, workspaces) -> dict:
          "project": (a.project.ext_id or a.project.handle) if a.project_id else "",
          "url": a.url,
          "next_action": a.next_action, "updated_at": a.updated_at}
-        for a in _outputs_qs(workspaces).filter(
+        for a in _outputs_qs(workspaces, user).filter(
             Q(source_url__endswith=f"/huddles/{hid}") | Q(source_url__endswith=f"/huddles/{hid}/"))
         .order_by("agent__slug", "id")
         # A check-in's proposed tasks are rendered as cards (`tasks`), not loose outputs.
@@ -270,7 +272,7 @@ def detail(anchor, *, user, visible_qs, workspaces) -> dict:
             "cells": cells, "outputs": outputs,
             "projects": projects, "tasks": tasks,
             # The check-in it ran for, from the anchor's `origin_ref` run.
-            "checkin": checkin_ref(anchor, workspaces)}
+            "checkin": checkin_ref(anchor, workspaces, user=user)}
 
 
 def projects_of(huddle_id: str, workspaces, *, user) -> list[dict]:
@@ -278,9 +280,8 @@ def projects_of(huddle_id: str, workspaces, *, user) -> list[dict]:
     agent in any of `workspaces`, each as `proposals.card` renders it (the same
     card the project page shows)."""
     from apps.agents import proposals
-
     rows = (AgentProject.objects.select_related("agent", "owner_user")
-            .filter(workspace_id__in=list(workspaces))
+            .filter(project_read_q(user), workspace_id__in=list(workspaces))
             .filter(Q(source_url__endswith=f"/huddles/{huddle_id}")
                     | Q(source_url__endswith=f"/huddles/{huddle_id}/"))
             .order_by("agent__slug", "pk"))
@@ -291,16 +292,15 @@ def tasks_of(huddle_id: str, workspaces, *, user) -> list[dict]:
     """The tasks this huddle proposed in its check-in's project — each as
     `proposals.task_card` renders it (the same card the project page shows)."""
     from apps.agents import proposals
-
     rows = (AgentTask.objects.select_related("agent", "project", "project__owner_user")
-            .filter(workspace_id__in=list(workspaces), origin_ref__kind=proposals.CHECKIN_PROPOSAL)
+            .filter(task_read_q(user), workspace_id__in=list(workspaces), origin_ref__kind=proposals.CHECKIN_PROPOSAL)
             .filter(Q(origin_ref__huddle_id=huddle_id) | Q(source_url__endswith=f"/huddles/{huddle_id}")
                     | Q(source_url__endswith=f"/huddles/{huddle_id}/"))
             .order_by("agent__slug", "pk"))
     return [proposals.task_card(t, user) for t in rows]
 
 
-def checkin_ref(anchor, workspaces) -> dict | None:
+def checkin_ref(anchor, workspaces, *, user) -> dict | None:
     """The check-in header, when the anchor's origin_ref names a check-in run
     whose project belongs to one of `workspaces` (the caller's, in the huddle's
     tree). `group_run` / `run` are the names an engine from before check-ins
@@ -312,7 +312,7 @@ def checkin_ref(anchor, workspaces) -> dict | None:
     if not run_id:
         return None
     r = (CheckinRun.objects.select_related("checkin", "checkin__lead", "project", "project__agent")
-         .filter(pk=run_id, project__workspace_id__in=list(workspaces)).first())
+         .filter(project_read_q(user, "project__"), pk=run_id, project__workspace_id__in=list(workspaces)).first())
     if r is None:
         return None
     p = r.project

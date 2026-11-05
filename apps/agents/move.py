@@ -173,6 +173,14 @@ def check(agent, dest_slug: str, *, by) -> Workspace:
         # A workspace project stays in its workspace; its steward must be there too.
         raise MoveError(f"{agent.slug} leads project(s) {', '.join(stewarded)} of another workspace, "
                         f"which stay there; give each another lead agent first", status=409)
+    # A project it leads moves with it, and a personal one only reaches its lead while
+    # its lead is a member where it lives (`services.promote_project` refuses the rest).
+    stranded = [p.address for p in AgentProject.objects.filter(agent=agent, workspace_id=agent.workspace_id,
+                                                               visibility=AgentProject.PERSONAL)
+                .select_related("owner_user") if not (p.owner_user_id and wsvc.is_member(p.owner_user, dest.slug))]
+    if stranded:
+        raise MoveError(f"{agent.slug} leads personal project(s) {', '.join(stranded)} whose lead is not a member "
+                        f"of '{dest.slug}'; give each another lead agent first", status=409)
     return dest
 
 

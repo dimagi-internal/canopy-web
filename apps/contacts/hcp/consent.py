@@ -103,8 +103,8 @@ def project_of(turn, workspace=None):
     agents (an entry may only be filed against a project where it is written)."""
     task = getattr(turn, "raised_from_task", None) if turn is not None else None
     project = getattr(task, "project", None) if task is not None else None
-    if project is None:
-        return None
+    if project is None or project.is_personal:
+        return None  # an entry outlives the turn and is read beyond a personal project's readers
     ws_id = getattr(workspace, "pk", workspace)
     if workspace is not None and project.workspace_id != ws_id:
         return None

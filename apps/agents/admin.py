@@ -8,6 +8,7 @@ from .models import (
     AgentTaskAction,
     RepoIdentity,
 )
+from .services import task_read_q
 
 
 class RepoIdentityInline(admin.TabularInline):
@@ -49,8 +50,15 @@ class AgentTaskAdmin(admin.ModelAdmin):
     list_display = ("agent", "title", "status", "owner", "assigned", "due", "updated_at")
     list_filter = ("agent", "status")
 
+    def get_queryset(self, request):
+        # Staff read no more of a personal project here than over the API.
+        return super().get_queryset(request).filter(task_read_q(request.user))
+
 
 @admin.register(AgentTaskAction)
 class AgentTaskActionAdmin(admin.ModelAdmin):
     list_display = ("agent", "task", "action", "status", "created_at")
     list_filter = ("agent", "action", "status")
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).filter(task_read_q(request.user, "task__"))

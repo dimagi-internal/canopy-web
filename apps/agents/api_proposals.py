@@ -32,7 +32,7 @@ from apps.contacts import services as contacts
 from apps.harness.models import Turn
 
 from . import engagement, proposals, services
-from .gates import agent_for_read, agent_for_work, project_or_404, visible_agent_workspaces
+from .gates import agent_for_read, agent_for_work, project_or_404, task_in_reach, visible_agent_workspaces
 from .models import Agent, AgentTask
 from .schemas import (
     AgentBackingIn,
@@ -69,7 +69,7 @@ def resolve_task_ref(request: HttpRequest, ref: str) -> AgentTask:
     if agent is None or agent.workspace_id not in visible_agent_workspaces(request):
         raise HttpError(422, f"no task {ref!r}: name it as <agent>/<task ext_id>, e.g. ada/T41")
     task = services.get_task(agent, ext_id.strip())
-    if task is None:
+    if task is None or not task_in_reach(request, task):
         raise HttpError(422, f"{agent.slug} has no task {ext_id.strip()!r}")
     return task
 
@@ -116,7 +116,7 @@ def list_project_backings(request: HttpRequest, slug: str, ref: str) -> list[dic
     """Oldest first. `stale` marks a backing of an earlier version (the project was
     revised since); `mine` marks the caller's own. Members."""
 
-    project = project_or_404(agent_for_read(request, slug), ref)
+    project = project_or_404(request, agent_for_read(request, slug), ref)
     return proposals.backings_of(project, me=contacts.person_for(user=request.user))
 
 
@@ -145,7 +145,7 @@ def back_project(request: HttpRequest, slug: str, ref: str, payload: ProjectBack
     """Replaces your earlier stance. `line` (at most 280 characters) is required
     unless you simply back it. You become one of the project's participants. Any
     member; backing is a signal — it never starts the project."""
-    project = project_or_404(agent_for_read(request, slug), ref)
+    project = project_or_404(request, agent_for_read(request, slug), ref)
     person = _me(request)
     try:
         proposals.back(project, stance=payload.stance, line=payload.line, person=person,
@@ -162,7 +162,7 @@ def back_project(request: HttpRequest, slug: str, ref: str, payload: ProjectBack
                summary="Withdraw your backing of a project")
 @gate("member", "self", kind="content", viewer_write="withdraws only the caller's OWN backing")
 def unback_project(request: HttpRequest, slug: str, ref: str) -> Status:
-    project = project_or_404(agent_for_read(request, slug), ref)
+    project = project_or_404(request, agent_for_read(request, slug), ref)
     proposals.unback(project, _me(request))
     return Status(204, None)
 
@@ -197,7 +197,7 @@ def back_project_as_agent(request: HttpRequest, slug: str, ref: str, backer: str
     files its members' round-3 answers: co-sign → backs, amend →
     backs_with_changes, decline → passes). Replaces that agent's earlier stance."""
     agent = agent_for_read(request, slug)
-    project = project_or_404(agent, ref)
+    project = project_or_404(request, agent, ref)
     who = services.get_agent(backer)
     if who is None or who.workspace_id not in visible_agent_workspaces(request):
         raise HttpError(404, f"agent '{backer}' not found")
@@ -250,7 +250,7 @@ def propose_task(request: HttpRequest, slug: str, ref: str, payload: TaskPropose
     agent = agent_for_read(request, slug)
     if not agent.is_own_login(request.user):
         agent = agent_for_work(request, slug)
-    project = project_or_404(agent, ref)
+    project = project_or_404(request, agent, ref)
     partners = _partners(request, payload.partners)
     run = None
     if payload.run is not None:
@@ -280,7 +280,7 @@ def propose_task(request: HttpRequest, slug: str, ref: str, payload: TaskPropose
 def list_task_backings(request: HttpRequest, slug: str, ref: str, task: str) -> list[dict]:
     """Oldest first. `stale` marks a backing of an earlier version; `mine` the caller's own. Members."""
 
-    row = _task_in(project_or_404(agent_for_read(request, slug), ref), task)
+    row = _task_in(project_or_404(request, agent_for_read(request, slug), ref), task)
     return proposals.backings_of(row, me=contacts.person_for(user=request.user))
 
 
@@ -300,7 +300,7 @@ def back_task(request: HttpRequest, slug: str, ref: str, task: str, payload: Pro
     """Replaces your earlier stance. `line` (at most 280 characters) is required
     unless you simply back it. You become one of the project's participants. Any
     member; backing is a signal — it never starts the task."""
-    project = project_or_404(agent_for_read(request, slug), ref)
+    project = project_or_404(request, agent_for_read(request, slug), ref)
     row = _task_in(project, task)
     person = _me(request)
     try:
@@ -318,7 +318,7 @@ def back_task(request: HttpRequest, slug: str, ref: str, task: str, payload: Pro
                summary="Withdraw your backing of a proposed task")
 @gate("member", "self", kind="content", viewer_write="withdraws only the caller's OWN backing")
 def unback_task(request: HttpRequest, slug: str, ref: str, task: str) -> Status:
-    project = project_or_404(agent_for_read(request, slug), ref)
+    project = project_or_404(request, agent_for_read(request, slug), ref)
     proposals.unback(None, _me(request), task=_task_in(project, task))
     return Status(204, None)
 
@@ -332,7 +332,7 @@ def back_task_as_agent(request: HttpRequest, slug: str, ref: str, task: str, bac
     file` records members' round-3 co-signs: co-sign → backs, amend →
     backs_with_changes, decline → passes). Replaces that agent's earlier stance."""
     agent = agent_for_read(request, slug)
-    project = project_or_404(agent, ref)
+    project = project_or_404(request, agent, ref)
     row = _task_in(project, task)
     who = services.get_agent(backer)
     if who is None or who.workspace_id not in visible_agent_workspaces(request):

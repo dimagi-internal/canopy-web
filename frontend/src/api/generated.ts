@@ -8839,7 +8839,8 @@ export interface paths {
          * @description In `workspace` — default the lead agent's, else the one you are pinned to
          *     or the only one you are in — led by `steward` (an agent's slug) when given,
          *     with `member_agents` working on it. The handle is free from its name when
-         *     omitted.
+         *     omitted. `visibility: personal` makes it yours and its agents' alone, led by you
+         *     unless `owner_email` names someone else; a workspace admin does not read it.
          */
         readonly post: operations["create_workspace_project"];
         readonly delete?: never;
@@ -29643,6 +29644,12 @@ export interface components {
              */
             readonly status: "proposed" | "planned" | "active" | "paused" | "done" | "canceled" | "archived";
             /**
+             * Visibility
+             * @default workspace
+             * @enum {string}
+             */
+            readonly visibility: "workspace" | "personal";
+            /**
              * Category
              * @default
              */
@@ -29865,6 +29872,12 @@ export interface components {
              * @enum {string}
              */
             readonly status: "proposed" | "planned" | "active" | "paused" | "done" | "canceled" | "archived";
+            /**
+             * Visibility
+             * @default workspace
+             * @enum {string}
+             */
+            readonly visibility: "workspace" | "personal";
             /**
              * Category
              * @default
@@ -30424,6 +30437,8 @@ export interface components {
             readonly workspace?: string | null;
             /** Steward */
             readonly steward?: string | null;
+            /** Visibility */
+            readonly visibility?: ("workspace" | "personal") | null;
         };
         /**
          * AgentTaskIn
@@ -35232,6 +35247,12 @@ export interface components {
             readonly workspace: string;
             /** Member Agents */
             readonly member_agents?: readonly string[];
+            /**
+             * Visibility
+             * @default workspace
+             * @enum {string}
+             */
+            readonly visibility: "workspace" | "personal";
         };
         /**
          * McpServerOut

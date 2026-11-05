@@ -529,7 +529,7 @@ def list_person_projects(request: HttpRequest, person_id: int, workspace: str | 
     person = _person_in(person_id, ws)
     people.log_access(person, via=PersonAccess.VIA_API, workspace_slug=ws.pk,
                       reader_user=request.user, reader_agent=people.agent_of_login(request.user))
-    rows = participants.projects_of(person, ws.pk)
+    rows = participants.projects_of(person, ws.pk, reader=request.user)
     return {"person": person.pk, "workspace": ws.pk, "projects": [
         {"id": r.project_id, "ext_id": r.project.ext_id, "name": r.project.name,
          "agent": (r.project.agent_slug or ""), "status": r.project.status, "role": r.role,
@@ -589,7 +589,8 @@ def add_person_fact(request: HttpRequest, person_id: int, payload: PersonFactIn)
     project = None
     if payload.project_id is not None:
         project = AgentProject.objects.select_related("agent").filter(pk=payload.project_id).first()
-        if project is None or project.workspace_id != ws.pk:
+        # A fact is read beyond a personal project's readers, so it is not filed against one.
+        if project is None or project.workspace_id != ws.pk or project.is_personal:
             raise _bad("project_id is not a project in that workspace")
     if people.agent_of_login(request.user) is not None and not hcp.may_record(person, source_turn):
         raise ProblemError(403, "This person has not let agents learn about them",
@@ -772,7 +773,7 @@ def _with_text(person: Person, rows: list[dict]) -> list[dict]:
         gone = f is None or f.status == PersonFact.DELETED
         out.append({"meaning": None, "words": [], "on_project": False, "total": 0.0, "because": "", **r,
                     "statement": None if gone else f.statement, "kind": "" if gone else f.kind,
-                    "project": None if gone or not f.project_id else f.project.name})
+                    "project": None if gone or not f.project_id or f.project.is_personal else f.project.name})
     return out
 
 

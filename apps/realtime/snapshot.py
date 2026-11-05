@@ -36,10 +36,10 @@ def supervisor_snapshot(user) -> dict:
     agents = [a for a in agent_services.list_agents() if a.workspace_id in slugs]
     # Waiting = whatever needs a human on that agent, through the one predicate
     # (`agents.services.waiting_q`): open asks, plus live tasks parked on a person.
-    from apps.agents.services import waiting_q
+    from apps.agents.services import task_read_q, waiting_q
 
     waiting = {
-        a.slug: AgentTask.objects.filter(waiting_q(), agent=a).count() for a in agents
+        a.slug: AgentTask.objects.filter(task_read_q(user), waiting_q(), agent=a).count() for a in agents
     }
 
     # A computer's key holder (`Runner.COMPUTER`) is no fleet runner.
