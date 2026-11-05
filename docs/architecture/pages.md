@@ -625,11 +625,12 @@ Every browser-facing address canopy-web serves. The SPA route table is
     connect. It does not sign, and links to Share, when something earlier is no longer
     choosable, canopy-web is on but can't be named, a key changed, a reconnect would sign
     something different, or a voucher is undecided. With no machine ready it says so and
-    offers Try again. If the browser needs a click, or it fails, "Give <agent> access"
-    and Later do the same on press, reading the row again first; a stale statement is read
-    again and retried once. The page names the agent's machines it goes to. The agent's
-    accounts page has no Share for an account the agent can't use yet: its "Give <agent> access" link
-    opens this page without `just_connected`, so nothing prompts until the button.
+    offers Try again. If the browser needs a click, or it fails, the page is headed "Not
+    connected" and says the connect didn't finish; Try again does the same on press, reading
+    the row again first (a stale statement is read again and retried once), and Cancel leaves.
+    When it finishes the page names the machines it is on. The agent's accounts page never
+    lists an unfinished first connect: it shows Connect, and the sweep removes the row after
+    an hour. A reconnect that didn't finish shows "Reconnect needed".
   - A reload, or an agent row that is already shared, says "<agent> can use it." The lists
     show "Used by canopy-web" for those providers: a plain switch to turn off an unshared
     connection (`POST /api/connections/{id}/server-use`), a link to Share for anything else.

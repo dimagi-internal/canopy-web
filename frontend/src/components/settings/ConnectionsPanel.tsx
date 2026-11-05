@@ -211,11 +211,6 @@ export function sharePath(c: ConnectionOut, returnTo: string): string {
   return `${scopedPath(c.workspace, `/connections/${c.id}/share`)}?${new URLSearchParams({ return_to: returnTo })}`
 }
 
-/** An agent's own connection has no choosing to do: this screen stores it for that agent. */
-export function storePath(c: ConnectionOut, returnTo: string): string {
-  return `${scopedPath(c.workspace, `/connections/${c.id}/connected`)}?${new URLSearchParams({ return_to: returnTo })}`
-}
-
 /** A revoking connection is never listed (the server hides it; this is the second line). */
 export function listed(cs: readonly ConnectionOut[]): ConnectionOut[] {
   return cs.filter((c) => c.state !== 'revoking')
@@ -268,14 +263,12 @@ function Sharing({ c, returnTo, canChange = true, onChanged, owner }: {
   )
   const href = sharePath(c, returnTo)
   if (c.state === 'unshared' && owner) {
+    // An unfinished first connect is never listed, so this is a reconnect that didn't finish.
     const name = owner.name || owner.slug
     return (
       <>
-        <p className={`text-[12px] ${c.server_use && c.server_reachable ? 'text-muted-foreground' : 'text-warning'}`}>
-          {c.server_use && c.server_reachable
-            ? `Project screens and apps can use it. ${name} can't yet.`
-            : `Signed in, but ${name} can't use it yet.`}{' '}
-          {canChange && <Link to={storePath(c, returnTo)} className={shareLink}>{`Give ${name} access`}</Link>}
+        <p className="text-[12px] text-warning">
+          {`The last reconnect didn't finish, so ${name} can't use it. Reconnect to fix it.`}
           {only}
         </p>
         <UsedByCanopyWeb c={c} href={href} canChange={canChange} onChanged={onChanged} />

@@ -52,12 +52,14 @@ export function copyFor(s: ShareStateOut): Copy {
  * A person's connection was sealed to their own vault key by the callback: nothing to do, no
  * prompt; Done goes back to where they started (`return_to`), and a quiet link goes on to Share.
  *
- * An agent's connection that is still unshared is stored in that agent's vault right here, with
- * no chooser: on arrival (`just_connected=1`, which the callback adds and this page strips, so
+ * Connecting an agent means the agent has the account, so this page is part of the connect: it
+ * either ends with the agent able to use it or says the connect failed. An agent's connection that
+ * is still unshared is stored for that agent right here, with no chooser: on arrival (`just_connected=1`, which the callback adds and this page strips, so
  * a reload or a shared link never prompts) it opens the owner's vault key and shares with that
  * agent alone, through the same functions as the Share screen (`vault/ownerShare`). If the
  * browser wants a click for the passkey, or it fails, a button does the same; a question only
- * a person can answer goes to the Share screen.
+ * a person can answer goes to the Share screen. Nothing lists an unfinished connect (the server
+ * leaves it out, and the sweep removes it), so leaving here means the agent is simply not connected.
  */
 export function ConnectedPage(): JSX.Element | null {
   const { workspace = '', id = '' } = useParams()
@@ -181,24 +183,24 @@ export function ConnectedPage(): JSX.Element | null {
   if (reconnect && copy) text = `Connected as ${copy.account} and stored in your vault. ${lentBefore === 1 ? 'The agent or computer that used it needs' : 'The agents or computers that used it need'} it shared again.`
   else if (copy?.action === 'person') text = copy.text
   else if (copy) {
-    const lead = `Connected ${agent} as ${copy.account}.`
-    text = where === 'storing' ? `${lead} Storing it in ${agent}'s vault…`
-      : where === 'stored' ? `Connected ${agent} as ${copy.account} and stored in ${agent}'s vault. ${agent} can use it now.${!webSealed && copy.extra ? ` ${copy.extra}` : ''}`
+    const failed = `Connecting ${agent} didn't finish, so ${agent} can't use ${copy.account}.`
+    text = where === 'storing' ? `Signed in as ${copy.account}. Finishing the connection for ${agent}…`
+      : where === 'stored' ? `Connected ${agent} as ${copy.account}. ${agent} can use it now.${!webSealed && copy.extra ? ` ${copy.extra}` : ''}`
         : where === 'plain' ? withExtra(`${agent} can use it.`)
-          : where === 'ask' ? `${lead} ${agent} needs a decision from you before it can use this.`
-            : where === 'none' ? `None of ${agent}'s machines are ready yet. Try again once one is online.`
-            : lead
+          : where === 'ask' ? `${failed} It needs a decision from you first.`
+            : where === 'none' ? `${failed} None of ${agent}'s machines are ready. Try again once one is online.`
+            : failed
   }
   const done = <Link to={returnTo} className={linkButton}>Done</Link>
   const machines = state && copy?.action === 'agent' ? ownerAgentMachines(state).join(', ') : ''
-  const machineLine = !machines ? ''
-    : where === 'stored' ? `Stored on ${agent}'s machines: ${machines}.`
-      : where === 'storing' || where === 'click' ? `It goes to ${agent}'s approved machines: ${machines}.`
-        : ''
+  const machineLine = machines && where === 'stored' ? `It's on ${agent}'s machines: ${machines}.` : ''
+  const failed = copy?.action === 'agent' && (where === 'click' || where === 'none' || where === 'ask')
+  const heading = failed ? 'Not connected' : copy?.action === 'agent' && where === 'storing' ? 'Connecting' : 'Connected'
+  const box = failed ? 'border-destructive/30 bg-destructive/10 text-destructive' : 'border-success/30 bg-success/10 text-success'
   return (
     <div className="max-w-2xl space-y-4" data-testid="connected">
-      <h1 className="text-lg font-semibold text-foreground">Connected</h1>
-      <div className="space-y-3 rounded border border-success/30 bg-success/10 p-3 text-[13px] text-success">
+      <h1 className="text-lg font-semibold text-foreground">{heading}</h1>
+      <div className={`space-y-3 rounded border p-3 text-[13px] ${box}`}>
         <p role="status">{text}</p>
         {machineLine && <p>{machineLine}</p>}
       </div>
@@ -219,8 +221,8 @@ export function ConnectedPage(): JSX.Element | null {
         {copy?.action === 'agent' && (where === 'plain' || where === 'stored') && done}
         {copy?.action === 'agent' && where === 'click' && state && (
           <>
-            <Button onClick={() => void store(state, false)}>{`Give ${agent} access`}</Button>
-            <Link to={returnTo} className={quietLink}>Later</Link>
+            <Button onClick={() => void store(state, false)}>Try again</Button>
+            <Link to={returnTo} className={quietLink}>Cancel</Link>
           </>
         )}
         {copy?.action === 'agent' && where === 'none' && state && (
@@ -232,7 +234,7 @@ export function ConnectedPage(): JSX.Element | null {
         {copy?.action === 'agent' && where === 'ask' && (
           <>
             <Link to={share} className={linkButton}>Open the Share screen</Link>
-            <Link to={returnTo} className={quietLink}>Later</Link>
+            <Link to={returnTo} className={quietLink}>Cancel</Link>
           </>
         )}
       </div>

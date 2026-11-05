@@ -211,16 +211,16 @@ function ConnectionRow({
   const lent = !!c.granted_from
   const where = c.workspace_name || c.workspace
   const missing = c.usable ? missingScopes(c) : ''
-  const needsReconnect = c.usable && (c.needs_reconnect || missing !== '')
+  // Connecting an agent means it has the account: its own that isn't usable by it is a reconnect
+  // that didn't finish. (An unfinished first connect isn't listed at all.)
+  const needsReconnect = c.usable && (c.needs_reconnect || missing !== '' || (!lent && c.state === 'unshared'))
   const pill: { label: string; tone: 'success' | 'warning' } = !c.usable
     ? { label: 'Not working', tone: 'warning' }
     : needsReconnect
       ? { label: 'Reconnect needed', tone: 'warning' }
       : lent && c.state === 'unshared'
         ? { label: 'Not shared yet', tone: 'warning' }
-        : !lent && c.state === 'unshared'
-          ? { label: 'Not ready', tone: 'warning' }
-          : { label: 'Connected', tone: 'success' }
+        : { label: 'Connected', tone: 'success' }
   return (
     <AccountRow
       testId={`agent-connection-${c.id}`}

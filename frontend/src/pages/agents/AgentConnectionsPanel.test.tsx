@@ -142,14 +142,13 @@ describe('AgentConnectionsPanel', () => {
     expect(link.getAttribute('href')).toBe('/w/dimagi/settings/connections')
   })
 
-  it('an agent connection not stored yet offers Give that agent access, never a picker', async () => {
+  it('a reconnect that did not finish needs a reconnect, with no other step to take', async () => {
     m.listAgentConnections.mockResolvedValue({ providers: [PROVIDER], connections: [conn({ state: 'unshared' })] })
     show()
-    expect(await screen.findByText(/Signed in, but eva can't use it yet\./)).toBeTruthy()
-    expect(screen.getByText('Not ready')).toBeTruthy()
-    const a = screen.getByRole('link', { name: 'Give eva access' }) as HTMLAnchorElement
-    expect(a.getAttribute('href')).toBe('/w/w/connections/3/connected?return_to=%2Fagents%2Feva%2Fsettings%2Faccounts')
-    expect(screen.queryByRole('link', { name: 'Share' })).toBeNull()
+    expect(await screen.findByText(/The last reconnect didn't finish, so eva can't use it\./)).toBeTruthy()
+    expect(screen.getByText('Reconnect needed')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Reconnect' })).toBeTruthy()
+    expect(screen.queryByRole('link', { name: /Share|access|Store/ })).toBeNull()
   })
 
   it('never lists an agent as lent its own account', async () => {

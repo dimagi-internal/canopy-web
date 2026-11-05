@@ -89,6 +89,16 @@ class ConnectionApp(models.Model):
         return tuple(self.scopes.split())
 
 
+class ConnectionQuerySet(models.QuerySet):
+    def unfinished(self):
+        """An agent's connects still waiting on their owner's passkey. Connecting an agent means
+        the agent has it, so until the first signed share nothing lists these as connected: the
+        Connected screen finishes one or says it failed, and the sweep removes what is left. A
+        reconnect that didn't finish is not one of these: it keeps its statement and shows as
+        needing a reconnect. A person's connection is finished at sign-in, sealed to their key."""
+        return self.filter(agent__isnull=False, state=Connection.UNSHARED, statement_version=0)
+
+
 class Connection(models.Model):
     """One account an owner connected: the sealed refresh token and the metadata
     around it. canopy-web can open `sealed` and `access_sealed` only when they name its own KMS key
@@ -108,6 +118,8 @@ class Connection(models.Model):
     ACTIVE = "active"
     REVOKING = "revoking"
     STATES = [(UNSHARED, "Not shared yet"), (ACTIVE, "Active"), (REVOKING, "Revoking")]
+
+    objects = ConnectionQuerySet.as_manager()
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(
