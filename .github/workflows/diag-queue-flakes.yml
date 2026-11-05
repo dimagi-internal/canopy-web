@@ -8,6 +8,7 @@ permissions:
 
 jobs:
   job-broker:
+    if: false
     name: DIAG new daemon test (${{ matrix.n }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -36,7 +37,6 @@ jobs:
           cut -c1-700 /tmp/diag.txt | head -40 || true
 
   chat:
-    if: false
     name: DIAG chat suite (${{ matrix.n }})
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -80,7 +80,7 @@ jobs:
           for s in "session_preload_libraries = 'auto_explain'" "auto_explain.log_min_duration = '500ms'" \
                    "auto_explain.log_analyze = on" "auto_explain.log_buffers = on" "log_lock_waits = on" \
                    "deadlock_timeout = '200ms'" "log_autovacuum_min_duration = 0" "log_checkpoints = on"; do
-            psql -h 127.0.0.1 -U e2e -d canopy_e2e -c "ALTER SYSTEM SET $s"
+            psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U e2e -d canopy_e2e -c "LOAD 'auto_explain'" -c "ALTER SYSTEM SET $s"
           done
           psql -h 127.0.0.1 -U e2e -d canopy_e2e -c "SELECT pg_reload_conf()"
       - name: Run
@@ -95,7 +95,7 @@ jobs:
           mkdir -p diag
           docker logs pgdiag > diag/pg.log 2>&1 || true
           cp "${TMPDIR:-/tmp}"/e2e-fake-runner-*.log diag/ || true
-          grep -nE 'duration: [0-9]{4,}|still waiting|acquired|automatic (vacuum|analyze)' diag/pg.log | cut -c1-220 | tail -60
+          grep -nE 'duration: [0-9]{4,}|still waiting|acquired|automatic (vacuum|analyze)' diag/pg.log | cut -c1-220 | tail -60 || true
       - uses: actions/upload-artifact@v7
         if: always()
         with:
