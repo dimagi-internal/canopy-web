@@ -33,7 +33,7 @@ close).
   (`frontend/packages/canopy-ui/src/chat/turnStatus.ts`). The embedded widget gets
   it because it mounts the same `ChatPanel`.
 - **"Is the last turn live" is answered once in the browser**:
-  `canopy-ui/chat/turnView.ts::useTurnView` → `{phase, inFlight, live, listLive,
+  `frontend/packages/canopy-ui/src/chat/turnView.ts::useTurnView` → `{phase, inFlight, live, listLive,
   canStop, label, runner}`, read by the chat header (`SessionStatusChip`) and by
   `ChatPanel` (activity line, Stop, the fold); `MessageList`/`planFold` take `live`
   as given. Only the NEWEST assistant row can be in flight, and not once the
@@ -41,7 +41,7 @@ close).
   (`inFlightRow`) — a lost `chat.stream_complete` never holds "working" up.
 - **The placement banner and the composer lock read the turn status**:
   `waiting_runner` (paused when `parked`) or `paused` raise them
-  (`pages/chat/useRunnerPlacement.ts::heldByAbsentRunner`); the fleet list is read
+  (`frontend/src/pages/chat/useRunnerPlacement.ts::heldByAbsentRunner`); the fleet list is read
   only for the "Continue on…" choices and Resume's runner id.
 - **Claude Code's own error notice is not a reply.** An `isApiErrorMessage` record
   ("Not logged in · Please run /login", a usage cap) becomes an assistant row with
@@ -49,7 +49,7 @@ close).
   on the live `chat.stream_complete` frame too; the kit draws it as a one-line
   "Didn't run" row (`MessageItem.tsx::apiErrorOf`), not as the agent talking.
 - **A quiet `working` turn says so.** The status carries `claimed_at` and `last_progress_at` (the claim, or the newest ledger event) for `working`; after `QUIET_AFTER_MS` (5 min) with nothing back — counting messages on screen and a reply still streaming — the chat kit replaces silence with a fact: "cloud-ec2-2 took this 6m ago and nothing has come back from it since." No verdict ("stuck"); it never speaks over a pending dialog. Slack says the same from `TurnStatus.quiet_since` (`apps/harness/turn_status.py`, `QUIET_AFTER_SECONDS`) in Slack date tokens — "*cloud-ec2-2* took this at 15:45 and nothing has come back from it since" — so its sweep edits the line only when something changes, never every minute.
-- **The composer says whether a follow-up rides the running turn.** For `working`, the status carries `midturn` (a message sent now is typed into the live session and read mid-turn, `Turn.rides_turn`) or `midturn_blocked` — `runner` (the holding box does not report `midturn`: the cloud runner), `dialog` (a parsed menu is up; it waits for the answer) or `confined` — from `turn_status.midturn_of`, the holder-side half of `routing.may_ride`. `canopy-ui/chat/turnStatus.ts::composerPlaceholder` words it; a claimed rider is listed in `queued` as `state: "midturn"` and drawn "delivered into the current turn".
+- **The composer says whether a follow-up rides the running turn.** For `working`, the status carries `midturn` (a message sent now is typed into the live session and read mid-turn, `Turn.rides_turn`) or `midturn_blocked` — `runner` (the holding box does not report `midturn`: the cloud runner), `dialog` (a parsed menu is up; it waits for the answer) or `confined` — from `turn_status.midturn_of`, the holder-side half of `routing.may_ride`. `frontend/packages/canopy-ui/src/chat/turnStatus.ts::composerPlaceholder` words it; a claimed rider is listed in `queued` as `state: "midturn"` and drawn "delivered into the current turn".
 - **Context meter.** Each assistant record's last row carries `content.usage` = `{context_tokens, model}` (input + both cache counts, `canopy_transcript.record_window`; never a sidechain call), stored and on `chat.stream_complete`. `ChatPanel` draws `ContextMeter` from the newest row that has it. The window is 1M when the model id or the bound runner's model setting (`SessionOut.runner_model`, reported on the heartbeat as `claude_model`) has `[1m]` or the prompt is past 200k, 200k when the runner names a model without it, else "unknown" — the transcript's model id never carries `[1m]`. A compaction summary row (`record.compact_summary`) draws as a divider and voids the older reading.
 - **What a session is doing: `apps/canopy_sessions/session_state.py`.** One
   resolver for every list (the session list's `running`, `/ide`, Home, the
