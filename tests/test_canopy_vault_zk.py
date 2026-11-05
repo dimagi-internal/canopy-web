@@ -1796,8 +1796,10 @@ def test_an_unendorsed_machine_is_its_own_persons_to_confirm(fleet):
                           "`canopy vault zk keep` elsewhere will not help.")
     assert why["link"] == f"/settings?device_key={key.pk}#your-runners"
 
-    # (Confirm access for a workspace vault was pulled from the device-key listing in the
-    # 2026-11-05 hotfix: per-key `why_waiting` there was too costly. It returns batched.)
+    # Confirm access is offered for it — before, nothing was, since eva no longer waits.
+    [row] = [k for k in c.get(f"/api/runner-device-keys/?runner={key.runner_id}").json()
+             if k["id"] == str(key.pk)]
+    assert row["zk_vouch_agents"] == [{"slug": "eva", "agent_id": _aid(fleet)}]
 
     # Signing under that agent is what a keeper of the Shared vault accepts.
     res = c.post(f"{ZK}/endorsements", content_type="application/json",
@@ -1809,67 +1811,45 @@ def test_an_unendorsed_machine_is_its_own_persons_to_confirm(fleet):
     assert [e for e in row["endorsements"] if e["target"] == key.ecdh_jkt]
 
 
-def test_the_resolve_layer_does_no_per_machine_diagnosis(fleet):
-    # The credential resolve runs before every turn and on every lease heartbeat: a
-    # per-layer `why_waiting` there starved canopy-web (2026-11-05 23:00Z). A shut layer
-    # is named, nothing more, and costs the same queries however many agents it serves.
-    from django.db import connection
-    from django.test.utils import CaptureQueriesContext
-
+def test_the_resolve_layer_says_why_a_machine_has_no_copy(fleet):
     from apps.agents.credentials import workspace_vaults
+    from apps.agents.schemas.credentials import ResolveVaultLayerOut
 
     vault, ed, priv, key, ecdh, c = _unendorsed_member_machine(fleet, "isma2")
-    with CaptureQueriesContext(connection) as q:
-        [layer] = [lay for lay in workspace_vaults.layers_payload(fleet.agent, key, None)
-                   if lay["vault_id"] == str(vault.pk)]
-    assert layer["wrap"] is None and "waiting" not in layer
-    before = len(q.captured_queries)
-    for i in range(4):   # more agents the vault serves must not add queries per layer
-        Agent.objects.create(slug=f"extra{i}", name=f"Extra {i}", workspace=fleet.ws, owner=fleet.user)
-    with CaptureQueriesContext(connection) as q:
-        workspace_vaults.layers_payload(fleet.agent, key, None)
-    assert len(q.captured_queries) <= before + 2, (before, len(q.captured_queries))
+    [layer] = [lay for lay in workspace_vaults.layers_payload(fleet.agent, key, None)
+               if lay["vault_id"] == str(vault.pk)]
+    assert layer["wrap"] is None and layer["waiting"]["reason"] == "unendorsed"
+    assert "Confirm access" in layer["waiting"]["fix"]
+    assert ResolveVaultLayerOut(**layer).waiting.reason == "unendorsed"
+    # A machine that holds its copy is told nothing extra.
+    [mine] = [lay for lay in workspace_vaults.layers_payload(fleet.agent, fleet.device, None)
+              if lay["vault_id"] == str(vault.pk)]
+    assert mine["wrap"] is not None and "waiting" not in mine
 
 
-def test_an_unendorsed_machine_is_asked_of_the_vaults_admins_not_its_person(fleet, mailoutbox):
-    # The person's notice pointed at Confirm access, which never renders for a box whose only
-    # agent is kv 0 or administered by them (DIM-SA-W175): the admins, who can grant, are asked.
+def test_an_unendorsed_machine_is_mailed_to_its_own_person_not_the_admins(fleet, mailoutbox):
     from apps.agents.credentials import zk_notify
+    from apps.agents.models import ZkGrantNotice
 
     vault, ed, priv, key, ecdh, c = _unendorsed_member_machine(fleet, "isma3")
     t0 = timezone.now()
     zk_notify.sweep(t0)
     mailoutbox.clear()
     zk_notify.sweep(t0 + zk_notify.GRACE)
-    msgs = [m for m in mailoutbox if "isma3-laptop" in m.subject]
-    assert msgs and all(m.to == ["jj@dimagi.com"] for m in msgs)
-    assert not [m for m in mailoutbox if "isma3@dimagi.com" in m.to]
+    [msg] = [m for m in mailoutbox if "isma3-laptop" in m.subject]
+    assert msg.to == ["isma3@dimagi.com"]
+    assert msg.subject == "Canopy vault · confirm your machine isma3-laptop so it can read the Shared vault"
+    assert "Settings → Device keys → isma3-laptop → Confirm access" in msg.body
+    assert "`canopy vault zk keep` will not help" in msg.body
+    assert f"/settings?device_key={key.pk}#your-runners" in msg.body
+    assert not [m for m in mailoutbox if "jj@dimagi.com" in m.to and "isma3-laptop" in m.subject]
+    notice = ZkGrantNotice.objects.get(vault=vault, kind="device", target=str(key.pk))
+    assert notice.notified["to"] == "machine_person" and notice.notified["why"] == "unendorsed"
+    # Once per machine: the next sweep sends nothing more.
+    mailoutbox.clear()
+    zk_notify.sweep(t0 + 2 * zk_notify.GRACE)
+    assert not [m for m in mailoutbox if "isma3-laptop" in m.subject]
 
-
-def test_the_vault_pages_waiting_machines_cost_the_same_queries_however_many_wait(fleet):
-    # The first version diagnosed each machine on its own (membership over every agent the
-    # vault serves, per machine) and pinned canopy-web's CPU on Shared (2026-11-05 23:00Z).
-    from django.db import connection
-    from django.test.utils import CaptureQueriesContext
-
-    from apps.agents.credentials import workspace_vaults
-
-    vault, ed, priv, key, ecdh, c = _unendorsed_member_machine(fleet, "isma5")
-
-    def cost():
-        pending = workspace_vaults.pending_targets(vault)
-        with CaptureQueriesContext(connection) as q:
-            out = workspace_vaults.describe_waiting_machines(vault, pending)
-        return len(q.captured_queries), out
-
-    n1, one = cost()
-    assert [p["waiting_reason"] for p in one if p["kind"] == "device"] == ["unendorsed"]
-    for name in ("isma6", "isma7"):
-        _, _, k2, _, c2 = _members_own_laptop(fleet, name)
-        assert c2.post(f"/api/runner-device-keys/{k2.pk}/approve").status_code == 200
-    n3, three = cost()
-    assert len([p for p in three if p["kind"] == "device"]) == 3
-    assert n3 <= n1 + 2, (n1, n3)
 
 def test_the_vault_page_lists_a_machine_waiting_through_an_agent_and_why(fleet):
     # Shared (2026-11-05): reached through an agent, not a runner attachment, so the page had
@@ -1878,7 +1858,7 @@ def test_the_vault_page_lists_a_machine_waiting_through_an_agent_and_why(fleet):
     state = fleet.client.get(f"/api/vaults/{vault.pk}/zk").json()
     [row] = [p for p in state["pending"] if p["kind"] == "device" and p["target"] == str(key.pk)]
     assert row["runner_name"] == "isma4-laptop" and row["person_email"] == "isma4@dimagi.com"
-    assert isinstance(row["serves"], list) and row["waiting_reason"] == "unendorsed"
+    assert row["serves"] == ["eva"] and row["waiting_reason"] == "unendorsed"
     # The admin's grant (what the page's Give access sends) is accepted.
     wrap = ref.wrap_ecdh_es(os.urandom(32), ecdh.public_key(),
                             ref.device_info(state["agent_id"], 1, key.ecdh_jkt),

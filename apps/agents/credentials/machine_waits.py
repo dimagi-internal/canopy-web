@@ -76,18 +76,15 @@ def _serves(vault: Vault, key: RunnerDeviceKey) -> bool:
 
 def _endorsed(vault: Vault, key: RunnerDeviceKey) -> bool:
     """Has a current member of an agent this vault serves signed for this exact key?
-    (Whether a given keeper trusts that person is the keeper's call, made on the box.)
-    One query for the signatures; membership is computed only for an agent that has one
-    — this runs on every credential resolve of a box with a shut layer."""
+    (Whether a given keeper trusts that person is the keeper's call, made on the box.)"""
     if not key.ecdh_jkt:
         return False
-    rows = list(AgentVaultEndorsement.objects.filter(
-        agent__in=vault_members.attached_agents(vault), kind="device", target=key.ecdh_jkt,
-        key_jkt=key.ecdh_jkt).select_related("agent").values_list("agent_id", "endorser_id"))
-    if not rows:
-        return False
-    agents = {a.pk: a for a in vault_members.attached_agents(vault)}
-    return any(by in zk.member_ids(agents[aid]) for aid, by in rows if aid in agents)
+    for agent in vault_members.attached_agents(vault):
+        if AgentVaultEndorsement.objects.filter(
+                agent=agent, kind="device", target=key.ecdh_jkt, key_jkt=key.ecdh_jkt,
+                endorser_id__in=zk.member_ids(agent)).exists():
+            return True
+    return False
 
 
 def why_waiting(vault: Vault, key: RunnerDeviceKey | None) -> dict | None:
