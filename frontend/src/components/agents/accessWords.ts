@@ -1,7 +1,7 @@
 // The words the access list is read in. Kept out of the .tsx files so fast refresh keeps working.
 //
 // Vocabulary (docs/superpowers/specs/2026-11-04-configurable-roles-design.md): a role is a named
-// bundle of permissions (read, write, agent_edit, use:<door>) a workspace defines; read_only,
+// bundle of permissions (read, write, agent_edit, use:<site key>) a workspace defines; read_only,
 // read_write and editor are the built-ins; admin and owner are fixed, never lines. A line gives ONE role or, rarely, ONE named capability. Say "agent admin"
 // or "workspace admin", never a bare "admin"; "member", "viewer" and "user" are not agent roles.
 
@@ -77,6 +77,6 @@ export function sourceWords(r: Pick<AgentAccessRowOut, 'source' | 'role' | 'via'
   if (s === 'workspace-editor') return 'A workspace editor: every turn needs approval'
   if (s.startsWith('rule:')) return `A published rule (${s.slice(5)})`
   if (s === 'capability:read' || s === 'capability:ask') return 'In read mode'
-  if (s.startsWith('capability:')) return `Through the "${s.slice(11)}" door`
+  if (s.startsWith('capability:')) return `From the "${s.slice(11)}" connected site`
   return r.role ? 'Set on this agent' : 'No line names them'
 }

@@ -79,7 +79,7 @@ def test_an_admin_defines_a_door_role_and_it_is_one_audited_change(w):
     assert r.status_code == 201, r.content
     out = r.json()
     assert out["key"] == "connector" and out["permissions"] == ["read", "use:connect"] and not out["builtin"]
-    assert any("use the 'connect' door" in c for c in out["can"])
+    assert any("use it from the 'connect' connected site" in c for c in out["can"])
     change = SettingChange.objects.get()
     assert change.changes[0]["scope"] == "agent-roles:dimagi:connector"
     assert "0 access-list line(s)" in change.summary

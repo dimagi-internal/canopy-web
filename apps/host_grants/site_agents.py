@@ -18,7 +18,7 @@ function to say whether each agent meets what the site asks
 What each agent entry says, and where it comes from:
 
 * listed: the site's tenant allows it (`AppCredentialAgent`) — allowed but
-  with no capability naming the site in `sites:` is listed `ready: false`,
+  with no row for the site is listed `ready: false`,
   with a problem saying so;
 * `capabilities`: those that name the site; `handles_sensitive` is `data:
   sensitive`, and who/when is who last published the interface holding it — exactly
@@ -183,8 +183,7 @@ def agent_entry(app, agent: Agent) -> dict:
     # `problems` is what a host that predates `problem_links` shows.
     found: list[tuple[str, str]] = []
     if not capabilities:
-        found.append((f"{agent.name} has no capability naming {app.name} in `sites:` — publish "
-                      f"one on its interface: canopy › {reach}", reach))
+        found.append((f"{agent.name} is not connected to {app.name} — connect it under Channels on its settings: canopy › {reach}", reach))
     if not takers:
         found.append((f"no runner takes {agent.name}'s turns: canopy › {running}", running))
     elif not ready_runners:

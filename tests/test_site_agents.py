@@ -195,7 +195,7 @@ def test_it_lists_only_the_agents_allowed_on_the_site(w):
     assert got.site_name == SITE and got.tenant == "connect"
     bare = got.agent("bare")
     assert not bare.ready and not bare.capabilities
-    assert any("no capability naming connect-labs" in p for p in bare.problems)
+    assert any("not connected to connect-labs" in p for p in bare.problems)
 
 
 def test_an_agent_of_another_workspace_is_never_listed(w):
@@ -495,7 +495,7 @@ def test_every_problem_comes_with_the_url_that_fixes_it(w):
     for problem, link in zip(bare.problems, bare.problem_links):
         assert link.text == problem
         assert link.url.startswith("http") and "/w/connect/agents/bare/settings#" in link.url
-    reach = next(p for p in bare.problem_links if "no capability naming" in p.text)
+    reach = next(p for p in bare.problem_links if "not connected to" in p.text)
     assert reach.url.endswith("#reach")
 
 

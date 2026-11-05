@@ -202,10 +202,10 @@ describe('AgentAccessList', () => {
     getAccessList.mockResolvedValue(LIST({ doors: ['canopy', 'connect'] }))
     show()
     fireEvent.change(await screen.findByLabelText('Their email'), { target: { value: 'cy@dimagi.com' } })
-    fireEvent.click(screen.getByRole('radio', { name: /One door/ }))
+    fireEvent.click(screen.getByRole('radio', { name: /One connected site/ }))
     expect(screen.queryByLabelText('Capability name')).toBeNull()          // no free-text name
     expect((screen.getByRole('button', { name: 'Add' }) as HTMLButtonElement).disabled).toBe(true)   // needs a pick
-    const pick = screen.getByLabelText('Door') as HTMLSelectElement
+    const pick = screen.getByLabelText('Connected site') as HTMLSelectElement
     expect([...pick.options].map((o) => o.value)).toEqual(['', 'canopy', 'connect'])
     fireEvent.change(pick, { target: { value: 'connect' } })
     fireEvent.click(screen.getByRole('button', { name: 'Add' }))

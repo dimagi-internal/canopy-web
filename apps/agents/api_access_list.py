@@ -18,7 +18,7 @@ from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
-from . import access, grants, rolecatalog, roles
+from . import access, answering, grants, rolecatalog, roles
 from .gates import agent_for_admin, agent_for_read
 from .interface import is_read_mode
 from .models import Agent, AgentGrant
@@ -58,7 +58,7 @@ def _can(permissions) -> list[str]:
     """What a role with these (closed) permissions lets someone do, in words."""
     doors = sorted(p.partition(":")[2] for p in permissions if p.startswith(f"{roles.USE}:") and p != f"{roles.USE}:*")
     out = [_CAN[p] for p in _PERMISSIONS if roles.holds(permissions, p)]
-    return out + [f"use the {d!r} door" for d in doors if not roles.holds(permissions, roles.WRITE)]
+    return out + [f"use it from the {d!r} connected site" for d in doors if not roles.holds(permissions, roles.WRITE)]
 
 
 def role_can(role: str) -> list[str]:
@@ -138,7 +138,7 @@ def _capability_warning(line: AgentGrant, agent: Agent) -> str:
     if not line.capability or is_read_mode(line.capability) \
             or line.capability in ((agent.interface or {}).get("capabilities") or {}):
         return ""   # (read mode exists on every agent)
-    return (f"{agent.slug} has not published a capability called {line.capability!r}, so this line "
+    return (f"{agent.slug} has no connected site called {line.capability!r}, so this line "
             "opens nothing until it does")
 
 
@@ -157,7 +157,8 @@ def get_access_list(request: HttpRequest, slug: str) -> AccessListOut:
     return AccessListOut(
         inherit_workspace_defaults=agent.inherit_workspace_defaults,
         lines=lines, implicit=_implicit(agent), roles=_roles_out(agent.workspace_id), can_edit=admin,
-        doors=sorted(n for n in ((agent.interface or {}).get("capabilities") or {}) if not is_read_mode(n)))
+        doors=sorted(n for n in ((agent.interface or {}).get("capabilities") or {}) if not is_read_mode(n)),
+        door_sites={row["key"]: row["site"] for row in answering.connected_sites_of(agent)})
 
 
 @router.post("/{slug}/access-list", response={201: AccessLineOut},

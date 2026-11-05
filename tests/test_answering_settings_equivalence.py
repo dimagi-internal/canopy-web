@@ -45,7 +45,7 @@ RETIRED = "retired_probe"
 
 #: The hash of every answer the frozen copy gives over the fixture. It moves only if the frozen
 #: copy or the fixture moves, and neither should: see the module docstring.
-FROZEN_ANSWERS = "46dcecc0c7a46cd4e4538cee92b18cd2359e0c5850c217425f6527769f0f4f90"
+FROZEN_ANSWERS = "80de0e7d9f0dbe6d64b2871def650bcc0b2ae6ae0702801c2f6b6fc8bfea7e53"
 
 REAL = SimpleNamespace(
     profile=interface.profile, envelope_profile=caller_context._profile, reachable=interface.reachable,

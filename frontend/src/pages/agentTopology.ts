@@ -21,7 +21,7 @@ export function explainEdge(e: AgentEdgeOut, src: AgentTopologyAgentOut, dst: Ag
     case 'editor':
       return `${dst.name}'s access list gives ${login} write, so ${src.name} may send ${dst.name} work in its whole profile; a line marked manual-only makes every such turn run manual. Making it an admin of ${dst.name} lets it ask for auto.`
     case 'no-interface':
-      return `${dst.name}'s access list gives ${login} nothing and ${dst.name} has published no capability, so work ${src.name} sends is refused.`
+      return `${dst.name}'s access list gives ${login} nothing and ${dst.name} offers nothing else, so work ${src.name} sends is refused.`
     case 'capabilities':
       return `${dst.name}'s access list confines ${login} to ${e.capabilities.join(', ')}. Work ${src.name} sends runs as that and nothing more, or is refused.`
     case 'nothing-offered':
