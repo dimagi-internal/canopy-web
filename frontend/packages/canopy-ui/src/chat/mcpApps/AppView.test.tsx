@@ -404,16 +404,8 @@ describe("AppView sends canopy's look", () => {
     );
     await waitFor(() => expect(screen.getByTitle("Labs: workflow_run_action")).toBeTruthy());
     const frame = screen.getByTitle("Labs: workflow_run_action") as HTMLIFrameElement;
-    const posted: Array<Record<string, unknown>> = [];
-    vi.spyOn(frame.contentWindow as Window, "postMessage").mockImplementation(((m: unknown) => {
-      posted.push(m as Record<string, unknown>);
-    }) as Window["postMessage"]);
-    act(() => {
-      window.dispatchEvent(new MessageEvent("message", {
-        data: { jsonrpc: "2.0", id: 3, method: "ui/initialize", params: {} },
-        source: frame.contentWindow, origin: "null",
-      }));
-    });
+    const { posted, send } = await bridged(frame);
+    await send({ jsonrpc: "2.0", id: 3, method: "ui/initialize", params: {} });
     await waitFor(() => expect(posted.find((m) => m.id === 3)).toBeTruthy());
     const answer = posted.find((m) => m.id === 3) as { result: { hostContext: { styles: { variables: Record<string, string> } } } };
     expect(answer.result.hostContext.styles.variables["--color-text-info"]).toBe("rgb(250, 140, 60)");
