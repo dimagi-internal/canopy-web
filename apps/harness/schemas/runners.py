@@ -93,6 +93,9 @@ class SlashCommandIn(Schema):
     # `user-invocable: false` in its file: a real skill Claude may load, not one to
     # offer a person. A report from an older runner lacks it, which means not internal.
     internal: bool = False
+    # When Claude Code last updated the plugin whose file this is, on this box: which
+    # box has the newest copy (`agents.skill_catalog`). Blank from an older runner.
+    plugin_updated_at: str = Field(default="", max_length=40)
 
 
 class SlashCommandsIn(Schema):

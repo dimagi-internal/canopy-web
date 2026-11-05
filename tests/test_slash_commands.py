@@ -3,6 +3,7 @@ run, and a session's composer is offered that plus its agent's launchable skills
 — only to someone who can send to it."""
 
 import json
+from datetime import timedelta
 
 import pytest
 from django.contrib.auth.models import User
@@ -149,6 +150,40 @@ def test_skill_files_on_a_box_to_the_menu_and_the_catalog(setup, tmp_path, monke
     assert {s["name"]: s["internal"] for s in catalog} == {"turn": False, "shipping": True}
     detail = _client(setup["owner"]).get("/api/agents/hal/").json()
     assert detail["skill_count"] == 2
+
+
+def test_a_published_catalog_follows_what_a_box_installed(setup, tmp_path, monkeypatch):
+    """The whole way, for a catalog published through its route and then left to go
+    stale: real files, the runner's real scan, its report, the tick, the read."""
+    from canopy_runner import slash_commands as runner_scan
+
+    monkeypatch.setattr(runner_scan, "_acp_seen", {})
+    owner = _client(setup["owner"])
+    resp = owner.put("/api/agents/hal/skills/", {"skills": [
+        {"name": "turn", "description": "old", "launchable": True, "improvement_note": "keep me",
+         "url": "https://example.com/turn"},
+        {"name": "retired", "improvement_note": "the skill is gone"},
+    ]}, content_type="application/json")
+    assert resp.status_code == 200, resp.content
+
+    plugin = tmp_path / "plugins" / "hal"
+    for name in ("turn", "added"):
+        path = plugin / "skills" / name / "SKILL.md"
+        path.parent.mkdir(parents=True)
+        path.write_text(f"---\nname: {name}\ndescription: {name} today\n---\nbody")
+    (tmp_path / ".claude" / "plugins").mkdir(parents=True)
+    installed = (timezone.now() + timedelta(minutes=5)).isoformat()
+    (tmp_path / ".claude" / "plugins" / "installed_plugins.json").write_text(json.dumps(
+        {"plugins": {"hal@hal": [{"installPath": str(plugin), "lastUpdated": installed}]}}))
+
+    assert _report(setup, runner_scan.scan(tmp_path)).status_code == 204
+    assert skill_catalog.refresh_all() == {"hal": 2}
+
+    rows = {s["name"]: s for s in owner.get("/api/agents/hal/skills/").json()}
+    assert set(rows) == {"turn", "added"}
+    assert rows["turn"]["launchable"] is True and rows["turn"]["improvement_note"] == "keep me"
+    assert rows["turn"]["url"] == "https://example.com/turn" and rows["turn"]["description"] == "turn today"
+    assert rows["added"]["description"] == "added today" and rows["added"]["launchable"] is False
 
 
 def test_someone_who_can_only_read_gets_nothing(setup):
