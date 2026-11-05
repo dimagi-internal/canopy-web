@@ -16,6 +16,9 @@ from dataclasses import dataclass
 
 from . import authority
 
+#: `turn_context.NO_AGENT`, which imports this package's parent.
+NO_AGENT_KIND = "no_agent"
+
 #: Whether the turn gets it.
 YES, NO, PENDING = "yes", "no", "pending"
 
@@ -65,6 +68,8 @@ def statement(context, agent, turn, *, runner=None) -> tuple[CredentialLine, ...
     if context.stamped:
         lines.append(CredentialLine("agent_vault", authority.VAULT, NO,
                                     "a confined turn's environment never holds the agent's own values"))
+    elif agent is None:
+        lines.append(CredentialLine("agent_vault", authority.VAULT, NO, "this turn runs as no agent"))
     else:
         lines.append(CredentialLine("agent_vault", authority.VAULT,
                                     _on_a_runner(runner is not None) if authority.hands_out(placement, authority.VAULT)
@@ -95,6 +100,8 @@ def _withheld_on_page(stamped, agent) -> list[CredentialLine]:
 def _without_a_turn(context) -> tuple[CredentialLine, ...]:
     """A preview. A confined answer is known already; the whole agent's waits for the turn."""
     gets, why = (NO, "a caller's turn is never given them") if context.stamped else (PENDING, "")
+    if context.profile.kind == NO_AGENT_KIND:
+        gets, why = NO, "this turn runs as no agent"
     return (CredentialLine("canopy_login", authority.AGENT_ONLY, gets, why),
             CredentialLine("github_identity", authority.DELEGATED, gets, why),
             CredentialLine("caller_token", "caller", YES if context.stamped else PENDING),

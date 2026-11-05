@@ -213,6 +213,12 @@ class Turn(models.Model):
     # the agent's guard confine the session to it. Decided once, at enqueue,
     # from the initiator — see `apps/agents/access.py::decide`.
     capability = models.CharField(max_length=48, blank=True, default="")
+    # What this turn RAN AS: its Turn Context as JSON (`turn_snapshot`), written at each claim, so it holds the run
+    # that last happened, and when it is refused before running. Null on a turn older than this: "not recorded".
+    # What the rules say NOW is computed on read, never stored. Names and lists only, never the prompt, the
+    # envelope's `person` block or a credential's value, and read only through
+    # `GET /api/canopy-sessions/{id}/turns/{turn_id}/context`, never on a turn's own schema.
+    resolved_context = models.JSONField(null=True, blank=True)
     # The agent CLI its starter or schedule asked for (`clis.refusal` checked it);
     # "" = the agent's default decides. Never written by the claim.
     requested_cli = models.CharField(max_length=32, blank=True, default="", db_default="")

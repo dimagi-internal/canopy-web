@@ -733,6 +733,137 @@ class SessionInfoOut(Schema):
     github_identity: GithubIdentityOut = GithubIdentityOut()
 
 
+class StandingOut(Schema):
+    relationship: str
+    permissions: list[str] = []
+    agent_role: str | None = None
+    source: str = ""
+    via: str = ""
+
+
+class ProfileOut(Schema):
+    #: whole_agent | read_mode | connected_site | session_review | deny_all | no_agent.
+    kind: str
+    name: str = ""
+    site: str | None = None
+    description: str | None = None
+    entry: str | None = None
+    #: Null when nothing is enumerated: `kind` alone says what it is. Empty denies.
+    tools: list[str] | None = None
+    bash: list[str] | None = None
+    read_paths: list[str] | None = None
+    write_paths: list[str] | None = None
+    data: str | None = None
+    default_profile_version: int | None = None
+
+
+class CredentialLineOut(Schema):
+    name: str
+    kind: str
+    #: yes | no | pending. Never a value.
+    gets: str
+    why: str = ""
+
+
+class ReviewOut(Schema):
+    #: manual | auto | pending (it needs the claim), or null for a turn with no agent.
+    mode: str | None = None
+    basis: str = ""
+    manual_only: bool = False
+    may_request_auto: bool = False
+    may_pin_runner: bool = False
+
+
+class RefusalOut(Schema):
+    code: str
+    why: str
+    how_to_fix: str = ""
+    who_can_fix: str = ""
+
+
+class TraceEntryOut(Schema):
+    rule: str
+    outcome: str
+    detail: str = ""
+
+
+class TurnContextOut(Schema):
+    """What one turn may do, and why."""
+    standing: StandingOut
+    #: full | confined | refused.
+    access: str
+    basis: str
+    #: Null only when refused.
+    profile: ProfileOut | None = None
+    session_key_suffix: str = ""
+    credentials: list[CredentialLineOut] = []
+    review: ReviewOut
+    stamped: str | None = None
+    refusal: RefusalOut | None = None
+    trace: list[TraceEntryOut] = []
+
+
+class SnapshotRunnerOut(Schema):
+    id: str
+    name: str
+    kind: str
+
+
+class TurnSnapshotOut(TurnContextOut):
+    """What a turn ran as, stored when it happened."""
+    version: int
+    #: claim | enqueue | open.
+    moment: str
+    recorded_at: dt.datetime
+    runner: SnapshotRunnerOut | None = None
+    #: The profile a refused turn named, which nothing else keeps.
+    requested: str | None = None
+    #: What an admission rule did about it, when one did.
+    admission: dict | None = None
+
+
+class SessionContextOut(Schema):
+    """The durable facts of a conversation, whoever is asking."""
+    session_id: str | None = None
+    agent: str | None = None
+    workspace: str | None = None
+    channel: str = ""
+    runner_requested: str | None = None
+    runner_bound: str | None = None
+    site: str = ""
+    #: Blank for a reader outside a sensitive conversation.
+    page: str = ""
+    sensitive: bool = False
+    sensitive_requirement: str = ""
+    is_review: bool = False
+    review_ask: str | None = None
+    audience: dict = {}
+    participants: list[dict] = []
+    session_grants: list[dict] = []
+    send_blocks: list[dict] = []
+
+
+class SessionContextsOut(Schema):
+    session_context: SessionContextOut
+    #: What would happen if you sent a message now. Null when `withheld` says why.
+    turn_context: TurnContextOut | None = None
+    withheld: str = ""
+
+
+class TurnRanAsOut(Schema):
+    """What one turn ran as, beside what the rules say now."""
+    turn_id: uuid.UUID
+    #: recorded | not_recorded (a turn older than the record, or none canopy ran) |
+    #: unavailable (canopy could not build it) | withheld (`note` says why).
+    status: str
+    ran_as: TurnSnapshotOut | None = None
+    #: The same asker and the same ask, resolved on this read. Nothing is stored and its turn mode is `pending`.
+    now: TurnContextOut | None = None
+    #: The two give a different access or profile.
+    differs: bool = False
+    note: str = ""
+
+
 class SendOut(Schema):
     turn_id: uuid.UUID | None
     message: MessageOut

@@ -312,7 +312,7 @@ def at_claim(turn, runner, mode: str) -> bool:
     if agent is None:
         return False
     rule = decide(turn, agent, facts(turn, runner=runner, mode=mode or ""))
-    return rule is not None and reject(turn, rule, runner=runner)
+    return rule is not None and reject(turn, rule, runner=runner, mode=mode)
 
 
 def at_refusal(turn, *, sender: str = "", access: str = "") -> AdmissionRule | None:
@@ -349,7 +349,7 @@ def result_note(rule: AdmissionRule, detail: str = "") -> str:
 
 
 def reject(turn, rule: AdmissionRule, *, runner=None, detail: str = "",
-           stage: dict | None = None) -> bool:
+           stage: dict | None = None, mode: str = "") -> bool:
     """Close a QUEUED turn CANCELLED on `rule`, record it, and owe its notices.
 
     CANCELLED, not FAILED: nothing went wrong, a rule decided, and a FAILED
@@ -369,6 +369,11 @@ def reject(turn, rule: AdmissionRule, *, runner=None, detail: str = "",
         stage = ({"runner": runner.name, "runner_kind": runner.kind} if runner is not None
                  else {"at": "enqueue"})
     _fire(turn, rule, note, stage, detail=detail)
+    from apps.harness import turn_snapshot  # noqa: PLC0415 — harness imports this app
+
+    # Allowed, then rejected by this rule: the Turn Context beside the rule's outcome.
+    turn_snapshot.record(turn, turn_snapshot.CLAIM if runner is not None else turn_snapshot.ENQUEUE, runner=runner,
+                         admission=turn_snapshot.rejected(rule, stage=stage, mode=mode))
     return True
 
 

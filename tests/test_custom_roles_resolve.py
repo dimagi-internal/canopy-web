@@ -13,7 +13,6 @@ from django.db import connection
 from django.test.utils import CaptureQueriesContext
 
 from apps.agents import access, grants, roles, turn_context
-from apps.agents.interface import _held_permissions
 from apps.agents.models import Agent, AgentGrant
 from apps.workspaces.models import Workspace
 from apps.workspaces.models import WorkspaceMembership as M
@@ -75,7 +74,7 @@ def test_the_envelope_role_is_the_key_and_permissions_are_the_contract(w):
     _line(w["agent"], w["door"], "connector")
     d = turn_context.for_asker(w["agent"], w["door"], verified=True, requested="connect")
     assert d.standing.agent_role == "connector"
-    assert "use:connect" in _held_permissions(d, "connect")
+    assert "use:connect" in d.held_permissions
 
 
 def test_the_strongest_role_of_a_person_is_the_one_that_allows_most(w):

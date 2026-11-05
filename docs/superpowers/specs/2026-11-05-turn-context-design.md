@@ -51,7 +51,7 @@ Admins never see "profile" as something to edit. They edit the **access list** (
 | `read_mode` | The agent's Read mode setting, else canopy's default | `confined` |
 | `connected_site` | That row on the agent. A row with no site (`parse` still accepts one; production has none, per `shape`) keeps this kind with `site` null | `confined` |
 | `session_review` | Canopy (review chats) | `confined` |
-| `deny_all` | Canopy: a turn whose stored stamp no longer resolves to a published entry, or a sensitive turn stamped with read mode that has since gone (`caller_context._profile`). Fail closed | `confined` |
+| `deny_all` | Canopy: a turn whose stored stamp no longer resolves to a published entry, or a sensitive turn stamped with read mode that has since gone (`turn_context.stamped_profile`), or a stamped turn whose agent has gone. Fail closed | `confined` |
 | `no_agent` | A turn with no agent: a person's own repo or project session. Its enforcement and credentials are what they are today; this kind only names them | `full` |
 
 There is no separate "limited session" path in resolution. A confined turn is an instance of the general result.
@@ -236,7 +236,7 @@ values. New additive field: `access`.
 
 **Routes:**
 * `GET /api/canopy-sessions/{id}/context` → `{session_context, turn_context}`, where `turn_context` is the preview for the requester. Anyone who can read the session. Read-only. An MCP tool, since agents debug too.
-* The snapshot: returned on `GET /api/canopy-sessions/{id}/info`'s turns, or a sibling route (builder's call).
+* The snapshot: a sibling route, `GET /api/canopy-sessions/{id}/turns/{turn_id}/context` → `{status, ran_as, now, differs}`. Not on `/info`'s turns: "what the rules say now" is a full resolve per turn, and `TurnOut` is served by every turn route, none of which asks this rule. A turn in the panel opens it when opened.
 
 **Stored snapshot:** new nullable `Turn.resolved_context` JSONField, written at each claim (a lapsed lease requeues and
 re-claims a turn, so it overwrites and holds the run that last happened), and at enqueue for a turn refused there. Holds what it
@@ -339,3 +339,21 @@ The code was the reference, and these are the differences it found. Each is fold
 | 3.4 | `session_writer` is asked of a turn | It is a list per session now, from `chat_session` only |
 | 4 | The consumer list | See the corrected list in section 4 |
 | 8 | Only the snapshot keeps `none` | A roster row does as well |
+
+### What building Stage 2 corrected
+
+Stage 1's fan-out was tested and unread. These are what real callers found.
+
+| Section | The spec or Stage 1 said | What it has to be |
+|---|---|---|
+| 3.3, "Two moments" | The stamp decides, and that is all a claim adds | The stamped answer lost what the rule itself said. The envelope's `permissions` need it: someone no longer admitted holds none whatever the stamp, and someone stamped whole-agent and now only reading holds `read`. So the result keeps the rule's answer beside the stamp (`held_permissions`) |
+| 3.3 | A refused turn is a Turn Context with no profile | A written turn refused at enqueue has an empty stamp, and an empty stamp reads as the whole agent. Nothing may ask what such a turn ran as without `was_refused` first. The envelope's `profile` stays `full` for it, for older runners; `access` says `refused` |
+| 3.1, 6 | A turn with no agent is `no_agent`, `full` | `Session.agent` is SET_NULL, so a turn stamped confined can lose its agent. It is `deny_all`, never `no_agent` |
+| 3.3, stage 3 | `credentials` is true at claim | On a turn with no agent it left the agent's vault `pending`, in a claim and a preview, though there is no agent's vault to get. It says `no` now, as it does for the login and the GitHub identity |
+| 3.1 | `runner` requested and bound | A preview read neither: the requested runner is `metadata.requested_runner_id` |
+| 3.2 | `standing` | A preview of a repo chat said `contact` to its owner. It now asks the session ACL, as a turn does |
+| 5, "Who sees it" | Session Context follows `can_read` | Whole, except `page`: a sensitive conversation's page is its own people's (`sensitivity.NOT_IN_IT_PAGE`), so another reader gets it blank |
+| 5, "Who sees it" | "The conversation's own people" | Builder call: its people on its chat surfaces, as that page's rule says. A person's own PAT or an MCP call does not get a sensitive turn's context, which holds no words but is still read by an AI through those doors. To open it to them, drop `request_is_chat_surface` from `_is_its_own_person` |
+| 5, stored snapshot | Written at each claim and when refused at enqueue | Also when a direct session opens, which is never claimed, and when an admission rule closes the turn (3.3 asks for that), at enqueue or claim. A blocked sender's mail is refused before the rule, so it has its own code, `sender_blocked`, and never stores the reason |
+| 5 | Older turns show "not recorded" | So do turns canopy never ran: a closeout report (`agent_report`), and a queued turn. A snapshot that could not be built is `unavailable`, and overwrites the last run's |
+| 4 | The envelope reads the Turn Context | Its `turn_mode` and `authority` still read `turn_mode.for_turn`: a queued turn's Turn Context says `pending`, and the envelope has always resolved it live |

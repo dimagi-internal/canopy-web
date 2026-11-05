@@ -72,7 +72,9 @@ PENDING = "pending"
 NOT_ON_ACCESS_LIST = "not_on_access_list"
 PROFILE_NOT_OPEN = "profile_not_open"
 SENSITIVE_NOT_OPEN = "sensitive_not_open"
-REFUSAL_CODES = frozenset({NOT_ON_ACCESS_LIST, PROFILE_NOT_OPEN, SENSITIVE_NOT_OPEN, sc.CONTENT_DELETED,
+#: Refused at the mail door, before the rule: the sender is blocked (`blocked_sender`).
+SENDER_BLOCKED = "sender_blocked"
+REFUSAL_CODES = frozenset({NOT_ON_ACCESS_LIST, PROFILE_NOT_OPEN, SENSITIVE_NOT_OPEN, SENDER_BLOCKED, sc.CONTENT_DELETED,
                            sc.CANNOT_WRITE, sc.CLI_NOT_OFFERED, sc.NOT_IN_SENSITIVE})
 
 #: `basis` when a turn is refused, and for a turn with no agent (the envelope's `granted_by`).
@@ -214,6 +216,8 @@ class TurnContext:
     _agent: object = field(default=None, compare=False, repr=False)
     _turn: object = field(default=None, compare=False, repr=False)
     _runner: object = field(default=None, compare=False, repr=False)
+    #: What the rule itself answered. Under a stamp it can differ from `access`, which is what the turn runs as.
+    _reach: object = field(default=None, compare=False, repr=False)
 
     def __post_init__(self):
         # What the rest of canopy relies on, held at the one place each answer is made.
@@ -234,6 +238,29 @@ class TurnContext:
         from .credentials import for_turn as for_turn_mod  # noqa: PLC0415 — it reads harness modules that read this one
 
         return for_turn_mod.statement(self, self._agent, self._turn, runner=self._runner)
+
+    @cached_property
+    def held_permissions(self) -> list[str]:
+        """What the asker holds on this agent for THIS turn (the envelope's `permissions`). A full turn holds
+        everything their role or lines give (closed under the dependency rule, so `write` is in it exactly when
+        the turn is full). A confined turn holds `read` and its capability's `use:<name>` only, even for an owner
+        a sensitive conversation confined. Someone the rule no longer admits holds nothing, whatever the stamp."""
+        reach = self._reach
+        if reach is None or reach.access == REFUSED:
+            return []
+        # `system` is not in the role table: it may do what an admin may.
+        role = roles.ADMIN if self.standing.agent_role == roles.SYSTEM else self.standing.agent_role
+        held = self.standing.permissions or roles.permissions_of(role)
+        if reach.access == FULL and not self.stamped:
+            return sorted(held)
+        name = self.stamped or reach.name or ""
+        if iface_mod.is_read_mode(name):
+            # Read mode is `read`, not a door: nothing is named after it (no `use:read`, no `use:ask`).
+            return [roles.READ]
+        kept = {p for p in held if p == roles.READ or (p.startswith(f"{roles.USE}:") and p != f"{roles.USE}:*")}
+        if name:
+            kept.add(roles.use(name))
+        return sorted(kept)
 
 
 # --- stages 1 and 2: the answer, as it is worked out ---------------------------------------------
@@ -529,7 +556,7 @@ def _finish(agent, reach: _Reach, session_ctx, turn, runner, trace: list) -> Tur
     return TurnContext(standing=standing, access=reach.access, profile=profile, basis=reach.basis,
                        session_key_suffix=suffix, review=_review_of(reach, turn, runner), stamped=stamped,
                        refusal=refusal, trace=tuple(trace), _session_ctx=session_ctx, _agent=agent,
-                       _turn=turn, _runner=runner)
+                       _turn=turn, _runner=runner, _reach=reach)
 
 
 def _send_refusal(session_ctx, asker: Asker, turn, trace: list) -> Refusal | None:
@@ -543,12 +570,28 @@ def _send_refusal(session_ctx, asker: Asker, turn, trace: list) -> Refusal | Non
     return Refusal(code=block.code, why=block.why) if block is not None else None
 
 
-def _no_agent(asker: Asker, session_ctx, turn, trace: list) -> TurnContext:
+def _relationship_without_agent(asker: Asker, session_ctx, turn) -> str:
+    if turn is not None:
+        return cc.relationship(turn, None)
+    session = session_ctx._session
+    return cc.session_relationship(asker.user, session) if asker.user is not None and session is not None else CONTACT
+
+
+def _no_agent(asker: Asker, session_ctx, turn, stamp, trace: list) -> TurnContext:
     """A person's own repo or project session. Its enforcement and credentials are what they are today,
-    and this only names them: there is no agent to hold a standing on."""
-    rel = cc.relationship(turn, None) if turn is not None else CONTACT
+    and this only names them: there is no agent to hold a standing on.
+
+    Not a turn stamped with a profile whose agent has since gone (`Session.agent` is SET_NULL): it was
+    admitted to something confined, and no agent left to read that from must never read as the whole of
+    anything."""
+    rel = _relationship_without_agent(asker, session_ctx, turn)
     trace.append(TraceEntry("no_agent", rel))
     review = Review(mode=None) if turn is None else _review_without_agent(turn)
+    if stamp:
+        trace.append(TraceEntry("stamp", DENY_ALL, stamp))
+        return TurnContext(standing=Standing(relationship=rel), access=CONFINED, profile=Profile(kind=DENY_ALL, name=stamp),
+                           basis=NO_INTERFACE, session_key_suffix=f"#{stamp}", review=review, stamped=stamp, refusal=None,
+                           trace=tuple(trace), _session_ctx=session_ctx, _turn=turn)
     return TurnContext(standing=Standing(relationship=rel), access=FULL, profile=Profile(kind=NO_AGENT),
                        basis=NO_INTERFACE, session_key_suffix="", review=review, stamped=iface_mod.FULL, refusal=None,
                        trace=tuple(trace), _session_ctx=session_ctx, _turn=turn)
@@ -572,8 +615,8 @@ def resolve_turn_context(session_ctx, asker: Asker, agent, *, requested: str | N
     trace: list[TraceEntry] = []
     blocked = _send_refusal(session_ctx, asker, turn, trace)
     if agent is None:
-        return _no_agent(asker, session_ctx, turn, trace) if blocked is None else _blocked_without_agent(
-            asker, session_ctx, blocked, trace)
+        return _no_agent(asker, session_ctx, turn, stamp, trace) if blocked is None else _blocked_without_agent(
+            asker, session_ctx, blocked, turn, trace)
     if stamp is not None:
         return _at_claim(agent, asker, session_ctx, stamp, turn, runner, trace)
     reach = _rules(agent, asker, session_ctx, requested, turn, trace)
@@ -584,8 +627,10 @@ def resolve_turn_context(session_ctx, asker: Asker, agent, *, requested: str | N
     return _finish(agent, reach, session_ctx, turn, runner, trace)
 
 
-def _blocked_without_agent(asker: Asker, session_ctx, refusal: Refusal, trace: list) -> TurnContext:
-    return TurnContext(standing=Standing(relationship=CONTACT), access=REFUSED, profile=None, basis=REFUSED_BASIS,
+def _blocked_without_agent(asker: Asker, session_ctx, refusal: Refusal, turn, trace: list) -> TurnContext:
+    # Who they are is still true, as on a turn with an agent.
+    rel = _relationship_without_agent(asker, session_ctx, turn)
+    return TurnContext(standing=Standing(relationship=rel), access=REFUSED, profile=None, basis=REFUSED_BASIS,
                        session_key_suffix="", review=Review(mode=None), stamped=None, refusal=refusal,
                        trace=tuple(trace), _session_ctx=session_ctx)
 
@@ -607,7 +652,7 @@ def _at_claim(agent, asker: Asker, session_ctx, stamp: str, turn, runner, trace:
     return TurnContext(standing=standing, access=access, profile=profile, basis=basis,
                        session_key_suffix=f"#{stamp}" if stamp else "", review=_review_of(reach, turn, runner),
                        stamped=stamp, refusal=None, trace=tuple(trace), _session_ctx=session_ctx,
-                       _agent=agent, _turn=turn, _runner=runner)
+                       _agent=agent, _turn=turn, _runner=runner, _reach=reach)
 
 
 # --- how entry points ask --------------------------------------------------------------------------
@@ -626,3 +671,39 @@ def for_asker(agent, who=None, *, verified: bool, requested: str | None = None, 
     session_ctx = sc.build(None, turn, agent=agent) if turn is not None else sc.empty(channel=channel)
     return resolve_turn_context(session_ctx, Asker(who=who, verified=verified, standing=standing, lines=lines),
                                 agent, requested=requested, turn=turn)
+
+
+def of_turn(turn, agent, *, runner=None) -> TurnContext:
+    """What a written turn runs as: its stamp stands, whatever the rules say now (§ 3.3, "Two moments").
+    The envelope and the stored snapshot read this; `for_turn` is the question of what the rules say. `runner`
+    is the box that just claimed it, the one thing the claim adds."""
+    return resolve_turn_context(sc.build(None, turn, agent=agent), Asker.of_turn(turn), agent, turn=turn,
+                                stamp=turn.capability, runner=runner)
+
+
+def was_refused(turn) -> bool:
+    """Was this turn refused before it ever ran? Such a turn has no stamp, and no stamp reads as the whole
+    agent, so nothing may ask `of_turn` what it ran as without asking this first. It is told by what was stored
+    (`resolved_context`) and, on a turn older than that, by the note the refusal wrote."""
+    from apps.harness.models import Turn  # noqa: PLC0415 — harness imports this package
+
+    stored = turn.resolved_context if isinstance(turn.resolved_context, dict) else {}
+    if stored.get("access") == REFUSED:
+        return True
+    return (turn.status == Turn.CANCELLED and turn.claimed_at is None
+            and (turn.result_note or "").startswith(REFUSED_NOTE_PREFIX))
+
+
+#: How a refused turn's note begins (`harness.services._apply_capability`, `channels.email`).
+REFUSED_NOTE_PREFIX = "not run:"
+
+
+def blocked_sender(turn, agent) -> TurnContext:
+    """A blocked sender's mail, refused at the door before the rule is asked. Never carries why they were
+    blocked: that is an admin's note about a person, and it stays on the contact."""
+    why = "the sender is blocked"
+    return TurnContext(standing=Standing(relationship=CONTACT), access=REFUSED, profile=None, basis=REFUSED_BASIS,
+                       session_key_suffix="", review=Review(mode=None), stamped=None,
+                       refusal=Refusal(code=SENDER_BLOCKED, why=why, who_can_fix=_who_can_fix(agent)),
+                       trace=(TraceEntry("blocked_sender", REFUSED, why),), _session_ctx=sc.empty(channel=turn.origin),
+                       _agent=agent, _turn=turn)

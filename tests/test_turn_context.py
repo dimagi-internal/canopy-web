@@ -5,18 +5,16 @@ send block against the route that refuses it. Design: `docs/superpowers/specs/20
 from __future__ import annotations
 
 import re
-from types import SimpleNamespace
 
 import pytest
 from canopy_runner import session_naming
-from django.contrib.auth import get_user_model
 from django.db import connection
 from django.test import Client
 from django.utils import timezone
 
 from apps.agents import answering_snapshot, interface, roles, session_context, turn_context
 from apps.agents.credentials import for_turn as credentials_for_turn
-from apps.agents.models import Agent, AgentAdmin, AgentGrant
+from apps.agents.models import AgentGrant
 from apps.agents.standings import Standings
 from apps.canopy_sessions.models import REVIEW_METADATA_KEY, Session, SessionParticipant
 from apps.harness import caller_context, sensitivity
@@ -24,42 +22,19 @@ from apps.harness import initiator as who
 from apps.harness import runner_requirements as rr
 from apps.harness.models import Runner, Turn
 from apps.tokens.models import PersonalToken
-from apps.workspaces.models import Workspace, WorkspaceMembership
+from apps.workspaces.models import WorkspaceMembership
 
 from .access_helpers import declare
+from .fixtures.turn_context import CAPS, _chat, make_world
 
 pytestmark = pytest.mark.django_db
 
 M = WorkspaceMembership
-CAPS = {
-    "ask": {"tools": ["Read"], "description": "Ask"},
-    "connect": {"tools": ["Read"], "sites": ["connect-labs"]},
-    "stock": {"tools": ["Read"], "pages": ["stock://*"]},
-    "data": {"tools": ["Read"], "sites": ["data-site"], "data": "sensitive"},
-    "bare": {"tools": ["Read"]},
-}
 
 
 @pytest.fixture()
 def w():
-    make = lambda name: get_user_model().objects.create_user(name, f"{name}@dimagi.com", "pw")  # noqa: E731
-    owner, admin, editor, reader, door, stranger, member = map(
-        make, ("owner", "admin", "editor", "reader", "door", "stranger", "member"))
-    ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=owner)
-    for user in (owner, admin, editor, reader, door, member):
-        M.objects.create(user=user, workspace=ws, role=M.VIEWER)
-    agent = Agent.objects.create(slug="agent", name="Agent", workspace=ws, owner=owner, turn_mode="auto",
-                                 interface={"capabilities": CAPS})
-    AgentAdmin.objects.create(agent=agent, user=admin, granted_by=owner)
-    AgentGrant.objects.create(agent=agent, kind=AgentGrant.PERSON, user=editor, role=roles.EDITOR)
-    AgentGrant.objects.create(agent=agent, kind=AgentGrant.PERSON, user=reader, role=roles.READ_ONLY)
-    AgentGrant.objects.create(agent=agent, kind=AgentGrant.PERSON, user=door, capability="connect")
-    return SimpleNamespace(ws=ws, agent=agent, owner=owner, admin=admin, editor=editor, reader=reader, door=door,
-                           stranger=stranger, member=member)
-
-
-def _chat(w, creator=None, **metadata):
-    return Session.objects.create(agent=w.agent, workspace=w.ws, created_by=creator or w.owner, metadata=metadata)
+    return make_world()
 
 
 _keys = iter(range(10**6))

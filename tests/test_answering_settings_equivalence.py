@@ -22,12 +22,11 @@ from django.contrib.auth import get_user_model
 from django.test import override_settings
 from django.utils import timezone
 
-from apps.agents import answering_snapshot, grants, interface, roles, sensitive_data, turn_context
+from apps.agents import answering_snapshot, grants, interface, roles, sensitive_data, session_context, turn_context
 from apps.agents.answering_snapshot import probe_turn
 from apps.agents.models import Agent, AgentAdmin, AgentGrant
 from apps.canopy_sessions.models import Session
 from apps.contacts.models import Contact
-from apps.harness import caller_context
 from apps.harness import runner_requirements as rr
 from apps.harness.models import Runner, RunnerAssignment, RunnerFlag, Turn
 from apps.harness.testing import enrolled
@@ -58,8 +57,16 @@ def _real_decide(agent, who, *, verified, capability, turn):
     return _as_decision(turn_context.for_asker(agent, who, verified=verified, requested=capability, turn=turn))
 
 
+def _envelope_profile(agent, capability, turn):
+    """What the envelope hands the runner for a stamp: the Turn Context's profile."""
+    if agent is None or not capability:
+        return None
+    facts = session_context.build(None, turn, agent=agent)
+    return turn_context.stamped_profile(agent, capability, facts).as_envelope()
+
+
 REAL = SimpleNamespace(
-    profile=interface.profile, envelope_profile=caller_context._profile, reachable=interface.reachable,
+    profile=interface.profile, envelope_profile=_envelope_profile, reachable=interface.reachable,
     page_sites=interface.page_sites, site_ceiling=interface.site_ceiling, own_login_of=interface.own_login_of,
     page_turn=interface.page_turn, page_site_of=interface.page_site_of,
     handles_sensitive=sensitive_data.handles_sensitive, as_claim=sensitive_data.as_claim,
@@ -264,7 +271,7 @@ def test_a_saved_turn_on_a_real_session_gets_the_same_answers(world):
             turn.save(update_fields=["capability"])
             facts = interface.grant_facts(turn, agent)
             assert facts["granted_by"]
-            assert caller_context._profile(agent, turn.capability, turn) == \
+            assert _envelope_profile(agent, turn.capability, turn) == \
                 legacy_interface.envelope_profile(agent, turn.capability, turn)
             assert interface.page_turn(turn, agent) == legacy_interface.page_turn(turn, agent)
             assert execution.facts_for(turn, agent, session, [rr.SENSITIVE_DATA]) == \

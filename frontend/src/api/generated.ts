@@ -17171,6 +17171,53 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/canopy-sessions/{session_id}/context": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * This session's facts, and what you could do in it now
+         * @description `session_context`: the durable facts of this conversation, whoever is asking. `turn_context`: what would happen
+         *     if you sent a message now, and why, from the same rule a real turn is resolved by. It predicts no admission rule,
+         *     and reading it writes nothing. In a sensitive conversation only its own people, in canopy's chat or the site's
+         *     panel, get `turn_context`; anyone else who can read the session gets `withheld` saying so.
+         */
+        readonly get: operations["get_session_context"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/{session_id}/turns/{turn_id}/context": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What one of this session's turns ran as, and what the rules say now
+         * @description `ran_as` is what the turn ran as, recorded when it was claimed or refused. A turn older than that record has
+         *     `status` `not_recorded`. `now` is the same asker and the same ask under today's rules, computed on this read, and
+         *     `differs` says whether the two give a different access or profile. Readable by whoever may read the turn's log,
+         *     and in a sensitive conversation only by its own people, in canopy's chat or the site's panel. Neither ever holds
+         *     the prompt, a transcript, what canopy knows about the person, or a credential's value.
+         */
+        readonly get: operations["get_session_turn_context"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/canopy-sessions/{session_id}/slash-commands": {
         readonly parameters: {
             readonly query?: never;
@@ -46934,6 +46981,322 @@ export interface components {
              */
             readonly github_identity: components["schemas"]["GithubIdentityOut"];
         };
+        /** CredentialLineOut */
+        readonly CredentialLineOut: {
+            /** Name */
+            readonly name: string;
+            /** Kind */
+            readonly kind: string;
+            /** Gets */
+            readonly gets: string;
+            /**
+             * Why
+             * @default
+             */
+            readonly why: string;
+        };
+        /** ProfileOut */
+        readonly ProfileOut: {
+            /** Kind */
+            readonly kind: string;
+            /**
+             * Name
+             * @default
+             */
+            readonly name: string;
+            /** Site */
+            readonly site?: string | null;
+            /** Description */
+            readonly description?: string | null;
+            /** Entry */
+            readonly entry?: string | null;
+            /** Tools */
+            readonly tools?: readonly string[] | null;
+            /** Bash */
+            readonly bash?: readonly string[] | null;
+            /** Read Paths */
+            readonly read_paths?: readonly string[] | null;
+            /** Write Paths */
+            readonly write_paths?: readonly string[] | null;
+            /** Data */
+            readonly data?: string | null;
+            /** Default Profile Version */
+            readonly default_profile_version?: number | null;
+        };
+        /** RefusalOut */
+        readonly RefusalOut: {
+            /** Code */
+            readonly code: string;
+            /** Why */
+            readonly why: string;
+            /**
+             * How To Fix
+             * @default
+             */
+            readonly how_to_fix: string;
+            /**
+             * Who Can Fix
+             * @default
+             */
+            readonly who_can_fix: string;
+        };
+        /** ReviewOut */
+        readonly ReviewOut: {
+            /** Mode */
+            readonly mode?: string | null;
+            /**
+             * Basis
+             * @default
+             */
+            readonly basis: string;
+            /**
+             * Manual Only
+             * @default false
+             */
+            readonly manual_only: boolean;
+            /**
+             * May Request Auto
+             * @default false
+             */
+            readonly may_request_auto: boolean;
+            /**
+             * May Pin Runner
+             * @default false
+             */
+            readonly may_pin_runner: boolean;
+        };
+        /**
+         * SessionContextOut
+         * @description The durable facts of a conversation, whoever is asking.
+         */
+        readonly SessionContextOut: {
+            /** Session Id */
+            readonly session_id?: string | null;
+            /** Agent */
+            readonly agent?: string | null;
+            /** Workspace */
+            readonly workspace?: string | null;
+            /**
+             * Channel
+             * @default
+             */
+            readonly channel: string;
+            /** Runner Requested */
+            readonly runner_requested?: string | null;
+            /** Runner Bound */
+            readonly runner_bound?: string | null;
+            /**
+             * Site
+             * @default
+             */
+            readonly site: string;
+            /**
+             * Page
+             * @default
+             */
+            readonly page: string;
+            /**
+             * Sensitive
+             * @default false
+             */
+            readonly sensitive: boolean;
+            /**
+             * Sensitive Requirement
+             * @default
+             */
+            readonly sensitive_requirement: string;
+            /**
+             * Is Review
+             * @default false
+             */
+            readonly is_review: boolean;
+            /** Review Ask */
+            readonly review_ask?: string | null;
+            /**
+             * Audience
+             * @default {}
+             */
+            readonly audience: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Participants
+             * @default []
+             */
+            readonly participants: readonly {
+                readonly [key: string]: unknown;
+            }[];
+            /**
+             * Session Grants
+             * @default []
+             */
+            readonly session_grants: readonly {
+                readonly [key: string]: unknown;
+            }[];
+            /**
+             * Send Blocks
+             * @default []
+             */
+            readonly send_blocks: readonly {
+                readonly [key: string]: unknown;
+            }[];
+        };
+        /** SessionContextsOut */
+        readonly SessionContextsOut: {
+            readonly session_context: components["schemas"]["SessionContextOut"];
+            readonly turn_context?: components["schemas"]["TurnContextOut"] | null;
+            /**
+             * Withheld
+             * @default
+             */
+            readonly withheld: string;
+        };
+        /** StandingOut */
+        readonly StandingOut: {
+            /** Relationship */
+            readonly relationship: string;
+            /**
+             * Permissions
+             * @default []
+             */
+            readonly permissions: readonly string[];
+            /** Agent Role */
+            readonly agent_role?: string | null;
+            /**
+             * Source
+             * @default
+             */
+            readonly source: string;
+            /**
+             * Via
+             * @default
+             */
+            readonly via: string;
+        };
+        /** TraceEntryOut */
+        readonly TraceEntryOut: {
+            /** Rule */
+            readonly rule: string;
+            /** Outcome */
+            readonly outcome: string;
+            /**
+             * Detail
+             * @default
+             */
+            readonly detail: string;
+        };
+        /**
+         * TurnContextOut
+         * @description What one turn may do, and why.
+         */
+        readonly TurnContextOut: {
+            readonly standing: components["schemas"]["StandingOut"];
+            /** Access */
+            readonly access: string;
+            /** Basis */
+            readonly basis: string;
+            readonly profile?: components["schemas"]["ProfileOut"] | null;
+            /**
+             * Session Key Suffix
+             * @default
+             */
+            readonly session_key_suffix: string;
+            /**
+             * Credentials
+             * @default []
+             */
+            readonly credentials: readonly components["schemas"]["CredentialLineOut"][];
+            readonly review: components["schemas"]["ReviewOut"];
+            /** Stamped */
+            readonly stamped?: string | null;
+            readonly refusal?: components["schemas"]["RefusalOut"] | null;
+            /**
+             * Trace
+             * @default []
+             */
+            readonly trace: readonly components["schemas"]["TraceEntryOut"][];
+        };
+        /** SnapshotRunnerOut */
+        readonly SnapshotRunnerOut: {
+            /** Id */
+            readonly id: string;
+            /** Name */
+            readonly name: string;
+            /** Kind */
+            readonly kind: string;
+        };
+        /**
+         * TurnRanAsOut
+         * @description What one turn ran as, beside what the rules say now.
+         */
+        readonly TurnRanAsOut: {
+            /**
+             * Turn Id
+             * Format: uuid
+             */
+            readonly turn_id: string;
+            /** Status */
+            readonly status: string;
+            readonly ran_as?: components["schemas"]["TurnSnapshotOut"] | null;
+            readonly now?: components["schemas"]["TurnContextOut"] | null;
+            /**
+             * Differs
+             * @default false
+             */
+            readonly differs: boolean;
+            /**
+             * Note
+             * @default
+             */
+            readonly note: string;
+        };
+        /**
+         * TurnSnapshotOut
+         * @description What a turn ran as, stored when it happened.
+         */
+        readonly TurnSnapshotOut: {
+            readonly standing: components["schemas"]["StandingOut"];
+            /** Access */
+            readonly access: string;
+            /** Basis */
+            readonly basis: string;
+            readonly profile?: components["schemas"]["ProfileOut"] | null;
+            /**
+             * Session Key Suffix
+             * @default
+             */
+            readonly session_key_suffix: string;
+            /**
+             * Credentials
+             * @default []
+             */
+            readonly credentials: readonly components["schemas"]["CredentialLineOut"][];
+            readonly review: components["schemas"]["ReviewOut"];
+            /** Stamped */
+            readonly stamped?: string | null;
+            readonly refusal?: components["schemas"]["RefusalOut"] | null;
+            /**
+             * Trace
+             * @default []
+             */
+            readonly trace: readonly components["schemas"]["TraceEntryOut"][];
+            /** Version */
+            readonly version: number;
+            /** Moment */
+            readonly moment: string;
+            /**
+             * Recorded At
+             * Format: date-time
+             */
+            readonly recorded_at: string;
+            readonly runner?: components["schemas"]["SnapshotRunnerOut"] | null;
+            /** Requested */
+            readonly requested?: string | null;
+            /** Admission */
+            readonly admission?: {
+                readonly [key: string]: unknown;
+            } | null;
+        };
         /**
          * SlashCommandOut
          * @description A command the composer offers as `/name`.
@@ -70934,6 +71297,51 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SessionInfoOut"];
+                };
+            };
+        };
+    };
+    readonly get_session_context: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SessionContextsOut"];
+                };
+            };
+        };
+    };
+    readonly get_session_turn_context: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+                readonly turn_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TurnRanAsOut"];
                 };
             };
         };

@@ -401,7 +401,7 @@ def test_a_stamped_turn_keeps_its_stamp_and_reports_what_the_envelope_reports(pe
                 assert interface.grant_facts(turn, agent) == old, (asker.who, conv, stamp)
                 assert _facts(ctx) == {k: old[k] for k in ("granted_by", "role", "source")}, (asker.who, conv, stamp)
                 assert ctx.stamped == stamp
-                assert ctx.profile.as_envelope() == caller_context._profile(agent, stamp, turn), (asker.who, conv, stamp)
+                assert ctx.profile.as_envelope() == reference.envelope_profile(agent, stamp, turn), (asker.who, conv, stamp)
                 assert ctx.access == (turn_context.FULL if stamp == "" else turn_context.CONFINED)
 
 

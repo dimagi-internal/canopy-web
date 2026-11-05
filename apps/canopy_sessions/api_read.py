@@ -7,8 +7,10 @@ import uuid
 
 from django.db.models import Q
 from django.http import Http404, HttpRequest
+from django.shortcuts import get_object_or_404
 from ninja.errors import HttpError
 
+from apps.agents import context_views, session_context, turn_context
 from apps.agents.credentials import delegations
 from apps.api.errors import ProblemError
 from apps.api.pagination import clamp_limit
@@ -41,12 +43,14 @@ from .schemas import (
     HumanInputPageOut,
     MessageOut,
     MessagePageOut,
+    SessionContextsOut,
     SessionDetailOut,
     SessionExportOut,
     SessionInfoOut,
     SessionOut,
     SessionSearchPageOut,
     StreamStateOut,
+    TurnRanAsOut,
 )
 # The one session router and the helpers its routes share; api.py imports this
 # module after defining them.
@@ -382,6 +386,70 @@ def get_session_info(request: HttpRequest, session_id: uuid.UUID):
 def _github_identity(session) -> dict:
     who = delegations.session_identity(session)
     return {"agent": who["agent"].slug if who["agent"] else "", "source": who["source"], "repo": who["repo"]}
+
+
+#: Why a reader outside a sensitive conversation gets no context of a turn in it.
+_NOT_THEIRS = ("this conversation holds a host's sensitive data: only the people in it can see what a turn in it may do, "
+               "from canopy's chat or the site's panel")
+
+
+def _is_its_own_person(request: HttpRequest, session) -> bool:
+    # What a sensitive conversation's page asks (`sensitivity.NOT_IN_IT_PAGE`): one of its people, on one of its chat
+    # surfaces. These views hold no words, and this is still the tightest rule that lets its people debug it.
+    return (sensitivity.request_is_chat_surface(request)
+            and sensitivity.is_conversation_person(session, user=request.user))
+
+
+@router.get("/{session_id}/context", response=SessionContextsOut,
+            summary="This session's facts, and what you could do in it now")
+@gate("session-acl")  # the Session Context and your own preview follow can_read; narrowed below when sensitive
+def get_session_context(request: HttpRequest, session_id: uuid.UUID):
+    """`session_context`: the durable facts of this conversation, whoever is asking. `turn_context`: what would happen
+    if you sent a message now, and why, from the same rule a real turn is resolved by. It predicts no admission rule,
+    and reading it writes nothing. In a sensitive conversation only its own people, in canopy's chat or the site's
+    panel, get `turn_context`; anyone else who can read the session gets `withheld` saying so."""
+    session = _session_or_404(request, session_id)
+    facts = session_context.build(session)
+    theirs = not facts.sensitive or _is_its_own_person(request, session)
+    out = {"session_context": context_views.session_context(facts, sees_page=theirs)}
+    if not theirs:
+        return {**out, "turn_context": None, "withheld": _NOT_THEIRS}
+    asker = turn_context.Asker(who=request.user, verified=True,
+                               chat_surface=sensitivity.request_is_chat_surface(request))
+    preview = turn_context.resolve_turn_context(facts, asker, session.agent)
+    return {**out, "turn_context": context_views.turn_context(preview), "withheld": ""}
+
+
+@router.get("/{session_id}/turns/{turn_id}/context", response=TurnRanAsOut,
+            summary="What one of this session's turns ran as, and what the rules say now")
+@gate("session-acl", "turn-content")  # readable_sessions, then can_read_turn_log (no words); narrowed below when sensitive
+def get_session_turn_context(request: HttpRequest, session_id: uuid.UUID, turn_id: uuid.UUID):
+    """`ran_as` is what the turn ran as, recorded when it was claimed or refused. A turn older than that record has
+    `status` `not_recorded`. `now` is the same asker and the same ask under today's rules, computed on this read, and
+    `differs` says whether the two give a different access or profile. Readable by whoever may read the turn's log,
+    and in a sensitive conversation only by its own people, in canopy's chat or the site's panel. Neither ever holds
+    the prompt, a transcript, what canopy knows about the person, or a credential's value."""
+    session = _session_or_404(request, session_id)
+    turn = get_object_or_404(staleness.driving_turns_of(session), pk=turn_id)
+    if not turn_access.can_read_turn_log(request.user, turn):
+        return {"turn_id": turn.pk, "status": "withheld", "note": "you may not read this turn's log"}
+    if sensitivity.any_sensitive(session, turn) and not _is_its_own_person(request, session):
+        return {"turn_id": turn.pk, "status": "withheld", "note": _NOT_THEIRS}
+    stored = turn.resolved_context if isinstance(turn.resolved_context, dict) else None
+    now = _now_of(turn, stored)
+    if stored is None:
+        return {"turn_id": turn.pk, "status": "not_recorded", "now": now, "note": "not recorded"}
+    if "error" in stored:
+        return {"turn_id": turn.pk, "status": "unavailable", "now": now, "note": stored["error"]}
+    return {"turn_id": turn.pk, "status": "recorded", "ran_as": stored, "now": now,
+            "differs": (stored["access"], stored["stamped"]) != (now["access"], now["stamped"])}
+
+
+def _now_of(turn, stored: dict | None) -> dict:
+    asked = turn.capability or (stored or {}).get("requested") or None
+    now = context_views.turn_context(turn_context.for_turn(turn, turn.acting_agent, asked))
+    # The turn's own mode is what it ran in. What it would be today needs a claim.
+    return {**now, "review": {**now["review"], "mode": turn_context.PENDING, "basis": ""}}
 
 
 @router.get("/{session_id}/slash-commands", response=list[SlashCommandOut],

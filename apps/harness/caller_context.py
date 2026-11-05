@@ -39,7 +39,6 @@ from apps.canopy_sessions.models import SessionParticipant, SessionReviewAsk
 from apps.contacts.models import Contact
 
 from . import initiator as who
-from . import sensitivity
 from .models import Turn
 
 #: Bump when a field's MEANING changes; adding a field does not need it.
@@ -159,8 +158,11 @@ def _relationship_without_agent(turn, user) -> str:
     if agent_self is not None and owner is not None and agent_self.owner_id == owner:
         return SYSTEM
     session = getattr(turn, "chat_session", None)
-    if session is None:
-        return CONTACT
+    return CONTACT if session is None else session_relationship(user, session)
+
+
+def session_relationship(user, session) -> str:
+    """What someone is to a conversation with no agent, whose session ACL is all there is to ask."""
     from apps.canopy_sessions import access
 
     role = access.role_for(user, session)
@@ -321,7 +323,9 @@ def build(turn, *, reader_user=None) -> dict:
     agent = turn.acting_agent
     ref = turn.origin_ref if isinstance(turn.origin_ref, dict) else {}
     cs = getattr(turn, "chat_session", None)
-    rel = relationship(turn, agent)
+    context = _turn_context(turn, agent)
+    rel = context.standing.relationship
+    grant = _grant(turn, agent, context)
     described = who.describe(turn)
     return {
         "version": VERSION,
@@ -370,7 +374,11 @@ def build(turn, *, reader_user=None) -> dict:
         # agent's FULL profile: its owner, an admin, canopy itself, or a
         # member of an agent that has published no interface. Otherwise the runner and the agent's
         # guard confine the session to exactly this.
-        "profile": CONFINED_PROFILE if turn.capability else FULL_PROFILE,
+        "profile": CONFINED_PROFILE if context.stamped else FULL_PROFILE,
+        # full | confined | refused: how the profile is enforced, in the Turn Context's word. Beside
+        # `profile`, which deployed runners and plugins read and which says `full` on a turn refused
+        # before it ran. Additive: no VERSION bump.
+        "access": _access(turn, context),
         # WHY: owner | admin | system | session:<role> | grant:<access-list line> |
         # capability:<name> | refused | no-interface (a turn with no agent).
         # `role`: WHERE the asker stands on the agent's role ladder (owner | admin | editor |
@@ -378,12 +386,12 @@ def build(turn, *, reader_user=None) -> dict:
         # session | list:<access-list line>) —
         # what an agent reads to say "you are read-only here because ..." instead of
         # guessing. Additive: no VERSION bump. See apps/agents/roles.py.
-        **_grant(turn, agent),
+        **grant,
         # WHY A CONFINED CALLER IS CONFINED and what would change it: their place, the
         # role the FULL profile takes, and who can give it. Roles only, never people or
         # other callers' data. null on a full profile. Additive: no VERSION bump.
-        "access_help": _access_help(turn, agent, rel),
-        "capability": _profile(agent, turn.capability, turn),
+        "access_help": _access_help(turn, agent, rel, grant),
+        "capability": context.profile.as_envelope() if agent is not None and context.profile is not None else None,
         # manual | auto for THIS turn, and why (apps/harness/turn_mode.py). What
         # `canopy agent mode --caller <path>` reads in preference to the agent-wide
         # switch, so a rule like "email from beth → auto" reaches the turn
@@ -728,19 +736,34 @@ def _turn_mode(turn) -> dict | None:
     return None if resolved is None else {"mode": resolved.mode, "basis": resolved.basis}
 
 
-def _grant(turn, agent) -> dict:
+def _turn_context(turn, agent):
+    """What this turn runs as. The claim that just resolved it left it on the turn, so a claim asks once."""
+    held = getattr(turn, "_turn_context", None)
+    if held is not None:
+        return held
+    from apps.agents import turn_context  # noqa: PLC0415 — it imports this module
+
+    return turn_context.of_turn(turn, agent)
+
+
+def _access(turn, context) -> str:
+    from apps.agents import turn_context  # noqa: PLC0415 — it imports this module
+
+    return turn_context.REFUSED if turn_context.was_refused(turn) else context.access
+
+
+def _grant(turn, agent, context=None) -> dict:
     if agent is None:
         return {"granted_by": "no-interface", "role": None, "source": "",
                 "permissions": [], "manual_only": False}
     from apps.agents.interface import grant_facts
 
-    return grant_facts(turn, agent)
+    return grant_facts(turn, agent, context=context)
 
 
-def _access_help(turn, agent, rel: str) -> dict | None:
+def _access_help(turn, agent, rel: str, grant: dict) -> dict | None:
     if agent is None or not turn.capability:
         return None
-    grant = _grant(turn, agent)
     drivers = rolecatalog.drivers(agent.workspace_id) or [roles.EDITOR]
     return {
         "your_role": grant.get("role") or rel,
@@ -749,18 +772,3 @@ def _access_help(turn, agent, rel: str) -> dict | None:
         "who_can_grant": (f"{agent.slug}'s owner or an admin: add you to the agent's access list "
                           f"as {' or '.join(drivers)}"),
     }
-
-
-def _profile(agent, capability: str, turn=None):
-    if agent is None or not capability:
-        return None
-    from apps.agents.interface import profile
-
-    got = profile(agent, capability)
-    if "default_profile_version" in got and turn is not None and sensitivity.is_sensitive(turn):
-        # A sensitive turn stamped with a read-mode name whose capability has since gone: canopy's
-        # default read profile (Write, mail) is not what it was admitted to. Deny everything,
-        # as an unpublished capability always did.
-        return {"name": capability, "description": "", "entry": None, "tools": [], "bash": [],
-                "read_paths": [], "write_paths": []}
-    return got

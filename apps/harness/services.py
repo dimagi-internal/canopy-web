@@ -25,7 +25,7 @@ from django.utils import timezone
 from apps.api.errors import TYPE_CONFLICT, ProblemError
 
 from . import clis as cli_vocab
-from . import mail_coalesce, runner_refresh, sensitivity
+from . import mail_coalesce, runner_refresh, sensitivity, turn_snapshot
 from .channels import email as email_channel
 from .claim import DEFAULT_LEASE_SECONDS
 from .ledger import append_events
@@ -80,6 +80,7 @@ def _apply_capability(turn: Turn, requested: str | None = None) -> None:
             turn.prompt = ""
             fields.append("prompt")
         turn.save(update_fields=fields)
+        turn_snapshot.record(turn, turn_snapshot.ENQUEUE, context=resolved, requested=requested)
         # Refused whatever the rules say; the workspace's `offered-nothing` rule
         # decides what is recorded and who is told (canopy-web#1416).
         from apps.admission import evaluate as admission

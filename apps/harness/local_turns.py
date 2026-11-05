@@ -32,6 +32,7 @@ from django.utils import timezone
 
 from . import clis
 from . import initiator as who
+from . import turn_snapshot
 from .ledger import append_events
 from .models import PrivateRunner, Runner, Turn
 from .turn_mode import AUTO, MANUAL
@@ -261,6 +262,8 @@ def open_turn(request, agent, *, private_runner: PrivateRunner, claude_session_i
     append_events(turn, [{"kind": "status", "payload": {
         "status": Turn.RUNNING, "local": True, "private_runner": private_runner.name}}])
     PrivateRunner.objects.filter(pk=private_runner.pk).update(last_seen_at=now)
+    # Never claimed: opening it is the moment it starts to run.
+    turn_snapshot.record(turn, turn_snapshot.OPEN)
     return turn, True
 
 
