@@ -18,6 +18,16 @@ export function ProjectStatusBadge({ status }: { status: string }): JSX.Element 
 }
 
 /** The latest published update's health, or "Update missing" when one is due. */
+/** A project only its lead and its agents can see. Renders nothing on any other. */
+export function PersonalBadge({ project }: { project: Pick<Project, 'visibility'> }): JSX.Element | null {
+  if (project.visibility !== 'personal') return null
+  return (
+    <span title="Only its lead and its agents can see this project" data-testid="personal-badge">
+      <StatusBadge tone="info">Personal</StatusBadge>
+    </span>
+  )
+}
+
 export function HealthBadge({
   project,
 }: {

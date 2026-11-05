@@ -74,6 +74,8 @@ def attach(vault: Vault, *, agent: Agent | None = None, workspace=None, runner: 
         _check_runner(vault, runner, allowed)
         where = runner.workspace_id
     elif project is not None:
+        if project.is_personal:
+            raise ZkError(422, "vault_bad_attachment", "a personal project cannot have a vault yet")
         where = project.workspace_id
     else:
         where = agent.workspace_id if agent is not None else workspace.slug

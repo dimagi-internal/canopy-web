@@ -17,6 +17,12 @@ Content is readable by:
 * for a chat turn, anyone who may read that chat (`canopy_sessions.access`) —
   and ONLY them: a chat is private to its people, which no role overrides.
 
+A turn raised from a task in a PERSONAL project is read only by that project's readers
+(`agents.services.may_read_project`): none of the people above reach past it, because
+its prompt carries the project. This is not the sensitivity mechanism, which is about
+what a runner may keep and would ground the turn on sensitive-data boxes; and it covers
+the turn's log here, not a session the turn ran in (`canopy_sessions.access` decides that).
+
 A SENSITIVE turn's content is nobody's through these doors (`harness.sensitivity`):
 its words belong to its conversation, which its own people read on the chat page,
 and every door here is a log a review or another AI could read.
@@ -35,7 +41,27 @@ from . import sensitivity
 #: log, so it is read by the same people as the prompt.
 REDACTED_FIELDS = {"prompt": "", "origin_ref": {}, "result_note": "", "share_token": "",
                    "provenance": {}}
+#: Blanked as well on a hidden turn of a personal project: a report is the board's
+#: everywhere else, and here it is the project's words.
+PERSONAL_REDACTED_FIELDS = {"report_title": "", "report_summary": "", "session_slug": "", "task_ext_ids": [],
+                            "work_product_urls": []}
 
+
+
+def _personal_project(turn, memo: dict):
+    """The personal project `turn` was raised from, or None."""
+    if not turn.raised_from_task_id:
+        return None
+    key = ("personal", turn.raised_from_task_id)
+    if key not in memo:
+        task = turn.raised_from_task
+        memo[key] = task.project if task.project_id and task.project.is_personal else None
+    return memo[key]
+
+
+def on_personal_project(turn) -> bool:
+    """Was `turn` raised from a task in a personal project?"""
+    return _personal_project(turn, {}) is not None
 
 
 def can_read_turn_content(user, turn, _memo: dict | None = None) -> bool:
@@ -76,6 +102,11 @@ def can_read_turn_log(user, turn, _memo: dict | None = None) -> bool:
     if not getattr(user, "is_authenticated", False):
         return False
     memo = _memo if _memo is not None else {}
+    project = _personal_project(turn, memo)
+    if project is not None:
+        from apps.agents.services import may_read_project  # noqa: PLC0415 — agents imports this package
+
+        return may_read_project(user, project)
     if turn.chat_session_id:
         from apps.canopy_sessions import access as session_access
 
@@ -112,6 +143,13 @@ def redact(turns, user):
     memory only, and mark it (`content_hidden`) so a page can say why rather
     than show an empty prompt. Returns the same iterable for chaining."""
     memo: dict = {}
+    # A page of turns reads their personal projects once, not per row.
+    task_ids = {t.raised_from_task_id for t in turns if t.raised_from_task_id}
+    if task_ids:
+        from apps.agents.models import AgentTask  # noqa: PLC0415 — agents imports this package
+
+        memo.update({("personal", t.pk): (t.project if t.project_id and t.project.is_personal else None)
+                     for t in AgentTask.objects.filter(pk__in=task_ids).select_related("project__agent")})
     # Every chat turn's answer in ONE query, through the same chat ACL
     # `can_read_turn_content` asks per row. Per row it was a session load and a
     # read check each — ~3 queries a turn, 2,468 for one page on labs
@@ -129,5 +167,9 @@ def redact(turns, user):
             continue
         for field, empty in REDACTED_FIELDS.items():
             setattr(t, field, type(empty)())
+        if _personal_project(t, memo) is not None:
+            for field, empty in PERSONAL_REDACTED_FIELDS.items():
+                setattr(t, field, type(empty)())
+            t.raised_from_task = None  # its alias is the agent's name for the work
         t.content_hidden = True
     return turns

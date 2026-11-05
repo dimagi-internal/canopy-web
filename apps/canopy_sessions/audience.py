@@ -129,7 +129,8 @@ def _project_teams(session) -> dict[str, set[int]]:
     projects = AgentProject.objects.filter(
         pk__in=ProjectSessionShare.objects.filter(user_id=b.runner.owner_id, revoked_at__isnull=True)
         .values("project_id"),
-        workspace_id=session.workspace_id, repo_slug__iexact=b.emdash_project)
+        workspace_id=session.workspace_id, repo_slug__iexact=b.emdash_project,
+        visibility=AgentProject.WORKSPACE)
     logins = set(Agent.objects.filter(user__isnull=False).values_list("user_id", flat=True))
     out = {}
     for p in projects:

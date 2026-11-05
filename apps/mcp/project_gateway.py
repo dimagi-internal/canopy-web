@@ -71,7 +71,7 @@ def _openable(user, query: str = "") -> list:
         return []
     slugs = wsvc.user_workspace_slugs(user)
     qs = (AgentProject.objects.filter(Q(workspace_id__in=slugs) | Q(agent__workspace_id__in=slugs) | services.shared_with_q(slugs))
-          .filter(served__isnull=False).exclude(status=AgentProject.ARCHIVED).distinct()
+          .filter(services.project_read_q(user), served__isnull=False).exclude(status=AgentProject.ARCHIVED).distinct()
           .select_related("agent", "workspace").prefetch_related("served").order_by("workspace_id", "handle"))
     words = [w for w in (query or "").lower().split() if w]
     out = []

@@ -92,6 +92,7 @@ from apps.attention import alerts
 from apps.attention.models import Alert
 
 from . import runners as harness_runners
+from . import turn_access
 from .models import FailureInvestigation, Runner, RunnerDrill, Turn
 
 logger = logging.getLogger(__name__)
@@ -253,6 +254,10 @@ def _on_turn_failed(turn: Turn) -> None:
         # A conversation that must stay on sensitive-data runners: its note can quote what the
         # turn read, and the debugger runs wherever ada does. Never re-processed
         # (spec 2026-10-22-sensitive-data-agents).
+        return
+    if turn_access.on_personal_project(turn):
+        # The same reason: its note can quote the project, and neither the debugger nor
+        # the people an investigation's alert reaches may read it.
         return
     note = _note_for(turn)
     if _HUMAN_NOTES.search(note):

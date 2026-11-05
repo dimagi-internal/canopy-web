@@ -45,7 +45,8 @@ def candidates(user):
         for r in repos:
             repo_q |= Q(repo_slug__iexact=r)
         q |= repo_q
-    return (AgentProject.objects.filter(workspace_id__in=slugs).exclude(repo_slug="")
+    # Never a personal project: its team is not who would read these sessions.
+    return (AgentProject.objects.filter(workspace_id__in=slugs, visibility=AgentProject.WORKSPACE).exclude(repo_slug="")
             .filter(q).select_related("workspace").order_by("workspace_id", "handle"))
 
 

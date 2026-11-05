@@ -234,7 +234,8 @@ def _project_share_q(user) -> Q:
     if not getattr(user, "is_authenticated", False) or Agent.objects.filter(user=user).exists():
         return Q(pk__in=[])
     on_team = AgentProject.objects.filter(
-        Q(owner_user=user) | Q(participant_rows__person__user=user)).values("pk")
+        Q(owner_user=user) | Q(participant_rows__person__user=user),
+        visibility=AgentProject.WORKSPACE).values("pk")
     shares = (ProjectSessionShare.objects
               .filter(revoked_at__isnull=True, project__in=on_team)
               .exclude(project__repo_slug="")

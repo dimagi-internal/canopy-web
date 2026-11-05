@@ -81,7 +81,7 @@ def readable_project(user, workspace: str, handle: str):
     # its workspace, its lead agent's, and the ones it is shared with and below them
     if not (services.project_reader_slugs(project) & wsvc.user_workspace_slugs(user)):
         return None
-    return project
+    return project if services.may_read_project(user, project) else None
 
 
 def _specs(workspace: str, handle: str) -> list[dict]:

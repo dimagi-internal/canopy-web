@@ -172,7 +172,7 @@ def live_facts(person: Person, workspace_slug: str | None = None, *, for_agent: 
 
 def fact_dict(fact: PersonFact) -> dict:
     project = None
-    if fact.project_id:
+    if fact.project_id and not fact.project.is_personal:
         # `title` is the contract's word for the project's `name`.
         project = {"id": fact.project_id, "title": fact.project.name,
                    "ext_id": fact.project.ext_id}
@@ -527,7 +527,7 @@ def envelope_projects(person: Person, workspace_slug: str | None) -> list[dict]:
 
     if not workspace_slug:
         return []
-    rows = participants.projects_of(person, workspace_slug, limit=participants.ENVELOPE_PROJECTS,
+    rows = participants.projects_of(person, workspace_slug, reader=None, limit=participants.ENVELOPE_PROJECTS,
                                     include_archived=False)
     return [{"id": r.project_id, "ext_id": r.project.ext_id, "name": r.project.name,
              "agent": (r.project.agent_slug or "")} for r in rows]
@@ -614,7 +614,9 @@ def conversations(person: Person, agent, *, since: dt.datetime | None = None, li
     from . import hcp
 
     qs = (Turn.objects.filter(Q(agent=agent) | Q(chat_session__agent=agent))
-          .filter(_initiated_by(person)))
+          .filter(_initiated_by(person))
+          # Its log is its readers' (`turn_access`), and this read goes to the agent's admins.
+          .exclude(raised_from_task__project__visibility="personal"))
     if since is not None:
         qs = qs.filter(created_at__gte=since)
     # A zero-data-retention session's words never become facts, so they are never

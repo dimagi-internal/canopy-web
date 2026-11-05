@@ -13,6 +13,7 @@ import datetime as dt
 from apps.timeline.types import ActivityEvent, cursor_page, truncate
 
 from .models import AgentSync, AgentTask
+from .services import task_read_q
 
 
 def recent_events(
@@ -40,7 +41,7 @@ def recent_events(
             )
         )
 
-    tasks = AgentTask.objects.select_related("agent")
+    tasks = AgentTask.objects.filter(task_read_q(user)).select_related("agent")
     if workspace_slugs is not None:  # a task's tenant is its own workspace, not its agent's
         tasks = tasks.filter(workspace_id__in=workspace_slugs)
     tasks = tasks.order_by("-created_at")

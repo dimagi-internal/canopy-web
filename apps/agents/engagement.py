@@ -110,7 +110,7 @@ def _proposal_row(qs, born, *, agent_users, name: str, status: str, backers: int
             "backers": backers, "comments": qs.filter(kind="commented").count(), **extra}
 
 
-def summary(workspaces, *, days: int = 14, checkin: str = "", agent: str = "",
+def summary(workspaces, *, user, days: int = 14, checkin: str = "", agent: str = "",
             now: dt.datetime | None = None) -> dict:
     """What people actually did in `workspaces` over the last `days` — the report
     Ada reads weekly (`GET /api/engagement/summary`).
@@ -131,7 +131,12 @@ def summary(workspaces, *, days: int = 14, checkin: str = "", agent: str = "",
 
     now = now or timezone.now()
     since = now - dt.timedelta(days=max(1, min(days, 365)))
-    qs = EngagementEvent.objects.filter(workspace_id__in=list(workspaces), at__gte=since)
+    # An event about a personal project counts only for those who may read it.
+    from .services import project_read_q, task_read_q  # noqa: PLC0415 — services imports this module
+
+    qs = EngagementEvent.objects.filter(Q(project__isnull=True) | project_read_q(user, "project__"),
+                                        task_read_q(user, "task__"),
+                                        workspace_id__in=list(workspaces), at__gte=since)
     if checkin:
         qs = qs.filter(checkin__in=resolve_checkin(workspaces, checkin))
     if agent:

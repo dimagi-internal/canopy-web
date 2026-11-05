@@ -15,10 +15,13 @@ from ._base import _aware
 from .projects import (
     _link_participants,
     _workspace_member,
+    agent_is_on_project,
     get_project,
     get_workspace_project,
     may_hold_workspace_project,
     may_join_workspace_project,
+    may_read_project,
+    may_use_project,
     resolve_project_owner_in,
 )
 
@@ -99,20 +102,22 @@ def _height_below(task: AgentTask) -> int:
     return height
 
 
-def resolve_parent(task: AgentTask, ref: str, agent: Agent | None = None) -> AgentTask | None:
+def resolve_parent(task: AgentTask, ref: str, agent: Agent | None = None, *, user=None) -> AgentTask | None:
     """The task `ref` names as `task`'s parent, checked — or None to clear.
 
     Refused (TaskTreeError) when the parent is unknown, is the task itself or
     one of its descendants, sits in a different project, or would make the
     chain deeper than MAX_TASK_DEPTH. `task` is the CHILD as it will be saved:
-    its `project` must already be the one it will have.
+    its `project` must already be the one it will have. A task in a personal
+    project `user` may not read is as unknown as one that does not exist.
     """
     ref = (ref or "").strip()
     if not ref:
         return None
     namer = agent or task.created_by_agent or task.agent
     parent = get_task(namer, ref) if namer is not None else work.task_by_key(ref)
-    if parent is None or parent.workspace_id != task.workspace_id:
+    if (parent is None or parent.workspace_id != task.workspace_id
+            or (parent.project_id and not may_use_project(parent.project, user=user, agent=namer))):
         raise TaskTreeError(f"parent {ref} is not a task of {namer.slug if namer else task.workspace_id}")
     if task.pk is not None:
         node, seen = parent, set()
@@ -239,6 +244,18 @@ def resolve_assignee(workspace_slug: str, value: str,
     return agent, None
 
 
+def _refuse_outsiders(project, *, agent: Agent | None = None, people=()) -> None:
+    """Work in a personal project goes only to someone who can read it: an agent
+    on it, or its lead. A wait or an assignment on anyone else would be one they
+    could never see, and approving it would hand an agent the project in a prompt."""
+    if project is None or not project.is_personal:
+        return
+    if agent is not None and not agent_is_on_project(agent, project):
+        raise AssigneeError(f"'{agent.slug}' is not on {project.address}, which is personal: add it to the project first")
+    if any(p is not None and not may_read_project(p, project) for p in people):
+        raise AssigneeError(f"{project.address} is personal: its work goes only to its lead and its agents")
+
+
 def _task_workspace(agent: Agent | None, project, workspace: str) -> str:
     if project is not None:
         return project.workspace_id
@@ -271,7 +288,8 @@ def create_tasks(agent: Agent | None, payloads: list[dict], *, workspace: str = 
         key = (p.get("idempotency_key") or "").strip()
         existing = AgentTask.objects.filter(idempotency_key=key).first() if key else None
         if existing is not None:
-            if existing.created_by_agent_id != (agent.pk if agent else None):
+            if (existing.created_by_agent_id != (agent.pk if agent else None)
+                    or (existing.project_id and not may_use_project(existing.project, user=by_user, agent=agent))):
                 raise ValueError(f"idempotency_key {key!r} is already used by another agent")
             out.append(existing)
             continue
@@ -292,7 +310,7 @@ def create_tasks(agent: Agent | None, payloads: list[dict], *, workspace: str = 
         raised_by = p.get("raised_by") or None
         if raised_by and agent is not None and not Turn.objects.filter(pk=raised_by, agent=agent).exists():
             raise ValueError(f"raised_by {raised_by} is not a turn of {agent.slug}")
-        project = _project_ref(agent, ref, workspace) if ref else None
+        project = _project_ref(agent, ref, workspace, user=by_user) if ref else None
         parent_ref = str(p.get("parent") or "").strip()
         parent = None
         ws = _task_workspace(agent, project, workspace)
@@ -301,16 +319,19 @@ def create_tasks(agent: Agent | None, payloads: list[dict], *, workspace: str = 
             # inherits it, so `{"parent": "T66"}` alone files it correctly.
             if not ref:
                 found = get_task(agent, parent_ref) if agent is not None else work.task_by_key(parent_ref)
+                if found is not None and found.project_id and not may_use_project(found.project, user=by_user, agent=agent):
+                    found = None  # resolve_parent refuses it, as a parent it cannot find
                 project = found.project if found is not None else None
                 ws = _task_workspace(agent, project, found.workspace_id if found is not None else workspace)
             parent = resolve_parent(AgentTask(agent=agent, created_by_agent=agent, project=project,
-                                              workspace_id=ws), parent_ref, agent)
+                                              workspace_id=ws), parent_ref, agent, user=by_user)
         waiting_on = _workspace_member(ws, p["waiting_on_email"], instead="assigned") \
             if p.get("waiting_on_email") else None
         if "assignee" in p and p["assignee"] is not None:
             assignee_agent, assignee_user = resolve_assignee(ws, p["assignee"], project)
         else:
             assignee_agent, assignee_user = (agent if via_agent else None), None
+        _refuse_outsiders(project, agent=assignee_agent, people=(assignee_user, waiting_on))
         kind = _kind(p.get("kind"))
         if kind == AgentTask.IDEA:
             _require_words(p.get("human_why"))
@@ -360,13 +381,15 @@ def create_tasks(agent: Agent | None, payloads: list[dict], *, workspace: str = 
     return out
 
 
-def _project_ref(agent: Agent | None, ref: str, workspace: str):
+def _project_ref(agent: Agent | None, ref: str, workspace: str, *, user=None):
     """A project named by an agent (alias, handle or address), else by address
-    or handle in `workspace`."""
+    or handle in `workspace`. A personal project `user` may not read is not found."""
     if agent is not None:
-        return get_project(agent, ref)
-    ws, _, handle = ref.rpartition("/")
-    return get_workspace_project(ws or workspace, handle)
+        project = get_project(agent, ref)
+    else:
+        ws, _, handle = ref.rpartition("/")
+        project = get_workspace_project(ws or workspace, handle)
+    return project if project is None or may_use_project(project, user=user, agent=agent) else None
 
 
 class DuplicateTaskError(Exception):
@@ -461,7 +484,7 @@ def patch_task(task: AgentTask, data, *, by_user=None, by_agent=None) -> AgentTa
         # "leave it where it is" (the schema keeps the two apart).
         ref = (data["project"] or "").strip()
         namer = by_agent or task.created_by_agent or task.agent
-        new_project = (_project_ref(namer, ref, task.workspace_id) if ref else None)
+        new_project = (_project_ref(namer, ref, task.workspace_id, user=by_user) if ref else None)
         if ref and new_project is None:
             raise ValueError(f"no project {ref!r}")
         moved = (new_project.pk if new_project else None) != task.project_id
@@ -469,7 +492,7 @@ def patch_task(task: AgentTask, data, *, by_user=None, by_agent=None) -> AgentTa
         if moved and task.milestone_id and "milestone" not in data:
             task.milestone = None  # a milestone is its project's
     if "parent" in data:
-        task.parent = resolve_parent(task, data["parent"] or "", by_agent)
+        task.parent = resolve_parent(task, data["parent"] or "", by_agent, user=by_user)
     elif moved and task.parent_id is not None:
         # Moving a subtask out of its parent's project, without naming a new
         # parent, would leave a child filed somewhere its parent is not.
@@ -479,6 +502,11 @@ def patch_task(task: AgentTask, data, *, by_user=None, by_agent=None) -> AgentTa
         task.milestone = work.resolve_milestone(task.project, data["milestone"])
     if data.get("kind") is not None:
         task.kind = _kind(data["kind"])
+    if moved or "assignee" in data or "waiting_on_email" in data:
+        _refuse_outsiders(task.project, agent=task.agent, people=(task.assignee_user, task.waiting_on_user))
+    if moved:
+        for child in _descendants(task):
+            _refuse_outsiders(task.project, agent=child.agent, people=(child.assignee_user, child.waiting_on_user))
     task.save()
     if data.get("before") is not None or data.get("after") is not None:
         work.move_task(task, before_key=data.get("before") or "", after_key=data.get("after") or "")

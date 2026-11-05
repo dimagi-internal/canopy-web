@@ -8,6 +8,7 @@ docs/architecture/dynamic-views.md.
 """
 from __future__ import annotations
 
+from django.db.models import Q
 from django.http import HttpRequest
 from ninja import Router, Status
 from ninja.errors import HttpError
@@ -58,7 +59,8 @@ def _out(view: DynamicView) -> DynamicViewOut:
 
 def _view_or_404(request: HttpRequest, view_id: int) -> DynamicView:
     view = DynamicView.objects.select_related("project", "created_by", "updated_by").filter(pk=view_id).first()
-    if view is None or view.workspace_id not in visible_agent_workspaces(request):
+    if (view is None or view.workspace_id not in visible_agent_workspaces(request)
+            or (view.project_id and not agent_services.may_read_project(request.user, view.project))):
         raise HttpError(404, f"view {view_id} not found")
     return view
 
@@ -79,7 +81,8 @@ def connection_surface(request: HttpRequest, ref: dict) -> declarations.Surface:
 
 def connection_share_target(ref: str) -> declarations.ShareTarget | None:
     """A project, for sharing an agent's connection with: what its views declare now, all of them."""
-    project = AgentProject.objects.filter(pk=int(ref)).first() if ref.isdecimal() else None
+    project = (AgentProject.objects.filter(pk=int(ref), visibility=AgentProject.WORKSPACE).first()
+               if ref.isdecimal() else None)
     if project is None:
         return None
     declared = [entry for connections in DynamicView.objects.filter(project=project).order_by("pk")
@@ -88,10 +91,14 @@ def connection_share_target(ref: str) -> declarations.ShareTarget | None:
                                     declared=declared)
 
 
-def _project_or_422(workspace: str, handle: str):
+def _project_or_422(request: HttpRequest, workspace: str, handle: str):
     project = agent_services.get_workspace_project(workspace, handle)
-    if project is None:
+    if project is None or not agent_services.may_read_project(request.user, project):
         raise HttpError(422, f"no project '{handle}' in workspace '{workspace}'")
+    try:
+        agent_services.refuse_on_personal(project, "dynamic views")
+    except agent_services.ProjectScopeError as exc:
+        raise HttpError(exc.status, str(exc)) from exc
     return project
 
 
@@ -132,7 +139,8 @@ def get_dynamic_view_guide(request: HttpRequest) -> DynamicViewGuideOut:
 def list_dynamic_views(request: HttpRequest, project: str = "") -> list[DynamicViewSummaryOut]:
     """Every view in the workspaces this request reads (pin one with `/api/w/<ws>/`).
     `project=<handle>` narrows to that project's views."""
-    qs = (DynamicView.objects.filter(workspace_id__in=list(listed_agent_workspaces(request)))
+    qs = (DynamicView.objects.filter(Q(project__isnull=True) | agent_services.project_read_q(request.user, "project__"),
+                                     workspace_id__in=list(listed_agent_workspaces(request)))
           .select_related("project", "updated_by"))
     if project:
         qs = qs.filter(project__handle=project)
@@ -149,7 +157,7 @@ def create_dynamic_view(request: HttpRequest, payload: DynamicViewIn) -> Status:
     object exactly, a shared entry names an agent in the workspace); a refusal names what
     is wrong. Returns the view with its `url`."""
     ws = _ws_for_write(request, payload.workspace)
-    project = _project_or_422(ws, payload.project) if payload.project else None
+    project = _project_or_422(request, ws, payload.project) if payload.project else None
     _require_edit(request, ws, project)
     try:
         view = services.create(workspace_id=ws, project=project, data=payload.model_dump(), user=request.user)
@@ -179,7 +187,7 @@ def update_dynamic_view(request: HttpRequest, view_id: int, payload: DynamicView
     if project_given:
         # A move needs rights where the view lands too: a project lead may not
         # put a view on the workspace, or on a project they do not edit.
-        project = _project_or_422(view.workspace_id, data["project"]) if data["project"] else None
+        project = _project_or_422(request, view.workspace_id, data["project"]) if data["project"] else None
         _require_edit(request, view.workspace_id, project)
     try:
         view = services.update(view, data=data, user=request.user, project=project, project_given=project_given)

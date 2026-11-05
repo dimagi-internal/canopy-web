@@ -121,6 +121,10 @@ class AgentProjectPatch(StrictModel):
     workspace: str | None = Field(default=None, max_length=100)
     #: Its lead agent, by slug (`""`: no agent leads it).
     steward: str | None = Field(default=None, max_length=100)
+    #: Who may read it. Only its lead changes this; `personal` is refused (409)
+    #: while it is shared, has check-ins, a vault, views or linked artifacts, or
+    #: while open work is held by someone not on it.
+    visibility: Literal["workspace", "personal"] | None = None
 
 
 class WorkspaceProjectIn(AgentProjectIn):
@@ -132,6 +136,9 @@ class WorkspaceProjectIn(AgentProjectIn):
     workspace: str = Field(default="", max_length=100)
     #: The agents working on it, by slug, beside its lead agent.
     member_agents: list[str] = Field(default_factory=list, max_length=50)
+    #: `personal`: only its lead (default: you) and the logins of its agents read
+    #: it; a workspace admin does not. Only here: an agent's route makes none.
+    visibility: Literal["workspace", "personal"] = "workspace"
 
 
 class ProjectShareIn(StrictModel):
@@ -379,6 +386,8 @@ class AgentProjectOut(StrictModel):
     name: str
     outcome: str
     status: Literal["proposed", "planned", "active", "paused", "done", "canceled", "archived"]
+    #: `personal`: only its lead and its agents' logins read it.
+    visibility: Literal["workspace", "personal"] = "workspace"
     #: triage | unstarted | started | paused | completed | canceled.
     category: str = ""
     priority: int = 0

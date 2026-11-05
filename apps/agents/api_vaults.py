@@ -27,6 +27,7 @@ from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
+from . import services
 from .credentials import vault_keeper, vault_members, workspace_vaults
 from .credentials.zk import ZkError
 from .gates import project_ws_or_404
@@ -77,7 +78,8 @@ def _out(v: Vault, user) -> WorkspaceVaultOut:
     rank = {"owner": 0, "admin": 1, "member": 2}
     rows = sorted(ms.values(), key=lambda m: (rank[m.role], (m.user.email or "").lower()))
     held, keepers = workspace_vaults.copies(v)
-    attached = list(VaultAttachment.objects.filter(vault=v).select_related("agent", "runner", "project"))
+    attached = [a for a in VaultAttachment.objects.filter(vault=v).select_related("agent", "runner", "project__agent")
+                if not a.project_id or services.may_read_project(user, a.project)]
     # A runner it serves is a member at the hardware level: say where its key lives and
     # whether it holds a copy of the vault's key, is waiting for one, or cannot have one yet.
     runner_ids = [a.runner_id for a in attached if a.runner_id]
@@ -245,6 +247,8 @@ def _editable_project(request: HttpRequest, address: str):
         project = None
     if project is None or not perms.can(request.user, project.workspace_id, perms.AGENT_WORK):
         raise ProblemError(404, "Not found", detail="no such project you may edit", type_=TYPE_NOT_FOUND)
+    if project.is_personal:
+        raise HttpError(422, "a personal project cannot have a vault yet: make it a workspace project first")
     return project
 
 

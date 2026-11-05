@@ -43,7 +43,8 @@ def explicit_project(ref: str, *, user, turn):
     if not ref:
         return None
     if ref.isdigit():
-        return AgentProject.objects.select_related("agent").filter(pk=int(ref)).first()
+        return AgentProject.objects.select_related("agent").filter(
+            pk=int(ref), visibility=AgentProject.WORKSPACE).first()
     m = _EXPLICIT_PROJECT.match(ref)
     if not m:
         return None
@@ -59,7 +60,8 @@ def explicit_project(ref: str, *, user, turn):
                 agent = turn.chat_session.agent
     if agent is None:
         return None
-    return AgentProject.objects.select_related("agent").filter(agent=agent, ext_id=m.group("ext")).first()
+    return AgentProject.objects.select_related("agent").filter(
+        agent=agent, ext_id=m.group("ext"), visibility=AgentProject.WORKSPACE).first()
 
 
 def resolve(request, *, session: str = "", turn: str = "", agent_project: str = "",
@@ -95,7 +97,8 @@ def resolve(request, *, session: str = "", turn: str = "", agent_project: str = 
         if project is None and the_turn is not None and the_turn.raised_from_task_id:
             task = the_turn.raised_from_task
             project = task.project if task.project_id else None
-        if project is not None and project.workspace_id in scope:
+        # An artifact is read by its own rule, so it never links a personal project.
+        if project is not None and project.workspace_id in scope and not project.is_personal:
             out["agent_project"] = project
     except Exception:  # noqa: BLE001 — a record must never fail the creation
         log.exception("could not resolve an artifact's origin")
@@ -104,7 +107,7 @@ def resolve(request, *, session: str = "", turn: str = "", agent_project: str = 
 
 def project_out(project) -> dict | None:
     """The agent project as the artifact APIs show it."""
-    if project is None:
+    if project is None or project.is_personal:
         return None
     return {
         "id": project.pk,

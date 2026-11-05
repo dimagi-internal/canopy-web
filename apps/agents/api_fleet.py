@@ -93,7 +93,8 @@ def task_query(request: HttpRequest, *, agent: str = "", project: str = "", stat
     # Scope FIRST: `filter_tasks(waiting="me")` adds unrouted open asks from
     # whatever queryset it is handed, so an unscoped one would leak other
     # tenants' asks into the inbox.
-    qs = AgentTask.objects.filter(workspace_id__in=listed_agent_workspaces(request))
+    qs = AgentTask.objects.filter(services.task_read_q(request.user),
+                                  workspace_id__in=listed_agent_workspaces(request))
     if agent:
         qs = qs.filter(Q(agent__slug=agent) | Q(created_by_agent__slug=agent, agent__isnull=True))
     return services.filter_tasks(work.task_rows(qs), user=request.user, project=project, status=status,
@@ -155,7 +156,7 @@ def create_task(request: HttpRequest, payload: TaskCreateIn) -> Status:
         raise HttpError(403, "creating a task requires the editor role")
     if data.get("on_approve"):
         raise HttpError(422, "on_approve is set by an agent filing its own work (its route), not here")
-    if ref and services._project_ref(None, ref, ws) is None:
+    if ref and services._project_ref(None, ref, ws, user=request.user) is None:
         raise HttpError(422, f"no project {ref!r} in {ws}")
     if (data.get("assignee") or "").strip() and "@" not in data["assignee"]:
         agent_for_read(request, data["assignee"].removeprefix("agent:"), honor_pin=False)
@@ -213,7 +214,8 @@ def list_fleet_projects(request: HttpRequest, status: str = "active",
                         repo_slug: str = "", scope: str = "") -> list[AgentProjectOut]:
     """Active by default; `status=` (a comma list; empty for all, `open` for
     every status still open) and `repo_slug=` narrow it."""
-    qs = AgentProject.objects.filter(workspace_id__in=listed_agent_workspaces(request))
+    qs = AgentProject.objects.filter(services.project_read_q(request.user),
+                                     workspace_id__in=listed_agent_workspaces(request))
     # `scope` is accepted and ignored: every project is the workspace's now.
     if repo_slug:
         qs = qs.filter(repo_slug=repo_slug)
@@ -231,8 +233,8 @@ def list_my_projects(request: HttpRequest, status: str = "active") -> list[Agent
     (`each_organisation`) and every row carries its workspace. Active by
     default; `status=` (empty for all)."""
     return wsvc.each_organisation(request, lambda: _project_rows(
-        AgentProject.objects.filter(workspace_id__in=listed_agent_workspaces(request),
-                                    owner_user=request.user),
+        AgentProject.objects.filter(services.project_read_q(request.user),
+                                    workspace_id__in=listed_agent_workspaces(request), owner_user=request.user),
         status=status,
     ))
 
@@ -261,7 +263,7 @@ def agent_roster(request: HttpRequest) -> list[AgentRosterRowOut]:
 
     visible = listed_agent_workspaces(request)
     agents = list(Agent.objects.filter(workspace_id__in=visible).select_related("owner").order_by("name"))
-    counts = _counts(agents)
+    counts = _counts(agents, request.user)
     since = timezone.now() - dt.timedelta(days=7)
     failed = [Turn.FAILED, Turn.LOST]
     turns = visible_turns_qs(request).filter(agent__in=agents).order_by()
@@ -304,7 +306,7 @@ def list_workspace_projects(request: HttpRequest, status: str = "") -> list[Agen
     addressed `<workspace>/<handle>`. `status=` (a comma list) narrows; default
     all."""
     listed = listed_agent_workspaces(request)
-    projects = services.workspace_projects(listed, status=status, steward_workspaces=listed)
+    projects = services.workspace_projects(listed, status=status, steward_workspaces=listed, user=request.user)
     work.annotate_projects(projects)
     return [AgentProjectOut.model_validate(p) for p in projects]
 
@@ -323,7 +325,7 @@ def list_mcp_servers(request: HttpRequest) -> list[McpServerOut]:
     its lead agent's) are exactly the ones a list spanning those workspaces reaches."""
 
     listed = listed_agent_workspaces(request)
-    projects = [p for p in services.workspace_projects(listed, steward_workspaces=listed)
+    projects = [p for p in services.workspace_projects(listed, steward_workspaces=listed, user=request.user)
                 if p.status != AgentProject.ARCHIVED]
     prefetch_related_objects(projects, "served")
     names = dict(Workspace.objects.filter(slug__in={p.workspace_id for p in projects})
@@ -357,7 +359,8 @@ def create_workspace_project(request: HttpRequest, payload: WorkspaceProjectIn):
     """In `workspace` — default the lead agent's, else the one you are pinned to
     or the only one you are in — led by `steward` (an agent's slug) when given,
     with `member_agents` working on it. The handle is free from its name when
-    omitted."""
+    omitted. `visibility: personal` makes it yours and its agents' alone, led by you
+    unless `owner_email` names someone else; a workspace admin does not read it."""
     steward = agent_for_work(request, payload.steward.strip()) if payload.steward.strip() else None
     workspace = payload.workspace.strip() or (steward.workspace_id if steward else "")
     if not workspace:
