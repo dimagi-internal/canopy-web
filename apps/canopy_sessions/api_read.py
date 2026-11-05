@@ -289,7 +289,7 @@ def _info_binding(binding, *, sensitive: bool = False) -> dict | None:
         "runner_kind": runner.kind if runner else None,
         "host": binding.host,
         "emdash_project": binding.emdash_project,
-        "session_key": binding.session_key,
+        "session_key": "" if binding.session.content_deleted_at else binding.session_key,
         "thread_key": binding.thread_key,
         "transcript_id": binding.transcript_id,
         "task_uid": binding.task_uid,

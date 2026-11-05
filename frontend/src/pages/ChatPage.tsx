@@ -294,10 +294,18 @@ function ChatPageInner({
   // Until the socket's snapshot lands the transcript is not empty, it is
   // unknown: "Start the conversation" over a session still loading reads as a
   // blank chat.
-  const loadingTranscript = !socket.synced && socket.state.messages.length === 0
+  const contentDeleted = Boolean(meta?.content_deleted_at)
+  const loadingTranscript = !contentDeleted && !socket.synced && socket.state.messages.length === 0
   const emptyState = useMemo(
     () =>
-      loadingTranscript ? (
+      contentDeleted ? (
+        <div
+          className="flex h-full flex-col items-center justify-center p-8 text-center text-sm text-muted-foreground"
+          data-testid="chat-content-deleted"
+        >
+          This session's content was permanently deleted.
+        </div>
+      ) : loadingTranscript ? (
         <div
           className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center text-sm text-muted-foreground"
           aria-busy="true"
@@ -312,7 +320,7 @@ function ChatPageInner({
           <div className="text-xs">Type a message below to begin.</div>
         </div>
       ),
-    [loadingTranscript],
+    [contentDeleted, loadingTranscript],
   )
 
   // "Load all messages" / "Load full session" live in the ⋯ menu

@@ -626,12 +626,23 @@ def test_a_coach_reads_nothing_of_it_afterwards(w):
     assert get(f"/api/canopy-sessions/{kept.pk}").status_code == 200
 
 
+def test_a_laptop_sessions_task_name_is_not_served_afterwards(w):
+    s = _laptop_session(w)
+    _said(s)
+    assert _as(w["lili"]).get(f"/api/canopy-sessions/{s.pk}").json()["session_key"] == KEY
+    assert _delete(w["lili"], s).status_code == 200
+    body = _as(w["lili"]).get(f"/api/canopy-sessions/{s.pk}").json()
+    assert body["title"] == "" and body["session_key"] == ""
+    assert RunnerBinding.objects.get(session=s).session_key == KEY
+
+
 def test_she_sees_the_empty_row_and_that_it_was_deleted(w):
     s = _lili_chat(w)
     assert _as(w["lili"]).get(f"/api/canopy-sessions/{s.pk}").json()["can_delete_content"] is True
     assert _delete(w["lili"], s).status_code == 200
     body = _as(w["lili"]).get(f"/api/canopy-sessions/{s.pk}").json()
     assert body["content_deleted_at"] and body["title"] == "" and body["my_role"] == "owner"
+    assert body["session_key"] == ""
     assert body["messages"] == []
 
 

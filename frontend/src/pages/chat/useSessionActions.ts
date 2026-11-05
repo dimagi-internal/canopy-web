@@ -172,7 +172,7 @@ export function useSessionActions({
     try {
       await deleteSessionContent(sessionId)
       forgetSession(sessionId)
-      if (onLeave) return onLeave()
+      if (onLeave) return onLeave(false)
       const to = closeDestination(window.history.state?.idx, meta.workspace)
       if (to === -1) navigate(-1)
       else navigate(to, { replace: true })

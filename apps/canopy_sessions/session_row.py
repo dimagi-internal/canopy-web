@@ -218,6 +218,9 @@ def session_out(session: Session, *, reply: bool = False, viewer=None) -> dict:
         # none of these is ever written with its words (`sensitivity.seal`), and a
         # list must not start reading them if that ever changes.
         **({"title": "", "opening": "", "last_reply": ""} if sensitive else {}),
+        # Its task name is kept to recognise the task on the box (`content_deletion`), and
+        # a task name can say what the session was about, so it is not served.
+        **({"title": "", "session_key": ""} if session.content_deleted_at else {}),
     }
 
 
