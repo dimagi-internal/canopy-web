@@ -121,7 +121,7 @@ def check_email_poster(request: HttpRequest, payload: TurnIn, agent) -> None:
             )
 
 
-def resolve_pin(request: HttpRequest, payload: TurnIn, agent):
+def resolve_pin(request: HttpRequest, payload: TurnIn, agent, workspace=None):
     """The runner `payload.runner_id` pins the turn to, or None — refused when
     the caller cannot see it (422) or it could never run the turn (403)."""
     pinned = None
@@ -141,7 +141,7 @@ def resolve_pin(request: HttpRequest, payload: TurnIn, agent):
         )
         if pinned is None:
             raise HttpError(422, f"unknown or retired runner id: {payload.runner_id}")
-        if agent is None and payload.project not in pinned.project_names():
+        if agent is None and not pinned.offers_project_in(payload.project, getattr(workspace, "slug", None)):
             # claim_next_turn's pin arm skips target matching, so without this a
             # pinned repo prompt lands on a box that never declared the repo —
             # routing's one rule for a project turn (runner_target_q's
@@ -149,8 +149,9 @@ def resolve_pin(request: HttpRequest, payload: TurnIn, agent):
             # turns route by declaration as before.
             raise HttpError(
                 403,
-                f"runner {pinned.name} does not declare the repo {payload.project!r}, or its "
-                "owner has not opted it into canopy (Settings → Canopy projects); "
+                f"runner {pinned.name} does not offer the repo {payload.project!r} in this "
+                "workspace: it does not hold it, or its owner has not opted it in and "
+                "assigned it here (Settings → Runners → Opted-in repos); "
                 "pin a runner that does, or dispatch without a runner",
             )
         if agent is not None:

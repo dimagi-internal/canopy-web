@@ -13,7 +13,7 @@ import {
 import { createSession, type ChatSession } from '@/api/chat'
 import { getAgentPinnableRunners, getAgentRoutePreview, listMyAgents, type AgentOut, type AgentPinnableRunnerOut } from '@/api/agents'
 import { listRunners, type RunnerOut } from '@/api/harness'
-import { onlineSessionCapableRunners, repoChoices, reportedRepos, runnerOptionLabel, type RepoChoice } from './runnerEligibility'
+import { onlineSessionCapableRunners, repoChoices, runnerOptionLabel, type RepoChoice } from './runnerEligibility'
 import { scopedPath } from '../../lib/scopedLinks'
 import { cliLabel } from '../../lib/clis'
 
@@ -30,7 +30,7 @@ export type NewChatTarget =
  * doors: the Sessions list and the supervisor feed.
  *
  * The repos offered are the ones the fleet's online, session-capable runners
- * report (`repoChoices`) — the set a project chat can actually be claimed on.
+ * offer this person (`repoChoices`), each in the workspace it would start in.
  * `agents` and `runners` may be passed by a caller that already loaded them;
  * otherwise the menu loads them itself (Home passes neither). `onCreated` replaces the default of opening the new
  * chat at `/w/<ws>/sessions/<id>` (/ide opens it in place). `target` skips the
@@ -168,7 +168,7 @@ export function NewChatMenu({
 
   const pickProject = useCallback((project: RepoChoice) => {
     setSelectedRunnerId('')
-    setProjectRunnerOptions(projectRunners(fleetRunnersRef.current ?? [], project.slug))
+    setProjectRunnerOptions(projectRunners(fleetRunnersRef.current ?? [], project))
     setPending({ kind: 'project', project })
   }, [])
 
@@ -333,12 +333,12 @@ function AgentRunnerOptions({ agent, runners }: { agent: string; runners: readon
 }
 
 
-/** The boxes a project chat on `repo` may be started on, by name: online +
- *  sessions-capable (only those can execute a chat turn at all), holding the
- *  repo (no other box could claim it), and administered by you (choosing a box
- *  for a project chat needs that; the server refuses any other). */
-export function projectRunners(fleet: readonly RunnerOut[], repo: string): RunnerOut[] {
+/** The boxes a project chat on this repo, in this workspace, may be started on,
+ *  by name: online + sessions-capable (only those can execute a chat turn at all),
+ *  offering the repo there (no other box could claim it), and administered by you
+ *  (choosing a box for a project chat needs that; the server refuses any other). */
+export function projectRunners(fleet: readonly RunnerOut[], repo: RepoChoice): RunnerOut[] {
   return onlineSessionCapableRunners(fleet)
-    .filter((r) => reportedRepos(r).includes(repo) && r.can_administer)
+    .filter((r) => r.can_administer && (r.repo_workspaces?.[repo.slug] ?? []).includes(repo.workspace ?? ''))
     .sort((a, b) => a.name.localeCompare(b.name))
 }

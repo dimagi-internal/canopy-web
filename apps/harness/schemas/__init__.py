@@ -128,6 +128,7 @@ from .pairings import (  # noqa: F401
 from .project_opt_in import (  # noqa: F401
     ProjectOptInIn,
     ProjectOptInOut,
+    ProjectOptInWorkspaceOut,
 )
 from .releases import (  # noqa: F401
     RunnerDownloadOut,

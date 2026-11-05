@@ -136,7 +136,9 @@ def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict,
             # not WHETHER — a lower rank still covers the turn).
             rows = repo_order_for(t, orders if orders is not None
                                   else load_workspace_orders({t.workspace_id}), requires=reqs)
-            return rows is None or any(row.id == r.id for row in rows)
+            if rows is None:
+                return r.offers_project_in(t.project, t.workspace_id)
+            return any(row.id == r.id for row in rows)
         # An unbound project chat: the box has its repo, and the workspace's
         # order shares the box or the chatting person administers it — the
         # predicate the claim asks, without the cascade's clock.

@@ -312,8 +312,9 @@ A project chat is a chat session with no agent, only a repo (`Session.project`).
 Its turns, while the session is **unbound**, follow the rules a repo turn
 follows (`routing.project_session_allows`, `tests/test_project_chat_routing.py`):
 
-1. the box declares the repo (`Runner.project_names()`; a chat with no repo has
-   nothing to match here);
+1. the box offers the repo in the session's workspace (`Runner.offers_project_in`:
+   held, opted in, assigned there; [runners.md](runners.md) § Opted-in projects; a
+   chat with no repo has nothing to match here);
 2. if the session's workspace has an enabled order, the order decides — the same
    cascade and grace, among listed boxes that pass rule 1 (`order_for`);
 3. with no order, only a box the turn's sender (`enqueued_by`) administers

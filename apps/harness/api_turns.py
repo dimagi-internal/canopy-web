@@ -107,7 +107,7 @@ def enqueue_turn(request: HttpRequest, payload: TurnIn):
     origin_ref = turn_gates.capped_origin_ref(request, payload)
     agent, workspace = turn_gates.resolve_target(request, payload)
     turn_gates.check_email_poster(request, payload, agent)
-    pinned = turn_gates.resolve_pin(request, payload, agent)
+    pinned = turn_gates.resolve_pin(request, payload, agent, workspace)
     initiator = turn_gates.check_asker(request, payload, agent)
     # An agent dispatching for the person in its turn (turn_asker): enqueue_turn stamps
     # them on the turn, and they are who asked for its mode (the claim re-checks them).

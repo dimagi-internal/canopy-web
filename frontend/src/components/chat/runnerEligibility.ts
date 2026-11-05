@@ -66,35 +66,28 @@ export function onlineSessionCapableRunners(
 }
 
 /**
- * A repo an agentless (project) chat can be started on. `workspace` is the home
- * workspace of the first runner reporting it — the tenant the chat is created
- * in — or null to let the server use the caller's default.
+ * A repo an agentless (project) chat can be started on, and the workspace it
+ * starts in: one its box's owner assigned the repo to, that you can start it in.
  */
 export type RepoChoice = { slug: string; workspace: string | null }
 
-/** The repos a runner reports holding (`capabilities.projects` — the emdash
- * project names it can open a worktree in). Defensive: the bag is caller-reported. */
-export function reportedRepos(runner: Pick<RunnerOut, "capabilities">): string[] {
-  const repos = (runner.capabilities as { projects?: unknown } | null)?.projects;
-  return Array.isArray(repos) ? repos.filter((r): r is string => typeof r === "string" && r !== "") : [];
-}
-
 /**
- * The repos a project chat can actually run on: the union of what the online,
- * session-capable runners report, sorted by name. This is the same list the
- * server claims against (`claim_next_turn` matches a project turn's repo to a
- * runner's `capabilities.projects`), so a repo offered here is one some box can
- * take. It replaced the retired workbench project registry, which listed repos
- * whether or not any runner held them.
+ * The repos a project chat can actually be started on, one per workspace, sorted
+ * by name: what the online, session-capable runners offer you
+ * (`RunnerOut.repo_workspaces`, which the server works out from where each repo's
+ * owner assigned it, the workspace's runner order and what you administer). A repo
+ * offered here is one some box would take from you in that workspace.
  */
 export function repoChoices(fleet: readonly RunnerOut[]): RepoChoice[] {
   const by = new Map<string, RepoChoice>();
   for (const r of onlineSessionCapableRunners(fleet)) {
-    for (const slug of reportedRepos(r)) {
-      if (!by.has(slug)) by.set(slug, { slug, workspace: r.workspace ?? null });
+    for (const [slug, workspaces] of Object.entries(r.repo_workspaces ?? {})) {
+      for (const workspace of workspaces) by.set(`${workspace}/${slug}`, { slug, workspace });
     }
   }
-  return [...by.values()].sort((a, b) => a.slug.localeCompare(b.slug));
+  return [...by.values()].sort(
+    (a, b) => a.slug.localeCompare(b.slug) || (a.workspace ?? '').localeCompare(b.workspace ?? ''),
+  );
 }
 
 /**

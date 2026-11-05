@@ -13,7 +13,7 @@ from ninja.errors import HttpError
 from apps.agents.gates import agent_for_read
 from apps.api.route_gates import gate
 
-from . import runner_projects
+from . import runner_projects, runner_repos
 from . import runners as harness_runners
 from .api import router, runner_admin_or_404, runner_or_404, runner_read_q
 from .models import Runner, RunnerProjectRequest
@@ -41,6 +41,9 @@ def _out(request: HttpRequest, runner: Runner) -> dict:
     # the ORM rows, not an already-built schema.
     rows = (RunnerProjectRequest.objects.filter(runner=runner)
             .select_related("agent", "requested_by").order_by("name"))
+    # Narrows this row's report to what the caller may see (never saved).
+    administered = harness_runners.administered_runner_ids(request.user, [runner])
+    runner_repos.annotate_for_caller(request.user, [runner], administered)
     return {
         "projects": sorted(runner.observed_projects()),
         "requests": list(rows),

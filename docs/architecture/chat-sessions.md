@@ -336,7 +336,7 @@ ignored files never travel), optionally the Claude transcript. ≤ 24 MB packed.
 - **An unbound chat with an agent** follows the agent's runner list and rules
   (`runner-routing.md` → "An agent's runner list").
 - **An unbound project chat** (no agent, only `Session.project`) runs on a box that
-  declares the repo and that the workspace's runner order shares — or, with no
+  offers the repo in that workspace (its owner assigned it there) and that the workspace's runner order shares — or, with no
   order, one the person who sent it administers. A teammate's project chat in a
   workspace with no order does not land on your box; it waits, and `/supervisor`'s
   unclaimable report says "no runner order in <ws>, and <person> administers no box

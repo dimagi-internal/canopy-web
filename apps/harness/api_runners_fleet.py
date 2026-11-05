@@ -13,6 +13,7 @@ from apps.api.route_gates import gate
 
 from . import (
     routing,
+    runner_repos,
 )
 from . import runners as harness_runners
 from .api import (  # noqa: E402
@@ -97,6 +98,7 @@ def _runner_rows(request: HttpRequest, qs) -> list:
         # its own flag rather than overloading can_manage — the credentials block
         # and the drill panel are gated by different routes.
         r.can_administer = r.pk in administered
+    runner_repos.annotate_for_caller(request.user, rows, administered)
     return _with_roots(request, rows)
 
 

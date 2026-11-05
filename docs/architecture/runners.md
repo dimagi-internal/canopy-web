@@ -281,6 +281,22 @@ answer is nothing. Every repo outside the choice is plain Claude Code.
   sessions canopy has a record of and nothing else, from any repo.
 - **Agents are always canopy.** An agent's own repo is checked against
   `observed_projects()` (`cannot_serve`, the inherited order), never the opt-in.
+- **Each repo belongs to workspaces.** `ProjectOptIn.workspaces` is `{repo: [slug, …]}`,
+  set per repo on the same screen, and covers the workspaces below each slug. A repo
+  never assigned belongs to the home workspace of the box holding it (no home: where
+  it is enrolled), so enrolling a box in a second tree carries no repo there.
+  `Runner.offers_project_in(repo, workspace)` is the question for repo work (held,
+  opted in, assigned): the workspace order, project chats, an unordered repo turn and
+  a pinned repo turn ask it, and a chosen box asks `project_assigned_to`
+  (`canopy_sessions.placement`). A chat already bound to a box stays there. It does
+  not touch mirroring or usage, which are the owner's own, or an agent's repo.
+- **What a person sees of a box's repos** is `runner_repos.annotate_for_caller`, read
+  once for the fleet list. `RunnerOut.repo_workspaces` is `{repo: the workspaces you
+  can start a repo chat in}`: assigned there, and the workspace's order lists the box
+  or you administer it. New chat offers exactly that, so `capabilities["projects"]`
+  is never a list of what someone can start. To someone who does not administer the
+  box, `capabilities["projects"]` and `GET /runners/{id}/projects` show only the repos
+  it offers in their workspaces, plus their workspaces' agents' repos.
 - **`everything`** also covers a task emdash could not place in a repo (blank
   project). A chosen list covers only the repos it names.
 - Migration `harness.0104` gave every existing runner owner `everything`. A

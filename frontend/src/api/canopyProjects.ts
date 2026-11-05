@@ -15,17 +15,31 @@ export type CanopyProjects = {
   everything: boolean
   projects: string[]
   available: string[]
+  /** The workspaces you assigned each repo to (and the ones below them). */
+  repo_workspaces: Record<string, string[]>
+  /** Where a repo you have not assigned belongs: your boxes' home workspaces. */
+  default_workspaces: Record<string, string[]>
+  /** The workspaces you may assign a repo to. */
+  workspaces: { slug: string; display_name: string }[]
 }
 
 function normalize(data: {
   everything?: boolean
   projects?: ReadonlyArray<string>
   available?: ReadonlyArray<string>
+  repo_workspaces?: Record<string, ReadonlyArray<string>>
+  default_workspaces?: Record<string, ReadonlyArray<string>>
+  workspaces?: ReadonlyArray<{ slug: string; display_name: string }>
 }): CanopyProjects {
+  const lists = (m?: Record<string, ReadonlyArray<string>>) =>
+    Object.fromEntries(Object.entries(m ?? {}).map(([k, v]) => [k, [...v]]))
   return {
     everything: data.everything ?? false,
     projects: [...(data.projects ?? [])],
     available: [...(data.available ?? [])],
+    repo_workspaces: lists(data.repo_workspaces),
+    default_workspaces: lists(data.default_workspaces),
+    workspaces: (data.workspaces ?? []).map((w) => ({ ...w })),
   }
 }
 
@@ -62,8 +76,14 @@ export async function setSessionSharing(projectId: number, shared: boolean): Pro
   return unwrap(res, 'could not change your session sharing') as unknown as SessionShare
 }
 
-export async function setCanopyProjects(everything: boolean, projects: string[]): Promise<CanopyProjects> {
-  const res = await apiV2.PUT('/api/me/canopy-projects/', { body: { everything, projects } })
+export async function setCanopyProjects(
+  everything: boolean,
+  projects: string[],
+  repoWorkspaces: Record<string, string[]>,
+): Promise<CanopyProjects> {
+  const res = await apiV2.PUT('/api/me/canopy-projects/', {
+    body: { everything, projects, repo_workspaces: repoWorkspaces },
+  })
   const data = unwrap(res, 'could not save your canopy projects')
   return normalize(data as unknown as Parameters<typeof normalize>[0])
 }

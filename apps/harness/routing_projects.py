@@ -61,8 +61,8 @@ def project_session_covers(runner: Runner, turn: Turn, orders: dict, *,
     if runner.directed_only():
         return False
     project = turn.chat_session.project
-    if project and project not in runner.project_names():
-        return False  # 1. the box declares the repo
+    if project and not runner.offers_project_in(project, turn.chat_session.workspace_id):
+        return False  # 1. the box holds the repo, for this workspace
     rows = project_session_rows(turn, orders, requires=requires)
     if rows is not None:
         return any(r.id == runner.id for r in rows)  # 2. the workspace shares it
