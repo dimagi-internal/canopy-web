@@ -2,18 +2,13 @@
 
 ## Canopy-Web Platform
 
-### Coaching facts in analytics
+### Coaching facts on a dashboard
 
-**What:** `coaching.note_sent`, `coaching.reply` and `coaching.finding_routed` as `activity.emit` facts, ids only.
+**What:** a coaching panel that reads `coaching.note_sent`, `coaching.reply` and `coaching.finding_routed`.
 
-**Why not yet:** canopy-web has no signal for any of them, so no kind exists in `activity.KINDS`.
-- `note_sent`: a coach's mail reaches `POST /api/mail/send/{ws}` like any of its mail. Nothing marks it a coaching note; matching the subject would be a guess. The fact is born in the coach's `bin/trellis-coach-ledger record-note`.
-- `reply`: the inbound mail is stored, but whether it means useful, wrong, already knew or pause is decided in a coach turn and kept in that box's ledger.
-- `finding_routed`: `bin/trellis-friction` writes local files, and its report is draft text for a person. Nothing leaves the box.
+**Why not yet:** the facts are recorded (`docs/architecture/analytics.md`), but nothing reads them yet: `analytics.build` counts other kinds. A panel has to decide who may see a per-person reply, since the facts carry `person_id`. They also outlive the coach's `forget`, which the consent text says.
 
-**What it would take:** a narrow route the agent's own login calls inside a running turn, taking a closed kind and ids, never free text, plus the three calls from the coach's repo. `POST /api/events/` is not it: `Event` is the fleet log, not `Activity`.
-
-**Effort:** S here, plus the coach's repo.
+**Effort:** S.
 
 ### Ask a coach to review one session
 

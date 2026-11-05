@@ -523,6 +523,11 @@ Framework tier. Bodies, lease states, long-poll, exec, slot data and every refus
 - `POST /api/capabilities/leases/{id}/exec` · `GET …/exec/{exec_id}` — run an allow-listed command / read it back.
 - `POST /api/capabilities/leases/{id}/uploads` · `GET …/artifacts?prefix=` — presigned PUTs into `in/` / GETs from `out/`.
 
+### An agent's state document (`apps/harness/api_agent_state.py`) and coaching facts (`apps/canopy_sessions/api_coaching.py`)
+- `GET /api/agents/{slug}/state-document` → `{version, document, updated_at}` (`version: 0`, `document: null` when there is none). The agent's owner and admins; its own login only inside a running, unconfined turn that answers to nobody or to one of them (403 otherwise); anyone else 404. Rules: `docs/architecture/runners.md` § An agent's state document.
+- `PUT /api/agents/{slug}/state-document` `{expected_version, document}` → `{version, updated_at}`. The agent's own login inside a running, unconfined turn of it; 409 with `current_version` when `expected_version` is stale; 413 above 1 MiB.
+- `POST /api/coaching/facts/` `{kind, ref, person_id?, note_type?, reply?, finding_type?}` → `{recorded}`. The same login and turn; ids and closed words only (`docs/architecture/analytics.md`).
+
 ### Agent tasks (`apps/agent_tasks`, mounted at `/api/agent-tasks`) — call an agent inline, get a structured result
 Framework tier. The contract, the completion rule and its two rails: [`agent-tasks.md`](agent-tasks.md). Anyone not listed gets a 404.
 - `POST /api/agent-tasks/` `{agent, name, instructions?, input, output_schema, routing?, timeout_s?, parent?}` — create a task and queue ONE turn for the agent (`origin_ref.agent_task`). The gates of `POST /api/harness/turns/` (`agent.work`). 422 for an `output_schema` that is not a JSON Schema, 413 for `input` over 1 MiB. 201.

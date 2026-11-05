@@ -7763,6 +7763,57 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/state-document": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * An agent's state document
+         * @description The document an agent backs up here, with its version (0 when it has none). For
+         *     the agent's owner and admins, and the agent's own login inside a running turn nobody
+         *     in particular asked for or an admin of it asked for.
+         */
+        readonly get: operations["get_agent_state_document"];
+        /**
+         * Replace an agent's state document
+         * @description Replace the document, for the agent's own login inside a running turn of that
+         *     agent. `expected_version` is the version the write is based on: 409 with
+         *     `current_version` if another write came first, so nothing is overwritten unseen; 413
+         *     above 1 MiB.
+         */
+        readonly put: operations["put_agent_state_document"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/coaching/facts/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Record a coaching fact
+         * @description For an agent's own login inside its running turn: a note went out, how a person
+         *     replied, or a friction pattern was recorded. Recording the same fact again changes
+         *     nothing (`recorded` is false).
+         */
+        readonly post: operations["record_coaching_fact"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/projects/{ref}/team/": {
         readonly parameters: {
             readonly query?: never;
@@ -33520,6 +33571,65 @@ export interface components {
             /** Mail Quiet Minutes */
             readonly mail_quiet_minutes?: number | null;
         };
+        /** AgentStateDocumentOut */
+        readonly AgentStateDocumentOut: {
+            /**
+             * Version
+             * @description 0 when the agent has no document yet.
+             */
+            readonly version: number;
+            /** Document */
+            readonly document?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /** Updated At */
+            readonly updated_at?: string | null;
+        };
+        /** AgentStateWriteOut */
+        readonly AgentStateWriteOut: {
+            /** Version */
+            readonly version: number;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
+        };
+        /** AgentStateDocumentIn */
+        readonly AgentStateDocumentIn: {
+            /**
+             * Expected Version
+             * @description The version this write is based on; 0 when none exists yet.
+             */
+            readonly expected_version: number;
+            /** Document */
+            readonly document: {
+                readonly [key: string]: unknown;
+            };
+        };
+        /** CoachingFactOut */
+        readonly CoachingFactOut: {
+            /** Recorded */
+            readonly recorded: boolean;
+        };
+        /** CoachingFactIn */
+        readonly CoachingFactIn: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "coaching.note_sent" | "coaching.reply" | "coaching.finding_routed";
+            /** Ref */
+            readonly ref: string;
+            /** Person Id */
+            readonly person_id?: number | null;
+            /** Note Type */
+            readonly note_type?: ("retrospective" | "explanatory" | "status") | null;
+            /** Reply */
+            readonly reply?: ("useful" | "wrong" | "already_knew" | "pause") | null;
+            /** Finding Type */
+            readonly finding_type?: ("knowledge-gap" | "session-mistake" | "system-defect") | null;
+        };
         /** ContributorBriefOut */
         readonly ContributorBriefOut: {
             /** Id */
@@ -58806,6 +58916,78 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["TriggerOut"];
+                };
+            };
+        };
+    };
+    readonly get_agent_state_document: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentStateDocumentOut"];
+                };
+            };
+        };
+    };
+    readonly put_agent_state_document: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentStateDocumentIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentStateWriteOut"];
+                };
+            };
+        };
+    };
+    readonly record_coaching_fact: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["CoachingFactIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CoachingFactOut"];
                 };
             };
         };
