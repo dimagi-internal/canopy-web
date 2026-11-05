@@ -227,7 +227,7 @@ def add_runner_requirements(session: Session, reqs, *, refuse_keyless: bool = Fa
     conversation that held a host's data keeps the host's floor, whatever token
     touches it next (spec 2026-09-30-zdr-runners).
 
-    `refuse_keyless` (a person's send, `doors.send_from`): when this would make the
+    `refuse_keyless` (a person's send, `send_paths.send_from`): when this would make the
     conversation sensitive and it can get no key — its starter has no vault key, or it
     is a contact's — raise `conversation_keys.CannotHold` and change nothing. All or
     nothing: the switch, the sealing of its history and the refusal never land apart,

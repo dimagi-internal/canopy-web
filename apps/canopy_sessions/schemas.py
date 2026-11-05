@@ -836,7 +836,7 @@ class SessionContextOut(Schema):
     sensitive: bool = False
     sensitive_requirement: str = ""
     is_review: bool = False
-    review_ask: str | None = None
+    review_of: str | None = None      # the session a review chat reviews
     audience: dict = {}
     participants: list[dict] = []
     session_grants: list[dict] = []
@@ -1125,7 +1125,7 @@ class PageActionSpec(Schema):
 class PageActionsDeclareIn(Schema):
     """What the page can do, replacing any previous declaration.
 
-    Wholesale, never merged: a page has one current set of capabilities, and an
+    Wholesale, never merged: a page has one current set of actions, and an
     action left over from a page the user navigated away from is one the agent
     would call into nothing.
     """

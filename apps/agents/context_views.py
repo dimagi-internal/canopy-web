@@ -74,7 +74,7 @@ def session_context(ctx, *, sees_page: bool = True) -> dict:
         "sensitive": ctx.sensitive,
         "sensitive_requirement": ctx.sensitive_requirement,
         "is_review": ctx.is_review,
-        "review_ask": None if ctx.review_ask is None else str(ctx.review_ask),
+        "review_of": None if ctx.review_of is None else str(ctx.review_of),
         "audience": _people(ctx.audience),
         "participants": [{"user_id": user_id, "role": role} for user_id, role in ctx.participants],
         "session_grants": [{"kind": g.kind, "user_id": g.user_id, "role": g.role, "source": g.source}

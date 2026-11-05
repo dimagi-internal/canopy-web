@@ -22,7 +22,7 @@ from apps.agents.models import Agent
 from apps.approvals import services as approvals
 from apps.approvals.models import ApprovalRequest
 from apps.canopy_sessions import access as session_access
-from apps.canopy_sessions import attachment_storage, doors
+from apps.canopy_sessions import attachment_storage, send_paths
 from apps.canopy_sessions import services as session_services
 from apps.canopy_sessions.models import Session
 from apps.harness import initiator as who
@@ -489,7 +489,7 @@ def _send(run: LocalAppRun, args: dict) -> dict:
     client_id = str(args.get("client_id") or "")[:120]
     inst = run.installation
     try:
-        _message, turn = doors.send_from(
+        _message, turn = send_paths.send_from(
             "rest",
             session=session,
             text=text,

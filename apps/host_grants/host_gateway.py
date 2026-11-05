@@ -298,7 +298,7 @@ def resolve(turn_id: str, *, reason: str = "") -> SiteContext:
     if rr.SENSITIVE_DATA in effective and not sensitive_data.handles_sensitive(agent, turn.capability):
         raise GatewayRefusal(
             "undeclared",
-            f"{site} gives its sensitive data only to a capability that handles sensitive data "
+            f"{site} gives its sensitive data only to a connected site that handles sensitive data "
             "(`data: sensitive`), and this turn's does not; ask the agent's owner to set it")
     ctx = context_for_grant(app, grant, turn_id=str(turn.pk), agent_slug=agent.slug,
                             ceiling=ceiling,

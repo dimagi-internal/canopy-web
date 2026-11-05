@@ -75,10 +75,10 @@ export function SessionContextSection({
       <Row label="Review chat" value={facts.is_review ? "Yes: it reviews one other session" : "No"} />
       <Row
         label="Session it reviews"
-        value={facts.review_ask ?? ""}
+        value={facts.review_of ?? ""}
         mono
         copy
-        href={facts.review_ask ? `/ide/${facts.review_ask}` : undefined}
+        href={facts.review_of ? `/ide/${facts.review_of}` : undefined}
       />
       <Row label="Runner asked for" value={facts.runner_requested ?? ""} mono copy />
       <Row

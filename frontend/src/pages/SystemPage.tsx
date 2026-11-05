@@ -178,10 +178,10 @@ export function SystemPage() {
   }, [filtered])
 
   if (error) {
-    return <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">Failed to load capabilities: {error}</div>
+    return <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">Failed to load the catalog: {error}</div>
   }
   if (!catalog) {
-    return <div className="text-sm text-muted-foreground">Loading capabilities…</div>
+    return <div className="text-sm text-muted-foreground">Loading the catalog…</div>
   }
 
   const counts = catalog.counts
@@ -240,7 +240,7 @@ export function SystemPage() {
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search capabilities…"
+          placeholder="Search the catalog…"
           className="w-full rounded-lg border border-input bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none sm:max-w-xs"
         />
         <div className="flex gap-1 overflow-x-auto">
@@ -269,7 +269,7 @@ export function SystemPage() {
           {mode === 'workflows' ? (
             <WorkflowsView items={catalog.items} selected={selected} onSelect={setSelected} />
           ) : total === 0 ? (
-            <p className="text-sm text-muted-foreground">No capabilities match “{query}”.</p>
+            <p className="text-sm text-muted-foreground">Nothing matches “{query}”.</p>
           ) : (
             <div className="space-y-5">
               {groups.map((g) => (
@@ -307,7 +307,7 @@ export function SystemPage() {
         <div className={selected ? 'block' : 'hidden lg:block'}>
           {!selected ? (
             <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-              Select a capability to see what it does.
+              Select an entry to see what it does.
             </div>
           ) : (
             <div className="rounded-lg border border-border bg-card lg:sticky lg:top-6">

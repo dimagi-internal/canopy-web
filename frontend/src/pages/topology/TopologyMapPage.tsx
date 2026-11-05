@@ -214,7 +214,7 @@ function Legend(): JSX.Element {
   return (
     <span className="inline-flex flex-wrap items-center gap-3">
       <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-5 bg-success" />whole agent</span>
-      <span className="inline-flex items-center gap-1.5"><span className="inline-block w-5 border-t-2 border-dashed border-warning" />some capabilities</span>
+      <span className="inline-flex items-center gap-1.5"><span className="inline-block w-5 border-t-2 border-dashed border-warning" />read mode or connected sites</span>
     </span>
   )
 }

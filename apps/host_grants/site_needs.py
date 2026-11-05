@@ -144,8 +144,8 @@ def fit(document: wire.SiteNeeds, content: dict) -> tuple[list[dict], list[str]]
             links = agent.get("problem_links") or [{"text": p, "url": ""} for p in agent["problems"]]
             if requires.get("handles_sensitive") and not any(
                     c["handles_sensitive"] for c in agent["capabilities"]):
-                why.append({"text": f"no capability of {agent['name']} for this site says "
-                                    f"`data: sensitive`", "url": f"{settings_url}#reach"})
+                why.append({"text": f"{agent['name']} has no connected site for this site that handles "
+                                    f"sensitive data", "url": f"{settings_url}#reach"})
             if flag and not agent["runners"]["ready_with"].get(flag):
                 # The site agents API's own link when it has one: it names where to fix it.
                 found = next((p for p in links if p["text"].startswith(runner_problem)), None)

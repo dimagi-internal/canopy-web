@@ -31,6 +31,7 @@ from .schemas import (
     AccessListOut,
     AccessRoleOut,
     AgentDefaultsOut,
+    ConnectedSiteChoiceOut,
 )
 
 router = Router(tags=["agents"])
@@ -38,7 +39,7 @@ defaults_router = Router(tags=["workspaces"])
 
 #: The words a person sees beside each permission.
 _CAN = {roles.READ: "ask it questions in read mode (it can only read and draft a reply)",
-        roles.WRITE: "drive the whole agent", roles.AGENT_EDIT: "change its skills and capabilities",
+        roles.WRITE: "drive the whole agent", roles.AGENT_EDIT: "change its skills and settings",
         roles.ADMINISTER: "configure it", roles.OWN: "transfer or delete it"}
 _PERMISSIONS = (roles.READ, roles.WRITE, roles.AGENT_EDIT, roles.ADMINISTER, roles.OWN)
 
@@ -47,7 +48,7 @@ def _out(line: AgentGrant, *, can_edit: bool, warning: str = "") -> AccessLineOu
     return AccessLineOut(
         warning=warning, id=line.pk, scope="agent" if line.agent_id else "workspace",
         scope_workspace=line.workspace_id, kind=line.kind, who=grants.describe(line), role=line.role,
-        capability=line.capability, include_below=line.include_below,
+        connected_site=line.capability, include_below=line.include_below,
         user_id=line.user_id, subject_workspace=line.subject_workspace_id, at_least=line.at_least,
         domain=line.domain, verified=line.verified, manual_only=line.manual_only, note=line.note,
         granted_by_email=getattr(line.granted_by, "email", None), granted_at=line.granted_at,
@@ -56,9 +57,9 @@ def _out(line: AgentGrant, *, can_edit: bool, warning: str = "") -> AccessLineOu
 
 def _can(permissions) -> list[str]:
     """What a role with these (closed) permissions lets someone do, in words."""
-    doors = sorted(p.partition(":")[2] for p in permissions if p.startswith(f"{roles.USE}:") and p != f"{roles.USE}:*")
+    sites = sorted(p.partition(":")[2] for p in permissions if p.startswith(f"{roles.USE}:") and p != f"{roles.USE}:*")
     out = [_CAN[p] for p in _PERMISSIONS if roles.holds(permissions, p)]
-    return out + [f"use it from the {d!r} connected site" for d in doors if not roles.holds(permissions, roles.WRITE)]
+    return out + [f"use it from the {d!r} connected site" for d in sites if not roles.holds(permissions, roles.WRITE)]
 
 
 def role_can(role: str) -> list[str]:
@@ -70,8 +71,8 @@ def role_out(row) -> AccessRoleOut:
     """A catalog role as the access-list forms show it."""
     held = roles.ROLES.close(row.permissions)
     plain = [p for p in _PERMISSIONS if p in held]
-    doors = sorted(p for p in held if p.startswith(f"{roles.USE}:") and p != f"{roles.USE}:*")
-    return AccessRoleOut(role=row.key, can=_can(held), permissions=plain + doors, label=row.label,
+    sites = sorted(p for p in held if p.startswith(f"{roles.USE}:") and p != f"{roles.USE}:*")
+    return AccessRoleOut(role=row.key, can=_can(held), permissions=plain + sites, label=row.label,
                          description=row.description, contains_write=roles.drives(held),
                          defined_on=row.workspace_id)
 
@@ -97,13 +98,13 @@ def _implicit(agent: Agent) -> list[AccessImplicitOut]:
 def _fields(payload: AccessLineIn, actor, home: str) -> dict:
     try:
         fields = grants.check_line(
-            actor, home=home, kind=payload.kind, role=payload.role, capability=payload.capability,
+            actor, home=home, kind=payload.kind, role=payload.role, capability=payload.connected_site,
             user_id=payload.user_id, email=payload.email, workspace=payload.workspace,
             at_least=payload.at_least, domain=payload.domain, verified=payload.verified,
             include_below=payload.include_below)
     except grants.LineError as exc:
         raise HttpError(422, str(exc)) from exc
-    # An approval gate is about driving the whole agent; a capability line has nothing to gate.
+    # An approval gate is about driving the whole agent; a connected-site line has nothing to gate.
     fields.update(manual_only=payload.manual_only and bool(fields["role"]), note=payload.note)
     return fields
 
@@ -132,9 +133,9 @@ def _summary(line: AgentGrant) -> dict:
             "manual_only": line.manual_only}
 
 
-def _capability_warning(line: AgentGrant, agent: Agent) -> str:
-    """Advice, never a refusal: a capability line names a capability this agent has not published,
-    so it opens nothing until it does."""
+def _connected_site_warning(line: AgentGrant, agent: Agent) -> str:
+    """Advice, never a refusal: a line names a connected site this agent does not have, so it opens
+    nothing until it does."""
     if not line.capability or is_read_mode(line.capability) \
             or line.capability in ((agent.interface or {}).get("capabilities") or {}):
         return ""   # (read mode exists on every agent)
@@ -157,8 +158,14 @@ def get_access_list(request: HttpRequest, slug: str) -> AccessListOut:
     return AccessListOut(
         inherit_workspace_defaults=agent.inherit_workspace_defaults,
         lines=lines, implicit=_implicit(agent), roles=_roles_out(agent.workspace_id), can_edit=admin,
-        doors=sorted(n for n in ((agent.interface or {}).get("capabilities") or {}) if not is_read_mode(n)),
-        door_sites={row["key"]: row["site"] for row in answering.connected_sites_of(agent)})
+        connected_sites=_connected_sites(agent))
+
+
+def _connected_sites(agent: Agent) -> list[ConnectedSiteChoiceOut]:
+    """Every entry a line may name (all but read mode), with the site it is connected to."""
+    site_of = {row["key"]: row["site"] for row in answering.connected_sites_of(agent)}
+    names = sorted(n for n in ((agent.interface or {}).get("capabilities") or {}) if not is_read_mode(n))
+    return [ConnectedSiteChoiceOut(name=n, site=site_of.get(n, "")) for n in names]
 
 
 @router.post("/{slug}/access-list", response={201: AccessLineOut},
@@ -168,15 +175,15 @@ def add_access_line(request: HttpRequest, slug: str, payload: AccessLineIn) -> S
     """A line says who has what: a person, everyone in a workspace (optionally also any workspace
     below it), anyone at an email domain, or a known visitor or sender. What they get is a role
     (a key from `GET /api/workspaces/{ws}/agent-roles`: the built-ins read_only, read_write and editor,
-    and any a workspace defined) or, rarely, one door (a named capability the agent published).
-    A line that names people only by address (domain, contact) can give a role that only reads or opens
-    doors, never one that drives or changes the agent."""
+    and any a workspace defined) or, rarely, one connected site (`connected_site`, a name from the list's
+    `connected_sites`). A line that names people only by address (domain, contact) can give a role that
+    only reads or opens connected sites, never one that drives or changes the agent."""
     agent = agent_for_admin(request, slug)
     line = _create({"agent": agent}, _fields(payload, request.user, agent.workspace_id), request.user)
     audit.note_change(scope=f"access-list:{agent.slug}", before=None, after=_summary(line),
-                      summary=f"added {grants.describe(line)} as {line.role or 'use ' + line.capability} "
+                      summary=f"added {grants.describe(line)} as {line.role or 'the connected site ' + line.capability} "
                               f"on {agent.slug}")
-    warning = grants.domain_warning(line, agent.workspace_id) or _capability_warning(line, agent)
+    warning = grants.domain_warning(line, agent.workspace_id) or _connected_site_warning(line, agent)
     return Status(201, _out(line, can_edit=True, warning=warning))
 
 
@@ -203,7 +210,7 @@ def change_access_line(request: HttpRequest, slug: str, line_id: int, payload: A
 def _apply_patch(line: AgentGrant, payload: AccessLinePatch, home: str) -> None:
     if payload.role is not None:
         if line.capability:
-            raise HttpError(422, "this line opens one named capability; remove it and add a role line")
+            raise HttpError(422, "this line opens one connected site; remove it and add a role line")
         try:
             row = grants.check_role(line.kind, payload.role, home)
         except grants.LineError as exc:

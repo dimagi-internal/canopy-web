@@ -101,7 +101,7 @@ def file_approval(request: HttpRequest, payload: ApprovalFileIn):
 @gate("member")
 def get_approval(request: HttpRequest, approval_id: int) -> dict:
     """The server-rendered preview of what approving will do, the requester's own words apart from it,
-    who it was sent to and how, and — once decided — who decided it, through which door, and what
+    who it was sent to and how, and — once decided — who decided it, through which channel, and what
     happened. 404 for a request in a workspace you are not in."""
     return cards.build(_visible(request, approval_id), viewer=request.user)
 

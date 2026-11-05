@@ -57,7 +57,7 @@ class Seed(NamedTuple):
 SEED = (
     Seed(READ_ONLY, "Read only", "Can ask the agent questions in read mode.", frozenset({READ})),
     Seed(READ_WRITE, "Read and write", "Can drive the whole agent.", frozenset({WRITE})),
-    Seed(EDITOR, "Editor", "Can drive the whole agent and change its skills and capabilities.",
+    Seed(EDITOR, "Editor", "Can drive the whole agent and change its skills and settings.",
          frozenset({AGENT_EDIT})),
 )
 SEED_KEYS = tuple(s.key for s in SEED)
@@ -112,7 +112,7 @@ def validate_permissions(permissions) -> frozenset[str]:
     """The CLOSED permission set for a role being saved, or InvalidRole.
 
     A role is built from the fixed vocabulary at the read / write / agent_edit level: `read`,
-    `write`, `agent_edit` and `use:<door>`. `admin` and `own` are `Agent.is_admin` and
+    `write`, `agent_edit` and `use:<site>`. `admin` and `own` are `Agent.is_admin` and
     `Agent.owner`, never a line, so no role can hold them; `use:*` is what `write` is. The set is
     closed (write carries read and every door, agent_edit carries write) and stored closed."""
     wanted = {str(p) for p in permissions or ()}
@@ -128,7 +128,7 @@ def validate_permissions(permissions) -> frozenset[str]:
         if sep and scope == USE and door and door != "*" and _DOOR.match(door):
             continue
         raise InvalidRole(f"{p!r} is not something a role can allow: use read, write, agent_edit "
-                          "or use:<door>")
+                          "or use:<site>")
     return ROLES.close(wanted)
 
 

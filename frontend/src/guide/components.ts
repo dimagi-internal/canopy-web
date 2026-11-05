@@ -16,7 +16,7 @@ export const COMPONENTS: SystemComponent[] = [
   },
   {
     name: 'The canopy plugin',
-    what: 'The capability library — skills, agents and commands, installed into Claude Code. What an agent knows how to do.',
+    what: 'The plugin catalog — skills, agents and commands, installed into Claude Code. What an agent knows how to do.',
   },
   {
     name: 'Runners',

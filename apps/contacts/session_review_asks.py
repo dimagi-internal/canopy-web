@@ -26,7 +26,7 @@ from django.utils import timezone
 from apps.agents import turn_context
 from apps.agents import interface as agent_iface
 from apps.api.errors import TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
-from apps.canopy_sessions import access, control, doors, lifecycle, services
+from apps.canopy_sessions import access, control, lifecycle, send_paths, services
 from apps.canopy_sessions.models import REVIEW_METADATA_KEY, SessionReviewAsk
 from apps.harness import initiator as who
 from apps.harness import sensitivity
@@ -133,7 +133,7 @@ def ask(request, person: Person, session) -> SessionReviewAsk:
         _changed(session, user, agent, after=True, before=was_live)
         hcp.audit(person, "sessionReviewAsk.asked", actor=hcp.user_actor(user),
                   purpose=f"asked {_name(agent)} to review one session, read-only")
-    _message, turn = doors.send_from(
+    _message, turn = send_paths.send_from(
         "rest", session=conversation, text=prompt(session), user=user,
         client_id=f"{VIA}-{uuid.uuid4().hex}",
         runner_requirements=getattr(request, "runner_requirements", ()),

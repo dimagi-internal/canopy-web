@@ -5291,7 +5291,7 @@ export interface paths {
          * Delete an agent (its owner or a workspace owner)
          * @description Remove an agent and everything hanging off it.
          *
-         *     Registration (`POST /`) was a one-way door until this existed: an agent
+         *     Registration (`POST /`) could not be undone until this existed: an agent
          *     created by mistake — a typo'd slug, a scaffold someone was only trying
          *     out, a test — was permanent and fleet-visible to every member of its
          *     workspace, because the only way back was a shell on the box. That made
@@ -5436,7 +5436,7 @@ export interface paths {
          * Everyone's role on this agent, why, and what they can reach
          * @description Every member of the agent's workspace with their role on the agent (owner, admin,
          *     editor, user, viewer), the reason for it, and what they reach signed in: the whole agent,
-         *     the capabilities their role may use, or nothing. People outside the workspace whom the
+         *     read mode or the connected sites their role may use, or nothing. People outside the workspace whom the
          *     access list names are on the list itself (`/access-list`). Readable by any member, like
          *     the admin list.
          */
@@ -5968,9 +5968,9 @@ export interface paths {
          * @description A line says who has what: a person, everyone in a workspace (optionally also any workspace
          *     below it), anyone at an email domain, or a known visitor or sender. What they get is a role
          *     (a key from `GET /api/workspaces/{ws}/agent-roles`: the built-ins read_only, read_write and editor,
-         *     and any a workspace defined) or, rarely, one door (a named capability the agent published).
-         *     A line that names people only by address (domain, contact) can give a role that only reads or opens
-         *     doors, never one that drives or changes the agent.
+         *     and any a workspace defined) or, rarely, one connected site (`connected_site`, a name from the list's
+         *     `connected_sites`). A line that names people only by address (domain, contact) can give a role that
+         *     only reads or opens connected sites, never one that drives or changes the agent.
          */
         readonly post: operations["add_access_line"];
         readonly delete?: never;
@@ -7387,8 +7387,8 @@ export interface paths {
          * An agent's public A2A Agent Card
          * @description The agent's public Agent Card (A2A v1.0): what it offers people outside its workspace.
          *
-         *     Served only for an agent that has published a capability for contacts or
-         *     unknown callers; any other slug is a 404. Supports `If-None-Match`.
+         *     Served only for an agent whose access list lets contacts or unknown callers
+         *     use read mode or a connected site; any other slug is a 404. Supports `If-None-Match`.
          */
         readonly get: operations["public_agent_card"];
         readonly put?: never;
@@ -7410,8 +7410,8 @@ export interface paths {
          * An agent's authenticated extended A2A Agent Card
          * @description The Agent Card as the signed-in caller sees it (A2A `GetExtendedAgentCard`).
          *
-         *     The public card's skills plus every capability the caller may invoke
-         *     themselves. A 404 when that is nothing. Supports `If-None-Match`.
+         *     The public card's skills plus read mode and every connected site the caller
+         *     may use themselves. A 404 when that is nothing. Supports `If-None-Match`.
          */
         readonly get: operations["extended_agent_card"];
         readonly put?: never;
@@ -9771,7 +9771,7 @@ export interface paths {
          * Delete a workspace (owner-only)
          * @description Delete an empty workspace. Owner-only, and never one that still owns agents.
          *
-         *     Creation (`POST /`) was a one-way door: a workspace made with a typo'd
+         *     Creation (`POST /`) could not be undone: a workspace made with a typo'd
          *     slug was permanent, and the slug appears in every URL its team uses. That
          *     is a bad property for a self-serve create endpoint, and it made the
          *     onboarding path un-rehearsable for the same reason agent creation was.
@@ -9829,7 +9829,7 @@ export interface paths {
         };
         /**
          * Workspaces I may request an invitation to
-         * @description A capability list, not a directory: only workspaces whose
+         * @description A list of what the caller may request, not a directory: only workspaces whose
          *     `access_request_domains` include the caller's login-email domain and that
          *     they are not already in, each with their own open request if any. Joins
          *     nothing — see `services.requestable_workspaces`.
@@ -10466,7 +10466,7 @@ export interface paths {
          * Which agents can send which other agents work, across this workspace and every one below it
          * @description Every agent in this workspace and its descendants, and for each ordered
          *     pair what the first gets when it sends the second work with its own canopy
-         *     login: the whole agent, some of its capabilities, or nothing — and why.
+         *     login: the whole agent, read mode or some of its connected sites, or nothing — and why.
          *     Admin and above. Granting access is `PUT /api/agents/{slug}/admins/{user_id}`
          *     with the source agent's `login_user_id`.
          */
@@ -11642,8 +11642,8 @@ export interface paths {
          * @description A session on your private runner is using `agent`: record it as a turn.
          *
          *     Allowed when `turn_context.resolve_turn_context` gives you the WHOLE agent (its owner or an admin,
-         *     or an editor line on its access list); a user or viewer gets 403 with what to ask for — they use the agent through canopy, on
-         *     its confined `ask` path. The turn runs `manual` unless you are an agent admin
+         *     or an editor line on its access list); anyone else gets 403 with what to ask for — they use the agent through canopy, in
+         *     read mode. The turn runs `manual` unless you are an agent admin
          *     and ask for `auto`. Idempotent per Claude session: a resumed session re-opens
          *     its live turn. The response carries the caller envelope.
          */
@@ -13684,7 +13684,7 @@ export interface paths {
          * @description Bring a retired runner back, keeping its identity — and therefore every
          *     RunnerBinding, assignment and session that points at it.
          *
-         *     Retirement used to be a ONE-WAY DOOR, which made it a trap rather than a
+         *     Retirement used to be impossible to undo, which made it a trap rather than a
          *     decision. `_runner_or_404` 404s a retired runner, so its daemon's heartbeat,
          *     claim and session-report calls all fail forever once retired; and `pair_runner`
          *     unconditionally CREATES a row, so the only recovery — re-pairing — minted a new
@@ -15978,7 +15978,7 @@ export interface paths {
         /**
          * One request, with everything needed to decide it
          * @description The server-rendered preview of what approving will do, the requester's own words apart from it,
-         *     who it was sent to and how, and — once decided — who decided it, through which door, and what
+         *     who it was sent to and how, and — once decided — who decided it, through which channel, and what
          *     happened. 404 for a request in a workspace you are not in.
          */
         readonly get: operations["get_approval"];
@@ -23777,7 +23777,7 @@ export interface components {
          * PageActionsDeclareIn
          * @description What the page can do, replacing any previous declaration.
          *
-         *     Wholesale, never merged: a page has one current set of capabilities, and an
+         *     Wholesale, never merged: a page has one current set of actions, and an
          *     action left over from a page the user navigated away from is one the agent
          *     would call into nothing.
          */
@@ -29420,10 +29420,10 @@ export interface components {
             /** Role */
             readonly role: string;
             /**
-             * Capability
+             * Connected Site
              * @default
              */
-            readonly capability: string;
+            readonly connected_site: string;
             /** User Id */
             readonly user_id?: number | null;
             /** Subject Workspace */
@@ -29488,12 +29488,8 @@ export interface components {
              * @default false
              */
             readonly can_edit: boolean;
-            /** Doors */
-            readonly doors?: readonly string[];
-            /** Door Sites */
-            readonly door_sites?: {
-                readonly [key: string]: string;
-            };
+            /** Connected Sites */
+            readonly connected_sites?: readonly components["schemas"]["ConnectedSiteChoiceOut"][];
         };
         /** AccessRoleOut */
         readonly AccessRoleOut: {
@@ -29530,8 +29526,21 @@ export interface components {
             readonly fixed: boolean;
         };
         /**
+         * ConnectedSiteChoiceOut
+         * @description One of the agent's connected sites, as an access-list line names it.
+         */
+        readonly ConnectedSiteChoiceOut: {
+            /** Name */
+            readonly name: string;
+            /**
+             * Site
+             * @default
+             */
+            readonly site: string;
+        };
+        /**
          * AccessLineIn
-         * @description One line to add: who, and what they get: ONE role, or (rarely) ONE named capability.
+         * @description One line to add: who, and what they get: ONE role, or (rarely) ONE connected site.
          */
         readonly AccessLineIn: {
             /**
@@ -29542,10 +29551,10 @@ export interface components {
             /** Role */
             readonly role?: string | null;
             /**
-             * Capability
+             * Connected Site
              * @default
              */
-            readonly capability: string;
+            readonly connected_site: string;
             /** User Id */
             readonly user_id?: number | null;
             /** Email */
@@ -29792,7 +29801,7 @@ export interface components {
         };
         /**
          * AgentRoleIn
-         * @description A role to define: a name and what it allows, chosen from read, write, agent_edit and use:<door>.
+         * @description A role to define: a name and what it allows, chosen from read, write, agent_edit and use:<site>.
          */
         readonly AgentRoleIn: {
             /** Key */
@@ -37049,8 +37058,8 @@ export interface components {
         };
         /**
          * RequestableWorkspaceOut
-         * @description One workspace the caller may request an invitation to — a capability
-         *     list, not a directory. `domain` is the entry of `access_request_domains`
+         * @description One workspace the caller may request an invitation to — a list of what
+         *     they may ask for, not a directory. `domain` is the entry of `access_request_domains`
          *     that matched, so the UI can say why. `pending_request_id` is set when the
          *     caller already has an open request there.
          */
@@ -38458,9 +38467,9 @@ export interface components {
         /**
          * AgentEdgeOut
          * @description What `source` gets when it sends `target` work with its own login.
-         *     `access`: full | confined (to `capabilities`) | none. `basis`: owner |
-         *     workspace-owner | admin | editor (full; manual only when its line says so) |
-         *     no-interface (refused: nothing published) | capabilities | nothing-offered |
+         *     `access`: full | confined (to read mode or the connected sites named in `capabilities`) | none.
+         *     `basis`: owner | workspace-owner | admin | editor (full; manual only when its line says so) |
+         *     no-interface (refused: nothing published) | `capabilities` (confined) | nothing-offered |
          *     not-member | no-login. Terms: docs/architecture/access.md. `can_grant` / `can_revoke`: whether
          *     THIS caller may make (or unmake) the source's login an admin of the target.
          */
@@ -47175,8 +47184,8 @@ export interface components {
              * @default false
              */
             readonly is_review: boolean;
-            /** Review Ask */
-            readonly review_ask?: string | null;
+            /** Review Of */
+            readonly review_of?: string | null;
             /**
              * Audience
              * @default {}

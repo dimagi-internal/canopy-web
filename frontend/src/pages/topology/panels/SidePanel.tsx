@@ -96,7 +96,7 @@ function Summary({ workspace, map, onSelect }: {
           them; the two lists below are plain facts about the wiring. */}
       <AlertList scope={`workspace:${workspace}`} title="Alerts here" />
       <section className="flex flex-col gap-1">
-        <PanelHeading>Agents held to some capabilities by another</PanelHeading>
+        <PanelHeading>Agents confined to read mode or connected sites by another</PanelHeading>
         {confined.length === 0 && <span className="text-success">None.</span>}
         {confined.map((e) => (
           <button key={edgeKey(e.source, e.target)} type="button" onClick={() => onSelect({ kind: 'agent', slug: e.source })} className="flex justify-between gap-2 text-left hover:underline">

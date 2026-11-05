@@ -7,7 +7,7 @@ from apps.agents import read_mode_gate
 
 
 class Command(BaseCommand):
-    help = ("Agents with a read_only / use:ask line (own or workspace default) and no published `ask`: "
+    help = ("Agents with a read-mode line (own or workspace default) and no read mode of their own: "
             "inert before read mode resolved on its own, live after. Exit 1 when there are any.")
 
     def add_arguments(self, parser):
@@ -18,7 +18,7 @@ class Command(BaseCommand):
         if opts["json"]:
             self.stdout.write(json.dumps(hits, indent=2))
         elif not hits:
-            self.stdout.write("none: no agent has a read-mode line and no published ask")
+            self.stdout.write("none: no agent has a read-mode line and no read mode of its own")
         else:
             for h in hits:
                 self.stdout.write(f"{h['workspace']}/{h['agent']}")

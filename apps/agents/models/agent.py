@@ -324,7 +324,7 @@ class AgentRole(models.Model):
     Defined on a workspace and usable by that workspace and every one below it; a key means one
     thing everywhere it is visible (the service refuses a clash along a chain). The permissions
     are the CLOSED set (`write` carries `read`, `agent_edit` carries `write`) chosen from the fixed
-    vocabulary `read`, `write`, `agent_edit` and `use:<door>`: never `admin` or `own`, which come
+    vocabulary `read`, `write`, `agent_edit` and `use:<site>`: never `admin` or `own`, which come
     from `Agent.is_admin` and `Agent.owner`, not from a line. The built-ins (`read_only`,
     `read_write`, `editor`) are seeded rows: editable, never deletable.
     """

@@ -353,7 +353,7 @@ def _entry_for(iface: dict, permissions, requested, session_ctx, trace: list) ->
     if name is None:
         name, how = _selected_entry(iface, opens, session_ctx), "page or site"
     if name is None:
-        name, how = iface_mod.ASK, "read mode"
+        name, how = iface_mod.READ_MODE_STAMP, "read mode"
     published, cap = iface_mod.published_capability(iface, name)
     if published is None and iface_mod.is_read_mode(name):
         published, cap = iface_mod.READ_MODE, {}   # {}: canopy's default, built when it is read

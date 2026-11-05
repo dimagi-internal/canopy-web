@@ -51,7 +51,7 @@ class AdmissionRule(models.Model):
 
     CONFINED, FULL, NONE = "confined", "full", "none"
     ACCESS_CHOICES = [
-        (CONFINED, "Confined: a caller held to one capability"),
+        (CONFINED, "Confined: held to read mode or one connected site"),
         (FULL, "Full: the agent's whole profile"),
         (NONE, "None: offered nothing, so refused"),
     ]

@@ -6,6 +6,7 @@
 // or "workspace admin", never a bare "admin"; "member", "viewer" and "user" are not agent roles.
 
 import type { AccessLineIn, AccessRoleOut, AgentAccessRowOut } from '@/api/agents'
+import { isReadModeName } from '@/components/chat/turnContextWords'
 
 export type LineKind = AccessLineIn['kind']
 
@@ -60,9 +61,9 @@ export function roleWord(role: string | null | undefined, roles?: readonly Acces
   return role.charAt(0).toUpperCase() + role.slice(1)
 }
 
-/** What a line gives, in words: its role, or the one capability it opens. */
-export function lineWhat(line: { role: string; capability?: string }, roles?: readonly AccessRoleOut[]): string {
-  return line.role ? roleWord(line.role, roles) : `Uses “${line.capability ?? ''}” only`
+/** What a line gives, in words: its role, or the one connected site it opens. */
+export function lineWhat(line: { role: string; connected_site?: string }, roles?: readonly AccessRoleOut[]): string {
+  return line.role ? roleWord(line.role, roles) : `Only the “${line.connected_site ?? ''}” connected site`
 }
 
 /** Why a person has the role they have: the server's own words (`via`) when it has them,
@@ -76,7 +77,7 @@ export function sourceWords(r: Pick<AgentAccessRowOut, 'source' | 'role' | 'via'
   if (s.startsWith('list:')) return 'A line on the access list'
   if (s === 'workspace-editor') return 'A workspace editor: every turn needs approval'
   if (s.startsWith('rule:')) return `A published rule (${s.slice(5)})`
-  if (s === 'capability:read' || s === 'capability:ask') return 'In read mode'
+  if (s.startsWith('capability:') && isReadModeName(s.slice(11))) return 'In read mode'
   if (s.startsWith('capability:')) return `From the "${s.slice(11)}" connected site`
   return r.role ? 'Set on this agent' : 'No line names them'
 }

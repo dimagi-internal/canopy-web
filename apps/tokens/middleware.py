@@ -421,7 +421,7 @@ def _authenticate_caller_token(request: HttpRequest, raw: str) -> HttpResponse |
     if grant is None or not grant.all_tools or grant.sensitive or grant.user is None:
         return problem_response(401, detail=(
             "this caller token does not reach REST: it has expired, its conversation no "
-            "longer has a verified asker, or it is confined to a capability (use MCP)"))
+            "longer has a verified asker, or its turn is confined (use MCP)"))
     routes = caller_token_routes
     if routes is None or not routes(request.method, request.path_info):
         return problem_response(403, detail=(

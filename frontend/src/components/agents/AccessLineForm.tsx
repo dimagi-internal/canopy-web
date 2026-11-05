@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
 
-import type { AccessLineIn, AccessRoleOut } from '@/api/agents'
+import type { AccessLineIn, AccessRoleOut, ConnectedSiteChoiceOut } from '@/api/agents'
 import {
   ADDRESS_ONLY_KINDS,
   AT_LEAST_OPTIONS,
@@ -27,8 +27,7 @@ export function AccessLineForm({
   workspaces,
   canGiveWrite = true,
   submitLabel = 'Add',
-  doors,
-  doorSites,
+  connectedSites,
   onAdd,
 }: {
   roles: readonly AccessRoleOut[]
@@ -36,18 +35,16 @@ export function AccessLineForm({
   workspaces: readonly [string, string][]
   canGiveWrite?: boolean
   submitLabel?: string
-  /** The agent's published doors, when this form is for one agent: a door is picked from this
-   *  list. Left out (a workspace's defaults, which span agents) the name is typed. */
-  doors?: readonly string[]
-  /** Each of `doors`' connected site, so a person picks a site and not an internal name. */
-  doorSites?: Readonly<Record<string, string>>
+  /** The agent's connected sites, when this form is for one agent: one is picked from this list, by
+   *  its site. Left out (a workspace's defaults, which span agents) the name is typed. */
+  connectedSites?: readonly ConnectedSiteChoiceOut[]
   /** Resolves when the line is added; rejects with the server's reason. */
   onAdd: (line: AccessLineIn) => Promise<unknown>
 }) {
   const [kind, setKind] = useState<LineKind>('person')
-  // '' = nothing chosen yet; 'capability' = one named capability instead of a role.
+  // '' = nothing chosen yet; 'connected_site' = one connected site instead of a role.
   const [choice, setChoice] = useState<string>('')
-  const [capability, setCapability] = useState('')
+  const [site, setSite] = useState('')
   const [includeBelow, setIncludeBelow] = useState(false)
   const [email, setEmail] = useState('')
   const [workspace, setWorkspace] = useState(workspaces[0]?.[0] ?? '')
@@ -65,7 +62,7 @@ export function AccessLineForm({
     setKind(next)
     // A role that drives the whole agent is never offered for the address-only kinds: clear it
     // rather than leave a refused choice.
-    if (ADDRESS_ONLY_KINDS.includes(next) && choice !== 'capability' && drives(choice, roles)) {
+    if (ADDRESS_ONLY_KINDS.includes(next) && choice !== 'connected_site' && drives(choice, roles)) {
       setChoice('')
     }
   }
@@ -76,10 +73,10 @@ export function AccessLineForm({
     setError(null)
     const line: AccessLineIn = {
       kind,
-      role: choice === 'capability' || choice === '' ? undefined : choice,
-      capability: choice === 'capability' ? capability.trim() : '',
+      role: choice === 'connected_site' || choice === '' ? undefined : choice,
+      connected_site: choice === 'connected_site' ? site.trim() : '',
       include_below: kind === 'workspace' && includeBelow,
-      manual_only: manualOnly && choice !== 'capability',
+      manual_only: manualOnly && choice !== 'connected_site',
       verified: true,
       note: '',
       email: kind === 'person' ? email.trim() : undefined,
@@ -94,7 +91,7 @@ export function AccessLineForm({
       setAtLeast('')
       setManualOnly(false)
       setChoice('')
-      setCapability('')
+      setSite('')
       setIncludeBelow(false)
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Could not add that')
@@ -105,7 +102,7 @@ export function AccessLineForm({
 
   const whoReady =
     kind === 'person' ? email.trim() !== '' : kind === 'workspace' ? effectiveWorkspace !== '' : kind === 'domain' ? domain.trim() !== '' : true
-  const ready = whoReady && (choice === 'capability' ? capability.trim() !== '' : choice !== '')
+  const ready = whoReady && (choice === 'connected_site' ? site.trim() !== '' : choice !== '')
 
   return (
     <form onSubmit={(e) => void submit(e)} className="flex flex-col gap-2" data-testid="access-line-form" aria-label="Add access">
@@ -179,17 +176,17 @@ export function AccessLineForm({
           )
         })}
         <label className="flex items-baseline gap-2 text-[12px] text-foreground">
-          <input type="radio" name="access-role" value="capability" checked={choice === 'capability'} onChange={() => setChoice('capability')} />
+          <input type="radio" name="access-role" value="connected_site" checked={choice === 'connected_site'} onChange={() => setChoice('connected_site')} />
           <span>One connected site</span>
           <span className="text-muted-foreground">(rare) they may use it only from that site, and nothing else</span>
         </label>
-        {choice === 'capability' && doors !== undefined && (
-          doors.length > 0 ? (
-            <select value={capability} onChange={(e) => setCapability(e.target.value)} aria-label="Connected site" className={`${FIELD} ml-6 w-56`}>
+        {choice === 'connected_site' && connectedSites !== undefined && (
+          connectedSites.length > 0 ? (
+            <select value={site} onChange={(e) => setSite(e.target.value)} aria-label="Connected site" className={`${FIELD} ml-6 w-56`}>
               <option value="">Pick a site…</option>
-              {doors.map((d) => (
-                <option key={d} value={d}>
-                  {doorSites?.[d] ?? d}
+              {connectedSites.map((c) => (
+                <option key={c.name} value={c.name}>
+                  {c.site || c.name}
                 </option>
               ))}
             </select>
@@ -197,10 +194,10 @@ export function AccessLineForm({
             <p className="m-0 ml-6 text-[12px] text-muted-foreground">This agent has no connected sites yet.</p>
           )
         )}
-        {choice === 'capability' && doors === undefined && (
+        {choice === 'connected_site' && connectedSites === undefined && (
           <input
-            value={capability}
-            onChange={(e) => setCapability(e.target.value)}
+            value={site}
+            onChange={(e) => setSite(e.target.value)}
             placeholder="internal name, e.g. connect"
             aria-label="Internal name of the site"
             className={`${FIELD} ml-6 w-56`}

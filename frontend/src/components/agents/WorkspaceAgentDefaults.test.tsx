@@ -20,15 +20,15 @@ vi.mock('@/workspace/WorkspaceProvider', () => ({
 const { WorkspaceAgentDefaults } = await import('./WorkspaceAgentDefaults')
 
 const LINE: AccessLineOut = {
-  id: 7, scope: 'workspace', scope_workspace: 'connect', kind: 'workspace', who: 'Everyone in connect', role: 'read_only', capability: '', include_below: false,
+  id: 7, scope: 'workspace', scope_workspace: 'connect', kind: 'workspace', who: 'Everyone in connect', role: 'read_only', connected_site: '', include_below: false,
   user_id: null, subject_workspace: 'connect', at_least: '', domain: '', verified: false, manual_only: false, note: '',
   granted_by_email: null, granted_at: null, can_edit: true, warning: '',
 }
 
 const ROLES: AgentDefaultsOut['roles'] = [
-  { role: 'owner', can: ['ask', 'drive the whole agent', 'change its skills and capabilities', 'configure it', 'transfer or delete it'], permissions: [], label: 'Owner', description: '', contains_write: true, defined_on: '', fixed: true },
-  { role: 'admin', can: ['ask', 'drive the whole agent', 'change its skills and capabilities', 'configure it'], permissions: [], label: 'Admin', description: '', contains_write: true, defined_on: '', fixed: true },
-  { role: 'editor', can: ['ask', 'drive the whole agent', 'change its skills and capabilities'], permissions: [], label: 'Editor', description: '', contains_write: true, defined_on: 'dimagi', fixed: false },
+  { role: 'owner', can: ['ask', 'drive the whole agent', 'change its skills and settings', 'configure it', 'transfer or delete it'], permissions: [], label: 'Owner', description: '', contains_write: true, defined_on: '', fixed: true },
+  { role: 'admin', can: ['ask', 'drive the whole agent', 'change its skills and settings', 'configure it'], permissions: [], label: 'Admin', description: '', contains_write: true, defined_on: '', fixed: true },
+  { role: 'editor', can: ['ask', 'drive the whole agent', 'change its skills and settings'], permissions: [], label: 'Editor', description: '', contains_write: true, defined_on: 'dimagi', fixed: false },
   { role: 'read_write', can: ['ask', 'drive the whole agent'], permissions: [], label: 'Read & write', description: '', contains_write: true, defined_on: 'dimagi', fixed: false },
   { role: 'read_only', can: ['ask'], permissions: [], label: 'Read only', description: '', contains_write: false, defined_on: 'dimagi', fixed: false },
 ]

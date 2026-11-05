@@ -332,7 +332,7 @@ def _access_request_or_404(m: WorkspaceMembership, request_id: int) -> Workspace
             summary="Workspaces I may request an invitation to")
 @gate("authenticated")  # capability list: access_request_domains match
 def list_requestable_workspaces(request: HttpRequest) -> list[RequestableWorkspaceOut]:
-    """A capability list, not a directory: only workspaces whose
+    """A list of what the caller may request, not a directory: only workspaces whose
     `access_request_domains` include the caller's login-email domain and that
     they are not already in, each with their own open request if any. Joins
     nothing — see `services.requestable_workspaces`."""
@@ -438,7 +438,7 @@ def set_access_settings(request: HttpRequest, slug: str, payload: AccessSettings
 def delete_workspace(request: HttpRequest, slug: str):
     """Delete an empty workspace. Owner-only, and never one that still owns agents.
 
-    Creation (`POST /`) was a one-way door: a workspace made with a typo'd
+    Creation (`POST /`) could not be undone: a workspace made with a typo'd
     slug was permanent, and the slug appears in every URL its team uses. That
     is a bad property for a self-serve create endpoint, and it made the
     onboarding path un-rehearsable for the same reason agent creation was.

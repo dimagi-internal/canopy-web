@@ -213,7 +213,7 @@ def check_role(kind, role: str | None, home: str):
                         "to make someone an admin of the agent, add them as an admin")
     if kind in ADDRESS_ONLY and grants_write(row):
         raise LineError("a line that names people only by their address can give a role that only reads "
-                        f"or opens a named capability, not {role} (it lets them drive the whole agent, "
+                        f"or opens a connected site, not {role} (it lets them drive the whole agent, "
                         "or change it): name the person, or everyone in a workspace")
     return row
 
@@ -233,13 +233,13 @@ def check_line(actor, *, home, kind, role=None, capability=None, user_id=None, e
                at_least="", domain="", verified=True, include_below=False, scope_is_workspace=False):
     """Validate one line a person is adding; returns the normalised field dict.
 
-    A line grants ONE role or, rarely, ONE named capability (`capability`)."""
+    A line grants ONE role or, rarely, ONE connected site (stored in `capability`)."""
     capability = (capability or "").strip()
     if bool(role) == bool(capability):
-        raise LineError("a line gives either a role or one named capability, not both and not neither")
+        raise LineError("a line gives either a role or one connected site, not both and not neither")
     if capability:
         if not _CAPABILITY.match(capability):
-            raise LineError(f"{capability!r} is not a capability name")
+            raise LineError(f"{capability!r} is not the name of a connected site")
         role = ""
     else:
         role_def = check_role(kind, role, home)

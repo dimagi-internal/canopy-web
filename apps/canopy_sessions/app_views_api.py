@@ -130,12 +130,12 @@ def app_view_message(request: HttpRequest, session_id: uuid.UUID, tool_call_id: 
                      payload: AppMessageIn):
     from apps.harness import initiator as who
 
-    from . import doors
+    from . import send_paths
 
     session = _session(request, session_id)
     ref = _run(views.check_message, session, _viewer(request), tool_call_id, payload.text)
     services.note_request_grant(session, request)
-    message, turn = doors.send_from(
+    message, turn = send_paths.send_from(
         "app_view", session=session, text=payload.text, user=request.user,
         client_id=payload.client_id,
         # A View's clicks arrive with the delegated token the site minted for

@@ -66,19 +66,19 @@ def structural_refusals(name: str, cap: dict) -> list[str]:
     Empty: it can."""
     out = []
     if not cap.get("sites"):
-        out.append(f"{name}: a `data: sensitive` capability must name `sites:` — a host's data "
+        out.append(f"{name}: a site that handles sensitive data must name `sites:` — a host's data "
                    "reaches it only through canopy's gateway")
     bad = [t for t in cap.get("tools") or []
            if t not in READ_ONLY_LOCAL and not _CANOPY_TOOL.match(t)]
     if bad:
-        out.append(f"{name}: a `data: sensitive` capability may hold only the gateway's site tools, "
+        out.append(f"{name}: a site that handles sensitive data may hold only the gateway's site tools, "
                    f"current_page, who_is_asking, the page's own actions (page_*) and "
                    f"{', '.join(sorted(READ_ONLY_LOCAL))}; "
                    f"refused: {', '.join(bad)}")
     if cap.get("bash"):
-        out.append(f"{name}: a `data: sensitive` capability may run no shell (`bash:` must be empty)")
+        out.append(f"{name}: a site that handles sensitive data may run no shell (`bash:` must be empty)")
     if cap.get("write_paths"):
-        out.append(f"{name}: a `data: sensitive` capability may write nothing (`write_paths:` must "
+        out.append(f"{name}: a site that handles sensitive data may write nothing (`write_paths:` must "
                    "be empty)")
     return out
 

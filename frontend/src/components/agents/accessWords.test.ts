@@ -19,7 +19,7 @@ const ROLE = (role: string, label: string, contains_write = false, fixed = false
 
 describe('roles from the server', () => {
   const roles = [ROLE('owner', 'Owner', true, true), ROLE('admin', 'Admin', true, true), ROLE('pilot', 'Pilot', true),
-    ROLE('connector', 'Connect door'), ROLE('read_only', 'Read only')]
+    ROLE('connector', 'Connect site'), ROLE('read_only', 'Read only')]
 
   it('offers the roles a line may give, weakest first, never the fixed ones', () => {
     expect(assignable(roles).map((r) => r.role)).toEqual(['read_only', 'connector', 'pilot'])
@@ -32,7 +32,7 @@ describe('roles from the server', () => {
   })
 
   it('reads a role as its label, and a fixed admin as "Agent admin"', () => {
-    expect(roleWord('connector', roles)).toBe('Connect door')
+    expect(roleWord('connector', roles)).toBe('Connect site')
     expect(roleWord('admin', roles)).toBe('Agent admin')
     expect(roleWord('mystery', roles)).toBe('Mystery')
   })

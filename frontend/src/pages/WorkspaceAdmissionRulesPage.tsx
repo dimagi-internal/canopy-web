@@ -313,15 +313,15 @@ export function WorkspaceAdmissionRulesPage(): JSX.Element {
               {c.access.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
             <input
-              aria-label="Capability"
-              placeholder="Any capability"
-              list="admission-capabilities"
+              aria-label="Read mode or connected site"
+              placeholder="Any read mode or site"
+              list="admission-profiles"
               value={draft.capability}
               onChange={(e) => set({ capability: e.target.value })}
               className="min-h-11 w-36 rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground sm:min-h-0"
             />
-            {/* `read` is read mode (the older name `ask` is the same thing and is still accepted). */}
-            <datalist id="admission-capabilities"><option value="read">Read mode (also matches ask)</option></datalist>
+            {/* `read` is read mode; its other stored name (`READ_MODE_STAMP`) is the same thing and is still accepted. */}
+            <datalist id="admission-profiles"><option value="read">Read mode</option></datalist>
             <select aria-label="Turn mode" className={select} value={draft.turn_mode}
               onChange={(e) => set({ turn_mode: e.target.value as AdmissionRuleIn['turn_mode'] })}>
               <option value="">Any mode</option>

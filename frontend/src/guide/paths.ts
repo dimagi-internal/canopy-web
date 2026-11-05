@@ -72,7 +72,7 @@ export const USER_ROLES: UserRole[] = [
       'Chat, answer a question an agent is blocked on, approve or decline a task, read the board. ' +
       'Then choose where it runs: a cloud runner needs nothing from you, or pair your own ' +
       'laptop so you can jump into the terminal mid-turn. Or skip agents entirely — mint a ' +
-      'token in Settings and install the canopy plugin to use the capability library in ' +
+      'token in Settings and install the canopy plugin to use the plugin catalog in ' +
       'your own Claude Code sessions, with no fleet to run.',
   },
   {

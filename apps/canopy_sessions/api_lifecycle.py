@@ -21,10 +21,10 @@ from . import (
     content_deletion,
     control,
     conversation_keys,
-    doors,
     filing,
     maintenance,
     placement,
+    send_paths,
     services,
 )
 from . import send as cs_send
@@ -348,7 +348,7 @@ def send(request: HttpRequest, session_id: uuid.UUID, payload: SendIn):
         raise HttpError(422, "message text is required")
     # The page this was sent from: the agent reaches its site through that page's grant.
     services.note_request_grant(session, request)
-    message, turn = doors.send_from(
+    message, turn = send_paths.send_from(
         "rest", session=session, text=payload.text, user=request.user,
         client_id=payload.client_id,
         runner_requirements=getattr(request, "runner_requirements", ()),

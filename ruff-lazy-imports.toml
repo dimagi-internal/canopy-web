@@ -54,7 +54,6 @@
 "apps/canopy_sessions/close_review.py" = ["PLC0415"]  # 1
 "apps/canopy_sessions/consumers.py" = ["PLC0415"]  # 6
 "apps/canopy_sessions/control.py" = ["PLC0415"]  # 6
-"apps/canopy_sessions/doors.py" = ["PLC0415"]  # 1
 "apps/canopy_sessions/feed.py" = ["PLC0415"]  # 4
 "apps/canopy_sessions/filing.py" = ["PLC0415"]  # 3
 "apps/canopy_sessions/maintenance.py" = ["PLC0415"]  # 1
@@ -63,6 +62,7 @@
 "apps/canopy_sessions/queued_feed.py" = ["PLC0415"]  # 2
 "apps/canopy_sessions/secrets_api.py" = ["PLC0415"]  # 1
 "apps/canopy_sessions/send.py" = ["PLC0415"]  # 11
+"apps/canopy_sessions/send_paths.py" = ["PLC0415"]  # 1
 "apps/canopy_sessions/serializers.py" = ["PLC0415"]  # 2
 "apps/canopy_sessions/services.py" = ["PLC0415"]  # 9
 "apps/canopy_sessions/signals.py" = ["PLC0415"]  # 7

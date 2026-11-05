@@ -355,7 +355,7 @@ def test_the_session_context_holds_the_facts_and_nothing_about_the_asker(w):
     assert sc.channel == turn.origin and sc.sensitive and sc.sensitive_requirement == rr.SENSITIVE_DATA
     assert (w.reader.pk, SessionParticipant.VIEWER) in sc.participants
     assert sc.audience["creator"] == {w.owner.pk}
-    assert not sc.is_review and sc.review_ask is None
+    assert not sc.is_review and sc.review_of is None
 
 
 def test_a_turn_with_no_session_has_its_own_channel_and_sensitivity(w):
@@ -368,7 +368,7 @@ def test_a_turn_with_no_session_has_its_own_channel_and_sensitivity(w):
 
 def test_a_review_chat_says_which_session_it_is_about(w):
     sc = session_context.build(_chat(w, **{REVIEW_METADATA_KEY: "the-session"}))
-    assert sc.is_review and sc.review_ask == "the-session"
+    assert sc.is_review and sc.review_of == "the-session"
 
 
 def test_an_empty_session_context_is_one_shape_with_nothing_in_it(w):

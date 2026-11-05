@@ -670,7 +670,7 @@ def list_admins(request: HttpRequest, slug: str):
 def agent_access(request: HttpRequest, slug: str):
     """Every member of the agent's workspace with their role on the agent (owner, admin,
     editor, user, viewer), the reason for it, and what they reach signed in: the whole agent,
-    the capabilities their role may use, or nothing. People outside the workspace whom the
+    read mode or the connected sites their role may use, or nothing. People outside the workspace whom the
     access list names are on the list itself (`/access-list`). Readable by any member, like
     the admin list."""
 
@@ -809,7 +809,7 @@ def revoke_admin(request: HttpRequest, slug: str, user_id: int):
 def delete_agent(request: HttpRequest, slug: str):
     """Remove an agent and everything hanging off it.
 
-    Registration (`POST /`) was a one-way door until this existed: an agent
+    Registration (`POST /`) could not be undone until this existed: an agent
     created by mistake — a typo'd slug, a scaffold someone was only trying
     out, a test — was permanent and fleet-visible to every member of its
     workspace, because the only way back was a shell on the box. That made

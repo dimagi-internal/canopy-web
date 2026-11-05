@@ -3,7 +3,7 @@ real entry point: who may open its socket, send into it, fork it, read its page,
 ship its rows, join it, and what its info, push and key read say.
 
 docs/architecture/tenancy.md § Sensitive conversations. One test (or two) per door
-an adversarial audit found open; `tests/test_sensitive_read_doors.py` holds the
+an adversarial audit found open; `tests/test_sensitive_read_routes.py` holds the
 read doors that were already shut.
 """
 from __future__ import annotations

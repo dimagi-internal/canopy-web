@@ -75,7 +75,7 @@ def requestable_workspaces(user) -> list[tuple[Workspace, str, WorkspaceAccessRe
     """Workspaces `user` may request an invitation to: their login email's
     domain is in `access_request_domains` and they are not a member. Each comes
     with the caller's own open (pending) request, if they have one. A
-    capability list, not a directory — it never names a workspace the caller
+    list of what the caller may ask for, not a directory — it never names a workspace the caller
     cannot ask to join."""
     domain = _email_domain(getattr(user, "email", ""))
     if not domain:

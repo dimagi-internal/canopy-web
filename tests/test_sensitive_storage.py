@@ -232,7 +232,7 @@ def test_an_mcp_call_is_not_a_chat_surface(w, rf):
 
 
 # The socket's own door — a browser, the widget, never a token or a minted cookie — is
-# driven through the real `RealtimeAuthMiddleware` in tests/test_sealed_server_doors.py.
+# driven through the real `RealtimeAuthMiddleware` in tests/test_sealed_server_routes.py.
 
 
 def test_a_visitor_cannot_hold_one_and_nothing_of_its_words_is_kept(w):

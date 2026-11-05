@@ -75,8 +75,8 @@ class WorkspaceParentIn(StrictModel):
 
 
 class RequestableWorkspaceOut(StrictModel):
-    """One workspace the caller may request an invitation to — a capability
-    list, not a directory. `domain` is the entry of `access_request_domains`
+    """One workspace the caller may request an invitation to — a list of what
+    they may ask for, not a directory. `domain` is the entry of `access_request_domains`
     that matched, so the UI can say why. `pending_request_id` is set when the
     caller already has an open request there."""
 
@@ -434,9 +434,9 @@ class AgentTopologyAgentOut(StrictModel):
 
 class AgentEdgeOut(StrictModel):
     """What `source` gets when it sends `target` work with its own login.
-    `access`: full | confined (to `capabilities`) | none. `basis`: owner |
-    workspace-owner | admin | editor (full; manual only when its line says so) |
-    no-interface (refused: nothing published) | capabilities | nothing-offered |
+    `access`: full | confined (to read mode or the connected sites named in `capabilities`) | none.
+    `basis`: owner | workspace-owner | admin | editor (full; manual only when its line says so) |
+    no-interface (refused: nothing published) | `capabilities` (confined) | nothing-offered |
     not-member | no-login. Terms: docs/architecture/access.md. `can_grant` / `can_revoke`: whether
     THIS caller may make (or unmake) the source's login an admin of the target."""
 

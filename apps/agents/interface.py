@@ -101,6 +101,7 @@ from apps.agents import roles
 from apps.agents.interface_default import (  # noqa: F401  (re-exported)
     READ_MODE,
     READ_MODE_NAMES,
+    READ_MODE_STAMP,
     READ_PROFILE_VERSION,
     default_interface,
     default_read_profile,
@@ -110,12 +111,6 @@ from apps.canopy_sessions.models import SessionParticipant
 from apps.harness import invocations
 
 logger = logging.getLogger(__name__)
-
-#: The fallback capability for a free-form channel (email, chat, Slack, a widget on a
-#: page that declared nothing). Named capabilities are for callers that ask for
-#: something specific, or for a page whose declared resource matches one's
-#: `pages` — see `page_entry`.
-ASK = "ask"
 
 #: canopy's gateway to a Connected site's own tools, added to every capability
 #: that names `sites:` (apps/mcp/tools/site.py).
@@ -147,6 +142,16 @@ def read_mode_override(iface: dict | None) -> str | None:
     is the one a `read`-named ask finds."""
     caps = (iface or {}).get("capabilities") or {}
     return next((n for n in READ_MODE_NAMES if n in caps), None)
+
+
+def stamp_words(stamp: str) -> str:
+    """A confined stamp in the words a person reads: `read mode`, `a one-session review`, or `the
+    connected site 'x'`. The stamp itself is a stored name, never shown bare."""
+    if is_read_mode(stamp):
+        return "read mode"
+    if stamp == SESSION_REVIEW:
+        return "a one-session review"
+    return f"the connected site '{stamp}'"
 
 
 def published_capability(iface: dict | None, name: str) -> tuple[str, dict] | tuple[None, None]:
@@ -207,9 +212,9 @@ def _strings(value, field: str, cap: str) -> list[str]:
 #: Keys the access list replaced; refused with the pointer below, never silently ignored.
 _RETIRED = {"full", "editors", "callers"}
 _RETIRED_HINT = ("{where}: `{key}:` is gone — who may use an agent is its access list now "
-                 "(Settings → Roles → Access, or /api/agents/<slug>/access-list). A capability only "
-                 "says what it is; to let someone use just this capability, add an access-list line "
-                 "that names it")
+                 "(Settings → Roles → Access, or /api/agents/<slug>/access-list). A profile only "
+                 "says what it may do; to let someone use just this connected site, add an access-list "
+                 "line that names it")
 
 
 def parse(doc) -> dict:
@@ -234,13 +239,13 @@ def parse(doc) -> dict:
     ignored = sorted(k for k in ("callers_default", "version") if k in doc)
     caps = doc.get("capabilities") or {}
     if not isinstance(caps, dict) or len(caps) > 50:
-        raise InterfaceError("capabilities must be a mapping of at most 50 entries")
+        raise InterfaceError("`capabilities` must be a mapping of at most 50 entries")
     out: dict = {}
     for name, cap in caps.items():
         if not isinstance(name, str) or not _NAME.match(name):
-            raise InterfaceError(f"capability name {name!r} must match {_NAME.pattern}")
+            raise InterfaceError(f"profile name {name!r} must match {_NAME.pattern}")
         if name == SESSION_REVIEW:
-            raise InterfaceError(f"capability name {name!r} is canopy's own and cannot be published")
+            raise InterfaceError(f"profile name {name!r} is canopy's own and cannot be published")
         if not isinstance(cap, dict):
             raise InterfaceError(f"{name} must be a mapping")
         for key in ("callers", "role"):
@@ -337,7 +342,7 @@ def _own_login(value, name: str, sites: list[str]) -> dict[str, list[str]]:
     out: dict[str, list[str]] = {}
     for site, names in value.items():
         if site not in sites:
-            raise InterfaceError(f"{name}.own_login: {site!r} is not one of this capability's "
+            raise InterfaceError(f"{name}.own_login: {site!r} is not one of this profile's "
                                  "`sites:` — it names the agent's login at a site it serves")
         listed = _strings(names, f"own_login.{site}", name)
         for n in listed:
@@ -364,7 +369,7 @@ def _pages(value, cap: str) -> list[str]:
         if pattern == "*":
             raise InterfaceError(
                 f"{cap}.pages: '*' matches every page, which is what omitting "
-                "`pages` does — name the resources this capability is for")
+                "`pages` does — name the resources this profile is for")
         if "://" not in pattern:
             raise InterfaceError(
                 f"{cap}.pages: {pattern!r} is not a resource pattern — it needs a "

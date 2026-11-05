@@ -15,6 +15,7 @@ from .access_list import (
     AccessListOut,
     AccessRoleOut,
     AgentDefaultsOut,
+    ConnectedSiteChoiceOut,
 )
 from .agent_card import (
     A2AAgentCapabilities,
@@ -343,6 +344,7 @@ __all__ = [
     "AccessLinePatch",
     "AccessListOut",
     "AccessRoleOut",
+    "ConnectedSiteChoiceOut",
     "ActOut",
     "ActionAppliedIn",
     "AgentAccessOut",

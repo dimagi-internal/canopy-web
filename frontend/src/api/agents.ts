@@ -755,6 +755,7 @@ export type AccessLineOut = Schemas['AccessLineOut']
 export type AccessLineIn = Schemas['AccessLineIn']
 export type AccessLinePatch = Schemas['AccessLinePatch']
 export type AccessRoleOut = Schemas['AccessRoleOut']
+export type ConnectedSiteChoiceOut = Schemas['ConnectedSiteChoiceOut']
 
 export async function getAccessList(slug: string): Promise<AccessListOut> {
   const res = await apiV2.GET('/api/agents/{slug}/access-list', { params: { path: { slug } } })

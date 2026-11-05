@@ -14,7 +14,8 @@ import type { TurnContextView } from "@/api/chat";
 type Profile = NonNullable<TurnContextView["profile"]>;
 type Trace = TurnContextView["trace"][number];
 
-/** The two names canopy's read mode is published under. A profile named either is read mode. */
+/** The two STORED names of read mode (the server's `READ_MODE` and `READ_MODE_STAMP`), as the wire
+ *  carries them in a stamp or a basis. A profile named either is read mode; neither is ever shown. */
 const READ_MODE_NAMES = new Set(["ask", "read"]);
 
 export function isReadModeName(name: string | null | undefined): boolean {

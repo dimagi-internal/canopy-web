@@ -190,7 +190,7 @@ def _serving(user, credential: dict | None, *, session_login_live: bool = False)
     if not live:
         raise Refused("the turn this login serves is no longer running, so it acts for no one")
     if current.capability:
-        raise Refused("a turn confined to a caller capability acts for no one but itself")
+        raise Refused("a confined turn acts for no one but itself")
     acting = turn_agent(current)
     if acting is None or acting.pk != agent.pk:
         raise Refused("the turn this login serves now runs for another agent")

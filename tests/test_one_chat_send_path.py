@@ -1,4 +1,4 @@
-"""Every chat door sends through `apps/canopy_sessions/doors.py::send_from`.
+"""Every chat door sends through `apps/canopy_sessions/send_paths.py::send_from`.
 
 The preamble a door owes a send (the site's runner requirements, the capped
 client nonce, a refusal as a 422, the dev stub inline) lives there once; a door
@@ -11,7 +11,7 @@ from tests._source import iter_app_sources
 
 ALLOWED = {
     "apps/canopy_sessions/services.py",  # defines it
-    "apps/canopy_sessions/doors.py",     # the one caller
+    "apps/canopy_sessions/send_paths.py",     # the one caller
 }
 
 
@@ -28,16 +28,16 @@ def test_only_doors_calls_send_message():
                  for src in iter_app_sources(("apps", "config"), exclude=ALLOWED)
                  for call in _calls(src.tree, "send_message")]
     assert not offenders, (
-        "send through apps.canopy_sessions.doors.send_from, not services.send_message: "
+        "send through apps.canopy_sessions.send_paths.send_from, not services.send_message: "
         + ", ".join(offenders))
 
 
 def test_every_door_is_declared():
-    from apps.canopy_sessions import doors
+    from apps.canopy_sessions import send_paths
 
     used = {call.args[0].value
             for src in iter_app_sources(("apps", "config"))
             for call in _calls(src.tree, "send_from")
             if call.args and isinstance(call.args[0], ast.Constant)}
     assert used, "no door sends through send_from"
-    assert used <= set(doors.DOORS), used - set(doors.DOORS)
+    assert used <= set(send_paths.SEND_PATHS), used - set(send_paths.SEND_PATHS)

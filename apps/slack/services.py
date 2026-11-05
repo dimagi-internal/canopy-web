@@ -34,7 +34,7 @@ from django.db import transaction
 from apps.agents import turn_context
 from apps.agents.models import Agent
 from apps.canopy_sessions import control as session_control
-from apps.canopy_sessions import doors
+from apps.canopy_sessions import send_paths
 from apps.canopy_sessions import services as session_services
 from apps.canopy_sessions.models import Session
 from apps.events import services as events_services
@@ -1273,7 +1273,7 @@ def _send(session: Session, created: bool, agent: Agent | None, principal: Princ
             origin_ref = {**(origin_ref or {}), "attachments": stored}
         prompt = "\n\n".join(p for p in (prompt, *notes) if p) or "(sent an attachment)"
     _remember_location(session, inbound)
-    _message, turn = doors.send_from(
+    _message, turn = send_paths.send_from(
         "slack",
         session=session,
         text=prompt,
@@ -1432,7 +1432,7 @@ def _requeue_stranded(session: Session, user, via: str) -> tuple[list[Turn], lis
             closed.append(last)
     asked: list[Turn] = []
     for turn in closed:
-        _msg, again = doors.send_from(
+        _msg, again = send_paths.send_from(
             "slack", session=session, text=turn.prompt, user=user, runner_requirements=(),
             chat_surface=False,
             # Idempotent per lost turn: a double click re-asks once.

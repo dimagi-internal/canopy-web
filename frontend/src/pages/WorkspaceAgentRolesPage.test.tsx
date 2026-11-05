@@ -24,8 +24,8 @@ const role = (key: string, label: string, permissions: string[], over: Partial<A
 function catalog(over: Partial<AgentRolesOut> = {}): AgentRolesOut {
   return {
     roles: [
-      role('editor', 'Editor', ['read', 'write', 'agent_edit'], { builtin: true, contains_write: true, can: ['drive the whole agent', 'change its skills and capabilities'] }),
-      role('connector', 'Connect door', ['read', 'use:connect'], { can: ['be answered in read mode', "use the 'connect' door"], in_use: { lines: 3, agents: 2, defaults: 1 } }),
+      role('editor', 'Editor', ['read', 'write', 'agent_edit'], { builtin: true, contains_write: true, can: ['drive the whole agent', 'change its skills and settings'] }),
+      role('connector', 'Connect site', ['read', 'use:connect'], { can: ['be answered in read mode', "use it from the 'connect' connected site"], in_use: { lines: 3, agents: 2, defaults: 1 } }),
       role('read_only', 'Read only', ['read'], { builtin: true, can: ['be answered in read mode'] }),
     ],
     fixed: [{ key: 'owner', label: 'Owner', can: ['transfer or delete it'], why: 'whoever owns the agent' },
@@ -56,14 +56,14 @@ describe('WorkspaceAgentRolesPage', () => {
     listAgentRoles.mockResolvedValue(catalog())
     show()
     const row = await screen.findByTestId('agent-role-connector')
-    expect(row.textContent).toContain("Can be answered in read mode, use the 'connect' door")
+    expect(row.textContent).toContain("Can be answered in read mode, use it from the 'connect' connected site")
     expect(row.textContent).toContain('3 lines · 2 agents · 1 default')
     expect(screen.getByTestId('agent-role-editor').textContent).toContain('built in')
     expect(screen.getByTestId('agent-role-fixed-owner').textContent).toContain('Not a line')
     expect(screen.queryByRole('button', { name: 'Delete Read only' })).toBeNull()      // a built-in is never deletable
   })
 
-  it('defines a role: the key follows the name, doors become use: entries', async () => {
+  it('defines a role: the key follows the name, connected sites become use: entries', async () => {
     listAgentRoles.mockResolvedValue(catalog())
     createAgentRole.mockResolvedValue(role('reviewer', 'Reviewer', ['read', 'use:report']))
     show()
@@ -89,7 +89,7 @@ describe('WorkspaceAgentRolesPage', () => {
     listAgentRoles.mockResolvedValue(catalog({ can_give_write: true }))
     show()
     fireEvent.click(await screen.findByRole('button', { name: 'New role' }))
-    fireEvent.click(screen.getByLabelText(/Change its skills and capabilities/))
+    fireEvent.click(screen.getByLabelText(/Change its skills and settings/))
     expect((screen.getByLabelText(/Drive the whole agent/) as HTMLInputElement).checked).toBe(true)
     expect((screen.getByLabelText(/Be answered in read mode/) as HTMLInputElement).checked).toBe(true)
   })
@@ -98,7 +98,7 @@ describe('WorkspaceAgentRolesPage', () => {
     listAgentRoles.mockResolvedValue(catalog())
     changeAgentRole.mockRejectedValue(new Error('1 line(s) that name people only by their address hold connector'))
     show()
-    fireEvent.click(await screen.findByRole('button', { name: 'Edit Connect door' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit Connect site' }))
     fireEvent.click(screen.getByRole('button', { name: 'Save role' }))
     expect((await screen.findByRole('alert')).textContent).toContain('only by their address')
   })
@@ -107,13 +107,13 @@ describe('WorkspaceAgentRolesPage', () => {
     listAgentRoles.mockResolvedValue(catalog())
     deleteAgentRole.mockResolvedValue(undefined)
     show()
-    fireEvent.click(await screen.findByRole('button', { name: 'Copy Connect door' }))
-    expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Connect door (copy)')
+    fireEvent.click(await screen.findByRole('button', { name: 'Copy Connect site' }))
+    expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Connect site (copy)')
     expect((screen.getByLabelText('Key') as HTMLInputElement).disabled).toBe(false)
     expect((screen.getByLabelText('Connected sites') as HTMLInputElement).value).toBe('connect')
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
 
-    fireEvent.click(screen.getByRole('button', { name: 'Delete Connect door' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Connect site' }))
     fireEvent.change(screen.getByLabelText('Move its holders to'), { target: { value: 'read_only' } })
     fireEvent.click(screen.getByRole('button', { name: 'Delete role' }))
     await waitFor(() => expect(deleteAgentRole).toHaveBeenCalledWith('dimagi', 'connector', 'read_only'))

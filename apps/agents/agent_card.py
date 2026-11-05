@@ -154,10 +154,12 @@ def _requirement(*names: str) -> A2ASecurityRequirement:
 
 def _skill(agent, name: str, cap: dict, *, public: bool) -> A2AAgentSkill:
     security = [_requirement(CONTACT)] if _contact_token_reaches(_outsider_lines(agent), name) else []
+    # `id` is the stored name a caller sends back; `name` is what a person reads, so read mode says so.
+    label = "read mode" if iface_mod.is_read_mode(name) else name.replace("_", " ")
     return A2AAgentSkill(
         id=name,
-        name=name.replace("_", " ").capitalize(),
-        description=(cap.get("description") or "").strip() or f"Ask {agent.name} ({name}).",
+        name=label.capitalize(),
+        description=(cap.get("description") or "").strip() or f"Ask {agent.name} ({label}).",
         tags=_tags(agent, name, outsiders_only=public),
         security_requirements=security or None,
     )
@@ -265,7 +267,7 @@ def extended_card(agent, user) -> A2AAgentCardOut | None:
         return None
     # Read mode exists on every agent: a signed-in person who holds `read` is offered it even when
     # the agent published nothing. (The PUBLIC card never lists it: an outsider's `read_only` line
-    # reaches the agent's own published `ask` only.)
+    # reaches the agent's own published read mode only.)
     for n in names:
         caps.setdefault(n, {"description": f"Ask {agent.name} (read mode): it answers from its own "
                                            "repo and docs and cannot change anything."})

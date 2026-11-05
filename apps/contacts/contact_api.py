@@ -658,7 +658,7 @@ def contact_archive_session(request: HttpRequest, session_id: str) -> ContactSes
                      summary="Say something")
 @gate("contact", kind="conversation")
 def send(request: HttpRequest, session_id: str, payload: ContactSendIn) -> dict:
-    from apps.canopy_sessions import doors
+    from apps.canopy_sessions import send_paths
 
     session = _session_or_404(request, session_id)
     if not payload.text.strip():
@@ -676,7 +676,7 @@ def send(request: HttpRequest, session_id: str, payload: ContactSendIn) -> dict:
     # unauthenticated one, so the turn simply carries no `enqueued_by` — which
     # is correct: nobody with an account sent this. A routing rule that wants
     # to know reads `turn.session.contact`, the authoritative answer.
-    message, turn = doors.send_from(
+    message, turn = send_paths.send_from(
         "contact", session=session, text=payload.text, user=request.user,
         client_id=payload.client_id, origin=origin or None,
         runner_requirements=getattr(request, "runner_requirements", ()),
@@ -993,14 +993,14 @@ def contact_app_view_context(request: HttpRequest, session_id: str, tool_call_id
 @gate("contact", kind="conversation")
 def contact_app_view_message(request: HttpRequest, session_id: str, tool_call_id: str,
                              payload: AppMessageIn):
-    from apps.canopy_sessions import doors
+    from apps.canopy_sessions import send_paths
     from apps.mcp_apps_host import mcp_apps_views
 
     session = _session_or_404(request, session_id)
     text = payload.text
     ref = _app_run(mcp_apps_views.check_message, session, _app_viewer(request), tool_call_id, text)
     note_request_grant(session, request)
-    message, turn = doors.send_from(
+    message, turn = send_paths.send_from(
         "contact_app_view", session=session, text=text, user=request.user,
         client_id=payload.client_id,
         runner_requirements=getattr(request, "runner_requirements", ()),

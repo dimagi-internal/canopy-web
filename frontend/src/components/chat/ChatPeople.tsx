@@ -311,7 +311,7 @@ export function CannotTakeATurn({
             setBusy(true);
             setError("");
             addLine(agent, {
-              kind: "person", user_id: person.user_id, role: "read_only", capability: "", email: null,
+              kind: "person", user_id: person.user_id, role: "read_only", connected_site: "", email: null,
               workspace: "", at_least: "", include_below: false, domain: "", verified: true, manual_only: false,
               note: "",
             })

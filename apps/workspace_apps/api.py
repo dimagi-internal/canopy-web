@@ -569,7 +569,7 @@ def act_workspace_app(request: HttpRequest, workspace: str, key: str, action: st
         m = services.manifest_for(inst, space)
         roles = {"public"} if as_public else _roles(request, inst, space, m)
         if as_public and space == LIVE:
-            raise HttpError(422, "as_public is for previewing a draft; use the public door for the live app")
+            raise HttpError(422, "as_public is for previewing a draft; use the public page for the live app")
         return services.act(inst, roles=roles, action=action, record_id=payload.record, input=payload.input,
                             user=request.user, client_ip=client_ip(request), space=space, manifest=m,
                             public=as_public, params=payload.params)

@@ -449,8 +449,9 @@ def github_refusal(turn) -> str:
         # and in a session a stranger steers it is the most valuable thing on the
         # box. The runner does not ask for one either; this is the server's half,
         # so a runner that did would still get nothing.
-        return (f"this turn is confined to the caller capability '{turn.capability}', and a "
-                f"caller's turn is never given its agent owner's GitHub identity")
+        from apps.agents import interface  # noqa: PLC0415 — interface imports harness, which imports this
+        return (f"this turn is confined to {interface.stamp_words(turn.capability)}, and a "
+                f"confined turn is never given its agent owner's GitHub identity")
     from apps.harness import turn_asker  # noqa: PLC0415 — harness imports this package
 
     if turn_asker.READS_FOR in (turn.origin_ref if isinstance(turn.origin_ref, dict) else {}):
