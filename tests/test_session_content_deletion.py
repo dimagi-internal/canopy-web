@@ -246,21 +246,33 @@ def test_deleting_again_does_nothing(w):
     assert Event.objects.filter(kind="session.content_deleted").count() == 1
 
 
-def test_a_file_that_will_not_delete_leaves_everything_for_a_retry(w, monkeypatch):
+def test_a_file_that_will_not_delete_stops_it_and_a_retry_finishes_the_rest(w, monkeypatch):
     s = _laptop_session(w)
     _said(s)
-    Attachment.objects.create(session=s, filename="a.png", content_type="image/png", size_bytes=1, storage_key="k")
+    for key in ("first", "stuck"):
+        Attachment.objects.create(session=s, filename="a.png", content_type="image/png", size_bytes=1,
+                                  storage_key=key)
     monkeypatch.setattr(attachment_storage, "is_configured", lambda: True)
+    gone = []
 
-    def _fail(key):
-        raise OSError("S3 is down")
+    def _delete_object(key):
+        if key == "stuck":
+            raise OSError("S3 is down")
+        gone.append(key)
 
-    monkeypatch.setattr(attachment_storage, "delete", _fail)
-    assert _delete(w["lili"], s).status_code == 503
+    monkeypatch.setattr(attachment_storage, "delete", _delete_object)
+    r = _delete(w["lili"], s)
+    assert r.status_code == 503 and "stay removed" in r.json()["detail"]
+    # What the route says: the file already removed stays removed, the rest is still there.
+    assert gone == ["first"]
+    assert Attachment.objects.filter(session=s).count() == 2
     assert Message.objects.filter(session=s).count() == 3
     assert Session.objects.get(pk=s.pk).content_deleted_at is None
-    monkeypatch.setattr(attachment_storage, "delete", lambda key: None)
+
+    monkeypatch.setattr(attachment_storage, "delete", gone.append)
     assert _delete(w["lili"], s).status_code == 200
+    assert gone == ["first", "first", "stuck"]
+    assert not Attachment.objects.filter(session=s).exists()
 
 
 # ---------------------------------------------------------------- the runner must not re-upload it

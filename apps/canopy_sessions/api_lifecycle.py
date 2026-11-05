@@ -467,15 +467,18 @@ def delete_session_content(request: HttpRequest, session_id: uuid.UUID):
     stay, so analytics does not change, and it is archived.
 
     Your runner will not upload it again: the session stops being asked of your computer and
-    anything it still ships is dropped, whether or not a coach reviews you. The copy on your
-    own computer is untouched, as is anything already read out of canopy, such as a coach's
-    notes and logs.
+    anything it still ships is dropped, whether or not a coach reviews you.
+
+    This does not reach: the copy on your computer; a coach's existing notes, logs and mailbox;
+    any chat a review request opened; Slack's own copy and share links; memory facts; artifacts
+    made from the session; and work it dispatched to other agents.
 
     Only the person whose session it is may do this, signed in as themselves: 403 for anyone
     else, and for an agent's login or a token issued to a turn; no admin can override it. 409
     while a turn is running, while it is being moved, when someone else is or was in the
     conversation, or while a fork holds a copy. Deleting again does nothing. 503 when a file's
-    stored copy could not be removed: nothing has changed, and you can try again."""
+    stored copy could not be removed: files already removed stay removed, everything else is
+    still there, and trying again finishes the rest."""
     session = _session_or_404(request, session_id)
     if acting_person.refusal(request) is not None or delegation.acting_app(request) is not None:
         raise HttpError(403, "Only the person whose session this is can delete it, signed in as "
@@ -493,8 +496,9 @@ def delete_session_content(request: HttpRequest, session_id: uuid.UUID):
     try:
         counts = content_deletion.delete_content(session, by=request.user)
     except content_deletion.BytesRemain:
-        raise HttpError(503, "A file attached to this session could not be removed, so nothing "
-                             "else was deleted. Try again.") from None
+        raise HttpError(503, "A file attached to this session could not be removed, so the delete "
+                             "stopped. Files already removed stay removed, and the rest of the "
+                             "session is still here. Try again to finish.") from None
     except ValueError as exc:  # it started working in between
         raise HttpError(409, content_deletion.REFUSALS.get(str(exc), str(exc))) from None
     session.refresh_from_db(fields=["content_deleted_at"])

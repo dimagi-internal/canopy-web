@@ -16369,15 +16369,18 @@ export interface paths {
          *     stay, so analytics does not change, and it is archived.
          *
          *     Your runner will not upload it again: the session stops being asked of your computer and
-         *     anything it still ships is dropped, whether or not a coach reviews you. The copy on your
-         *     own computer is untouched, as is anything already read out of canopy, such as a coach's
-         *     notes and logs.
+         *     anything it still ships is dropped, whether or not a coach reviews you.
+         *
+         *     This does not reach: the copy on your computer; a coach's existing notes, logs and mailbox;
+         *     any chat a review request opened; Slack's own copy and share links; memory facts; artifacts
+         *     made from the session; and work it dispatched to other agents.
          *
          *     Only the person whose session it is may do this, signed in as themselves: 403 for anyone
          *     else, and for an agent's login or a token issued to a turn; no admin can override it. 409
          *     while a turn is running, while it is being moved, when someone else is or was in the
          *     conversation, or while a fork holds a copy. Deleting again does nothing. 503 when a file's
-         *     stored copy could not be removed: nothing has changed, and you can try again.
+         *     stored copy could not be removed: files already removed stay removed, everything else is
+         *     still there, and trying again finishes the rest.
          */
         readonly delete: operations["delete_session_content"];
         readonly options?: never;

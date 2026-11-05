@@ -101,8 +101,8 @@ _ORIGIN_REF_KEPT = frozenset({"thread_key", "chat_session_id", "client_id", "tri
 
 
 class BytesRemain(Exception):
-    """The store refused to delete an attachment. Nothing else has been touched, and
-    deleting again retries it."""
+    """The store refused to delete an attachment. Objects already deleted stay deleted; no
+    row has been touched, and deleting again finishes the rest."""
 
 
 def blocker(session) -> str | None:
