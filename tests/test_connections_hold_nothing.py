@@ -1,6 +1,9 @@
 """canopy-web holds no OAuth token it could use: no token column on `Connection`,
 no Fernet anywhere in the connections app but the app's client secret, and no
-route that hands a token out. A connection row carries the sealed envelope only."""
+route that hands a token out. A connection row carries the sealed envelope only.
+
+The one exception, on purpose and only there: `apps/connections/temporary.py`, a person's
+access token with nothing that can renew it (`TemporaryAccess`, `vault.md` § Lending for an hour)."""
 from __future__ import annotations
 
 import ast
@@ -43,6 +46,8 @@ def test_fernet_is_used_only_for_the_app_client_secret():
                  and getattr(n.func, "id", getattr(n.func, "attr", "")) in {"encrypt_secret", "decrypt_secret"}]
         if path.name == "models.py":
             assert calls and all(_inside(tree, c, "ConnectionApp", "client_secret") for c in calls), path
+        elif path.name == "temporary.py":
+            assert calls, path
         else:
             assert calls == [], path
         # Nor any direct use of Fernet, imported or called.

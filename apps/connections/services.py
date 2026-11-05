@@ -461,11 +461,13 @@ def _pkce_pair() -> tuple[str, str]:
 
 
 def begin(session, *, app: ConnectionApp, owner: Owner, redirect_uri: str, return_to: str = "",
-          lend_minutes: int | None = None, owner_turns_only: bool = False, for_agent: str = "") -> str:
+          lend_minutes: int | None = None, owner_turns_only: bool = False, for_agent: str = "",
+          temporary: bool = False) -> str:
     """Park a PKCE verifier, a CSRF `state` and `app` in the session; return the
     authorize URL (with `app`'s client). `lend_minutes` and `owner_turns_only` are the
     limits the connection will carry (`complete`); `for_agent` is the slug the share
-    screen ticks for the owner.
+    screen ticks for the owner. `temporary` asks the provider for no refresh token, and
+    the callback finishes it with `temporary.complete`, for the agent `for_agent` names.
 
     The verifier never leaves the server; only its S256 challenge goes to the
     provider, so an intercepted `code` cannot be exchanged by anyone else.
@@ -481,10 +483,11 @@ def begin(session, *, app: ConnectionApp, owner: Owner, redirect_uri: str, retur
     pending[state] = {"app": app.pk, "provider": app.provider, "workspace": app.workspace_id,
                       "client_id": app.client_id,
                       "owner_kind": kind, "owner_id": owner_id, "verifier": verifier, "return_to": return_to,
-                      "lend_minutes": lend_minutes, "owner_turns_only": owner_turns_only, "for_agent": for_agent}
+                      "lend_minutes": lend_minutes, "owner_turns_only": owner_turns_only, "for_agent": for_agent,
+                      "temporary": temporary}
     session[SESSION_KEY] = pending  # reassigned so a Django session marks itself modified
     owner_obj = (Agent if kind == "agent" else get_user_model()).objects.filter(pk=owner_id).first()
-    return p.authorize_url(state, redirect_uri, challenge, owner_kind=kind, owner=owner_obj)
+    return p.authorize_url(state, redirect_uri, challenge, owner_kind=kind, owner=owner_obj, temporary=temporary)
 
 
 def pending_for(session, state: str) -> dict | None:
@@ -517,6 +520,24 @@ def authorize_refused(session, *, provider: str, state: str, error: str, by) -> 
     return "provider_error"
 
 
+def take_parked(session, *, provider: str, workspace, state: str) -> tuple[dict, ConnectionApp]:
+    """Spend the flow parked under `state`, and return it with its app. `bad_state` for a callback of
+    another provider or workspace than it was begun with, or an app no longer the one it began with."""
+    pending = dict(session.get(SESSION_KEY) or {})
+    parked = pending.pop(state, None) if state else None
+    session[SESSION_KEY] = pending
+    if not parked or parked.get("provider") != provider or parked.get("workspace") != _slug(workspace):
+        raise ConnectionError("bad_state", "start the connection again")
+    app = (ConnectionApp.objects.select_related("workspace")
+           .filter(pk=parked.get("app"), provider=provider, workspace_id=parked["workspace"],
+                   removed_at__isnull=True).first())
+    # Removed, or given another client, between begin and complete: the code was
+    # issued to a client this app no longer is.
+    if app is None or app.client_id != parked.get("client_id"):
+        raise ConnectionError("bad_state", "that app has changed; start the connection again")
+    return parked, app
+
+
 def complete(session, *, provider: str, workspace, code: str, state: str, redirect_uri: str, by) -> Connection:
     """Exchange `code` with the parked app, check who the account is, and seal its
     refresh token to the owner.
@@ -537,19 +558,7 @@ def complete(session, *, provider: str, workspace, code: str, state: str, redire
     (`owner_changed`): boxes pin a connection's owner key, and only that pin catches
     a self-consistent forgery, so it never changes.
     """
-    pending = dict(session.get(SESSION_KEY) or {})
-    parked = pending.pop(state, None) if state else None
-    session[SESSION_KEY] = pending
-    if not parked or parked.get("provider") != provider or parked.get("workspace") != _slug(workspace):
-        raise ConnectionError("bad_state", "start the connection again")
-    app = (ConnectionApp.objects.select_related("workspace")
-           .filter(pk=parked.get("app"), provider=provider, workspace_id=parked["workspace"],
-                   removed_at__isnull=True).first())
-    # Removed, or given another client, between begin and complete: the code was
-    # issued to a client this app no longer is.
-    if app is None or app.client_id != parked.get("client_id"):
-        raise ConnectionError("bad_state", "that app has changed; start the connection again")
-
+    parked, app = take_parked(session, provider=provider, workspace=workspace, state=state)
     p = _configured(app)
     if parked["owner_kind"] == "agent":
         agent = Agent.objects.filter(pk=parked["owner_id"]).first()

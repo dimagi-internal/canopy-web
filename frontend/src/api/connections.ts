@@ -45,6 +45,15 @@ export async function disconnectMine(id: string): Promise<DisconnectOut> {
   return unwrap(res, 'Could not disconnect.')
 }
 
+export type TemporaryEndedOut = components['schemas']['TemporaryEndedOut']
+
+export async function endTemporaryAccess(id: string): Promise<TemporaryEndedOut> {
+  const res = await apiV2.DELETE('/api/connections/temporary/{access_id}', {
+    params: { path: { access_id: id } },
+  })
+  return unwrap(res, 'Could not end it.')
+}
+
 // ---- Sharing: what the owner's browser reads and writes (`vault/connectionShare.ts`) ----
 // canopy-web opens these envelopes only if the owner's statement names it. Sharing needs a fresh passkey; the step-up
 // middleware answers that, and refusals carry their `code` on the `ApiError`.

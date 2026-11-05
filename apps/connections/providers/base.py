@@ -170,6 +170,8 @@ class Provider:
     client_auth: ClassVar[Literal["body", "basic"]] = "body"
     rotates_refresh_token: ClassVar[bool] = False
     revokes_refused_grant: ClassVar[bool] = True
+    # Whether a connect can ask for an access token alone (`temporary_params`, `apps.connections.temporary`).
+    temporary_access: ClassVar[bool] = False
     server_use_default: ClassVar[bool] = False
     server_calls: ClassVar[bool] = False
     pkce: ClassVar[bool] = True
@@ -283,10 +285,17 @@ class Provider:
 
     # ---- the OAuth flow -----------------------------------------------------
 
+    def temporary_params(self) -> Mapping[str, str]:
+        """What asks for an access token and no refresh token. Empty, the default, is a provider
+        that cannot be asked: `temporary_access` stays False and a temporary connect is refused."""
+        return {}
+
     def authorize_url(self, state: str, redirect_uri: str, code_challenge: str, *,
-                      owner_kind: Literal["user", "agent"] = "user", owner: Any = None) -> str:
+                      owner_kind: Literal["user", "agent"] = "user", owner: Any = None,
+                      temporary: bool = False) -> str:
         query = {
             **self.authorize_params(owner_kind=owner_kind, owner=owner),
+            **(self.temporary_params() if temporary else {}),
             "response_type": "code",
             "client_id": self.client_id,
             "redirect_uri": redirect_uri,

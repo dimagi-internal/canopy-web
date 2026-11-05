@@ -37,6 +37,12 @@ A person's start may name limits, which the owner then sees on the share screen:
 with no limit) and `owner_turns_only=1` (`Connection`). `for_agent=<slug>` only ticks
 that agent on the share screen; it grants nothing.
 
+A person's start may instead name `temporary=1` with `for_agent=<slug>`
+(`apps.connections.temporary`): an access token alone, for that agent, for turns that person
+starts. No vault key is needed, there is no share screen, and it lands back on `return_to` with
+`?connection=<provider>&status=ok`. Reasons of its own: `temporary_unsupported`, for a provider
+that cannot be asked for no refresh token, and `bad_agent`, for a slug not in this workspace.
+
 A connect that succeeds lands on the success screen,
 `/w/<workspace>/connections/<id>/connected?return_to=<return_to>&just_connected=1`, which says plainly
 what was connected and who can use it now, and links on to the share screen for the
@@ -73,7 +79,7 @@ from django.views.decorators.http import require_http_methods
 
 from apps.agents.models import Agent
 
-from . import providers, services
+from . import providers, services, temporary
 
 DEFAULT_RETURN = "/settings"
 #: A lend for a while, in minutes: long enough to be used, and no longer than the week an
@@ -161,10 +167,19 @@ def connections_start(request: HttpRequest, provider: str, workspace: str) -> Ht
         if lend_minutes not in LEND_MINUTES:
             return _land(request, return_to, provider, "error", "bad_lend")
     for_agent = params.get("for_agent", "")
+    short_lived = not slug and params.get("temporary") == "1"
     try:
         app = services.app_for(workspace, provider)
     except services.NotConfigured:
         return _land(request, return_to, provider, "error", "not_configured")
+    if short_lived:
+        if not temporary.supported(provider):
+            return _land(request, return_to, provider, "error", "temporary_unsupported")
+        if temporary.agent_for(workspace, for_agent) is None:
+            return _land(request, return_to, provider, "error", "bad_agent")
+        return HttpResponseRedirect(services.begin(
+            request.session, app=app, owner=owner, redirect_uri=_redirect_uri(request, provider, workspace),
+            return_to=return_to, for_agent=for_agent, temporary=True))
     try:
         services.owner_keyset(owner[0], owner_obj, request.user)
     except services.ConnectionError as e:  # no vault key: nothing to seal to, so nothing is begun
@@ -207,6 +222,15 @@ def connections_callback(request: HttpRequest, provider: str, workspace: str) ->
         reason = services.authorize_refused(request.session, provider=provider, state=state,
                                             error=request.GET["error"], by=request.user)
         return _land(request, return_to, provider, "error", reason)
+
+    if parked.get("temporary"):
+        try:
+            temporary.complete(request.session, provider=provider, workspace=workspace,
+                               code=request.GET.get("code") or "", state=state,
+                               redirect_uri=_redirect_uri(request, provider, workspace), by=request.user)
+        except services.ConnectionError as e:
+            return _land(request, return_to, provider, "error", e.code)
+        return _land(request, return_to, provider, "ok")
 
     try:
         conn = services.complete(request.session, provider=provider, workspace=workspace,
