@@ -319,25 +319,41 @@ def pending_targets(vault: Vault) -> list[dict]:
 
 def describe_waiting_machines(vault: Vault, pending: list[dict]) -> list[dict]:
     """`pending`, each waiting MACHINE annotated for the vault's page: whose it is, which
-    agents this vault serves that it runs, and why no keeper has passed it the key
-    (`machine_waits.why_waiting` — `unendorsed` means its person never confirmed it, so
-    only a grant here lets it in). A machine reaching the vault through an agent,
-    workspace or project attachment had no row anywhere on the page (Shared, 2026-11-05)."""
-    from .machine_waits import why_waiting  # noqa: PLC0415 — machine_waits imports this module
+    agents this vault serves that it runs, and whether anyone has confirmed it
+    (`waiting_reason`: `unendorsed` — no keeper will pass it the key, an admin's grant is
+    the way in — or `waiting_for_keeper`).
+
+    BATCHED: one read of the vault's agents, one query for which of them each runner is
+    routed, one endorsement query — however many machines wait. The first version ran `machine_waits.why_waiting`
+    per machine, recomputing membership across every agent the vault serves each time;
+    on Shared that pinned canopy-web's CPU and starved every keeper (2026-11-05 23:00Z)."""
+    from ..models import AgentVaultEndorsement  # noqa: PLC0415 — keeps the module's model imports as they were
 
     ids = [t["target"] for t in pending if t.get("kind") == "device"]
+    if not ids:
+        return pending
     keys = {str(k.pk): k for k in RunnerDeviceKey.objects.filter(pk__in=ids)
             .select_related("runner__owner", "approved_by")}
-    agents = vault_members.attached_agents(vault) if keys else []
+    agents = vault_members.attached_agents(vault)
+    # "Runs": the agents of this vault routed to the machine's runner — one query. Not
+    # `runner_serves_agent` per machine x agent: its access checks cost ~8 queries each.
+    from apps.harness.models import RunnerAssignment  # noqa: PLC0415 — kept beside its only use
+
+    runs: dict = {}
+    for rid, slug in (RunnerAssignment.objects.filter(agent__in=agents, runner_id__in={k.runner_id for k in keys.values()})
+                      .values_list("runner_id", "agent__slug")):
+        runs.setdefault(rid, set()).add(slug)
+    jkts = [k.ecdh_jkt for k in keys.values() if k.ecdh_jkt]
+    signed = set(AgentVaultEndorsement.objects.filter(
+        agent__in=agents, kind="device", target__in=jkts).values_list("target", flat=True))
     out = []
     for t in pending:
         k = keys.get(str(t.get("target"))) if t.get("kind") == "device" else None
         if k is not None:
             person = k.runner.owner if k.runner.owner_id else k.approved_by
-            why = why_waiting(vault, k) or {}
             t = {**t, "person_email": getattr(person, "email", "") or "",
-                 "serves": sorted(a.slug for a in agents if device_keys.runner_serves_agent(k.runner, a)),
-                 "waiting_reason": why.get("reason", "")}
+                 "serves": sorted(runs.get(k.runner_id, ())),
+                 "waiting_reason": "waiting_for_keeper" if k.ecdh_jkt in signed else "unendorsed"}
         out.append(t)
     return out
 
@@ -444,13 +460,10 @@ def _layers(vaults, device_key, wanted: set[str] | None) -> list[dict]:
         layer = {"vault_id": str(v.pk), "name": v.name, "workspace": v.workspace_id,
                  "binding_id": binding_id(v), "kv": v.kv, "wrap": mine.wrap if mine else None,
                  "values": dict(qs.values_list("name", "value_zk")) if mine else {}}
-        if mine is None and device_key is not None:
-            # Why this machine has no copy and who can fix it, so the turn that reads
-            # it is not left to guess (`machine_waits`): an unendorsed machine is its
-            # own person's to confirm — no keeper, and no `zk keep`, ever grants it.
-            from .machine_waits import why_waiting  # noqa: PLC0415 — keeps this module's imports flat
-
-            layer["waiting"] = why_waiting(v, device_key)
+        # No per-layer diagnosis here: this is the credential resolve every runner calls
+        # before each turn and on each lease heartbeat, and `why_waiting` (membership over
+        # every agent the vault serves) on it starved canopy-web (2026-11-05 23:00Z). The
+        # CLI says "no copy" and points at Device keys; the vault page says why.
         out.append(layer)
     return out
 
