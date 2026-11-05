@@ -346,6 +346,7 @@ def promote_project(project: AgentProject, handle: str, workspace: str = "") -> 
     # A task lives where its project does.
     for task in project.tasks.exclude(workspace_id=workspace):
         work.rehome(task, workspace)
+    project.meetings.exclude(workspace_id=workspace).update(workspace_id=workspace)
     _settle_shares(project)
     _settle_vault_attachments(project)
     return project
@@ -434,6 +435,7 @@ def _personal_blockers(project: AgentProject) -> list[str]:
         "it has dynamic views": project.dynamic_views.exists(),
         "run documents are filed under it": project.runs.exists(),
         "its tasks are related to tasks outside it": outside,
+        "other people's meetings are in it": project.meetings.exclude(owner=project.owner_user).exists(),
     }
     out = [why for why, holds in links.items() if holds]
     for model, label in _artifact_models():
@@ -497,7 +499,7 @@ def next_project_ext_id(agent: Agent) -> str:
 
 
 _PROJECT_FIELDS = ("name", "outcome", "status", "owner_note", "drive_folder_id",
-                   "drive_folder_url", "repo_slug", "notes", "priority", "start_date", "target_date")
+                   "drive_folder_url", "repo_slug", "notes", "priority", "start_date", "target_date", "meeting_instructions")
 
 
 _PROJECT_STATUS = {s for s, _ in AgentProject.STATUS_CHOICES}

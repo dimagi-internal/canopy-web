@@ -16,7 +16,7 @@ KEY = re.compile(r"^[a-z][a-z0-9-]{1,38}[a-z0-9]$")
 VERSION = re.compile(r"^\d{1,6}(\.\d{1,6}){0,3}$")
 PLATFORMS = ("macos",)
 SETTING_TYPES = ("agent", "text", "longtext", "bool")
-CANOPY_OPS = ("sessions.create", "sessions.send", "turns.status")
+CANOPY_OPS = ("sessions.create", "sessions.send", "turns.status", "meetings.save")
 TOP_LEVEL = {
     "key",
     "name",

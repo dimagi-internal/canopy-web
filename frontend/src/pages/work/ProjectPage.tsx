@@ -25,6 +25,7 @@ import { ProjectOverview } from '@/pages/agents/ProjectOverview'
 import { errorText } from '@/api/problem'
 import { MilestonesSection } from '@/pages/work/ProjectMilestones'
 import { PropertyHeader } from '@/pages/work/ProjectProperties'
+import { ProjectMeetings } from '@/pages/work/ProjectMeetings'
 import { ProjectServices } from '@/pages/work/ProjectServices'
 import { UpdatesSection } from '@/pages/work/ProjectUpdates'
 import { ProjectShares } from '@/pages/work/ProjectShares'
@@ -126,6 +127,12 @@ export function ProjectPage(): JSX.Element {
       <ProjectViewsSection workspace={workspace} handle={handle} projectName={detail.name} />
       <UpdatesSection detail={detail} workspace={workspace} handle={handle} onChanged={reload} />
       <ProjectWork detail={detail} workspace={workspace} handle={handle} address={address} onChanged={reload} />
+      <ProjectMeetings
+        detail={detail}
+        workspace={workspace}
+        handle={handle}
+        onSaveInstructions={(text) => void save({ meeting_instructions: text })}
+      />
       <ProjectServices detail={detail} workspace={workspace} handle={handle} onChanged={reload} />
       {detail.visibility !== 'personal' && (
         <ProjectShares detail={detail} workspace={workspace} handle={handle} onChanged={reload} />

@@ -283,6 +283,12 @@ def test_as_a_program_it_sends_last_words_on_ended_and_reports_the_session():
     assert send["args"]["client_id"].startswith("meeting-assistant-r1-")
     _write(proc, {"type": "canopy.result", "id": send["id"], "status": 200, "body": {"turn_id": "t1"}})
 
+    while (saving := _read(proc))["type"] != "canopy.call":
+        pass
+    assert saving["op"] == "meetings.save" and "goodbye everyone" in saving["args"]["text"]
+    _write(proc, {"type": "canopy.result", "id": saving["id"], "status": 200,
+                  "body": {"id": "m1", "url": "https://canopy.test/m1"}})
+
     rest = [json.loads(line) for line in proc.stdout]
     assert rest[-1] == {"type": "stopped", "reason": "meeting_ended"}
     assert not any("goodbye" in json.dumps(line) for line in rest)
@@ -332,7 +338,7 @@ def test_as_a_program_a_refused_create_stops_with_a_reason():
 def test_the_manifest_declares_what_the_app_calls():
     manifest = json.loads((APP.parent / "manifest.json").read_text())
     assert manifest["source"] == ["{python}", "source.py"]
-    assert set(manifest["canopy"]) == {"sessions.create", "sessions.send", "turns.status"}
+    assert set(manifest["canopy"]) == {"sessions.create", "sessions.send", "turns.status", "meetings.save"}
 
 
 def test_text_held_behind_a_slow_agent_is_split_and_none_is_lost(monkeypatch):
@@ -350,3 +356,85 @@ def test_text_held_behind_a_slow_agent_is_split_and_none_is_lost(monkeypatch):
     assert len(h.sent) > 1
     joined = " ".join(text for text, _ in h.sent)
     assert all(w in joined for w in words)
+
+
+class SavingApp:
+    """`App` with a feed already over, to pin what is and isn't kept."""
+
+    def __init__(self, reason, segments, *, saves=None):
+        self.events, self.saved = [], []
+        self.saves = saves or [lambda text: {"url": "u"}]
+        inbox = self.inbox = []
+        wire = type("W", (), {"event": lambda _, name, **f: self.events.append((name, f)),
+                              "receive": lambda _, timeout: inbox.pop(0) if inbox else None})()
+        self.app = m.App(wire)
+        self.app.feed = m.Feed(run_id="r", post=None, turn_status=None, log=lambda *a, **k: None)
+        self.app.feed.stop_reason, self.app.feed.everything = reason, list(segments)
+
+    def save_meeting(self, text):
+        self.saved.append(text)
+        return self.saves.pop(0)(text) if self.saves else {"url": "u"}
+
+    def run(self):
+        self.app._save(self)
+        return self.saved
+
+
+SAID = [{"text": "we ship", "start": 1, "end": 2, "speaker": "Ana"}]
+
+
+def test_a_meeting_that_ended_by_itself_is_saved_with_who_said_what():
+    saved = SavingApp("meeting_ended", SAID).run()
+    assert saved == ["[0:00:01] Ana: we ship"]
+    assert SavingApp("no_new_speech", SAID).run()
+
+
+def test_stop_a_deleted_meeting_and_running_out_of_time_save_nothing():
+    for reason in ("stopped", "meeting_gone", "max_minutes", "canopy_refused"):
+        assert SavingApp(reason, SAID).run() == []
+
+
+def test_deleting_the_meeting_forgets_what_would_have_been_saved():
+    feed = m.Feed(run_id="r", post=None, turn_status=None, log=lambda *a, **k: None)
+    feed.add_segment(SAID[0])
+    feed.mark_gone()
+    assert feed.everything == []
+
+
+def test_a_failed_save_is_retried_and_its_events_hold_no_words(monkeypatch):
+    monkeypatch.setattr(m, "SAVE_RETRY_SECONDS", 0.0)
+    def boom(text):
+        raise OSError("confidential words")
+
+    app = SavingApp("meeting_ended", SAID, saves=[boom, lambda text: {"url": "u"}])
+    app.run()
+    assert [e[0] for e in app.events] == ["save_failed", "saved"]
+    assert "confidential" not in repr(app.events) and "ship" not in repr(app.events)
+
+
+def test_a_deletion_or_a_stop_that_arrives_before_the_save_wins(monkeypatch):
+    monkeypatch.setattr(m, "SAVE_RETRY_SECONDS", 0.0)
+    app = SavingApp("meeting_ended", SAID)
+    app.inbox.append({"type": "gone"})
+    assert app.run() == []
+    app = SavingApp("meeting_ended", SAID)
+    app.inbox.append({"type": "stop"})
+    with pytest.raises(m.Stopping):
+        app.run()
+    assert app.saved == []
+
+
+def test_a_deletion_between_retries_stops_the_retrying(monkeypatch):
+    monkeypatch.setattr(m, "SAVE_RETRY_SECONDS", 0.0)
+
+    def boom(text):
+        app.inbox.append({"type": "gone"})
+        raise OSError("down")
+
+    app = SavingApp("meeting_ended", SAID, saves=[boom])
+    assert len(app.run()) == 1
+
+
+def test_a_very_long_transcript_fits_one_request_even_where_escaping_grows_it():
+    fitted = m.fit_to_save("\u0928" * 1_000_000)
+    assert len(json.dumps(fitted)) <= m.MAX_SAVED_ENCODED

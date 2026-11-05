@@ -172,6 +172,8 @@ class StubLink:
             return 200, {"turn_id": str(uuid.uuid4())}
         if op == "turns.status":
             return 200, {"status": "done"}
+        if op == "meetings.save":
+            return 200, {"id": str(uuid.uuid4())}
         return 400, {"detail": f"unknown op {op}"}
 
     def finish(self, reason: str, counts: dict) -> None:

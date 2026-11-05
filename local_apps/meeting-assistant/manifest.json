@@ -2,8 +2,8 @@
   "key": "meeting-assistant",
   "name": "Meeting assistant",
   "description": "Live feedback from an agent during a meeting.",
-  "version": "0.2.0",
-  "changelog": "One app: reads the Superwhisper transcript itself, with nothing else to install.",
+  "version": "0.3.0",
+  "changelog": "Saves the transcript of a meeting that ended by itself to your private Meetings page.",
   "entry": [
     "{python}",
     "app.py"
@@ -22,7 +22,8 @@
       "the transcript and speaker names of the Superwhisper meeting that started in the last 15 minutes"
     ],
     "sends": [
-      "transcript text to the canopy session it opens, and so to the agent's model provider"
+      "transcript text to the canopy session it opens, and so to the agent's model provider",
+      "the whole transcript to your private Meetings page in Canopy, when a meeting ends by itself"
     ]
   },
   "settings": {
@@ -54,6 +55,7 @@
   "canopy": [
     "sessions.create",
     "sessions.send",
-    "turns.status"
+    "turns.status",
+    "meetings.save"
   ]
 }

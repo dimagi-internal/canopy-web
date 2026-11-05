@@ -27,6 +27,7 @@ from apps.canopy_sessions import services as session_services
 from apps.canopy_sessions.models import Session
 from apps.harness import initiator as who
 from apps.harness.models import Runner, Turn
+from apps.meetings import services as meetings
 from apps.workspace_apps.models import AppTemplate, AppTemplateVersion
 from apps.workspace_apps.services import _version_key
 from apps.workspaces import permissions as perms
@@ -518,4 +519,29 @@ def _turn_status(run: LocalAppRun, args: dict) -> dict:
     return {"status": turn.status}
 
 
-_OPS = {"sessions.create": _create_session, "sessions.send": _send, "turns.status": _turn_status}
+def _save_meeting(run: LocalAppRun, args: dict) -> dict:
+    """The transcript of a meeting that ended, private to the person until they attach it."""
+    inst = run.installation
+    text = args.get("text")
+    if not isinstance(text, str) or not text.strip():
+        raise Refused("text must be non-empty", 422)
+    agent = _usable_agent(agent_slug(inst, run.version), inst.user)
+    actor = meetings.Actor(user=inst.user, login=inst.user)
+    try:
+        meeting, _created = meetings.create(
+            actor,
+            title=str(args.get("title") or ""),
+            agent=agent,
+            artifact={"kind": "transcript", "text": text, "source": str(args.get("source") or inst.template.key)},
+        )
+    except meetings.Refused as exc:
+        raise Refused(str(exc), exc.status) from exc
+    return {"id": str(meeting.pk), "url": scoped_url(meeting.workspace_id, f"/meetings/{meeting.pk}")}
+
+
+_OPS = {
+    "sessions.create": _create_session,
+    "sessions.send": _send,
+    "turns.status": _turn_status,
+    "meetings.save": _save_meeting,
+}

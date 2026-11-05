@@ -299,6 +299,7 @@ def test_google_is_registered_with_its_scope_choices():
         f"{G}gmail.readonly": "Read mail", f"{G}gmail.compose": "Write drafts",
         f"{G}gmail.send": "Send mail", f"{G}gmail.modify": "Label and archive mail",
         f"{G}calendar.readonly": "Read calendars", f"{G}calendar.events": "Edit calendar events",
+        f"{G}drive.readonly": "Read files in Drive",
     }
     # Every scope at once still fits a connection's stored scopes.
     assert len(" ".join((*cls.scopes, *cls.scope_choices))) <= Connection._meta.get_field("scopes").max_length

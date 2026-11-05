@@ -14,7 +14,7 @@ SETTING_NAME_RX = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
 PYTHON = "{python}"
 PLATFORMS = {"macos"}
 SETTING_TYPES = {"agent", "text", "longtext", "bool"}
-CANOPY_OPS = {"sessions.create", "sessions.send", "turns.status"}
+CANOPY_OPS = {"sessions.create", "sessions.send", "turns.status", "meetings.save"}
 MAX_MINUTES = 480
 
 REQUIRED = ("key", "name", "version", "entry", "platforms", "max_minutes")
