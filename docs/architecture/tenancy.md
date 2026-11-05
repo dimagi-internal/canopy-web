@@ -452,19 +452,22 @@ THE predicate; every surface below asks it, one test each in
     `canopy-chat/v1/wrap|<conversation>|<user>`) to the starter's vault key
     (`GET /my-vault-key`) — its PUBLIC half, so starting a chat or sending in one, private
     or not, never asks for a passkey (`sealedChat.offerForNewChat`). A key pinned in this
-    browser (`trust.checkSelf`) is used silently. A key CHANGED since this browser pinned it
-    stops the new chat with a sentence (a substituted key looks like that); the panel and
-    the chat page show it and keep what was typed. A key never seen in this browser (a fresh
-    browser, the panel's frame, storage the browser will not keep) is **trusted on first
-    use**: the chat starts wrapped to the key canopy names, pinned here as unconfirmed with
-    the chat's id (`trust.trustSelfOnFirstUse`). The first time the person opens their vault
-    key in that browser for any reason (`unlockLocally`, `useVaultUnlock` → `trust.rememberSelf`),
-    the key they actually hold — derived from its private scalar — is checked against it;
-    a mismatch is a warning naming those chats on the sealed-conversation banner
-    (`useSealedConversation.warning`), and the pin becomes the key they hold, so the
-    substituted key is refused from then on. **The trade-off:** a key substituted on a
-    browser's very first chat is DETECTED at the first unlock there, not prevented; with
-    storage blocked nothing is remembered, so each start trusts anew and nothing is checked.
+    browser (`trust.checkSelf`) is used silently. A key never seen in this browser (a fresh
+    browser, the panel's frame, storage the browser will not keep), or CHANGED since this
+    browser pinned it (the person replaced their key in another browser), is **trusted on
+    first use**: the chat starts wrapped to the key canopy names, pinned here as unconfirmed
+    with the chat's id (`trust.trustSelfOnFirstUse`). The next time the person opens their
+    vault key in that browser for any reason (`unlockVaultKey`, `stepUpAndUnlock`,
+    `unlockLocally` → `trust.rememberSelf`), the key they actually hold — derived from its
+    private scalar — is checked against it; a mismatch is a warning naming those chats on the
+    sealed-conversation banner (`useSealedConversation.warning`), the pin becomes the key
+    they hold, and the disproven key stops any later chat here (the panel and the chat page
+    say why and keep what was typed). **The trade-off (owner decision, 2026-11-05):** a key
+    substituted by a write to the database, with no login or passkey, is DETECTED at the
+    next unlock in that browser, not prevented, so a chat that turns private before then
+    could be read by whoever holds that key. Refusing instead stopped every browser but
+    one, for everyone who replaced their key, with no way to tell the two apart. With storage
+    blocked nothing is remembered, so each start trusts anew and nothing is checked.
     canopy-web keeps it (`SessionKey.public_jwk`, a `SessionKeyWrap`) even
     while the chat is ordinary, so if it becomes sensitive its words are sealed to a key
     canopy-web never saw the private half of (`conversation_keys.check_offer`, `ensure_key`).
@@ -556,7 +559,7 @@ THE predicate; every surface below asks it, one test each in
     which they are `needs_key` again. A re-add or role change keeps a current copy. Until they hold a copy the
     live socket, whose frames carry the words, turns them away (`sensitivity.hears_live`,
     asked at connect and on every re-check; `session.error` `needs_key`).
-  - *A new vault key.* Settings → Vault key → Create a new vault key needs no passphrase,
+  - *A new vault key.* Settings → Security → Create a new vault key needs no passphrase,
     Secret Key or passkey that opens the current key, and deletes nothing stored in any vault. One screen lists
     every vault the person holds a copy of, who can let them back in, and any only they can
     open (`vault/newKeyImpact.ts`). If they are in private conversations it asks whether they

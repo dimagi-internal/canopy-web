@@ -8,7 +8,7 @@ import {
 } from '@/api/vault'
 import { } from '@/api/problem'
 import { assertWithPrf, PrfUnsupportedError, WRONG_PASSPHRASE } from './prf'
-import type { } from './trust'
+import { rememberSelf } from './trust'
 import {
   importPrivateScalar,
   openUserKey,
@@ -150,17 +150,21 @@ export async function stepUpAndUnlock(ks: VaultKeysetOut): Promise<Unlocked | nu
   const touch = await assertWithPrf(ks.prf_input, { allow: byPasskey.map((s) => s.cred) })
   const seal = byPasskey.find((s) => s.cred === touch.cred)
   if (!seal || !touch.prf) return null
-  const pub = ks.public_jwk as Jwk
-  const scalar = await openUserKey(seal, ks.user_id, touch.prf)
-  return { userId: ks.user_id, privateKey: await importPrivateScalar(scalar, pub), publicJwk: pub, scalar }
+  return opened(ks, await openUserKey(seal, ks.user_id, touch.prf))
 }
 
 /** Open the keyset — passkey or passphrase, as the person chooses. */
 export async function unlockVaultKey(prompt: UnlockPrompt, ks?: VaultKeysetOut): Promise<Unlocked> {
   ks = ks ?? (await getKeyset())
-  if (!ks.exists || !ks.public_jwk) throw new Error('Set up your vault key first (Settings → Vault key).')
-  const scalar = await openScalar(ks, prompt)
+  if (!ks.exists || !ks.public_jwk) throw new Error('Set up your vault key first (Settings → Security).')
+  return opened(ks, await openScalar(ks, prompt))
+}
+
+/** The key just opened is the person's own, so every unlock pins it (`trust.rememberSelf`):
+ *  whichever page opened it, this browser now knows the key they hold. */
+async function opened(ks: VaultKeysetOut, scalar: Uint8Array): Promise<Unlocked> {
   const pub = ks.public_jwk as Jwk
+  await rememberSelf(ks.user_id, pub, scalar).catch(() => undefined)
   return { userId: ks.user_id, privateKey: await importPrivateScalar(scalar, pub), publicJwk: pub, scalar }
 }
 

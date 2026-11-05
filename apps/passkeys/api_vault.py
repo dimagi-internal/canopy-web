@@ -83,7 +83,7 @@ def get_vault_keyset(request: HttpRequest) -> VaultKeysetOut:
     if not out.exists:
         vault_log.log("keyset_missing", request)
         raise ProblemError(404, "No vault key", type_=TYPE_NOT_FOUND,
-                           detail="You have not set up a vault key (Settings → Vault key).",
+                           detail="You have not set up a vault key (Settings → Security).",
                            members={"error": "no_vault_keyset", **out.model_dump(mode="json")})
     return out
 

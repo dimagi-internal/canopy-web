@@ -155,7 +155,7 @@ export function EmbedChat({
   const { sealedKey, myRole, audience } = useSessionDetail({ client, sessionId, isContact, link, sealedRows, setSensitive })
   const unlocker = useUnlockPrompt()
   const unlockVault = useCallback(async () => {
-    if (!sealedKey?.keyset) throw new Error('Set up your vault key in canopy (Settings → Vault key) to read this.')
+    if (!sealedKey?.keyset) throw new Error('Set up your vault key in canopy (Settings → Security) to read this.')
     return unlockLocally(sealedKey.keyset, unlocker.prompt)
   }, [sealedKey, unlocker.prompt])
   const sealed = useSealedConversation(sealedKey, socket.state.messages, unlockVault)

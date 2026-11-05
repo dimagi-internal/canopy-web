@@ -166,7 +166,7 @@ def owner_keyset(owner_kind: str, owner, by) -> UserVaultKeyset:
     keyset = (UserVaultKeyset.objects.filter(user_id=getattr(user, "pk", None)).first()
               if user is not None else None)
     if keyset is None:
-        raise ConnectionError("no_vault_key", "Set up your vault key first (Settings → Vault key): a connection "
+        raise ConnectionError("no_vault_key", "Set up your vault key first (Settings → Security): a connection "
                                               "is sealed to it, and canopy-web keeps no copy it can read.")
     return keyset
 

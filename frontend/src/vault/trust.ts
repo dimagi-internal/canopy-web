@@ -33,6 +33,9 @@ export interface Pin {
   unconfirmed?: boolean
   /** The chats whose keys were wrapped to it meanwhile, named if that check fails. */
   conversations?: string[]
+  /** Keys an unlock here has PROVEN are not yours: named as yours, then the key you hold
+   *  turned out to be another (`rememberSelf`). Named again, they stop the chat. */
+  disproven?: string[]
 }
 export type Pins = Record<string, Pin>
 
@@ -213,26 +216,32 @@ export async function rememberSelf(userId: string, publicJwk: Jwk, scalar?: Uint
     mismatch = { userId, wrongJkt: was.jkt, conversations: was.conversations ?? [], found_at: new Date().toISOString() }
     writeMismatch(mismatch)
   }
+  const disproven = [...(was?.disproven ?? []), ...(mismatch ? [mismatch.wrongJkt] : [])]
   if (!was || was.jkt !== thumb || (was.unconfirmed && scalar)) {
     // Only a key opened from its private half confirms; a public half alone keeps the doubt.
     writePin(userId, { jkt: thumb, email: was?.email ?? '', pinned_at: new Date().toISOString(),
+                       ...(disproven.length ? { disproven } : {}),
                        ...(scalar ? {} : { unconfirmed: true, conversations: was?.conversations ?? [] }) })
   }
   return mismatch
 }
 
-/** Starting a chat in a browser that has never opened your vault key: its key is wrapped
- *  to the key canopy names as yours WITHOUT asking you to unlock (starting a chat never
- *  does), and that key is pinned here as UNCONFIRMED, with the chat's id. Your first
- *  unlock here checks it (`rememberSelf`). A pin already there (confirmed or not, the
- *  same key) just gains the chat. Storage this browser cannot keep keeps nothing: each
- *  start trusts anew, and nothing is checked later. */
+/** Starting a chat when this browser has not opened the vault key canopy names as yours,
+ *  because it has never opened one or because that key was replaced since: its key is
+ *  wrapped to the named key WITHOUT asking you to unlock (starting a chat never does),
+ *  and that key is pinned here as UNCONFIRMED, with the chat's id. Your next unlock here
+ *  checks it (`rememberSelf`). A confirmed pin of the same key is left alone; an unconfirmed
+ *  one gains the chat. Storage this browser cannot keep keeps nothing: each start trusts
+ *  anew, and nothing is checked later. */
 export function trustSelfOnFirstUse(userId: string, thumb: string, conversation: string): void {
   const was = loadPins()[userId]
-  if (was && was.jkt !== thumb) return  // `checkSelf` said changed: the caller refused
-  if (was && !was.unconfirmed) return
-  writePin(userId, { jkt: thumb, email: was?.email ?? '', pinned_at: was?.pinned_at ?? new Date().toISOString(),
-                     unconfirmed: true, conversations: [...(was?.conversations ?? []), conversation].slice(-200) })
+  if (was && was.jkt === thumb && !was.unconfirmed) return
+  // Chats wrapped to an earlier unconfirmed key stay listed: nothing has checked them yet.
+  const earlier = was?.unconfirmed ? was.conversations ?? [] : []
+  writePin(userId, { jkt: thumb, email: was?.email ?? '',
+                     pinned_at: was?.jkt === thumb ? was.pinned_at : new Date().toISOString(),
+                     ...(was?.disproven?.length ? { disproven: was.disproven } : {}),
+                     unconfirmed: true, conversations: [...earlier, conversation].slice(-200) })
 }
 
 /** Your own key here was taken on first use and not checked yet. */
@@ -293,9 +302,11 @@ export function selfMismatchMessage(m: SelfMismatch): string {
 }
 
 /** Whether `thumb` is the vault key this browser last opened as yours (or took on first
- *  use, not yet checked): `new` when it has none, `changed` when it holds a different one. */
-export function checkSelf(userId: string, thumb: string): 'pinned' | 'new' | 'changed' {
+ *  use, not yet checked): `new` when it has none, `changed` when it holds a different one
+ *  (a replaced key looks like that), `disproven` when an unlock here proved it is not yours. */
+export function checkSelf(userId: string, thumb: string): 'pinned' | 'new' | 'changed' | 'disproven' {
   const pin = loadPins()[userId]
   if (!pin) return 'new'
+  if (pin.disproven?.includes(thumb)) return 'disproven'
   return pin.jkt === thumb ? 'pinned' : 'changed'
 }

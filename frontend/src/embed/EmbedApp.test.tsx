@@ -1120,15 +1120,29 @@ describe('starting a conversation, and the visitor\'s vault key', () => {
     expect(offered()).toBeUndefined()
   })
 
-  it('stops, keeps the text and says why, when the key named as the visitor\'s changed', async () => {
+  it('starts, when the visitor replaced their key since this frame last saw it', async () => {
     const { generateKeyPair, jkt } = await import('@/vault/zk')
     const { pinPerson } = await import('@/vault/trust')
-    const mine = await generateKeyPair()
-    pinPerson('7', await jkt(mine.publicJwk), '')
+    const old = await generateKeyPair()
+    pinPerson('7', await jkt(old.publicJwk), '')
     await vaultServer({ named: await generateKeyPair() })
     renderPanel()
     await say('hello')
-    await waitFor(() => expect(screen.getByTestId('sendbox-banner').textContent).toMatch(/not the one this browser last opened/), { timeout: 4000 })
+    await waitFor(() => expect(created()).toBeDefined())
+    expect(offered()).toBeDefined()
+  })
+
+  it('stops, keeps the text and says why, when an unlock here proved the named key is not theirs', async () => {
+    const { generateKeyPair, jkt } = await import('@/vault/zk')
+    const { rememberSelf, trustSelfOnFirstUse } = await import('@/vault/trust')
+    const mine = await generateKeyPair()
+    const named = await generateKeyPair()
+    trustSelfOnFirstUse('7', await jkt(named.publicJwk), 'chat-earlier')
+    await rememberSelf('7', mine.publicJwk, mine.scalar)
+    await vaultServer({ named })
+    renderPanel()
+    await say('hello')
+    await waitFor(() => expect(screen.getByTestId('sendbox-banner').textContent).toMatch(/already found is not yours/), { timeout: 4000 })
     // Put back by SendBox's effect, which runs just after the render that shows the reason.
     await waitFor(() => expect(boxValue()).toBe('hello'))
     expect(created()).toBeUndefined()

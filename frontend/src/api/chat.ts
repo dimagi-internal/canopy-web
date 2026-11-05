@@ -30,9 +30,9 @@ export type SlashCommand = components["schemas"]["SlashCommandOut"];
 /** A key pair for a chat this browser starts (`offerForNewChat`), or null — and the chat
  *  starts with no key — when the person has no vault key (404). Starting a chat never
  *  asks to unlock the vault key: the key is wrapped to its public half, pinned here, or
- *  trusted on first use and checked at the first unlock here. A vault key that CHANGED
- *  since this browser pinned it, or a failed read, THROWS: the chat is not started, and
- *  the caller shows why. */
+ *  trusted on first use and checked at the next unlock here. A vault key an unlock here
+ *  proved is not theirs, or a failed read, THROWS: the chat is not started, and the
+ *  caller shows why. */
 export async function browserConversationKey(
   mine: () => Promise<MyVaultKey | VaultKeyNamed>,
 ): Promise<ConversationKeyOffer | null> {

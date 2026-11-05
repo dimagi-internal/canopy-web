@@ -258,7 +258,7 @@ export function SecretSealCard({ slug, name, requestId, onStored }: {
       {phase === 'trust' && verdict && (
         <div className="space-y-2 rounded-md border border-warning/40 bg-warning/10 p-2" data-testid="secret-seal-trust">
           <div>This browser has not trusted these people&apos;s vault keys before. They vouch for who can read
-            {' '}{slug}. Check each fingerprint with them (Settings → Vault key shows theirs) before you trust it:</div>
+            {' '}{slug}. Check each fingerprint with them (Settings → Security shows theirs) before you trust it:</div>
           <ul className="space-y-1">
             {newEndorsers(verdict).map((p) => (
               <li key={p.by}>

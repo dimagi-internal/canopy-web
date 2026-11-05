@@ -112,7 +112,7 @@ def parse_wraps(store: Store, kv: int, wraps: list, *, allow_recovery: bool) -> 
             if ks is None:
                 raise _zk.ZkError(422, "zk_invalid_target",
                               f"{what}: user {target} is not a member of {store.member_scope} "
-                              "with a vault key (Settings → Vault key)")
+                              "with a vault key (Settings → Security)")
             row = store.wrap_model(**store.owner_kw, kv=kv, kind=kind, user=ks.user,
                                    wrap=_zk.check_ecdh_wrap(wrap, what))
         elif kind == "recovery":
