@@ -416,7 +416,7 @@ jobs:
         run: >-
           uv run pytest --ds=config.settings.pgtest --reuse-db tests/test_kb_vectors_pg.py tests/test_kb_vectors.py
           tests/test_kb_versions.py tests/test_project_mcp.py tests/test_canopy_vault_phase1b.py tests/test_slack_choices_pg.py
-          tests/test_answering_snapshot.py tests/test_answering_settings_equivalence.py -q --durations=10
+          tests/test_answering_snapshot.py tests/test_answering_settings_equivalence.py tests/test_answering_settings.py -q --durations=10
 
   # The checks that only make sense on a PR, because they compare against the
   # PR's BASE — which a merge-group run does not have. On a PR these are the

@@ -1,17 +1,19 @@
 # Agent settings replace the interface: read mode and connected sites
 
-**Status:** P0 is built (`manage.py answering_snapshot`, `tests/legacy_interface.py`,
-`tests/test_answering_settings_equivalence.py`). P1 to P3 are not. Follows
-`2026-11-03-agent-read-mode-and-doors-design.md`, whose Phase 1 is deployed: every `Deploy to Labs (AWS)`
-run on 2026-11-04 succeeded and included it. `manage.py read_mode_gate` exists and runs; no re-run against
-production is on record, and one should happen before P1 (section 7).
+**Status:** P0 is built and deployed. P1 and P2 are being built. P3 waits on 30 days with no calls to the old
+routes. Follows `2026-11-03-agent-read-mode-and-doors-design.md`, whose Phase 1 is deployed.
+
+Checked against production on `221d920be`, read-only: 21 agents and 3 sites, every list in `shape` empty, and
+`read_mode_gate` found nothing. The snapshot's hash is
+`aec39912a35ad8750a3067ce56e8ee28f40ae60ea4e11441069f01fcf96b788f`. An empty `shape` is what says every agent,
+including the three section 4 does not describe, fits the plain forms.
 
 The design decisions here were made by the implementer under the owner's delegation and have not been
 personally reviewed by the owner (section 9).
 
-Live-agent facts come from a read through the canopy API on 2026-11-04 by an earlier draft of this spec.
-They were not re-read for this version, and `tests/fixtures/answering_interfaces.json` is reconstructed
-from them, not captured. The `shape` section of the snapshot is what checks them against production.
+Section 4's per-agent detail comes from a read through the canopy API on 2026-11-04 by an earlier draft of this
+spec, and `tests/fixtures/answering_interfaces.json` is reconstructed from it, not captured. Neither is relied
+on for what production holds: the new routes refuse any document they cannot hold.
 
 ## 1. In plain words
 
@@ -85,7 +87,7 @@ The two settings are views of the document:
 
 | Setting | Read | Write |
 |---|---|---|
-| Read mode | the `ask` (else `read`) entry, else canopy's default: `{source: default\|custom, profile}` | sets or deletes the entry, under the name it already has |
+| Read mode | the `ask` (else `read`) entry, else canopy's default: `{source: default\|custom, profile}` | sets the entry, under the name it already has (a new one is `ask`, so that person's next read-mode turn starts a new runner session, as publishing an `ask` always has), or deletes both names |
 | Connected sites | each entry naming a site: `{site, key, description, profile, ceiling, own_login, sensitive}` | sets or deletes the entry for that site |
 
 **Why not the separate columns and `SiteConnection` table an earlier draft proposed.** They existed to give the
@@ -109,15 +111,19 @@ retired, so it stays the unchanged way back.
 * One site per row, and one row per (agent, site). Live data has none otherwise.
 * A read-mode entry holds no `sites`, `ceiling`, `own_login`, `pages` or `data`.
 * No `pages`.
+* Every entry but read mode names a site.
 * Sensitive on: the row must pass `structural_refusals`, as today.
 
-An existing document that breaks one keeps working as it does. It is refused only when someone saves it through
-a new route, with a message saying why.
+The rules are asked of the whole stored document before the edit, so an edit cannot tidy away what it cannot hold,
+and a document that fits still fits after any edit these routes can make. An existing document that breaks one keeps working as it does. It is refused only when someone saves it
+through a new route, with a message saying why. An edit validates only the entry it changes and leaves the others
+as saved. Saving clears `interface_source`, which would otherwise be stale YAML that the old sensitive switch
+edits and saves back.
 
 ### 3.2 A new row's key and defaults
 
 `key` is the entry's name, generated once from the site: lower-cased, every other character `_`, because a
-name must match `^[a-z][a-z0-9_]{0,40}$`, so `connect-labs` becomes `connect_labs`. It avoids `read`, `ask` and
+name must match `^[a-z][a-z0-9_]{0,40}$`, so `connect-labs` becomes `connect_labs`. It avoids `read`, `ask`, `session_review` (canopy's own, which nobody can publish) and
 any name the agent already has (a suffix). It is never renamed. The UI shows it only as a small "internal name",
 which an access line can pick.
 
@@ -144,7 +150,7 @@ Each write route carries the gate `publish_interface` carries today, `@gate(...,
 `audit.note_change` scopes `agent:<slug>/read-mode` and `agent:<slug>/site/<site>`. `GET /api/agents/{slug}` gains
 `read_mode` and `connected_sites`, so Trellis can explain another agent with a tool it already holds.
 
-## 4. Live agents (18, read 2026-11-04)
+## 4. Live agents (21 in production; 18 described here, read 2026-11-04)
 
 | Agents | Stored | They see |
 |---|---|---|
@@ -154,7 +160,7 @@ Each write route carries the gate `publish_interface` carries today, `@gate(...,
 | ace | `ask` + `canopy` (`canopy-web`, 4 ceiling globs) + `connect` (`connect-labs`, ceiling, own login `LABS_MCP_TOKEN`) | customised read mode, two sites |
 | labsdata | `data` (`connect-labs`, sensitive, ceiling, entry) | default read mode, one sensitive site |
 
-`hal`'s entry has no `sites`/`ceiling` keys at all (an older save); readers already tolerate that. The read
+alafia-test, tempo and vera arrived after that read, so their documents are not described here. `hal`'s entry has no `sites`/`ceiling` keys at all (an older save); readers already tolerate that. The read
 default is now version 3: labsdata's read mode has no `curl` reads.
 
 ## 5. Wire and stored strings that must not change
@@ -197,8 +203,8 @@ Each is one PR. Every phase rolls back by redeploying the previous image.
 
 | # | PR | Risk | Verify |
 |---|---|---|---|
-| P0 | Characterization (section 6). No behaviour change. | Low | Done, except that nobody has yet run the snapshot against production. A person runs it read-only over ECS Exec, reads `shape`, and keeps the hash and the JSON outside the repo. |
-| P1 | New routes and MCP tools (3.3), the rules (3.1), `dry_run`, `select_for_update` in the writer, the two `GET /api/agents/{slug}` fields, `generated.ts`, the plugin's new CLI commands. Old routes stay as they are, marked `deprecated=True`. | Medium: a published surface and writes | Before: `read_mode_gate` re-run against production, and `shape` empty or each hit decided. After: the snapshot's hash is unchanged across the deploy. Round-trip test: reading a row and PUTting it back leaves the document byte-equal, for every fixture agent that satisfies 3.1. |
+| P0 | Characterization (section 6). No behaviour change. | Low | Done, deployed and run read-only against production. |
+| P1 | New routes and MCP tools (3.3), the rules (3.1), `dry_run`, `select_for_update` in the writer, the two `GET /api/agents/{slug}` fields, `generated.ts`, the plugin's new CLI commands. Old routes stay as they are, marked `deprecated=True`. | Medium: a published surface and writes | Before: `read_mode_gate` and `shape`, both clean on `221d920be`. After: the snapshot's hash is unchanged across the deploy. Round-trip test: reading a setting and PUTting it back changes no answer and leaves every other entry as saved, for every fixture agent that satisfies 3.1. It is parse-equal, not byte-equal: the entry saved is normalised by `parse`, as any save is. |
 | P2 | Frontend: on the Channels tab, "Read mode and doors" becomes Read mode and Connected sites cards, replacing `AgentInterfaceView`/`InterfaceEditor`. Line form, role form and admission-rule wording (door to connected site). The site-agents `problems` sentence. Docs, CLAUDE.md, agent repos' text. | Low | Render check of ACE, labsdata, Trellis and a default agent. Snapshot diff is only that sentence. |
 | P3 | Retire. Once `list_mcp_calls` shows no call to the five old tool names for 30 days and Trellis's tool lists name `get_agent` (edited through the new route, then its repo test): old routes return 410 with a pointer; delete YAML parsing and `with_sensitive`. If `shape` is empty, delete `pages` and the site-ceiling union, and move those corner cases out of the frozen copy. Optional and alone: drop `interface_source`. | Medium for the deletion; the column drop is the only irreversible step | Equivalence test green; snapshot hash unchanged. |
 

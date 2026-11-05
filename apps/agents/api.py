@@ -48,7 +48,7 @@ from apps.tokens.middleware import minting_refusal
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from . import access, agent_login, command_sync, creation, mailbox, sensitive_data, services
+from . import access, agent_login, answering, command_sync, creation, mailbox, sensitive_data, services
 from . import move as agent_move
 from .creation import repo_url
 from .credentials import delegations, licenses, login_test_key
@@ -69,6 +69,7 @@ from .interface import (
     validate,
 )
 from .models import (
+    Agent,
     AgentAdmin,
     AgentCredentialRead,
     AgentLicense,
@@ -509,6 +510,8 @@ def _detail(request: HttpRequest, agent) -> AgentDetailOut:
     pending = agent_login.pending_request(agent) if agent.is_admin(request.user) else None
     return AgentDetailOut.model_validate({
         **services.agent_detail(agent),
+        "read_mode": answering.read_mode_of(agent),
+        "connected_sites": answering.connected_sites_of(agent),
         "canopy_user_request": login_request_out(pending) if pending is not None else None,
         "can_transfer_owner": _may_transfer_owner(request, agent),
         "is_admin": agent.is_admin(request.user),
@@ -689,8 +692,8 @@ def _interface_out(agent) -> dict:
             "published_by_email": by.email if by is not None else None}
 
 
-@router.get("/{slug}/interface", response=AgentInterfaceOut,
-            summary="What this agent offers callers — its declared interface")
+@router.get("/{slug}/interface", response=AgentInterfaceOut, deprecated=True,
+            summary="Deprecated: use get_read_mode and list_connected_sites. What this agent offers callers — its declared interface")
 @gate("member")
 def get_interface(request: HttpRequest, slug: str):
     return _interface_out(agent_for_read(request, slug))
@@ -699,8 +702,8 @@ def get_interface(request: HttpRequest, slug: str):
 # Owner-or-admin, not the editor tier the skill catalog uses: the interface is
 # a SECURITY POLICY — it decides what people outside the agent's admins can make
 # it do — so loosening it is the same kind of act as handing over its keys.
-@router.post("/{slug}/interface/validate", response=AgentInterfaceValidateOut,
-             summary="Check a draft interface with the server's parser, without saving it")
+@router.post("/{slug}/interface/validate", response=AgentInterfaceValidateOut, deprecated=True,
+             summary="Deprecated: use dry_run on put_read_mode or put_connected_site. Check a draft interface with the server's parser, without saving it")
 @gate("agent-admin", kind="action")
 def validate_interface(request: HttpRequest, slug: str, payload: AgentInterfaceIn):
     agent_for_admin(request, slug)
@@ -720,8 +723,8 @@ def validate_interface(request: HttpRequest, slug: str, payload: AgentInterfaceI
             "yaml": payload.source if payload.source is not None else yaml.safe_dump(parsed, sort_keys=False)}
 
 
-@router.put("/{slug}/interface", response=AgentInterfaceOut,
-            summary="Save the agent's declared interface (YAML source, or a parsed mapping)")
+@router.put("/{slug}/interface", response=AgentInterfaceOut, deprecated=True,
+            summary="Deprecated: use put_read_mode and put_connected_site. Save the agent's declared interface (YAML source, or a parsed mapping)")
 @gate("agent-admin", setting=True)
 def publish_interface(request: HttpRequest, slug: str, payload: AgentInterfaceIn):
     agent = agent_for_admin(request, slug)
@@ -749,17 +752,12 @@ def _save_interface(request: HttpRequest, agent, doc, source: str) -> dict:
     # agent's owner or an admin, from the browser or a token. What makes it safe is
     # that `parse` refuses such a capability if it could leak, and the save is audited
     # (spec 2026-10-22-sensitive-data-agents §5).
-    agent.interface = parsed
-    agent.interface_source = source
-    agent.interface_published_at = timezone.now()
-    agent.interface_published_by = request.user
-    agent.save(update_fields=["interface", "interface_source", "interface_published_at",
-                              "interface_published_by", "updated_at"])
+    answering.store(agent, parsed, source, request.user)
     return _interface_out(agent)
 
 
-@router.put("/{slug}/interface/capabilities/{name}/sensitive", response=AgentInterfaceOut,
-            summary="Say whether one capability handles sensitive data: writes or removes its `data: sensitive` in the saved YAML")
+@router.put("/{slug}/interface/capabilities/{name}/sensitive", response=AgentInterfaceOut, deprecated=True,
+            summary="Deprecated: use the sensitive field of put_connected_site. Say whether one capability handles sensitive data: writes or removes its `data: sensitive` in the saved YAML")
 @gate("agent-admin", setting=True)
 def set_capability_sensitive(request: HttpRequest, slug: str, name: str,
                              payload: CapabilitySensitiveIn):
@@ -769,6 +767,13 @@ def set_capability_sensitive(request: HttpRequest, slug: str, name: str,
     # the switch never disagree. An interface saved as a mapping (no source) is
     # edited as a mapping.
     agent = agent_for_admin(request, slug)
+    # Read, change, write: under the row's lock, so an edit through the new routes cannot be lost.
+    with transaction.atomic():
+        agent = Agent.objects.select_for_update().get(pk=agent.pk)
+        return _set_sensitive(request, agent, name, payload)
+
+
+def _set_sensitive(request: HttpRequest, agent, name: str, payload: CapabilitySensitiveIn):
     caps = (agent.interface or {}).get("capabilities") or {}
     if name not in caps:
         raise HttpError(404, f"{agent.slug} has no capability {name!r} in its saved interface")
@@ -797,8 +802,8 @@ def set_capability_sensitive(request: HttpRequest, slug: str, name: str,
     return out
 
 
-@router.delete("/{slug}/interface", response=AgentInterfaceOut,
-               summary="Reset the declared interface to the default: only the agent's admins and its workspace's editors can reach it")
+@router.delete("/{slug}/interface", response=AgentInterfaceOut, deprecated=True,
+               summary="Deprecated: use reset_read_mode and delete_connected_site. Reset the declared interface to the default: only the agent's admins and its workspace's editors can reach it")
 @gate("agent-admin", setting=True)
 def reset_interface(request: HttpRequest, slug: str):
     # Never "no interface": every agent has one, and this is the one that changes
