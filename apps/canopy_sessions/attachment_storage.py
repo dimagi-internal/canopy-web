@@ -108,7 +108,6 @@ def http_response(attachment):
     if not is_configured():
         raise HttpError(503, "attachments are not configured on this deployment")
     stored = get(attachment.storage_key)
-    from django.conf import settings
 
     # Any file may be attached, so only an image is rendered (a thumbnail); every
     # other file is a download of opaque bytes — an uploaded HTML or SVG never runs
