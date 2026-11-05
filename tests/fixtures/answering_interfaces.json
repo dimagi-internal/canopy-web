@@ -242,7 +242,6 @@
        "ToolSearch",
        "mcp__*canopy-web__who_is_asking",
        "mcp__*canopy-web__current_page",
-       "mcp__*canopy-web__get_interface",
        "mcp__*canopy-web__get_agent",
        "mcp__*canopy-web__list_agents",
        "mcp__*canopy-web__get_access_list",
@@ -259,7 +258,6 @@
        "bin/trellis-email --reply-all --thread-id {thread_id} --subject-file {cwd}/.trellis-ask/* --body-file {cwd}/.trellis-ask/*",
        "canopy agent list",
        "canopy agent show *",
-       "canopy agent interface get *",
        "canopy doctor",
        "gh api repos/dimagi-internal/*/contents/*",
        "gh api repos/dimagi-internal/*/commits*",
@@ -290,7 +288,7 @@
        "ToolSearch",
        "mcp__*canopy-web__who_is_asking",
        "mcp__*canopy-web__current_page",
-       "mcp__*canopy-web__get_interface"
+       "mcp__*canopy-web__get_agent"
       ],
       "bash": [
        "gh api repos/dimagi-internal/*/contents/*"

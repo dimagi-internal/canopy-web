@@ -9,6 +9,7 @@ import copy
 import datetime as dt
 import json
 import pathlib
+import re
 
 import pytest
 from django.contrib.auth import get_user_model
@@ -21,6 +22,7 @@ from apps.agents.answering_snapshot import probe_turn
 from apps.agents.models import Agent, AgentAdmin, AgentGrant
 from apps.api.api import api
 from apps.events.models import SettingChange
+from apps.mcp import api_tools
 from apps.tokens.models import AppCredential, PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -204,9 +206,9 @@ def test_session_review_stays_canopys_through_every_new_route(w):
     assert interface.profile(w["agent"], interface.SESSION_REVIEW) == canopy_door
     # A key like it is an ordinary door: what it opens is that row, never the review.
     assert "Bash" not in canopy_door["tools"]
-    # The old route refuses the name too, as it did.
-    response = _put(client, "/api/agents/hal/interface", {"interface": {"capabilities": {"session_review": {}}}})
-    assert response.status_code == 422
+    # The parser refuses the name too, whatever asks it.
+    with pytest.raises(interface.InterfaceError):
+        interface.parse({"capabilities": {"session_review": {}}})
 
 
 def test_a_sensitive_row_must_be_able_to_hold_it(w):
@@ -259,10 +261,15 @@ def test_a_mixed_agent_fits_because_sensitive_is_per_site(w):
     assert sensitive_data.handles_sensitive(agent, "secret") and not sensitive_data.handles_sensitive(agent, "plain")
 
 
-def test_the_old_route_still_takes_what_the_new_ones_refuse(w):
-    # It is the unchanged way back until it is retired.
-    doc = copy.deepcopy(_fixture()["corner_two_sites"]["interface"])
-    assert _put(_as(w["admin"]), "/api/agents/hal/interface", {"interface": doc}).status_code == 200
+def test_a_document_these_settings_cannot_hold_says_what_a_person_can_do(w):
+    agent = _shaped(w, "corner_two_sites")
+    stored = copy.deepcopy(agent.interface)
+    response = _put(_as(w["admin"]), READ, {"description": "changed"})
+    assert response.status_code == 422
+    assert "Nothing was changed" in response.json()["detail"] and "maintainers" in response.json()["detail"]
+    assert "interface" not in response.json()["detail"]
+    agent.refresh_from_db()
+    assert agent.interface == stored
 
 
 # --- every fixture agent round-trips ----------------------------------------------------------
@@ -319,19 +326,13 @@ def test_each_write_is_a_setting_change_with_its_before_and_after(w):
     assert "ask" in changes[0]["after"] and "ask" not in changes[0]["before"]
 
 
-def test_a_save_clears_the_yaml_it_no_longer_matches(w):
+def test_a_save_clears_the_yaml_an_older_save_kept(w):
     agent = w["agent"]
-    client = _as(w["admin"])
-    yaml = "capabilities:\n  door:\n    sites: [site-a]\n    tools: [Read]\n"
-    assert _put(client, "/api/agents/hal/interface", {"source": yaml}).status_code == 200
-    _put(client, f"{SITES}/site-a", {"description": "from the form"})
+    Agent.objects.filter(pk=agent.pk).update(interface_source="capabilities: {}\n")
+    _put(_as(w["admin"]), f"{SITES}/site-a", {"description": "from the form"})
     agent.refresh_from_db()
     assert agent.interface_source == ""
-    # The old switch would otherwise edit the kept YAML and save the old text back.
-    switch = "/api/agents/hal/interface/capabilities/door/sensitive"
-    assert _put(client, switch, {"handles_sensitive": True}).status_code == 200
-    agent.refresh_from_db()
-    assert agent.interface["capabilities"]["door"]["description"] == "from the form"
+    assert agent.interface["capabilities"]["site_a"]["description"] == "from the form"
 
 
 def test_a_save_says_who_saved_it_as_every_save_has(w):
@@ -388,14 +389,55 @@ def test_the_agents_own_page_carries_both(w):
     assert {r["key"] for r in body["connected_sites"]} == {"canopy", "connect"}
 
 
-def test_the_old_routes_say_they_are_deprecated_and_the_new_ones_are_published():
-    operations = {op["operationId"]: op for methods in api.get_openapi_schema()["paths"].values()
-                  for op in methods.values()}
-    found = {tail: op for name, op in operations.items() for tail in
-             ("get_interface", "publish_interface", "validate_interface", "set_capability_sensitive", "reset_interface")
-             if name.endswith(tail)}
-    assert len(found) == 5
-    assert all(op.get("deprecated") and op["summary"].startswith("Deprecated: use") for op in found.values())
+RETIRED_OPERATIONS = ("get_interface", "publish_interface", "validate_interface", "reset_interface",
+                      "set_capability_sensitive")
+RETIRED_ROUTES = [("get", "interface"), ("put", "interface"), ("delete", "interface"),
+                  ("post", "interface/validate"), ("put", "interface/capabilities/door/sensitive")]
+#: What each old route used to take: had one survived, this would reset or rewrite the agent.
+OLD_BODY = {"interface": {"capabilities": {}}, "source": "capabilities: {}\n", "handles_sensitive": True}
+
+
+def _old_route_callers(w):
+    raw, _ = PersonalToken.create_for_user(user=w["admin"], label="cli")
+    browser = Client(enforce_csrf_checks=True)   # a stale browser tab holds no token for this
+    browser.force_login(w["admin"])
+    return {"owner": _as(w["owner"]), "admin": _as(w["admin"]), "member": _as(w["member"]),
+            "admin's token": Client(HTTP_AUTHORIZATION=f"Bearer {raw}"), "browser": browser}
+
+
+@pytest.mark.parametrize("method, tail", RETIRED_ROUTES)
+@pytest.mark.parametrize("prefix", ["/api/agents/hal", "/api/w/connect/agents/hal"])
+def test_each_old_route_answers_410_and_saves_nothing(w, method, tail, prefix):
+    agent = _shaped(w, "labsdata")
+    Agent.objects.filter(pk=agent.pk).update(interface_source="kept\n")
+    agent.refresh_from_db()
+    stored, published_at = copy.deepcopy(agent.interface), agent.interface_published_at
+    for who, client in _old_route_callers(w).items():
+        kwargs = {} if method == "get" else {"data": json.dumps(OLD_BODY), "content_type": "application/json"}
+        response = getattr(client, method)(f"{prefix}/{tail}", **kwargs)
+        assert response.status_code == 410, (who, response.content)
+        assert response["Content-Type"] == "application/problem+json"
+        body = response.json()
+        assert body["read_mode"] == "/api/agents/hal/read-mode"
+        assert body["connected_sites"] == "/api/agents/hal/connected-sites"
+        for word in ("read-mode", "connected-sites", "dry_run", "sensitive"):
+            assert word in body["detail"], word
+        # The plugin's credential_guard ends a turn on words like these. A 410 is not a login failing.
+        assert not re.search(r"credential|authenticat|unauthori|api.?key|access token|401", response.content.decode(), re.I)
+    agent.refresh_from_db()
+    assert agent.interface == stored and agent.interface_published_at == published_at
+    assert agent.interface_source == "kept\n"
+    assert not SettingChange.objects.exists()
+
+
+def test_the_old_routes_are_in_neither_openapi_nor_the_tools_and_the_new_ones_are_published():
+    schema = api.get_openapi_schema()
+    assert not [path for path in schema["paths"] if "/interface" in path]
+    operations = {op["operationId"]: op for methods in schema["paths"].values() for op in methods.values()}
+    tools = {op["operationId"] for methods in api_tools.tool_spec(api_tools.api_schema())["paths"].values()
+             for op in methods.values()}
+    for name in RETIRED_OPERATIONS:
+        assert not [found for found in (*operations, *tools) if found.endswith(name)], name
     for tail in ("get_read_mode", "put_read_mode", "reset_read_mode", "list_connected_sites", "put_connected_site",
                  "delete_connected_site"):
         assert any(name.endswith(tail) and not op.get("deprecated") for name, op in operations.items()), tail

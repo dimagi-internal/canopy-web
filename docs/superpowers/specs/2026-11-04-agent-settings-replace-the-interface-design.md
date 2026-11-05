@@ -1,7 +1,8 @@
 # Agent settings replace the interface: read mode and connected sites
 
-**Status:** P0 is deployed, and P1 and P2 are built. P3 waits on 30 days with no calls to the old
-routes. Follows `2026-11-03-agent-read-mode-and-doors-design.md`, whose Phase 1 is deployed.
+**Status:** P0 is deployed, and P1 and P2 are built. P3's route retirement was done early by the owner's decision,
+because the MCP call log could not see direct API calls and the docs kept generating calls; removing `pages` and the
+site-ceiling union and dropping `interface_source` still wait. Follows `2026-11-03-agent-read-mode-and-doors-design.md`, whose Phase 1 is deployed.
 
 Checked against production on `221d920be`, read-only: 21 agents and 3 sites, every list in `shape` empty, and
 `read_mode_gate` found nothing. The snapshot's hash is
@@ -206,7 +207,7 @@ Each is one PR. Every phase rolls back by redeploying the previous image.
 | P0 | Characterization (section 6). No behaviour change. | Low | Done, deployed and run read-only against production. |
 | P1 | New routes and MCP tools (3.3), the rules (3.1), `dry_run`, `select_for_update` in the writer, the two `GET /api/agents/{slug}` fields, `generated.ts`, the plugin's new CLI commands. Old routes stay as they are, marked `deprecated=True`. | Medium: a published surface and writes | Before: `read_mode_gate` and `shape`, both clean on `221d920be`. After: the snapshot's hash is unchanged across the deploy. Round-trip test: reading a setting and PUTting it back changes no answer and leaves every other entry as saved, for every fixture agent that satisfies 3.1. It is parse-equal, not byte-equal: the entry saved is normalised by `parse`, as any save is. |
 | P2 | Frontend: on the Channels tab, "Read mode and doors" becomes Read mode and Connected sites cards, replacing `AgentInterfaceView`/`InterfaceEditor`. Line form, role form and admission-rule wording (door to connected site), with the line form picking a site by name. The site-agents `problems` sentence. Docs and CLAUDE.md. (Agent repos' text moves to P3: `canopy agent interface` still works until then, and their stored tool lists are P3's anyway.) | Low | Render check of ACE, labsdata, Trellis and a default agent. Snapshot diff is only that sentence. |
-| P3 | Retire. Once `list_mcp_calls` shows no call to the five old tool names for 30 days and Trellis's tool lists name `get_agent` (edited through the new route, then its repo test): old routes return 410 with a pointer; delete YAML parsing and `with_sensitive`. If `shape` is empty, delete `pages` and the site-ceiling union, and move those corner cases out of the frozen copy. Optional and alone: drop `interface_source`. | Medium for the deletion; the column drop is the only irreversible step | Equivalence test green; snapshot hash unchanged. |
+| P3 | Retire. **Routes retired early by owner decision, without the 30-day wait: the MCP-call-log test could not see direct API calls, and the docs kept generating calls. YAML parsing and `with_sensitive` are gone; `pages`, the union and the column are not.** As first planned: once `list_mcp_calls` shows no call to the five old tool names for 30 days and Trellis's tool lists name `get_agent` (edited through the new route, then its repo test): old routes return 410 with a pointer; delete YAML parsing and `with_sensitive`. If `shape` is empty, delete `pages` and the site-ceiling union, and move those corner cases out of the frozen copy. Optional and alone: drop `interface_source`. | Medium for the deletion; the column drop is the only irreversible step | Equivalence test green; snapshot hash unchanged. |
 
 ## 8. What not to do
 

@@ -168,20 +168,18 @@ def test_the_gate_command_exits_nonzero_with_a_hit(w):
 # --- the screens' data ------------------------------------------------------------------------
 
 
-def test_the_interface_route_says_which_read_mode_the_agent_has(w):
+def test_the_read_mode_route_says_which_read_mode_the_agent_has(w):
     from django.test import Client
 
     c = Client()
     c.force_login(w["owner"])
-    got = c.get("/api/agents/hal/interface").json()
-    assert got["read_mode"]["source"] == "default" and got["read_mode"]["override"] is None
-    assert got["read_mode"]["default_profile"]["write_paths"] == ["{cwd}/.hal-read/*", "{cwd}/.hal-ask/*"]
-    assert got["read_mode"]["default_profile_version"] == 3
+    got = c.get("/api/agents/hal/read-mode").json()
+    assert got["source"] == "default"
+    assert got["profile"]["write_paths"] == ["{cwd}/.hal-read/*", "{cwd}/.hal-ask/*"]
     w["agent"].interface = parse({"capabilities": {"ask": {"tools": ["Read"]}}})
     w["agent"].save(update_fields=["interface"])
-    got = c.get("/api/agents/hal/interface").json()
-    assert got["read_mode"]["source"] == "override" and got["read_mode"]["override"] == "ask"
-    assert got["read_mode"]["default_profile"]["tools"][0] == "Read"      # shown whether or not it is hidden
+    got = c.get("/api/agents/hal/read-mode").json()
+    assert got["source"] == "custom" and got["profile"]["tools"] == ["Read"]
 
 
 def test_the_access_list_names_the_doors_a_line_may_open(w):

@@ -275,7 +275,7 @@ and the two fixed roles, strongest first:
   | Edit display name, description, persona, email, google account, avatar, runner-kind preference (`POST /agents/` on an existing agent; creating one is a workspace editor's) | **agent_edit** | what the agent says about itself |
   | The code in the agent's own repo (commits, merges to its default branch) | **agent_edit** | the agent's `permissions` in the caller envelope are its cue; the runner-side rail (canopy plugin) refuses a push or merge from a turn whose asker lacks it |
   | Where the repo points and what boxes install (`repo_url`, `repo_ref`, `runtime_secrets`, `runtime_sources`, `clis`, `cli_models`; `PATCH …/repository`, `PATCH …/clis`) | **admin** | whoever names the repo writes code that runs with the agent's credentials |
-  | Published interface: `PUT`/`DELETE …/interface`, read-mode override, the `sensitive` switch | **admin** | decides who may reach what, and how sensitive data is handled |
+  | Read mode and connected sites: `PUT`/`DELETE …/read-mode`, `PUT`/`DELETE …/connected-sites/{site}`, including `sensitive` | **admin** | decides who may reach what, and how sensitive data is handled |
   | Machine capabilities (`PUT …/capabilities`, refresh, slot data) | **admin** | leases money-spending machines |
   | Access list, workspace defaults, licenses, canopy login and token, vaults and credentials, GitHub identity, mailbox, runner pins, routing rules, Slack switch | **admin** | configuring the agent in canopy-web; its keys |
   | Transfer, delete the agent, name its admins | **own** | `Agent.owner` or a workspace owner |
@@ -410,7 +410,7 @@ What a turn may reach (`Decision.access`; the roster's "Can reach"):
 
 ## Capabilities (the agent's interface)
 
-People see two settings, **Read mode** and **Connected sites** (Settings → Channels; `GET|PUT|DELETE /api/agents/{slug}/read-mode`, `…/connected-sites`; `apps/agents/answering.py`). They are views of the one document below, which stays the only storage: `Agent.interface`, written only by `answering.store`. A connected site's row is an entry naming that one site, and its internal name is the entry's name. **Handles sensitive data** is a switch per site, not per agent: it confines a conversation on that site, and the owner's ordinary chat with the same agent is still the whole agent. Stamps, access lines and wire fields keep saying `capability`. The new routes refuse a document they cannot hold (`answering.document_problems`, which `manage.py answering_snapshot` reports as `shape`) and leave it as it is. The YAML route is deprecated. Spec: `docs/superpowers/specs/2026-11-04-agent-settings-replace-the-interface-design.md`.
+People see two settings, **Read mode** and **Connected sites** (Settings → Channels; `GET|PUT|DELETE /api/agents/{slug}/read-mode`, `…/connected-sites`; `apps/agents/answering.py`). They are views of the one document below, which stays the only storage: `Agent.interface`, written only by `answering.store`. A connected site's row is an entry naming that one site, and its internal name is the entry's name. **Handles sensitive data** is a switch per site, not per agent: it confines a conversation on that site, and the owner's ordinary chat with the same agent is still the whole agent. Stamps, access lines and wire fields keep saying `capability`. The new routes refuse a document they cannot hold (`answering.document_problems`, which `manage.py answering_snapshot` reports as `shape`) and leave it as it is. The old `/interface` routes answer 410. Spec: `docs/superpowers/specs/2026-11-04-agent-settings-replace-the-interface-design.md`.
 
 An agent's **published interface** (`apps/agents/interface.py`, live state on canopy-web, never a
 repo file) is its set of **capabilities**: named profiles it offers people who do not run the
@@ -432,15 +432,14 @@ whole agent. It says what each one *is*, and nothing about who may use it.
   none, they are refused; an unknown or retired door yields the empty deny-all profile.
 * **Default deny.** The default interface (`interface.default_interface()`) is
   `{version: 1, capabilities: {}}`: no door and no override. Every agent has an interface (a field
-  default on `Agent.interface`; `GET /interface` never returns `{}`) and "unpublish" is **reset to
+  default on `Agent.interface`; a row holding `{}` reads as the default) and "unpublish" is **reset to
   default**. An agent that has published nothing is reached by its owner, its agent admins, the
   people whose lines give `write`, and, in read mode, the people whose lines give `read`.
 * **Retired keys are refused.** `full:`, `editors:` and a capability's `callers:` or `role:` are a
   422 naming the access list; `callers_default: none`, `version` and a capability's `input` are accepted and ignored (published interfaces still carry them; a republish must not 422), and are not written back. Strict on purpose: an unknown key
   is refused, not ignored.
-* The page edits it as a form (Settings → Channels → Capabilities) with the YAML under
-  "Advanced"; a draft is checked by `POST /interface/validate`, which asks `interface.parse` per
-  field. Saving is for the agent's owner or an agent admin, browser or token.
+* The page edits it as two forms (Settings → Channels); `dry_run: true` on a PUT checks a draft with
+  `interface.parse` without saving. Saving is for the agent's owner or an agent admin, browser or token.
 
 ## The rule (the decision table)
 
@@ -470,10 +469,10 @@ add the asker, and what each role can do.
   rights (`basis: sensitive:<capability>`). Any turn in a sensitive conversation (one
   that requires sensitive-data runners) must end in that capability; anything else — full, another capability, or a
   person whose lines do not open the capability — is refused. The setting is an interface setting,
-  saved by the agent's owner or an agent admin, browser or token — as YAML (`publish_interface`)
-  or with the capability's sensitive-data switch, which edits that YAML (`set_capability_sensitive`) — and audited
+  saved by the agent's owner or an agent admin, browser or token, as the `sensitive` field of its
+  connected site (`put_connected_site`), and audited
   like any setting change (`docs/architecture/settings-audit.md`; the agent's Settings
-  → Channels → Capabilities shows its history); such a capability that holds a shell, writes, or any
+  → Channels shows its history); such a capability that holds a shell, writes, or any
   tool but the gateway's site tools, `current_page`, `who_is_asking` and read-only
   local tools is a 422. The turn runs the agent's current code; no commit is pinned.
   A runner in sensitive-data mode refuses any unconfined envelope (`sensitive_data_unconfined`).

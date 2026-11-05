@@ -117,10 +117,13 @@ def key_for(site: str, taken) -> str:
 
 # --- the one writer ----------------------------------------------------------------------------
 
-def store(agent, parsed: dict, source: str, by) -> None:
-    """Save a whole document on `agent`. Every interface write ends here."""
+def store(agent, parsed: dict, by) -> None:
+    """Save a whole document on `agent`. Every interface write ends here.
+
+    Clears `interface_source`: the YAML an older save kept there no longer says what the document
+    says. Nothing reads that column now, and it stays until dropping it gets its own decision."""
     agent.interface = parsed
-    agent.interface_source = source
+    agent.interface_source = ""
     agent.interface_published_at = timezone.now()
     agent.interface_published_by = by
     agent.save(update_fields=["interface", "interface_source", "interface_published_at",
@@ -131,17 +134,14 @@ def _validated(name: str, entry: dict) -> dict:
     try:
         return iface_mod.parse({"capabilities": {name: entry}})["capabilities"][name]
     except iface_mod.InterfaceError as exc:
-        # The parser speaks for the old YAML too; a person at the form reads the form's words.
+        # The parser speaks in the stored document's words; a person at the form reads the form's.
         words = str(exc).replace("a `data: sensitive` capability", "a site that handles sensitive data")
         raise SettingsError(re.sub(r" \(`\w+:` must be empty\)", "", words)) from exc
 
 
 def _edit(agent, change, *, by, dry_run: bool) -> tuple[Agent, dict, dict]:
     """`change(doc)` applied to the agent's current document, under a lock on its row, so two people
-    editing different rows cannot lose one. Returns `(agent, entries before, entries after)`.
-
-    Clears `interface_source`: the YAML kept there no longer says what the document says, and
-    `set_capability_sensitive` would edit it and save the old text back."""
+    editing different rows cannot lose one. Returns `(agent, entries before, entries after)`."""
     with transaction.atomic():
         locked = Agent.objects.select_for_update().get(pk=agent.pk)
         doc = copy.deepcopy(locked.interface or {})
@@ -152,12 +152,13 @@ def _edit(agent, change, *, by, dry_run: bool) -> tuple[Agent, dict, dict]:
         problems = document_problems(before)
         if problems:
             raise SettingsError(f"{agent.slug} is set up in a way these settings cannot hold "
-                                f"({'; '.join(problems)}): change it through its interface first")
+                                f"({'; '.join(problems)}). Nothing was changed and the agent keeps "
+                                "working as it is. Ask canopy-web's maintainers to correct its saved setup.")
         change(doc)
         if len(doc["capabilities"]) > _MAX_ENTRIES:
             raise SettingsError(f"an agent can hold at most {_MAX_ENTRIES} of these")
         if not dry_run:
-            store(locked, doc, "", by)
+            store(locked, doc, by)
     return locked, before, doc["capabilities"]
 
 

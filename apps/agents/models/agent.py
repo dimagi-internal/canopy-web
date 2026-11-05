@@ -39,10 +39,10 @@ class Agent(models.Model):
     )
     #: The DECLARED INTERFACE — what callers (anyone not the owner or an admin)
     #: may ask this agent for. LIVE STATE held here, not in the agent's repo:
-    #: edited on the agent's page (or `canopy agent interface set`), validated by
-    #: `apps.agents.interface.parse`.
+    #: edited as read mode and connected sites (`apps/agents/answering.py`, the one writer),
+    #: validated by `apps.agents.interface.parse`.
     #: Never empty: an agent is created with the default interface (owner, admins and
-    #: editors only), which `interface.is_default` recognises. See `apps/agents/interface.py`.
+    #: editors only). See `apps/agents/interface.py`.
     interface = models.JSONField(default=default_interface, blank=True)
     #: The interface as its editor wrote it (YAML, comments and all). `interface`
     #: is its parsed, validated form — the one everything enforces.

@@ -338,6 +338,7 @@ export function ConnectedSitesCard({ agentSlug, agentName, canEdit, onChange }: 
 }
 
 function changeLabel(c: SettingChangeOut): string {
+  // reset_interface and set_capability_sensitive are retired routes; old history rows still carry them.
   switch (c.operation) {
     case 'put_read_mode': return 'Read mode customised'
     case 'reset_read_mode':

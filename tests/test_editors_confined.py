@@ -8,7 +8,7 @@ import pytest
 from django.contrib.auth.models import User
 
 from apps.agents import access, roles
-from apps.agents.interface import InterfaceError, parse, validate
+from apps.agents.interface import InterfaceError, parse
 from apps.agents.models import Agent, AgentAdmin, AgentGrant
 from apps.workspaces.models import Workspace
 from apps.workspaces.models import WorkspaceMembership as M
@@ -22,7 +22,6 @@ def test_the_editors_setting_is_retired_and_points_at_the_access_list(value):
     with pytest.raises(InterfaceError) as exc:
         parse({"editors": value, "capabilities": {"ask": {"tools": ["Read"]}}})
     assert "access list" in str(exc.value)
-    assert validate({"editors": value, "capabilities": {"ask": {"tools": ["Read"]}}})
 
 
 @pytest.fixture()
