@@ -92,7 +92,6 @@ def test_mcp_messages_each_get_a_thread(monkeypatch, no_db_close):
 
 
 def test_close_thread_connections_closes_django_connections(monkeypatch):
-    from django.db import connections
 
     closed = []
     monkeypatch.setattr(thread_context.connections, "close_all", lambda: closed.append(threading.get_ident()))
