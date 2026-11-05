@@ -131,7 +131,9 @@ def _validated(name: str, entry: dict) -> dict:
     try:
         return iface_mod.parse({"capabilities": {name: entry}})["capabilities"][name]
     except iface_mod.InterfaceError as exc:
-        raise SettingsError(str(exc)) from exc
+        # The parser speaks for the old YAML too; a person at the form reads the form's words.
+        words = str(exc).replace("a `data: sensitive` capability", "a site that handles sensitive data")
+        raise SettingsError(re.sub(r" \(`\w+:` must be empty\)", "", words)) from exc
 
 
 def _edit(agent, change, *, by, dry_run: bool) -> tuple[Agent, dict, dict]:

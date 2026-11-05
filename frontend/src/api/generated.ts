@@ -29589,6 +29589,10 @@ export interface components {
             readonly can_edit: boolean;
             /** Doors */
             readonly doors?: readonly string[];
+            /** Door Sites */
+            readonly door_sites?: {
+                readonly [key: string]: string;
+            };
         };
         /** AccessRoleOut */
         readonly AccessRoleOut: {

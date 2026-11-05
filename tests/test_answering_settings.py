@@ -213,6 +213,8 @@ def test_a_sensitive_row_must_be_able_to_hold_it(w):
     response = _put(_as(w["admin"]), f"{SITES}/site-a", {"sensitive": True, "bash": ["ls"], "tools": ["Write"]})
     assert response.status_code == 422
     assert "may run no shell" in response.json()["detail"]
+    assert "a site that handles sensitive data" in response.json()["detail"]
+    assert "bash:" not in response.json()["detail"] and "capability" not in response.json()["detail"]
     w["agent"].refresh_from_db()
     assert not w["agent"].interface.get("capabilities")
 

@@ -45,7 +45,7 @@ describe('SiteNeedsTable', () => {
     expect(screen.getByText('Can handle sensitive data')).toBeTruthy()
     expect(
       screen.getByText(
-        /For sensitive data, this site requires an agent capability that handles sensitive data, running on a sensitive-data runner/,
+        /For sensitive data, this site requires an agent that handles sensitive data, running on a sensitive-data runner/,
       ),
     ).toBeTruthy()
     expect(screen.getByText(/older site agents version/)).toBeTruthy()

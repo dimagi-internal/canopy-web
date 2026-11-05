@@ -1,11 +1,11 @@
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
-import { AgentInterfaceView } from '@/components/agents/AgentInterfaceView'
+import { AgentAnsweringSettings } from '@/components/agents/AgentAnsweringSettings'
 import { SlackAccessToggle } from '@/components/agents/SlackAccessToggle'
 import { AgentMailboxControl } from '@/components/agents/AgentMailboxControl'
 import { AgentGoogleAccountControl } from '@/components/agents/AgentGoogleAccountControl'
 import { Section, Setting } from '@/components/objectPage/settingsLayout'
 
-// Channels: read mode and doors, Slack, email, Google account.
+// Channels: read mode and connected sites, Slack, email, Google account.
 
 export function ChannelsTab({ agent, isAdmin, admins }: { agent: AgentOutletContext['agent']; isAdmin: boolean; admins: string }) {
   return (
@@ -13,12 +13,12 @@ export function ChannelsTab({ agent, isAdmin, admins }: { agent: AgentOutletCont
     <Section id="reach" title="Channels">
       <div className="divide-y divide-border rounded-lg border border-border bg-card">
         <Setting
-          title="Read mode and doors"
+          title="Read mode and connected sites"
           who={admins}
           canEdit={isAdmin}
-          description={`How ${agent.name} answers people who may read but not drive it (read mode, on every agent), and its optional doors.`}
+          description={`How ${agent.name} answers people who may read but not drive it, and the sites it can be reached from.`}
         >
-          <AgentInterfaceView agentSlug={agent.slug} agentName={agent.name} canEdit={isAdmin} />
+          <AgentAnsweringSettings agentSlug={agent.slug} agentName={agent.name} canEdit={isAdmin} />
         </Setting>
         <Setting
           title="Slack"

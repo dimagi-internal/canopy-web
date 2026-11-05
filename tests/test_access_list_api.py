@@ -173,7 +173,7 @@ def test_a_capability_the_agent_has_not_published_is_added_with_a_warning(w):
     w["agent"].refresh_from_db()
     body = {"kind": "person", "email": "vw@dimagi.com"}
     got = _post(w, "owner", {**body, "capability": "connect"}).json()
-    assert "has not published a capability called 'connect'" in got["warning"]
+    assert "has no connected site called 'connect'" in got["warning"]
     got = _post(w, "owner", {"kind": "person", "email": "ed@dimagi.com", "capability": "ask"}).json()
     assert got["warning"] == ""
 
