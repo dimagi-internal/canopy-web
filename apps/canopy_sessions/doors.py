@@ -31,8 +31,11 @@ from . import services
 from . import send
 
 #: The client nonce is capped where it is used, not in the schemas, so the
-#: request models (and `generated.ts`) stay unbounded `str`s.
-CLIENT_ID_MAX = 100
+#: request models (and `generated.ts`) stay unbounded `str`s. It becomes the suffix
+#: of the turn's idempotency key, `chat:<session hex>:<client_id>` (38 characters
+#: before it), which is a varchar(128): anything longer than 90 is a 500 on
+#: PostgreSQL, where SQLite stored it whole.
+CLIENT_ID_MAX = 90
 
 
 @dataclass(frozen=True)

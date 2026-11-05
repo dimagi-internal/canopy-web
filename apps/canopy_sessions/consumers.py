@@ -382,7 +382,7 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         # them (an older client) commits the server draft, as before.
         data = data or {}
         text = data.get("text") if isinstance(data.get("text"), str) else None
-        client_id = str(data.get("client_id") or "")[:100]
+        client_id = str(data.get("client_id") or "")[:doors.CLIENT_ID_MAX]
         try:
             user_message_id = await database_sync_to_async(self._commit_and_send)(text, client_id)
         except conversation_keys.CannotHold as exc:

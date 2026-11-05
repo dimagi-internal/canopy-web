@@ -136,7 +136,7 @@ def test_a_contacts_client_id_reaches_the_turns_idempotency_key():
 
 def test_a_contacts_client_id_over_100_chars_is_truncated():
     """Same cap as the WS path (consumers.py's `chat.send`:
-    `str(data.get("client_id") or "")[:100]`) and the member REST path
+    `str(data.get("client_id") or "")[:CLIENT_ID_MAX]`) and the member REST path
     (`test_chat_api.py::test_send_client_id_over_100_chars_is_truncated`) —
     the contact endpoint had neither before this."""
     from apps.harness.models import Turn
@@ -152,9 +152,12 @@ def test_a_contacts_client_id_over_100_chars_is_truncated():
                content_type="application/json", **hdr)
     assert r.status_code == 200, r.content
 
+    from apps.canopy_sessions.doors import CLIENT_ID_MAX
+
     turn = Turn.objects.filter(chat_session_id=sid).latest("created_at")
-    assert turn.idempotency_key.endswith(f":{long_id[:100]}")
-    assert not turn.idempotency_key.endswith(f":{long_id}")
+    assert turn.idempotency_key.endswith(f":{long_id[:CLIENT_ID_MAX]}")
+    # SQLite ignores the column's length; PostgreSQL 500s on it.
+    assert len(turn.idempotency_key) <= Turn._meta.get_field("idempotency_key").max_length
 
 
 def test_only_agents_the_site_was_allowed_to_offer():
