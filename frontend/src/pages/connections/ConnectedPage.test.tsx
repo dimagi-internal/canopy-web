@@ -173,7 +173,7 @@ describe('ConnectedPage, an agent’s connection', () => {
     open()
     expect(await screen.findByText("It goes to Eva's approved machines: eva-cloud.")).toBeTruthy()
     expect(unlock).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: 'Store for Eva' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Give Eva access' }))
     expect(await screen.findByText("Stored on Eva's machines: eva-cloud.")).toBeTruthy()
     expect(unlock).toHaveBeenCalledTimes(1)
     expect(screen.queryByRole('link', { name: /Share/ })).toBeNull()
@@ -228,15 +228,15 @@ describe('ConnectedPage, an agent’s connection', () => {
 
   it("a reload without just_connected doesn't prompt", async () => {
     open()
-    expect(await screen.findByRole('button', { name: "Store for Eva" })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: "Give Eva access" })).toBeTruthy()
     expect(unlock).not.toHaveBeenCalled()
     expect(href('Later')).toBe('/settings/connections')
   })
 
-  it("a refused or dismissed passkey shows Store for Eva, and the button works", async () => {
+  it("a refused or dismissed passkey shows Give Eva access, and the button works", async () => {
     unlock.mockRejectedValueOnce(new DOMException('not allowed', 'NotAllowedError'))
     arrive()
-    const button = await screen.findByRole('button', { name: "Store for Eva" })
+    const button = await screen.findByRole('button', { name: "Give Eva access" })
     expect(screen.getByText('Connected Eva as jj@dimagi.com.')).toBeTruthy()
     expect(screen.queryByRole('alert')).toBeNull()
     expect(href('Later')).toBe('/settings/connections')
@@ -250,14 +250,14 @@ describe('ConnectedPage, an agent’s connection', () => {
     putShare.mockRejectedValueOnce(new Error('The server said no.'))
     arrive()
     expect((await screen.findByText('The server said no.'))).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: "Store for Eva" }))
+    fireEvent.click(screen.getByRole('button', { name: "Give Eva access" }))
     expect(await screen.findByText(STORED)).toBeTruthy()
   })
 
   it('an already unlocked vault makes no button at all', async () => {
     arrive()
     await screen.findByText(STORED)
-    expect(screen.queryByRole('button', { name: /Store for/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Give Eva access/ })).toBeNull()
     expect(screen.queryByText(/passkey/i)).toBeNull()
   })
 
@@ -342,7 +342,7 @@ describe('ConnectedPage, an agent’s connection', () => {
   it('the arrival try never opens the passphrase dialog; the button may', async () => {
     unlock.mockRejectedValueOnce(new DOMException('no', 'NotAllowedError'))
     arrive()
-    fireEvent.click(await screen.findByRole('button', { name: "Store for Eva" }))
+    fireEvent.click(await screen.findByRole('button', { name: "Give Eva access" }))
     await screen.findByText(STORED)
     expect(unlock.mock.calls[0][0]).toEqual({ passkeyOnly: true })
     expect(unlock.mock.calls[1][0]).toEqual({ passkeyOnly: false })
@@ -353,7 +353,7 @@ describe('ConnectedPage, an agent’s connection', () => {
     arrive()
     await screen.findByText('The server said no.')
     const before = getShareState.mock.calls.length
-    fireEvent.click(screen.getByRole('button', { name: "Store for Eva" }))
+    fireEvent.click(screen.getByRole('button', { name: "Give Eva access" }))
     await screen.findByText(STORED)
     expect(getShareState.mock.calls.length).toBeGreaterThan(before)
   })

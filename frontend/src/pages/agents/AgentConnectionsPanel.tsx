@@ -219,7 +219,7 @@ function ConnectionRow({
       : lent && c.state === 'unshared'
         ? { label: 'Not shared yet', tone: 'warning' }
         : !lent && c.state === 'unshared'
-          ? { label: 'Not stored yet', tone: 'warning' }
+          ? { label: 'Not ready', tone: 'warning' }
           : { label: 'Connected', tone: 'success' }
   return (
     <AccountRow

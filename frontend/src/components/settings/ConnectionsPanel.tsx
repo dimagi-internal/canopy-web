@@ -273,9 +273,9 @@ function Sharing({ c, returnTo, canChange = true, onChanged, owner }: {
       <>
         <p className={`text-[12px] ${c.server_use && c.server_reachable ? 'text-muted-foreground' : 'text-warning'}`}>
           {c.server_use && c.server_reachable
-            ? `Project screens and apps can use it. ${name} can't until it is stored.`
-            : `Not stored for ${name} yet, so ${name} can't use it.`}{' '}
-          {canChange && <Link to={storePath(c, returnTo)} className={shareLink}>{`Store for ${name}`}</Link>}
+            ? `Project screens and apps can use it. ${name} can't yet.`
+            : `Signed in, but ${name} can't use it yet.`}{' '}
+          {canChange && <Link to={storePath(c, returnTo)} className={shareLink}>{`Give ${name} access`}</Link>}
           {only}
         </p>
         <UsedByCanopyWeb c={c} href={href} canChange={canChange} onChanged={onChanged} />
