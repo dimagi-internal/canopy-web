@@ -83,31 +83,30 @@ def zk_agents_to_vouch_for(user, key: RunnerDeviceKey, *, assume_active: bool = 
             continue
         if device_keys.runner_serves_agent(key.runner, agent, facts) and zk.device_waits(agent, key):
             out.append(DeviceKeyVouchOut(slug=agent.slug, agent_id=str(agent.pk)))
-    out += _workspace_vault_vouches(user, key, {a.slug for a in out})
+    out += _workspace_vault_vouches(key, {a.slug for a in out}, assume_active=assume_active)
     return sorted(out, key=lambda a: a.slug)
 
 
-def _workspace_vault_vouches(user, key: RunnerDeviceKey, have: set[str]) -> list[DeviceKeyVouchOut]:
-    """For each workspace vault this machine waits on unendorsed, one agent the vault
-    serves to sign under — a keeper accepts that signature for the vault
-    (`vault_keeper.work`). Without this, a machine whose agents' own vaults were all
-    settled offered no Confirm access at all while the Shared vault waited on it forever
-    (DIM-SA-W175, 2026-11-05)."""
-    from apps.agents.credentials import machine_waits, vault_members  # noqa: PLC0415 — cycle via apps.agents.credentials
+def _workspace_vault_vouches(key: RunnerDeviceKey, have: set[str], *, assume_active: bool = False
+                             ) -> list[DeviceKeyVouchOut]:
+    """For each zero-knowledge WORKSPACE vault this machine waits on unendorsed, every agent
+    the vault serves that its person may sign it under (`machine_waits.vouch_agents` — the
+    same signatures the vault's keepers accept). Whatever the agent's own `zk_kv`, and
+    whether or not the person administers the agent: DIM-SA-W175 (2026-11-05) runs only
+    gshubdesk, kv 0 and owned by its person, so neither agent-vault list ever named it
+    and the Shared vault waited on the box forever. The person's own signature only —
+    nothing here endorses anything."""
+    from apps.agents.credentials import machine_waits  # noqa: PLC0415 — cycle via apps.agents.credentials
 
     out = []
     for vault in Vault.objects.filter(kind=Vault.WORKSPACE, kv__gte=1):
-        why = machine_waits.why_waiting(vault, key)
+        why = machine_waits.why_waiting(vault, key, assume_active=assume_active)
         if not why or why["reason"] != machine_waits.UNENDORSED:
             continue
-        for agent in machine_waits.vouch_agents(vault, key):
-            # The endorsement route admits only a member of the agent's own vault.
-            if vault_members.role_of(vault_members.vault_for_agent(agent), user) is None:
-                continue
+        for agent in machine_waits.vouch_agents(vault, key, assume_active=assume_active):
             if agent.slug not in have:
                 have.add(agent.slug)
                 out.append(DeviceKeyVouchOut(slug=agent.slug, agent_id=str(agent.pk)))
-            break
     return out
 
 

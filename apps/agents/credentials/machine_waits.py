@@ -32,6 +32,9 @@ UNENDORSED = "unendorsed"
 WAITING_FOR_KEEPER = "waiting_for_keeper"
 #: Its new decryption key is not approved yet: its person approves it on Device keys.
 KEY_NOT_APPROVED = "key_not_approved"
+#: Unendorsed, and its person can sign under no agent the vault serves: only an admin
+#: of the vault, granting in the browser, can let it in. Never point them at Confirm access.
+NEEDS_ADMIN_GRANT = "needs_admin_grant"
 #: Its person is not a member of the vault: an admin of the vault decides.
 NOT_A_MEMBER = "not_a_member"
 
@@ -50,16 +53,30 @@ def _person(key: RunnerDeviceKey):
     return key.approved_by
 
 
-def vouch_agents(vault: Vault, key: RunnerDeviceKey) -> list:
-    """The agents this vault serves that `key`'s person may sign for it under — the ones
-    a keeper would accept the signature for: the machine is a current reader of the agent
-    and its person a member of the agent's own vault. Oldest-first by slug, stable."""
+def vouch_agents(vault: Vault, key: RunnerDeviceKey, *, assume_active: bool = False) -> list:
+    """The agents this vault serves that `key`'s person may sign for it under — exactly the
+    signatures a keeper of the vault accepts (`vault_keeper.work` reads
+    `zk_endorse.endorsements` of each attached agent): the machine is a current reader of
+    the agent and its person a member of the agent's own vault, so the endorsement route
+    admits them. Independent of the agent's own `zk_kv` and of whether the person
+    administers it — a workspace vault reaches a kv-0 agent's box all the same.
+    `assume_active`: as if the key were approved (the list for a key about to be). Sorted
+    by slug, stable."""
     uid = vault_members.person_of_device(key)
+    person = _person(key)
+    if uid is None or person is None or not key.ecdh_jkt:
+        return []
     out = []
     for agent in sorted(vault_members.attached_agents(vault), key=lambda a: a.slug):
         if uid not in zk.member_ids(agent):
             continue
-        if any(k.pk == key.pk for k in zk.eligible_device_keys(agent)):
+        if vault_members.role_of(vault_members.vault_for_agent(agent), person) is None:
+            continue
+        if assume_active:
+            reads = key.status != RunnerDeviceKey.REVOKED and device_keys.runner_serves_agent(key.runner, agent)
+        else:
+            reads = any(k.pk == key.pk for k in zk.eligible_device_keys(agent))
+        if reads:
             out.append(agent)
     return out
 
@@ -87,11 +104,12 @@ def _endorsed(vault: Vault, key: RunnerDeviceKey) -> bool:
     return False
 
 
-def why_waiting(vault: Vault, key: RunnerDeviceKey | None) -> dict | None:
+def why_waiting(vault: Vault, key: RunnerDeviceKey | None, *, assume_active: bool = False) -> dict | None:
     """Why `key` holds no copy of workspace vault `vault`'s current key, and who fixes it:
     ``{reason, machine, person, person_email, fix, link}``. None when it holds one, the
     vault has no key yet, or there is no machine to ask about. Never raises on missing
-    rows: an unknown is reported as such, not guessed."""
+    rows: an unknown is reported as such, not guessed. `assume_active`: as if the key
+    were approved (asked of a key on the approve screen)."""
     if key is None or not vault.kv:
         return None
     if key.status == RunnerDeviceKey.REVOKED or not _serves(vault, key):
@@ -108,11 +126,20 @@ def why_waiting(vault: Vault, key: RunnerDeviceKey | None) -> dict | None:
         return {**base, "reason": NOT_A_MEMBER,
                 "fix": f"{who} is not a member of the {vault.name} vault; an admin of the vault "
                        "decides whether to add them. Running `canopy vault zk keep` will not help."}
-    if key.status != RunnerDeviceKey.ACTIVE or not key.ecdh_ready:
+    if not assume_active and (key.status != RunnerDeviceKey.ACTIVE or not key.ecdh_ready):
         return {**base, "reason": KEY_NOT_APPROVED,
                 "fix": f"{machine}'s key is waiting for {who} to approve it: canopy-web Settings → "
                        f"Device keys → {machine} → Approve (passkey). Running `canopy vault zk keep` "
                        "elsewhere will not help."}
+    if not _endorsed(vault, key) and not vouch_agents(vault, key, assume_active=assume_active):
+        # Nobody can sign for it (its person is in no attached agent's vault): no keeper
+        # will ever grant it, and there is no Confirm access to point at. Only an admin
+        # of THIS vault can, by hand.
+        return {**base, "reason": NEEDS_ADMIN_GRANT,
+                "fix": f"{machine} cannot be confirmed by {who} (they are in no vault of an agent the "
+                       f"{vault.name} vault serves), so no keeper will ever grant it: an admin of the "
+                       f"{vault.name} vault grants it from the vault's page (passkey). Running "
+                       "`canopy vault zk keep` elsewhere will not help."}
     if not _endorsed(vault, key):
         return {**base, "reason": UNENDORSED,
                 "fix": f"{machine} is waiting for {who} to confirm it: canopy-web Settings → "
