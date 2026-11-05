@@ -396,12 +396,14 @@ act, and it does not depend on a rule, on enforcement being on, or on being coac
   (`_review_grant_q`, `_review_ask_q`; a live ask is revoked), and a grant or ask given later does
   not bring it back. The chat a review ask opened is a conversation of its own, deleted the same way. The tombstone and what honours
   it: chat-sessions.md § A person deleting their own session.
-- **What it cannot reach**, and the page says so: the transcript on the person's computer; what a coach
-  already read into its notes, logs and mailbox; words posted to Slack; a `/canopy:share-session`
+- **What it cannot reach**, and the confirm dialog and route docs say so: the transcript on the person's
+  computer; what a coach already read into its notes, logs and mailbox; any chat a review ask opened (a
+  conversation of its own, deleted the same way); words posted to Slack; a `/canopy:share-session`
   link (`session_sharing`, its own delete); facts on their memory page; artifacts made from the session
   (a walkthrough, a review, a storyboard); and sessions or turns this conversation dispatched to, which
   are other conversations with their own records.
-- A failed delete of a file's stored object answers 503 with nothing else changed, and a retry finishes it.
+- A failed delete of a file's stored object answers 503: objects already removed stay removed, no row
+  has changed, and a retry finishes the rest.
 - Recorded as `session.content_deleted` in the workspace's event log and `session.contentDeleted` on the
   person's own audit, ids only. It is not a setting and not an analytics fact.
 

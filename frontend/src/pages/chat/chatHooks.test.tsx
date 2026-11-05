@@ -387,7 +387,12 @@ describe('useSessionActions', () => {
     )
     await act(async () => { await result.current.deleteContent() })
     expect(chat.deleteSessionContent).not.toHaveBeenCalled()
-    expect(confirm.mock.calls[0][0]).toMatch(/can’t be undone/)
+    const asked = confirm.mock.calls[0][0]
+    expect(asked).toMatch(/can’t be undone/)
+    for (const out of ['copy on your computer', 'notes, logs and mailbox', 'review request', 'share links',
+      'Memory facts', 'Artifacts', 'other agents']) {
+      expect(asked).toContain(out)
+    }
     confirm.mockReturnValue(true)
     await act(async () => { await result.current.deleteContent() })
     expect(chat.deleteSessionContent).toHaveBeenCalledWith('s1')

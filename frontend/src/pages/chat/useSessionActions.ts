@@ -28,9 +28,15 @@ import { ApiError } from '@/api/problem'
 /** Says what goes, what stays out of reach, and that it cannot be undone. */
 export const DELETE_CONTENT_CONFIRM =
   'Delete everything canopy stores of this session? This can’t be undone.\n\n' +
-  'Its messages, transcript, attachments and title go, and your computer won’t upload it again. ' +
-  'The session on your own computer stays, and so does anything already read from it, ' +
-  'such as a coach’s notes and logs.'
+  'Its messages, transcript, attachments and title go, and your computer won’t upload it again.\n\n' +
+  'This does not reach:\n' +
+  '• The copy on your computer\n' +
+  '• A coach’s existing notes, logs and mailbox\n' +
+  '• Any chat a review request opened\n' +
+  '• Slack’s own copy and share links\n' +
+  '• Memory facts\n' +
+  '• Artifacts made from the session\n' +
+  '• Work it dispatched to other agents'
 
 export interface SessionActionsOptions {
   sessionId: string
