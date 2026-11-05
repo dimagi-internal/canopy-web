@@ -246,16 +246,17 @@ def _on_malformed_multipart(request: HttpRequest, exc: MultiPartParserError) -> 
 @api.exception_handler(OverflowError)
 @api.exception_handler(DataError)
 def _on_out_of_range(request: HttpRequest, exc: Exception) -> HttpResponse:
-    """A caller's number too big for its column (an id or count past int32/int64).
+    """A caller's value the database cannot store: a number past int32/int64, or a NUL in text.
 
     Ninja's `int` is unbounded, so `/members/9223372036854775808/` reaches the
     database, which refuses it (`DataError` on Postgres, `OverflowError` on
-    SQLite). That is the caller's input, not a server fault."""
+    SQLite); Postgres also refuses `\\x00` in text with a `DataError`. That is
+    the caller's input, not a server fault."""
     problem = Problem(
         type=TYPE_VALIDATION,
-        title="Value out of range",
+        title="Value cannot be stored",
         status=400,
-        detail="A value in the request is too large for the field it names.",
+        detail="A value in the request is out of range, or holds a character the database refuses.",
         instance=request.path,
     )
     return _problem_response(request, problem)
