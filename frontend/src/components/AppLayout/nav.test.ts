@@ -29,7 +29,7 @@ describe('NAV', () => {
   it('files Demos as a sub-menu of Projects, after its own items', () => {
     const projects = resolveNav(authed).find((e) => label(e) === 'Projects')!
     const { items, groups } = menuSections(entryItems(projects))
-    expect(items.map((i) => i.label)).toEqual(['All projects', 'Tasks', 'Triage'])
+    expect(items.map((i) => i.label)).toEqual(['All projects', 'Meetings', 'Tasks', 'Triage'])
     expect(groups).toEqual([
       {
         label: 'Demos',

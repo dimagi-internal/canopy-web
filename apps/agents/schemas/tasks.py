@@ -104,6 +104,8 @@ class AgentProjectPatch(StrictModel):
     drive_folder_url: str | None = Field(default=None, max_length=500)
     repo_slug: str | None = Field(default=None, max_length=100)
     notes: str | None = None
+    #: What this project's people want done with meeting notes: read by the agent following up.
+    meeting_instructions: str | None = Field(default=None, max_length=10000)
     links: list[AgentTaskLink] | None = None
     priority: int | None = Field(default=None, ge=0, le=4)
     start_date: dt.date | None = None
@@ -409,6 +411,8 @@ class AgentProjectOut(StrictModel):
     drive_folder_url: str
     repo_slug: str
     notes: str
+    #: What this project's people want done with meeting notes.
+    meeting_instructions: str = ""
     links: list[AgentTaskLink] = Field(default_factory=list)
     task_count: int = 0
     open_task_count: int = 0

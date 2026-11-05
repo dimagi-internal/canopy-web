@@ -31,6 +31,7 @@ from django.test import Client
 from django.utils import timezone
 from fastmcp.exceptions import ToolError
 
+from apps.agent_runs.models import AgentRun
 from apps.agents.models import (
     Agent,
     AgentProject,
@@ -52,7 +53,6 @@ from apps.agents.models import (
     Vault,
     VaultAttachment,
 )
-from apps.agent_runs.models import AgentRun
 from apps.api.api import api
 from apps.canopy_sessions.models import ProjectSessionShare
 from apps.contacts.models import PersonFact
@@ -61,7 +61,9 @@ from apps.dynamic_views.models import DynamicView
 from apps.feedback.models import FeedbackRound
 from apps.harness.models import Turn
 from apps.huddles.models import CheckinRun, ProjectCheckin
-from apps.mcp import project_gateway, projects as mcp_projects
+from apps.mcp import project_gateway
+from apps.mcp import projects as mcp_projects
+from apps.meetings.models import Meeting, MeetingArtifact
 from apps.reviews.models import ReviewRequest
 from apps.storyboards.models import Storyboard
 from apps.walkthroughs.models import Walkthrough
@@ -196,7 +198,14 @@ def _make_world() -> dict:
                                session_slug=f"{MARK}-slug", work_product_urls=[f"https://example.test/{S('turn.url')}"],
                                reported_at=timezone.now(), initiator_user=wsadmin, enqueued_by=wsadmin)
 
-    return dict(ws=ws, lead=lead, editor=editor, wsadmin=wsadmin, lead_login=lead_login, lead_agent=lead_agent,
+    meeting = Meeting.objects.create(workspace=ws, owner=lead, project=project, agent=lead_agent,
+                                     title=S("meeting.title"), attendees=[{"name": S("meeting.attendee"), "email": ""}])
+    MeetingArtifact.objects.create(meeting=meeting, kind="transcript", text=S("meeting.text"), sha256="x",
+                                   source=f"{MARK}-src"[:40], source_url=f"https://example.test/{S('meeting.url')}")
+    project.meeting_instructions = S("project.meeting_instructions")
+    project.save(update_fields=["meeting_instructions"])
+
+    return dict(meeting=meeting, ws=ws, lead=lead, editor=editor, wsadmin=wsadmin, lead_login=lead_login, lead_agent=lead_agent,
                 outsider_agent=outsider_agent, project=project, twin=twin, public_task=public_task,
                 tasks=[held_by_editor, on_outsider, on_lead, subtask], checkin=checkin, run=run, view=view, saved=saved,
                 turn=turn, doc=doc, vault=vault, storyboard=storyboard, walkthrough=walkthrough, review=review,
@@ -223,6 +232,7 @@ def _project_values(w: dict) -> dict:
         "task": [tasks[2].key, tasks[0].ext_id],
         "ext_id": [w["doc"].ext_id],
         "name": [w["checkin"].name],
+        "meeting_id": [str(w["meeting"].pk)],
         "turn_id": [str(w["turn"].pk)],
         "run_id": [str(w["run"].pk), str(w["doc"].pk)],
         "huddle_id": [f"{MARK}-huddle"],

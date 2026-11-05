@@ -60,6 +60,8 @@ class GoogleProvider(Provider):
         f"{_SCOPE}gmail.send": "Send mail",
         f"{_SCOPE}gmail.modify": "Label and archive mail",
         f"{_SCOPE}calendar.readonly": "Read calendars",
+        # An agent reading a meeting transcript's Doc in a turn, on a connection the person lent it.
+        f"{_SCOPE}drive.readonly": "Read files in Drive",
         f"{_SCOPE}calendar.events": "Edit calendar events",
     }
     rotates_refresh_token = False

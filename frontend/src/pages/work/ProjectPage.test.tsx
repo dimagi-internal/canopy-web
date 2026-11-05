@@ -123,6 +123,7 @@ describe('ProjectPage', () => {
       'project-milestones',
       'project-scope',
       'project-tasks',
+      'project-meetings',
       'project-services',
       'project-shares',
       'project-proposal',

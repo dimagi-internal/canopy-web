@@ -104,6 +104,8 @@ const WorkspaceAppCustomizePage = lazySection(() => import('./pages/WorkspaceApp
 const WorkspaceAppStoreDetailPage = lazySection(() => import('./pages/WorkspaceAppStoreDetailPage'))
 const LocalAppDetailPage = lazySection(() => import('./pages/LocalAppDetailPage'))
 const LocalAppReviewPage = lazySection(() => import('./pages/LocalAppReviewPage'))
+const MeetingsPage = lazySection(() => import('./pages/meetings/MeetingsPage'))
+const MeetingDetailPage = lazySection(() => import('./pages/meetings/MeetingDetailPage'))
 const PublicAppPage = lazySection(() => import('./pages/PublicAppPage'))
 const LinkAppPage = lazySection(() => import('./pages/LinkAppPage'))
 const NewAgentPage = lazySection(() =>
@@ -434,6 +436,8 @@ export const routeTable: RouteObject[] = [
       { path: '/w/:workspace/apps', element: <LazySection><WorkspaceAppsPage /></LazySection> },
       { path: '/w/:workspace/apps/store', element: <LazySection><WorkspaceAppStoreDetailPage /></LazySection> },
       // Apps a person installs for themselves, the page's Personal tab (apps/local_apps).
+      { path: '/w/:workspace/meetings', element: <LazySection><MeetingsPage /></LazySection> },
+      { path: '/w/:workspace/meetings/:id', element: <LazySection><MeetingDetailPage /></LazySection> },
       { path: '/w/:workspace/apps/personal/review/:id', element: <LazySection><LocalAppReviewPage /></LazySection> },
       { path: '/w/:workspace/apps/personal/:key', element: <LazySection><LocalAppDetailPage /></LazySection> },
       { path: '/w/:workspace/apps/:appKey/customize', element: <LazySection><WorkspaceAppCustomizePage /></LazySection> },

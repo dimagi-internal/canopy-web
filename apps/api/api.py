@@ -358,6 +358,7 @@ from apps.shareouts.api import router as shareouts_router  # noqa: E402
 from apps.dynamic_views.api import router as dynamic_views_router  # noqa: E402
 from apps.local_apps.api import router as local_apps_router  # noqa: E402
 from apps.local_apps.api import runner_router as local_apps_runner_router  # noqa: E402
+from apps.meetings.api import router as meetings_router  # noqa: E402
 from apps.workspace_apps.api import public_router as public_apps_router  # noqa: E402
 from apps.workspace_apps.api import router as workspace_apps_router  # noqa: E402
 from apps.slack.api import router as slack_config_router  # noqa: E402
@@ -414,6 +415,7 @@ api.add_router("/dynamic-views", dynamic_views_router)
 api.add_router("", workspace_apps_router)
 api.add_router("", public_apps_router)
 api.add_router("/local-apps", local_apps_router)
+api.add_router("/meetings", meetings_router)
 api.add_router("/harness/runners", local_apps_runner_router)
 api.add_router("/sessions", sessions_router)
 # Agents are workspace-scoped. Mounted flat (single, clean schema); the canonical

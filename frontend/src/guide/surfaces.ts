@@ -550,6 +550,21 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Look through the screenshots', 'Read what the app keeps and who sees it', 'Install the app'],
   },
   {
+    path: '/w/:workspace/meetings',
+    title: 'Meetings',
+    audience: 'Anyone with meeting notes, or on a project that has them',
+    what: "Your private meetings and those of the projects you're on, from any tool: a Google Meet transcript, Gemini's notes, Granola, Superwhisper. Search what was said, and add a meeting by pasting its text or a link.",
+    actions: ['Search titles, people and what was said', 'Paste a transcript or a link to a Doc', 'Ask an agent for help with it'],
+  },
+  {
+    path: '/w/:workspace/meetings/:id',
+    home: '/w/:workspace/meetings',
+    title: 'Meeting',
+    audience: 'Whoever saved it, and everyone on its project',
+    what: 'One meeting: everything saved on it whichever tool made it, the project it belongs to, and the conversation with the agent helping with it.',
+    actions: ['Read the transcript, notes and follow-up', 'Put it in a project, or take it out', 'Ask an agent for help', 'Delete it'],
+  },
+  {
     path: '/w/:workspace/apps/personal/:key',
     home: '/w/:workspace/apps',
     title: 'Personal app',

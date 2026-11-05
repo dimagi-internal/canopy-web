@@ -106,6 +106,9 @@ class AgentProject(models.Model):
     repo_slug = models.CharField(max_length=100, blank=True, default="")
 
     notes = models.TextField(blank=True, default="")
+    #: What this project's people want done with meeting notes, in their words. A follow-up on
+    #: a meeting attached here works from it (`apps/meetings/services.py`).
+    meeting_instructions = models.TextField(blank=True, default="")
     links = models.JSONField(default=list, blank=True)
     #: Where its knowledge base's objects are stored (`kb_store.root`): fixed for good,
     #: so a new handle or workspace moves nothing (#2047). Blank: `kb-projects/<pk>/`.

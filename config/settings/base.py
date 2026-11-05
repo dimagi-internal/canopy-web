@@ -99,6 +99,7 @@ INSTALLED_APPS = [
     "apps.dynamic_views",
     "apps.workspace_apps",
     "apps.local_apps",
+    "apps.meetings",
     "apps.mcp",
     "apps.session_sharing",
     "apps.push",
