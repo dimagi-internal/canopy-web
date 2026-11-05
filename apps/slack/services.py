@@ -950,7 +950,7 @@ def deliver_channel_read(inbound: Inbound, agent: Agent, material: str, ask: str
 def _with_window(installation: SlackInstallation, principal: Principal, agent: Agent,
                  inbound: Inbound, win: window.Window, ask: str) -> tuple[str, Outcome | None]:
     """The ask, with the channel's window in front of it (see `window`): its last
-    `win.minutes`, or its newest `win.last` messages within them.
+    `win.minutes`, or its newest `win.last` messages however old.
 
     Members only: the window can hold a private channel's messages, and a
     contact's session is one no member can open — nobody could check what it

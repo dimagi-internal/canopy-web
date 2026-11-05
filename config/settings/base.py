@@ -664,7 +664,8 @@ SLACK_CLIENT_SECRET = env("SLACK_CLIENT_SECRET", default="")
 SLACK_SIGNING_SECRET = env("SLACK_SIGNING_SECRET", default="")
 # `--history <minutes>` (apps/slack/window.py): how many messages one read may
 # pull however long the window — an operational guard. Whether history may be
-# read at all, and how far back, is each workspace's own setting (Slack page).
+# read at all, and how far back a time window goes, is each workspace's own
+# setting (Slack page).
 SLACK_HISTORY_MESSAGE_CEILING = env.int("SLACK_HISTORY_MESSAGE_CEILING", default=500)
 # A reply posted in the window to a thread whose PARENT is older is found by
 # scanning parents this far back for a `latest_reply` inside the window —
