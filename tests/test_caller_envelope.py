@@ -1028,6 +1028,48 @@ def test_a_turn_with_no_agent_holds_nothing():
         "granted_by": "no-interface", "role": None, "source": "", "permissions": [], "manual_only": False}
 
 
+# --- agent_repo: what the plugin's own-repo rail reads -------------------------------------------
+
+@pytest.mark.parametrize("url", ["https://github.com/dimagi-internal/ace",
+                                 "https://github.com/dimagi-internal/ace.git",
+                                 "git@github.com:dimagi-internal/ace.git"])
+def test_the_envelope_names_the_agents_own_repo(ctx, url):
+    owner, _ws, agent = ctx
+    Agent.objects.filter(pk=agent.pk).update(repo_url=url)
+    agent.refresh_from_db()
+    assert caller_context.build(_user_turn(agent, owner, "p-repo"))["agent_repo"] == "dimagi-internal/ace"
+
+
+def test_the_repo_is_named_whoever_asks_since_the_rail_guards_the_ones_without_edit(ctx):
+    owner, _ws, agent = ctx
+    Agent.objects.filter(pk=agent.pk).update(repo_url="https://github.com/dimagi-internal/ace")
+    agent.refresh_from_db()
+    assert caller_context.build(_email(agent))["agent_repo"] == "dimagi-internal/ace"      # a stranger's mail
+    reader = _line_user(ctx, "ro-repo", role=roles.READ_ONLY)
+    assert caller_context.build(_user_turn(agent, reader, "p-ro"))["agent_repo"] == "dimagi-internal/ace"
+    schedule, _ = services.enqueue_turn(agent=agent, origin=Turn.ORIGIN_CANOPY_SCHEDULER, idempotency_key="s-repo",
+                                        initiator=who.system(via="schedule:1", accountable=owner))
+    assert caller_context.build(schedule)["agent_repo"] == "dimagi-internal/ace"
+
+
+def test_an_agent_with_no_repo_says_so_with_an_empty_string_not_by_leaving_it_out(ctx):
+    # The hook tells "" (this canopy-web knows of no repo) from absent (an older canopy-web).
+    owner, _ws, agent = ctx
+    assert agent.repo_url == ""
+    env = caller_context.build(_user_turn(agent, owner, "p-norepo"))
+    assert "agent_repo" in env and env["agent_repo"] == ""
+
+
+def test_a_turn_with_no_agent_has_no_repo_to_name():
+    assert caller_context._agent_repo(None) is None
+
+
+def test_agent_repo_does_not_bump_the_version(ctx):
+    owner, _ws, agent = ctx
+    assert caller_context.VERSION == 3
+    assert caller_context.build(_user_turn(agent, owner, "p-v"))["version"] == 3
+
+
 def test_permissions_and_manual_only_do_not_bump_the_version(ctx):
     owner, _ws, agent = ctx
     assert caller_context.VERSION == 3

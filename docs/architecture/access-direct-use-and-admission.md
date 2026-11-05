@@ -273,6 +273,11 @@ profile), `turn_mode` (`{mode, basis}`), and:
   workspace, or not). It is how canopy knows the asker, not a role: it says nothing about what
   they may do. Read `role`.
 
+* **`agent_repo`** — the agent's own repo as `owner/repo`, on every turn and whoever asks. The
+  canopy plugin's own-repo rail reads it, so the rail holds in a session outside the agent's clone.
+  `""` means the agent has no repo set, and a turn whose asker lacks `agent_edit` then cannot make
+  repo writes from a session where the hook finds none either. `null` means the turn has no agent. An
+  envelope without the field (an older canopy-web) means neither.
 * **`ship_grant`** — when ANOTHER agent's verified login that is this agent's
   owner or an agent admin dispatched the turn at it, push / PR / merge in this agent's OWN
   repo are pre-approved even in `manual`. Nothing else is.

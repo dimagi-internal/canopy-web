@@ -394,6 +394,12 @@ def build(turn, *, reader_user=None) -> dict:
         # chose, and the rest follows (`credentials/authority.py`). null for a turn with
         # no agent.
         "authority": _authority(turn, agent),
+        # WHICH REPO IS THIS AGENT'S OWN (`owner/repo`), for the own-repo rail in the
+        # canopy plugin's session hook: it holds wherever the session's directory is.
+        # "" says the agent has no repo set; null says the turn has no agent. Absent
+        # (an older canopy-web) says neither, and the hook must not read it as "".
+        # Additive: no VERSION bump.
+        "agent_repo": _agent_repo(agent),
         # The owner-approved REPO-INTERNAL SHIP GRANT (Jonathan, 2026-10-03): when
         # another agent's login that holds this agent's keys (an explicit admin, or
         # the owner) dispatches work AT this agent, the session may push, open PRs
@@ -600,6 +606,14 @@ def _thread_history(turn, ref: dict) -> dict | None:
             _trigger(last, last.origin_ref if isinstance(last.origin_ref, dict) else {})
             ["message_count"] if last is not None else None),
     }
+
+
+def _agent_repo(agent) -> str | None:
+    if agent is None:
+        return None
+    from apps.agents.credentials.delegations import agent_repo
+
+    return agent_repo(agent)
 
 
 #: What a ship grant covers, by name, and what it pointedly does not. Both travel in
