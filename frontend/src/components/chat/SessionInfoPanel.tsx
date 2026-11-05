@@ -1,9 +1,20 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { getSessionInfo, type SessionInfo, type SessionInfoTurn } from "@/api/chat";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  getSessionContext,
+  getSessionInfo,
+  getTurnContext,
+  type SessionContexts,
+  type SessionInfo,
+  type SessionInfoTurn,
+  type TurnRanAs,
+} from "@/api/chat";
+import { useAuth } from "@/auth/AuthProvider";
 import { relativeAge } from "@/lib/relativeAge";
 import { CopyButton } from "canopy-ui/ui";
 import { cliLabel } from "@/lib/clis";
 import { slackLabel } from "@/lib/slackLinks";
+import { Row, Section } from "./SessionInfoRows";
+import { SessionContextSection, TurnContextNowSection, TurnRanAsView, type Loaded } from "./TurnContextSections";
 
 /**
  * "Session info", opened from the chat's ⋯ menu and the /ide row menu:
@@ -25,16 +36,55 @@ export function SessionInfoPanel({ sessionId }: { sessionId: string }) {
   const [info, setInfo] = useState<SessionInfo | null>(null);
   const [error, setError] = useState("");
   const [raw, setRaw] = useState(false);
+  // The two contexts: read once when the panel opens. A turn's is read only when that turn is opened.
+  const [contexts, setContexts] = useState<Loaded<SessionContexts>>({ state: "loading" });
+  const [turnContexts, setTurnContexts] = useState<Record<string, Loaded<TurnRanAs>>>({});
+  const asked = useRef(new Set<string>());
+  const current = useRef(sessionId);
+  const auth = useAuth();
+  const me = auth.user?.user_id ?? null;
 
   useEffect(() => {
     let cancelled = false;
+    current.current = sessionId;
+    asked.current = new Set();
+    setContexts({ state: "loading" });
+    setTurnContexts({});
     getSessionInfo(sessionId)
       .then((r) => !cancelled && setInfo(r))
       .catch((e) => !cancelled && setError(e instanceof Error ? e.message : "Could not load session info."));
+    getSessionContext(sessionId)
+      .then((r) => !cancelled && setContexts({ state: "done", data: r }))
+      .catch(
+        (e) =>
+          !cancelled &&
+          setContexts({ state: "error", message: e instanceof Error ? e.message : "Could not load what a turn here may do." }),
+      );
     return () => {
       cancelled = true;
     };
   }, [sessionId]);
+
+  const openTurn = useCallback(
+    (turnId: string) => {
+      // Once per turn per panel: reopening a turn shows what was read, and only a failed read is asked again.
+      if (asked.current.has(turnId)) return;
+      asked.current.add(turnId);
+      const sid = sessionId;
+      setTurnContexts((m) => ({ ...m, [turnId]: { state: "loading" } }));
+      getTurnContext(sid, turnId)
+        .then((r) => sid === current.current && setTurnContexts((m) => ({ ...m, [turnId]: { state: "done", data: r } })))
+        .catch((e) => {
+          if (sid !== current.current) return;
+          asked.current.delete(turnId);
+          setTurnContexts((m) => ({
+            ...m,
+            [turnId]: { state: "error", message: e instanceof Error ? e.message : "Could not load what this turn ran as." },
+          }));
+        });
+    },
+    [sessionId],
+  );
 
   if (error) return <p className="text-[12px] text-destructive">{error}</p>;
   if (!info) return <p className="text-[12px] text-muted-foreground">Loading…</p>;
@@ -45,6 +95,18 @@ export function SessionInfoPanel({ sessionId }: { sessionId: string }) {
   const first = info.turn_count <= info.turns.length ? info.turns[info.turns.length - 1] : undefined;
   const prov = (s.provenance ?? {}) as Record<string, unknown>;
   const activity = (s.activity ?? {}) as Record<string, unknown>;
+  // Raw is everything the panel read: the session's record, its two contexts, and each turn's that was opened.
+  const rawText = JSON.stringify(
+    {
+      ...info,
+      context: contexts.state === "done" ? contexts.data : null,
+      turn_contexts: Object.fromEntries(
+        Object.entries(turnContexts).flatMap(([id, l]) => (l.state === "done" ? [[id, l.data]] : [])),
+      ),
+    },
+    null,
+    2,
+  );
 
   return (
     <div data-testid="session-info" className="max-h-[70vh] space-y-4 overflow-y-auto pr-1 text-[12px]">
@@ -57,12 +119,12 @@ export function SessionInfoPanel({ sessionId }: { sessionId: string }) {
         >
           {raw ? "Formatted" : "Raw"}
         </button>
-        <CopyButton text={JSON.stringify(info, null, 2)} variant="outline" resetMs={1200} title="Copy everything">Copy all</CopyButton>
+        <CopyButton text={rawText} variant="outline" resetMs={1200} title="Copy everything">Copy all</CopyButton>
       </div>
 
       {raw ? (
         <pre data-testid="session-info-raw" className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-muted p-2 font-mono text-[11px]">
-          {JSON.stringify(info, null, 2)}
+          {rawText}
         </pre>
       ) : (
         <>
@@ -83,6 +145,12 @@ export function SessionInfoPanel({ sessionId }: { sessionId: string }) {
               <Row label="Metadata" value={JSON.stringify(info.metadata)} mono />
             )}
           </Section>
+
+          <TurnContextNowSection loaded={contexts} />
+
+          {contexts.state === "done" && (
+            <SessionContextSection facts={contexts.data.session_context} binding={b} me={me} />
+          )}
 
           <Section title="Where it came from">
             <Row label="Opened by" value={s.created_by ?? info.contact ?? (first ? "" : "a runner (no person)")} />
@@ -156,7 +224,7 @@ export function SessionInfoPanel({ sessionId }: { sessionId: string }) {
             ) : (
               <ul className="space-y-1">
                 {info.turns.map((t) => (
-                  <TurnRow key={t.id} turn={t} />
+                  <TurnRow key={t.id} turn={t} ranAs={turnContexts[t.id]} onOpen={openTurn} />
                 ))}
               </ul>
             )}
@@ -176,14 +244,25 @@ export function githubIdentityText(g: { agent: string; source: string; repo: str
     : "none — no agent, so its turns get no GitHub token"
 }
 
-function TurnRow({ turn: t }: { turn: SessionInfoTurn }) {
+function TurnRow({
+  turn: t,
+  ranAs,
+  onOpen,
+}: {
+  turn: SessionInfoTurn;
+  ranAs: Loaded<TurnRanAs> | undefined;
+  onOpen: (turnId: string) => void;
+}) {
   const [open, setOpen] = useState(false);
   return (
-    <li className="rounded border border-border">
+    <li className="rounded border border-border" data-testid="session-info-turn">
       <button
         type="button"
         className="flex w-full items-center gap-2 px-2 py-1 text-left hover:bg-muted"
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => {
+          if (!open) onOpen(t.id);
+          setOpen((o) => !o);
+        }}
         aria-expanded={open}
       >
         <span className="text-muted-foreground">{open ? "▾" : "▸"}</span>
@@ -194,6 +273,10 @@ function TurnRow({ turn: t }: { turn: SessionInfoTurn }) {
       </button>
       {open && (
         <dl className="space-y-0.5 border-t border-border px-2 py-1">
+          <div className="pb-1">
+            <p className="mb-0.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Turn context</p>
+            <TurnRanAsView loaded={ranAs} />
+          </div>
           <Row label="Turn id" value={t.id} mono copy />
           <Row label="Asked by" value={initiatorText(t)} />
           <Row label="Sent as" value={t.enqueued_by_email ?? ""} />
@@ -219,45 +302,6 @@ function TurnRow({ turn: t }: { turn: SessionInfoTurn }) {
         </dl>
       )}
     </li>
-  );
-}
-
-function Section({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section>
-      <h3 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{title}</h3>
-      <dl className="space-y-0.5">{children}</dl>
-    </section>
-  );
-}
-
-/** One fact. An empty value is not rendered: the panel lists what IS stored. */
-function Row({
-  label,
-  value,
-  mono,
-  copy,
-  href,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-  copy?: boolean;
-  href?: string;
-}) {
-  if (!value) return null;
-  return (
-    <div className="grid grid-cols-[8.5rem_1fr] items-start gap-2">
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className={`flex min-w-0 items-start gap-1 ${mono ? "font-mono text-[11px]" : ""}`}>
-        {href ? (
-          <a href={href} className="break-all text-primary hover:underline">{value}</a>
-        ) : (
-          <span className="whitespace-pre-wrap break-all">{value}</span>
-        )}
-        {copy && <CopyButton text={value} variant="ghost" className="shrink-0" title="Copy value" resetMs={1200} />}
-      </dd>
-    </div>
   );
 }
 
