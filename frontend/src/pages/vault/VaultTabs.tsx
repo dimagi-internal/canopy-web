@@ -67,6 +67,37 @@ function useRun(onChange: (v: WorkspaceVaultOut) => void) {
   return { busy, run, errorLine }
 }
 
+/** A new vault's first step, shown above its sections: make its key, in this browser.
+ *  Says who gets a copy now and who only once they have set up their own vault key. */
+export function VaultMakeKey({ vault: v, onChange, reload, unlock }: VaultOutletContext): JSX.Element {
+  const { busy, run, errorLine } = useRun(onChange)
+  const later = v.members.filter((m) => !m.has_vault_key).map((m) => m.email)
+  return (
+    <div className="rounded-md border border-warning/40 bg-warning/10 p-3 text-[12px]" data-testid="vault-no-key">
+      <p className="font-medium text-foreground">First, make this vault&rsquo;s key</p>
+      <p className="mt-1 text-foreground">
+        Nothing can go in until it has one.{' '}
+        {managesVault(v)
+          ? 'Your passkey makes it, with a copy for you and for every member and machine waiting.'
+          : 'An owner or admin of this vault makes it.'}
+      </p>
+      {later.length > 0 && (
+        <p className="mt-1 text-muted-foreground" data-testid="vault-no-key-later">
+          {later.join(', ')} {later.length === 1 ? 'has' : 'have'} not set up a vault key yet, so{' '}
+          {later.length === 1 ? 'gets a copy' : 'get copies'} once they do.
+        </p>
+      )}
+      {managesVault(v) && (
+        <Button type="button" size="sm" className="mt-2" disabled={busy} data-testid="vault-make-key"
+          onClick={() => void run(async () => { await makeWorkspaceVaultKey(v.vault_id, await unlock()); reload() })}>
+          Make its key
+        </Button>
+      )}
+      {errorLine}
+    </div>
+  )
+}
+
 /** Its key (made in this browser, copies to whoever waits) and what it serves. */
 export function VaultOverviewTab({ vault: v, onChange, reload, unlock }: VaultOutletContext): JSX.Element {
   const { busy, run, errorLine } = useRun(onChange)
@@ -100,19 +131,9 @@ export function VaultOverviewTab({ vault: v, onChange, reload, unlock }: VaultOu
     <div>
       <Sub id="key" title="Its key">
         {v.kv === 0 ? (
-          <div className="flex flex-wrap items-center gap-2 rounded-md border border-warning/40 bg-warning/10 p-2 text-[12px]"
-            data-testid="vault-no-key">
-            <span className="text-foreground">
-              No key yet, so nothing can go in. Your passkey makes it: a copy for you, and one for every member and
-              machine waiting.
-            </span>
-            {manages && (
-              <Button type="button" size="sm" disabled={busy} data-testid="vault-make-key"
-                onClick={() => void run(async () => { await makeWorkspaceVaultKey(v.vault_id, await unlock()); reload() })}>
-                Make its key
-              </Button>
-            )}
-          </div>
+          <p className="text-[12px] text-muted-foreground" data-testid="vault-no-key-here">
+            No key yet: make it at the top of this page.
+          </p>
         ) : (
           <div className="flex flex-wrap items-center gap-2 text-[12px]" data-testid="vault-key">
             <span className="text-success">●</span>
@@ -364,7 +385,7 @@ export function VaultSecretsTab({ vault: v, onChange, reload, unlock }: VaultOut
         </form>
       )}
       {manages && v.kv === 0 && (
-        <p className="mt-2 text-[12px] text-muted-foreground">Make the vault&rsquo;s key (Storage &amp; key) before anything can go in.</p>
+        <p className="mt-2 text-[12px] text-muted-foreground">Make the vault&rsquo;s key (at the top of this page) before anything can go in.</p>
       )}
       <p className="mt-2 text-[11px] text-muted-foreground">
         A value is encrypted in this browser under the vault&rsquo;s key; canopy-web stores only ciphertext and shows only names.

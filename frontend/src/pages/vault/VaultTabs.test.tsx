@@ -16,7 +16,7 @@ const ops = vi.hoisted(() => ({
 }))
 vi.mock('@/vault/operations', () => ops)
 
-const { VaultMembersTab, VaultOverviewTab, VaultSecretsTab } = await import('./VaultTabs')
+const { VaultMakeKey, VaultMembersTab, VaultOverviewTab, VaultSecretsTab } = await import('./VaultTabs')
 
 const SHARED = {
   vault_id: 'v1', workspace: 'dimagi', name: 'Shared', kv: 1, secrets: ['gog-oauth-client'],
@@ -118,10 +118,19 @@ describe('vault page', () => {
 
   it('makes its key in the browser with one unlock', async () => {
     const c = ctx({ kv: 0 })
-    render(<MemoryRouter><VaultOverviewTab {...c} /></MemoryRouter>)
+    render(<MemoryRouter><VaultMakeKey {...c} /></MemoryRouter>)
     fireEvent.click(screen.getByTestId('vault-make-key'))
     await waitFor(() => expect(ops.makeWorkspaceVaultKey).toHaveBeenCalledWith('v1', ME))
     expect(c.reload).toHaveBeenCalled()
+  })
+
+  it('names who gets a copy only once they set up a vault key', () => {
+    render(<MemoryRouter><VaultMakeKey {...ctx({ kv: 0, members: [
+      { user_id: 1, email: 'lead@dimagi.com', role: 'owner', sources: [], has_vault_key: true, has_copy: false },
+      { user_id: 12, email: 'amie@dimagi.com', role: 'admin', sources: [], has_vault_key: false, has_copy: false },
+    ] })} /></MemoryRouter>)
+    expect(screen.getByTestId('vault-no-key-later').textContent).toBe(
+      'amie@dimagi.com has not set up a vault key yet, so gets a copy once they do.')
   })
 
   it('serves a whole workspace from "workspace:slug", an agent otherwise', async () => {

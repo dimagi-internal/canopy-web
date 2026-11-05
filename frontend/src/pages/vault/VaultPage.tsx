@@ -6,7 +6,7 @@ import { VaultView } from '@/components/vault/VaultView'
 import { scopedPath } from '@/lib/scopedLinks'
 import type { Unlocked } from '@/vault/operations'
 import { useVaultUnlock } from '@/vault/useVaultUnlock'
-import { VaultMembersTab, VaultOverviewTab, VaultSecretsTab } from './VaultTabs'
+import { VaultMakeKey, VaultMembersTab, VaultOverviewTab, VaultSecretsTab } from './VaultTabs'
 
 // A WORKSPACE VAULT'S ONE PAGE, `/w/:workspace/vaults/:vaultId`, drawn by the same
 // `VaultView` an agent's vault uses (components/vault/VaultView.tsx): a summary
@@ -65,8 +65,8 @@ export function VaultPage(): JSX.Element {
   const runners = vault.attachments.filter((a) => a.runner).length
   const waiting = vault.members.filter((m) => m.has_vault_key && !m.has_copy).length
   const noKey = vault.kv === 0
+  // A vault with no key says so once, as its first step above the sections.
   const attention = [
-    noKey && 'no key yet, so nothing can go in',
     !noKey && waiting > 0 && `${waiting} ${waiting === 1 ? 'person is' : 'people are'} waiting for the key`,
   ].filter((a): a is string => Boolean(a))
   const people = `${vault.members.length} ${vault.members.length === 1 ? 'person' : 'people'}`
@@ -85,6 +85,7 @@ export function VaultPage(): JSX.Element {
           machines: runners,
           attention,
         }}
+        firstStep={noKey ? <VaultMakeKey {...ctx} /> : undefined}
         secrets={{
           summary: `${vault.secrets.length} stored`,
           tone: 'ok',
