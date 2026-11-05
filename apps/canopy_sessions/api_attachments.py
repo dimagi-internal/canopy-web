@@ -76,12 +76,9 @@ def upload_attachment(
     if not attachment_storage.is_configured():
         raise HttpError(503, "attachments are not configured on this deployment")
 
-    content_type = _content_type(file)
-    allowed = settings.ATTACHMENT_ALLOWED_CONTENT_TYPES
-    if content_type not in allowed:
-        # An allowlist: these bytes get opened by an agent and rendered inline by
-        # a browser, so anything not explicitly understood is refused.
-        raise HttpError(422, f"unsupported file type '{content_type or 'unknown'}'")
+    # Any type: the agent reads the file; the browser renders only images
+    # (attachment_storage.serve), so the type is a label here, never a gate.
+    content_type = _content_type(file) or "application/octet-stream"
     if file.size is None or file.size <= 0:
         raise HttpError(422, "file is empty")
     if file.size > settings.ATTACHMENT_MAX_UPLOAD_BYTES:

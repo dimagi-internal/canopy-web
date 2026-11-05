@@ -93,15 +93,14 @@ def test_a_path_traversal_filename_cannot_escape_the_session_prefix():
     assert ".." not in row.storage_key
 
 
-def test_a_type_outside_the_allowlist_is_refused():
-    # Allowlist, not denylist: an agent opens these and a browser renders them.
+def test_any_file_type_is_accepted():
+    # The agent reads whatever it is given; only what the browser renders is narrow.
     _user, _ws, session, c = _ctx()
 
-    resp, put = _upload(c, session.id, name="x.html", data=b"<script>alert(1)</script>")
+    resp, put = _upload(c, session.id, name="page.html", data=b"<script>alert(1)</script>")
 
-    assert resp.status_code == 422
-    put.assert_not_called()
-    assert Attachment.objects.count() == 0
+    assert resp.status_code == 201
+    assert put.call_args[0][2] == "text/html"
 
 
 def test_a_file_over_the_cap_is_refused(settings):
@@ -161,8 +160,22 @@ def test_content_streams_the_bytes_inline():
     assert resp.content == PNG
     assert resp["Content-Type"] == "image/png"
     assert "inline" in resp["Content-Disposition"]
-    # Inline from canopy's origin: if the allowlist ever admits a document type,
-    # it still renders in an opaque origin, never as the viewer.
+    assert resp["Content-Security-Policy"] == "sandbox"
+    assert resp["X-Content-Type-Options"] == "nosniff"
+
+
+def test_a_file_that_is_not_an_image_is_served_as_a_download():
+    # Uploaded HTML must never run as a page on canopy's origin.
+    user, _ws, session, c = _ctx()
+    row = _make(session, user)
+
+    with mock.patch(f"{STORAGE}.get") as get:
+        get.return_value = mock.Mock(body=b"<script>alert(1)</script>", content_type="text/html")
+        resp = c.get(f"/api/canopy-sessions/attachments/{row.id}/content")
+
+    assert resp.status_code == 200
+    assert resp["Content-Type"] == "application/octet-stream"
+    assert resp["Content-Disposition"].startswith("attachment;")
     assert resp["Content-Security-Policy"] == "sandbox"
     assert resp["X-Content-Type-Options"] == "nosniff"
 

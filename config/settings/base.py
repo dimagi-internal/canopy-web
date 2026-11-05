@@ -469,20 +469,11 @@ ATTACHMENT_MAX_UPLOAD_BYTES = env.int(
     "ATTACHMENT_MAX_UPLOAD_BYTES", default=10 * 1024 * 1024,
 )
 
-# An allowlist, never a denylist: the bytes are handed to an agent that will open
-# them, and the browser renders them inline (under `Content-Security-Policy:
-# sandbox` + nosniff, attachment_storage.serve). Screenshots, plus the documents an
-# agent reads with its Read tool: PDF and plain text. Never HTML or SVG — a document
-# type that runs script.
-ATTACHMENT_ALLOWED_CONTENT_TYPES = env.list(
-    "ATTACHMENT_ALLOWED_CONTENT_TYPES",
-    default=[
-        "image/png", "image/jpeg", "image/gif", "image/webp",
-        "application/pdf",
-        "text/plain", "text/markdown", "text/csv",
-        "application/json", "application/yaml",
-    ],
-)
+# Any file may be attached: the agent reads it with its Read tool, whatever it is.
+# What the browser may RENDER is the narrow part — only these image types are served
+# inline (thumbnails); every other file is served as a download, so an uploaded HTML
+# or SVG never runs as a page (attachment_storage.serve).
+ATTACHMENT_INLINE_CONTENT_TYPES = ("image/png", "image/jpeg", "image/gif", "image/webp")
 
 # Pinned explicitly (security review 2026-07-26, F8) rather than left to
 # Django's own default (2.5MB as of 5.2, but not a documented-stable

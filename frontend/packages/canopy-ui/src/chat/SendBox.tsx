@@ -107,10 +107,6 @@ interface Props {
 export const REFERENCE_MIME = "application/x-canopy-reference";
 
 /** What the composer types where a file goes: "[Image #2]", "[File #3]". */
-/** What the file picker offers: screenshots, and the documents an agent reads
- *  (canopy-web's ATTACHMENT_ALLOWED_CONTENT_TYPES says what the server takes). */
-const ATTACH_ACCEPT = "image/*,.pdf,.txt,.md,.markdown,.log,.csv,.json,.yaml,.yml";
-
 function attachmentPlaceholder(file: Pick<File, "type">, n: number): string {
   return `[${file.type.startsWith("image/") ? "Image" : "File"} #${n}]`;
 }
@@ -532,7 +528,6 @@ export function SendBox({
                 ref={fileInputRef}
                 type="file"
                 multiple
-                accept={ATTACH_ACCEPT}
                 className="hidden"
                 data-testid="attachment-input"
                 onChange={(e) => {

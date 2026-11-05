@@ -871,13 +871,14 @@ def test_without_the_files_scope_slack_redirects_to_sign_in_and_the_agent_is_tol
     assert "files:read" in turn.prompt and "could not be downloaded" not in turn.prompt
 
 
-def test_a_file_type_canopy_does_not_accept_is_named_not_downloaded(slack, linked, hal, bucket):
+def test_a_file_of_any_type_is_attached(slack, linked, hal, bucket):
+    from apps.canopy_sessions.models import Attachment
     mention("hal first")
-    with _download() as get:
+    with _download(content_type="application/pdf", body=b"%PDF-1.4") as get:
         _file_reply(files=({"name": "notes.pdf", "mimetype": "application/pdf", "size": 10,
                             "url_private_download": "https://files.slack.com/x"},))
-    assert not get.called
-    assert "notes.pdf (application/pdf" in Turn.objects.order_by("created_at").last().prompt
+    assert get.called
+    assert Attachment.objects.get().content_type == "application/pdf"
 
 
 def test_messages_in_threads_canopy_is_not_in_are_dropped_unread(slack, linked, hal):
