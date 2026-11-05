@@ -754,7 +754,8 @@ Every browser-facing address canopy-web serves. The SPA route table is
   - **Profile** — every workspace you are in, your role, and how members there
     see you.
   - **Account** — contact details, presence, where your sessions are filed,
-    who may review them.
+    which project teams you share them with (`#session-sharing`), who may review
+    them.
   - **Security** — passkeys and your vault key (`#vault-key`: set up with a PRF
     passkey or a passphrase + Secret Key with a one-time Emergency Kit),
     recovery, runner device keys (`#device-keys`, `#your-runners`; a box's
