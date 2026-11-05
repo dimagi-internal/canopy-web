@@ -36,7 +36,7 @@ from apps.mcp.server import mcp
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import WorkspaceMembership
 
-from .test_turn_context import _chat, w  # noqa: F401 — the world the Turn Context's own tests use
+from .fixtures.turn_context import _chat, make_world
 
 pytestmark = pytest.mark.django_db
 
@@ -50,7 +50,8 @@ _keys = iter(range(10**6))
 
 
 @pytest.fixture()
-def world(w):  # noqa: F811
+def world():
+    w = make_world()
     # The owner runs the box: a viewer's box serves no workspace.
     WorkspaceMembership.objects.filter(user=w.owner, workspace=w.ws).update(role=WorkspaceMembership.OWNER)
     AgentCredential.objects.create(agent=w.agent, name="SEEDED_NAME", value_zk=VAULT_VALUE)

@@ -27,7 +27,6 @@ from apps.agents.answering_snapshot import probe_turn
 from apps.agents.models import Agent, AgentAdmin, AgentGrant
 from apps.canopy_sessions.models import Session
 from apps.contacts.models import Contact
-from apps.harness import caller_context
 from apps.harness import runner_requirements as rr
 from apps.harness.models import Runner, RunnerAssignment, RunnerFlag, Turn
 from apps.harness.testing import enrolled
