@@ -72,7 +72,7 @@ key outside that file — that pair is the signature of an access decision.
 ## Runners and tenancy
 
 A runner's tenant is its pairing owner's workspaces it is enrolled in, never
-`Runner.workspace` (`apps/harness/routing.py::runner_tenant_slugs`; a NULL owner fails closed) —
+`Runner.workspace` (`apps/harness/routing_orders.py::runner_tenant_slugs`; a NULL owner fails closed) —
 the rule, its claim/schedule parity test and the routing hint:
 [runners.md § Which workspaces a runner serves](runners.md#which-workspaces-a-runner-serves-the-tenant-gate).
 

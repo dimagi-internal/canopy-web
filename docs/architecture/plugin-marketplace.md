@@ -82,7 +82,7 @@ signed in or not, and reveal nothing.
 
 Send **`Authorization: Bearer <canopy token>`**: the same header and token (a
 PAT from `/canopy:canopy-web-pat-mint`, at `~/.claude/canopy/workbench-token`)
-that the canopy plugin's `scripts/canopy-web-mcp-headers.js` sends to
+that the canopy plugin's canopy's `plugins/canopy/scripts/canopy-web-mcp-headers.js` sends to
 `/api/mcp/`. `BearerTokenAuthMiddleware` resolves it, as for every other route.
 A delegated token also works (it resolves to a user). A contact token, or a
 confined session's `cct_…` caller token, has no user and gets a 401.
