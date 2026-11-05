@@ -101,7 +101,7 @@ headless); `claude-desktop` and `emdash` run Claude Code only.
 - **One rule picks**, `clis.choose(turn, runner)`: the CLIs the turn allows (`clis.allowed`:
   the conversation's `Session.cli` once it is held to one, else the turn's `requested_cli`,
   else its acting agent's list, else the default — and never a CLI the agent is no longer set
-  up for), keep those the box has signed in, for a caller's turn (`Turn.capability`) those it
+  up for), keep those the box has signed in, for a caller's confined turn (stored `Turn.capability`) those it
   confines (`clis.confines`: the box's `profiles`/`envelope` for that CLI), for a sensitive
   conversation only `SENSITIVE_CLIS` (Claude Code); the first left wins, `None` = this box does
   not take it. The claim, coverage (`_refined_allows`, which passes its `ignore_requirements`
@@ -117,7 +117,7 @@ headless); `claude-desktop` and `emdash` run Claude Code only.
   A session a box reports with no turn is held to the box's only CLI (emdash: Claude Code).
   Once held: a fork runs on the same CLI; a transfer or placement onto a box without it is
   refused (`placement._placeable_runner`); and if its agent is no longer set up for it, a send
-  is refused at every door (`clis.conversation_refusal`, 422; Slack says so in the thread).
+  is refused at every send path (`clis.conversation_refusal`, 422; Slack says so in the thread).
 - **Sign-in is per CLI.** A box claims nothing only when no CLI is signed in. Coverage asks
   `choose` without the sign-in (a signed-out box still covers, like an offline one);
   `turn_reach` adds it, so a Codex conversation on a box whose Codex login is gone reads

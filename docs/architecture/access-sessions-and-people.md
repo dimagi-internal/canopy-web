@@ -83,8 +83,8 @@ That writes one `SessionReviewAsk` per (session, agent, person), live for 7 days
 (`WINDOW`), opens a chat with the coach owned by the person, and starts a turn there whose
 verified asker is them.
 
-**The door.** Every turn in that chat runs confined in canopy's built-in `session_review`
-capability (`interface.SESSION_REVIEW`, `access._review_rule`), whoever asks: owner, admin and
+**The profile.** Every turn in that chat runs confined in canopy's built-in `session_review`
+profile (`interface.SESSION_REVIEW`, `turn_context._review_rule`), whoever asks: owner, admin and
 canopy too, as a sensitive conversation does, and a fork or a Slack branch of it stays in it or is
 refused. `turn_context.resolve_turn_context` decides this; nothing is started as canopy. The transcript is text someone
 may have written to steer whoever reads it, so the turn holds:
@@ -126,7 +126,7 @@ scope is a separate table (`tests/test_session_review_asks.py`).
 **Who is offered it** (`session_review_asks.state`): only the agent `COACHING_AGENT_SLUG` names, and
 only someone in its workspace, since the reply is in a chat there. It says plainly why not when the
 session is sensitive, canopy holds none of the session's messages, or `turn_context.resolve_turn_context` gives them nothing
-on the agent. Any access opens it, `read_only` too, because the door is narrower than read mode. The
+on the agent. Any access opens it, `read_only` too, because that profile is narrower than read mode. The
 coach needs no membership of the session's workspace: it reads as the person.
 
 ## Who is in a session

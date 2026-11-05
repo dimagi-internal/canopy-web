@@ -135,7 +135,7 @@ site_agents.refresh()               # "re-read now" from your own settings page
 
 `GET /api/sites/agents`, signed with your own key, answers with a JWS signed by
 canopy's client key (the `Canopy-Execution` key): exactly the agents this
-workspace allows on your site, each with its capabilities for your site
+workspace allows on your site, each with its connected sites for your site
 (`handles_sensitive` and who set it), which runner flags its runners carry and whether one
 is ready now, `ready`, `url` (the agent's page in canopy), `problems` — plain
 sentences naming where in canopy to fix each — and `problem_links`
@@ -179,7 +179,7 @@ def site_needs():
 ```
 
 `sensitive_data.requires` is what an agent must be to work with your sensitive data
-(`handles_sensitive`: a capability for your site says `data: sensitive`;
+(`handles_sensitive`: a connected site for your site says `data: sensitive`;
 `runner_flag`: its turns run on a runner with that flag), and
 `uses.sensitive_data_agents` names the agents you let near it. **The pages and
 scopes in `site.json` are informational for canopy:** it shows them to the site's

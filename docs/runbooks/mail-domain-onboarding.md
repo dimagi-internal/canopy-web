@@ -6,7 +6,7 @@ Design and invariants: `docs/architecture/mail.md`. Do steps 1–4 once per AWS 
 
 Run every `aws cloudformation deploy` below from an up-to-date `main` checkout, after the feature's PR has merged — the templates you deploy must be the merged ones.
 
-The mail stack's HTTPS subscriptions send a `SubscriptionConfirmation` the moment they are created, and canopy-web can only verify and confirm it if it already knows the topic ARNs. The ARNs and bucket name are deterministic, so set canopy-web up first. (The SNS doors verify signatures regardless of `MAIL_ENABLED`, but need the topic ARN settings.)
+The mail stack's HTTPS subscriptions send a `SubscriptionConfirmation` the moment they are created, and canopy-web can only verify and confirm it if it already knows the topic ARNs. The ARNs and bucket name are deterministic, so set canopy-web up first. (The SNS endpoints verify signatures regardless of `MAIL_ENABLED`, but need the topic ARN settings.)
 
 1. **Turn the feature on in canopy-web** with the known names, then deploy:
    ```bash

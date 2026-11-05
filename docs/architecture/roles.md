@@ -2,7 +2,7 @@
 
 > Every term here — workspace roles, agent roles (`owner` / `admin` / `editor` /
 > `read_write` / `read_only`, plus `system`), the access list, access (`full` / `confined` /
-> `none`), the agent's capabilities, turn mode — is defined once, with THE rule that decides an
+> `refused`), read mode and connected sites, turn mode — is defined once, with THE rule that decides an
 > agent turn, in [`access.md`](access.md). This page is about enforcement.
 
 There are six tiers. Each contains the one below it.
@@ -10,7 +10,7 @@ There are six tiers. Each contains the one below it.
 | Tier | Enforced as | Can |
 |---|---|---|
 | **Link reader** | *no account* — a link you were sent | Read what was shared: a storyboard, a narrative, a walkthrough, a session transcript, the public explainer. |
-| **Viewer** | workspace member, `viewer` | Read the board and the turns you started; answer a blocked question, approve or decline a task. Talk to an agent only as far as its access list lets you (a read_only line opens `ask`, a line naming a capability opens that one; nothing is open by being in the workspace). Cannot change what an agent *is*, or anything else. |
+| **Viewer** | workspace member, `viewer` | Read the board and the turns you started; answer a blocked question, approve or decline a task. Talk to an agent only as far as its access list lets you (a read_only line opens read mode, a line naming a connected site opens that one; nothing is open by being in the workspace). Cannot change what an agent *is*, or anything else. |
 | **Editor** | workspace member, `editor` | Create and edit agents, send turns to them (`POST /api/harness/turns/` needs this role **and** `turn_context.resolve_turn_context` giving you the agent; the whole profile needs a line on its access list that gives `write` (read_write or editor), and a line may make every such turn `manual`), edit schedules, route work (never in `auto`), **delete an agent**; create and change every product surface (projects, walkthroughs, shareouts, reviews, DDD, storyboards, issues). |
 | **Workspace admin** | workspace member, `admin` | Run the workspace: read every LOG (the event log, every turn's prompt / ledger / transcript / caller context, runner drills, connected-site health); invite, re-role and remove members **strictly below themselves**; the integrations (inbound mailboxes + push config, Slack history + sync, Test connection); the default runner order, retention, admission rules, and starting or declining a proposed project. Holds no keys. |
 | **Owner** | workspace member, `owner` | The keys: make admins and owners, the shared vault, every agent's credentials (a workspace owner is every agent's admin), the Slack app itself, registering or changing a connected site, deleting or moving the workspace; hold or stop the workspace's work (`control`). Gets the workspace's alert and access-request email. |

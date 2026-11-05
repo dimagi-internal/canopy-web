@@ -8,9 +8,9 @@ How actions reach the agent and what they cannot do (7), how access control reso
 
 ### First: is it actually a page action?
 
-Three doors, and picking the wrong one is the commonest mistake:
+Three routes, and picking the wrong one is the commonest mistake:
 
-| the thing | door | why |
+| the thing | route | why |
 | --- | --- | --- |
 | **reading** data | your server / MCP tool | live, ACL-correct, works with no tab open. The page supplies only the *selection* |
 | **writing** server data | your server / MCP tool | audited, rate-limited, revocable, survives the tab closing |
@@ -66,7 +66,7 @@ page changed.
   the chosen session is named in the tool description so a wrong guess is
   visible rather than silent.
 - **A confined agent sees only its own conversation's page.** A visitor's
-  conversation runs the agent in a capability with `sites:`, and that profile gets
+  conversation runs the agent in a connected site (an entry with `sites:`), and that profile gets
   the `page_*` tools automatically — in a sensitive conversation too, since an
   action runs in that person's tab and its answer goes only to the turn. They are
   canopy's tools, not your MCP server's: an agent that sends `page_showQuery`
@@ -176,7 +176,7 @@ In three steps — every claim, lifetime, header and refusal is in
    token's scopes.
 4. **Sensitive data? Verify `Canopy-Execution`.** On an agent's turn every request also carries
    canopy's signed statement about the call: the agent, its author's declaration that the
-   capability handles sensitive data (`data: sensitive`, made by its owner or an admin), the
+   connected site handles sensitive data (`data: sensitive`, made by its owner or an admin), the
    runner and its flags in force (`sensitive_data`, declared by a person and matched by the
    box's own report), and the
    conversation's requirements. `canopy_sdk.django.execution.verify_execution(request)` checks
@@ -184,7 +184,7 @@ In three steps — every claim, lifetime, header and refusal is in
    `execution.sensitive_clearance(agents={...})` says whether to release sensitive data or keep the
    agent on synthetic data, and why. Claims and refusal codes:
    [SDK README § `Canopy-Execution`](../../sdk/python/README.md#canopy-execution--what-canopy-vouches-for-per-request).
-   canopy's gateway itself never calls you for a sensitive conversation whose capability does
+   canopy's gateway itself never calls you for a sensitive conversation whose connected site does
    not handle sensitive data.
 5. **The person's own View? Verify `Canopy-View`, never infer it.** A View's `resources/read`
    carries canopy's signed `Canopy-View` (`actor: "view"`, your id for the person as `sub`, the
@@ -194,7 +194,7 @@ In three steps — every claim, lifetime, header and refusal is in
    `rpc=("tools/call", {"name": …, "arguments": …})`). An agent's own tool call never carries
    one. Either rides only
    when the principal behind the View is a person acting as themselves — never an agent's turn,
-   caller token or own login, whatever door it uses (`apps/harness/acting_person.py`) — and only
+   caller token or own login, whatever route it uses (`apps/harness/acting_person.py`) — and only
    in a conversation they are in (`mcp_apps_views.view_facts`). If you give a View more than an
    agent, give it on `canopy_sdk.django.execution.verify_view(request, uri=, subject=)` alone: a
    delegated call with **no** statement is no one you may trust. Check it live with
@@ -202,7 +202,7 @@ In three steps — every claim, lifetime, header and refusal is in
 
 **What canopy adds on its side.** In your site's Connected-site row
 (`/w/<workspace>/settings/connected-apps`), set your **sign-in issuer** and **MCP
-server** URL. The agent's owner gives the capability that serves your site
+server** URL. The agent's owner gives the connected site that serves your site
 `sites: [<your site's name>]`. **What a call may reach is yours to decide**: your
 page's scopes and your ACL for that person, enforced by your MCP server (it lists
 and runs only the tools the token's scopes map to). canopy holds no list of your
@@ -301,7 +301,7 @@ over **4 MB** (`result too large; use a smaller page_size`), so page what you re
 
 **A minimal host** — no SDK storage; a store of your own and two MCP handlers
 (FastMCP 2.12+ shown, any MCP server works the same way). The resource handler applies
-**the same sensitive-data rule as the tool**: a result is a second door to the same rows,
+**the same sensitive-data rule as the tool**: a result is a second route to the same rows,
 so a host that clears only `tools/call` lets an agent `site_read` back what its tool
 withheld.
 

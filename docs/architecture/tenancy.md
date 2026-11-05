@@ -145,12 +145,12 @@ failure again.
   bearer with `apps/tokens/principal.py::resolve_bearer`. Tokens name their kind: `cpat_`
   (personal access, incl. MCP OAuth access tokens), `cdt_` (delegated), `ccon_` (contact),
   `cct_` (caller), `crt_` (runner), `chk_` (chat key), `hcpat_`/`hcprt_` (HCP). A prefixed
-  token is looked up in its own table only, and refused by a door that does not take its
+  token is looked up in its own table only, and refused by a route that does not take its
   kind. Tokens minted before the `cpat_`/`cdt_`/`ccon_` prefixes are 43 bare characters and
   still resolve by trying each kind. The prefixes are what `.gitleaks.toml` (`canopy-token`)
   and the transcript scrubber (`apps/session_sharing/redact.py`) recognise.
 - **What each kind may do is one table**, `apps/tokens/kinds.py`: every credential type a
-  door records (`request.auth_credential["type"]`; none = `session`), what it reaches, whether
+  route records (`request.auth_credential["type"]`; none = `session`), what it reaches, whether
   it may mint another credential (a session or a PAT only), whether it is a turn speaking for
   its asker (a caller token: refused where only the person may act), and whether it may carry
   `X-Canopy-On-Behalf-Of` (a PAT). Ask the table (`kinds.speaks_for_a_turn(request)`,
@@ -169,7 +169,7 @@ failure again.
   cannot sign an MCP client in on its own.
 - **Browser or machine** is one question, `views_debug.is_machine` (`stepup.is_browser` asks
   it): a machine is a request a token authenticated (`request.auth_method`, stamped by every
-  bearer door in `apps/tokens/middleware.py`), an in-process MCP call, or a session minted
+  bearer route in `apps/tokens/middleware.py`), an in-process MCP call, or a session minted
   from a token. An `Authorization` header alone proves nothing: a signed-in cookie user
   skips the token lookup, so a junk `Authorization: Bearer x` sent with a stolen cookie
   leaves `auth_method` unset and the request is still a browser, which every passkey
@@ -192,7 +192,7 @@ failure again.
   asymmetric algorithms only, `aud` enforced, `exp` ≤ 120s, single-use `jti` failing closed).
   canopy holds only the host's public key. Arrival resolves to an account the person already
   has that is a member of the site's workspace, or to a contact — it never creates a user or a
-  membership. **Don't add a shared-secret-plus-email door**; a signature is the only way a
+  membership. **Don't add a shared-secret-plus-email route**; a signature is the only way a
   site speaks for somebody.
 - The other direction — canopy calling the site's tools as the visitor — is the host grant
   chain: the host issues an ID-JAG at arrival, canopy redeems it (`apps/host_grants/host_grants.py`,
@@ -223,7 +223,7 @@ failure again.
   absent one fails closed. `dmarc=pass` proves the domain, not the human.
 - Grades are a high-water mark (a forwarded message must not downgrade a correspondent), with
   the latest grade kept beside it so a drop stays visible.
-- Recorded best-effort from the email door (`apps/harness/channels/email.py`) — mail
+- Recorded best-effort from the email channel (`apps/harness/channels/email.py`) — mail
   is answered even when the bookkeeping fails.
 - What agents learn about a person (`PersonFact`, HCP): `access-sessions-and-people.md` → "What agents know about
   a person".
@@ -505,7 +505,7 @@ THE predicate; every surface below asks it, one test each in
     it — reads the metadata columns. The reply reaches the asker the one way every turn's
     does: its transcript rows. A confined turn has no binding, so its box tails the turn's
     own transcript while it runs (`_TurnTail`, every ~2 s, one row per message or tool call as
-    Claude writes it — never token by token) and ships through the unbound door
+    Claude writes it — never token by token) and ships through the unbound route
     (`session_sync.ingest_turn_end_rows`), then ships the whole transcript once more at the
     end, before deleting it. Every ship of one transcript lands in the same epoch, and a row
     already held is neither stored nor fanned out again, so the final ship adds nothing the
@@ -516,7 +516,7 @@ THE predicate; every surface below asks it, one test each in
     login's test vault key). A harness signed in as the agent then reads them exactly as a
     person does: the passphrase unlock in its browser.
   - *Who may send into one.* Its own people on its chat surfaces, the read gate
-    (`reads_content`, asked in `doors.send_from` for every door: REST, socket, contact,
+    (`reads_content`, asked in `send_paths.send_from` for every send path: REST, socket, contact,
     app view, MCP, Slack) — 403 `NOT_IN_IT_SEND` otherwise, `forbidden` on the socket.
     Whoever may not read the answer may not steer the agent either. A leg that only lets
     someone see one exists (an agent's admins, a co-tenant of a runner-discovered one)
@@ -525,10 +525,10 @@ THE predicate; every surface below asks it, one test each in
     nobody started stays keyless and keeps no words.
   - *Who may hold one.* A canopy user with a vault key. A contact, or a starter with none,
     is refused in a sentence ("a sensitive conversation needs a canopy account with a vault
-    key; set yours up at …") at create (422) and at every send door (`CannotHold`: 422 on
+    key; set yours up at …") at create (422) and at every send path (`CannotHold`: 422 on
     REST, `session.error` `cannot_hold` on the socket). A send that would MAKE an older
     conversation sensitive is refused before the switch, in its transaction
-    (`add_runner_requirements(..., refuse_keyless=True)` from `doors.send_from`): all or
+    (`add_runner_requirements(..., refuse_keyless=True)` from `send_paths.send_from`): all or
     nothing, so a refused send never leaves it private with its history blanked. Rows an agent ships into a keyless
     sensitive conversation keep no words at all.
   - *Multiplayer.* Adding someone is a browser act by someone in it: their browser unwraps
@@ -544,7 +544,7 @@ THE predicate; every surface below asks it, one test each in
     to give you a fresh copy"). Removing someone deletes their wrap; the key is not rotated
     (they could have kept what they read). Nothing else makes
     anyone one of its people: `participants.ensure_participant` adds nobody to a sensitive
-    conversation who is not its creator and holds no wrap of its key, so no door — a Slack
+    conversation who is not its creator and holds no wrap of its key, so no entry point — a Slack
     reply, a dispatch's asker — can. Asking to join is once an hour per conversation
     (`join_requests.TooSoon`, 429; `CANOPY_JOIN_REQUEST_REASK_SECONDS`).
   - *Given it before it became sensitive.* A participant with no copy for their current
@@ -646,7 +646,7 @@ THE predicate; every surface below asks it, one test each in
     file lands in the turn's own directory (`<cwd>/.canopy-attachments/<turn>/`, owner-only),
     readable by that turn alone (`sensitive_data_settings(attachment_dir=…)`, and the
     profile's `attachment_dirs`, which profile_guard ≥ 4 — canopy 0.2.781 — lets Read open
-    and nothing else; the capability's own tools and read_paths are unchanged, and an older
+    and nothing else; the profile's own tools and read_paths are unchanged, and an older
     guard gets no file, named as not available), and goes when the turn ends
     (`_sensitive_data_forget_turn`); what the agent read of it survives only in the kept
     session's transcript, which lives no longer than the kept conversation. The transcript
@@ -658,7 +658,7 @@ THE predicate; every surface below asks it, one test each in
   runs no search, whose query would keep the turn's words, and `hcp_searchPreferences` is a
   403), and the person cannot switch it on or grant it there. The Learn/Use switches are not
   offered in one (`tests/test_hcp.py`).
-- **Live and log doors ask the same gate:** the chat socket (`SessionConsumer`), whose live
+- **Live and log routes ask the same gate:** the chat socket (`SessionConsumer`), whose live
   frames carry the words, admits only `reads_content`; the turn socket's tail gets the stored
   metadata; and `turn_access.can_read_turn_content` is False for a sensitive turn, so no turn
   read (REST, MCP, the board, the unclaimable report, the caller envelope) returns its
@@ -690,8 +690,8 @@ THE predicate; every surface below asks it, one test each in
   `/canopy cloud` leave a private conversation as it is and say so (`_move_to_cloud`),
   since its stranded turn could only be re-asked by Slack sending into it.
 - **The agent's memory:** every turn of a sensitive conversation runs confined to the same
-  capability, so it resumes the Claude session of the conversation's previous turn when it
-  runs on the same sensitive-data box, in the same capability for the same agent, and the
+  connected site, so it resumes the Claude session of the conversation's previous turn when it
+  runs on the same sensitive-data box, in the same connected site for the same agent, and the
   box still holds the transcript. The box records which session belongs to which
   conversation itself (`~/.canopy/kept-conversations/<session>.json`, runner/ec2
   `kept_resume` / `keep_conversation`), told by the claim that the turn is in one
@@ -709,8 +709,8 @@ THE predicate; every surface below asks it, one test each in
   other per-turn state under `~/.canopy` are denied by name (`sensitive_data_settings`). A
   member's `who_is_asking` is gated like its REST twin (`can_read_turn_content`), so a
   sensitive turn is "turn not found".
-- **No door around the gate** (`tests/test_sensitive_read_doors.py`,
-  `tests/test_sealed_server_doors.py`): a session minted from a
+- **No route around the gate** (`tests/test_sensitive_read_routes.py`,
+  `tests/test_sealed_server_routes.py`): a session minted from a
   token is refused by the app-view routes (`app_views_api.browser_only`) and the panel's
   own token (`embed_api.embed_self_token`), both via `is_machine`, and by the chat socket
   (`auth_method="minted"`); every page route — its state and actions, declared, listed,
@@ -722,7 +722,7 @@ THE predicate; every surface below asks it, one test each in
   its row (`page_actions._forget`), and the page is forgotten when its
   last live turn ends (`turn_close._forget_the_page`), or after
   `CANOPY_SENSITIVE_PAGE_TTL_SECONDS` (15 min) with no live turn
-  (`page_state.forget_idle_sensitive_pages`, a tick); the unbound stream door
+  (`page_state.forget_idle_sensitive_pages`, a tick); the unbound stream route
   (`api_session_sync._turn_end_session`) takes only the confined turn's own transcript
   (the first it ships, stamped on `Turn.session_key`) from a box that may still hold the
   agent (`runner_may_hold_agent`); a list reads who is in which once per page
@@ -755,11 +755,11 @@ THE predicate; every surface below asks it, one test each in
 - **Never re-processed:** auto-debug starts nothing for a turn with any requirement; the
   fleet's transcript readers find none to read.
 - **A sensitive turn's token reaches a fixed few tools:** its caller token's tools are the
-  capability's globs ∩ `sensitive_data.SENSITIVE_CANOPY_TOOLS` (`current_page`,
+  connected site's globs ∩ `sensitive_data.SENSITIVE_CANOPY_TOOLS` (`current_page`,
   `who_is_asking`, `site_tools`, `site_call`, `site_read`) plus its own page's actions
   (`page_*`, `sensitive_data.sensitive_tool`: each runs in its person's tab and answers
   only the turn, so nothing leaves its people), whatever the interface lists; it resolves to
-  nothing once the capability stops saying `data: sensitive` (re-read on every call) or the
+  nothing once the connected site stops saying `data: sensitive` (re-read on every call) or the
   turn is not confined (`caller_tokens._sensitive_grant`, `mcp/turn_scope.py`). So a
   sensitive turn creates no schedule, task or turn of its own.
 - **Lineage is never dropped:** a caller token's own turn is the parent of anything its

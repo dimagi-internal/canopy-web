@@ -171,7 +171,7 @@ every 30 s.
   nothing is open or dismissed.
 - **Topology** (`/w/:ws/settings/topology`): the side panel's "Alerts here"
   (`workspace:<slug>`, which also matches every workspace below it) is the one place a runner or agent
-  problem shows (no separate can't-run list, badge or "lacks its repo" line); "held to some capabilities" and "runners serving nobody" stay as
+  problem shows (no separate can't-run list, badge or "lacks its repo" line); "held to read mode or some connected sites" and "runners serving nobody" stay as
   plain facts.
 - **Agent page** (`/w/:ws/agents/:slug`): `agent:<slug>` above every section,
   nothing when empty.

@@ -66,7 +66,7 @@ direct (a direct turn).
   claimed, and it carries the same caller envelope a runner turn gets
   (`trigger.private_runner` names the machine; `trigger.runner` is null).
 * **Who may.** Exactly whom the rule gives the WHOLE agent (rows 1–3): its owner
-  or an agent admin, anyone whose lines give `write`. A read_only or capability line, or a contact, is refused
+  or an agent admin, anyone whose lines give `write`. A read_only or connected-site line, or a contact, is refused
   (403) and keeps the confined path through canopy.
 * **Mode.** `manual`, always — except an agent admin who asks for `auto`. Stamped
   at open, like a dispatch's request; an editor does not get the
@@ -124,7 +124,7 @@ and waits for a human yes, and a cloud session that ends cannot receive one.
   conditions are any subset of: agent, origin (the `Turn.origin` vocabulary),
   principal (who asked, in this condition's own words: `member` is a canopy user, `contact` an
   outside person with no account, `agent`, `system`; it is not an agent role), access
-  (`confined`/`full`), capability, turn mode, runner kind
+  (`confined`/`full`), profile (stored as the rule's `capability`: read mode or a connected site's name), turn mode, runner kind
   (`emdash`/`cloud`/`remote`), and reach (`paused`/`offline`, below). A blank
   condition means any. A rule needs at
   least one. Its action is `reject`, `allow` or `auto` (below). It also carries a reason and two
@@ -199,11 +199,11 @@ and waits for a human yes, and a cloud session that ends cannot receive one.
 * **Refusals as rules.** canopy refuses two
   kinds of turn on its own, before any rule: mail from a contact the workspace
   **blocked** (`channels.email.refused_email_turn`), and a person the agent offers
-  **nothing** (no line gives them a role that opens a capability) (`_apply_capability`, access `none`). Those are access
+  **nothing** (no line opens read mode, a connected site or the whole agent for them) (`_apply_capability`, a `refused` Turn Context; the rule's condition says `access: none`). Those are access
   decisions, so they stand whatever the rules say: no `allow` can cover them,
   and disabling their rule does not let them run. Each is reported through a
   rule instead (`evaluate.at_refusal`): conditions `sender: blocked` or
-  `access: none`, which also takes origin, principal, capability and agent but
+  `access: none`, which also takes origin, principal, profile (`capability`) and agent but
   never a runner or a mode (a refusal comes before either). A matching enabled
   rule records the ledger event and the fired count and sends its notices, while
   the turn keeps the refusal's own `result_note`. Migration `admission/0005`,
@@ -235,21 +235,21 @@ and waits for a human yes, and a cloud session that ends cannot receive one.
 
 What the runner hands the agent beside each turn (`apps/harness/caller_context.py`,
 VERSION 3 — 3 only added `person` and `trigger.kind`, so a v2 reader is unaffected): `who`, `verified` (THIS message), `role` and `source`
-(below), `relationship`, `profile` (`full` | `confined`), `access` (`full` | `confined` | `refused`, the Turn Context's word; `profile` says `full` on a turn refused before it ran, and stays for the runners and plugins that read it), `permissions`, `manual_only`, `granted_by`, `capability` (the confined
-profile), `turn_mode` (`{mode, basis}`), and:
+(below), `relationship`, `profile` (`full` | `confined`), `access` (`full` | `confined` | `refused`, the Turn Context's word; `profile` says `full` on a turn refused before it ran, and stays for the runners and plugins that read it), `permissions`, `manual_only`, `granted_by`, `capability` (the wire name of the confined
+profile: read mode or a connected site), `turn_mode` (`{mode, basis}`), and:
 
 * **`role`** — the asker's named role on the agent: `owner` | `admin` | `editor` |
-  `read_write` | `read_only` | `system`, null when refused or when only named-capability lines
+  `read_write` | `read_only` | `system`, null when refused or when only connected-site lines
   name them (`granted_by` then says `capability:<name>`). **`source`** — why: `owner` | `admin` |
   `system` | `session` | `list:<line>` (the access-list line that gave it, e.g.
   `list:domain:dimagi.com`), `""` when refused. An agent says "you are read_only here because …"
   from these, instead of guessing. Added without a version bump.
 * **`permissions`** — what the asker holds on THIS agent on this turn: a sorted list from the
-  agent vocabulary (`read`, `write`, `agent_edit`, `admin`, `own`, and scoped `use:<capability>`),
+  agent vocabulary (`read`, `write`, `agent_edit`, `admin`, `own`, and scoped `use:<site>`, stored as `use:<name>`),
   closed under the dependency rule (`agent_edit` implies `write` implies `read`). A named role
   gives `roles.permissions_of(role)` (owner, admin and system included; system holds what an admin
-  does); an access-list asker gets what their lines give (`Decision.permissions`); a confined turn
-  holds only `read` (when their lines give it) and `use:<capability>` for the capability the turn
+  does); an access-list asker gets what their lines give (`Standing.permissions` on the Turn Context); a confined turn
+  holds only `read` (when their lines give it) and `use:<name>` for the connected site the turn
   runs in, even for an owner whom a sensitive conversation confined; `[]` when refused or for a
   turn with no agent. **`write` is in `permissions` exactly when `profile` is `full`**, so a reader
   may trust either (`tests/test_caller_envelope.py`). **`manual_only`** — `true` when the line that
@@ -262,8 +262,8 @@ profile), `turn_mode` (`{mode, basis}`), and:
   own repo; the canopy plugin's runner-side rail enforces that, canopy-web only reports it here.
 * **`granted_by`** — a legacy one-word summary of the same decision, kept for older readers;
   new readers should use `permissions` and `profile`, never match its strings: `owner` | `admin` |
-  `system` | `session:<role>` | `grant:<line>` (a line that gives `write`) | `capability:<name>` (a
-  confined asker in that capability) | `sensitive:<capability>` | `refused`, and `no-interface` for a
+  `system` | `session:<role>` | `grant:<line>` (a line that gives `write`) | `capability:<name>` (wire: a
+  confined asker in read mode or that connected site) | `sensitive:<name>` | `refused`, and `no-interface` for a
   turn with no agent. New values may appear.
 * **`access_help`** — on a confined turn only: `{your_role, workspace, role_needed_for_full,
   who_can_grant}`. Why the caller is confined and what would change it, in roles (never people

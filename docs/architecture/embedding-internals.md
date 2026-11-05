@@ -124,7 +124,7 @@ and the embed does not — not a component. Compare against `ChatPage.tsx`:
   word), and the panel says which page the agent is told about ("Asking about …":
   the page state's `title` if the host declares one, else its `resource` as words).
 
-### Styling: two halves, two doors
+### Styling: two halves, two routes in
 
 `frontend/packages/canopy-widget/src/theme.ts`:
 

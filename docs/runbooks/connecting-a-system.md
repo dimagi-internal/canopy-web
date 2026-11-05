@@ -62,7 +62,7 @@ that agent is deleted or moved, and the host then shows no agents.
 | ace-web publishes its keys | `GET /ace/api/canopy/jwks`, derived from that key | Yes — code |
 | canopy trusts ace-web | the `ace-web` **Connected site** row: workspace `connect`, `jwks_url` set, **no** pasted keys, agent `ace` | **No — hand-made prod state** |
 | canopy is an OAuth client of hosts (host grants) | `CANOPY_OAUTH_CLIENT_KEY` + `CANOPY_OAUTH_DPOP_KEY`, secrets `canopy-web/oauth-client-key` + `canopy-web/oauth-dpop-key` created by CFN | Containers are in CFN; **values are deliberately `PLACEHOLDER`**, so `/oauth/*.json` answer 503 and no `id_jag` is redeemed |
-| ACE's declared interface (its capabilities) and access list | live state on canopy-web (agent → Settings → Channels → Capabilities, and → Roles → Access) | **No — hand-made prod state** |
+| ACE's read mode and connected sites, and its access list | live state on canopy-web (agent → Settings → Channels → Read mode and connected sites, and → Roles → Access) | **No — hand-made prod state** |
 
 ### The gap, stated plainly
 
@@ -126,8 +126,8 @@ curl -s https://canopy.dimagi.com/oauth/jwks.json     # one EdDSA key
 4. The host allowlists canopy's `client_id`
    (`https://canopy.dimagi.com/oauth/client.json`) and starts
    sending `id_jag` at arrival.
-5. The agent's owner gives the capability that serves the site
-   `sites: [<site name>]` + a `ceiling:` (agent → Settings → Callers).
+5. The agent's owner adds a connected site for the site
+   (`sites: [<site name>]`, optionally a `ceiling:`; agent → Settings → Channels → Read mode and connected sites).
 
 Rotating the DPoP key invalidates every stored grant (they are bound to it);
 visitors simply re-grant on their next re-mint. Rotating the client key: keep
