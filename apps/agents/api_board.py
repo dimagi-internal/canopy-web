@@ -20,10 +20,11 @@ from apps.api.route_gates import gate
 from apps.contacts import services as contacts
 from apps.harness import turn_access
 from apps.harness.models import Turn, agent_turns_q
-from apps.workspaces.links import base_url
 from apps.workspaces import permissions as perms
+from apps.workspaces.links import base_url
 
 from . import engagement, ideas, participants, proposals, services, work
+from .api_proposals import resolve_task_ref
 from .credentials import workspace_vaults
 from .gates import (
     agent_for_read,
@@ -39,7 +40,6 @@ from .gates import (
     visible_agent_workspaces,
 )
 from .models import AgentProject, AgentTask
-from .api_proposals import resolve_task_ref
 from .schemas import (
     ActionAppliedIn,
     ActOut,
@@ -183,7 +183,7 @@ def project_detail(request: HttpRequest, project) -> AgentProjectDetailOut:
 
 
 @router.patch("/{slug}/projects/{ref}/", response=AgentProjectOut, summary="Update a project",)
-@gate("agent.work", kind="content")
+@gate("agent.work", "project-member", kind="content")
 def patch_project(request: HttpRequest, slug: str, ref: str,
                   payload: AgentProjectPatch) -> AgentProjectOut:
     agent = agent_for_read(request, slug)

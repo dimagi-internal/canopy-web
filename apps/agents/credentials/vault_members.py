@@ -8,7 +8,12 @@ with the member so a page can always say WHY someone can open it:
   set it names: everyone with full access to an agent (`access.roster`; the
   agent's owner comes in as `owner`, its admins as `admin`) and everyone holding an active
   license to use it directly, or the owners / admins of a workspace (inherited
-  down the tree as those roles are).
+  down the tree as those roles are), or what a workspace vault is attached to.
+
+**A project gives its PEOPLE, never its agents' rosters.** A vault attached to a project
+is read in the turns of the project's member agents, but who may open it is the project's
+own members (`project_members`). An agent's full-access list is about that agent: being
+able to use Eva does not put you on every project Eva works on.
 
 A person's role is the highest any source gives them, in the agent's words:
 `owner` and `admin` (see and edit values, change membership) above `member` (open
@@ -21,14 +26,26 @@ works for is a member, so approving a machine never grants by itself.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from django.db import transaction
 from django.db.models import Q
 
 from apps.workspaces import services as wsvc
 
-from .. import access
+from .. import access, project_members
+from ..member_roles import (
+    ADMIN,
+    ASSIGNABLE,
+    MEMBER,
+    OWNER,
+    Membership,
+    MembershipError,
+    is_admin,
+    not_a_person,
+    role_named,
+)
+from ..member_roles import add as _add
 from ..models import (
     Agent,
     AgentLicense,
@@ -39,32 +56,6 @@ from ..models import (
 )
 
 logger = logging.getLogger(__name__)
-
-OWNER, ADMIN, MEMBER = VaultMember.OWNER, VaultMember.ADMIN, VaultMember.MEMBER
-_RANK = {MEMBER: 0, ADMIN: 1, OWNER: 2}
-#: What a row or a link may give: owner comes only from owning the agent or workspace.
-_ASSIGNABLE = {ADMIN, MEMBER}
-#: The words before the roles matched the agent's; still accepted from older clients.
-_OLD_NAMES = {"manage": ADMIN, "use": MEMBER}
-
-
-def is_admin(role: str | None) -> bool:
-    """May see and edit values and change membership: the vault's owners and admins."""
-    return role in (OWNER, ADMIN)
-
-
-def role_named(role: str) -> str:
-    """A role as a client sent it, in today's words (`manage` → `admin`, `use` → `member`)."""
-    return _OLD_NAMES.get(role, role)
-
-
-@dataclass
-class Membership:
-    user: object
-    role: str
-    #: Why: "direct", "agent:<slug>", "workspace_owners:<slug>", "workspace_admins:<slug>".
-    sources: list[str] = field(default_factory=list)
-
 
 def vault_for_agent(agent: Agent) -> Vault | None:
     """The agent's vault, made (linked to the agent) the first time it is asked
@@ -83,17 +74,6 @@ def vault_for_agent(agent: Agent) -> Vault | None:
     return v
 
 
-def _add(out: dict[int, Membership], user, role: str, source: str) -> None:
-    m = out.get(user.pk)
-    if m is None:
-        out[user.pk] = Membership(user, role, [source])
-        return
-    if _RANK[role] > _RANK[m.role]:
-        m.role = role
-    if source not in m.sources:
-        m.sources.append(source)
-
-
 def _linked(link: VaultLink, out: dict[int, Membership]) -> None:
     if link.kind == VaultLink.AGENT:
         source = f"agent:{link.agent.slug}"
@@ -109,13 +89,15 @@ def _linked(link: VaultLink, out: dict[int, Membership]) -> None:
             _add(out, lic.user, link.role, f"license:{link.agent.slug}")
         return
     if link.kind == VaultLink.ATTACHED:
-        # Everyone with full access to an agent this workspace vault serves, as the
-        # link's role: an agent's admins run that agent, they do not manage the
-        # workspace's vault (its owners do, through their own link).
-        for agent in attached_agents(link.vault):
+        # Everyone with full access to an agent attached by itself or through a workspace, as
+        # the link's role: an agent's admins run that agent, they do not manage the workspace's
+        # vault (its owners do, through their own link).
+        rows = list(VaultAttachment.objects.filter(vault=link.vault).select_related("project"))
+        for agent in _agents_by_name(rows):
             for row in access.roster(agent):
                 if row["access"] == access.FULL:
                     _add(out, _UserRef(row["user_id"], row["email"]), link.role, f"attached:{agent.slug}")
+        _project_people(link, [r.project for r in rows if r.project_id], out)
         return
     wanted = {"owner"} if link.kind == VaultLink.WORKSPACE_OWNERS else {"owner", "admin"}
     source = f"{link.kind}:{link.workspace.slug}"
@@ -123,6 +105,23 @@ def _linked(link: VaultLink, out: dict[int, Membership]) -> None:
         if m.role in wanted:
             # A workspace's owners own its vault, as an agent's owner owns the agent's.
             _add(out, m.user, OWNER if m.role == "owner" else link.role, source)
+
+
+def _project_people(link: VaultLink, projects: list, out: dict[int, Membership]) -> None:
+    """The people of the attached projects in the vault's tree, who must themselves belong
+    to that tree (a share can reach a sibling workspace; a vault cannot reach past its own).
+    The project's lead and admins are the vault's admins, as an agent's admins are its
+    vault's; only a workspace or an agent gives `owner`."""
+    tree = vault_tree(link.vault)
+    for project in projects:
+        if project.workspace_id not in tree:
+            continue
+        people = project_members.members(project)
+        roles = wsvc.member_roles_of(m.user for m in people.values())
+        for m in people.values():
+            if tree & set(roles.get(m.user.pk, {})):
+                role = ADMIN if is_admin(m.role) else link.role
+                _add(out, m.user, role, f"project:{project.address}")
 
 
 def vault_tree(vault: Vault) -> set[str]:
@@ -143,20 +142,27 @@ def project_agents(vault: Vault, project, tree: set[str] | None = None) -> tuple
             [a for a in members if a.workspace_id not in tree])
 
 
+def _agents_by_name(rows: list[VaultAttachment]) -> list[Agent]:
+    """The agents attachments name by themselves or through a workspace (and below it): the
+    ones whose full-access people the attached link counts. Not a project's member agents."""
+    ids = {r.agent_id for r in rows if r.agent_id}
+    roots = {r.workspace_id for r in rows if r.workspace_id}
+    tree = roots | wsvc.descendant_slugs(roots) if roots else set()
+    return list(Agent.objects.filter(Q(pk__in=ids) | Q(workspace_id__in=tree)).select_related("workspace"))
+
+
 def attached_agents(vault: Vault) -> list[Agent]:
     """Every agent a WORKSPACE vault serves: its direct attachments, every agent in
     an attached workspace or below it, and the member agents of an attached project
     that lie in the vault's tree (`project_agents`)."""
     rows = list(VaultAttachment.objects.filter(vault=vault).select_related("project"))
-    ids = {r.agent_id for r in rows if r.agent_id}
-    roots = {r.workspace_id for r in rows if r.workspace_id}
-    tree = roots | wsvc.descendant_slugs(roots) if roots else set()
+    agents = {a.pk: a for a in _agents_by_name(rows)}
     projects = [r.project for r in rows if r.project_id]
     if projects:
         vtree = vault_tree(vault)
         for project in projects:
-            ids |= {a.pk for a in project_agents(vault, project, vtree)[0]}
-    return list(Agent.objects.filter(Q(pk__in=ids) | Q(workspace_id__in=tree)).select_related("workspace"))
+            agents.update((a.pk, a) for a in project_agents(vault, project, vtree)[0])
+    return list(agents.values())
 
 
 @dataclass(frozen=True)
@@ -164,15 +170,6 @@ class _UserRef:
     """What a roster row gives: enough to key and show a member without a query."""
     pk: int
     email: str
-
-
-def not_a_person(user_ids) -> set[int]:
-    """Of `user_ids`, the logins that are not people: an agent's own canopy login
-    (`Agent.user`). It is never a vault member — it holds no vault key, and an agent
-    able to change its own vault's membership could hand its key to anyone (a
-    prompt-injected agent adding a reader)."""
-    ids = set(user_ids)
-    return set(Agent.objects.filter(user_id__in=ids).values_list("user_id", flat=True))
 
 
 def members(vault: Vault | None) -> dict[int, Membership]:
@@ -238,17 +235,12 @@ def devices_working_for(keys, person_ids):
 
 # ---- changing membership ----------------------------------------------------------------
 
-class VaultMembershipError(Exception):
-    """A refused membership change. `code` is the machine-readable `error`."""
-
-    def __init__(self, status: int, code: str, detail: str) -> None:
-        super().__init__(detail)
-        self.status, self.code, self.detail = status, code, detail
+VaultMembershipError = MembershipError
 
 
 def _check_role(role: str) -> str:
     role = role_named(role)
-    if role not in _ASSIGNABLE:
+    if role not in ASSIGNABLE:
         raise VaultMembershipError(422, "vault_bad_role",
                                    "role must be admin or member (owner comes from owning the agent or workspace)")
     return role

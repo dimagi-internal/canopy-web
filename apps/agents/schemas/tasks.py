@@ -1229,6 +1229,38 @@ class ProjectServiceOut(StrictModel):
     updated_at: dt.datetime
 
 
+class ProjectMemberOut(StrictModel):
+    """A person on a project, and why."""
+
+    user_id: int
+    email: str
+    #: `owner` (its lead), `admin` or `member`.
+    role: str
+    #: `lead` and/or `direct`.
+    sources: list[str] = []
+
+
+class ProjectMemberIn(StrictModel):
+    email: str = Field(min_length=3, max_length=254)
+    #: `admin` (may change who is on it) or `member`.
+    role: str = Field(default="member", max_length=10)
+
+
+class ProjectBoxOwnerOut(StrictModel):
+    """Someone whose machine runs a member agent but who is not a member of the vault serving it."""
+
+    email: str
+    agents: list[str] = []
+
+
+class ProjectPeopleOut(StrictModel):
+    members: list[ProjectMemberOut] = []
+    #: The caller may change the list: the lead, an admin on it, or an owner of its workspace.
+    may_manage: bool = False
+    #: Who must join before their machines can read the project's vaults. Only for a caller who may change the list.
+    box_owners_missing: list[ProjectBoxOwnerOut] = []
+
+
 class ProjectVaultOut(StrictModel):
     """A workspace vault attached to a project: names only, never a value. Its member agents
     that lie in the vault's tree read it in their turns."""

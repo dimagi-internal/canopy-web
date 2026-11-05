@@ -303,6 +303,36 @@ export async function removeProjectService(workspace: string, handle: string, id
 
 // ---- sharing a project with other workspaces of its tree -------------------------
 
+export type ProjectPeople = Schemas['ProjectPeopleOut']
+export type ProjectMemberRole = 'admin' | 'member'
+
+export async function listProjectMembers(workspace: string, handle: string): Promise<ProjectPeople> {
+  const res = await apiV2.GET('/api/workspace-projects/{workspace}/{handle}/members/', {
+    params: { path: { workspace, handle } },
+  })
+  return typed(unwrap(res, 'listProjectMembers'))
+}
+
+export async function addProjectMember(
+  workspace: string,
+  handle: string,
+  email: string,
+  role: ProjectMemberRole,
+): Promise<ProjectPeople> {
+  const res = await apiV2.POST('/api/workspace-projects/{workspace}/{handle}/members/', {
+    params: { path: { workspace, handle } },
+    body: { email, role },
+  })
+  return typed(unwrap(res, 'addProjectMember'))
+}
+
+export async function removeProjectMember(workspace: string, handle: string, userId: number): Promise<ProjectPeople> {
+  const res = await apiV2.DELETE('/api/workspace-projects/{workspace}/{handle}/members/{user_id}/', {
+    params: { path: { workspace, handle, user_id: userId } },
+  })
+  return typed(unwrap(res, 'removeProjectMember'))
+}
+
 export type ProjectShare = Schemas['ProjectShareOut']
 export type ProjectShareRemoved = Schemas['ProjectShareRemovedOut']
 

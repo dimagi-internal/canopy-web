@@ -16,7 +16,7 @@ from django.db import IntegrityError, transaction
 from django.test import Client
 from django.utils import timezone
 
-from apps.agents import move, services
+from apps.agents import move, project_members, services
 from apps.agents.credentials import vault_members, workspace_vaults
 from apps.agents.models import (
     Agent,
@@ -197,7 +197,11 @@ def test_a_machine_of_a_project_served_agent_may_hold_the_key_only_for_a_vault_m
     services.set_member_agents(w.proj, [w.hal, w.deep])
     workspace_vaults.attach(w.vault, project=w.proj, by=w.jj)
     key = _device(w.deep, adm, "box-deep")
-    # adm administers deep, a served agent, so the attached link makes them a member ...
+    # adm administers deep, a served agent, which alone does not make them a member ...
+    assert vault_members.role_of(w.vault, adm) is None
+    assert not workspace_vaults.device_may_hold(w.vault, key)
+    # ... being on the project does ...
+    project_members.add_member(w.proj, adm, role="member", by=w.jj)
     assert vault_members.role_of(w.vault, adm) == "member"
     assert workspace_vaults.device_may_hold(w.vault, key) and key in workspace_vaults.eligible_device_keys(w.vault)
     # ... and a machine whose person is not a member holds nothing, however it is routed.
@@ -245,6 +249,7 @@ def test_a_device_reads_the_project_vault_only_while_its_person_is_a_member(w):
     editors_run(w.deep)
     services.set_member_agents(w.proj, [w.hal, w.deep])
     workspace_vaults.attach(w.vault, project=w.proj, by=w.jj)
+    project_members.add_member(w.proj, adm, role="member", by=w.jj)
     Vault.objects.filter(pk=w.vault.pk).update(kv=1)
     w.vault.refresh_from_db()
     VaultSecret.objects.create(vault=w.vault, name="GOOGLE_PROVISIONER_KEY", value_zk="zk1:x", kv=1)
@@ -258,17 +263,18 @@ def test_a_device_reads_the_project_vault_only_while_its_person_is_a_member(w):
 
 # ---- who becomes a member of the vault -----------------------------------------------------
 
-def test_the_attached_link_follows_the_project_served_agents(w):
+def test_the_attached_link_gives_a_projects_people_not_its_agents_rosters(w):
     person = _user("pat")
     _member(w.team, person, WorkspaceMembership.EDITOR)
     AgentAdmin.objects.create(agent=w.deep, user=person, granted_by=w.jj)
     editors_run(w.deep)
     workspace_vaults.attach(w.vault, project=w.proj, by=w.jj)
-    assert vault_members.role_of(w.vault, person) is None          # deep is not in the project yet
     w.proj.member_agents.add(w.deep)
+    assert vault_members.role_of(w.vault, person) is None          # deep's people are deep's
+    project_members.add_member(w.proj, person, role="member", by=w.jj)
     ms = vault_members.members(w.vault)
-    assert ms[person.pk].role == "member" and ms[person.pk].sources == ["attached:deep"]
-    w.proj.member_agents.remove(w.deep)
+    assert ms[person.pk].role == "member" and ms[person.pk].sources == ["project:connect/connect-work"]
+    project_members.remove_member(w.proj, person.pk)
     assert vault_members.role_of(w.vault, person) is None
 
 

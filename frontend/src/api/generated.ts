@@ -9083,6 +9083,55 @@ export interface paths {
         readonly patch: operations["patch_workspace_project"];
         readonly trace?: never;
     };
+    readonly "/api/workspace-projects/{workspace}/{handle}/members/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The people on a project: its lead and those added by name
+         * @description The people on it, with why. They may change the project, and they are members of every
+         *     vault attached to it. Not the people who merely took part (`participants`), who get nothing.
+         */
+        readonly get: operations["list_project_members"];
+        readonly put?: never;
+        /**
+         * Add a person to a project by name, or change their role
+         * @description `{email, role}`: `role` is `admin` or `member`. Joining makes them a member of every vault
+         *     attached to the project, so it needs the project's lead, an admin on it, or an owner of its
+         *     workspace, and never an agent's login. They must belong to a workspace that can read it (422).
+         */
+        readonly post: operations["add_project_member"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/members/{user_id}/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Take a person off a project
+         * @description Removes their by-name membership and, with it, their place in the project's vaults. A copy
+         *     of a vault's key they already hold still opens what was written before: rotate the vault
+         *     if they have seen something that must stop working. The lead stays the lead until the project's lead changes.
+         */
+        readonly delete: operations["remove_project_member"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/workspace-projects/{workspace}/{handle}/shares/": {
         readonly parameters: {
             readonly query?: never;
@@ -11862,7 +11911,7 @@ export interface paths {
          * Serve an agent, a workspace's agents, a project's member agents or a cloud runner from a vault
          * @description `{agent}`, `{workspace}` (the vault's own workspace or one below it), `{project}`
          *     (`<workspace>/<handle>`, in the vault's tree: every current member agent in that tree is
-         *     served, and joining or leaving the project changes it) or `{runner}`:
+         *     served, the project's people become members, and joining or leaving changes both) or `{runner}`:
          *     a cloud runner whose Claude credentials the vault then holds. A project needs the caller
          *     to be an editor of the project's workspace too. A runner needs the
          *     caller to administer it too, and must share an isolation boundary with every runner
@@ -35978,6 +36027,64 @@ export interface components {
             readonly published_at?: string | null;
             /** Bytes */
             readonly bytes?: number | null;
+        };
+        /**
+         * ProjectBoxOwnerOut
+         * @description Someone whose machine runs a member agent but who is not a member of the vault serving it.
+         */
+        readonly ProjectBoxOwnerOut: {
+            /** Email */
+            readonly email: string;
+            /**
+             * Agents
+             * @default []
+             */
+            readonly agents: readonly string[];
+        };
+        /**
+         * ProjectMemberOut
+         * @description A person on a project, and why.
+         */
+        readonly ProjectMemberOut: {
+            /** User Id */
+            readonly user_id: number;
+            /** Email */
+            readonly email: string;
+            /** Role */
+            readonly role: string;
+            /**
+             * Sources
+             * @default []
+             */
+            readonly sources: readonly string[];
+        };
+        /** ProjectPeopleOut */
+        readonly ProjectPeopleOut: {
+            /**
+             * Members
+             * @default []
+             */
+            readonly members: readonly components["schemas"]["ProjectMemberOut"][];
+            /**
+             * May Manage
+             * @default false
+             */
+            readonly may_manage: boolean;
+            /**
+             * Box Owners Missing
+             * @default []
+             */
+            readonly box_owners_missing: readonly components["schemas"]["ProjectBoxOwnerOut"][];
+        };
+        /** ProjectMemberIn */
+        readonly ProjectMemberIn: {
+            /** Email */
+            readonly email: string;
+            /**
+             * Role
+             * @default member
+             */
+            readonly role: string;
         };
         /** ProjectShareOut */
         readonly ProjectShareOut: {
@@ -61587,6 +61694,80 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentProjectOut"];
+                };
+            };
+        };
+    };
+    readonly list_project_members: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProjectPeopleOut"];
+                };
+            };
+        };
+    };
+    readonly add_project_member: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ProjectMemberIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProjectPeopleOut"];
+                };
+            };
+        };
+    };
+    readonly remove_project_member: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+                readonly user_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProjectPeopleOut"];
                 };
             };
         };

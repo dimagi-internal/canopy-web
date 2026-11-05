@@ -80,6 +80,10 @@ Vocabulary (closed — add to it deliberately, never in passing):
 * ``vault-admin`` — ``credentials.vault_members.role_of`` is ``owner`` or ``admin``
   (``vault_members.is_admin``), directly or through a link (an agent vault's link
   makes the agent's owner its owner and the agent's admins its admins).
+* ``project-admin`` — ``agents.project_members.may_manage``: a person who leads the project or
+  is an admin on it, or an owner of its workspace. Never an agent's login. This list opens the
+  project's vaults, so being an editor is not enough.
+* ``project-member`` — ``agents.project_members.is_member``: a person on the project.
 * ``agent-login`` — the agent's OWN canopy login (``Agent.user``), i.e. the
   agent calling with its own PAT, whatever its workspace role.
 * ``session-acl`` — ``apps/canopy_sessions/access.py`` (read/write/share per chat).
@@ -158,7 +162,7 @@ VOCABULARY: frozenset[str] = frozenset({
     "content.write", "agent.work", "session.drive", "events.write", "logs.read",
     "members.manage", "integrations", "runners.route", "retention.manage",
     "admission.manage", "projects.decide", "own", "control",
-    "agent-edit", "agent-admin", "agent-owner", "vault-admin", "agent-login", "session-acl", "turn-content",
+    "agent-edit", "agent-admin", "agent-owner", "vault-admin", "project-admin", "project-member", "agent-login", "session-acl", "turn-content",
     "runner", "runner-admin", "runner-holds-agent", "license",
     "contact", "signed-link", "host", "beta-reviewer", "superuser", "fleet-holder",
     "hcp-grant", "device-proof", "owner-token-and-key", "invited-role", "paired-key", "page-viewer",

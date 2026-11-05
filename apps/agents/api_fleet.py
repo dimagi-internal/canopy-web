@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime as dt
 
+from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models import Case, Count, IntegerField, Q, When, prefetch_related_objects
 from django.http import HttpRequest
@@ -16,20 +17,23 @@ from ninja import Router, Status
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.api.errors import TYPE_VALIDATION, ProblemError
 from apps.api.pagination import DEFAULT_LIMIT_CAP, Page, clamp_limit, paginate
 from apps.api.route_gates import gate
 from apps.events import audit
 from apps.harness.models import Turn
 from apps.harness.turn_queries import visible_turns_qs
 from apps.oauth_server.views import issuer
+from apps.passkeys import stepup
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.links import scoped_path
 from apps.workspaces.models import Workspace
 
-from . import kb_store, kb_vectors, kb_versions, services, work
+from . import kb_store, kb_vectors, kb_versions, project_members, services, work
 from .api import list_agents
 from .api_board import apply_project_patch, project_detail, require_workspace_editor
+from .credentials import workspace_vaults
 from .gates import (
     agent_for_read,
     agent_for_work,
@@ -40,6 +44,7 @@ from .gates import (
     visible_agent_workspaces,
 )
 from .health import _counts
+from .member_roles import MembershipError
 from .models import Agent, AgentProject, AgentTask, ProjectService
 from .schemas import (
     AgentOut,
@@ -53,6 +58,10 @@ from .schemas import (
     KbPublishIn,
     KbUploadOut,
     McpServerOut,
+    ProjectBoxOwnerOut,
+    ProjectMemberIn,
+    ProjectMemberOut,
+    ProjectPeopleOut,
     ProjectShareIn,
     ProjectShareOut,
     ProjectShareRemovedOut,
@@ -233,8 +242,9 @@ def list_my_projects(request: HttpRequest, status: str = "active") -> list[Agent
     (`each_organisation`) and every row carries its workspace. Active by
     default; `status=` (empty for all)."""
     return wsvc.each_organisation(request, lambda: _project_rows(
-        AgentProject.objects.filter(services.project_read_q(request.user),
-                                    workspace_id__in=listed_agent_workspaces(request), owner_user=request.user),
+        AgentProject.objects.filter(Q(owner_user=request.user) | Q(people__user=request.user),
+                                    services.project_read_q(request.user),
+                                    workspace_id__in=listed_agent_workspaces(request)).distinct(),
         status=status,
     ))
 
@@ -394,7 +404,7 @@ def get_workspace_project(request: HttpRequest, workspace: str, handle: str) -> 
 @router.patch("/workspace-projects/{workspace}/{handle}/", response=AgentProjectOut,
               summary="Update a project (including its lead agent and its agents)")
 # an editor of its workspace or its lead agent's, its lead, or a working agent's own login
-@gate("agent.work", "agent-login", "self", kind="content")
+@gate("agent.work", "agent-login", "self", "project-member", kind="content")
 def patch_workspace_project(request: HttpRequest, workspace: str, handle: str,
                             payload: AgentProjectPatch) -> AgentProjectOut:
     project = _workspace_project_or_404(request, workspace, handle)
@@ -403,6 +413,82 @@ def patch_workspace_project(request: HttpRequest, workspace: str, handle: str,
     if "links" in data and data["links"] is not None:
         data["links"] = [link if isinstance(link, dict) else link.model_dump() for link in data["links"]]
     return AgentProjectOut.model_validate(apply_project_patch(request, project, data))
+
+
+def _project_people(request: HttpRequest, project) -> ProjectPeopleOut:
+    people = project_members.members(project)
+    rank = {"owner": 0, "admin": 1, "member": 2}
+    rows = sorted(people.values(), key=lambda m: (rank[m.role], (m.user.email or "").lower()))
+    manages = project_members.may_manage(project, request.user)
+    return ProjectPeopleOut(
+        members=[ProjectMemberOut(user_id=m.user.pk, email=m.user.email or "", role=m.role, sources=m.sources)
+                 for m in rows],
+        may_manage=manages,
+        box_owners_missing=([ProjectBoxOwnerOut(email=e, agents=a)
+                             for e, a in workspace_vaults.project_vault_box_owners(project).items()]
+                            if manages else []))
+
+
+def _people_to_change(request: HttpRequest, workspace: str, handle: str):
+    project = _workspace_project_or_404(request, workspace, handle)
+    if not project_members.may_manage(project, request.user):
+        raise HttpError(403, "changing who is on a project requires its lead, an admin on it, or a workspace owner")
+    return project
+
+
+def _people_emails(project) -> list[str]:
+    return sorted(f"{m.user.email}:{m.role}" for m in project_members.members(project).values())
+
+
+@router.get("/workspace-projects/{workspace}/{handle}/members/", response=ProjectPeopleOut,
+            summary="The people on a project: its lead and those added by name")
+@gate("member")
+def list_project_members(request: HttpRequest, workspace: str, handle: str) -> ProjectPeopleOut:
+    """The people on it, with why. They may change the project, and they are members of every
+    vault attached to it. Not the people who merely took part (`participants`), who get nothing."""
+    return _project_people(request, _workspace_project_or_404(request, workspace, handle))
+
+
+@router.post("/workspace-projects/{workspace}/{handle}/members/", response=ProjectPeopleOut,
+             summary="Add a person to a project by name, or change their role")
+@gate("project-admin", "own", setting=True, step_up=True)  # browser: + step-up; token allowed
+def add_project_member(request: HttpRequest, workspace: str, handle: str, payload: ProjectMemberIn) -> ProjectPeopleOut:
+    """`{email, role}`: `role` is `admin` or `member`. Joining makes them a member of every vault
+    attached to the project, so it needs the project's lead, an admin on it, or an owner of its
+    workspace, and never an agent's login. They must belong to a workspace that can read it (422)."""
+    project = _people_to_change(request, workspace, handle)
+    if stepup.is_browser(request):
+        stepup.require_recent_step_up(request)
+    user = get_user_model().objects.filter(email__iexact=payload.email.strip()).first()
+    if user is None:
+        raise ProblemError(422, "Project", detail=f"nobody here has the address {payload.email}",
+                           type_=TYPE_VALIDATION, members={"error": "project_no_such_user"})
+    before = _people_emails(project)
+    try:
+        project_members.add_member(project, user, role=payload.role, by=request.user)
+    except MembershipError as exc:
+        raise ProblemError(exc.status, "Project", detail=exc.detail, type_=TYPE_VALIDATION,
+                           members={"error": exc.code}) from exc
+    audit.note_change(scope=f"project-members:{project.address}", before=before, after=_people_emails(project),
+                      workspace=project.workspace, summary=f"{user.email} on {project.address} as {payload.role}")
+    return _project_people(request, project)
+
+
+@router.delete("/workspace-projects/{workspace}/{handle}/members/{user_id}/", response=ProjectPeopleOut,
+               summary="Take a person off a project")
+@gate("project-admin", "own", setting=True, step_up=True)  # browser: + step-up; token allowed
+def remove_project_member(request: HttpRequest, workspace: str, handle: str, user_id: int) -> ProjectPeopleOut:
+    """Removes their by-name membership and, with it, their place in the project's vaults. A copy
+    of a vault's key they already hold still opens what was written before: rotate the vault
+    if they have seen something that must stop working. The lead stays the lead until the project's lead changes."""
+    project = _people_to_change(request, workspace, handle)
+    if stepup.is_browser(request):
+        stepup.require_recent_step_up(request)
+    before = _people_emails(project)
+    project_members.remove_member(project, user_id)
+    audit.note_change(scope=f"project-members:{project.address}", before=before, after=_people_emails(project),
+                      workspace=project.workspace, summary=f"took a person off {project.address}")
+    return _project_people(request, project)
 
 
 def _share_out(share, project) -> ProjectShareOut:
@@ -491,7 +577,7 @@ def _kb_call(fn):
 
 @router.post("/workspace-projects/{workspace}/{handle}/kb/upload", response=KbUploadOut,
              summary="Get a presigned upload for a new knowledge base (the steward's curator)")
-@gate("agent.work", kind="content")  # the steward's write gate: its curator publishes
+@gate("agent.work", "project-member", kind="content")  # the steward's write gate: its curator publishes
 def kb_upload_target(request: HttpRequest, workspace: str, handle: str) -> KbUploadOut:
     """Step one of publishing: PUT the gzipped kb.sqlite to `url` with `headers`,
     then `POST …/kb/publish`. The bytes never pass through canopy."""
@@ -503,7 +589,7 @@ def kb_upload_target(request: HttpRequest, workspace: str, handle: str) -> KbUpl
 
 @router.post("/workspace-projects/{workspace}/{handle}/kb/originals", response=KbOriginalsOut,
              summary="Get presigned uploads for the original files a knowledge base points at")
-@gate("agent.work", kind="content")
+@gate("agent.work", "project-member", kind="content")
 def kb_upload_originals(request: HttpRequest, workspace: str, handle: str, payload: KbOriginalsIn) -> KbOriginalsOut:
     """Before publishing a build: name the originals its items point at (sha256, size,
     type); the answer has a PUT for each one the project's store lacks. Stored by
@@ -518,7 +604,7 @@ def kb_upload_originals(request: HttpRequest, workspace: str, handle: str, paylo
 
 @router.post("/workspace-projects/{workspace}/{handle}/kb/publish", response=AgentProjectOut,
              summary="Publish an uploaded knowledge base: the project then serves it as its MCP server")
-@gate("agent.work", kind="content")
+@gate("agent.work", "project-member", kind="content")
 def publish_kb(request: HttpRequest, workspace: str, handle: str, payload: KbPublishIn) -> AgentProjectOut:
     """The project answers its tools at `mcp_path` from this upload from now on
     (every serving instance re-fetches it by its sha256), as a new FULL version of its

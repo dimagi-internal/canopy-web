@@ -6,14 +6,6 @@ OpenAPI component names) are unchanged.
 """
 from __future__ import annotations
 
-from .roles import (
-    AgentRoleIn,
-    AgentRoleOut,
-    AgentRolePatch,
-    AgentRolesOut,
-    AgentRoleUseOut,
-    FixedRoleOut,
-)
 from .access_list import (
     AccessImplicitOut,
     AccessInheritIn,
@@ -175,6 +167,14 @@ from .github import (
     AgentGitHubIn,
     AgentGitHubOut,
 )
+from .roles import (
+    AgentRoleIn,
+    AgentRoleOut,
+    AgentRolePatch,
+    AgentRolesOut,
+    AgentRoleUseOut,
+    FixedRoleOut,
+)
 from .skills import (
     AgentSkillCatalogIn,
     AgentSkillIn,
@@ -234,7 +234,11 @@ from .tasks import (
     ProjectBackerOut,
     ProjectBackingIn,
     ProjectBackingOut,
+    ProjectBoxOwnerOut,
+    ProjectMemberIn,
+    ProjectMemberOut,
     ProjectParticipantOut,
+    ProjectPeopleOut,
     ProjectProgressOut,
     ProjectProposeIn,
     ProjectProposeOut,
@@ -519,6 +523,10 @@ __all__ = [
     "ProjectServiceIn",
     "ProjectServiceOut",
     "ProjectServicePatch",
+    "ProjectBoxOwnerOut",
+    "ProjectMemberIn",
+    "ProjectMemberOut",
+    "ProjectPeopleOut",
     "ProjectShareIn",
     "ProjectShareOut",
     "ProjectShareRemovedOut",
