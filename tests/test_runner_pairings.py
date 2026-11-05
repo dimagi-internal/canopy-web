@@ -172,7 +172,7 @@ def test_a_windows_cdp_down_remedy_names_the_runtime_switch_not_spotlight():
     assert "Session runtime" in win.remedy and "--remote-debugging-port" in win.remedy
 
 
-# ---- the anonymous doors refuse uniformly ---------------------------------------------
+# ---- the anonymous routes refuse uniformly ---------------------------------------------
 
 def test_a_proof_by_another_key_is_refused(org):
     res = _open(_key(), signer=_key())
@@ -348,7 +348,7 @@ def test_a_name_you_already_use_is_refused(org):
 def test_an_unknown_code_is_404_and_signed_out_is_refused(org, settings):
     assert org["browser"].get(f"{PAIRINGS}ABCD-EFGH").status_code == 404
     settings.REQUIRE_AUTH = True
-    code = _open(_key()).json()["user_code"]  # the box's door stays open
+    code = _open(_key()).json()["user_code"]  # the box's route stays open
     assert Client().get(f"{PAIRINGS}{code}").status_code == 401
     assert Client().post(f"{PAIRINGS}{code}/approve", data={"workspace": "connect", "name": "x"},
                          content_type="application/json").status_code == 401

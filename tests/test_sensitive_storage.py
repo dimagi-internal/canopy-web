@@ -206,7 +206,7 @@ def test_a_participant_reads_it_back_multiplayer(w):
     assert REPLY in browser_said(detail["messages"], detail["sealed_key"], peer_key, peer.pk)
 
 
-def test_no_token_or_ai_door_reads_it_back_even_for_its_own_person(w):
+def test_no_token_or_ai_route_reads_it_back_even_for_its_own_person(w):
     from apps.tokens.models import PersonalToken
 
     _converse(w["hot"])
@@ -231,8 +231,8 @@ def test_an_mcp_call_is_not_a_chat_surface(w, rf):
     assert REPLY not in _said([{"plaintext": m.plaintext} for m in rows])
 
 
-# The socket's own door — a browser, the widget, never a token or a minted cookie — is
-# driven through the real `RealtimeAuthMiddleware` in tests/test_sealed_server_doors.py.
+# The socket's own way in — a browser, the widget, never a token or a minted cookie — is
+# driven through the real `RealtimeAuthMiddleware` in tests/test_sealed_server_routes.py.
 
 
 def test_a_visitor_cannot_hold_one_and_nothing_of_its_words_is_kept(w):
@@ -351,7 +351,7 @@ def test_the_fleets_transcript_readers_find_nothing(w):
     assert ledger.read_transcript(t) == b""
 
 
-# --- every live and log door -------------------------------------------------------------
+# --- every live and log route -------------------------------------------------------------
 
 
 def test_the_live_socket_is_its_own_peoples_alone(w):
@@ -492,7 +492,7 @@ def test_a_resumed_session_reships_its_transcript_and_only_the_new_turn_lands(w)
 def test_live_ships_during_a_confined_turn_then_the_turn_end_ship_adds_and_shows_nothing_twice(
         w, monkeypatch):
     """The runner tails a running confined turn and ships its rows as Claude writes
-    them, through the same door and transcript id as the turn-end ship. Each row is
+    them, through the same route and transcript id as the turn-end ship. Each row is
     kept once and shown once, the moment it first arrives; the turn-end ship then
     lands on rows already held and fans nothing out again."""
     from apps.canopy_sessions.services import TRANSCRIPT_SOURCED
@@ -545,7 +545,7 @@ def test_only_the_runner_that_ran_a_confined_turn_may_ship_its_rows_and_only_for
                                   status=Runner.ONLINE, owner=w["user"])
     # No turn on this runner at all.
     assert _ship(w, w["runner"], "cli-1", [("assistant", REPLY)]).status_code == 404
-    # An unconfined turn is the binding's business, not this door's.
+    # An unconfined turn is the binding's business, not this route's.
     t = _turn(w["hot"], claimed_by=w["runner"], status=Turn.RUNNING)
     assert _ship(w, w["runner"], "cli-1", [("assistant", REPLY)]).status_code == 404
     t.delete()

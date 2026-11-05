@@ -1,8 +1,8 @@
 """Admission rules: turns that can never complete are rejected before they run.
 
 The incident (canopy-web#1400, turn 506cbfed, 2026-10-10): a DMARC-verified
-contact emailed hal; hal's `ask` lists `contact@dimagi.com:verified`, so the
-turn was confined; it resolved manual; a cloud runner claimed it; the ask
+contact emailed hal; hal's read mode lists `contact@dimagi.com:verified`, so the
+turn was confined; it resolved manual; a cloud runner claimed it; the read-mode
 procedure drafted a reply and waited for a human yes nobody could give. 32s of
 LLM, no reply, no notice. The seeded workspace rule now rejects that
 combination at the claim: CANCELLED, never claimed, a sender notice and an
@@ -41,7 +41,7 @@ VERIFIED = [{"name": "Authentication-Results", "value": PASS_ALL}]
 
 
 def _confine(hal):
-    """`ask` for verified dimagi.com contacts only, and workspace editors drive it manually."""
+    """Read mode for verified dimagi.com contacts only, and workspace editors drive it manually."""
     declare(hal, {"ask": {}})
     allow(hal, role=roles.READ_ONLY, contact=True, domain="dimagi.com", verified=True)
     editors_run(hal)
@@ -268,7 +268,7 @@ def _reject_on_cloud(fleet, capture, **kw):
     "bounce+abc@example.org",
 ])
 def test_a_noreply_sender_gets_no_notice(fleet, django_capture_on_commit_callbacks, sender):
-    # A no-reply address cannot be a verified dimagi.com contact in the ask
+    # A no-reply address cannot be a verified dimagi.com contact in the read-mode
     # list, so give it a rule of its own.
     hal = fleet["hal"]
     _ask_any_contact(hal)
@@ -730,7 +730,7 @@ def test_a_confined_caller_on_a_thread_that_started_manual_is_not_raised(
         fleet, django_capture_on_commit_callbacks):
     rule = _auto_on_cloud(fleet)
     _route(fleet["hal"], fleet["cloud"])
-    turn = _mail(fleet["hal"])  # VIKRAM: confined to `ask`
+    turn = _mail(fleet["hal"])  # VIKRAM: confined to read mode
     assert turn.capability == "ask"
     _thread_started_manual(turn)
     _claim(fleet["cloud"], django_capture_on_commit_callbacks)

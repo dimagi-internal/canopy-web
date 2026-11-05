@@ -320,7 +320,7 @@ def test_transient_subscribe_failure_is_unavailable(monkeypatch, make):
 
 
 @pytest.mark.parametrize("url", [URL, "/api/mail/ses/events/"])
-def test_transient_confirm_failure_is_500_on_both_doors(world, settings, monkeypatch, url):
+def test_transient_confirm_failure_is_500_on_both_routes(world, settings, monkeypatch, url):
     settings.MAIL_EVENTS_TOPIC_ARN = TOPIC
     monkeypatch.setattr(sns, "verify", lambda m, topic_arn: None)
     monkeypatch.setattr(sns, "_get", _raiser(lambda: TimeoutError("slow")))
@@ -329,7 +329,7 @@ def test_transient_confirm_failure_is_500_on_both_doors(world, settings, monkeyp
 
 
 @pytest.mark.parametrize("url", [URL, "/api/mail/ses/events/"])
-def test_invalid_confirm_is_404_on_both_doors(world, settings, monkeypatch, url):
+def test_invalid_confirm_is_404_on_both_routes(world, settings, monkeypatch, url):
     settings.MAIL_EVENTS_TOPIC_ARN = TOPIC
     monkeypatch.setattr(sns, "verify", lambda m, topic_arn: None)
     monkeypatch.setattr(sns, "_get", _raiser(lambda: _http_error(404)))
@@ -337,7 +337,7 @@ def test_invalid_confirm_is_404_on_both_doors(world, settings, monkeypatch, url)
     assert Client().post(url, json.dumps(body), content_type="text/plain").status_code == 404
 
 
-def test_transient_cert_failure_on_events_door_is_500(world, settings, monkeypatch):
+def test_transient_cert_failure_on_events_route_is_500(world, settings, monkeypatch):
     settings.MAIL_EVENTS_TOPIC_ARN = TOPIC
     monkeypatch.setattr(sns, "_fetch_cert", _raiser(lambda: TimeoutError("slow")))
     assert Client().post("/api/mail/ses/events/", json.dumps(_SIGNED),
@@ -385,7 +385,7 @@ _SES_VALIDATION = "Successfully validated SNS topic for Amazon SES event publish
 @pytest.mark.parametrize("url,topic_setting", [(URL, "MAIL_INBOUND_TOPIC_ARN"),
                                                ("/api/mail/ses/events/", "MAIL_EVENTS_TOPIC_ARN")])
 @pytest.mark.parametrize("message", [_SES_VALIDATION, '"a json string"', "[1, 2]"])
-def test_non_json_notification_is_ignored_quietly_on_both_doors(world, signed, settings, caplog,
+def test_non_json_notification_is_ignored_quietly_on_both_routes(world, signed, settings, caplog,
                                                                  url, topic_setting, message):
     setattr(settings, topic_setting, TOPIC)
     body = {"Type": "Notification", "TopicArn": TOPIC, "Message": message}

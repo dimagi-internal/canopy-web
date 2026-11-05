@@ -1,7 +1,7 @@
 """Files in a private (sensitive) conversation: the agent's copy for one turn, the
 people's sealed (`apps/canopy_sessions/private_attachments.py`).
 
-Every test goes through the real door: the upload and sealed-copy routes a person's
+Every test goes through the real routes: the upload and sealed-copy routes a person's
 browser calls, the send, the runner's download route, `close_turn`, the deadline
 sweep, the history routes. The test stands in for the browser where a browser seals
 or opens (`_seal`, `_open`) — never app code.
@@ -76,7 +76,7 @@ def bucket(settings):
 @pytest.fixture()
 def w():
     out = world()
-    # A private conversation runs only in a capability that handles sensitive data.
+    # A private conversation runs only in a profile that handles sensitive data.
     declare(out["agent"], {"data": {"sites": ["connect-labs"], "data": "sensitive", "tools": ["Read"]}})
     allow(out["agent"], capability="data")
     editors_run(out["agent"])

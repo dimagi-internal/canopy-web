@@ -1,6 +1,6 @@
-"""The interface setting that a capability handles sensitive data (`data: sensitive`), and what it changes: it is set by
+"""The interface setting that a connected site handles sensitive data (`data: sensitive`), and what it changes: it is set by
 the agent's owner or an admin (browser or token), audited like any setting, refused when structurally false; and a phi
-capability, and any turn in a sensitive conversation, is confined for everyone.
+profile, and any turn in a sensitive conversation, is confined for everyone.
 
 Spec: docs/superpowers/specs/2026-10-22-sensitive-data-agents-design.md §5.
 """
@@ -33,7 +33,7 @@ DATA = {"sites": ["connect-labs"], "data": "sensitive",
                   "mcp__*canopy-web__current_page", "mcp__*canopy-web__who_is_asking"]}
 IFACE = {"capabilities": {"data": DATA,
                           "ask": {"tools": ["Read", "Bash"]}}}
-#: Who the access list lets in, by capability: "member" (the workspace's members) or "contact".
+#: Who the access list lets in, by profile: "member" (the workspace's members) or "contact".
 WHO = {"data": ["contact", "member"], "ask": ["member"], "connect": ["contact"]}
 SITE = "connect-labs"
 #: The internal name a new connected-labs row gets (`answering.key_for`).
@@ -72,14 +72,14 @@ def _put(c, slug, site=SITE, **body):
     return c.put(f"/api/agents/{slug}/connected-sites/{site}", data=body, content_type="application/json")
 
 
-def _let_in(agent, who, capability):
-    """`ask` is what `read` opens, so it is a read-only line; any other capability a named line."""
-    line = dict(role=roles.READ_ONLY) if is_read_mode(capability) else dict(capability=capability)
+def _let_in(agent, who, name):
+    """Read mode is what `read` opens, so it is a read-only line; any other profile a named line."""
+    line = dict(role=roles.READ_ONLY) if is_read_mode(name) else dict(capability=name)
     allow(agent, contact=(who == "contact"), **line)
 
 
 def _declare(agent, by, doc=IFACE, who_=WHO):
-    """Publish `doc`'s capabilities and let `who_` (members and/or contacts, per capability) in."""
+    """Publish `doc`'s profiles and let `who_` (members and/or contacts, per profile) in."""
     declare(agent, doc["capabilities"])
     for name in doc["capabilities"]:
         for caller in who_[name]:
@@ -92,7 +92,7 @@ def _declare(agent, by, doc=IFACE, who_=WHO):
 # --- refused when structurally false ---------------------------------------------------
 
 
-def test_a_read_only_site_capability_may_say_sensitive():
+def test_a_read_only_connected_site_may_say_sensitive():
     out = parse(IFACE)["capabilities"]["data"]
     assert out["data"] == "sensitive"
     assert "data" not in parse(IFACE)["capabilities"]["ask"]
@@ -108,7 +108,7 @@ def test_a_read_only_site_capability_may_say_sensitive():
     ({"write_paths": ["{cwd}/out/*"]}, "write nothing"),
     ({"sites": []}, "sites"),
 ])
-def test_a_sensitive_capability_that_can_leak_is_a_422_naming_it(over, named):
+def test_a_sensitive_profile_that_can_leak_is_a_422_naming_it(over, named):
     with pytest.raises(InterfaceError) as exc:
         parse({"capabilities": {"data": {**DATA, **over}}})
     assert named in str(exc.value)
@@ -210,7 +210,7 @@ def _turn(w, user, session=None, **kw):
 
 
 @pytest.mark.parametrize("who_", ["owner", "admin", "editor"])
-def test_on_the_site_the_sensitive_door_confines_even_the_owner(w, who_):
+def test_on_the_site_the_sensitive_profile_confines_even_the_owner(w, who_):
     _declare(w["agent"], w["owner"])
     d = _turn(w, w[who_], _site_session(w))
     assert (d.access, d.stamped, d.basis) == (access.CONFINED, "data", "sensitive:data")
@@ -223,7 +223,7 @@ def test_the_owner_keeps_their_role_and_mode_rights_when_confined(w):
     assert d.standing.relationship == access.OWNER and d.review.may_pin_runner
 
 
-def test_naming_a_sensitive_capability_confines_the_owner_anywhere(w):
+def test_naming_a_sensitive_profile_confines_the_owner_anywhere(w):
     _declare(w["agent"], w["owner"])
     d = turn_context.for_asker(w["agent"], w["owner"], verified=True, requested="data")
     assert (d.access, d.stamped) == (access.CONFINED, "data")
@@ -231,7 +231,7 @@ def test_naming_a_sensitive_capability_confines_the_owner_anywhere(w):
     assert turn_context.for_asker(w["agent"], w["owner"], verified=True).access == access.FULL
 
 
-def test_a_sensitive_conversation_with_no_sensitive_door_is_refused_even_for_the_owner(w):
+def test_a_sensitive_conversation_with_no_sensitive_profile_is_refused_even_for_the_owner(w):
     declare(w["agent"], {"ask": {}})
     _let_in(w["agent"], "member", "ask")
     editors_run(w["agent"])
@@ -239,7 +239,7 @@ def test_a_sensitive_conversation_with_no_sensitive_door_is_refused_even_for_the
     assert d.access == turn_context.REFUSED and "handles sensitive data" in d.refusal.why
 
 
-def test_a_sensitive_conversation_runs_only_in_its_sensitive_door(w):
+def test_a_sensitive_conversation_runs_only_in_its_sensitive_profile(w):
     _declare(w["agent"], w["owner"])
     sensitive = {"runner_requirements": ["sensitive_data"]}
     for who_ in ("owner", "editor", "viewer"):
@@ -247,8 +247,8 @@ def test_a_sensitive_conversation_runs_only_in_its_sensitive_door(w):
         assert (d.access, d.stamped) == (access.CONFINED, "data"), who_
 
 
-def test_a_sensitive_caller_the_sensitive_door_does_not_list_is_refused(w):
-    # The sensitive door takes a user; a workspace viewer's line makes them only a viewer.
+def test_a_sensitive_caller_the_sensitive_profile_does_not_list_is_refused(w):
+    # The sensitive profile takes a user; a workspace viewer's line makes them only a viewer.
     _declare(w["agent"], w["owner"], doc={"capabilities": {
         "data": {**DATA},
         "ask": {"tools": ["Read"]}}}, who_={"data": ["contact"], "ask": ["member"]})

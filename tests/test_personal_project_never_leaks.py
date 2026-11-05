@@ -92,7 +92,7 @@ def _make_world() -> dict:
 
     lead_login = User.objects.create_user("leadagent", "leadagent@dimagi.com", "pw")
     WorkspaceMembership.objects.create(user=lead_login, workspace=ws, role=WorkspaceMembership.EDITOR)
-    # The admin OWNS the lead agent: an agent's admins are the widest door to its work.
+    # The admin OWNS the lead agent: an agent's admins are the widest way into its work.
     lead_agent = Agent.objects.create(slug="guard-lead", name="Guard Lead", workspace=ws, owner=wsadmin, user=lead_login)
     outsider_agent = Agent.objects.create(slug="guard-outsider", name="Guard Outsider", workspace=ws, owner=editor)
 
@@ -409,7 +409,7 @@ def test_its_lead_and_its_agents_read_what_the_walk_kept_out(world):
     assert _client(world["lead"]).get(f"/api/harness/turns/{world['turn'].pk}").json()["prompt"] == S("turn.prompt")
 
 
-# ---- the MCP doors, which are not REST routes ---------------------------------------
+# ---- the MCP tools, which are not REST routes ---------------------------------------
 
 
 @pytest.mark.parametrize("who", ["editor", "wsadmin"])

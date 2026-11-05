@@ -37,7 +37,7 @@ def _eva(agent):
     allow(agent, role=roles.EDITOR, contact=True, domain="dimagi.com", verified=True)
 
 
-#: Hal-like: everyone not an admin is confined to `ask`.
+#: Hal-like: everyone not an admin is confined to read mode (published as `ask`).
 HAL = {"ask": {"description": "Ask", "tools": ["Read"]}}
 
 
@@ -173,18 +173,18 @@ def _check(turn, want):
 
 @pytest.mark.parametrize("iface", list(IFACES))
 @pytest.mark.parametrize("role", list(EXPECT))
-@pytest.mark.parametrize("door", list(ENTRY_POINTS))
-def test_members_through_every_signed_in_entry_point(w, door, role, iface):
+@pytest.mark.parametrize("entry", list(ENTRY_POINTS))
+def test_members_through_every_signed_in_entry_point(w, entry, role, iface):
     _publish(w["agent"], iface)
     user = w[role]
-    turn = ENTRY_POINTS[door](w, user, f"{door}-{role}-{iface}")
+    turn = ENTRY_POINTS[entry](w, user, f"{entry}-{role}-{iface}")
     want = EXPECT[role][iface]
-    if door == "api" and role == "viewer":
+    if entry == "api" and role == "viewer":
         # The harness API's agent branch is the editor tier's entry point: a viewer
-        # talks to an agent by chat, Slack or a capability's MCP tool instead.
+        # talks to an agent by chat, Slack or a connected site's MCP tool instead.
         assert turn is None
         return
-    if turn is None:        # refused at the door: the list does not name them
+    if turn is None:        # refused on the way in: the list does not name them
         assert want[0] is None
         return
     _check(turn, want)
@@ -198,13 +198,13 @@ def test_members_by_verified_email(w, role, iface):
     _check(_via_email(w, w[role].email, f"{role}-{iface}"), EXPECT[role][iface])
 
 
-STAFF = {"full": (("full", DIMAGI_STAFF_LINE, "auto")), "ask": ("confined", "capability:ask", "auto")}
+STAFF = {"full": (("full", DIMAGI_STAFF_LINE, "auto")), "read_mode": ("confined", "capability:ask", "auto")}
 CONTACTS = {
     # (address, verified) -> per interface; `editors` lines are about members only
     ("staff@dimagi.com", True): {"none": REFUSED, "editors": REFUSED, "eva": STAFF["full"],
-                                 "hal": STAFF["ask"]},
-    ("staff@dimagi.com", False): {"none": REFUSED, "editors": REFUSED, "eva": REFUSED, "hal": STAFF["ask"]},
-    ("someone@partner.org", True): {"none": REFUSED, "editors": REFUSED, "eva": REFUSED, "hal": STAFF["ask"]},
+                                 "hal": STAFF["read_mode"]},
+    ("staff@dimagi.com", False): {"none": REFUSED, "editors": REFUSED, "eva": REFUSED, "hal": STAFF["read_mode"]},
+    ("someone@partner.org", True): {"none": REFUSED, "editors": REFUSED, "eva": REFUSED, "hal": STAFF["read_mode"]},
 }
 for _row in CONTACTS.values():
     _row["eva_confined"], _row["hal_confined"] = _row["eva"], _row["hal"]
@@ -230,7 +230,7 @@ def test_a_refusal_says_what_the_caller_can_do(w):
     allow(w["agent"], capability="status")
     editors_run(w["agent"])
     d = turn_context.for_asker(w["agent"], w["viewer"], verified=True, requested="deploy")
-    assert d.access == turn_context.REFUSED        # a line cannot use a capability the agent does not have
+    assert d.access == turn_context.REFUSED        # a line cannot use a profile the agent does not have
     # Why, in plain words, and who can fix it, by name (`apps/agents/refusals.py`). Naming one the agent does not
     # have is fixed by not naming it, so the fix itself names nobody.
     assert "access list" in d.refusal.why and "Send without naming 'deploy'" in d.refusal.how_to_fix
@@ -242,7 +242,7 @@ def test_the_mcp_tool_list_follows_the_rule(w):
     from apps.agents.interface import offered_to
 
     _publish(w["agent"], "hal")
-    assert offered_to(w["editor"], w["agent"]) == ["ask"]      # a whole-agent line: every capability
+    assert offered_to(w["editor"], w["agent"]) == ["ask"]      # a whole-agent line: every profile
     assert offered_to(w["viewer"], w["agent"]) == ["ask"]
     AgentGrant.objects.filter(agent=w["agent"]).delete()
     declare(w["agent"], {"ask": {}, "admin_only": {}})
@@ -252,19 +252,19 @@ def test_the_mcp_tool_list_follows_the_rule(w):
     assert offered_to(w["viewer"], w["agent"]) == []
 
 
-# --- the permission model: one line, one person, every door ----------------------------------
+# --- the permission model: one line, one person, every entry point ----------------------------------
 
-#: A person with ONE line of each kind on an agent that publishes `ask` and `status` (no
-#: capabilities-only: who may use them is the list's business). (profile, why, mode) per line, through
-#: the doors that can confine. `read_only` is `read`: it opens `ask` and nothing else; a
-#: named-capability line opens just that capability; `write` (read_write, editor) is the whole agent.
+#: A person with ONE line of each kind on an agent that publishes read mode (`ask`) and `status` (no
+#: profiles-only: who may use them is the list's business). (profile, why, mode) per line, through
+#: the entry points that can confine. `read_only` is `read`: it opens read mode and nothing else; a
+#: line naming one profile opens just that profile; `write` (read_write, editor) is the whole agent.
 HAL_NO_CALLERS = {"ask": {"description": "Ask", "tools": ["Read"]},
                   "status": {"description": "Status", "tools": ["Read"]}}
 LINES = {
     "read_only": {"role": roles.READ_ONLY},
     "read_write": {"role": roles.READ_WRITE},
     "editor": {"role": roles.EDITOR},
-    "use_ask": {"capability": "ask"},
+    "use_read_mode": {"capability": "ask"},
     "use_status": {"capability": "status"},
 }
 
@@ -274,18 +274,18 @@ def _expect_line(kind, user):
         "read_only": ("confined", "capability:ask", "auto"),
         "read_write": ("full", f"grant:person:{user.pk}", "auto"),
         "editor": ("full", f"grant:person:{user.pk}", "auto"),
-        "use_ask": ("confined", "capability:ask", "auto"),
-        "use_status": REFUSED,          # a free-form message asks `ask`, and this line is not for it
+        "use_read_mode": ("confined", "capability:ask", "auto"),
+        "use_status": REFUSED,          # a free-form message asks for read mode, and this line is not for it
     }[kind]
 
 
 @pytest.mark.parametrize("kind", list(LINES))
-@pytest.mark.parametrize("door", ["chat", "slack"])
-def test_each_kind_of_line_through_the_doors_that_can_confine(w, door, kind):
+@pytest.mark.parametrize("entry", ["chat", "slack"])
+def test_each_kind_of_line_through_the_entry_points_that_can_confine(w, entry, kind):
     declare(w["agent"], HAL_NO_CALLERS)
     user = w["viewer"]
     AgentGrant.objects.create(agent=w["agent"], kind=AgentGrant.PERSON, user=user, **LINES[kind])
-    turn = ENTRY_POINTS[door](w, user, f"line-{door}-{kind}")
+    turn = ENTRY_POINTS[entry](w, user, f"line-{entry}-{kind}")
     _check(turn, _expect_line(kind, user))
 
 
@@ -297,9 +297,9 @@ def test_each_kind_of_line_by_verified_email(w, kind):
     _check(_via_email(w, user.email, f"line-email-{kind}"), _expect_line(kind, user))
 
 
-def test_the_api_door_gives_the_same_answer_to_a_workspace_editor(w):
-    """The harness API asks the rule like every other door: `write` is the whole agent, `read` or a
-    capability line is a confined turn, and a line naming another capability is refused."""
+def test_the_api_route_gives_the_same_answer_to_a_workspace_editor(w):
+    """The harness API asks the rule like every other entry point: `write` is the whole agent, `read`
+    or a line naming one profile is a confined turn, and a line naming another profile is refused."""
     declare(w["agent"], HAL_NO_CALLERS)
     user = w["editor"]                    # a workspace editor may start work through the API
     for kind in LINES:
@@ -313,9 +313,9 @@ def test_the_api_door_gives_the_same_answer_to_a_workspace_editor(w):
             _check(turn, want)
 
 
-def test_read_mode_is_on_for_every_agent_and_a_published_ask_overrides_it(w):
+def test_read_mode_is_on_for_every_agent_and_the_owners_own_read_mode_overrides_it(w):
     """`read` opens read mode on every agent: canopy's default (stamp `read`) until the owner
-    publishes an `ask` of their own (stamp `ask`)."""
+    publishes a read mode of their own (`READ_MODE_STAMP`)."""
     declare(w["agent"], None)
     AgentGrant.objects.create(agent=w["agent"], kind=AgentGrant.PERSON, user=w["viewer"], role=roles.READ_ONLY)
     _check(_via_chat(w, w["viewer"], "off"), ("confined", "capability:read", "auto"))

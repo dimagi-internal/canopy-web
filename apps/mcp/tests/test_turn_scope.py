@@ -65,7 +65,7 @@ def _names():
     return sorted(t.name for t in async_to_sync(mcp.list_tools)())
 
 
-def test_a_contacts_session_sees_only_its_capabilitys_tools_and_is_nobody(w):
+def test_a_contacts_session_sees_only_its_profiles_tools_and_is_nobody(w):
     turn = _email_turn(w["agent"])
     with as_token(caller_tokens.mint(turn)) as access:
         assert access.claims["user_id"] is None          # an outside contact is no canopy user
