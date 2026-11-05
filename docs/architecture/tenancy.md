@@ -392,8 +392,9 @@ act, and it does not depend on a rule, on enforcement being on, or on being coac
 - **Only while it is quiet** (`content_deletion.blocker`), else 409: no open turn, its engine not
   working, no move under way, no fork still holding a copy. Rechecked under the row locks.
 - **It leaves a metadata row.** The session is archived and empty, stays readable by those who could
-  read it (its row, not its words), and takes nothing more. A coach's leg stops reading it at all
-  (`_review_grant_q`), and a grant given later does not bring it back. The tombstone and what honours
+  read it (its row, not its words), and takes nothing more. A coach's legs stop reading it at all
+  (`_review_grant_q`, `_review_ask_q`; a live ask is revoked), and a grant or ask given later does
+  not bring it back. The chat a review ask opened is a conversation of its own, deleted the same way. The tombstone and what honours
   it: chat-sessions.md § A person deleting their own session.
 - **What it cannot reach**, and the page says so: the transcript on the person's computer; what a coach
   already read into its notes, logs and mailbox; words posted to Slack; a `/canopy:share-session`

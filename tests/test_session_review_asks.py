@@ -126,6 +126,22 @@ def test_pressing_starts_a_turn_asked_by_the_person_that_reads_that_session_only
     assert not _reads(bearer, w["bos"])       # anyone else's
 
 
+def test_deleting_the_session_ends_a_live_ask_and_refuses_a_new_one(w):
+    ask, turn = _pressed(w)
+    bearer = _login(w, turn)
+    assert _reads(bearer, w["mine"])
+    assert _person(w["lili"]).delete(f"/api/canopy-sessions/{w['mine'].pk}/content").status_code == 200
+    assert not _reads(bearer, w["mine"])
+    ask.refresh_from_db()
+    assert ask.revoked_at is not None
+    # Not even if the ask were still live: the session's leg refuses it by itself.
+    SessionReviewAsk.objects.filter(pk=ask.pk).update(revoked_at=None)
+    assert not _reads(bearer, w["mine"])
+    Turn.objects.filter(pk=turn.pk).update(status=Turn.DONE)
+    r = _press(w)
+    assert r.status_code == 422 and "was deleted" in str(r.json())
+
+
 def test_any_other_turn_by_the_same_agent_reads_nothing(w):
     """THE test: the row names one conversation, one person, one agent. Nothing else it
     could run as gets through, including the turns a review grant would let in."""
