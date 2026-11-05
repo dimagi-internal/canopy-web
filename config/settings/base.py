@@ -469,12 +469,19 @@ ATTACHMENT_MAX_UPLOAD_BYTES = env.int(
     "ATTACHMENT_MAX_UPLOAD_BYTES", default=10 * 1024 * 1024,
 )
 
-# An allowlist, never a denylist: the bytes are handed to an agent that will
-# open them, and the browser renders them inline. Images only for now — the
-# stated use case is "show the agent a screenshot".
+# An allowlist, never a denylist: the bytes are handed to an agent that will open
+# them, and the browser renders them inline (under `Content-Security-Policy:
+# sandbox` + nosniff, attachment_storage.serve). Screenshots, plus the documents an
+# agent reads with its Read tool: PDF and plain text. Never HTML or SVG — a document
+# type that runs script.
 ATTACHMENT_ALLOWED_CONTENT_TYPES = env.list(
     "ATTACHMENT_ALLOWED_CONTENT_TYPES",
-    default=["image/png", "image/jpeg", "image/gif", "image/webp"],
+    default=[
+        "image/png", "image/jpeg", "image/gif", "image/webp",
+        "application/pdf",
+        "text/plain", "text/markdown", "text/csv",
+        "application/json", "application/yaml",
+    ],
 )
 
 # Pinned explicitly (security review 2026-07-26, F8) rather than left to

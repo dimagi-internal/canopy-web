@@ -76,7 +76,7 @@ def upload_attachment(
     if not attachment_storage.is_configured():
         raise HttpError(503, "attachments are not configured on this deployment")
 
-    content_type = (file.content_type or "").split(";")[0].strip().lower()
+    content_type = _content_type(file)
     allowed = settings.ATTACHMENT_ALLOWED_CONTENT_TYPES
     if content_type not in allowed:
         # An allowlist: these bytes get opened by an agent and rendered inline by
@@ -112,6 +112,30 @@ def upload_attachment(
     attachment_storage.put(attachment.storage_key, file.read(), content_type)
     attachment.save()
     return 201, attachment
+
+
+#: A browser sends no useful type for many text files (Safari: `.yaml`, `.log`; most:
+#: a bare `.md` on some systems), so a generic one is read from the extension.
+_TYPE_BY_EXTENSION = {
+    ".md": "text/markdown", ".markdown": "text/markdown",
+    ".txt": "text/plain", ".log": "text/plain",
+    ".csv": "text/csv", ".json": "application/json",
+    ".yaml": "application/yaml", ".yml": "application/yaml",
+    ".pdf": "application/pdf",
+}
+_GENERIC_TYPES = {"", "application/octet-stream"}
+_TYPE_ALIASES = {"text/x-markdown": "text/markdown", "text/yaml": "application/yaml",
+                 "text/x-yaml": "application/yaml", "application/x-yaml": "application/yaml"}
+
+
+def _content_type(file: UploadedFile) -> str:
+    declared = (file.content_type or "").split(";")[0].strip().lower()
+    declared = _TYPE_ALIASES.get(declared, declared)
+    if declared in _GENERIC_TYPES:
+        name = (file.name or "").lower()
+        ext = name[name.rfind("."):] if "." in name else ""
+        return _TYPE_BY_EXTENSION.get(ext, declared)
+    return declared
 
 
 def _from_its_peoples_browser(request: HttpRequest, session) -> bool:
