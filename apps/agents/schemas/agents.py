@@ -713,48 +713,6 @@ class AgentAccessOut(StrictModel):
     slack_enabled: bool
 
 
-class AgentInterfaceIn(StrictModel):
-    # Exactly one of: `source`, the YAML an editor wrote (kept, comments and all),
-    # or `interface`, an already-parsed mapping. See apps/agents/interface.py.
-    source: str | None = None
-    interface: dict | None = None
-
-
-class CapabilitySensitiveIn(StrictModel):
-    # On writes `data: sensitive` into the capability's block of the saved YAML;
-    # off removes it. An ordinary interface edit, as the YAML path is.
-    handles_sensitive: bool
-
-
-class InterfaceProblemOut(StrictModel):
-    # The field the parser's message is about: `full`, a capability name, or
-    # `<capability>.<field>`; "" when it is about the whole document.
-    path: str
-    message: str
-
-
-class AgentInterfaceValidateOut(StrictModel):
-    errors: list[InterfaceProblemOut]
-    # When the draft is valid: the parsed model (what the form edits) and the same model as
-    # YAML (what the Advanced view edits) — so the form and the YAML switch without a YAML
-    # library in the browser.
-    interface: dict | None = None
-    yaml: str = ""
-
-
-class ReadModeOut(StrictModel):
-    """What a person who holds `read` and not `write` gets from this agent."""
-
-    # `default`: canopy's own profile, on every agent from the start. `override`: the agent
-    # published its own `ask`, which replaces the default whole.
-    source: str
-    # The published capability that overrides it (`ask`), else null.
-    override: str | None = None
-    # The default profile as it stands for this agent now, whether or not an override hides it.
-    default_profile: dict
-    default_profile_version: int
-
-
 class AnsweringProfile(StrictModel):
     description: str = ""
     # The command a conversation starts with (`/<plugin>:<skill> [args]`), or none.
@@ -810,20 +768,6 @@ class ConnectedSiteIn(ReadModeIn):
     ceiling: list[str] | None = None
     own_login: list[str] | None = None
     sensitive: bool | None = None
-
-
-class AgentInterfaceOut(StrictModel):
-    # Never empty: an agent without a declared interface has the default one.
-    interface: dict
-    read_mode: ReadModeOut
-    # The YAML as last saved; "" when it was published as a parsed mapping.
-    source: str = ""
-    # `source` when there is one, else the interface rendered as YAML.
-    yaml: str = ""
-    # True while the interface is the default: no capability published.
-    is_default: bool = True
-    published_at: dt.datetime | None = None
-    published_by_email: str | None = None
 
 
 class AgentCanopyUserIn(StrictModel):

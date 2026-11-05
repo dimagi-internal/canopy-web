@@ -887,8 +887,9 @@ export async function deleteConnectedSite(slug: string, site: string): Promise<C
 export type SettingChangeOut = Schemas['SettingChangeOut']
 
 // The audited changes to this agent's read mode and connected sites, newest first, from any client.
-// Admins see everyone's; others see their own. The /interface operations are the same settings saved
-// the old way.
+// Admins see everyone's; others see their own. publish_interface, reset_interface and
+// set_capability_sensitive are retired routes: nothing writes them now, but old history rows still
+// carry those names, so they stay.
 const SETTINGS_OPERATIONS = new Set([
   'put_read_mode', 'reset_read_mode', 'put_connected_site', 'delete_connected_site',
   'publish_interface', 'reset_interface', 'set_capability_sensitive',

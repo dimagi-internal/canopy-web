@@ -4,6 +4,7 @@ URL configuration for canopy-web project.
 from django.contrib import admin
 from django.urls import include, path, re_path
 
+from apps.agents.views import RETIRED_INTERFACE_PATH, retired_interface_route
 from apps.api.api import api as api_v2
 from apps.api.views import redoc_docs, scalar_docs
 from apps.harness.views import download_runner, runner_app_home
@@ -137,6 +138,9 @@ urlpatterns = [
     path("auth/slack/install/", slack_auth.install, name="slack_install"),
     path("auth/slack/callback/", slack_auth.oauth_callback, name="slack_oauth_callback"),
     path("auth/slack/link/", slack_auth.link, name="slack_link"),
+    # The retired agent `interface` routes: 410 naming what replaced them. A bare view, so they
+    # are in neither OpenAPI nor the MCP tools, which are generated from it.
+    re_path(RETIRED_INTERFACE_PATH, retired_interface_route, name="agent-interface-retired"),
     path("api/", api_v2.urls),
     path("api/docs/", scalar_docs, name="api_docs_scalar"),
     path("api/redoc/", redoc_docs, name="api_docs_redoc"),

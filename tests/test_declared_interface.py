@@ -11,7 +11,7 @@ from django.contrib.auth.models import User
 from django.test import Client
 
 from apps.agents import roles
-from apps.agents.interface import ASK, FULL, InterfaceError, default_interface, parse
+from apps.agents.interface import ASK, FULL, InterfaceError, parse
 from apps.agents.models import Agent, AgentAdmin
 from apps.harness import caller_context, claim, services
 from apps.harness import initiator as who
@@ -278,40 +278,41 @@ def _client(u):
 
 
 def test_the_owner_publishes_and_any_member_reads(w):
-    r = _client(w["op"]).put("/api/agents/ace/interface", {"interface": PLAIN},
-                             content_type="application/json")
+    r = _client(w["op"]).put("/api/agents/ace/read-mode", ASK_CAP, content_type="application/json")
     assert r.status_code == 200, r.content
-    assert r.json()["published_by_email"] == "op@dimagi.com"
-    got = _client(w["ed"]).get("/api/agents/ace/interface").json()
-    ask = got["interface"]["capabilities"]["ask"]
-    assert "role" not in ask and "callers" not in ask
+    w["agent"].refresh_from_db()
+    assert w["agent"].interface_published_by == w["op"]
+    stored = w["agent"].interface["capabilities"]["ask"]
+    assert "role" not in stored and "callers" not in stored
+    got = _client(w["ed"]).get("/api/agents/ace/read-mode").json()
+    assert got["source"] == "custom" and got["profile"]["tools"] == ASK_CAP["tools"]
 
 
-def test_publishing_the_old_who_keys_is_a_422_that_points_at_the_access_list(w):
-    r = _client(w["op"]).put("/api/agents/ace/interface", {"interface": RETIRED_WORDS},
+def test_the_old_who_keys_are_refused_and_point_at_the_access_list(w):
+    with pytest.raises(InterfaceError, match="access list"):
+        parse(RETIRED_WORDS)
+    r = _client(w["op"]).put("/api/agents/ace/read-mode", {"callers": ["member"]},
                              content_type="application/json")
     assert r.status_code == 422
-    assert "access list" in r.json()["detail"]
 
 
 def test_an_editor_cannot_publish_it_is_a_security_policy(w):
-    r = _client(w["ed"]).put("/api/agents/ace/interface", {"interface": PLAIN},
-                             content_type="application/json")
+    r = _client(w["ed"]).put("/api/agents/ace/read-mode", ASK_CAP, content_type="application/json")
     assert r.status_code == 403
 
 
-def test_a_bad_interface_is_a_422_not_a_silent_partial(w):
-    r = _client(w["op"]).put("/api/agents/ace/interface",
-                             {"interface": {"capabilities": {"ask": {"tool": ["Read"]}}}},
-                             content_type="application/json")
+def test_a_bad_setting_is_a_422_not_a_silent_partial(w):
+    before = Agent.objects.get(pk=w["agent"].pk).interface
+    r = _client(w["op"]).put("/api/agents/ace/read-mode", {"tool": ["Read"]}, content_type="application/json")
     assert r.status_code == 422
+    w["agent"].refresh_from_db()
+    assert w["agent"].interface == before
 
 
 def test_reset_returns_to_the_default_not_to_nothing(w):
     _publish(w["agent"])
-    r = _client(w["op"]).delete("/api/agents/ace/interface")
-    assert r.status_code == 200 and r.json()["interface"] == default_interface()
-    assert r.json()["is_default"] is True
+    r = _client(w["op"]).delete("/api/agents/ace/read-mode")
+    assert r.status_code == 200 and r.json()["source"] == "default"
     w["agent"].refresh_from_db()
     # `ed`'s members' read line still stands, and read mode needs no published capability.
     assert _as_user(w["agent"], w["ed"], "k").capability == "read"
@@ -475,43 +476,6 @@ def test_full_rules_are_refused_and_point_at_the_access_list():
         parse({"full": ["everyone"]})
     with pytest.raises(InterfaceError, match="access list"):
         parse({"full": ["contact@*.com"]})
-
-
-SAVED_YAML = """# What ACE offers.
-capabilities:
-  ask:
-    description: Anyone who may ask.
-"""
-
-
-def test_the_yaml_is_saved_verbatim_and_parsed(w):
-    r = _client(w["op"]).put("/api/agents/ace/interface", {"source": SAVED_YAML},
-                             content_type="application/json")
-    assert r.status_code == 200, r.content
-    body = r.json()
-    assert body["source"].strip() == SAVED_YAML.strip()  # comments kept
-    assert "role" not in body["interface"]["capabilities"]["ask"]
-    assert _client(w["op"]).get("/api/agents/ace/interface").json()["source"].strip() == SAVED_YAML.strip()
-
-
-def test_bad_yaml_is_a_422_that_says_why(w):
-    r = _client(w["op"]).put("/api/agents/ace/interface", {"source": "capabilities: [unclosed"},
-                             content_type="application/json")
-    assert r.status_code == 422 and "YAML" in r.content.decode()
-
-
-def test_yaml_cannot_construct_objects(w):
-    r = _client(w["op"]).put("/api/agents/ace/interface",
-                             {"source": "!!python/object/apply:os.system ['id']"},
-                             content_type="application/json")
-    assert r.status_code == 422
-
-
-def test_exactly_one_of_source_or_interface(w):
-    c = _client(w["op"])
-    assert c.put("/api/agents/ace/interface", {}, content_type="application/json").status_code == 422
-    assert c.put("/api/agents/ace/interface", {"source": SAVED_YAML, "interface": {}},
-                 content_type="application/json").status_code == 422
 
 
 # --- a page can pick the door --------------------------------------------------

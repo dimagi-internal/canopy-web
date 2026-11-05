@@ -505,44 +505,6 @@ def published(iface: dict) -> bool:
     return bool(iface.get("capabilities"))
 
 
-#: THE default interface (`default_interface`, from `interface_default.py`), which every agent
-#: has until its owner changes it: no capability. Only its owner, its admins and the editors
-#: its access list names reach it.
-def is_default(iface: dict | None) -> bool:
-    """Whether this interface is the default (or empty, which reads the same)."""
-    return not published(iface or {})
-
-
-def validate(doc) -> list[dict]:
-    """Every problem with a draft, as `[{path, message}]` — [] when `parse` accepts it.
-
-    `parse` stops at the first fault; a form wants one per field, so the top level
-    and each capability are parsed on their own. The server's parser stays the
-    only judge: this never decides what is valid, it only asks `parse` more than once.
-    """
-    errors: list[dict] = []
-
-    def attempt(piece, path: str = ""):
-        try:
-            parse(piece)
-        except InterfaceError as exc:
-            errors.append({"path": exc.path or path, "message": str(exc)})
-
-    if not isinstance(doc, dict):
-        attempt(doc)
-        return errors
-    attempt({k: v for k, v in doc.items() if k != "capabilities"})
-    caps = doc.get("capabilities") or {}
-    if not isinstance(caps, dict):
-        attempt({"capabilities": caps}, "capabilities")
-        return errors
-    if len(caps) > 50:
-        attempt({"capabilities": caps}, "capabilities")
-    for name, cap in caps.items():
-        attempt({"capabilities": {name: cap}}, str(name))
-    return errors
-
-
 def is_review_turn(turn) -> bool:
     """Whether `turn` belongs to a chat opened by asking for a one-session review."""
     from apps.canopy_sessions import access as session_access  # noqa: PLC0415 — access imports the agents app
