@@ -31,7 +31,6 @@
 "apps/agents/credentials/oauth_api.py" = ["PLC0415"]  # 2
 "apps/agents/credentials/vault_alerts.py" = ["PLC0415"]  # 1
 "apps/agents/credentials/zk.py" = ["PLC0415"]  # 1
-"apps/agents/credentials/zk_notify.py" = ["PLC0415"]  # 1
 "apps/agents/credentials/zk_seal.py" = ["PLC0415"]  # 1
 "apps/agents/engagement.py" = ["PLC0415"]  # 1
 "apps/agents/ideas.py" = ["PLC0415"]  # 2
