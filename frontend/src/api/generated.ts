@@ -16351,6 +16351,40 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/canopy-sessions/{session_id}/content": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Permanently delete your session's stored words
+         * @description Delete everything canopy stores of what was said in your own session: its messages
+         *     (sealed ones and their key included), transcript rows, attachments, drafts, its turns'
+         *     prompts, notes and logs, and its title. It cannot be undone. The session's row and ids
+         *     stay, so analytics does not change, and it is archived.
+         *
+         *     Your runner will not upload it again: the session stops being asked of your computer and
+         *     anything it still ships is dropped, whether or not a coach reviews you. The copy on your
+         *     own computer is untouched, as is anything already read out of canopy, such as a coach's
+         *     notes and logs.
+         *
+         *     Only the person whose session it is may do this, signed in as themselves: 403 for anyone
+         *     else, and for an agent's login or a token issued to a turn; no admin can override it. 409
+         *     while a turn is running, while it is being moved, when someone else is or was in the
+         *     conversation, or while a fork holds a copy. Deleting again does nothing. 503 when a file's
+         *     stored copy could not be removed: nothing has changed, and you can try again.
+         */
+        readonly delete: operations["delete_session_content"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/canopy-sessions/{session_id}/stop": {
         readonly parameters: {
             readonly query?: never;
@@ -44636,6 +44670,8 @@ export interface components {
         };
         /** SessionOut */
         readonly SessionOut: {
+            /** Content Deleted At */
+            readonly content_deleted_at?: string | null;
             /**
              * Backfill Pending
              * @default false
@@ -45138,6 +45174,20 @@ export interface components {
             readonly selections?: readonly (readonly number[])[] | null;
             /** Texts */
             readonly texts?: readonly (string | null)[] | null;
+        };
+        /** SessionContentDeletedOut */
+        readonly SessionContentDeletedOut: {
+            /**
+             * Deleted At
+             * Format: date-time
+             */
+            readonly deleted_at: string;
+            /** Messages */
+            readonly messages: number;
+            /** Attachments */
+            readonly attachments: number;
+            /** Turns */
+            readonly turns: number;
         };
         /**
          * MyVaultKeyOut
@@ -45738,6 +45788,8 @@ export interface components {
         };
         /** SessionDetailOut */
         readonly SessionDetailOut: {
+            /** Content Deleted At */
+            readonly content_deleted_at?: string | null;
             /**
              * Backfill Pending
              * @default false
@@ -45972,6 +46024,11 @@ export interface components {
              * @default false
              */
             readonly can_move: boolean;
+            /**
+             * Can Delete Content
+             * @default false
+             */
+            readonly can_delete_content: boolean;
             /**
              * Has More Before
              * @default false
@@ -69154,6 +69211,28 @@ export interface operations {
                     readonly "application/json": {
                         readonly [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    readonly delete_session_content: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SessionContentDeletedOut"];
                 };
             };
         };

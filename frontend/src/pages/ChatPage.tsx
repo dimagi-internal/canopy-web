@@ -275,8 +275,9 @@ function ChatPageInner({
   // The composer refuses rather than queueing — see sendBlockReason.
   // A viewer was given this chat to read (canopy_sessions.access); the server
   // refuses their send with a 403, so say so here instead of letting it bounce.
-  const disabledReason =
-    meta?.my_role === 'viewer'
+  const disabledReason = meta?.content_deleted_at
+    ? "This session's content was permanently deleted. Start a new session to carry on."
+    : meta?.my_role === 'viewer'
       ? "You were given this chat as a viewer, so you can read it but not send."
       : sendBlockReason({
           runnerName: placement.runnerName,
@@ -404,6 +405,7 @@ function ChatPageInner({
         {metaError && <span className="text-xs text-muted-foreground">· {metaError}</span>}
         <div className="ml-auto flex shrink-0 items-center gap-2">
           {actions.closeNote && <span className="text-[12px] text-muted-foreground">{actions.closeNote}</span>}
+          {actions.deleteNote && <span role="alert" className="text-[12px] text-destructive">{actions.deleteNote}</span>}
           {actions.resetNote && <span className="text-[12px] text-muted-foreground">{actions.resetNote}</span>}
           {actions.slackNote && <span className="text-[12px] text-muted-foreground">{actions.slackNote}</span>}
           {id && (
@@ -435,6 +437,10 @@ function ChatPageInner({
               resetting={actions.resetting}
               onClose={() => void actions.closeThisSession()}
               closing={actions.closing}
+              onDeleteContent={
+                meta?.can_delete_content && !meta.content_deleted_at ? () => void actions.deleteContent() : undefined
+              }
+              deletingContent={actions.deletingContent}
               // A viewer was given this chat to read, not to type into — the
               // control changes what a person's OWN composer shows others,
               // which a viewer has no composer for.

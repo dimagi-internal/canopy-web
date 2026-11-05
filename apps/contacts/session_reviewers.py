@@ -16,15 +16,18 @@ from __future__ import annotations
 
 from django.conf import settings
 from django.db import transaction
+from django.dispatch import receiver
 from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.canopy_sessions import lifecycle
 from apps.canopy_sessions.models import SessionReviewGrant
+from apps.harness.signals import session_content_deleted
 from apps.workspaces import access_requests
 
 from . import hcp
 from .models import Person
+from .services import person_for
 
 
 def live(user):
@@ -63,6 +66,17 @@ def _sharing_changed(user, agent, *, granted: bool) -> None:
     lifecycle.record(lifecycle.SHARING_CHANGED, None, by=user, workspace_id=agent.workspace_id,
                      change={"field": "review_grant", "user_id": user.pk, "agent": agent.slug,
                              "before": not granted, "after": granted})
+
+
+@receiver(session_content_deleted, dispatch_uid="person_audit_session_content_deleted")
+def _on_content_deleted(sender, session, by, **kwargs) -> None:
+    """A person deleted one of their sessions' words: on their own audit, the session's id
+    and nothing else. In the deleting transaction, so there is no unrecorded delete."""
+    if by is None:
+        return
+    hcp.audit(person_for(user=by), "session.contentDeleted", actor=hcp.user_actor(by),
+              workspace_slug=session.workspace_id, purpose="delete a session's stored content",
+              detail=str(session.pk))
 
 
 def granted_to(agent, user) -> list[SessionReviewGrant]:

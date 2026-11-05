@@ -186,6 +186,12 @@ class Session(models.Model):
     retention_floor_index = models.PositiveIntegerField(default=0)
     #: When retention last removed content from this session. Null = never.
     content_purged_at = models.DateTimeField(null=True, blank=True)
+    #: The person whose session this is deleted its stored words
+    #: (`content_deletion.delete_content`). THE tombstone: from then on it takes no
+    #: more words from anywhere. Every runner path and every send is refused, and its
+    #: row and ids stay for analytics. Never cleared. `DeletedTranscript` carries the
+    #: same refusal to a new session row for the same Claude transcript.
+    content_deleted_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -260,6 +266,24 @@ class Message(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"msg:{self.session_id.hex[:8]}:{self.turn_index}:{self.role}"
+
+
+class DeletedTranscript(models.Model):
+    """A Claude transcript whose session's words a person deleted: nothing shipped
+    under this id is ever stored again, whichever session row it is shipped into.
+
+    `Session.content_deleted_at` stops the session itself. This covers what that
+    cannot: the same conversation arriving as a NEW session row, which is what happens
+    when a box is paired again (a new `Runner`, whose report finds no binding for the
+    task while the old runner's row still holds it) and goes on to ship the file still
+    on its disk. No FK on purpose: a tombstone outlives whatever else happens to the row."""
+
+    transcript_id = models.CharField(max_length=100, primary_key=True)
+    session_id = models.UUIDField(db_index=True)
+    deleted_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"deleted-transcript:{self.transcript_id}"
 
 
 class SessionReviewGrant(models.Model):

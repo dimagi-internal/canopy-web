@@ -138,6 +138,7 @@ def session_out(session: Session, *, reply: bool = False, viewer=None) -> dict:
             else ((binding.session_key if (binding and binding.session_key) else "") or session.title)
         ),
         "status": session.status,
+        "content_deleted_at": session.content_deleted_at,
         "opening": transcript_read.opening_of(session),
         "origin_resource": session.origin_resource,
         "created_at": session.created_at,

@@ -11,6 +11,8 @@ class ContactsConfig(AppConfig):
         from apps.common import ticks
 
         ticks.register("contacts.hcp_oauth_deliver", _hcp_deliver, 60)
+        # A person's own record of deleting one of their sessions' words.
+        from . import session_reviewers  # noqa: F401 — connects its receiver
 
 
 def _hcp_deliver() -> None:

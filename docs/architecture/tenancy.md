@@ -373,6 +373,37 @@ Built and **off** unless `CANOPY_RETENTION_ENFORCE=true`.
   workspace rule still wins when enforcement is on.
 - Spec: `docs/superpowers/specs/2026-10-05-content-retention-design.md`.
 
+## Deleting your own session's content
+
+`DELETE /api/canopy-sessions/{id}/content`, the "Delete this session's content" item in a session's
+menu (`canopy_sessions/content_deletion.py`). Retention is a workspace's clock; this is one person's
+act, and it does not depend on a rule, on enforcement being on, or on being coached.
+
+- **Who: the person whose session it is, nobody else** (`access.owns_words`): the chat they started,
+  or a session discovered on a box they own that is not an agent's own work, also once it has fallen
+  off that box's report. No role overrides it: not a workspace owner, an agent admin or a runner admin.
+- **As themselves** (`harness.acting_person`, and `delegation.acting_app`): 403 for an agent's login,
+  any token issued to a turn (a turn's login, a caller token, an act-as-you token, which also lists it
+  in `act_as.EXCLUDED_PATTERNS`), a runner, and a site's token for its visitor. Their own browser
+  session, PAT or OAuth token may. It does not ask for a passkey.
+- **Only while it is theirs alone** (`access.others_in_it`), else 409: nobody else added, no channel
+  thread it lives in, no line anyone else wrote and no turn anyone else asked for, including people
+  since removed. A contact's conversation is never anyone's to delete this way.
+- **Only while it is quiet** (`content_deletion.blocker`), else 409: no open turn, its engine not
+  working, no move under way, no fork still holding a copy. Rechecked under the row locks.
+- **It leaves a metadata row.** The session is archived and empty, stays readable by those who could
+  read it (its row, not its words), and takes nothing more. A coach's leg stops reading it at all
+  (`_review_grant_q`), and a grant given later does not bring it back. The tombstone and what honours
+  it: chat-sessions.md § A person deleting their own session.
+- **What it cannot reach**, and the page says so: the transcript on the person's computer; what a coach
+  already read into its notes, logs and mailbox; words posted to Slack; a `/canopy:share-session`
+  link (`session_sharing`, its own delete); facts on their memory page; artifacts made from the session
+  (a walkthrough, a review, a storyboard); and sessions or turns this conversation dispatched to, which
+  are other conversations with their own records.
+- A failed delete of a file's stored object answers 503 with nothing else changed, and a retry finishes it.
+- Recorded as `session.content_deleted` in the workspace's event log and `session.contentDeleted` on the
+  person's own audit, ids only. It is not a setting and not an analytics fact.
+
 ## Sensitive conversations (`apps/harness/sensitivity.py`)
 
 `is_sensitive(session | turn)` — the requirements (`runner_requirements.requirements_of`,

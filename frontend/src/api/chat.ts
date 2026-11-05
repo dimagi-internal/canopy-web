@@ -369,6 +369,12 @@ export function closeSession(id: string): Promise<CloseResult> {
   });
 }
 
+/** Permanently delete what canopy stores of your own session. Refusals are thrown
+ *  (`ApiError`), with the reason to show in `message`. */
+export function deleteSessionContent(id: string): Promise<components["schemas"]["SessionContentDeletedOut"]> {
+  return request(`/api/canopy-sessions/${encodeURIComponent(id)}/content`, { method: "DELETE" });
+}
+
 /** Retire a session row by hand without touching emdash; /unarchive undoes it. */
 export function archiveSession(id: string): Promise<ChatSession> {
   return request<ChatSession>(`/api/canopy-sessions/${encodeURIComponent(id)}/archive`, { method: "POST" });

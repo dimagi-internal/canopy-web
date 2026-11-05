@@ -53,6 +53,8 @@ def prompt(session) -> str:
 def _reason(agent, user, session) -> str:
     """Why `agent` cannot be asked to review `session` now, in plain words, or ""."""
     name = _name(agent)
+    if access.is_content_deleted(session):
+        return f"This session's content was deleted, so {name} has nothing to review."
     if sensitivity.is_sensitive(session):
         return f"This conversation is sensitive, so {name} cannot be asked to review it."
     if agent.user_id is None or not agent.user.is_active:

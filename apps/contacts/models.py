@@ -853,6 +853,9 @@ class PersonAuditEvent(models.Model):
         # `session_reviewers.py`): let in, and let go.
         "sessionReviewer.granted", "sessionReviewer.revoked",
         "sessionReviewAsk.asked", "sessionReviewAsk.withdrawn",
+        # The person deleted the stored words of one of their sessions: the session's
+        # id in `detail`, nothing else about it (`session_reviewers`).
+        "session.contentDeleted",
     )
     USER, AGENT, SYSTEM = "user", "agent", "system"
 

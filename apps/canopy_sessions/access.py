@@ -86,8 +86,9 @@ from django.utils import timezone
 from apps.agents.models import Agent, AgentProject
 from apps.harness import runner_requirements as rr
 from apps.harness import runners, sensitivity
-from apps.harness.models import Runner
+from apps.harness.models import Runner, Turn
 
+from . import channel_bindings
 from .models import (
     ProjectSessionShare,
     RunnerBinding,
@@ -361,11 +362,12 @@ def review_grantors(user):
 
 def _review_grant_q(user) -> Q:
     """Leg 5: the sessions of the people `review_grantors` allows this request to read.
-    Empty for anyone else."""
+    Empty for anyone else, and never a session whose words its person deleted: a coach
+    has no business with the row that is left."""
     if not getattr(user, "is_authenticated", False):
         return Q(pk__in=[])
     return (sessions_of_q(review_grantors(user).values("user_id"))
-            & Q(contact__isnull=True) & _not_sensitive_q())
+            & Q(contact__isnull=True, content_deleted_at__isnull=True) & _not_sensitive_q())
 
 
 def _review_ask_q(user) -> Q:
@@ -382,7 +384,8 @@ def _review_ask_q(user) -> Q:
     asks = SessionReviewAsk.objects.filter(
         session_id=OuterRef("pk"), agent__user=user, user_id=stand.person_id,
         review_session_id=stand.conversation_id, revoked_at__isnull=True, expires_at__gt=timezone.now())
-    return (sessions_of_q([stand.person_id]) & Q(contact__isnull=True) & _not_sensitive_q()
+    return (sessions_of_q([stand.person_id]) & Q(contact__isnull=True, content_deleted_at__isnull=True)
+            & _not_sensitive_q()
             & Q(Exists(asks)))
 
 
@@ -513,7 +516,10 @@ def role_for(user, session) -> str | None:
 
 
 def can_share(user, session) -> bool:
-    """Only an owner decides who else is in the conversation."""
+    """Only an owner decides who else is in the conversation, and nobody joins one
+    whose words were deleted."""
+    if is_content_deleted(session):
+        return False
     return role_for(user, session) == SessionParticipant.OWNER
 
 
@@ -539,7 +545,52 @@ def can_add_people(user, session) -> bool:
 
 
 def can_write(user, session) -> bool:
+    # A session whose words were deleted takes no more, from anyone: this is every
+    # REST write (`_session_or_404`) and the socket's drafts and sends.
+    if is_content_deleted(session):
+        return False
     return role_for(user, session) in _WRITE_ROLES
+
+
+#: What a write into a session whose words were deleted is told.
+CONTENT_DELETED_REFUSAL = ("This session's content was permanently deleted, so it takes nothing "
+                           "more. Start a new session to carry on.")
+
+
+def is_content_deleted(session) -> bool:
+    return session is not None and session.content_deleted_at is not None
+
+
+def owns_words(user, session) -> bool:
+    """Is this session's content `user`'s to delete? THE rule: the person whose session
+    it is, and nobody else. The chat they started, or a session discovered on a box they
+    own that is not an agent's own work (`is_box_owner`, so a laptop session that has
+    fallen off its box's report is still theirs). Never a contact's conversation, and no
+    role, runner admin or workspace owner has an override. Whether the REQUEST is that
+    person acting as themselves is `harness.acting_person`, asked at the route."""
+    if not getattr(user, "is_authenticated", False) or session is None or session.contact_id is not None:
+        return False
+    if session.created_by_id is not None:
+        return session.created_by_id == user.pk
+    return session.agent_id is None and is_box_owner(user, session)
+
+
+def others_in_it(user, session) -> bool:
+    """Is this someone else's conversation too? Anyone else added to it, a channel
+    thread it lives in, or anyone else who ever spoke in it: a line someone else wrote,
+    or a turn someone else asked for, including people since taken out of it."""
+    if SessionParticipant.objects.filter(session=session).exclude(user=user).exists():
+        return True
+    if any(channel_bindings.of(session).values()):
+        return True
+    authors = (session.messages.filter(author__isnull=False)
+               .values_list("author", flat=True).distinct())
+    if any(isinstance(a, dict) and (a.get("contact_id") or a.get("user_id") not in (None, user.pk))
+           for a in authors):
+        return True
+    return Turn.objects.filter(sensitivity.turns_of_q(session.pk)).filter(
+        Q(initiator_contact__isnull=False)
+        | (Q(initiator_user__isnull=False) & ~Q(initiator_user=user))).exists()
 
 
 #: What a caller who may read a session but not pull from its runner is told.
@@ -562,6 +613,8 @@ def may_pull(user, session) -> bool:
     rows and nothing more."""
     if not getattr(user, "is_authenticated", False) or not can_read(user, session):
         return False
+    if is_content_deleted(session):
+        return False
     return is_box_owner(user, session) or can_write(user, session)
 
 
@@ -570,7 +623,7 @@ def may_move(user, session) -> bool:
     Anyone who may write in it, or an admin of the box it is on — the person
     trusted with emptying that box. Where it may land is the transfer's own rule
     (`transfer_requests.request`)."""
-    if not can_read(user, session):
+    if not can_read(user, session) or is_content_deleted(session):
         return False
     if can_write(user, session):
         return True

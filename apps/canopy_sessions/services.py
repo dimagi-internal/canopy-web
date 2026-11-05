@@ -507,6 +507,7 @@ RESET_OK = "ok"
 RESET_NO_BINDING = "no_binding"            # nothing knows which box/worktree it came from
 RESET_RUNNER_UNREACHABLE = "runner_unreachable"   # transient: retry when it's back
 RESET_SENSITIVE_BOX = "sensitive_data_runner"     # its box never ships a transcript
+RESET_CONTENT_DELETED = "content_deleted"         # its person deleted it: it must not come back
 
 
 def _reset_blocker(session) -> tuple[str, object]:
@@ -524,6 +525,10 @@ def _reset_blocker(session) -> tuple[str, object]:
     binding), or no live runner to read it (offline/retired — transient).
     """
     binding = getattr(session, "runner_binding", None)
+    # First, so a bulk reset's `prune_ghosts` never drops the row that holds the
+    # tombstone: the next report would file the task as a new session.
+    if session.content_deleted_at is not None:
+        return RESET_CONTENT_DELETED, binding
     if binding is None or binding.runner_id is None:
         return RESET_NO_BINDING, None
     # Reachable is enough to READ A FILE — mirrors request_backfill, which never

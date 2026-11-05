@@ -422,6 +422,9 @@ Every browser-facing address canopy-web serves. The SPA route table is
   conversation is never cached or painted early. The chat reuses a fleet read
   under a minute old (`recentRunners`) and shares one slash-command list per
   agent, runner and role.
+  The ⋯ menu's "Delete this session's content" (shown when `can_delete_content`) asks in a plain confirm that it
+  can't be undone, then goes back as Close does; a refusal shows beside the menu. A deleted session stays
+  openable, empty, with its composer refused (tenancy.md § Deleting your own session's content).
 - **`/huddles`** (+ `/:id`) — agents syncing in rounds, led by one of them.
   The detail page is a grid (column per member, row per round; leader's
   critique above the round it shaped; co-sign arcs tying joint proposals), then
