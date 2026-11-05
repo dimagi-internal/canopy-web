@@ -280,14 +280,14 @@ ignored files never travel), optionally the Claude transcript. ≤ 24 MB packed.
   `drafts.set_visibility`) — never a field on the version-guarded `draft.update`
   keystroke frame, where a stale echo can silently downgrade it. The control lives
   in the chat's ⋯ menu (`ChatSessionMenu`).
-- **Every door sends through `doors.send_from(door, ...)`** (REST, socket, app
+- **Every send path sends through `send_paths.send_from(send_path, ...)`** (REST, socket, app
   views, contact API, Slack): it stamps the site's runner requirements, caps the
-  client nonce, turns a refusal into a 422 on an HTTP door and runs the dev stub
-  inline; what differs per door is a row of `doors.DOORS`. Who may send, the
-  initiator and door-only follow-ups stay at the door
+  client nonce, turns a refusal into a 422 on an HTTP route and runs the dev stub
+  inline; what differs per send path is a row of `send_paths.SEND_PATHS` (each a `SendPath`).
+  Who may send, the initiator and route-only follow-ups stay at the route
   (`tests/test_one_chat_send_path.py`). `runner_requirements` has no default:
-  every door a site's token can reach passes the token's requirements (`sensitive_data`),
-  so a turn sent there routes under the site's floor; a door no site reaches
+  every send path a site's token can reach passes the token's requirements (`sensitive_data`),
+  so a turn sent there routes under the site's floor; a send path no site reaches
   (Slack) passes `()` explicitly.
 - **A send only enqueues.** `send.queued_messages` (derived, never stored) shows
   every watcher the sends not yet in the transcript; REST and contact sends carry a
@@ -376,7 +376,7 @@ ignored files never travel), optionally the Claude transcript. ≤ 24 MB packed.
   with <repo>" (`runner-routing.md` → "Project chats"). A chat with neither an agent nor a
   repo follows the same order-or-your-box rule.
 - **Picking a box** for a chat is one rule, `canopy_sessions.placement.may_place`,
-  asked by every door that chooses: the "Run on" picker's `runner_id`, a send's
+  asked by every entry point that chooses: the "Run on" picker's `runner_id`, a send's
   `placement`, the banner's `/place`, a move of queued turns (`move_queued_turns`,
   Slack's move-to-cloud) and the cloud-box offer. For a chat with an agent it is
   `agents.access.may_pin_runner` (an agent admin, or a runner admin of that box);
@@ -425,7 +425,7 @@ session, or changes who can see it or where it is listed, is ONE `Event` row
 | `session.archived` / `session.unarchived` | `/archive` / `/unarchive` (`control.archive_session` / `unarchive_session`), a send into an archived session, a contact's archive, a successor taking its binding, `staleness.archive_stale_sessions`; reported open again | observed; staleness (`record_many`) |
 | `session.deleted` | the row deleted (a ghost pruned by `/reset`, any other delete) | observed (`post_delete`) |
 | `session.moved` | filed in another workspace — written to BOTH workspaces | observed (`filing.move`); `filing.rehome_agent_sessions` (`record_many`) |
-| `session.slack_bound` / `slack_detached` / `slack_rebound` | its `metadata.slack_thread` set, removed or replaced (share-with-bind, detach, new thread, the front door) | observed |
+| `session.slack_bound` / `slack_detached` / `slack_rebound` | its `metadata.slack_thread` set, removed or replaced (share-with-bind, detach, new thread, the Slack channel) | observed |
 | `session.participant_added` / `_removed` / `_role_changed` | a `SessionParticipant` row; one going with its session is the deletion, not a removal | observed on the participant row |
 | `session.sharing_changed` | a person's project sharing (`ProjectSessionShare`) or a coach's review grant — `session` blank, it covers many | `sharing.set_shared`, `contacts.session_reviewers` |
 | `session.sensitivity_changed` | it became sensitive | `services.add_runner_requirements` |

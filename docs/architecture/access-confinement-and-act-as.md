@@ -1,6 +1,6 @@
 # Access: confinement and acting on someone's behalf
 
-How a confined turn is enforced (what a caller's turn can and cannot reach), how an agent acts on behalf of the person who asked, and the two act-as-you doors: canopy-web's own `ActAsGrant` in the agent's turn, and the passkey-confirmed host grants on a connected site. The words and the one rule are defined in [access.md](access.md).
+How a confined turn is enforced (what a caller's turn can and cannot reach), how an agent acts on behalf of the person who asked, and the two act-as-you permissions: canopy-web's own `ActAsGrant` in the agent's turn, and the passkey-confirmed host grants on a connected site. The words and the one rule are defined in [access.md](access.md).
 
 **See also:** [access.md](access.md) (glossary, "Whose authority an agent acts with"), [access-direct-use-and-admission.md](access-direct-use-and-admission.md), [embedding-internals.md](embedding-internals.md) (host grants).
 
@@ -14,9 +14,9 @@ tool; and beside every delivered prompt — the runner leaves
 `caller_context` UserPromptSubmit hook adds a summary next to the person's words
 (cloud: `CANOPY_CALLER`).
 
-* **Default deny.** An agent with no capability published and no `write` line is reached only by
-  its owner and agent admins; every read_only, capability-line, contact or unidentified
-  caller is refused (row 5). The interface is live state on canopy-web —
+* **Default deny.** An agent with no `read` or `write` line and no connected site is reached only by
+  its owner and agent admins; every contact or unidentified caller no line names, and every
+  line that opens nothing the agent has, is refused (row 5). Read mode exists on every agent. The interface is live state on canopy-web —
   never a file in the agent's repo; the owner or an agent admin edits it on the agent. It
   confines callers who reach the agent through canopy (web chat, Slack, email,
   embedded sites). canopy's MCP server offers NO per-agent tools: someone who
@@ -24,18 +24,18 @@ tool; and beside every delivered prompt — the runner leaves
   Code, as themselves (`/get-started`).
 * **An agent's own login is the agent.** `Agent.user` grades as `system`;
   another agent's login grades like any person, or agent A could steer all of B.
-* **Three layers, each failing closed.** (1) canopy stamps `Turn.capability` at
+* **Three layers, each failing closed.** (1) canopy stamps the profile's name on `Turn.capability` (the stored field) at
   enqueue (`harness.services._apply_capability`) or refuses the turn; (2) only a
   runner reporting `profiles` (and `envelope >= 2`) may claim such a turn, and it
   runs it in its own `cx-` session with the profile written to
   `~/.canopy/profiles/<task>.json` first; (3) the plugin-wide `profile_guard`
   PreToolUse hook refuses anything the profile does not list — Bash
   argument-for-argument, `{thread_id}`-pinned, paths realpath'd.
-* **Native deny rules under the guard.** The runner also writes the capability as
+* **Native deny rules under the guard.** The runner also writes the profile as
   Claude Code's own DENY rules (`runner/canopy_runner/canopy_runner/native_permissions.py`
   → the `cx-` worktree's `.claude/settings.json`; `--settings` on cloud). Fleet
   sessions run with `--dangerously-skip-permissions`, so only deny rules take
-  effect natively: whole tools, MCP servers and high-risk programs the capability
+  effect natively: whole tools, MCP servers and high-risk programs the profile
   never grants. Exact-argument scoping stays the hook's job.
 * **Confined sessions have `Read`; a cloud runner has no `Grep` or `Glob`.** The cloud box
   installs the current `@anthropic-ai/claude-code` from npm (`runner/ec2/runner.cfn.yaml`,
@@ -57,7 +57,7 @@ tool; and beside every delivered prompt — the runner leaves
   and bound to its conversation; the canopy plugin's `headersHelper` sends it from
   the session's profile. It resolves to the conversation's CURRENT turn: tools run as
   that turn's caller (no canopy user at all for an outside contact), and only the
-  tools the capability lists exist (`apps/mcp/turn_scope.py`, `agent ∩ caller`).
+  tools the profile lists exist (`apps/mcp/turn_scope.py`, `agent ∩ caller`).
   Expired, long-finished, or a conversation whose current turn is not confined → it
   authenticates nothing; `who_is_asking` answers only about its own conversation.
 * **A confined turn holds no credentials it does not need.** canopy refuses it
@@ -66,7 +66,7 @@ tool; and beside every delivered prompt — the runner leaves
   `runner/ec2/cloud_runner.py`: Claude's login, locale/paths/TLS, which agent and
   turn) — no `CANOPY_TOKEN`, no agent `.env`, no vault key (it never calls
   `credentials/resolve`), no chat key; gog's keyring password only when the
-  capability's own bash rules run the mail path (`canopy email …` /
+  profile's own bash rules run the mail path (`canopy email …` /
   `bin/<slug>-email`).
 * **A colleague's FULL turn reads as the colleague.** A full-profile turn not
   asked by the agent's owner, an agent admin or canopy (an editor line, a
@@ -83,7 +83,7 @@ tool; and beside every delivered prompt — the runner leaves
   `canopy-web-mcp-headers.js` sends it and never falls back to a PAT once it has
   one; a write failure refuses the turn. A scoped token does not serve a
   confined turn's conversation, and a confined token does not serve a full turn's.
-  **Its reads stop where the agent's part in them stops** (`access.turn_reach`, both doors): an agent
+  **Its reads stop where the agent's part in them stops** (`access.turn_reach`, REST and MCP alike): an agent
   turn's caller token, scoped or confined, reads the asker's sessions only if the session is its own
   conversation or is with that agent. Their laptop sessions and their chats with other agents take
   an act-as-you grant (`canopy:act-as-you`), because the asker granted this agent nothing over them.
@@ -95,7 +95,7 @@ tool; and beside every delivered prompt — the runner leaves
   (`api_tools.is_tool_route`) and is refused (403) on every other one. The routes
   MCP leaves out (minting a PAT, the person's own memory switches and grants, the
   runner protocol) stay out of reach of a session acting for someone. A confined
-  token is refused on REST (401): its capability's tool list is an MCP filter, and
+  token is refused on REST (401): its profile's tool list is an MCP filter, and
   REST has no equivalent to apply. This is what lets the canopy CLI in a scoped
   session read as the asker instead of failing for want of a PAT; like MCP, REST
   refuses an agent turn's token every write but driving the page (non-GET → 403);
@@ -198,7 +198,7 @@ for 30 minutes, and does so only once you approve with your passkey
   (`act_as.unreviewed_write_refusal`: 403 at the request, 422 at the approval). A `manual`
   turn is unaffected. An `auto` turn **you are attending** may ask for write: your message
   typed in the canopy-web chat (`origin=canopy_web_chat`, asker kind `user` and that very
-  person, verified, not a chain on your behalf), not confined to a caller capability, with
+  person, verified, not a chain on your behalf), not confined to a caller's profile, with
   you present in that chat when it asks (`presence.is_present`). The review it lacks is
   yours, at the approval page, which shows the reason and scope and needs your passkey.
   Not attended, so still read-only: a schedule or trigger firing, an inbound email or Slack
@@ -254,14 +254,14 @@ host* (the header above is canopy-web's own decisions):
 - **A chat on a page reaches that site only as the person, under their act-as-you
   permission — owners included.** The gateway (`site_tools` / `site_call` /
   `site_read`) serves every turn in a conversation held on a site's page (the
-  session's `embed_app`) whose agent is set up for that site — some capability of its
-  interface lists it in `sites:` (`interface.page_site_of`) — whatever the turn's
-  profile: a confined visitor's (its capability must list the site), an editor's
+  session's `embed_app`) whose agent is set up for that site — one of its connected sites
+  lists it in `sites:` (`interface.page_site_of`) — whatever the turn's
+  profile: a confined visitor's (its connected site must list the site), an editor's
   (scoped token), the owner's or an agent admin's (found from the chat key the runner gave
   only that session). Every call uses the SENDER's grant for that page. A full-profile
   turn is narrowed by the widest ceiling the owner set on that site
   (`interface.site_ceiling`).
-- **The agent's own login at that site is withheld from such a turn.** A capability
+- **The agent's own login at that site is withheld from such a turn.** A connected site
   names it per site: `own_login: {connect-labs: [LABS_MCP_TOKEN]}` — credential names,
   never values. The claim carries `page_site: {site, withheld}`
   (`interface.page_turn`); a cloud runner leaves those names out of the turn's

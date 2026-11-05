@@ -55,7 +55,7 @@ who can read the task gets a 403. The result is validated against `output_schema
 a list of `{path, message}`, `path` a JSON Pointer into the result (`""` for the
 whole of it), at most 50 — and the task stays open, so the agent fixes each path and
 submits again. A task that has ended is a 409; a result over 1 MiB a 413. A confined
-turn (a caller's capability) reaches canopy as its asker, not as the agent, so it
+turn (a caller's read mode or connected site) reaches canopy as its asker, not as the agent, so it
 cannot submit: agent tasks are for turns that run as the agent.
 
 ## The completion rule
@@ -75,7 +75,7 @@ soon"), so a turn's end is never read as an answer. Two rails hold the rule:
    submit_agent_task_result now." followed by the task's own instructions — up to
    **2** follow-ups; the next end fails the task with `error: "the agent ended without
    a result"`. A follow-up is not a send into the ended turn's session: that is a
-   person's chat door (its ACL, sealing and authorship), and a nudge has no person
+   person's chat send path (its ACL, sealing and authorship), and a nudge has no person
    behind it. On a laptop runner a turn finishes as soon as its session exists while
    the agent works on in it, so nothing is sent while that session is still live on
    the runner (`turn_agent_tokens.live_session`); the deadline still holds.

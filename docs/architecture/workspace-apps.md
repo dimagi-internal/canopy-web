@@ -28,7 +28,7 @@ What runs is `compose(template manifest, overlay)` (`overlay.py`), validated aga
 `pages` (sandboxed JSX, with named `slots`), `settings`, `fixtures` (sample records for test
 copies) and `scenarios` (plain-language checks). Installing one runs nothing on the server.
 
-A manifest may also carry a top-level `connections` declaration, the same shape as a dynamic view's (`[{provider, as: "viewer"|"shared", agent?, reads, writes}]`, validated by `manifest.py`, composed through overlays unchanged). Member-door pages may call Salesforce through canopy-web within it; public pages never do. A shared agent connection is approved per app on the agent's Accounts tab ([`vault.md`](vault.md) § Calls from screens).
+A manifest may also carry a top-level `connections` declaration, the same shape as a dynamic view's (`[{provider, as: "viewer"|"shared", agent?, reads, writes}]`, validated by `manifest.py`, composed through overlays unchanged). Member-only pages may call Salesforce through canopy-web within it; public pages never do. A shared agent connection is approved per app on the agent's Accounts tab ([`vault.md`](vault.md) § Calls from screens).
 
 What an app can say without code, each enforced in `services.act` / `services.query`:
 
@@ -58,7 +58,7 @@ retention preview and run, and a data-subject export by email (Customize → Pri
 ## The overlay (`overlay.py`)
 
 The workspace **adds** in its own namespace (`x_` fields/collections/actions/roles, `x-` pages) so
-a template addition can never collide, and changes a template element only through narrow doors:
+a template addition can never collide, and changes a template element only through narrow routes:
 relabel / help / hide / require (never un-require), add options to lists the template marks
 `extensible` (between `fixed_first` and `fixed_last`), switch an action off, add its own fields to
 an action's input, fill a declared **slot**, set a setting. `fork_page` replaces a page and is

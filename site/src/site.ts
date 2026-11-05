@@ -2,7 +2,7 @@
 
 export const GITHUB_URL = 'https://github.com/dimagi-internal/canopy-web'
 export const LICENSE_URL = `${GITHUB_URL}/blob/main/LICENSE`
-// The door into the app: signed in, straight to your workbench; signed out, the
+// The way into the app: signed in, straight to your workbench; signed out, the
 // login middleware sends you through Google sign-in first, then here.
 export const SIGN_IN_URL = '/app'
 // The request-access form posts here. Empty = this host (canopy-web serves the site

@@ -2,10 +2,11 @@
 
 Every word canopy uses about who may do what has exactly one meaning, and it is
 defined here. Code docstrings point at this page instead of re-defining terms
-(`apps/agents/access.py`, `apps/agents/grants.py`, `apps/agents/roles.py`,
-`apps/harness/caller_context.py`, `apps/workspaces/permissions.py`,
-`apps/agents/interface.py`, `apps/harness/turn_mode.py`). Reuse existing words, one
-meaning per word, no new terms. Design: `docs/superpowers/specs/2026-10-30-agent-roles-and-access-list-design.md`.
+(`apps/agents/turn_context.py`, `session_context.py`, `refusals.py`, `grants.py`, `roles.py`,
+`interface.py`, `answering.py`, `apps/harness/caller_context.py`, `apps/harness/turn_mode.py`,
+`apps/workspaces/permissions.py`). Reuse existing words, one meaning per word, no new terms.
+Designs: `docs/superpowers/specs/2026-11-05-turn-context-design.md` (the Turn Context) and
+`docs/superpowers/specs/2026-10-30-agent-roles-and-access-list-design.md` (roles and the access list).
 
 There are two ladders, and they are different questions:
 
@@ -13,19 +14,14 @@ There are two ladders, and they are different questions:
   invite people, create content, reshape agents);
 * an **agent role** says what a person may make one *agent* do.
 
-THE rule that joins them is one function, `apps/agents/turn_context.resolve_turn_context(session_ctx, asker,
-agent, *, requested=None, turn=None, stamp=None, runner=None)`, which returns a frozen `TurnContext(standing,
-access, profile, basis, session_key_suffix, review, stamped, refusal, trace)`; its design is
-`docs/superpowers/specs/2026-11-05-turn-context-design.md`. `turn_context.for_turn(turn, agent, requested)` and
-`for_asker(agent, who, *, verified, requested, turn, standing, lines)` are how an entry point asks it.
-In `standing`, `relationship` is how canopy
-knows the asker (`owner | admin | member | contact | system`), `agent_role` is the named role their
-lines give. Every entry point that makes an agent do work asks it (see "Where it
-is asked" below); `tests/test_access_matrix.py` asks it through every entry point. Don't write a
-second predicate for "may this person make this agent do X" — ask the rule.
+THE rule that joins them is one function, `apps/agents/turn_context.resolve_turn_context`. It reads
+the facts of a conversation and who is asking, and returns a **Turn Context**: what one turn may do
+and why. Every entry point that makes an agent do work asks it; everything downstream reads its
+result; `tests/test_access_matrix.py` asks it through every entry point. Don't write a second
+predicate for "may this person make this agent do X" — ask the rule.
 
-This page is the glossary, the roles, the access list, access levels, capabilities, the decision
-table, triggers and turn mode. The rest is split by subject:
+This page is the model, the glossary, the roles, the access list, read mode and connected sites, the
+decision table, refusals, triggers and turn mode. The rest is split by subject:
 [access-direct-use-and-admission.md](access-direct-use-and-admission.md) (direct use of an agent,
 what a caller's turn tells the owner, admission rules, the caller envelope),
 [access-confinement-and-act-as.md](access-confinement-and-act-as.md) (how confinement is enforced,
@@ -33,24 +29,239 @@ acting on behalf of the asker, act-as-you on canopy-web and on connected sites) 
 [access-sessions-and-people.md](access-sessions-and-people.md) (who can see and who is in a session,
 Slack threads, what agents know about a person); the HCP service is [hcp-service.md](hcp-service.md).
 
+## The Turn Context
+
+```
+FAN IN                                 RESOLVE             FAN OUT
+Session Context ─┐                                         ┌─ the agent (caller envelope)
+Asker           ─┼─→ resolve_turn_context() → Turn Context ┼─ the runner (session, confinement)
+Agent settings  ─┘                                         ├─ tokens, credentials
+                                                           ├─ the turn's refusal, the composer
+                                                           └─ the session panel, in chat and the IDE
+```
+
+`resolve_turn_context(session_ctx, asker, agent, *, requested=None, turn=None, stamp=None, runner=None)`
+is pure: **it writes nothing** (a test wraps it in a read-only guard). `caller_context.build` writes a
+`PersonAccess` row and may create a `Person`; that stays in the envelope's `person` block, outside the
+resolver. Entry points ask it through three wrappers:
+
+* `turn_context.for_turn(turn, agent, requested)` — what the rules say for a turn, from its own initiator.
+* `turn_context.for_asker(agent, who, *, verified, requested, turn, standing, lines, channel)` — a
+  question with no turn (the roster, the topology, `may_edit_agent`, licenses), or about a turn when the
+  caller knows better than the turn how far this message is proven.
+* `turn_context.of_turn(turn, agent, *, runner)` — what a written turn **runs as**: its stamp stands
+  (see "Two moments").
+
+### Session Context
+
+The durable facts of a conversation, whoever is asking: `session_context.build(session, turn=None, *,
+agent=None)`, a frozen read-model over rows that already exist. No table, no write, nothing about the
+asker. The turn is an input because some facts only a turn holds (a sessionless turn dispatched from a
+sensitive parent is sensitive through its ancestors; its conversation may be `canopy_session` rather
+than `chat_session`). A question with no conversation uses `session_context.empty(channel=…)`, so the
+resolver has one input shape.
+
+| Field | Means |
+|---|---|
+| `session_id`, `agent`, `workspace` | Which conversation, which agent (its slug; none for a person's own repo or project session), which tenant. |
+| `channel` | `turn.origin` for a turn, which is what turn mode reads; for a preview, where the conversation lives (the origin of its first turn). Never `Session.origin`, which only says which side created the row. |
+| `runner_requested`, `runner_bound` | The runner asked for (`turn.pinned_runner_id`, or `metadata.requested_runner_id`) and the one backing it now. |
+| `site`, `page` | The connected site the conversation is held on, and the resource its page declared (`interface.session_site`, `session_resource`). |
+| `sensitive`, `sensitive_requirement` | Whether the conversation holds a site's sensitive data (`sensitivity.is_sensitive` for a turn, `any_sensitive` for a session), and the requirement that made it so. Once true it does not revert. |
+| `is_review`, `review_of` | This is a one-session review's chat, and the session it reviews. |
+| `audience`, `participants` | Who can see the session (`canopy_sessions.audience`) and its `(user_id, role)` rows. |
+| `session_grants` | Being in this session gives someone more than their own standing ("Session grants" below). |
+| `send_blocks` | Why this session takes no message from anyone, or from some people (stage 0 below). |
+
+### Session grants
+
+`session_grants` is a list of `{kind, user_id, role, source}`, asked by stage 1 in one rule. Exactly one
+kind exists: **`session_writer`** (`interface.session_writers`): a participant with role owner or editor
+in a session the agent's owner or an admin started holds the whole agent there, so a colleague let into
+the owner's conversation continues the SAME runner session. Both halves matter: the creator must be the
+owner or an admin (or any member could start a chat and be "the owner of a session"), and the grant is an
+explicit participant row. It is read from a turn's `chat_session` only, never `canopy_session`. A session
+writer's permissions stop at `write`: nothing gives them the agent itself. Adding a kind is one builder in
+`session_context.py` and one test, with no change to the resolver.
+
+### What a Turn Context holds
+
+A frozen `TurnContext`, always produced, even when refused:
+
+| Field | Means |
+|---|---|
+| `standing` | What the asker holds on this agent and why: `relationship` (`owner \| admin \| member \| contact \| system`), `permissions` (everything their lines grant), `agent_role`, `source` (`owner \| admin \| system \| session \| list:<line>`) and `via` (`source` in words). On a refusal from the rule `permissions` is empty and `agent_role`/`source` blank; a stage 0 refusal keeps the whole standing, because who they are is still true. |
+| `access` | `full`, `confined` or `refused`: how the profile is enforced. |
+| `profile` | The one profile the turn runs in, or None exactly when refused. |
+| `basis` | Why, in one word: `owner \| admin \| system \| session:<role> \| grant:<line> \| capability:<name> \| sensitive:<name> \| refused \| no-interface`. The `capability:` prefix is a wire value (the envelope's `granted_by`, `caller_tokens.is_caller_scoped` and licenses read it); it names a read-mode or connected-site profile. |
+| `session_key_suffix` | `#<name>` for a confined profile, empty for the whole agent ("What confinement keeps"). |
+| `credentials` | What this turn gets, by name and kind, never a value ("Credentials" below). |
+| `review` | Turn mode and its basis (`pending` until a claim knows the runner), `manual_only`, `may_request_auto`, `may_pin_runner`. |
+| `stamped` | The profile name stored on `Turn.capability`: `""` for the whole agent, a name, None when refused. |
+| `refusal` | `{code, why, how_to_fix, who_can_fix}`, non-null exactly when `access == refused` ("Refusals" below). |
+| `trace` | An ordered list of `{rule, outcome, detail}`, one per rule the resolver asked: the "why" a screen shows. |
+
+`held_permissions` is what the asker holds for THIS turn (the envelope's `permissions`): a full turn holds
+everything its role or lines give; a confined turn holds `read` and its profile's `use:<name>` only, even
+for an owner a sensitive conversation confined; someone the rule no longer admits holds nothing, whatever
+the stamp.
+
+### Profiles
+
+A **profile** is the complete definition of what a turn can do: tools, shell commands, read and write
+paths, how it starts (`entry`), and whether it handles sensitive data. Every allowed turn has exactly one.
+`Profile` is `{kind, name, site, description, entry, tools, bash, read_paths, write_paths, data,
+default_profile_version}`, read when asked (canopy's default read profile reads the agent's skills).
+
+| Kind | Defined by | Access |
+|---|---|---|
+| `whole_agent` | The agent itself: nothing is enumerated. | `full` |
+| `read_mode` | The agent's Read mode setting, else canopy's default. | `confined` |
+| `connected_site` | That site's row on the agent (`site` names it; a stored entry with no site keeps this kind with `site` null). | `confined` |
+| `session_review` | Canopy, for a one-session review's chat. | `confined` |
+| `deny_all` | Canopy: a stamp that no longer resolves to a published profile, a sensitive turn stamped with read mode that has since gone (`turn_context.stamped_profile`), or a stamped turn whose agent has gone. Fail closed. | `confined` |
+| `no_agent` | A turn with no agent: a person's own repo or project session. Its enforcement and credentials are its own; this kind only names them. | `full` |
+
+**Only an explicit `kind == whole_agent` (or `no_agent`) means the whole of anything.** A missing profile,
+name or list never does; on every confined kind an absent list denies. `TurnContext` refuses to be built
+otherwise (a profile exactly when not refused; `full` exactly for `whole_agent`/`no_agent`).
+
+Admins never edit a profile as such. They edit the **access list** (who) and **Read mode** and
+**Connected sites** (what), which define the confined profiles; in the UI a profile reads as "what it may
+do".
+
+### How it is resolved
+
+**Stage 0 — can this session take a message from them.** Only for a **preview** (a real turn is past its
+entry point, and asking here would refuse turns no entry point refuses). The Session Context's
+`send_blocks`, in the order the send route asks them, each the same check the route makes and the same
+words it says: content deleted (everyone), `can_write` (a signed-in person who may read but not write;
+a contact's send has its own route), the agent CLI the conversation is held to and its agent no longer
+runs (everyone), and a sensitive conversation's not-in-it rule (anyone who is not one of its people at
+its chat surfaces). A block is a refused Turn Context with its own code; it changes nobody's access.
+
+**Stage 1 — standing**, first match:
+
+1. Canopy itself, another agent's approved dispatch, a schedule: `system`.
+2. For a person: `Agent.owner`, then the agent's own login (`system`), then `Agent.is_admin`
+   (`caller_context.relationship_for_user`).
+3. `session_grants`.
+4. The access list (`grants.resolve`).
+5. Otherwise, nothing.
+
+**Stage 2 — profile.** A base, then two rules that only narrow:
+
+| Base (first match) | Profile | Access |
+|---|---|---|
+| Owner, admin, system, a session grant, or holds `write` | `whole_agent` | `full` |
+| Holds nothing | — | `refused` |
+| Named a profile their permissions open | that `connected_site`, or `read_mode` if that is what was named | `confined` |
+| Named one they can't open, or one that is gone | — (**no fall-through to read mode**) | `refused` |
+| Named none; their page, else their site, selects one their permissions open | that `connected_site` | `confined` |
+| Named none, and holds `read` | `read_mode` (a page's or site's profile they can't open is skipped, not fatal: someone with `read` on a connected site gets read mode there) | `confined` |
+| Otherwise | — | `refused` |
+
+| Narrowing | Effect |
+|---|---|
+| **Review chat** (`_review_rule`) | Anyone not refused gets `session_review`, `confined`, and loses `auto` and pinning. |
+| **Sensitive** (`_sensitive_rule`) | A `full` base in a `data: sensitive` profile (the one named, else the one the site or page selects) runs that profile, `confined`, keeping role, mode and pin rights (`basis: sensitive:<name>`). A turn in a sensitive conversation that ends anywhere but its sensitive profile is `refused` — a review chat included. A `read` holder in a non-sensitive conversation on a sensitive page keeps what the base gave them. |
+
+**Stage 3 — fan-out values:** `review`, `session_key_suffix`, `credentials`. Turn mode's rules are not here
+(`apps/harness/turn_mode.py`); they need the claim, so the resolver reads a claimed turn's stamp, asks them
+afresh when given the runner, and otherwise reports `pending`.
+
+### Two moments: enqueue and claim
+
+A turn is resolved at **enqueue**, which stamps `Turn.capability` (`""` for the whole agent, else the
+profile's name) or refuses it. At **claim**, `of_turn` completes the Turn Context with the runner and final
+turn mode and **does not re-decide the profile: the stamp wins**, so a turn queued under one access level
+runs as it was admitted. A stamp that no longer resolves is `deny_all`. The asker's standing is still read
+live (the envelope's `permissions` need it): under the stamp, and when that no longer admits them, as they
+stand now. `who_is_asking` mid-turn stays live. A turn refused at enqueue has an empty stamp, and an empty
+stamp reads as the whole agent, so nothing asks what such a turn ran as without `turn_context.was_refused`
+first.
+
+A **preview** (the session panel's "For you, now", the composer) resolves with no stamp and writes nothing.
+**Admission rules** are a separate layer after the Turn Context (`admission/evaluate.at_claim`,
+[access-direct-use-and-admission.md](access-direct-use-and-admission.md)): the snapshot records their outcome
+beside the Turn Context; a preview does not predict them, and says so.
+
+### Who reads it (fan-out)
+
+| Reader | Reads |
+|---|---|
+| **The caller envelope** (`caller_context.build`) | The Turn Context serialised, plus what canopy knows about the person. `access` (`full \| confined \| refused`) is its word; `profile` (`full \| confined`) stays on the wire beside it for runners and plugins that read it (`session_naming.is_confined`, the canopy plugin's hooks), and says `full` on a turn refused before it ran. `capability`, `granted_by` and `source` keep their names. |
+| **The runner** | The stamp and `profile`: a confined turn runs in a `cx-` session keyed `<thread>#<name>`, under `profile_guard`, `_confine` and `_confined_env` ("What confinement keeps"). |
+| **Tokens and credentials** | `credentials/for_turn.py`, `caller_tokens`, `turn_agent_tokens`, `delegations`: below. |
+| **Refusals and the composer** | `refusal`: a refused turn's `result_note`, an entry point's 403, Slack's reply, the composer's notice ("Refusals"). |
+| **The session panel** | `GET /api/canopy-sessions/{id}/context` and `…/turns/{turn_id}/context` ("Seeing it"). |
+| **Everything else** | The roster and topology, `may_edit_agent`, licenses, `turn_mode`, `turn_gates`, `interface.grant_facts`/`offered_to`, admission, `answering_snapshot`. |
+
+**Credentials.** `TurnContext.credentials` is a true statement of what the turn gets — `canopy_login`
+(agent-only), `github_identity` (delegated), `caller_token`, `agent_vault`, and the agent's own login at a
+site, withheld on that site's page — each `yes | no | pending` with why, never a value. It adds no rule: it
+asks the functions that decide (`turn_agent_tokens.refusal`, `delegations.github_refusal`,
+`caller_tokens.is_caller_scoped`, `interface.page_turn`, `credentials/authority.py`), and anything only a
+box can settle is `pending`. A confined turn's environment never holds the agent's own values; only
+`whole_agent` gets delegated credentials and the agent's full login.
+
+### What confinement keeps
+
+The resolver has no separate "limited session" path, but the enforcement stays. These are requirements:
+
+* **Fail closed.** `profile_guard` denies everything for a `cx-` session with a missing or malformed profile;
+  a stamp that no longer resolves is `deny_all`; None never means the whole agent.
+* **Separate conversations.** Turns under different profiles never share a runner session, or a read-only
+  person could see the whole agent's history: `session_key_suffix` carries `<thread>#<name>`, and is empty
+  for `whole_agent` so live conversations don't split.
+* **Credentials.** Only `whole_agent` gets delegated credentials and the agent's full login.
+* **The runner's enforcement is not a second decision.** The `cx-` session name, `profile_guard`, `_confine`
+  and `_confined_env` are how the runner holds `access == confined` → [access-confinement-and-act-as.md](access-confinement-and-act-as.md).
+
+### Seeing it
+
+`frontend/src/components/chat/SessionInfoPanel.tsx`, opened from the chat's ⋯ menu and the IDE's row menu,
+shows both contexts, every value beside its reason and the trace with the step that changed the answer
+highlighted (for a refusal, the send block whose code it is, else the step that said no):
+
+* `GET /api/canopy-sessions/{id}/context` → `{session_context, turn_context, withheld}`: the facts, and a
+  preview of what would happen if you sent now. Anyone who can read the session (`can_read`); in a
+  sensitive conversation only its own people, in canopy's chat or the site's panel, get `turn_context`
+  (and `page`), and anyone else gets `withheld`.
+* `GET /api/canopy-sessions/{id}/turns/{turn_id}/context` → `{status, ran_as, now, differs}`: what the turn
+  ran as (`Turn.resolved_context`, written at each claim, when refused at enqueue, when a direct session
+  opens and when an admission rule closes the turn) beside what today's rules say. `status` is `recorded`,
+  `not_recorded` (older turns, a closeout report, a queued turn), `unavailable` or `withheld`. Follows
+  `turn_access.can_read_turn_log`, and the same sensitive narrowing.
+
+Both are MCP tools like every route. Neither ever holds the prompt, a transcript, the envelope's `person`
+block or a credential's value (`apps/agents/context_views.py`, an allowlist of named fields); tool lists,
+paths and names are configuration, readable to members.
+
 ## The words
 
 | Word | Means | Where it lives |
 |---|---|---|
+| **Session Context** | The durable facts of a conversation, whoever is asking. | `session_context.py` |
+| **asker** | Who a turn is for, and whether this message proves it (`verified`). | `turn_context.Asker` |
+| **standing** | What the asker holds on this agent, and why: relationship, permissions, role, source. | `TurnContext.standing` |
+| **Turn Context** | What one turn may do, resolved fresh for each message; always produced, even when refused. | `turn_context.py` |
+| **profile** | The complete definition of what a turn can do; one kind from a closed set. In the UI, "what it may do". | `turn_context.Profile` |
+| **access** | `full`, `confined` or `refused`: how a profile is enforced. A roster row and the topology say `none` for refused, on the wire. | `TurnContext.access` |
 | **workspace role** | What a person may do in a workspace: viewer < editor < admin < owner < superuser. Each role holds a set of workspace *permissions* (`content.write`, `logs.read`, …), not to be confused with the agent permissions below. Built on the same role engine as agent roles (`apps/common/rolesets.py`), with its own vocabulary. | `apps/workspaces/permissions.py`, `WorkspaceMembership.ROLE_RANK` |
-| **permission** | What a person may do with ONE agent: `read` (be answered in read mode), `write` (drive the whole agent), `agent_edit` (change the agent itself), `admin` (configure it), `own`. `agent_edit` implies `write` implies `read`; `admin` implies all but `own`. A line may also grant the scoped `use:<capability>`, which opens that one capability. | `apps/agents/roles.py` |
-| **agent role** | A named bundle of permissions, **defined by a workspace** (`AgentRole`) and usable below it. Three come built in as the defaults: **editor** (read + write + agent_edit), **read_write** (read + write), **read_only** (read); they are editable, cloneable and never deletable. A workspace adds its own ("read + use the connect door"). **owner** and **admin** are fixed in code: they are `Agent.owner` and `Agent.is_admin`, never a line. Never "member", "contact", "viewer" or "user". | `apps/agents/roles.py` (vocabulary, the built-ins' seed, the fixed roles), `rolecatalog.py` (the catalog), `roleadmin.py` (editing it) |
+| **permission** | What a person may do with ONE agent: `read` (be answered in read mode), `write` (drive the whole agent), `agent_edit` (change the agent itself), `admin` (configure it), `own`. `agent_edit` implies `write` implies `read`; `admin` implies all but `own`. A line may also grant the scoped `use:<site>`, which opens that one connected site. | `apps/agents/roles.py` |
+| **agent role** | A named bundle of permissions, **defined by a workspace** (`AgentRole`) and usable below it. Three come built in as the defaults: **editor** (read + write + agent_edit), **read_write** (read + write), **read_only** (read); they are editable, cloneable and never deletable. A workspace adds its own ("read + use the connect site"). **owner** and **admin** are fixed in code: they are `Agent.owner` and `Agent.is_admin`, never a line. Never "member", "contact", "viewer" or "user". | `apps/agents/roles.py` (vocabulary, the built-ins' seed, the fixed roles), `rolecatalog.py` (the catalog), `roleadmin.py` (editing it) |
 | **system** | Not a person and not in the table: canopy itself (a schedule, a drill), the agent's OWN canopy login, an approved task's dispatch. It may do what an agent admin may. | `roles.SYSTEM` |
-| **access list** | The one list per agent that says who has what: lines of `(who, role)` or, rarely, `(who, one named capability)`. | `AgentGrant`, `apps/agents/grants.py` |
+| **access list** | The one list per agent that says who has what: lines of `(who, role)` or, rarely, `(who, one connected site)`. | `AgentGrant`, `apps/agents/grants.py` |
 | **line** | One entry of an access list. `who` is a person, everyone in a workspace (optionally also every workspace below it), anyone at a domain, or a known visitor or sender. | "The access list" below |
 | **workspace default** | A line set once on a workspace; every agent in it, and in the workspaces below it, inherits it unless the agent opts out. | `AgentGrant.workspace`, `Agent.inherit_workspace_defaults` |
-| **read mode** | What a person with `read` and not `write` gets: the agent answers them in a confined session that **exists on every agent from the start**. One per agent: canopy's default profile (`interface.default_read_profile`, built from the agent, pinned by `tests/test_default_read_profile.py`, shown on the agent's Settings → Read mode and doors), or the agent's own published `ask`, which replaces the default whole. `read` and `ask` are the same thing (`interface.is_read_mode`, the only place that says so); a turn is stamped with the name actually run (`read` for the default, `ask` for an override). | `apps/agents/interface.py`, `interface_default.py` |
-| **connected site** (in code and on the wire, a *capability* or *door*) | A named, sandboxed profile an agent publishes (ACE's `connect`): which tools, paths and sites a confined session may touch, for a place or a list of people. Rare. It never says who may use it: that is the access list's job (`read` opens read mode; a line can name any door). `ask` is the override of read mode, not a door. | the agent's interface, `apps/agents/interface.py` |
-| **entry point** | A way work reaches an agent: the harness API, a canopy-web chat, Slack, email. Every one asks the rule. | "Where it is asked" |
-| **role** vs **source** | A role is what someone can do; a source is why they have it (`owner`, `admin`, `system`, `session`, `list:<line>`). Never the same word. | `Decision.agent_role`, `Decision.source` |
+| **read mode** | The default confined profile for someone who holds `read` and not `write`. It **exists on every agent from the start**: canopy's default (`interface.default_read_profile`), or the agent's own, which replaces the default whole. | "Read mode and connected sites" |
+| **connected site** | A confined profile tied to one registered site (ACE's `connect`): which tools and paths a conversation held on that site may use. Rare. It never says who may use it: that is the access list's job. | "Read mode and connected sites" |
+| **entry point** | A way work reaches an agent: the harness API, a canopy-web chat, Slack, email, a site's panel. Every one asks the rule. | "Where it is asked" |
+| **role** vs **source** | A role is what someone can do; a source is why they have it (`owner`, `admin`, `system`, `session`, `list:<line>`). Never the same word. | `Standing.agent_role`, `Standing.source` |
 | **contact** | Not a role. How canopy knows someone who is not a workspace member: an emailer, a Slack person outside the workspace, a widget visitor (who may have no address at all). A contact has an agent role only if a line names them; with no line they are refused. | `apps/contacts` |
 | **verified** | THIS message proves the sender's address: a signed-in request, mail that is DMARC-aligned or DKIM-signed by its own From: domain, a full member of our own Slack. An embedded site's visitor is never verified (the host vouches for them, not the human). | `caller_context.is_verified` |
-| **access level** | What a turn may reach: `full`, `confined` or `none`. | "Access levels" |
+| **refusal** | Why a turn is not run, how to fix it and who can: one code from a closed set. | `apps/agents/refusals.py` |
 | **agent admin** | Someone who holds an agent's keys: its owner, a workspace owner (implicitly), or a person granted by name (`AgentAdmin`), each still a member of the workspace. `Agent.is_admin` answers it. On the ladder, *admin* is this role and *owner* is the agent's owner above it. | `Agent.is_admin` |
 | **workspace admin** | A person with the workspace role admin: runs the workspace, holds no agent keys. | "Workspace roles" |
 | **runner admin** | A runner's owner or a `RunnerAdmin` grant. | "Runner roles" |
@@ -66,7 +277,8 @@ or as you only under an act-as-you permission you granted.** Two things decide w
 session carries, and the person chose both: **where it runs** (a runner box, or *direct*:
 their own Claude Code) and **whether it is reviewed** (`manual` or `auto`). Three kinds of
 credential follow from them, in ONE table (`credentials/authority.py`, asked by
-`credential_resolve`; the caller envelope's `authority` block tells the session):
+`credential_resolve`; the caller envelope's `authority` block tells the session; what one
+turn really gets is `TurnContext.credentials`):
 
 | Kind | On a runner | Direct |
 |---|---|---|
@@ -94,7 +306,7 @@ for a touch. An `auto` turn may ask to act as the person to read only
   another agent admin's laptop would let them open it) — and to nothing else: never under the vault key,
   so no workspace member, agent admin or license holder reads it, nor canopy-web, nor the person it came
   from (they replace or withdraw it, `/settings`). It is the agent's to use in any turn
-  the rule lets run in the full profile (never a caller's confined turn); a box gets it
+  the rule lets run as the whole agent (never a caller's confined turn); a box gets it
   only in its own resolve's `delegated` field, proved by its device key. canopy gives it
   no expiry: the provider's own is shown as information. → `vault.md` § Whose account
   an entry is
@@ -108,7 +320,7 @@ for a touch. An `auto` turn may ask to act as the person to read only
   you approve read-only or read + write, and it acts as you on canopy for 30 minutes —
   "Acting as the person on canopy-web" in [access-confinement-and-act-as.md](access-confinement-and-act-as.md)). Nothing else lets an agent act as a
   person. In particular:
-  - **An agent's caller token only reads.** A full-profile AGENT turn asked by someone
+  - **An agent's caller token only reads.** A whole-agent turn asked by someone
     who is not the agent's owner, an agent admin or canopy — an editor line, a
     writer in someone else's chat — reaches canopy as its asker so that it sees what
     they may see (`CallerToken`, `Grant.read_only`), but its tools are the READ tools
@@ -119,8 +331,8 @@ for a touch. An `auto` turn may ask to act as the person to read only
     refused, on MCP (`mcp.turn_scope.READ_ONLY_REFUSAL`) and on REST
     (`tokens.middleware._authenticate_caller_token`), saying the asker has granted no
     act-as-you permission: the agent writes as its own login, or asks them for one
-    ([access-confinement-and-act-as.md](access-confinement-and-act-as.md)). Confined caller tokens
-    keep their capability's own tool list. A **repo chat** (no agent: a person's own
+    ([access-confinement-and-act-as.md](access-confinement-and-act-as.md)). A confined turn's caller
+    token keeps its profile's own tool list. A **repo chat** (no agent: a person's own
     Claude Code session on a repo they chose) is that person's own tool, and its token
     keeps every tool, as them.
   - **An agent's canopy login is always the account at its own email** (`Agent.email`),
@@ -151,8 +363,8 @@ outside `apps/workspaces/` names a role. Full detail: `docs/architecture/roles.m
 
 | Workspace role | Holds | In plain words |
 |---|---|---|
-| **viewer** | `read` | Reads the workspace. Talks to an agent only as far as that agent's access list and capabilities let them. |
-| **editor** | + `content.write`, `agent.work`, `session.drive`, `events.write` | Makes things; **reshapes agents and sends them work** (the routes behind an agent's settings, schedules, tasks and dispatch). Whether a turn of theirs runs the agent's whole profile is the agent's access list, not this role. |
+| **viewer** | `read` | Reads the workspace. Talks to an agent only as far as that agent's access list lets them. |
+| **editor** | + `content.write`, `agent.work`, `session.drive`, `events.write` | Makes things; **reshapes agents and sends them work** (the routes behind an agent's settings, schedules, tasks and dispatch). Whether a turn of theirs runs the whole agent is the agent's access list, not this role. |
 | **admin** | + `logs.read`, `members.manage`, `integrations`, `runners.route`, `retention.manage`, `admission.manage`, `projects.decide` | **Runs the workspace**: every log, members below admin, the integrations, the default runner order, how long chat and turn content is kept, which turns are refused, and starting or declining a proposed project (beside that project's own owner). **Holds no agent keys** — a workspace admin is not an agent admin. |
 | **owner** | + `own`, `control` | **The keys**: the shared vault, the Slack app, connected sites, deleting the workspace — and is an **agent admin of every agent** in it. Holds or stops all work in the workspace's tree. **Is told**: blocking alerts, access requests, owner notices. |
 | **superuser** | everything an owner holds | **Oversight**: an owner's keys, here and below, **without the owner's email** (`services.owner_user_ids` and `services.mail_recipients` leave superusers out — unless nobody else would be told). The workspace-level sibling of the system superuser (`User.is_superuser`), which holds the same two switches for the whole fleet and no workspace access. |
@@ -236,33 +448,33 @@ change. The domains themselves are server-set, never client input.
 
 What a person may make ONE agent do (`apps/agents/roles.py`). A **permission** is one thing; a
 **role** is a named bundle of them. The vocabulary is fixed (`read`, `write`, `agent_edit`, `admin`,
-`own`, and `use:<door>`); the bundles are **configurable** (next section); these are the built-ins
+`own`, and `use:<site>`); the bundles are **configurable** (next section); these are the built-ins
 and the two fixed roles, strongest first:
 
 | Agent role | Holds | In plain words |
 |---|---|---|
-| **read_only** | `read` | Is answered in read mode, and nothing else. **On for every agent**: the confined session can only read and draft a reply (and send it on the thread it was asked on); the access-list form pre-selects no role. |
-| **read_write** | `read`, `write` | Drives the **whole agent**, in its own authority: every skill and every capability it has (the `full` access level). The ordinary way to give someone an agent. |
+| **read_only** | `read` | Is answered in read mode, and nothing else. **Read mode exists on every agent**: the confined session can only read and draft a reply (and send it on the thread it was asked on); the access-list form pre-selects no role. |
+| **read_write** | `read`, `write` | Drives the **whole agent**, in its own authority: every skill and every connected site it has (`full` access). The ordinary way to give someone an agent. |
 | **editor** | + `agent_edit` | Everything read_write may, and changes the agent itself: its skills, its persona and the code in its own repo (table below). |
-| **admin** | + `admin` | Configures the agent in canopy-web: its access list, capabilities, credentials, routing, runners, integrations. May ask for `auto` and pin any runner that can hold it. |
+| **admin** | + `admin` | Configures the agent in canopy-web: its access list, read mode and connected sites, credentials, routing, runners, integrations. May ask for `auto` and pin any runner that can hold it. |
 | **owner** | + `own` | Everything an agent admin may, plus transfer or delete the agent and name its admins. |
 
 * **The dependency rule** (`apps/agents/roles.py`, enforced when a role is built, tested in
   `tests/test_agent_access_list.py`): `agent_edit` implies `write` implies `read`; `admin` implies
-  everything except `own`; `write` also opens every capability. A role cannot hold a permission
-  without the ones it depends on, so a future user-defined role gets the same guarantee by going
-  through the same constructor. Roles are fixed built-ins; there are no user-defined roles.
+  everything except `own`; `write` also opens every connected site. A role cannot hold a permission
+  without the ones it depends on.
 * **One engine.** The closure, `allows(role, permission)`, `holds(permissions, permission)` and rank
   are `apps/common/rolesets.py`, shared with the workspace's roles
   (`apps/workspaces/permissions.py`, a ladder derived from `MINIMUM_ROLE`). The mechanism is shared;
   the vocabularies (`read`, `write` here; `logs.read`, `members.manage` there) are not.
 * `system` is not in the table (see "The words"). Another agent's login is not `system`: it is
   graded like any person, or agent A could steer all of agent B.
-* **What the rule reads.** the rule unions the permissions of every matching line
+* **What the rule reads.** The rule unions the permissions of every matching line
   (`Resolution.permissions`) and asks one question: do they hold `write` (`roles.holds(…, WRITE)`)?
-  Then they get the whole agent. Otherwise they get a capability, chosen by what their lines open
-  (`roles.can_use`: `write` opens all, `read` opens read mode, `use:<name>` opens `<name>`; `use:ask` and `use:read` are read-mode lines). What each change to
-  an agent needs is the table below.
+  Then they get the whole agent. Otherwise they get one confined profile, chosen by what their lines
+  open (`roles.can_use`: `write` opens all, `read` opens read mode, `use:<name>` opens the connected
+  site `<name>`; a stored `use:` of read mode's own name is a read-mode line). What each change to an
+  agent needs is the table below.
 * **What changes the agent itself (`agent_edit`).** `access.may_edit_agent(user, agent)` is the
   one predicate, asked by `@gate("agent-edit")` routes (`gates.agent_for_edit`): the owner, an admin and the agent's own login always may; anyone else only through
   an access-list line whose role holds `agent_edit` (an `editor` line or workspace default). Being an
@@ -278,7 +490,7 @@ and the two fixed roles, strongest first:
   | The code in the agent's own repo (commits, merges to its default branch) | **agent_edit** | the agent's `permissions` in the caller envelope are its cue; the runner-side rail (canopy plugin) refuses a push or merge from a turn whose asker lacks it |
   | Where the repo points and what boxes install (`repo_url`, `repo_ref`, `runtime_secrets`, `runtime_sources`, `clis`, `cli_models`; `PATCH …/repository`, `PATCH …/clis`) | **admin** | whoever names the repo writes code that runs with the agent's credentials |
   | Read mode and connected sites: `PUT`/`DELETE …/read-mode`, `PUT`/`DELETE …/connected-sites/{site}`, including `sensitive` | **admin** | decides who may reach what, and how sensitive data is handled |
-  | Machine capabilities (`PUT …/capabilities`, refresh, slot data) | **admin** | leases money-spending machines |
+  | Machine capabilities (`PUT …/capabilities`, refresh, slot data) | **admin** | leases money-spending machines (`capabilities.md`) |
   | Access list, workspace defaults, licenses, canopy login and token, vaults and credentials, GitHub identity, mailbox, runner pins, routing rules, Slack switch | **admin** | configuring the agent in canopy-web; its keys |
   | Transfer, delete the agent, name its admins | **own** | `Agent.owner` or a workspace owner |
   | Schedules and triggers, tasks and the board, turns and chats, hold and release, turn mode, syncs | **work** (`agent.work` or `write`) | they change what the agent DOES, never what it IS |
@@ -291,7 +503,7 @@ and the two fixed roles, strongest first:
 * **An owner or agent admin who has left the workspace is neither** (`Agent.is_admin`,
   `caller_context.relationship_for_user`): both need current membership.
 * Roles describe a person; what a *turn* gets also depends on who started it and how
-  (`Decision.source`, below).
+  (`Standing.source`, the Turn Context).
 * **Safety rails are stated by permission**, not by role name: a `domain` or `contact` line can
   never grant a role that contains `write`; a workspace default whose role contains `write` is the
   workspace owner's call. See "The access list".
@@ -303,9 +515,9 @@ and the two fixed roles, strongest first:
 roles; `GET|POST /api/workspaces/{slug}/agent-roles`, `PATCH|DELETE …/{key}`, `POST …/{key}/reset`).
 
 * A role is a key (immutable, stored on its lines and sent in the envelope), a name, a sentence and a
-  set of permissions chosen from `read`, `write`, `agent_edit` and `use:<door>`. It is stored **closed**
-  (write carries read and every door, agent_edit carries write). A custom role can **never** hold
-  `admin` or `own`: those come from who the agent belongs to, not from a line.
+  set of permissions chosen from `read`, `write`, `agent_edit` and `use:<site>`. It is stored **closed**
+  (write carries read and every connected site, agent_edit carries write). A custom role can **never**
+  hold `admin` or `own`: those come from who the agent belongs to, not from a line.
 * A role is defined on a workspace and usable by it and every workspace below; its key means one thing
   everywhere it is visible (a clash along a chain is refused, both ways), so nothing is overridden.
   `read_only`, `read_write` and `editor` are seeded on every root workspace (`rolecatalog.ensure_seeded`).
@@ -318,7 +530,7 @@ roles; `GET|POST /api/workspaces/{slug}/agent-roles`, `PATCH|DELETE …/{key}`, 
   anything that does (`write`, which `agent_edit` carries), before or after an edit, is the workspace
   owner's. Every write is a settings change (`agent-roles:<workspace>:<key>`, with how many lines it
   reaches), takes a passkey step-up from a browser, and a token may write a role that only reads or opens
-  doors but never one that drives or changes the agent.
+  connected sites but never one that drives or changes the agent.
 * **The rails follow the role's contents, by permission:** a `domain` or `contact` line can never give a
   role that holds `write`, and an edit that would make a role drive is refused while such a line holds
   it (`roleadmin`). Moving an agent into another tree re-points its lines to the destination's identical
@@ -330,9 +542,10 @@ roles; `GET|POST /api/workspaces/{slug}/agent-roles`, `PATCH|DELETE …/{key}`, 
 
 An agent's **access list** (`AgentGrant`, `apps/agents/grants.py`) is the one place that says
 who has what on it. A **line** is `(who, what)`, with a `manual_only` flag and a free-text note.
-`what` is ONE role (a key from the workspace's roles: read_only, read_write, editor, or its own) or, instead and rarely, ONE named capability (the
-scoped permission `use:<capability>`, which opens that capability and nothing else: no `read`, no
-`ask`). `who` is one of four kinds (the API's `kind`):
+`what` is ONE role (a key from the workspace's roles: read_only, read_write, editor, or its own) or,
+instead and rarely, ONE connected site (the API's `connected_site`, stored as `AgentGrant.capability`:
+the scoped permission `use:<site>`, which opens that one site and nothing else — not `read`, not read
+mode). `who` is one of four kinds (the API's `kind`):
 
 | `kind` | Who | It matches an asker when… |
 |---|---|---|
@@ -342,38 +555,40 @@ scoped permission `use:<capability>`, which opens that capability and nothing el
 | `contact` | A known visitor or sender canopy holds as a contact: an emailer, a Slack person outside the workspace, a widget visitor who may have no address. Optionally at a `domain` (blank: any), optionally `verified`. | canopy knows them as a contact, and the domain and `verified` conditions hold. |
 
 * **A person's permissions are the union of their matching lines** (`grants.resolve`): their
-  *role* is the strongest role line (None if only capability lines name them), and what they may do
-  is every line's permissions together. The lines are listed strongest first, role lines before
-  capability lines; the line that gives `write` (or opens the capability asked for) is the
-  decision's `source`: `list:<subject key>` is `list:<subject key>` (`person:12`, `workspace:connect:editor:`,
-  `workspace:dimagi::` + `:below`, `domain:dimagi.com`, `contact:`, and `#use:<capability>` appended
-  on a capability line); its words, for a person to read, are `Decision.via`
+  *role* is the strongest role line (None if only connected-site lines name them), and what they may
+  do is every line's permissions together. The lines are listed strongest first, role lines before
+  connected-site lines; the line that gives `write` (or opens the profile the turn runs in) is the
+  Turn Context's `source`: `list:<subject key>` (`person:12`, `workspace:connect:editor:`,
+  `workspace:dimagi::` + `:below`, `domain:dimagi.com`, `contact:`, and `#use:<site>` appended on a
+  connected-site line); its words, for a person to read, are `Standing.via`
   ("Anyone at @dimagi.com (verified)").
 * **`manual_only`** is a flag on a line: every turn it lets someone start runs `manual`, so an
   agent admin approves what goes out. It matters for lines that give `write` only (a read_only or
-  capability line is confined, whose turns follow the routing ladder). A person is manual only when
+  connected-site line is confined, whose turns follow the routing ladder). A person is manual only when
   EVERY line that gives them `write` says so: one line without the flag frees the person. Dropping the
   gate is one visible edit to one line, never a code change.
 * **Which lines you can write** (`grants.check_line`): exactly one of a role (a key visible from the
-  line's workspace, `grants.check_role`) and a capability name; a `person` line names a canopy user in a
+  line's workspace, `grants.check_role`) and a connected site; a `person` line names a canopy user in a
   workspace you can see (`no such person…` otherwise); a `workspace` line names a workspace you are
   in, and `at_least` must be a workspace role; a `domain` or `contact` line can give `read_only` or
-  a named capability but **never a role that contains `write`** (`grants.check_role`), because an
+  a connected site but **never a role that contains `write`** (`grants.check_role`), because an
   address is something a message can claim, and driving the whole agent takes a named person or a
   workspace's people (lines carried over by an earlier migration, e.g. a verified-contact editor
   line, keep resolving as they did; the rail is on adding and changing); a `domain` line must name
   its domain; `include_below` is for a workspace line only. One line per subject per list and
-  per capability (409 on a repeat: change that line instead). Naming a capability the agent has
-  not published is allowed with a warning: the line opens nothing until it does.
+  per connected site (409 on a repeat: change that line instead). Naming a connected site the agent
+  does not have is allowed with a warning: the line opens nothing until it does.
 * **Who may read and change it.** Any member of the agent's workspace reads the list
-  (`GET /api/agents/{slug}/access-list`). An **agent admin** adds, changes and removes the agent's
-  own lines and turns inheritance on or off. Every change is a settings change
-  (`access-list:<slug>`, `docs/architecture/settings-audit.md`). The UI is the agent's
-  Settings → Roles → Access.
-* **A line can only open what exists.** It cannot open a door the agent has not published. Read mode
-  always exists: a read_only line opens it on an agent that published nothing (canopy's default
-  profile) as on one that published its own `ask`. Before putting `read_only` on an agent, know that
-  it is live: `manage.py read_mode_gate` lists agents with such a line and no published `ask`. `manage.py answering_snapshot` prints how every agent answers, read-only and repeatably, so a change to the interface can be diffed.
+  (`GET /api/agents/{slug}/access-list`, which also lists the agent's `connected_sites: [{name, site}]`
+  a line may name). An **agent admin** adds, changes and removes the agent's own lines and turns
+  inheritance on or off. Every change is a settings change (`access-list:<slug>`,
+  `docs/architecture/settings-audit.md`). The UI is the agent's Settings → Roles → Access.
+* **A line can only open what exists.** It cannot open a connected site the agent does not have. Read
+  mode always exists: a read_only line opens it on an agent with no read mode of its own (canopy's
+  default) as on one with its own. Before putting `read_only` on an agent, know that it is live:
+  `manage.py read_mode_gate` lists agents with such a line and no read mode of their own.
+  `manage.py answering_snapshot` prints how every agent answers, read-only and repeatably, so a change
+  to read mode, connected sites or the rule can be diffed.
 * **Default: nobody.** A new agent has no lines of its own; with none inherited either, only its
   owner and agent admins reach it (and anyone with `write` only by being named). Nobody gets in by being in
   the workspace.
@@ -397,88 +612,104 @@ marked `scope: workspace`, and is removed there only by going to the workspace.
 
 A line cannot give `admin` or `owner`, and a workspace editor is not an agent editor: the workspace
 role gates the routes that reshape an agent, while whether a person's own turn runs the whole agent
-is the access list. An interface that still carries `role:`, `full:`, `editors:` or `callers:` is
+is the access list. A stored document that still carries `role:`, `full:`, `editors:` or `callers:` is
 refused (422) with a pointer here.
 
-## Access levels
+## Read mode and connected sites
 
-What a turn may reach (`Decision.access`; the roster's "Can reach"):
+The two settings admins edit for **what** a confined turn may do (Settings → Channels → Read mode and
+connected sites; `GET|PUT|DELETE /api/agents/{slug}/read-mode`, `GET /api/agents/{slug}/connected-sites`,
+`PUT|DELETE …/connected-sites/{site}`; `apps/agents/answering.py`). Who may use them is the access list,
+never these settings. Saving is for the agent's owner or an agent admin, browser or token; `dry_run: true`
+on a PUT checks a draft with the server's own parser without saving; every save is a settings change
+(the page shows its history).
 
-* **full** — the agent's whole profile.
-* **confined** — one capability of its published interface, and nothing else
-  (the envelope's `profile: confined`; VERSION 1 said `restricted`).
-* **none** — refused. The turn is written `cancelled` with the reason and what the
-  asker CAN do, or (over HTTP) the request gets a 403 saying so.
+* **Read mode** is the default confined profile for someone who holds `read` and not `write`, **on every
+  agent with no setup**. With no setting it is canopy's default (`interface_default.default_read_profile`,
+  built from the agent and pinned exactly by `tests/test_default_read_profile.py`, so a code change that
+  widens every agent at once cannot pass unnoticed; its version rides the envelope as
+  `default_profile_version`): it reads the agent's own worktree, drafts a reply in its scratch folders,
+  and, when the agent has a mailbox, reads and answers the thread it was asked on; its entry is the
+  agent's `/<slug>:answer-caller` skill when its catalog has one. An admin may customise it: the first
+  change starts from canopy's default as it stands for this agent and saves it as the agent's own, which
+  then replaces the default whole; reset returns to canopy's default. A read-mode turn's envelope lists only
+  `read` in `permissions`. A sensitive conversation never gets read mode (its email-reply rules are not a
+  sensitive profile).
+* **A connected site** is one row per registered site: a confined profile (`description`, `entry`, `tools`,
+  `bash`, `read_paths`, `write_paths`) plus an optional `ceiling` (a narrowing of the site's tools, on the
+  owner's word), `own_login` (the agent's own credentials at that site) and **Handles sensitive data**. A
+  conversation held on that site selects it, and its profile gains canopy's gateway tools (`site_tools`,
+  `site_call`, `site_read`) and the page's own actions (`page_*`) → [access-confinement-and-act-as.md](access-confinement-and-act-as.md).
+  A new row starts from `answering.new_site_defaults`, saved explicitly so a later change widens nobody.
+  Removing a row gives a turn already stamped with it the `deny_all` profile, and a line naming it opens
+  nothing. **Handles sensitive data** is per site, not per agent: it confines a conversation on that site
+  for everyone (the decision table), while the owner's ordinary chat with the same agent is still the whole
+  agent. Such a site that holds a shell, writes, or any tool but the gateway's site tools, `current_page`,
+  `who_is_asking` and read-only local tools is a 422.
 
-## Capabilities (the agent's interface)
+**Storage and the names that stay.** Both settings are views of one document, `Agent.interface`, which
+stays the only storage and is written only by `answering.store` (live state on canopy-web, never a repo
+file). Its stored entries live under a `capabilities` key; a connected site's row is an entry naming that
+one site, and the entry's name (`answering.key_for`, never renamed) is what a turn is stamped with and what
+an access line names. These stored and wire names stay, each behind one constant:
 
-People see two settings, **Read mode** and **Connected sites** (Settings → Channels; `GET|PUT|DELETE /api/agents/{slug}/read-mode`, `…/connected-sites`; `apps/agents/answering.py`). They are views of the one document below, which stays the only storage: `Agent.interface`, written only by `answering.store`. A connected site's row is an entry naming that one site, and its internal name is the entry's name. **Handles sensitive data** is a switch per site, not per agent: it confines a conversation on that site, and the owner's ordinary chat with the same agent is still the whole agent. Stamps, access lines and wire fields keep saying `capability`. The new routes refuse a document they cannot hold (`answering.document_problems`, which `manage.py answering_snapshot` reports as `shape`) and leave it as it is. The old `/interface` routes answer 410. Spec: `docs/superpowers/specs/2026-11-04-agent-settings-replace-the-interface-design.md`.
+* **Read mode's stored name.** Canopy's default is stamped `read`; an agent's own read mode is stored and
+  stamped under the name `ask` — the one place that name lives is `interface_default.READ_MODE_STAMP`, and
+  `interface.is_read_mode` is the one place that says the two names are read mode. New read-mode entries
+  are written under it, and turns stamped with it keep resolving.
+* `Turn.capability` (the stamp), `AgentGrant.capability` (a line's connected site), `AdmissionRule.capability`,
+  `use:<name>` in stored role permissions, `data: sensitive`, the envelope's `capability` and `granted_by`
+  (`capability:<name>`), and `profile: full|confined` beside `access`. Renaming them would split live
+  conversations (`session_naming.restricted_key`, `cloud_runner._kept_identity`).
+* `interface_source` (cleared by every save; nothing reads it), an entry's `pages` (a page-resource selector,
+  kept so stored documents keep working) and the site-ceiling union stay as they are.
 
-An agent's **published interface** (`apps/agents/interface.py`, live state on canopy-web, never a
-repo file) is its set of **capabilities**: named profiles it offers people who do not run the
-whole agent. It says what each one *is*, and nothing about who may use it.
-
-* A capability has a profile (`tools`, `bash`, `read_paths`, `write_paths`, `entry`,
-  `description`), optionally the resources it serves (`pages`, superseded; `sites` and `ceiling`;
-  `own_login`; `data: sensitive`). It carries **no `role:`**: who may open it is a line on the
-  access list (`interface.opens(permissions, name)`: `write` opens all, `read` opens read mode,
-  `use:<name>` opens `<name>`). Read mode is the free-form profile every entry point falls back to,
-  the one `read` opens, and it is **on for every agent**: the agent's published `ask` when it has
-  one (stamp `ask`, replaces the default whole), else canopy's default (stamp `read`). The caller
-  envelope lists only `read` in `permissions` for a read-mode turn, never `use:read` or `use:ask`.
-  Doors are optional and rare. A sensitive conversation never gets read mode (its email-reply rules
-  are not a sensitive profile).
-* **Which capability a confined asker gets**: the one the asker named, else the one whose `pages`
-  match the page the conversation was held on, else the one whose `sites` include the Connected
-  site it was held on, else read mode: among those their permissions open (`access._capability_for`). If
-  none, they are refused; an unknown or retired door yields the empty deny-all profile.
-* **Default deny.** The default interface (`interface.default_interface()`) is
-  `{version: 1, capabilities: {}}`: no door and no override. Every agent has an interface (a field
-  default on `Agent.interface`; a row holding `{}` reads as the default) and "unpublish" is **reset to
-  default**. An agent that has published nothing is reached by its owner, its agent admins, the
-  people whose lines give `write`, and, in read mode, the people whose lines give `read`.
-* **Retired keys are refused.** `full:`, `editors:` and a capability's `callers:` or `role:` are a
-  422 naming the access list; `callers_default: none`, `version` and a capability's `input` are accepted and ignored (published interfaces still carry them; a republish must not 422), and are not written back. Strict on purpose: an unknown key
-  is refused, not ignored.
-* The page edits it as two forms (Settings → Channels); `dry_run: true` on a PUT checks a draft with
-  `interface.parse` without saving. Saving is for the agent's owner or an agent admin, browser or token.
+**What a document may hold.** The settings routes refuse a document they cannot hold
+(`answering.document_problems`, which `manage.py answering_snapshot` reports as `shape`) and leave it as
+it is. Retired keys are refused: `full:`, `editors:` and an entry's `callers:` or `role:` are a 422 naming
+the access list; `callers_default: none`, `version` and an entry's `input` are accepted and ignored, and
+not written back. An unknown key is refused, not ignored. The default document is `{capabilities: {}}`
+(`interface_default.default_interface()`): no connected site and no read mode of its own. Every agent has
+one (a row holding `{}` reads as the default), and an agent with nothing set is reached by its owner, its
+agent admins, the people whose lines give `write`, and, in read mode, the people whose lines give `read`.
+The old `/interface` routes answer 410.
 
 ## The rule (the decision table)
 
-`turn_context.resolve_turn_context` asks in this order; the first row that matches decides.
+`turn_context.resolve_turn_context`, as a table of outcomes; the first row that matches decides
+(stages 1 and 2 above):
 
 | # | Who | Access | Mode | May request `auto` | May pin a runner |
 |---|---|---|---|---|---|
 | 1 | **owner / agent admin / system** (no line needed) | `full` | the routing ladder | owner / agent admin, on a verified credential | owner / agent admin: any runner that may hold the agent |
 | 2 | a writer in an agent admin's own session (`session_writer`) | `full` | the routing ladder | no | only a runner they administer |
 | 3 | their lines give them **`write`** (read_write, editor) | `full` | the routing ladder, but **every turn `manual`** when every line that gives `write` is `manual_only` | no | only a runner they administer |
-| 4 | their lines give them **`read`** or a **named capability**, and a capability they open exists | `confined` to it | the routing ladder | no | — |
-| 5 | anyone else (no line, or lines that open no capability the agent has) | `none` | — | — | — |
+| 4 | their lines give them **`read`** or a **connected site**, and a profile they open exists | `confined` to it | the routing ladder | no | — |
+| 5 | anyone else (no line, or lines that open nothing the agent has) | `refused` | — | — | — |
 
-The decision carries `agent_role` (their role in the table; `None` when refused or when only
-capability lines name them), `permissions` (everything their lines grant) and `source`
-(why): `owner`, `admin`, `system`, `session` or `list:<line>`. `basis` is the older single word
-for the same thing: `owner`, `admin`, `system`, `session:<role>`, `grant:<line>` (row 3),
-`capability:<name>` (row 4) or `refused` (row 5). The refusal names the agent's owner as the one who can
-add the asker, and what each role can do.
+The standing carries `agent_role` (their role in the table; `None` when refused or when only
+connected-site lines name them), `permissions` (everything their lines grant) and `source`
+(why): `owner`, `admin`, `system`, `session` or `list:<line>`. `basis` is the single word for the
+same thing: `owner`, `admin`, `system`, `session:<role>`, `grant:<line>` (row 3),
+`capability:<name>` (row 4, a wire value naming the read-mode or connected-site profile) or `refused`
+(row 5). The refusal says who can add the asker, and with which role ("Refusals").
 
-* **Over the table: the sensitive-data rule** (`access._sensitive_rule`, spec
-  `2026-10-22-sensitive-data-agents` §5). A capability its interface says
-  handles sensitive data (`data: sensitive`, `apps/agents/sensitive_data.py`) — the one a turn names, or the
-  one its conversation's site or page selects — is **confined for everyone**: whoever
-  the table gave FULL (owner, agent admin, `system`, a `write` line, a session
-  writer) runs that capability's profile instead, keeping their role, mode and pin
-  rights (`basis: sensitive:<capability>`). Any turn in a sensitive conversation (one
-  that requires sensitive-data runners) must end in that capability; anything else — full, another capability, or a
-  person whose lines do not open the capability — is refused. The setting is an interface setting,
-  saved by the agent's owner or an agent admin, browser or token, as the `sensitive` field of its
-  connected site (`put_connected_site`), and audited
-  like any setting change (`docs/architecture/settings-audit.md`; the agent's Settings
-  → Channels shows its history); such a capability that holds a shell, writes, or any
-  tool but the gateway's site tools, `current_page`, `who_is_asking` and read-only
-  local tools is a 422. The turn runs the agent's current code; no commit is pinned.
+* **Over the table: the sensitive-data rule** (`turn_context._sensitive_rule`, spec
+  `2026-10-22-sensitive-data-agents` §5). A connected site that handles sensitive data (`data: sensitive`,
+  `apps/agents/sensitive_data.py`) — the one a turn names, or the one its conversation's site or page
+  selects — is **confined for everyone**: whoever the table gave `full` (owner, agent admin, `system`, a
+  `write` line, a session writer) runs that site's profile instead, keeping their role, mode and pin
+  rights (`basis: sensitive:<name>`). Any turn in a sensitive conversation (one that requires
+  sensitive-data runners) must end in that profile; anything else — the whole agent, another profile, or a
+  person whose lines do not open it — is refused (`sensitive_not_open`). The switch is saved by the
+  agent's owner or an agent admin, browser or token, as the `sensitive` field of its connected site
+  (`PUT …/connected-sites/{site}`), and audited like any setting change
+  (`docs/architecture/settings-audit.md`). The turn runs the agent's current code; no commit is pinned.
   A runner in sensitive-data mode refuses any unconfined envelope (`sensitive_data_unconfined`).
-* Row 3 (a **`write` line**, read_write or editor): they may steer the whole agent, in its full profile. With
+* **A one-session review's chat** runs in `session_review` for everyone not refused, owner included
+  (`turn_context._review_rule`): no login, no Bash, no tool but `read_asked_session` →
+  [access-sessions-and-people.md](access-sessions-and-people.md) § Asking a coach to review one session.
+* Row 3 (a **`write` line**, read_write or editor): they may steer the whole agent. With
   `manual_only` on every line that gives them `write`, every turn they start runs `manual` — outbound or irreversible
   actions wait for an agent admin — and they may not set `auto` anywhere: not on a dispatch, not on
   a routing rule or actor route, not on the agent's own switch. Without it the routing ladder
@@ -499,22 +730,56 @@ add the asker, and what each role can do.
   that no strict rule for the agent's own address keeps its work off
   (`access._routed_to`). That lets an agent hand its next chat to another box it
   runs on without adding reach its routing did not already give.
-* A **project chat** (no agent, only a repo) has no agent admins, so choosing its
+* A **project chat** (no agent, only a repo; profile `no_agent`) has no agent admins, so choosing its
   box — `runner_id` at creation, a placement on send, `/place`, a move — is for a
   **runner admin** of that box only
   (`canopy_sessions.placement.may_place`, the one placement rule). Unplaced, it runs on a box
   its workspace's runner order shares or one its sender administers
   (`runner-routing.md` → "Project chats"), never on a teammate's box by default.
-  It acts as the person who asked (see "Projects run as the person who asked").
+  It acts as the person who asked ([access-confinement-and-act-as.md](access-confinement-and-act-as.md), "Projects run as the person who asked").
 
-**Where it is asked.** `harness.services.enqueue_turn` (`_apply_capability`) for
-every entry point — the harness API (`POST /api/harness/turns/`), a canopy-web chat send, Slack intake and
-email intake (after the existing sender triage: a blocked contact never reaches
-the rule; a member is recognised by mail only on THIS message's DMARC); the
-harness API also asks it up front to answer 403 with a reason; `turn_mode.for_turn`
-at every claim (an editor line's `manual_only`); the caller envelope (`profile`,
-`granted_by`); the extended A2A card (`offered_to`); the access roster and the
-agent topology.
+**Where it is asked.** `harness.services.enqueue_turn` (`_apply_capability`, which stamps the turn)
+for every entry point — the harness API (`POST /api/harness/turns/`), a canopy-web chat send, Slack
+intake and email intake (after the existing sender triage: a blocked contact never reaches the rule; a
+member is recognised by mail only on THIS message's DMARC); the harness API also asks it up front to
+answer 403 with the refusal; the claim (`of_turn`, with the runner; turn mode reads an editor line's
+`manual_only`); the caller envelope (`access`, `profile`, `granted_by`); the extended A2A card
+(`offered_to`); the access roster and the agent topology; the session panel's preview.
+
+## Refusals
+
+If someone can reach a session but the Turn Context would not let them take a turn, canopy says why and
+how to fix it. Every refused Turn Context carries a `refusal`: `{code, why, how_to_fix, who_can_fix}`.
+`code` is one of a closed set (`refusals.Code`, stored on `Turn.resolved_context`, never renamed); each code
+has exactly one builder (a test holds the two sets equal), so the words are the same wherever they appear.
+`why` is plain words, starting lower-case to follow "not run: "; `how_to_fix` is one concrete action;
+`who_can_fix` names real people or roles. A builder is handed only the agent, the session and a few facts
+(which profile, which CLI), never a prompt, a fact about a person or a secret.
+
+| Code | Made by | Means |
+|---|---|---|
+| `not_on_access_list` | the rule | Nothing on the access list names them. For a proven sender nobody listed, the fix also offers binding the address to an inbound-mail trigger ("Triggers"). |
+| `sender_not_proven` | the rule | A line names their address, but only for a message that proves it, and this one did not (read by asking the list again as if proven). |
+| `profile_not_open` | the rule | They hold something, but not what this conversation would run in: read mode, a review chat, a named connected site (or one the agent does not have), or nothing this page or site uses. |
+| `sensitive_not_open` | the rule | A sensitive conversation runs only in its sensitive connected site, and that is not open to them (or the agent has none for it). |
+| `sender_blocked` | the mail entry point, before the rule | The sender is blocked. Never says why: that is an admin's note about a person, and it stays on the contact. |
+| `content_deleted` | stage 0 | The session's content was permanently deleted. |
+| `cannot_write` | stage 0 | They may read the session but not act in it; the fix names the session's owner. |
+| `cli_not_offered` | stage 0 | The conversation is held to an agent CLI its agent is no longer set up for. |
+| `not_in_sensitive` | stage 0 | A sensitive conversation takes messages only from its own people, at its chat surfaces. |
+
+How each channel says it: a refused turn is written `cancelled` with `result_note` "not run: <why>.
+<how_to_fix>" (`refusals.REFUSED_NOTE_PREFIX`; `turn_context.was_refused` reads it on turns older than the
+snapshot); an HTTP entry point's 403 or 422 says `message` (why, capitalised, then the fix); Slack replies
+with `text`; the composer reads the preview and shows the reason and the fix above the input, which stays
+readable. A person added to a session who cannot take a turn is flagged on their participant row
+(`turn_refusal`, the same refusal said `about` them), only to someone who may add people, with a way to add
+them to the access list when the fix is a line and the viewer may add one; an editor added to a session the
+agent's owner or an admin started is a session writer and is never flagged.
+
+Refusals that do not depend on who is asking stay where they are and keep their own words: no runner
+available, an admission rule closing a turn, and the harness route's checks before a turn exists
+(`agent_for_work`, the email poster, a pin, `reads_for`, `turn_mode=auto`).
 
 ## Triggers: what starts an agent on its own
 
@@ -537,7 +802,7 @@ Rules:
   access list.
 * **Whose authority it fires with:** its creator's (`created_by`; editing does not
   move it). Its turn is a SYSTEM turn (`initiator.system`) accountable to the creator,
-  so `turn_context.resolve_turn_context` gives it the agent's profile and the turn mode is bounded by the
+  so `turn_context.resolve_turn_context` gives it the whole agent and the turn mode is bounded by the
   creator (`turn_mode._accountable_cap`: manual unless they are an agent admin). A
   trigger's own `turn_mode` is a rung above the routing rules
   (`turn_mode.trigger_posture`): `manual` always holds; `auto` only while the creator
@@ -546,8 +811,7 @@ Rules:
   or loses the right to set it up (`triggers.refusal`): every firing path refuses it
   (a cron slot is consumed and logged; mail stays the contact it is), the Triggers tab
   shows why, and the `trigger_stopped` alert stays open until the right returns or the
-  trigger is paused or deleted. A cron row from before attribution (no creator) fires
-  as canopy's own, as it always did.
+  trigger is paused or deleted. A cron row with no creator fires as canopy's own.
 * **How mail fires one** (`harness.channels.email.trigger_behind_email`), all of:
   - THIS message is aligned (DMARC, or DKIM signed by the From: domain) on our own
     receiver's verdict — a `SenderTrust` exception never applies;
@@ -569,10 +833,10 @@ Rules:
 * **Managing:** the agent's Triggers tab; `GET|POST /api/agents/{slug}/triggers/`,
   `PATCH|DELETE …/{id}`, `POST …/{id}/run-now` (cron). The `/schedules/` routes are
   the cron subset runners and the calendar use.
-* **A refusal points here:** a verified contact refused by the access list is told that,
-  if it is automated, an agent admin can bind it to an inbound-mail trigger on
-  the agent's Triggers tab, so an automated sender is never cancelled at enqueue
-  without anyone being told.
+* **A refusal points here:** a verified contact refused by the access list
+  (`not_on_access_list`) is told that, if it is automated, an agent admin can bind it to an
+  inbound-mail trigger on the agent's Triggers tab, so an automated sender is never cancelled
+  at enqueue without anyone being told.
 
 ## Runner roles
 
@@ -595,13 +859,13 @@ runner's tenant may also READ its drill results (`logs.read`), but not start one
   merge, deploy) needs the agent's owner or an agent admin first. The default.
 * **`auto`** — the agent acts and reports.
 
-Decided at claim, top rung first (`apps/harness/turn_mode.py`): a dispatch's
-requested mode (`auto` only from an agent admin) → the `manual_only` cap of an editor line (`manual`) →
-an actor routing rule (an `auto` naming a person needs a verified message) → a
+Decided at claim, top rung first (`apps/harness/turn_mode.py`), and carried on the Turn Context's
+`review`: a dispatch's requested mode (`auto` only from an agent admin) → the `manual_only` cap of an
+editor line (`manual`) → an actor routing rule (an `auto` naming a person needs a verified message) → a
 source routing rule → the agent's own switch (`Agent.turn_mode`). Setting `auto`
 on any rung is for the agent's owner and agent admins.
 
 `auto` is a posture for outbound actions, not a claim that nobody is looking. A turn the
 person typed into the canopy-web chat while present in it is **attended**
 (`act_as.attended_by`); for act-as-you that is the one place `auto` does not mean unreviewed
-(next section). The mode itself is unchanged.
+([access-confinement-and-act-as.md](access-confinement-and-act-as.md)). The mode itself is unchanged.

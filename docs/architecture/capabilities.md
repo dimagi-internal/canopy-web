@@ -13,7 +13,7 @@ things (a test account, a seat), with no machine and no AWS call (§6). Design r
 
 | | Meaning | Where |
 |---|---|---|
-| (a) | **Interface capability**: a door an agent publishes (`ask`, a page's resource), run in an allowlisted profile for callers on its access list | `apps/agents/interface.py`, `docs/architecture/access.md` |
+| (a) | **Read mode or a connected site**: a confined profile an agent offers (read mode, or one site), run as an allowlist for callers on its access list; stored as an entry of `Agent.interface`'s `capabilities` and stamped on `Turn.capability` | `apps/agents/interface.py`, `docs/architecture/access.md` |
 | (b) | **Workspace permission**: a named right a workspace role holds (`perms.can(user, ws, perms.X)`) | `apps/workspaces/permissions.py`, `docs/architecture/roles.md` |
 | (c) | **Cloud capability**: a leased machine or named pool slot | `apps/capabilities`, this page |
 | (d) | **`Runner.capabilities`**: the JSON a box reports about itself (what it serves, its repos) | `apps/harness/models/runner.py`, `docs/architecture/runners.md` |
@@ -398,7 +398,7 @@ which) live lease holds it. MCP tools: `set_capability_slot_data`, `list_capabil
 - **Republishing keeps the data.** It is keyed by the capability row and the slot name, not
   the manifest. Data for a slot the manifest no longer declares is kept but never
   delivered; DELETE removes it (PUT refuses it).
-- **Delivery — the only door a secret value leaves by, still sealed.** The acquire response
+- **Delivery — the only route a secret value leaves by, still sealed.** The acquire response
   and `GET /api/capabilities/leases/{id}` (and its long-poll, and the `get_capability_lease`
   tool) carry `slot_data: {"public": {…}, "sealed": {key: "zks1:…"}, "agent_id"}` when ALL
   hold: the caller is

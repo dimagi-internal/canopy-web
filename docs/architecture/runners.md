@@ -210,7 +210,7 @@ Tests: `tests/test_runners_on_one_machine.py`.
   (`~/.canopy-runner/off-disk-ok/<slug>`).
 - **gog.** Each agent has its own `GOG_HOME=~/.gog/<slug>` and keyring password
   `HKDF-SHA256(runner secret, "gog:"+slug)` (`cloud_runner.gog_env`, the same derivation as
-  canopy's `gog_home`). The inbox poller, full turns and a confined turn's mail capability
+  canopy's `gog_home`). The inbox poller, full turns and a confined turn's mail path
   get only that agent's three variables — never another agent's, never the secret's path.
   A box without a runner secret keeps its box-wide `GOG_*`.
 
@@ -375,6 +375,6 @@ grant on that agent. An agent's own canopy login is not a holder.
 A **sensitive-data box is dedicated**: one with a declared `sensitive_data` flag OR
 reporting a `data_mode` (`runner_requirements.is_sensitive_data_box` — either alone, unlike
 routing's `in_force`, which needs both) holds only an agent with a `data: sensitive`
-capability, whoever owns it. So no other agent's full profile, secrets or GitHub identity
+connected site, whoever owns it. So no other agent's full profile, secrets or GitHub identity
 shares a box with a sensitive conversation. Guarded by
 `tests/test_sensitive_data_box_is_dedicated.py`.

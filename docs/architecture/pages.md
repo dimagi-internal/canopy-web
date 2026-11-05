@@ -255,7 +255,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
     workspace defaults it inherits — `GET /api/agents/{slug}/access-list` — beside a
     roster of every workspace member's role on the agent, why, and what they can
     reach — `GET /api/agents/{slug}/access`; agent admins granted/revoked on the row;
-    **Direct use**); **Channels** (capabilities, Slack, email, Google
+    **Direct use**); **Channels** (read mode and connected sites, Slack, email, Google
     account); **External accounts** (GitHub delegation, the
     Google mailbox); **Security** — first **Vault**: the shared `VaultView`
     (`components/vault/`, adapter `pages/agents/AgentSecretsPanel.tsx`) — a summary
@@ -360,8 +360,8 @@ Every browser-facing address canopy-web serves. The SPA route table is
     who stops if it goes dark. With nothing selected, the side panel shows the
     workspace's alerts ("Alerts here", `workspace:<slug>`: an agent with no
     runner it can use, or none of whose routed runners declares its repo, is an alert —
-    [`alerts.md`](alerts.md)) above two plain facts: agents held to some
-    capabilities by another, and runners serving nobody. The side panel mounts the supervisor's
+    [`alerts.md`](alerts.md)) above two plain facts: agents confined by another
+    (to read mode or connected sites), and runners serving nobody. The side panel mounts the supervisor's
     `RunnerDetail` and the agent's `AgentRouting` — this is where runners are
     configured on the web; each lane's "Add a runner" offers the Canopy Runner
     downloads (as on `/get-started#runner`), with the developer command
@@ -469,7 +469,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
   `apps/agents/credentials/vault_health.py`) and properties — active projects, open tasks
   (`AgentTask.LIVE_STATUSES`) and those waiting on a person (`services.waiting_q`),
   each linking to the agent's page; who can use it (its owner and agent admins only, or the
-  capabilities it publishes) and its turn mode; how it is used over
+  read mode and connected sites it offers) and its turn mode; how it is used over
   30 days beside its setup, since an agent with steps left can be in use — turns
   started and how many failed, the people who used it, the runners its turns ran
   on (`analytics.agent_turns`, from the fact log), and a "Used" tile; open sessions and
@@ -584,7 +584,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
   and emailed to `CANOPY_BETA_REQUESTS_TO` with Reply-To the requester; grants
   nothing. `docs/superpowers/specs/2026-10-05-public-site-and-mark-design.md`.
   An in-app (client-side) link to `/` still reaches the app via `RootRedirect`.
-- **`/app`** — the door into the app: → the active workspace (signed out,
+- **`/app`** — the way into the app: → the active workspace (signed out,
   Google sign-in first). The site's Sign in and `LOGIN_REDIRECT_URL`.
 - **`/about`** — the public explainer, chrome-less, live counts.
 - **`/get-started`** — public (no login): the three steps to use a canopy agent
