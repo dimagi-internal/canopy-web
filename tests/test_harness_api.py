@@ -180,6 +180,57 @@ def test_finish_on_queued_turn_is_409(client, agent):
     assert resp.status_code == 409, resp.content
 
 
+def test_a_resent_finish_is_a_successful_no_op(client, agent):
+    # The cloud runner re-sends a finish it never heard answered (a reset after the
+    # server committed it, a 5xx), so the second copy must read as success and
+    # change nothing — not a 409 the runner would log as a lost finish, and not a
+    # second round of close-out side effects.
+    from apps.harness.models import Turn
+
+    rid = _pair(client)
+    assert _hb(client, rid).status_code == 200
+    RunnerAssignment.objects.create(agent=agent, runner_id=rid, rank=0)
+    tid = client.post(
+        "/api/harness/turns/",
+        {"agent_slug": "echo", "origin": "manual", "idempotency_key": "k1"},
+        content_type="application/json",
+    ).json()["id"]
+    assert client.post(f"/api/harness/runners/{rid}/claim").status_code == 200
+    body = {"status": "done", "result_note": "shipped", "session_key": "s-1"}
+    first = client.post(f"/api/harness/turns/{tid}/finish", body, content_type="application/json")
+    assert first.status_code == 200 and first.json()["status"] == "done"
+    turn = Turn.objects.get(pk=tid)
+    events = turn.events.count()
+    finished_at = turn.finished_at
+
+    again = client.post(f"/api/harness/turns/{tid}/finish", body, content_type="application/json")
+    assert again.status_code == 200, again.content
+    assert again.json()["status"] == "done"
+    turn.refresh_from_db()
+    assert turn.events.count() == events
+    assert turn.finished_at == finished_at and turn.result_note == "shipped"
+
+
+def test_a_late_finish_does_not_resurrect_a_lost_turn(client, agent):
+    from apps.harness.models import Turn
+
+    rid = _pair(client)
+    assert _hb(client, rid).status_code == 200
+    RunnerAssignment.objects.create(agent=agent, runner_id=rid, rank=0)
+    tid = client.post(
+        "/api/harness/turns/",
+        {"agent_slug": "echo", "origin": "manual", "idempotency_key": "k1"},
+        content_type="application/json",
+    ).json()["id"]
+    assert client.post(f"/api/harness/runners/{rid}/claim").status_code == 200
+    Turn.objects.filter(pk=tid).update(status=Turn.LOST)   # the lease sweep got there first
+
+    late = client.post(f"/api/harness/turns/{tid}/finish", {"status": "done", "result_note": "x"},
+                       content_type="application/json")
+    assert late.status_code == 200, late.content       # the runner stops re-sending
+    assert Turn.objects.get(pk=tid).status == Turn.LOST
+
+
 def test_list_filter_by_agent_and_status(client, agent):
     # the exact query the drain-turn skill issues
     client.post(

@@ -1,3 +1,4 @@
+import http.client
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -189,3 +190,25 @@ def test_network_fault_is_transient(server):
     with pytest.raises(ClientError) as exc:
         c._call("POST", "/retry-probe")
     assert exc.value.transient is True
+
+
+@pytest.mark.parametrize("make", [
+    lambda: http.client.IncompleteRead(b"{", 10),
+    lambda: http.client.RemoteDisconnected("closed"),
+    lambda: http.client.BadStatusLine("garbage"),
+])
+def test_a_connection_cut_mid_response_is_transient_and_retried(monkeypatch, make):
+    # Neither IncompleteRead nor BadStatusLine is an OSError: they used to escape
+    # `_attempt` raw and unretried — and a finish that raised was a finish lost.
+    calls = []
+
+    def boom(*a, **k):
+        calls.append(1)
+        raise make()
+    monkeypatch.setattr(client_mod.urllib.request, "urlopen", boom)
+    monkeypatch.setattr(client_mod.time, "sleep", lambda s: None)
+    c = Client("http://canopy.invalid", "tok")
+    with pytest.raises(ClientError) as exc:
+        c.finish("t-1", note="done")
+    assert exc.value.transient is True
+    assert len(calls) == RETRY_ATTEMPTS
