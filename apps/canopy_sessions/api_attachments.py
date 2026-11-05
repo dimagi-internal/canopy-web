@@ -76,12 +76,9 @@ def upload_attachment(
     if not attachment_storage.is_configured():
         raise HttpError(503, "attachments are not configured on this deployment")
 
-    content_type = (file.content_type or "").split(";")[0].strip().lower()
-    allowed = settings.ATTACHMENT_ALLOWED_CONTENT_TYPES
-    if content_type not in allowed:
-        # An allowlist: these bytes get opened by an agent and rendered inline by
-        # a browser, so anything not explicitly understood is refused.
-        raise HttpError(422, f"unsupported file type '{content_type or 'unknown'}'")
+    # Any type: the agent reads the file; the browser renders only images
+    # (attachment_storage.serve), so the type is a label here, never a gate.
+    content_type = _content_type(file) or "application/octet-stream"
     if file.size is None or file.size <= 0:
         raise HttpError(422, "file is empty")
     if file.size > settings.ATTACHMENT_MAX_UPLOAD_BYTES:
@@ -112,6 +109,30 @@ def upload_attachment(
     attachment_storage.put(attachment.storage_key, file.read(), content_type)
     attachment.save()
     return 201, attachment
+
+
+#: A browser sends no useful type for many text files (Safari: `.yaml`, `.log`; most:
+#: a bare `.md` on some systems), so a generic one is read from the extension.
+_TYPE_BY_EXTENSION = {
+    ".md": "text/markdown", ".markdown": "text/markdown",
+    ".txt": "text/plain", ".log": "text/plain",
+    ".csv": "text/csv", ".json": "application/json",
+    ".yaml": "application/yaml", ".yml": "application/yaml",
+    ".pdf": "application/pdf",
+}
+_GENERIC_TYPES = {"", "application/octet-stream"}
+_TYPE_ALIASES = {"text/x-markdown": "text/markdown", "text/yaml": "application/yaml",
+                 "text/x-yaml": "application/yaml", "application/x-yaml": "application/yaml"}
+
+
+def _content_type(file: UploadedFile) -> str:
+    declared = (file.content_type or "").split(";")[0].strip().lower()
+    declared = _TYPE_ALIASES.get(declared, declared)
+    if declared in _GENERIC_TYPES:
+        name = (file.name or "").lower()
+        ext = name[name.rfind("."):] if "." in name else ""
+        return _TYPE_BY_EXTENSION.get(ext, declared)
+    return declared
 
 
 def _from_its_peoples_browser(request: HttpRequest, session) -> bool:

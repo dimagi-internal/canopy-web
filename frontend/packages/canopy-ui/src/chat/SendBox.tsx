@@ -528,7 +528,6 @@ export function SendBox({
                 ref={fileInputRef}
                 type="file"
                 multiple
-                accept="image/*"
                 className="hidden"
                 data-testid="attachment-input"
                 onChange={(e) => {

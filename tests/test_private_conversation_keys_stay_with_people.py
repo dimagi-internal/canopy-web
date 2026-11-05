@@ -93,7 +93,6 @@ def _admitted(session, user) -> bool:
 
 
 def test_a_file_in_a_private_conversation_is_kept_under_no_name(w, settings):
-    settings.ATTACHMENT_ALLOWED_CONTENT_TYPES = ["image/png"]
     with mock.patch("apps.canopy_sessions.attachment_storage.put") as put, \
             mock.patch("apps.canopy_sessions.attachment_storage.is_configured", return_value=True):
         r = w["c"].post(f"/api/canopy-sessions/{w['hot'].pk}/attachments",

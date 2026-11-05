@@ -64,7 +64,6 @@ class FakeBucket:
 @pytest.fixture()
 def bucket(settings):
     settings.CANOPY_ATTACHMENTS_BUCKET = "test-bucket"
-    settings.ATTACHMENT_ALLOWED_CONTENT_TYPES = ["image/png"]
     settings.CHAT_STUB_EXECUTOR = False  # a runner runs the turn, as in production
     b = FakeBucket()
     with mock.patch(f"{STORAGE}.put", side_effect=b.put), \

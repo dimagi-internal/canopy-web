@@ -11,7 +11,7 @@ refuse: it REDIRECTS to the workspace's sign-in page (seen in production,
 type decides the rest; either way the person is told the scope is what is
 missing, not that the download "failed".
 
-Each file is best-effort: one that cannot be fetched or is not allowed becomes a
+Each file is best-effort: one that cannot be fetched becomes a
 line in the prompt, never a failed message — the person still reaches the agent,
 and the agent is told what it is missing.
 """
@@ -49,7 +49,6 @@ def store(installation, session, user, files) -> tuple[list[dict], list[str]]:
 
     refs: list[dict] = []
     missed: list[str] = []
-    allowed = set(settings.ATTACHMENT_ALLOWED_CONTENT_TYPES)
     limit = settings.ATTACHMENT_MAX_UPLOAD_BYTES
     for f in files:
         name = _label(f)
@@ -57,9 +56,6 @@ def store(installation, session, user, files) -> tuple[list[dict], list[str]]:
         url = f.get("url_private_download") or f.get("url_private")
         if not attachment_storage.is_configured() or installation is None:
             missed.append(f"{name} (attachments are not configured)")
-            continue
-        if declared not in allowed:
-            missed.append(f"{name} ({declared or 'unknown type'} is not an attachment type canopy accepts)")
             continue
         if int(f.get("size") or 0) > limit:
             missed.append(f"{name} (larger than the {limit // (1024 * 1024)}MB limit)")
@@ -81,10 +77,11 @@ def store(installation, session, user, files) -> tuple[list[dict], list[str]]:
             logger.warning("slack file download failed: %s", e)
             missed.append(f"{name} (could not be downloaded from Slack)")
             continue
-        got = str(resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        got = str(resp.headers.get("Content-Type") or "").split(";")[0].strip().lower() or "application/octet-stream"
         body = resp.content or b""
-        if got not in allowed:
-            # The no-scope case: a 200 sign-in page. Say what fixes it.
+        if got == "text/html" and declared != "text/html":
+            # The no-scope case: a 200 sign-in page where a file was promised. Say
+            # what fixes it.
             missed.append(f"{name} ({NO_SCOPE})")
             continue
         if not body or len(body) > limit:

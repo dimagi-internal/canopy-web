@@ -108,14 +108,17 @@ def http_response(attachment):
     if not is_configured():
         raise HttpError(503, "attachments are not configured on this deployment")
     stored = get(attachment.storage_key)
-    response = HttpResponse(stored.body, content_type=stored.content_type)
-    # inline: the browser renders it rather than downloading. filename is already
-    # sanitised at upload, so it is safe in the header.
-    response["Content-Disposition"] = f'inline; filename="{attachment.filename}"'
-    # Served inline from canopy's own origin, and the type allowlist is an env
-    # setting — so if it ever admits a document type (HTML, SVG), the bytes still
-    # run in an opaque origin, never as the viewer. Same rule as walkthrough
-    # content (apps/walkthroughs/streaming.py::SANDBOX_CSP); harmless on an image.
+
+    # Any file may be attached, so only an image is rendered (a thumbnail); every
+    # other file is a download of opaque bytes — an uploaded HTML or SVG never runs
+    # as a page. filename is already sanitised at upload, so it is safe in the header.
+    inline = stored.content_type in settings.ATTACHMENT_INLINE_CONTENT_TYPES
+    response = HttpResponse(stored.body,
+                            content_type=stored.content_type if inline else "application/octet-stream")
+    response["Content-Disposition"] = f'{"inline" if inline else "attachment"}; filename="{attachment.filename}"'
+    # And sandboxed either way: whatever a browser makes of the bytes runs in an
+    # opaque origin, never as the viewer. Same rule as walkthrough content
+    # (apps/walkthroughs/streaming.py::SANDBOX_CSP); harmless on an image.
     response["X-Content-Type-Options"] = "nosniff"
     response["Content-Security-Policy"] = "sandbox"
     return response
