@@ -322,10 +322,11 @@ jobs:
   # What SQLite cannot test: pgvector (the dormant KB vectors, kept working for a
   # corpus that turns them on — the HNSW index, the filtered nearest-neighbour
   # query, vectors joining search through the MCP tool), and the KB version log's
-  # row locks (the index job claims with SELECT … FOR UPDATE SKIP LOCKED). The
-  # suite skips itself on SQLite, so `Backend pytest` alone would wave a broken
-  # vector path through. Runs only the PostgreSQL-specific files (the whole suite
-  # on Postgres is minutes longer and adds nothing SQLite does not already cover).
+  # row locks (the index job claims with SELECT … FOR UPDATE SKIP LOCKED), and
+  # runners racing the turn claim, finish and lease sweep (tests/test_claim_race_pg.py,
+  # ~7s). The suite skips itself on SQLite, so `Backend pytest` alone would wave a
+  # broken vector path through. Runs only the PostgreSQL-specific files; the whole
+  # suite runs on Postgres nightly, off the queue (pg-nightly.yml).
   test-backend-postgres:
     name: Backend pytest (PostgreSQL)
     if: github.event_name != 'pull_request'
@@ -434,7 +435,8 @@ jobs:
         run: >-
           uv run pytest --ds=config.settings.pgtest --reuse-db tests/test_kb_vectors_pg.py tests/test_kb_vectors.py
           tests/test_kb_versions.py tests/test_project_mcp.py tests/test_canopy_vault_phase1b.py tests/test_slack_choices_pg.py
-          tests/test_answering_snapshot.py tests/test_answering_settings_equivalence.py tests/test_answering_settings.py -q --durations=10
+          tests/test_answering_snapshot.py tests/test_answering_settings_equivalence.py tests/test_answering_settings.py
+          tests/test_claim_race_pg.py -q --durations=10
 
   # The checks that only make sense on a PR, because they compare against the
   # PR's BASE — which a merge-group run does not have. On a PR these are the
