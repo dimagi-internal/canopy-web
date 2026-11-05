@@ -23,17 +23,18 @@ export async function listMeetings(params: {
 
 export async function getMeeting(id: string): Promise<Meeting> {
   const res = await apiV2.GET('/api/meetings/{meeting_id}', { params: { path: { meeting_id: id } } })
-  return unwrap(res, 'getMeeting')
+  return unwrap(res, 'getMeeting') as Meeting
 }
 
-export async function createMeeting(body: MeetingInput): Promise<Meeting> {
-  const res = await apiV2.POST('/api/meetings/', { body })
-  return unwrap(res, 'createMeeting')
+/** The generated type marks fields the server defaults as required, so leave out any you don't set. */
+export async function createMeeting(body: Partial<MeetingInput>): Promise<Meeting> {
+  const res = await apiV2.POST('/api/meetings/', { body: body as MeetingInput })
+  return unwrap(res, 'createMeeting') as Meeting
 }
 
 export async function updateMeeting(id: string, body: Schemas['MeetingPatch']): Promise<Meeting> {
   const res = await apiV2.PATCH('/api/meetings/{meeting_id}', { params: { path: { meeting_id: id } }, body })
-  return unwrap(res, 'updateMeeting')
+  return unwrap(res, 'updateMeeting') as Meeting
 }
 
 export async function deleteMeeting(id: string): Promise<void> {
@@ -55,6 +56,15 @@ export async function startMeetingFollowUp(id: string, body: Schemas['MeetingFol
 export function linkOnly(text: string): string | null {
   const trimmed = text.trim()
   return /^https?:\/\/\S+$/.test(trimmed) ? trimmed : null
+}
+
+/** What to call a pasted link's source. Goes by the link's host, wherever else the words appear in it. */
+export function linkSource(link: string): 'google_doc' | 'link' {
+  try {
+    return new URL(link).hostname === 'docs.google.com' ? 'google_doc' : 'link'
+  } catch {
+    return 'link'
+  }
 }
 
 export const KIND_LABELS: Record<string, string> = {

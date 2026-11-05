@@ -4,7 +4,7 @@ import { useEffect, useState, type ChangeEvent, type FormEvent, type JSX } from 
 import { useNavigate } from 'react-router-dom'
 import { Button, Textarea } from 'canopy-ui/ui'
 import { listMyAgents } from '@/api/agents'
-import { createMeeting, linkOnly } from '@/api/meetings'
+import { createMeeting, linkOnly, linkSource } from '@/api/meetings'
 import { errorText } from '@/api/problem'
 import { useScopedPath } from '@/lib/scopedLinks'
 
@@ -81,8 +81,8 @@ export function AddMeeting({
       ask,
       follow_up: Boolean(agent),
       artifact: link
-        ? { kind, source: link.includes('docs.google.com') ? 'google_doc' : 'link', source_url: link }
-        : { kind, source: 'pasted', text },
+        ? { kind, source: linkSource(link), source_url: link, text: '' }
+        : { kind, source: 'pasted', source_url: '', text },
     })
       .then((meeting) => {
         onSaved?.()

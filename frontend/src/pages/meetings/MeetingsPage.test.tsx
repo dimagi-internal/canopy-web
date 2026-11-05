@@ -17,7 +17,7 @@ vi.mock('@/api/agents', () => ({
   listMyAgents: () => Promise.resolve({ items: [{ slug: 'hal', name: 'Hal' }] }),
 }))
 
-import { linkOnly } from '@/api/meetings'
+import { linkOnly, linkSource } from '@/api/meetings'
 import MeetingsPage from './MeetingsPage'
 
 const ROW = {
@@ -64,6 +64,9 @@ describe('MeetingsPage', () => {
   it('treats pasted text as the notes and a lone link as a pointer', async () => {
     expect(linkOnly(' https://docs.google.com/document/d/1/edit ')).toBe('https://docs.google.com/document/d/1/edit')
     expect(linkOnly('see https://x.org')).toBeNull()
+    expect(linkSource('https://docs.google.com/document/d/1/edit')).toBe('google_doc')
+    expect(linkSource('https://evil.example/docs.google.com')).toBe('link')
+    expect(linkSource('https://docs.google.com.evil.example/x')).toBe('link')
     page()
     await screen.findByText('Weekly sync')
     fireEvent.click(screen.getByRole('button', { name: 'Add a meeting' }))
