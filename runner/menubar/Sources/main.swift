@@ -325,7 +325,7 @@ struct RunnerCLI {
 }
 
 // ── the app ───────────────────────────────────────────────────────────────────────
-final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate, WKUIDelegate {
+final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate, WKUIDelegate, WKNavigationDelegate {
     let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     var baseTree: NSImage?
     var timer: Timer?
@@ -422,6 +422,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindo
         // drops alert()/prompt()/window.open() — so "Delete session…" in the IDE silently
         // did nothing here while working in a browser. See the WKUIDelegate methods below.
         web.uiDelegate = self
+        web.navigationDelegate = self
         let win = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 420, height: 640),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -478,6 +479,30 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindo
         alert.addButton(withTitle: "Cancel")
         alert.window.initialFirstResponder = field
         present(alert) { completionHandler($0 == .alertFirstButtonReturn ? field.stringValue : nil) }
+    }
+
+    // <input type="file"> (the chat composer's Attach button): a bare WKWebView drops the
+    // click unless its UI delegate shows a panel, so attaching silently did nothing here.
+    func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters,
+                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = parameters.allowsDirectories
+        panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+        if let win = window, win.isVisible {
+            panel.beginSheetModal(for: win) { completionHandler($0 == .OK ? panel.urls : nil) }
+        } else {
+            completionHandler(panel.runModal() == .OK ? panel.urls : nil)
+        }
+    }
+
+    // A file dragged from Finder and dropped where the page takes no drop: WebKit's
+    // default is to load the file in place of canopy, and this window has no Back.
+    // The page cancels such drops itself (frontend/src/lib/strayFileDrop.ts); this
+    // catches one from a page built before it did.
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        decisionHandler(navigationAction.request.url?.isFileURL == true ? .cancel : .allow)
     }
 
     // window.open / target=_blank: open in the default browser rather than nowhere.
