@@ -84,6 +84,14 @@ _PER_ENDPOINT_EXCLUSIONS: dict[tuple[str, str], tuple[list, str]] = {
         "refuses special-use domains such as `.test`; JSON Schema's `format: email` "
         "admits them, and has no way to say 'deliverable'.",
     ),
+    ("GET", "/api/hcp/v1/export"): (
+        [positive_data_acceptance],
+        "`include`/`exclude` are comma lists of fixed words (audit, versions / "
+        "deleted). The HCP protocol defines its own `malformed-request` answer for "
+        "any other value, so the route keeps them plain strings and checks them "
+        "itself; a schema `pattern` would make the framework answer instead, and "
+        "Ninja cannot declare a pattern it does not enforce.",
+    ),
 }
 
 # Drive is an external service the CI box has no credentials for. A route that
@@ -153,6 +161,39 @@ _PROTECTED_TOKEN_IDS = _own_token_ids() if _schema_available else set()
 #: A token id no row has, swapped in for the suite's own token's.
 _ABSENT_TOKEN_ID = 2**31 - 1
 
+# The CI user's one workspace (contract-nightly.yml makes sure there is exactly
+# one), so a create resolves to it ("your sole workspace") and runs its real path
+# instead of answering 422 workspace-required. The suite keeps it SOLE and intact:
+_CI_WORKSPACE = os.environ.get("SCHEMATHESIS_CI_WORKSPACE", "")
+_ABSENT_WORKSPACE = "contract-ci-absent"
+#: Routes that could delete it, or remove or demote the CI user in it.
+_GUARDS_CI_WORKSPACE = {
+    ("DELETE", "/api/workspaces/{slug}/"),
+    ("DELETE", "/api/workspaces/{slug}/members/{user_id}/"),
+    ("PATCH", "/api/workspaces/{slug}/members/{user_id}/"),
+    ("PUT", "/api/workspaces/{slug}/parent"),
+}
+
+
+def _protect_the_suites_own_state(case, op) -> None:
+    """Steer a fuzzed request away from the credential and workspace the suite runs as."""
+    params = case.path_parameters or {}
+    if op == ("DELETE", "/api/tokens/{pk}/") and params.get("pk") in _PROTECTED_TOKEN_IDS:
+        params["pk"] = _ABSENT_TOKEN_ID
+    if _CI_WORKSPACE and op in _GUARDS_CI_WORKSPACE and params.get("slug") == _CI_WORKSPACE:
+        params["slug"] = _ABSENT_WORKSPACE
+
+
+def _undo_a_new_workspace(op, response, headers) -> None:
+    """A fuzzed `POST /api/workspaces/` that succeeds gives the CI user a second
+    workspace, and every later create would 422 as ambiguous. Delete it again."""
+    if op != ("POST", "/api/workspaces/") or response.status_code != 201:
+        return
+    slug = response.json().get("slug")
+    if slug and slug != _CI_WORKSPACE:
+        requests.delete(SCHEMA_URL.replace("/openapi.json", f"/workspaces/{slug}/"),
+                        headers=headers, timeout=10)
+
 _parametrize = (
     schema.parametrize()
     if _schema_available
@@ -170,8 +211,8 @@ def test_api_conforms_to_schema(case):
     headers: dict[str, str] = {}
     if AUTH_BEARER:
         headers["Authorization"] = f"Bearer {AUTH_BEARER}"
-    if (case.operation.method.upper(), case.operation.path) == ("DELETE", "/api/tokens/{pk}/"):
-        if (case.path_parameters or {}).get("pk") in _PROTECTED_TOKEN_IDS:
-            case.path_parameters["pk"] = _ABSENT_TOKEN_ID
+    op = (case.operation.method.upper(), case.operation.path)
+    _protect_the_suites_own_state(case, op)
     response = case.call(headers=headers)
+    _undo_a_new_workspace(op, response, headers)
     case.validate_response(response, excluded_checks=_excluded_checks(case, response))

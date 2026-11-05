@@ -74,6 +74,22 @@ jobs:
           ALLOWED_HOSTS: localhost,127.0.0.1
           AUTH_ALLOWED_EMAIL_DOMAIN: dimagi-ai.com
 
+      # Push answers 503 "not configured" without VAPID keys, which is right for
+      # a push-less deployment but means the fuzz never reaches its real path.
+      # A throwaway pair, made here and never stored, lets it.
+      - name: Make throwaway VAPID keys
+        run: |
+          uv run python - >> "$GITHUB_ENV" <<'EOF'
+          import base64
+          from cryptography.hazmat.primitives import serialization
+          from cryptography.hazmat.primitives.asymmetric import ec
+          b64 = lambda b: base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+          key = ec.generate_private_key(ec.SECP256R1())
+          print("VAPID_PRIVATE_KEY=" + b64(key.private_numbers().private_value.to_bytes(32, "big")))
+          print("VAPID_PUBLIC_KEY=" + b64(key.public_key().public_bytes(
+              serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)))
+          EOF
+
       - name: Start backend
         run: |
           uv run python manage.py runserver 0.0.0.0:8000 > /tmp/runserver.log 2>&1 &
@@ -91,6 +107,38 @@ jobs:
           ALLOWED_HOSTS: localhost,127.0.0.1
           AUTH_ALLOWED_EMAIL_DOMAIN: dimagi-ai.com
           REQUIRE_AUTH: "True"
+
+      # A create with no workspace named lands in the caller's SOLE workspace;
+      # with none it answers 422 workspace-required, and with two it refuses as
+      # ambiguous, so either way the fuzz stops at the door. The CI user is the
+      # first user, so it owns the default workspace (`dimagi`) — but that is made
+      # lazily, on whichever request first asks, so make it NOW: made mid-run, it
+      # would be a second workspace. Then use it, make one through the API if
+      # there is none, and fail loudly on two. The suite keeps it sole and intact
+      # (test_schemathesis.py).
+      - name: Give the CI user exactly one workspace
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/canopy_web
+          DJANGO_SETTINGS_MODULE: config.settings.production
+          SECRET_KEY: ci-secret
+          ALLOWED_HOSTS: localhost,127.0.0.1
+          AUTH_ALLOWED_EMAIL_DOMAIN: dimagi-ai.com
+        run: |
+          uv run python manage.py shell -c \
+            "from apps.workspaces.services import ensure_default_workspace; print('default workspace:', ensure_default_workspace())"
+          API=http://localhost:8000/api/workspaces/
+          AUTH="Authorization: Bearer ${{ steps.pat.outputs.raw }}"
+          SLUGS=$(curl -fsS "$API" -H "$AUTH" | jq -r '.[].slug')
+          if [ -z "$SLUGS" ]; then
+            curl -fsS -X POST "$API" -H "$AUTH" -H "Content-Type: application/json" \
+              -d '{"slug": "contract-ci", "display_name": "Contract CI"}' > /dev/null
+            SLUGS=contract-ci
+          fi
+          if [ "$(echo "$SLUGS" | wc -l)" -ne 1 ]; then
+            echo "::error::the CI user is in more than one workspace: $SLUGS"; exit 1
+          fi
+          echo "CI user's workspace: $SLUGS"
+          echo "SCHEMATHESIS_CI_WORKSPACE=$SLUGS" >> "$GITHUB_ENV"
 
       # Schemathesis is installed HERE, not in the project's dev extra.
       #
@@ -116,7 +164,6 @@ jobs:
           SCHEMATHESIS_SCHEMA_URL: http://localhost:8000/api/openapi.json
           SCHEMATHESIS_AUTH_BEARER: ${{ steps.pat.outputs.raw }}
           SCHEMATHESIS_MAX_EXAMPLES: ${{ github.event.inputs.max_examples || '100' }}
-
       # A red nightly that nobody sees is not a check. On main only (a dispatch on
       # a branch is someone trying a change, and is watched by whoever ran it),
       # keep ONE open issue with a fixed title: open it on the first failure,
