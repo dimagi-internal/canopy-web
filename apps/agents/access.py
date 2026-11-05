@@ -126,11 +126,27 @@ def decide(agent, who=None, *, verified: bool, origin: str = "", capability: str
     Everyone but the owner, the admins and canopy gets what their line on the access list
     gives them, and nothing else.
     """
+    review = turn is not None and iface_mod.is_review_turn(turn)
+    if review:
+        capability = iface_mod.SESSION_REVIEW
     decision = _stamp(_decide(agent, who, verified=verified, origin=origin, capability=capability,
                               turn=turn, st=standing))
     decision = _from_access_list(agent, decision, who, verified=verified, capability=capability,
                                  turn=turn, standing=standing, lines=lines)
+    if review:
+        decision = _review_rule(decision)
     return _sensitive_rule(agent, decision, capability=capability, turn=turn)
+
+
+def _review_rule(d: Decision) -> Decision:
+    """A turn in a one-session review's chat runs in its door, for everyone with any access at
+    all: owner, admin, editor and canopy too. It only narrows, as `_sensitive_rule` does. That
+    chat holds a transcript someone may have written to steer whoever reads it, so no later
+    message there picks up the agent's whole profile, nor a login, a token or a send."""
+    if d.access == NONE:
+        return d
+    return replace(d, access=CONFINED, capability=iface_mod.SESSION_REVIEW, may_request_auto=False,
+                   may_pin_runner=False, basis=f"capability:{iface_mod.SESSION_REVIEW}")
 
 
 #: Why a sensitive conversation with no capability that handles sensitive data is refused.
@@ -238,6 +254,10 @@ def _capability_for(agent, iface: dict, permissions, capability, turn):
     def opens(name, cap):
         return iface_mod.opens(permissions, name)
 
+    if capability == iface_mod.SESSION_REVIEW:
+        # Canopy's own door, for a turn in a review chat only (`decide`): `read` opens it.
+        is_review = turn is not None and iface_mod.is_review_turn(turn)
+        return (capability, {}) if is_review and roles.holds(permissions, roles.READ) else (None, None)
     name = capability
     if name is None and turn is not None:
         name = iface_mod._page_capability(turn, iface, opens) or iface_mod._site_capability(turn, iface, opens)
@@ -271,7 +291,8 @@ def _from_access_list(agent, d: Decision, who, *, verified: bool, capability, tu
     name, _cap = _capability_for(agent, iface, got.permissions, capability, turn)
     if name is None:
         return d
-    line = got.line_opening(name)
+    # The review door is opened by `read`; `line_opening` knows only named capabilities and read mode.
+    line = got.line_for(roles.READ) if name == iface_mod.SESSION_REVIEW else got.line_opening(name)
     return Decision(relationship=d.relationship, access=CONFINED, capability=name, may_request_auto=False,
                     may_pin_runner=False, manual_only=False, basis=f"capability:{name}",
                     agent_role=got.role, source=f"list:{line.subject_key}", via=grants.describe(line),

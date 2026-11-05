@@ -373,6 +373,13 @@ class MessagePageOut(Schema):
     has_more_before: bool
 
 
+class AskedSessionPageOut(Schema):
+    """One backward page of the one session a review chat was asked about."""
+    session_id: uuid.UUID
+    messages: list[MessageOut]
+    has_more_before: bool
+
+
 class HumanInputPageOut(Schema):
     """One forward page of what PEOPLE typed into a session, oldest first."""
     messages: list[MessageOut]

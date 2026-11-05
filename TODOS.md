@@ -10,6 +10,14 @@
 
 **Effort:** S.
 
+### Narrow the weekly coach pass
+
+**What:** The per-person coaching turn is a full-profile turn with Trellis's whole reach, and any text in a coached person's session lands in it. It reads every grantor's sessions (`review_grantors`, `unattended`), holds the owner's GitHub delegation, and can run the mail script and the ledger.
+
+**Why not yet:** it cannot use the `session_review` door. It must send mail and write the ledger, which need Bash and the agent's env; nobody asked, so there is no person for a caller token to read as; a published capability would be a live settings change. Two smaller steps: a server-stamped one-grantor scope on the dispatch (`reads_for`, needs a `canopy agent dispatch` flag, stopping one person's session reaching another's), and no GitHub identity for a coaching turn.
+
+**Effort:** M, canopy-web and canopy.
+
 ### Proactive Conversation Detection
 
 **What:** Monitor Slack channels and open claw sessions for conversations that contain reusable approaches. Surface as suggestions in the web UI.

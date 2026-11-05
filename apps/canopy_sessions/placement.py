@@ -17,6 +17,7 @@ from apps.harness.models import Runner, Turn
 from . import activity as session_activity
 from . import conversation_keys, handoff, services, staleness, transcript_read
 from . import lifecycle
+from . import access as session_access
 from .models import Message, RunnerBinding, Session
 
 
@@ -492,6 +493,9 @@ def fork_session(*, session: Session, turn_index: int, user) -> Session:
     cannot be forked (no Claude session, a runner that cannot, a message from
     before a transfer), RuntimeError when the cut would fall in a turn still running.
     """
+    if session_access.is_review_conversation(session):
+        # A fork copies what a one-session review read into a session that is not in its door.
+        raise ValueError("a one-session review's chat cannot be forked")
     binding = getattr(session, "runner_binding", None)
     if binding is None or not binding.session_key or binding.runner is None:
         raise ValueError("this session has no Claude session on a runner to fork")

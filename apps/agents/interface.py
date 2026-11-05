@@ -129,6 +129,15 @@ GATEWAY_TOOLS = ("mcp__*canopy-web__site_tools", "mcp__*canopy-web__site_call",
 #: own tab, as them; a confined turn reaches only its own conversation's page.
 PAGE_TOOLS = ("mcp__*canopy-web__page_*",)
 
+#: The door every turn of a one-session review runs in, whoever asks: canopy's, built here, on
+#: every agent, never publishable (`parse`) and never widened by a published one. It reads the
+#: asked session and replies, because that transcript is text someone may have aimed at it.
+SESSION_REVIEW = "session_review"
+#: What it holds. No Bash, no Write, no other canopy tool. `read_asked_session` takes no
+#: session id; canopy reads the one the conversation's live ask names.
+SESSION_REVIEW_TOOLS = ("Read", "ToolSearch", "mcp__*canopy-web__who_is_asking",
+                        "mcp__*canopy-web__read_asked_session")
+
 #: `Turn.capability` for a turn in the agent's FULL profile. Empty so that every
 #: turn predating this reads as "full", which is what it was.
 FULL = ""
@@ -231,6 +240,8 @@ def parse(doc) -> dict:
     for name, cap in caps.items():
         if not isinstance(name, str) or not _NAME.match(name):
             raise InterfaceError(f"capability name {name!r} must match {_NAME.pattern}")
+        if name == SESSION_REVIEW:
+            raise InterfaceError(f"capability name {name!r} is canopy's own and cannot be published")
         if not isinstance(cap, dict):
             raise InterfaceError(f"{name} must be a mapping")
         for key in ("callers", "role"):
@@ -532,6 +543,13 @@ def validate(doc) -> list[dict]:
     return errors
 
 
+def is_review_turn(turn) -> bool:
+    """Whether `turn` belongs to a chat opened by asking for a one-session review."""
+    from apps.canopy_sessions import access as session_access  # noqa: PLC0415 — access imports the agents app
+
+    return session_access.is_review_conversation(session_access.turn_conversation(turn))
+
+
 def session_writer(turn, agent) -> str | None:
     """The asker's role in the session this turn continues, when someone who
     holds the agent's whole profile STARTED that session and gave the asker an
@@ -653,6 +671,10 @@ def profile(agent, capability: str) -> dict | None:
     """
     if capability == FULL:
         return None
+    if capability == SESSION_REVIEW:
+        return {"name": SESSION_REVIEW, "entry": None, "tools": list(SESSION_REVIEW_TOOLS), "bash": [],
+                "description": f"{agent.slug} reviews one session someone asked it to, and replies to them.",
+                "read_paths": ["{cwd}/**"], "write_paths": []}
     _published, cap = published_capability(getattr(agent, "interface", None), capability)
     default_version = None
     if cap is None and is_read_mode(capability):

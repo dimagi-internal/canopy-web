@@ -15,6 +15,8 @@ from apps.api.pagination import clamp_limit
 from apps.api.route_gates import gate
 from apps.embedding import delegation
 from apps.harness import sensitivity, turn_access
+from apps.harness.models import Turn
+from apps.tokens import kinds
 from apps.workspaces import services as wsvc
 
 from . import (
@@ -33,6 +35,7 @@ from . import (
 )
 from . import join_requests
 from .schemas import (
+    AskedSessionPageOut,
     SlashCommandOut,
     BackfillStateOut,
     HumanInputPageOut,
@@ -160,6 +163,38 @@ def _decode_cursor(cursor: str) -> tuple[dt.datetime, uuid.UUID]:
         return _aware(dt.datetime.fromisoformat(when)), uuid.UUID(sid)
     except (ValueError, UnicodeDecodeError) as exc:
         raise HttpError(422, "cursor is not one this endpoint issued; start again without it") from exc
+
+
+@router.get("/asked-review/messages", response=AskedSessionPageOut,
+            summary="Read the one session this conversation was asked to review")
+@gate("session-acl")  # the live ask names it; readable_sessions, held to turn_reach
+def read_asked_session(request: HttpRequest, before: int | None = None,
+                       limit: int = transcript_read.SCROLLBACK_PAGE_DEFAULT):
+    """For a turn in a chat opened by asking an agent to review one session: that session's
+    messages, one backward page at a time, newest first (`before`: a `turn_index`). It takes no
+    session id. Not found when the ask was withdrawn or ran out, the session is sensitive, or
+    the request is anything else."""
+    # Only the caller token of the turn itself: its credential names the turn, and neither a
+    # person nor the agent's login may read through here.
+    cred = getattr(request, "auth_credential", None) or {}
+    turn = None
+    if kinds.kind_of(cred) is kinds.KINDS[kinds.CALLER_TOKEN] and cred.get("turn_id"):
+        turn = Turn.objects.select_related("chat_session").filter(pk=cred["turn_id"]).first()
+    conversation = access.turn_conversation(turn) if turn is not None else None
+    ask = (access.live_review_ask(conversation.pk, user_id=turn.initiator_user_id)
+           if access.is_review_conversation(conversation) else None)
+    session = (access.readable_sessions(request.user).filter(pk=ask.session_id).first()
+               if ask is not None else None)
+    if session is None or session.content_deleted_at is not None or sensitivity.is_sensitive(session):
+        raise Http404("no session is asked about in this conversation")
+    limit = clamp_limit(limit)
+    if before is None:
+        rows, has_more, _oldest = transcript_read.tail_messages(session, limit)
+    else:
+        rows, has_more = transcript_read.messages_before(session, before=before, limit=limit)
+    rows = _read_window(request, session, rows)
+    return {"session_id": session.pk, "messages": [MessageOut.from_orm(m) for m in rows],
+            "has_more_before": has_more}
 
 
 @router.get("/search", response=SessionSearchPageOut, summary="Page through every session (cursor)")
