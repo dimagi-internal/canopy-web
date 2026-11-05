@@ -61,7 +61,7 @@ class WorkspaceOut(StrictModel):
     # True when `role` comes from owning an ancestor rather than a membership
     # row here — the UI shows it so an org owner knows why they can see it.
     inherited: bool = False
-    # A capability flag for clients: a list or search pinned to this workspace
+    # A flag for clients: a list or search pinned to this workspace
     # also returns the caller's workspaces BELOW it (`services.pinned_read_scope`),
     # so one read pinned to a tree's root covers the organisation. Clients that
     # predate it fan a refused read out over each workspace instead.
@@ -560,10 +560,10 @@ class AgentHealthOut(StrictModel):
     # manual: its turns stop for a person's approval before acting or sending;
     # auto: they run through. (A routing rule can set a turn's mode itself.)
     turn_mode: str
-    # Whether it publishes any capability: what people other than its admins may
+    # Whether it publishes read mode or a connected site: what people other than its admins may
     # ask it to do.
     has_interface: bool
-    # How many capabilities it offers (confined access).
+    # How many profiles it offers (read mode and connected sites: confined access).
     capabilities: int
     # Its access list in words, one `"<who>: <role>"` per line (its own and the workspace
     # defaults it inherits): everyone else who can use it besides its admins.

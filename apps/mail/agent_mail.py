@@ -48,7 +48,7 @@ def _wake(route, parsed, msg, thread) -> None:
                     "from": parsed.from_addr,
                     "from_name": parsed.from_name, "subject": parsed.subject,
                     "message_id": parsed.message_id, "discovered_by": "ses",
-                    # Who else is on the thread: the email door admits the members
+                    # Who else is on the thread: the email channel admits the members
                     # among them to its session (`email_channel.admit_thread_people`).
                     "to": list(parsed.to or []), "cc": list(parsed.cc or []),
                     "message_count": thread.message_count, "headers": _auth_results(parsed)},

@@ -40,7 +40,7 @@ def _turn_agent(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.UUID):
         .filter(pk=turn_id, claimed_by=runner, status__in=routing.EXECUTING)
         .first()
     )
-    # A caller's turn (confined to a capability) is steered by a stranger: it is
+    # A caller's turn (a confined turn) is steered by a stranger: it is
     # never lent the agent's identity anywhere. Same 404 as a turn not held.
     if turn is None or turn.capability:
         raise HttpError(404, "turn not found")

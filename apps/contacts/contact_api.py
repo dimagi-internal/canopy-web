@@ -504,7 +504,7 @@ def _for_contacts(app, agents) -> list:
 def _bound(request: HttpRequest, rows, field: str = "agent_id"):
     """`rows` narrowed to the one agent this contact's token is bound to (a page
     that chose its agent — `ContactToken.bound_agent`), if it is. Every contact
-    door that names an agent or a conversation passes through this, so a token
+    route that names an agent or a conversation passes through this, so a token
     minted on a data page for `labsdata` can neither start nor continue a
     conversation with any other agent the site offers."""
     bound = getattr(request, "bound_agent_id", None)

@@ -1,4 +1,4 @@
-"""The job broker on a real Unix socket, with its three doors to the box stubbed.
+"""The job broker on a real Unix socket, with its three entry points to the box stubbed.
 
 What stands in: `spawn`, `run_unit` and `run_unit_pipe` each take the argv `confined_argv` built,
 insist it is `systemd-run`, and run what follows its `--` as this user in the `WorkingDirectory=`

@@ -137,7 +137,7 @@ class InstallationOut(InstallationSummaryOut):
     #: Set when this response describes a draft's test copy (`?draft=`).
     draft: DraftInfoOut | None = None
     #: The Salesforce calls the app's pages declare (`connections`), so the page can tell a read from a
-    #: write before asking. The member door only: `PublicAppOut` has none.
+    #: write before asking. The member surface only: `PublicAppOut` has none.
     connections: list[dict[str, Any]] = []
     #: The whole composed manifest, for someone who maintains the app; None otherwise.
     manifest: dict[str, Any] | None = None

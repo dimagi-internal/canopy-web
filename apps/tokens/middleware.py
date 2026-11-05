@@ -48,12 +48,12 @@ class BearerTokenAuthMiddleware:
         if refused is not None:
             return refused
         if request.META.get("HTTP_X_CANOPY_ON_BEHALF_OF"):
-            from apps.harness import turn_asker  # noqa: PLC0415 — only a request sending X-Canopy-On-Behalf-Of pays for it, like the file's other door-specific imports
+            from apps.harness import turn_asker  # noqa: PLC0415 — only a request sending X-Canopy-On-Behalf-Of pays for it, like the file's other route-specific imports
 
             if turn_asker.of(getattr(request, "user", None)) is None:
                 # Only a turn's own login may act on someone's behalf (checked above);
                 # anything else asking to must hear no, not be quietly judged as itself.
-                from apps.api.errors import problem_response  # noqa: PLC0415 — only a request sending X-Canopy-On-Behalf-Of pays for it, like the file's other door-specific imports
+                from apps.api.errors import problem_response  # noqa: PLC0415 — only a request sending X-Canopy-On-Behalf-Of pays for it, like the file's other route-specific imports
 
                 return problem_response(403, detail=(
                     "X-Canopy-On-Behalf-Of refused: acting on someone's behalf needs the "
@@ -82,7 +82,7 @@ class BearerTokenAuthMiddleware:
         user = getattr(request, "user", None)
         already_signed_in = user is not None and getattr(user, "is_authenticated", False)
 
-        from apps.harness import act_as, caller_tokens  # noqa: PLC0415 — the bearer door's per-kind imports stay inside it, like the file's others
+        from apps.harness import act_as, caller_tokens  # noqa: PLC0415 — the bearer route's per-kind imports stay inside it, like the file's others
 
         if raw.startswith(act_as.PREFIX):
             # An act-as-you token: the person, under the permission they approved with
@@ -92,7 +92,7 @@ class BearerTokenAuthMiddleware:
             # A session that already signed this request in keeps its identity.
             return None if already_signed_in else _authenticate_caller_token(request, raw)
 
-        # One resolver for every door (apps/tokens/principal.py). A session that
+        # One resolver for every entry point (apps/tokens/principal.py). A session that
         # already signed this request in keeps its identity, so a PAT is not
         # even looked up then; a delegated token still is (its site is stamped).
         from apps.tokens import principal as P
@@ -171,10 +171,10 @@ class BearerTokenAuthMiddleware:
             # works them out here, on every request, so no agent has to remember to say
             # so (apps/harness/turn_asker.py). `X-Canopy-On-Behalf-Of` only asserts it:
             # naming anyone else is refused.
-            from apps.harness import turn_asker  # noqa: PLC0415 — a PAT door import, like the file's other door-specific imports
+            from apps.harness import turn_asker  # noqa: PLC0415 — a PAT-route import, like the file's other route-specific imports
 
             if request.META.get("HTTP_X_CANOPY_ON_BEHALF_OF"):
-                from apps.api.errors import problem_response  # noqa: PLC0415 — only a request sending X-Canopy-On-Behalf-Of pays for it, like the file's other door-specific imports
+                from apps.api.errors import problem_response  # noqa: PLC0415 — only a request sending X-Canopy-On-Behalf-Of pays for it, like the file's other route-specific imports
 
                 try:
                     turn_asker.declare(request.user, found.credential,
@@ -391,7 +391,7 @@ act_as_call_log: Callable[[HttpRequest, object, int], None] | None = None
 #: Whether `METHOD path` is a route a caller token may reach over REST. The MCP app
 #: registers it at startup (`apps.mcp.apps.McpConfig.ready` → `api_tools.is_tool_route`)
 #: so this layer never imports the one above it; unset, no route qualifies and the
-#: door fails closed.
+#: route fails closed.
 caller_token_routes: Callable[[str, str], bool] | None = None
 
 
@@ -400,10 +400,10 @@ def _authenticate_caller_token(request: HttpRequest, raw: str) -> HttpResponse |
 
     canopy-web#1782: a project turn's session acts as the person who asked, and
     its canopy CLI needs REST for that, not only MCP. Accepted only as the MCP
-    door accepts it, so nothing new is granted:
+    route accepts it, so nothing new is granted:
 
     * the SCOPED (full-profile) kind only, naming a canopy user, not sensitive —
-      a confined token is held to its capability's tools, which REST has no way
+      a confined token is held to its profile's tools, which REST has no way
       to apply, so it is refused here;
     * re-resolved on every request, so it follows the conversation's current
       asker and voids exactly when `resolve` says it does;
@@ -414,8 +414,8 @@ def _authenticate_caller_token(request: HttpRequest, raw: str) -> HttpResponse |
       own open page: the asker granted no act-as-you permission, so a write is refused,
       as MCP refuses it. A repo chat's token is the person's own tool and keeps writes;
     * with the caller's acting cap, as `_authenticate_mcp_call` applies it."""
-    from apps.api.errors import problem_response  # noqa: PLC0415 — only a caller-token request pays for it, like the file's other door-specific imports
-    from apps.harness import caller_tokens  # noqa: PLC0415 — only a caller-token request pays for it, like the file's other door-specific imports
+    from apps.api.errors import problem_response  # noqa: PLC0415 — only a caller-token request pays for it, like the file's other route-specific imports
+    from apps.harness import caller_tokens  # noqa: PLC0415 — only a caller-token request pays for it, like the file's other route-specific imports
 
     grant = caller_tokens.resolve(raw)
     if grant is None or not grant.all_tools or grant.sensitive or grant.user is None:
@@ -444,11 +444,11 @@ def _authenticate_caller_token(request: HttpRequest, raw: str) -> HttpResponse |
     request._dont_enforce_csrf_checks = True
     _apply_acting_cap(request)
     # How far this token reads, as the asker (the same call on MCP, below).
-    from apps.canopy_sessions import access as session_access  # noqa: PLC0415 — only a caller-token request pays for it, like the file's other door-specific imports
+    from apps.canopy_sessions import access as session_access  # noqa: PLC0415 — only a caller-token request pays for it, like the file's other route-specific imports
 
     session_access.limit_reach(request.user, session_access.turn_reach(grant.turn))
     try:
-        from apps.workspaces import role_cap  # noqa: PLC0415 — only a caller-token request pays for it, like the file's other door-specific imports
+        from apps.workspaces import role_cap  # noqa: PLC0415 — only a caller-token request pays for it, like the file's other route-specific imports
 
         role_cap.apply(request.user, role_cap.turn_cap(turn_id, request.user))
     except Exception:  # noqa: BLE001 — a cap only narrows; never deny on a hiccup

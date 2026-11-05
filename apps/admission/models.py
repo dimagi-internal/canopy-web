@@ -86,7 +86,7 @@ class AdmissionRule(models.Model):
     origin = models.CharField(max_length=32, choices=ORIGIN_CHOICES, blank=True, default="")
     principal = models.CharField(max_length=8, choices=PRINCIPAL_CHOICES, blank=True, default="")
     access = models.CharField(max_length=8, choices=ACCESS_CHOICES, blank=True, default="")
-    #: A capability name from the agent's interface (`ask`), blank = any.
+    #: Read mode or a connected site of the agent's interface (read mode stored as `READ_MODE_STAMP`), blank = any.
     capability = models.CharField(max_length=64, blank=True, default="")
     turn_mode = models.CharField(max_length=8, choices=TURN_MODE_CHOICES, blank=True, default="")
     #: `blocked` matches a sender the workspace blocked (`Contact.is_blocked`).

@@ -162,7 +162,7 @@ def user_for_verified_email(email: str):
     (and bound by an operator through `Agent.user`), never through an allauth
     sign-in, so they have no `EmailAddress` row and could never be resolved —
     ace-web started an ACE run as `ace@dimagi-ai.com`, ACE's own login, and
-    turn 2727e227 arrived as a contact confined to `ask`, which then refused
+    turn 2727e227 arrived as a contact confined to read mode, which then refused
     the run. `User.email` alone is a free field and proves nothing for a human
     (that rule stands); it counts here only because an operator explicitly
     bound that account as an agent's identity, which is the provenance the

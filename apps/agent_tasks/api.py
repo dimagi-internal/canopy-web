@@ -90,7 +90,7 @@ def create_agent_task(request: HttpRequest, payload: AgentTaskCallIn):
     outbound action. `output_schema` must be a valid JSON Schema (422); `input` is at
     most 1 MiB as JSON (413). Who may create one: whoever may enqueue a turn for
     the agent."""
-    # A TurnIn for the gates enqueue_turn runs, so this door can never be wider.
+    # A TurnIn for the gates enqueue_turn runs, so this route can never be wider.
     turn_in = TurnIn(agent_slug=payload.agent, origin="api", idempotency_key="agent-task",
                      routing=payload.routing, parent=payload.parent)
     turn_gates.check_shape(turn_in)

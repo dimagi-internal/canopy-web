@@ -1,6 +1,6 @@
 """The public product site (``site/``, built by Astro) — which paths it owns.
 
-``/`` is the product site for EVERYONE, signed in or not, and ``/app`` is the door
+``/`` is the product site for EVERYONE, signed in or not, and ``/app`` is the way
 into the app (the SPA sends it to your default workspace; signed out, the login
 middleware sends you through Google first). That is deliberate for now (owner,
 2026-10-06): the site is being iterated on and has to be visible while signed in.

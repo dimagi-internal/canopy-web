@@ -128,7 +128,7 @@ urlpatterns = [
     # forwarded. A plain 404 that says so, served before the SPA catch-all so
     # the app shell never renders under a dead link.
     re_path(FLAT_ARTIFACT_PATH, flat_artifact_gone, name="flat-artifact-gone"),
-    # Slack front door (apps/slack). The webhooks are signed POSTs whose raw
+    # Slack channel (apps/slack). The webhooks are signed POSTs whose raw
     # body must be read for the signature, so they are bare views registered
     # BEFORE the Ninja `api/` mount; the browser legs need a login, like the
     # GitHub flow above. The callback path is registered on the Slack app.

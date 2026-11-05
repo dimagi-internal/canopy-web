@@ -2,7 +2,7 @@
 
 canopy's own agents reach a person's HCP instance as FIRST-PARTY clients (the
 grant per agent × channel × host in `hcp.grant_for`). This module is the other
-door: an application someone else runs asks the person, through a standard
+way in: an application someone else runs asks the person, through a standard
 authorization-code flow, for access to some categories of their instance. That
 is what makes canopy's `authorization_profile` "oauth2" and the service eligible
 for HCP v1 Interop. The design record, every judgment call, and what "public"
@@ -580,7 +580,7 @@ def deliver_due(now: dt.datetime | None = None, limit: int = 20) -> int:
 
 
 def maybe_deliver(now: dt.datetime | None = None) -> None:
-    """The off-request clock's door: at most once a minute across the fleet. Never raises."""
+    """The off-request clock's entry point: at most once a minute across the fleet. Never raises."""
     try:
         if not cache.add("hcp-revocation-deliveries", "1", timeout=60):
             return

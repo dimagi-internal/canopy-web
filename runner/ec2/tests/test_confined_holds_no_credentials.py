@@ -5,7 +5,7 @@ and everything the box held: the runner owner's canopy PAT (CANOPY_TOKEN), the
 agent's whole ~/.<slug>/.env (CANOPY_WEB_PAT among it), the
 owner's GitHub token and the chat's key. A confined turn's env is now an
 allowlist — Claude's own login, locale/paths/TLS, which agent and turn this is —
-plus gog's keyring password only for a capability whose bash allowlist runs the
+plus gog's keyring password only for a profile whose bash allowlist runs the
 mail path. A full-profile turn is unchanged.
 """
 from __future__ import annotations
@@ -106,7 +106,7 @@ def test_what_a_confined_turn_keeps_is_what_it_needs_to_run(cr):
     assert "GOG_KEYRING_PASSWORD" not in env                     # no mail in `connect`
 
 
-def test_only_a_capability_that_sends_mail_gets_the_mail_keyring(cr):
+def test_only_a_profile_that_sends_mail_gets_the_mail_keyring(cr):
     mod, calls = cr
     mod._run_turn("r-1", _turn(ASK))
     env = calls["env"]
@@ -123,8 +123,8 @@ def test_only_a_capability_that_sends_mail_gets_the_mail_keyring(cr):
     ("bin/ace-emailer --x", False),
     ("echo canopy email read", False),
 ])
-def test_mail_is_derived_from_the_capabilitys_own_bash_rules(cloud_runner, rule, mail):
-    assert cloud_runner._capability_uses_mail({"bash": [rule]}) is mail
+def test_mail_is_derived_from_the_profiles_own_bash_rules(cloud_runner, rule, mail):
+    assert cloud_runner._profile_uses_mail({"bash": [rule]}) is mail
 
 
 def test_a_full_profile_turn_is_unchanged(cr):

@@ -96,14 +96,14 @@ def test_the_file_lands_in_the_turns_own_directory_readable_by_it_alone_and_goes
     assert f == att / f"1-{NAME}" and seen["bytes"] == [PNG]
     assert seen["modes"] == [0o600] and seen["dir_mode"] == 0o700
     assert str(f) in seen["prompt"] and "Read it with the Read tool" in seen["prompt"]
-    # Its rules: Read inside that directory (the capability grants no Read at all), and
+    # Its rules: Read inside that directory (the profile grants no Read at all), and
     # profile_guard's profile says the same.
     rule = mod._abs_read_rule(att, "/**")
     assert rule in seen["settings"]["permissions"]["allow"]
     from canopy_runner import native_permissions as np
 
     assert not np.denied_by(seen["settings"]["permissions"]["deny"], os.path.realpath(str(f)))
-    # The guard's exception names the directory alone; the capability is as declared,
+    # The guard's exception names the directory alone; the profile is as declared,
     # so Read opens nothing else it lists.
     assert seen["profile"]["attachment_dirs"] == [os.path.realpath(str(att))]
     assert seen["profile"]["capability"] == CAP

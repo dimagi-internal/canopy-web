@@ -1,11 +1,11 @@
 """One answer to "who does this bearer token speak for?".
 
-Three doors read a raw bearer token — REST (`apps/tokens/middleware.py`), MCP
+Three entry points read a raw bearer token — REST (`apps/tokens/middleware.py`), MCP
 (`apps/mcp/auth.py`) and the WebSocket handshake (`apps/realtime/channels_auth.py`).
 Each used to look the token up in its own order, with its own idea of which
 token types it accepts and whether a use is stamped. They ask `resolve_bearer`
 now, each naming the kinds it takes; what a kind may then REACH stays with the
-door (a runner key opens the runner protocol only, an HCP token `/api/hcp/v1/`
+entry point (a runner key opens the runner protocol only, an HCP token `/api/hcp/v1/`
 only, a delegated token `site ∩ user`).
 
 The kinds, tried in this order:
@@ -13,14 +13,14 @@ The kinds, tried in this order:
 * ``runner-key`` — a runner's own `RunnerAccessToken` (by its prefix).
 * ``hcp-oauth`` — an HCP service access token (by its prefix); no canopy user.
 * ``pat`` — a `PersonalToken`, hand-minted or an OAuth access token; a use is
-  stamped (`last_used_at`, `last_used_client`) when the door names its client.
+  stamped (`last_used_at`, `last_used_client`) when the entry point names its client.
 * ``contact`` — a `ContactToken`; no canopy user, ever.
 * ``delegated`` — a site's `DelegatedToken` for an active user.
 
 Every kind is told apart by its prefix: `crt_`, `hcpat_`, and — for tokens
 minted since they were introduced — `cpat_`, `cdt_`, `ccon_` (the models'
 `PREFIX`). A prefixed token is looked up in its own table only, and refused
-when that kind is not one the door accepts. A token minted before the prefixes
+when that kind is not one the entry point accepts. A token minted before the prefixes
 is 43 bare base64url characters (`LEGACY_LENGTH`): it is tried against each
 accepted kind in the order above, as before. Length is what tells a legacy
 token that happens to begin `cpat_` from a prefixed one.
@@ -55,7 +55,7 @@ def credential(kind: str, pk, label: str) -> dict:
 def resolve_bearer(raw: str, *, accept=ALL_KINDS, client: str | None = None) -> Principal | None:
     """The principal `raw` names, among the kinds `accept`, or None.
 
-    Only the accepted kinds are looked up, so a door that takes one kind pays
+    Only the accepted kinds are looked up, so an entry point that takes one kind pays
     for one query. `client` (from `models.client_label`) stamps a PAT's use;
     None stamps nothing — for a re-check, or a request a session already
     signed in."""

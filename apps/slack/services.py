@@ -348,7 +348,7 @@ def auto_link(installation: SlackInstallation, slack_user_id: str, info: dict):
     fallback for someone whose two emails differ. Requiring it first is what
     made the first live mention on labs (2026-09-19) look like silence.
 
-    "Same email" is `contacts.services.user_for_verified_email`, as on every door.
+    "Same email" is `contacts.services.user_for_verified_email`, as on every channel.
     Only for a full member of this Slack (`is_home_member`): a guest is
     someone the organisation invited in, and a Slack Connect visitor's email is
     their own org's to set — both are answered as a CONTACT whatever it says. Not on an ambiguous match either — two canopy accounts sharing an
@@ -362,7 +362,7 @@ def auto_link(installation: SlackInstallation, slack_user_id: str, info: dict):
     if not email:
         return None
     # The account that provably holds the address, by the same rule as every other
-    # door (a VERIFIED allauth email, else an agent's own login) — `User.email` is a
+    # channel (a VERIFIED allauth email, else an agent's own login) — `User.email` is a
     # free field and proves nothing for a human.
     from apps.contacts.services import user_for_verified_email  # noqa: PLC0415 — only a first Slack message pays for it
 
@@ -685,7 +685,7 @@ def _confined_elsewhere(session: Session, agent: Agent, principal: Principal, in
     """Would this message run confined in SOMEONE ELSE'S thread session?
 
     Asked of an unsaved probe turn through THE rule (`turn_context.for_turn`),
-    so it cannot disagree with the capability the real turn would be stamped.
+    so it cannot disagree with the profile the real turn would be stamped with.
     A confined turn in the owner's conversation reaches nothing of it — it runs
     apart on the runner — yet it shared the owner's chat session, so it queued
     behind the owner's turn and its answer landed in the owner's thread as if it
@@ -914,7 +914,7 @@ def restart_from_click(installation: SlackInstallation, *, slack_user_id: str, c
     ctx = _context_in(closed, agent, principal, installation.team_id)
     reach = ctx.access
     if reach == turn_context.REFUSED:
-        # The refusal's own words (`apps/agents/refusals.py`), as every other door says them.
+        # The refusal's own words (`apps/agents/refusals.py`), as every other channel says them.
         return Outcome(REFUSED, f"`{agent.slug}` didn't start a new session: {ctx.refusal.text}",
                        session=closed, agent=agent, workspace_id=agent.workspace_id)
     if reach == turn_context.CONFINED and thread_ts and not is_dm and not _owns(closed, principal):

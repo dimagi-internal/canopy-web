@@ -782,7 +782,7 @@ def _search_then_get(threads, headers, modify_rc=0, modified=None):
 
 def test_ses_event_receipts_do_not_start_a_session():
     """ace@ 1a0d0a1632cfde4f: SES Send/Bounce/Delivery receipts from SNS started 14 confined
-    `ask` sessions in 12 hours, each concluding there was nothing to answer."""
+    read-mode sessions in 12 hours, each concluding there was nothing to answer."""
     client = FakeClient()
     modified = []
     r = _search_then_get([{"id": "thr-ses", "from": _SES_FROM, "subject": _SES_SUBJECT,

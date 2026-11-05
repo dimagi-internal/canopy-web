@@ -2,7 +2,7 @@
 
 Tests the DECISION (is a slot due, is fire called with the right slot), not the HTTP
 and not the cron math: DST/cron correctness is canopy_cron's suite, and duplicating it
-here would just re-test croniter through a second door.
+here would just re-test croniter through a second path.
 """
 import datetime as dt
 

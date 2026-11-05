@@ -215,11 +215,11 @@ def test_a_handoff_leaves_without_waiting_on_its_turns(cr, monkeypatch):
 
 
 def test_only_an_unconfined_turn_on_a_supervised_box_is_adoptable(cr, monkeypatch):
-    monkeypatch.setattr(cr, "_capability", lambda turn: None)
+    monkeypatch.setattr(cr, "_confined_profile", lambda turn: None)
     assert not cr.adoptable_turn({"id": TURN})  # no supervisor: the unit's restart kills it
     monkeypatch.setenv("CANOPY_RUNNER_SUPERVISED", "1")
     assert cr.adoptable_turn({"id": TURN})
-    monkeypatch.setattr(cr, "_capability", lambda turn: "ask")
+    monkeypatch.setattr(cr, "_confined_profile", lambda turn: "ask")
     assert not cr.adoptable_turn({"id": TURN})
 
 

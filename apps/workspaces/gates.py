@@ -1,6 +1,6 @@
 """Resolving the workspace a route names by slug — the workspace sibling of `agents/gates.py`.
 
-One rule, so every door answers a stranger the same way: a workspace the caller is not
+One rule, so every route answers a stranger the same way: a workspace the caller is not
 in is a 404 (never a role hint), and one they are in but lack the permission for is a
 403 that names the role it needs (`permissions.MINIMUM_ROLE`).
 """

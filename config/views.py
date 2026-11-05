@@ -83,7 +83,7 @@ def spa_view(request):
     `/w/<ws>/…`, `/share/<token>` — lands here. It shipped with no cache headers
     at all, which leaves the freshness of the one file that names the current
     asset hashes up to each browser's heuristics. Same `no-cache` as WhiteNoise
-    now sends, so both doors agree; see config/static_cache.py.
+    now sends, so both paths agree; see config/static_cache.py.
     """
     site_page = public_site.serve(request)
     if site_page is not None:

@@ -102,7 +102,7 @@ def test_an_entry_needing_a_thread_fails_the_turn_instead_of_running_it(cr):
 
 def test_a_chat_turn_with_no_thread_runs_the_persons_own_words_confined(cr):
     # A Slack or web-chat caller has no thread; a thread-bound entry is for email.
-    # Refusing broke every confined chat turn here (found building Hal's `ask`).
+    # Refusing broke every confined chat turn here (found building Hal's read mode).
     mod, calls = cr
     t = _turn(prompt="how does routing work?",
               origin_ref={"chat_session_id": "s-1"},
@@ -246,8 +246,8 @@ def test_without_the_module_the_turn_still_runs_confined_by_the_hook(cr, monkeyp
 def test_both_envelope_words_confine(cloud_runner, word):
     # Envelope VERSION 2 says "confined"; an older canopy-web said "restricted".
     t = _turn(caller_context={"profile": word, "capability": CAP, "conversation": {}})
-    assert cloud_runner._capability(t) == CAP
-    assert cloud_runner._capability({**t, "caller_context": {"profile": "full"}}) is None
+    assert cloud_runner._confined_profile(t) == CAP
+    assert cloud_runner._confined_profile({**t, "caller_context": {"profile": "full"}}) is None
 
 
 def test_the_heartbeat_reports_the_envelope_version(cloud_runner):

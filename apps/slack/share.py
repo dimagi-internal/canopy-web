@@ -1,4 +1,4 @@
-"""A session shares itself TO Slack — the front door, run backwards.
+"""A session shares itself TO Slack — the inbound Slack channel, run backwards.
 
 Everywhere else in this app a thread is born in Slack and adopts a session.
 Here the session exists first (you are working in it) and posts a summary into
@@ -172,7 +172,7 @@ def _installation(user, session: Session | None, workspace: str) -> tuple[SlackI
 def _slack_user(installation: SlackInstallation, user) -> str:
     """The caller's Slack user id in this install — linking by email if Slack knows it.
 
-    The same rule the front door and the manual link page apply: the Slack
+    The same rule the inbound Slack channel and the manual link page apply: the Slack
     account's email equals the canopy one. Anything else stays unlinked.
     """
     link = SlackUserLink.objects.filter(installation=installation, user=user).first()
@@ -478,7 +478,7 @@ _DETACHED_HISTORY = 20
 
 #: The binding itself, plus the per-thread bookkeeping that would otherwise leak
 #: into the NEXT thread after a re-share: what `share_session` (bind) and the
-#: front door write, and what relay keeps about the thread it posts into.
+#: inbound Slack channel write, and what relay keeps about the thread it posts into.
 _BINDING_KEYS = (
     services.SLACK_THREAD_KEY, "slack_team", "slack_channel", "slack_thread_ts", "slack_shared_by",
     relay.BOUND_AT, relay.ELSEWHERE_AT, relay.CLOSED_NOTICE, "slack_closed_told",
@@ -605,7 +605,7 @@ def detach_session(user, session: Session) -> DetachResult:
 def bound_repo_session(installation: SlackInstallation, key: str) -> Session | None:
     """An agent-less session bound to this thread by a share, if there is one.
 
-    The front door finds a thread's session through its agent; a repo session
+    The inbound Slack channel finds a thread's session through its agent; a repo session
     has none, so it needs this second lookup.
     """
     return (services.tenant_sessions(installation).filter(Q(agent__isnull=True),

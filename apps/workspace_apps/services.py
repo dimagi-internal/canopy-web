@@ -2,7 +2,7 @@
 
 Routes are in `api.py`. Every read and write goes through here with the caller's
 ROLES already worked out (`access.roles_for`) and a `space` — "live", or one
-draft's private test copy — so the rule is in one place whichever door (a member
+draft's private test copy — so the rule is in one place whichever surface (a member
 page, a public page, an MCP tool, a scenario run) the request came through.
 """
 from __future__ import annotations
@@ -631,7 +631,7 @@ def query(inst: AppInstallation, *, roles: set[str], collection: str, where: dic
           order: str = "-created_at", limit: int = 100, public: bool = False, space: str = LIVE,
           manifest: dict | None = None, user=None) -> list[dict]:
     """Records of one collection the caller may read. `public=True` is the
-    anonymous door: the collection's public projection, its `where` always
+    anonymous public page: the collection's public projection, its `where` always
     applied on top of the caller's and only its fields returned."""
     m = manifest or manifest_for(inst, space)
     spec = m["collections"].get(collection)
@@ -1380,7 +1380,7 @@ def retention_apply(inst: AppInstallation, now=None) -> dict:
 
 
 def retention_sweep(now=None) -> dict:
-    """Every enabled installation's rules (the off-request clock's door)."""
+    """Every enabled installation's rules (the off-request clock's entry point)."""
     out = {}
     for inst in AppInstallation.objects.filter(enabled=True).select_related("workspace"):
         if manifest_for(inst, LIVE).get("retention"):
@@ -1389,7 +1389,7 @@ def retention_sweep(now=None) -> dict:
 
 
 def send_scheduled(now=None) -> dict:
-    """Send every held-back email that is due (the clock's door). One whose record
+    """Send every held-back email that is due (the clock's entry point). One whose record
     no longer matches what the action left it as (an un-rejected candidate, an
     anonymized address) is cancelled, not sent; each outcome lands in the
     record's history."""

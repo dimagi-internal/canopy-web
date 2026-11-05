@@ -185,16 +185,16 @@ def clear_pending(task: str, *, root: pathlib.Path | None = None) -> None:
         pass
 
 
-# --- restricted execution: a caller's turn, confined to its capability ---------------
+# --- restricted execution: a caller's turn, confined to read mode or a connected site ---
 #
 # canopy-web decides per turn whether the asker gets the agent's FULL profile (its
-# owner, an admin, canopy itself) or is a CALLER confined to a capability from the
+# owner, an admin, canopy itself) or is a CALLER confined to a profile (read mode or a connected site) from the
 # agent's declared interface. For a caller's turn this runner:
 #   * opens it in its OWN emdash session — a distinct thread key and a `cx-` task
 #     name — so it never shares a session with an admin's work;
-#   * writes the capability's profile to ~/.canopy/profiles/<task>.json BEFORE the
+#   * writes that profile to ~/.canopy/profiles/<task>.json BEFORE the
 #     session starts, where canopy's `profile_guard` hook reads it on every tool call;
-#   * starts it with the capability's `entry` command rather than the admin's turn.
+#   * starts it with the profile's `entry` command rather than the admin's turn.
 
 PROFILE_ROOT = pathlib.Path.home() / ".canopy" / "profiles"
 
@@ -225,13 +225,13 @@ class ProfileError(RuntimeError):
     """A caller's turn cannot be confined, so it must not run."""
 
 
-def capability(turn: dict) -> dict | None:
-    """The capability profile when this is a caller's turn, else None (full profile)."""
+def confined_profile(turn: dict) -> dict | None:
+    """The confined profile (the envelope's `capability` field) when this is a caller's turn, else None (full profile)."""
     env = turn.get("caller_context") or {}
     if not is_confined(env):
         return None
     cap = env.get("capability")
-    # A confined envelope with no capability is still confined: deny-all.
+    # A confined envelope that names no profile is still confined: deny-all.
     return cap if isinstance(cap, dict) else {"name": "none", "tools": [], "bash": [],
                                                "read_paths": [], "write_paths": [], "entry": None}
 
@@ -244,19 +244,19 @@ def thread_id(turn: dict) -> str:
 
 
 def entry_prompt(turn: dict, prompt: str) -> str:
-    """A caller's session starts with the capability's `entry`, never the admin's turn.
+    """A caller's session starts with the profile's `entry`, never the admin's turn.
 
     `{thread_id}` is filled from the conversation; an entry that needs one on a
     turn that has none is refused rather than run with a hole in it.
     """
-    cap = capability(turn)
+    cap = confined_profile(turn)
     if cap is None or not cap.get("entry"):
         return prompt
     entry = str(cap["entry"])
     if "{thread_id}" in entry:
         tid = thread_id(turn)
         if not tid:
-            raise ProfileError(f"capability '{cap.get('name')}' starts on a thread, "
+            raise ProfileError(f"profile '{cap.get('name')}' starts on a thread, "
                                "and this turn has none")
         entry = entry.replace("{thread_id}", tid)
     return entry
@@ -270,7 +270,7 @@ def write_profile(task: str, turn: dict, *, root: pathlib.Path | None = None) ->
     everything anyway, and a turn that silently does nothing is worse than one that
     fails and says why.
     """
-    cap = capability(turn)
+    cap = confined_profile(turn)
     if cap is None:
         raise ProfileError("not a caller's turn")
     if not session_naming.is_restricted_task(task) or not re.fullmatch(r"cx-[a-z0-9-]{1,200}", task):
@@ -281,8 +281,8 @@ def write_profile(task: str, turn: dict, *, root: pathlib.Path | None = None) ->
            # The envelope the session is told to read (`--caller`); naming it here
            # lets the guard allow exactly that one file outside the worktree.
            "caller_path": str(CALLER_ROOT / f"{turn.get('id')}.json"),
-           # canopy's MCP credential for THIS session — the caller, scoped to the
-           # capability — sent by the canopy plugin's headers helper in place of the
+           # canopy's MCP credential for THIS session — the caller, scoped to its
+           # profile — sent by the canopy plugin's headers helper in place of the
            # owner's PAT. The session cannot read this file (profile_guard), so it
            # cannot lift the token; a missing one makes the helper send an invalid
            # header, never the PAT.

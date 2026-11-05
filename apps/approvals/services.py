@@ -1,6 +1,6 @@
 """Filing, deciding, cancelling and expiring approval requests — the whole lifecycle, in one place.
 
-`decide()` is the ONE door every channel uses (the page, a Slack button, an alert's button, the
+`decide()` is the ONE path every channel uses (the page, a Slack button, an alert's button, the
 API). It locks the request, checks the kind's own authority for THIS person, then either declines
 (nothing runs) or runs the kind's hard-coded handler as the approver, inside a savepoint so a
 refusal leaves nothing half-done. A request is decided once.

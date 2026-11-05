@@ -650,7 +650,7 @@ GITHUB_APP_CLIENT_SECRET = env("GITHUB_APP_CLIENT_SECRET", default="")
 # (https://github.com/apps/<slug>/installations/new). Public.
 GITHUB_APP_SLUG = env("GITHUB_APP_SLUG", default="")
 
-# Slack front door (apps/slack). The client id is public (it is in every
+# Slack channel (apps/slack). The client id is public (it is in every
 # install URL); the client + signing secrets are Secrets Manager entries. Any of
 # the three empty (or the CFN "PLACEHOLDER") means Slack is off: the webhooks
 # answer 503 and nothing else changes.

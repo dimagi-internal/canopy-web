@@ -102,7 +102,7 @@ def handle(installation, inbound: Inbound, ask: str) -> Outcome:
     branch.parent_session = parent
     branch.parent_claude_session = (getattr(binding, "transcript_id", "") or "")[:100]
     branch.metadata = {**(branch.metadata or {}), BRANCHED_FROM_KEY: key}
-    # A branch of a review chat carries what was read, so it stays in the review's door.
+    # A branch of a review chat carries what was read, so it stays in the review's profile.
     if REVIEW_METADATA_KEY in (parent.metadata or {}):
         branch.metadata[REVIEW_METADATA_KEY] = parent.metadata[REVIEW_METADATA_KEY]
     branch.save(update_fields=["parent_session", "parent_claude_session", "metadata", "updated_at"])

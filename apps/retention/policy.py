@@ -20,7 +20,7 @@ from .models import RetentionRule
 # Chat sessions whose creator stamped a product marker. The same marker
 # `canopy_sessions.send.default_origin` routes on.
 _SESSION_SOURCES = {"ace-web": "ace_web", "email": "email", "slack": "slack"}
-# Thread keys the channel front doors write into Session.metadata. Spelled here
+# Thread keys the channels' entry points write into Session.metadata. Spelled here
 # rather than imported (slack.services pulls in the whole Slack client);
 # tests/test_retention.py pins them to their definitions.
 SLACK_THREAD_KEY = "slack_thread"

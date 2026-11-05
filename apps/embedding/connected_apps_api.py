@@ -101,7 +101,7 @@ class ConnectedAppOut(Schema):
     public_keys: list[str]
     signs_assertions: bool
     #: Where the site publishes its keys, if it does. `signs_assertions` is
-    #: true for either door — a published JWKS or a pasted key.
+    #: true for either way — a published JWKS or a pasted key.
     jwks_url: str
     #: The site's OAuth issuer (RFC 8414) and MCP resource (RFC 9728), when it
     #: grants canopy access to its tools as the visitor (host grant contract

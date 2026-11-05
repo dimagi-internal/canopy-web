@@ -1,7 +1,7 @@
 """Meetings over REST, and so over MCP: agents use these same routes.
 
 An agent acts for the person whose running turn its login was issued for, and for nobody else.
-The person is who a meeting belongs to, whichever door it came in by. Design:
+The person is who a meeting belongs to, whichever way it came in. Design:
 docs/architecture/meetings.md.
 """
 

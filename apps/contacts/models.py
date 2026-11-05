@@ -363,7 +363,7 @@ class Contact(models.Model):
     #: an inbound email or a host assertion is enough — so there has to be a way
     #: to say no to a specific person without disconnecting the whole site or
     #: closing the mailbox. Blocking grants nothing back either: it is a refusal
-    #: at the door, checked wherever a contact would otherwise be acted on.
+    #: on the way in, checked wherever a contact would otherwise be acted on.
     blocked_at = models.DateTimeField(null=True, blank=True)
     blocked_reason = models.CharField(max_length=200, blank=True, default="")
 

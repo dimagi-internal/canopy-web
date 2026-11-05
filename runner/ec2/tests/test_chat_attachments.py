@@ -103,7 +103,7 @@ def test_a_confined_session_is_told_of_files_it_is_not_given(cr, net):  # noqa: 
               caller_context={"profile": "restricted", "capability": CAP, "conversation": {}})
     mod._run_turn("r-1", t)
 
-    assert net.urls == [], "a confined session reads only its capability's paths"
+    assert net.urls == [], "a confined session reads only its profile's paths"
     prompt = calls["exec"]["prompt"]
     assert prompt.startswith("what is on this slide?")
     assert "slide-01.jpg" in prompt and "could not be downloaded" in prompt

@@ -6,7 +6,7 @@ whose asker is that person; the coach replies there. Nothing that reads a
 `SessionReviewGrant` reads this table: it enrols nobody in the weekly pass, uploads no other
 session, and appears on no roster (`tests/test_session_review_asks.py` pins each).
 
-The turn runs confined in canopy's `interface.SESSION_REVIEW` door, whoever asks
+The turn runs confined in canopy's `interface.SESSION_REVIEW` profile, whoever asks
 (`turn_context.resolve_turn_context`), because the transcript is text someone may have aimed at whoever reads it:
 no agent login, no GitHub, no Bash, no canopy tool but `read_asked_session`, which reads the
 session as the person through the session ACL (`access.turn_reach`). Anyone with any access to

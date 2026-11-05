@@ -4708,7 +4708,7 @@ SENSITIVE_DATA_ENV = {
 #: The name the turn's canopy-web MCP server is given in its `--mcp-config`. The
 #: canopy plugin's own server is `canopy-web` in plugin `canopy`, whose tools Claude
 #: Code names `mcp__plugin_canopy_canopy-web__<tool>`; giving the strict config's
-#: server this name keeps every tool name, so the allow list above, a capability's
+#: server this name keeps every tool name, so the allow list above, a confined profile's
 #: own rules and the agents' skills read the same.
 SENSITIVE_DATA_MCP_SERVER = "plugin_canopy_canopy-web"
 #: What a confined session with no token of its own sends (the canopy plugin's
@@ -4719,7 +4719,7 @@ CONFINED_NO_MCP_TOKEN = "cct_missing-confined-session-token"
 #: through canopy's gateway, as the visitor.
 SENSITIVE_DATA_ALLOW = ("Read", "Grep", "Glob", "Skill", "ToolSearch", "TodoWrite",
                         "mcp__plugin_canopy_canopy-web__*")
-#: Denied outright, whatever a confined capability allows: each is a way for what a
+#: Denied outright, whatever a confined profile allows: each is a way for what a
 #: turn read to leave the box (a shell, a file, the web, a subagent, a later session).
 SENSITIVE_DATA_DENY = ("Bash", "Write", "Edit", "NotebookEdit", "WebFetch", "WebSearch", "Agent",
                        "Task", "CronCreate", "CronDelete", "CronList", "ScheduleWakeup",
@@ -4816,7 +4816,7 @@ def sensitive_data_settings(confined: dict | None = None, *, cwd=None,
 
     Deny is the union, plus every read no turn here may make
     (`_sensitive_data_read_denies`). Allow is the confined turn's own list when it has
-    one (its capability decides), minus anything `SENSITIVE_DATA_DENY` holds;
+    one (its profile decides), minus anything `SENSITIVE_DATA_DENY` holds;
     otherwise `SENSITIVE_DATA_ALLOW`. Either way a read tool granted whole is granted
     only inside the turn's own working directory (`cwd`; and its caller envelope,
     `caller_path`) and its own sessions' tool output (`sessions`), never the box's
@@ -4825,7 +4825,7 @@ def sensitive_data_settings(confined: dict | None = None, *, cwd=None,
     disabled and unlisted tools are refused.
 
     `attachment_dir` is where a private conversation's files for this turn were put
-    (inside `cwd`): Read is allowed there whatever the capability grants, as the
+    (inside `cwd`): Read is allowed there whatever the profile grants, as the
     caller envelope is — they are the person's words, sent for this turn.
     """
     doc = dict(confined or {})
@@ -5091,11 +5091,11 @@ def _sensitive_data_forget_turn(turn_id: str, cwd: pathlib.Path | None, session_
 
 # ── a sensitive conversation keeps its own Claude session between turns ───────
 # (spec 2026-10-23-sensitive-conversations-sealed-to-their-people §1). Every turn of
-# a sensitive conversation is confined to the same capability for the same people,
+# a sensitive conversation is confined to the same profile for the same people,
 # so the rule that a confined turn is never resumed (which keeps a staff turn's
 # context out of a partner's on an email thread) protects nothing inside one. The
 # box keeps that conversation's last session -- its transcript and sidecar, nothing
-# else -- and the next turn resumes it when this box ran it, in the same capability
+# else -- and the next turn resumes it when this box ran it, in the same profile
 # for the same agent, and the transcript is still here. Otherwise the turn starts
 # fresh and is told so (`conversation.starts_fresh` in its envelope): canopy-web
 # keeps no copy of the words it could hand back.
@@ -5125,7 +5125,7 @@ def _sensitive_conversation(turn: dict) -> str:
     """The chat session id when this confined turn is in a SENSITIVE conversation on
     a sensitive-data box (canopy-web's claim says `sensitive_conversation`); else "".
     Only such a turn keeps or resumes a session."""
-    if not SENSITIVE_DATA_MODE or not turn.get("sensitive_conversation") or _capability(turn) is None:
+    if not SENSITIVE_DATA_MODE or not turn.get("sensitive_conversation") or _confined_profile(turn) is None:
         return ""
     conv = _chat_session_id(turn)
     return conv if _KEPT_ID.fullmatch(conv or "") else ""
@@ -5149,9 +5149,9 @@ def _kept_conversations() -> dict[str, dict | None]:
 
 
 def _kept_identity(turn: dict, cwd: pathlib.Path) -> dict:
-    """What must match for a turn to resume a kept session: the same capability,
+    """What must match for a turn to resume a kept session: the same profile,
     agent and directory (Claude Code finds a transcript by its cwd)."""
-    return {"capability": str((_capability(turn) or {}).get("name") or ""),
+    return {"capability": str((_confined_profile(turn) or {}).get("name") or ""),
             "agent": _turn_agent_slug(turn), "cwd": str(cwd)}
 
 
@@ -5164,7 +5164,7 @@ def _kept_expired(rec: dict, now: float) -> bool:
 
 def kept_resume(turn: dict, cwd: pathlib.Path | None, *, now: float | None = None) -> str:
     """The session this turn resumes: its sensitive conversation's kept one, when
-    this box ran it, in the same capability for the same agent, it is not past its
+    this box ran it, in the same profile for the same agent, it is not past its
     idle deadline and its transcript is still here. "" starts fresh."""
     conv = _sensitive_conversation(turn)
     if not conv or cwd is None:
@@ -11722,7 +11722,7 @@ def _agent_thread_key(turn: dict) -> str:
       `<agent>:<turn id>`, one fresh session per turn. That is the #309 guard —
       a keyless turn must never sink into a shared, live session.
 
-    A confined (caller's) turn's key carries `#<capability>`, as the laptop's
+    A confined (caller's) turn's key carries `#<profile name>`, as the laptop's
     does, so it is never the staff session on the same thread."""
     if _chat_session_id(turn):
         return ""
@@ -11732,7 +11732,7 @@ def _agent_thread_key(turn: dict) -> str:
         return ""
     explicit = _explicit_thread(turn)
     key = explicit or f"{slug}:{turn_id}"
-    cap = _capability(turn)
+    cap = _confined_profile(turn)
     return f"{key}#{cap.get('name') or 'none'}" if cap is not None else key
 
 
@@ -11873,7 +11873,7 @@ def _session_resume_plan(runner_id: str, turn: dict) -> str:
     """
     thread_key = _session_thread_key(turn)
     agent_turn = False
-    if not thread_key and _explicit_thread(turn) and _capability(turn) is None:
+    if not thread_key and _explicit_thread(turn) and _confined_profile(turn) is None:
         # An agent turn on a named conversation (an email thread) continues the
         # session the thread's last turn on THIS box left. A keyless turn's key is
         # its own id — nothing to resume — and a confined turn never resumes.
@@ -12795,7 +12795,7 @@ def _maybe_report_slash_commands(runner_id: str) -> None:
 
 # ── confined turns (who-is-asking phase 5, cloud) ────────────────────────────
 # A CALLER's turn — someone who is not the agent's owner or an admin — runs
-# confined to the capability canopy granted them. On a laptop the runner cannot
+# confined to the profile canopy granted them (read mode or a connected site). On a laptop the runner cannot
 # set a session's environment (emdash spawns it), so canopy's profile_guard finds
 # the profile from the `cx-` session name. Here the runner spawns claude itself,
 # so it says so directly: CANOPY_PROFILE=<profile file>, inherited by every hook
@@ -12815,7 +12815,7 @@ MIN_GUARD_VERSION = 3
 
 #: The caller-envelope version this code reads, reported on every beat.
 ENVELOPE_VERSION = 2
-#: `profile` values meaning "confined to a capability": the current word and the
+#: `profile` values meaning "a confined turn": the current word and the
 #: one an envelope from an older canopy-web carries.
 CONFINED_PROFILES = frozenset({"confined", "restricted"})
 
@@ -12843,10 +12843,10 @@ _CONFINED_ENV_KEEP = frozenset({
 })
 _CONFINED_ENV_KEEP_PREFIXES = ("LC_",)
 
-#: The one secret a capability may need from this process: the password to gog's
-#: `file` keyring, without which an `ask` capability can neither read the caller's
-#: thread nor reply to it. Given ONLY to a capability whose own bash allowlist runs
-#: the mail path (`_capability_uses_mail`) — derived from the declaration, so no live
+#: The one secret a confined profile may need from this process: the password to gog's
+#: `file` keyring, without which a read-mode profile can neither read the caller's
+#: thread nor reply to it. Given ONLY to a profile whose own bash allowlist runs
+#: the mail path (`_profile_uses_mail`) — derived from the declaration, so no live
 #: interface has to change. Note what it opens: the box's one gog keyring, which
 #: holds every agent's mailbox token on this box (the agent's identity comes from
 #: its repo's config/agent.json, not from here).
@@ -12860,20 +12860,20 @@ _MAIL_RULE = re.compile(r"^(?:canopy\s+email\s|(?:\./)?bin/[A-Za-z0-9_-]+-email(
 _CONFINED_EXTRA_DENY = frozenset({*_GITHUB_ENV_KEYS, "CANOPY_CHAT_KEY"})
 
 
-def _capability_uses_mail(cap: dict) -> bool:
+def _profile_uses_mail(cap: dict) -> bool:
     return any(_MAIL_RULE.match(str(rule).strip()) for rule in (cap.get("bash") or []))
 
 
 def _confined_env(slug: str | None, cap: dict, extra: dict) -> dict:
     """A caller's turn environment: the allowlist above, the mail keyring only if
-    the capability sends mail, which agent and turn this is, and the per-turn
+    the profile sends mail, which agent and turn this is, and the per-turn
     pointers (CANOPY_PROFILE, CANOPY_CALLER, …). Never the agent's `.env`, never
     a GitHub token, never this process's canopy PAT —
     the session reaches canopy's MCP with its caller token, from its profile."""
     src = _child_safe_env()
     env = {k: v for k, v in src.items()
            if k in _CONFINED_ENV_KEEP or k.startswith(_CONFINED_ENV_KEEP_PREFIXES)}
-    if _capability_uses_mail(cap):
+    if _profile_uses_mail(cap):
         if _gog_secret() is not None:
             # A runner with its own secret (spec §6): ONLY this agent's gog home and
             # password, derived from the runner secret — never the secret's path, never another agent's pair.
@@ -12887,7 +12887,7 @@ def _confined_env(slug: str | None, cap: dict, extra: dict) -> dict:
     return env
 
 
-def _capability(turn: dict) -> dict | None:
+def _confined_profile(turn: dict) -> dict | None:
     env = turn.get("caller_context") or {}
     if env.get("profile") not in CONFINED_PROFILES:
         return None
@@ -12913,12 +12913,12 @@ def _neutralise_mentions(text: str) -> str:
 
 def _confined_prompt(turn: dict) -> str:
     """What a confined turn's session is given to start: the caller's own words, or
-    the capability's entry. Never with a live file mention (`_neutralise_mentions`)."""
+    the profile's entry. Never with a live file mention (`_neutralise_mentions`)."""
     return _neutralise_mentions(_confined_prompt_text(turn))
 
 
 def _confined_prompt_text(turn: dict) -> str:
-    cap = _capability(turn) or {}
+    cap = _confined_profile(turn) or {}
     prompt = turn.get("prompt", "")
     entry = cap.get("entry")
     if not entry:
@@ -12930,12 +12930,12 @@ def _confined_prompt_text(turn: dict) -> str:
         # they typed it — as the laptop runner does. Substituting the entry dropped
         # the question (labsdata, 2026-10-23: "Nothing was asked yet") and showed
         # the entry command as the person's line. The canopy plugin's prompt hook
-        # names the entry as the capability's procedure, so the agent still follows
+        # names the entry as the profile's procedure, so the agent still follows
         # it; the profile confines the session either way.
         return prompt
     if "{thread_id}" in entry and not tid:
         # A thread-bound entry is how an EMAIL caller's session starts.
-        raise ConfineError(f"capability '{cap.get('name')}' starts on a thread, and this turn has none")
+        raise ConfineError(f"profile '{cap.get('name')}' starts on a thread, and this turn has none")
     return entry.replace("{thread_id}", tid)
 
 
@@ -12967,9 +12967,9 @@ def _confine(turn: dict, read_dirs=()) -> tuple[dict, str]:
     it so the guard allows reading exactly that one file. `read_dirs` are where a
     private conversation's files for this turn were put: named as the profile's
     `attachment_dirs`, which the guard lets Read open and nothing else — the
-    capability's own tools and read_paths are unchanged."""
+    profile's own tools and read_paths are unchanged."""
     turn_id = str(turn["id"])
-    cap = _capability(turn)
+    cap = _confined_profile(turn)
     caller_path = CALLER_ROOT / f"{turn_id}.json"
     doc = {"version": PROFILE_DOC_VERSION, "turn_id": turn_id, "capability": cap,
            "caller_path": str(caller_path),
@@ -13083,7 +13083,7 @@ def _lineage_env(turn: dict) -> dict:
 
 
 def _native_settings(turn: dict, cwd: pathlib.Path, caller_path: str) -> str | None:
-    """A confined turn's capability as Claude Code's OWN permission rules, passed
+    """A confined turn's profile as Claude Code's OWN permission rules, passed
     with `--settings` — the second layer under profile_guard (canopy_runner's
     `native_permissions` holds the translation and the reasoning). Best-effort:
     profile_guard is the fail-closed layer, so a missing module or an unwritable
@@ -13094,7 +13094,7 @@ def _native_settings(turn: dict, cwd: pathlib.Path, caller_path: str) -> str | N
         _log(f"warn: native permission layer unavailable ({exc}); profile_guard alone confines "
              f"turn {str(turn.get('id'))[:8]}")
         return None
-    cap = _capability(turn) or {}
+    cap = _confined_profile(turn) or {}
     tid = str(((turn.get("caller_context") or {}).get("conversation") or {}).get("thread_id")
               or (turn.get("origin_ref") or {}).get("thread_id") or "")
     path = PROFILE_ROOT / f"cloud-{turn['id']}.settings.json"
@@ -13250,7 +13250,7 @@ def adoptable_turn(turn: dict) -> bool:
     """Will this turn run under a relay, so a new daemon can adopt it? Never a plain job:
     it has no relay, and a new daemon must not run it again or give it to a model."""
     return (ADOPT_TURNS and _supervised() and not SENSITIVE_DATA_MODE
-            and _capability(turn) is None and not turn.get("job"))
+            and _confined_profile(turn) is None and not turn.get("job"))
 
 
 def _lifecycle(turn_id: str, event: str, *, post: bool = True, **fields) -> None:
@@ -14076,7 +14076,7 @@ _ADOPTED: set = set()
 def _adopted_confined(state: dict) -> bool:
     """Whether an adopted turn is a confined (caller's) one, which holds no credential:
     as its daemon recorded it, or as its turn says (a state file from before `confined`)."""
-    return bool(state.get("confined")) or _capability(state.get("turn") or {}) is not None
+    return bool(state.get("confined")) or _confined_profile(state.get("turn") or {}) is not None
 
 
 def _adopted_cwds() -> set[str]:
@@ -14341,7 +14341,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
     conversation = _sensitive_conversation(turn)
     _kept_busy(conversation, 1)
     try:
-        confined = _capability(turn) is not None
+        confined = _confined_profile(turn) is not None
         forget["confined"] = confined
         if job and confined:
             # canopy-web never sends one (a job starts only from a schedule); nor would
@@ -14353,14 +14353,14 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         # Decided FIRST, before any environment is built: a confined (caller's)
         # turn's env is an allowlist (`_confined_env`), so nothing below — the
         # cwd's own git pull included — can hand it a credential.
-        _TURN_ENV.confined = _capability(turn) if confined else None
+        _TURN_ENV.confined = _confined_profile(turn) if confined else None
         if SENSITIVE_DATA_MODE and not confined:
             # A sensitive-data box runs only confined turns (spec 2026-10-22-sensitive-
-            # data-agents §5: a capability that handles sensitive data is confined for
+            # data-agents §5: a profile that handles sensitive data is confined for
             # everyone). canopy-web decides that; this is the box refusing to trust it
             # blindly.
             note = ("sensitive_data_unconfined: a sensitive-data runner runs only turns confined "
-                    "to a capability that handles sensitive data; this turn's envelope is not confined")
+                    "to a profile that handles sensitive data; this turn's envelope is not confined")
             _post_finish(turn_id, {"status": "failed", "result_note": note})
             _log(f"turn {turn_id[:8]} NOT run — {note}")
             return
@@ -14449,7 +14449,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             # (full) and a partner's (confined) on ONE canopy Session, and resuming
             # would carry the full turn's context into the caller's session. Except
             # inside a SENSITIVE conversation, every turn of which is confined to the
-            # same capability for the same people: it resumes the session this box
+            # same profile for the same people: it resumes the session this box
             # kept for it (`kept_resume`), and otherwise is told it starts fresh.
             resume_id = (kept_resume(turn, cwd) if conversation else "") or None
             forget["resumed"] = resume_id or ""
@@ -14462,7 +14462,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                 attachment_paths: list[pathlib.Path] = []
                 if conversation and cwd is not None and profiles_supported() < ATTACHMENT_DIRS_GUARD_VERSION:
                     # The installed guard cannot let the turn read them without widening
-                    # its capability, so they are not fetched: named as not available.
+                    # its profile, so they are not fetched: named as not available.
                     refs = [r for r in (turn.get("origin_ref") or {}).get("attachments") or [] if r.get("id")]
                     prompt = _neutralise_mentions(_with_attachments(
                         prompt, [], [f"attachment {n}" for n in range(1, len(refs) + 1)]))
@@ -14477,7 +14477,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                     if attachment_paths:
                         _TURN_ENV.attachment_dir = att_dir
                 else:
-                    # Any other confined session reads only its capability's paths, so
+                    # Any other confined session reads only its profile's paths, so
                     # the files are not fetched — but they are NAMED, never silently lost.
                     withheld = [_attachment_name(r.get("filename", "")) for r in
                                 (turn.get("origin_ref") or {}).get("attachments") or [] if r.get("id")]

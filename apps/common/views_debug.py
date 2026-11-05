@@ -28,7 +28,7 @@ def is_machine(request) -> bool:
     this request: a bearer token that authenticated it, an MCP tool call (dispatched
     in-process, so it carries no header), or a session minted from a token."""
     # An Authorization header counts only when a token actually authenticated
-    # the request: every bearer door in apps/tokens/middleware.py stamps
+    # the request: every bearer route in apps/tokens/middleware.py stamps
     # `auth_method`. A signed-in cookie user skips the PAT lookup, so a junk
     # `Authorization: Bearer x` sent with a stolen cookie leaves it unset and
     # must not read as "a token" (it would skip every passkey step-up).

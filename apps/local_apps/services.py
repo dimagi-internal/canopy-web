@@ -458,7 +458,7 @@ def _session_of(run: LocalAppRun, raw) -> Session:
     session = Session.objects.filter(pk=session_id).first()
     if session is None:
         raise Refused("that session is gone", 404)
-    # Having opened it isn't standing: every door into a chat asks the one ACL, so
+    # Having opened it isn't standing: every route into a chat asks the one ACL, so
     # someone removed from this session stops being able to send here too.
     if not session_access.can_write(run.installation.user, session):
         raise Refused("you can no longer write in that session", 403)

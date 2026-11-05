@@ -1,4 +1,4 @@
-"""The second layer: a caller's capability, restated as Claude Code permission rules
+"""The second layer: a caller's confined profile, restated as Claude Code permission rules
 in the session worktree's `.claude/settings.json`."""
 import json
 import os
@@ -21,7 +21,7 @@ def _perms(cap=ASK, wt="/w/cx-a-1234-xyz12", **kw):
     return np.settings_for(cap, worktree=wt, thread_id="18c9abc", servers=SERVERS, **kw)
 
 
-def test_tools_the_capability_does_not_grant_are_denied_outright():
+def test_tools_the_profile_does_not_grant_are_denied_outright():
     deny = _perms()["deny"]
     for tool in ("Edit", "Write", "WebFetch", "WebSearch", "Agent", "NotebookEdit"):
         assert tool in deny
@@ -40,7 +40,7 @@ def test_no_bash_patterns_means_no_bash():
     assert "Bash" in _perms({**ASK, "bash": []})["deny"]
 
 
-def test_high_risk_programs_are_denied_unless_the_capability_starts_with_them():
+def test_high_risk_programs_are_denied_unless_the_profile_starts_with_them():
     deny = _perms()["deny"]
     assert "Bash(git *)" in deny and "Bash(gh *)" in deny and "Bash(curl *)" in deny
     git_cap = {**ASK, "bash": ["git status"]}
@@ -56,7 +56,7 @@ def test_mcp_patterns_are_normalised_to_real_servers():
     assert "mcp__plugin_canopy_canopy-web" not in p["deny"]
 
 
-def test_a_capability_with_no_mcp_denies_every_server_including_unknown_ones():
+def test_a_profile_with_no_mcp_denies_every_server_including_unknown_ones():
     assert "mcp__*" in _perms({**ASK, "tools": ["Read"]})["deny"]
 
 
@@ -116,7 +116,7 @@ def test_a_read_tool_with_no_read_paths_reaches_only_its_worktree(tmp_path):
     assert "Read(~/.claude/projects/**/*.jsonl)" in perms["deny"]
 
 
-# ACE's live `ask` capability (2026-10-02): Write granted, Edit not, writes confined
+# ACE's live read-mode profile (2026-10-02): Write granted, Edit not, writes confined
 # to `.ace-ask/` while reads cover the worktree.
 ACE_ASK = {"name": "ask", "entry": "/ace:ask --thread {thread_id}",
            "tools": ["Read", "Grep", "Glob", "Write", "mcp__*canopy-web__who_is_asking"],
@@ -162,7 +162,7 @@ def test_a_write_tool_with_no_write_paths_is_denied_like_profile_guard_refuses_i
 
 
 def test_a_write_path_outside_the_worktree_drops_the_conflicting_edit_denies():
-    """An allow cannot carve out a deny, so a capability that writes outside the
+    """An allow cannot carve out a deny, so a profile that writes outside the
     worktree loses the credential Edit denies — exactly as read_paths do for Read."""
     p = _perms({**ACE_ASK, "write_paths": ["~/notes/*"]})
     assert "Edit(~/notes/*)" in p["allow"]
@@ -186,7 +186,7 @@ def test_mcp_servers_are_read_from_config_and_installed_plugins(tmp_path):
         == "plugin:canopy:canopy-web"
 
 
-def test_servers_the_capability_never_reaches_are_not_started():
+def test_servers_the_profile_never_reaches_are_not_started():
     """An `mcp__<server>` deny still spawns the server; `deniedMcpServers` does not,
     and it is spelled with the CONFIG name."""
     assert np.servers_to_stop(ASK, NAMES) == ["gbrain", "plugin:ace:ace-connect"]
@@ -220,8 +220,8 @@ def test_writing_keeps_a_repos_own_settings_and_deny_rules(tmp_path):
     (tmp_path / ".claude" / "settings.json").write_text(json.dumps(
         {"hooks": {"x": 1}, "permissions": {"allow": ["Bash"], "deny": ["Read(.env)"],
                                             "defaultMode": "acceptEdits"}}))
-    np.write_worktree_settings(str(tmp_path), _perms(), capability="ask")
-    np.write_worktree_settings(str(tmp_path), _perms(), capability="ask")   # idempotent
+    np.write_worktree_settings(str(tmp_path), _perms(), profile="ask")
+    np.write_worktree_settings(str(tmp_path), _perms(), profile="ask")   # idempotent
     doc = json.loads((tmp_path / ".claude" / "settings.json").read_text())
     assert doc["hooks"] == {"x": 1}
     assert doc["permissions"]["defaultMode"] == "dontAsk"

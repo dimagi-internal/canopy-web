@@ -661,9 +661,9 @@ A box in sensitive-data mode is the only kind canopy routes a sensitive conversa
   The one exception is a turn in a **sensitive conversation** (the claim says
   `sensitive_conversation`): the box keeps that conversation's last session, its
   transcript and sidecar directory only, recorded in
-  `~/.canopy/kept-conversations/<chat session>.json` (session id, capability, agent, cwd,
+  `~/.canopy/kept-conversations/<chat session>.json` (session id, profile, agent, cwd,
   last used). The conversation's next turn resumes it (`claude -p --resume`) when it runs
-  on this box, in the same capability for the same agent, and the transcript is still
+  on this box, in the same profile for the same agent, and the transcript is still
   there; otherwise it starts fresh and its envelope says so (`conversation.starts_fresh`).
   A kept session is deleted once the conversation has been idle
   `SENSITIVE_KEEP_IDLE_HOURS` (24), or when canopy-web says it is closed (the box asks
@@ -691,7 +691,7 @@ A box in sensitive-data mode is the only kind canopy routes a sensitive conversa
   the box reports `sensitive_data`, and believes the report only from a cloud box signed
   in with its device key (never a person's token, never a laptop).
 - **Dedicated.** canopy-web lets a sensitive-data box hold only agents with a
-  `data: sensitive` capability (`runner_requirements.is_sensitive_data_box`).
+  `data: sensitive` profile (`runner_requirements.is_sensitive_data_box`).
 - **Fails closed.** Any other non-empty `RUNNER_DATA_MODE` (a typo, the retired `zdr`)
   locks the box down the same way, fails health (`claude.sensitive_data`, naming the
   value), reports `ready: false` and claims no turn.

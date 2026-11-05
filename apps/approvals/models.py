@@ -49,7 +49,7 @@ class ApprovalRequest(models.Model):
     decided_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
                                    related_name="+")
     decided_at = models.DateTimeField(null=True, blank=True)
-    #: The door: web | slack | email | push | alert | api.
+    #: The channel: web | slack | email | push | alert | api.
     via = models.CharField(max_length=16, blank=True, default="")
     comment = models.TextField(blank=True, default="")
     result = models.JSONField(default=dict, blank=True)

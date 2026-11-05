@@ -338,7 +338,7 @@ def test_invite_defaults_to_viewer_and_accept_grants_the_stored_role(org):
 
 def test_only_invite_acceptance_approval_and_creation_create_memberships():
     """Every call that can CREATE a WorkspaceMembership in app code lives in a
-    named, deliberate door: `_grant` (invite acceptance + request approval),
+    named, deliberate path: `_grant` (invite acceptance + request approval),
     `ensure_member` (the default-workspace bootstrap), and workspace creation
     (the creator becomes its owner). A new one fails here."""
     allowed = {
