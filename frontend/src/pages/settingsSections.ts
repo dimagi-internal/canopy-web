@@ -20,6 +20,7 @@ export const SETTINGS_SECTIONS: { section: SettingsSection; label: string }[] = 
 
 const ANCHORS: Record<string, SettingsSection> = {
   'contact-details': 'account',
+  'session-sharing': 'account',
   security: 'security',
   you: 'security',
   passkeys: 'security',

@@ -4,11 +4,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 
 const getCanopyProjects = vi.fn()
 const setCanopyProjects = vi.fn()
-const getSessionSharing = vi.fn().mockResolvedValue([])
-const setSessionSharing = vi.fn()
-vi.mock('@/api/canopyProjects', () => ({
-  getCanopyProjects, setCanopyProjects, getSessionSharing, setSessionSharing,
-}))
+vi.mock('@/api/canopyProjects', () => ({ getCanopyProjects, setCanopyProjects }))
 
 const { CanopyProjectsPanel } = await import('./CanopyProjectsPanel')
 
@@ -22,27 +18,35 @@ describe('CanopyProjectsPanel', () => {
   afterEach(() => {
     cleanup()
     vi.clearAllMocks()
-    getSessionSharing.mockResolvedValue([])
   })
 
-  it('shares your sessions with a project team only when you tick it', async () => {
-    getCanopyProjects.mockResolvedValue(projects({ everything: true, projects: [], available: ['connect-labs'] }))
-    const row = {
-      project_id: 7, handle: 'supply', name: 'Supply', workspace: 'dimagi', repo: 'connect-labs',
-      shared: false, team_size: 3,
-    }
-    getSessionSharing.mockResolvedValue([row])
-    setSessionSharing.mockResolvedValue({ ...row, shared: true })
+  it('says Saved after a save, until you change something again', async () => {
+    const loaded = projects({ everything: true, projects: [], available: ['canopy-web'] })
+    getCanopyProjects.mockResolvedValue(loaded)
+    setCanopyProjects.mockResolvedValue(projects({ everything: false, projects: [], available: ['canopy-web'] }))
     render(<CanopyProjectsPanel />)
-    const box = (await screen.findByTestId('session-sharing-7')) as HTMLInputElement
-    expect(box.checked).toBe(false)
-    expect(screen.getByText(/team of 3/)).toBeTruthy()
+    fireEvent.click(await screen.findByTestId('canopy-projects-chosen'))
+    expect(screen.queryByText('Saved.')).toBeNull()
     await act(async () => {
-      fireEvent.click(box)
+      fireEvent.click(screen.getByTestId('canopy-projects-save'))
       await Promise.resolve()
     })
-    expect(setSessionSharing).toHaveBeenCalledWith(7, true)
-    expect(((await screen.findByTestId('session-sharing-7')) as HTMLInputElement).checked).toBe(true)
+    expect(await screen.findByText('Saved.')).toBeTruthy()
+    fireEvent.click(screen.getByTestId('canopy-projects-everything'))
+    expect(screen.queryByText('Saved.')).toBeNull()
+  })
+
+  it('says nothing was saved when the save fails', async () => {
+    getCanopyProjects.mockResolvedValue(projects({ everything: true, projects: [], available: ['canopy-web'] }))
+    setCanopyProjects.mockRejectedValue(new Error('no'))
+    render(<CanopyProjectsPanel />)
+    fireEvent.click(await screen.findByTestId('canopy-projects-chosen'))
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('canopy-projects-save'))
+      await Promise.resolve()
+    })
+    expect(await screen.findByText('no')).toBeTruthy()
+    expect(screen.queryByText('Saved.')).toBeNull()
   })
 
   it('says canopy is off everywhere when nothing is chosen', async () => {
