@@ -62,7 +62,7 @@ export function connectOutcome(search: string): { provider: string; status: stri
 export async function disconnectLent(id: string, agent: string, declaredAgents: readonly string[]): Promise<DisconnectOut['outcome'] | TemporaryEndedOut['outcome']> {
   if (!declaredAgents.includes(agent)) throw new Error(`this view declares no task for ${agent || 'that agent'}`)
   const mine = await listMyConnections()
-  const short = (mine.temporary ?? []).find((t) => t.id === id)
+  const short = mine.temporary?.find((t) => t.id === id)
   if (short) {
     if (short.agent !== agent) throw new Error(`that access is not lent to ${agent}`)
     return (await endTemporaryAccess(id)).outcome
