@@ -4,12 +4,13 @@ A provider is a class registered here; it is used bound to one workspace's
 `ConnectionApp` (`for_app(app)`), which holds the OAuth client a workspace admin
 configured. Nothing about a provider lives in Django settings.
 
-ADDING A PROVIDER (Sage Intacct next) is one module here, and nothing else —
-services, views, routes, the frontend, the CLI and the runner all read
-providers from this registry. There is no settings step. A provider is this
-module plus `orchestrator/connections/providers/<name>.py` in the canopy CLI
-(the refresh and revoke a machine runs); the two agree on `required_scopes` and
-`rotates_refresh_token` (pinned by `tests/test_connections_shared_names.py`):
+ADDING A PROVIDER (Sage Intacct next) takes two modules: this one, and
+`orchestrator/connections/providers/<name>.py` in the canopy CLI (the refresh and
+revoke a machine runs). Services, views, routes, the frontend and the runner read
+providers from this registry, and there is no settings step. The two modules agree
+on `required_scopes` and `rotates_refresh_token`, which
+`tests/test_connections_shared_names.py` pins, so add the provider there too. A
+screen may call a provider only once `calls._RULES` has rules for it:
 
 1. `providers/<name>.py`: a `Provider` subclass (`base.py` says what to fill in;
    `salesforce.py` and `google.py` are the worked examples) with `identity()`

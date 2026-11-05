@@ -32,6 +32,7 @@ from apps.passkeys import stepup
 from apps.tokens import kinds
 from apps.workspaces import permissions as perms
 from apps.workspaces.gates import workspace_for
+from apps.workspaces.links import base_url
 
 from . import call_service, proofs, providers, server_key, services, sharing, tokens
 from . import recipients as rcpt
@@ -198,11 +199,13 @@ def _disconnected(conn: Connection, by) -> DisconnectOut:
 
 def _start_url(request: HttpRequest, provider: str, workspace: str) -> str:
     # Absolute: the CLI prints it for a person to open, far from any page.
-    return request.build_absolute_uri(reverse("connections_start", args=[provider, workspace]))
+    return f"{base_url()}{reverse('connections_start', args=[provider, workspace])}"
 
 
 def _callback_url(request: HttpRequest, provider: str, workspace: str) -> str:
-    return request.build_absolute_uri(reverse("connections_callback", args=[provider, workspace]))
+    # The address the provider will call back: canopy's public one, never this request's
+    # host (an MCP call runs in-process, where that is `localhost`).
+    return f"{base_url()}{reverse('connections_callback', args=[provider, workspace])}"
 
 
 def _provider_or_404(provider: str) -> type[providers.Provider]:
