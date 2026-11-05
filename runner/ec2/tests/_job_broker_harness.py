@@ -6,6 +6,10 @@ it names; `stop` stands for `systemctl stop` of a unit, killing everything carry
 marker as `KillMode=control-group` would, and `no_processes` for `pkill` + `pgrep` of the uid. So
 what these prove is the broker's and the runner's half. `job_self_check.sh` proves systemd's, on a
 box.
+
+The marker is looked for here, in Python, and never passed to a process: a `pkill -f <marker>` has
+the marker on its own command line, so it would SIGKILL a concurrent `pgrep -f <marker>` (read as
+"nothing left"), and that `pgrep` would match the `pkill` (read as a survivor).
 """
 from __future__ import annotations
 
@@ -13,10 +17,12 @@ import importlib.util
 import os
 import pathlib
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 
 EC2 = pathlib.Path(__file__).resolve().parent.parent
 
@@ -26,6 +32,17 @@ def load_broker():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def carrying(marker) -> list:
+    """The pids whose command line has `marker` in it. A zombie's has gone."""
+    listing = subprocess.run(["ps", "-A", "-ww", "-o", "pid=", "-o", "command="], capture_output=True, text=True)
+    found = []
+    for line in listing.stdout.splitlines():
+        pid, _, command = line.strip().partition(" ")
+        if marker in command:
+            found.append(int(pid))
+    return found
 
 
 def _props(argv):
@@ -105,7 +122,15 @@ class Harness:
         return self.stop_ok
 
     def kill_all(self):
-        subprocess.run(["pkill", "-KILL", "-f", self.marker], capture_output=True)
+        """Until none is left, as `no_processes_left` does: a killed process lingers a moment."""
+        deadline = time.monotonic() + 5
+        while (pids := carrying(self.marker)) and time.monotonic() < deadline:
+            for pid in pids:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except OSError:
+                    pass
+            time.sleep(0.01)
         for proc in self.procs:
             if proc.poll() is None:
                 proc.kill()

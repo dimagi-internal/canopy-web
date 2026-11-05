@@ -22,7 +22,7 @@ from types import SimpleNamespace
 
 import pytest
 import yaml
-from _job_broker_harness import Harness, load_broker
+from _job_broker_harness import Harness, carrying, load_broker
 
 EC2 = pathlib.Path(__file__).resolve().parent.parent
 
@@ -651,7 +651,7 @@ def _text(events):
 
 
 def _alive(mod):
-    return subprocess.run(["pgrep", "-f", mod._marker], capture_output=True).returncode == 0
+    return bool(carrying(mod._marker))
 
 
 def _stage(mod, tmp_path, token, *, provider="salesforce"):
