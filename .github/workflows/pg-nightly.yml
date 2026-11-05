@@ -1,0 +1,154 @@
+name: Backend pytest on PostgreSQL (nightly, whole suite)
+
+# The PR/queue suite runs on SQLite (config/settings/test.py), which ignores
+# SELECT … FOR UPDATE and serializes every writer, so code whose correctness rests
+# on PostgreSQL's row locks or its stricter typing passes there regardless. ci.yml's
+# `Backend pytest (PostgreSQL)` runs only a short list of PG suites, to keep the
+# merge queue fast. This runs EVERYTHING on the production engine, nightly and on
+# demand, off the queue — and files what breaks in ONE tracking issue (label
+# `pg-nightly`): opened on the first failing night, commented on every later one,
+# closed by the first green one.
+#
+# The migration-walking tests (`needs_migrations`) are not here: ci.yml already
+# runs them on PostgreSQL in every queue run.
+
+on:
+  schedule:
+    - cron: "30 6 * * *"   # 06:30 UTC daily, before the contract nightly
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write   # the tracking issue, via `gh issue` with GITHUB_TOKEN
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-backend-postgres-full:
+    name: Backend pytest (PostgreSQL, whole suite)
+    # Pinned for the same reason as ci.yml's PostgreSQL job: the image's pg_dump
+    # must be able to restore into the PG16 service.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: canopy_web
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGPASSWORD: postgres
+      DJANGO_SETTINGS_MODULE: config.settings.pgtest
+      # pytest-django adds the `test_` prefix (and `_gwN` per xdist worker).
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/canopy_web
+      WORKERS: "4"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Sync dependencies
+        run: uv sync --extra dev
+
+      - name: Make the CI database skip durability
+        run: |
+          for setting in "fsync = off" "synchronous_commit = off" "full_page_writes = off"; do
+            psql -h localhost -U postgres -c "ALTER SYSTEM SET $setting"
+          done
+          psql -h localhost -U postgres -c "SELECT pg_reload_conf()"
+
+      # The same migrated-DB cache as ci.yml (same key), so a night with no new
+      # migration restores main's build in seconds instead of replaying ~530 of them.
+      - name: Note the runner image
+        id: image
+        run: echo "id=$(. /etc/os-release; echo "$ID$VERSION_ID")" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the migrated test DB
+        id: testdb
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /tmp/testdb.dump
+          key: pg-testdb-v1-${{ steps.image.outputs.id }}-${{ hashFiles('apps/**/migrations/*.py', 'sdk/python/src/**/migrations/*.py', 'config/settings/*.py', 'uv.lock', 'pyproject.toml') }}
+
+      - name: Build the test DB (every migration) — or load the cached build
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/test_canopy_web
+          HIT: ${{ steps.testdb.outputs.cache-hit }}
+        run: |
+          psql -h localhost -U postgres -c "CREATE DATABASE test_canopy_web"
+          if [ "$HIT" = "true" ] && pg_restore -h localhost -U postgres -d test_canopy_web --no-owner --exit-on-error /tmp/testdb.dump; then
+            echo "::notice::Restored the migrated test DB."
+          else
+            if [ "$HIT" = "true" ]; then
+              echo "::warning::The cached test DB dump failed to restore; replaying every migration instead."
+              psql -h localhost -U postgres -c "DROP DATABASE test_canopy_web"
+              psql -h localhost -U postgres -c "CREATE DATABASE test_canopy_web"
+            fi
+            uv run python manage.py migrate --noinput
+          fi
+
+      # One copy per xdist worker, cloned from the migrated DB (a file copy, not a
+      # migration replay), which `--reuse-db` then picks up by name.
+      - name: Give each worker its own copy of the test DB
+        run: |
+          for i in $(seq 0 $((WORKERS - 1))); do
+            psql -h localhost -U postgres -c "CREATE DATABASE test_canopy_web_gw$i TEMPLATE test_canopy_web"
+          done
+
+      - name: Run the whole suite on PostgreSQL
+        run: |
+          set -o pipefail
+          uv run pytest --ds=config.settings.pgtest --reuse-db -n "$WORKERS" -m "not needs_migrations" \
+            -q -rfE -p no:cacheprovider --timeout=600 --durations=20 2>&1 | tee /tmp/pytest.log
+
+      - name: Report failures in the tracking issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh label create pg-nightly --color B60205 \
+            --description "The whole backend suite failing on PostgreSQL (pg-nightly.yml)" 2>/dev/null || true
+          {
+            echo "The nightly PostgreSQL run of the whole backend suite failed: $RUN_URL"
+            echo "(ref \`$GITHUB_REF_NAME\`, commit \`$GITHUB_SHA\`)"
+            echo
+            if [ -s /tmp/pytest.log ]; then
+              n=$(grep -cE '^(FAILED|ERROR) ' /tmp/pytest.log || true)
+              echo "**$n failing** — last summary line: \`$(tail -n 1 /tmp/pytest.log)\`"
+              echo
+              echo '```'
+              grep -E '^(FAILED|ERROR) ' /tmp/pytest.log | cut -c1-300 | head -n 150
+              echo '```'
+            else
+              echo "The suite never ran: a setup step failed. See the run."
+            fi
+          } > /tmp/issue.md
+          issue=$(gh issue list --label pg-nightly --state open --limit 1 --json number --jq '.[0].number // empty')
+          if [ -n "$issue" ]; then
+            gh issue comment "$issue" --body-file /tmp/issue.md
+          else
+            gh issue create --label pg-nightly \
+              --title "Backend suite fails on PostgreSQL (nightly)" --body-file /tmp/issue.md
+          fi
+
+      - name: Close the tracking issue on a green night
+        if: success() && github.ref_name == github.event.repository.default_branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          issue=$(gh issue list --label pg-nightly --state open --limit 1 --json number --jq '.[0].number // empty')
+          if [ -n "$issue" ]; then
+            gh issue close "$issue" --comment "The whole suite passed on PostgreSQL: $RUN_URL"
+          fi
