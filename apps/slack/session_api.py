@@ -13,6 +13,7 @@ from django.http import HttpRequest
 from ninja import Router
 from ninja.errors import HttpError
 
+from apps.agents import refusals
 from apps.api.auth import session_auth
 from apps.api.route_gates import gate
 from apps.canopy_sessions import access
@@ -162,7 +163,7 @@ def _slack_session_for(request: HttpRequest, *, turn_id: str = "", session_id: s
     if session is None:
         raise HttpError(404, "no session you can open matches that")
     if not access.can_write(request.user, session):
-        raise HttpError(403, "you can read this session but not act in it")
+        raise HttpError(403, refusals.cannot_write_message(session))
     return session
 
 

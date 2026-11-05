@@ -1,4 +1,7 @@
 import { useEffect, useState } from "react";
+import { addAccessLine } from "@/api/agents";
+import { scopedPath } from "@/lib/scopedLinks";
+import { RefusalNotice } from "./RefusalNotice";
 import {
   addParticipant,
   getSession,
@@ -139,6 +142,8 @@ export function ChatPeoplePanel({ sessionId, myRole, canAddPeople = false }: {
   const isOwner = myRole === "owner";
   const mayAdd = isOwner || canAddPeople;
   const [candidates, setCandidates] = useState<ParticipantCandidate[] | null>(null);
+  // Who was just added: if they can read this but could not take a turn, the adder is told so.
+  const [justAdded, setJustAdded] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -172,6 +177,8 @@ export function ChatPeoplePanel({ sessionId, myRole, canAddPeople = false }: {
       options: SHARE_ROLES,
       editable: isOwner && !isChatOwner,
       why: [
+        // Reading is not taking a turn. A viewer's role already says so; anyone else is told here.
+        p.turn_refusal && p.turn_refusal.code !== "cannot_write" ? "can read it, can't take a turn" : null,
         p.needs_key
           ? (isChatOwner ? "owns the chat · needs a fresh copy of its key" : "needs the key to read it")
           : isChatOwner ? "owns the chat" : null,
@@ -183,13 +190,19 @@ export function ChatPeoplePanel({ sessionId, myRole, canAddPeople = false }: {
     };
   });
 
+  const added = justAdded ? (people ?? []).find((p) => p.email.toLowerCase() === justAdded) ?? null : null;
+
   return (
-    <div className="space-y-3 text-[13px]">
+    // min-w-0: inside the dialog's grid, a wide table must not widen everything else with it.
+    <div className="min-w-0 space-y-3 text-[13px]">
       {people === null && !error && <p className="text-muted-foreground">Loading…</p>}
       {people && people.length === 0 && (
         <p className="text-muted-foreground">Nobody has been given this chat.</p>
       )}
-      {people && people.length > 0 && <PeopleTable rows={rows} actions={isOwner} />}
+      {people && people.length > 0 && (
+        // On a phone the table, with its actions, is wider than the dialog: it scrolls, the rest stays put.
+        <div className="overflow-x-auto"><PeopleTable rows={rows} actions={isOwner} /></div>
+      )}
       {(people ?? []).some((p) => p.needs_key) && (
         <div className="space-y-1" data-testid="needs-key">
           <p className="text-muted-foreground">
@@ -215,6 +228,14 @@ export function ChatPeoplePanel({ sessionId, myRole, canAddPeople = false }: {
           ))}
         </div>
       )}
+      {added && (
+        <CannotTakeATurn
+          sessionId={sessionId}
+          person={added}
+          onFixed={setPeople}
+          onDismiss={() => setJustAdded(null)}
+        />
+      )}
       {mayAdd ? (
         <div className="space-y-1">
           <AddPeoplePicker
@@ -223,10 +244,11 @@ export function ChatPeoplePanel({ sessionId, myRole, canAddPeople = false }: {
             loading={candidates === null}
             options={SHARE_ROLES}
             defaultRole="editor"
-            onAdd={async (email, role) =>
+            onAdd={async (email, role) => {
               setPeople(await addPerson(sessionId, email, role as "editor" | "viewer", vault.unlock,
-                                        APP_PEOPLE_API, trust.confirm))
-            }
+                                        APP_PEOPLE_API, trust.confirm));
+              setJustAdded(email.trim().toLowerCase());
+            }}
           />
           <p className="text-muted-foreground">Anyone in this workspace who is not in it yet, people or agents.</p>
         </div>
@@ -237,5 +259,79 @@ export function ChatPeoplePanel({ sessionId, myRole, canAddPeople = false }: {
       {vault.element}
       {error && <p className="text-destructive">{error}</p>}
     </div>
+  );
+}
+
+/**
+ * Told to whoever just added someone who can read this chat but could not take a turn in it now
+ * (`ParticipantOut.turn_refusal`, THE rule's preview for them, said about them). When the fix is a
+ * line on the agent's access list and you may add one, you can add it here: read only, the least
+ * that lets them take a turn. Anything more is chosen on the access list itself.
+ */
+export function CannotTakeATurn({
+  sessionId,
+  person,
+  onFixed,
+  onDismiss,
+  addLine = addAccessLine,
+}: {
+  sessionId: string;
+  person: Participant;
+  onFixed: (rows: Participant[]) => void;
+  onDismiss: () => void;
+  addLine?: typeof addAccessLine;
+}) {
+  // The access list lives on the agent's page in this workspace; the IDE has no workspace in its address.
+  const workspace = decodeURIComponent(/^\/w\/([^/]+)/.exec(window.location.pathname)?.[1] ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [fixed, setFixed] = useState(false);
+  const name = person.display_name || person.email;
+  const refusal = person.turn_refusal;
+  if (fixed && !refusal) {
+    return (
+      <p className="rounded-md border border-success/40 bg-success/10 px-3 py-2 text-foreground" data-testid="turn-fixed">
+        {name} can take a turn here now.{" "}
+        <button type="button" className="text-primary underline" onClick={onDismiss}>Dismiss</button>
+      </p>
+    );
+  }
+  if (!refusal) return null;
+  const agent = person.access_list_agent;
+  const listHref = agent && workspace ? scopedPath(workspace, `/agents/${agent}/settings/roles`) : null;
+  return (
+    <RefusalNotice title={`${name} can read this but can't take a turn.`} refusal={refusal} testId="added-cannot-take-a-turn">
+      {agent && refusal.code === "not_on_access_list" && (
+        <button
+          type="button"
+          disabled={busy}
+          data-testid="add-to-access-list"
+          className="rounded-md border border-input bg-background px-2 py-0.5 font-medium text-foreground hover:bg-muted disabled:opacity-50"
+          onClick={() => {
+            setBusy(true);
+            setError("");
+            addLine(agent, {
+              kind: "person", user_id: person.user_id, role: "read_only", capability: "", email: null,
+              workspace: "", at_least: "", include_below: false, domain: "", verified: true, manual_only: false,
+              note: "",
+            })
+              .then(() => listParticipants(sessionId))
+              .then((rows) => {
+                setFixed(true);
+                onFixed(rows);
+              })
+              .catch((e) => setError(e instanceof Error ? e.message : "Could not add them to the access list."))
+              .finally(() => setBusy(false));
+          }}
+        >
+          {busy ? "Adding…" : `Add ${name} to ${agent}'s access list as read only`}
+        </button>
+      )}
+      {listHref && (
+        <a href={listHref} className="text-primary underline">Open {agent}'s access list</a>
+      )}
+      <button type="button" className="ml-auto text-muted-foreground underline" onClick={onDismiss}>Dismiss</button>
+      {error && <p className="m-0 w-full text-destructive">{error}</p>}
+    </RefusalNotice>
   );
 }

@@ -22,6 +22,8 @@ from functools import cached_property
 from apps.harness import clis, sensitivity
 
 from . import interface as iface_mod
+from .refusals import Code, Refusal
+from .refusals import make as refusal_of
 
 #: The one kind of session grant there is (§ 3.4): `interface.session_writers`.
 SESSION_WRITER = "session_writer"
@@ -29,14 +31,11 @@ SESSION_WRITER = "session_writer"
 #: Who a send block stops (§ 3.3, stage 0): everyone, or only some people.
 ANYONE, SOME_PEOPLE = "anyone", "some_people"
 
-#: The closed list of stage 0's refusal codes. `turn_context.REFUSAL_CODES` holds them all.
-CONTENT_DELETED = "content_deleted"
-CANNOT_WRITE = "cannot_write"
-CLI_NOT_OFFERED = "cli_not_offered"
-NOT_IN_SENSITIVE = "not_in_sensitive"
-
-#: What a person who can read a session, but not write in it, is told (`canopy_sessions.api`).
-READ_ONLY_REFUSAL = "you can read this session but not act in it"
+#: Stage 0's refusal codes. Every code, and its words, is in `refusals.Code`.
+CONTENT_DELETED = Code.CONTENT_DELETED
+CANNOT_WRITE = Code.CANNOT_WRITE
+CLI_NOT_OFFERED = Code.CLI_NOT_OFFERED
+NOT_IN_SENSITIVE = Code.NOT_IN_SENSITIVE
 
 
 @dataclass(frozen=True)
@@ -53,12 +52,19 @@ class SessionGrant:
 @dataclass(frozen=True)
 class SendBlock:
     """Why this session takes no message from anyone, or from some people. `applies` is the same
-    check the send route makes, asked of one asker."""
+    check the send route makes, asked of one asker, and `refusal` is what that route says."""
 
-    code: str
-    why: str
+    refusal: Refusal
     scope: str
     applies: Callable = field(compare=False, repr=False)
+
+    @property
+    def code(self) -> str:
+        return self.refusal.code
+
+    @property
+    def why(self) -> str:
+        return self.refusal.why
 
 
 @dataclass(frozen=True)
@@ -207,19 +213,20 @@ def _session_writer_grants(session, agent) -> tuple[SessionGrant, ...]:
 def _send_blocks(session) -> tuple[SendBlock, ...]:
     from apps.canopy_sessions import access as session_access  # noqa: PLC0415 — access imports the agents app
 
+    agent = session.agent
     blocks = []
     if session_access.is_content_deleted(session):
-        blocks.append(SendBlock(CONTENT_DELETED, session_access.CONTENT_DELETED_REFUSAL, ANYONE,
+        blocks.append(SendBlock(refusal_of(CONTENT_DELETED, agent=agent, session=session), ANYONE,
                                 lambda asker: True))
     # Only a signed-in person: a contact's send goes through its own door, with its own ACL.
-    blocks.append(SendBlock(CANNOT_WRITE, READ_ONLY_REFUSAL, SOME_PEOPLE,
+    blocks.append(SendBlock(refusal_of(CANNOT_WRITE, agent=agent, session=session), SOME_PEOPLE,
                             lambda asker: asker.user is not None
                             and not session_access.can_write(asker.user, session)))
-    if (why := clis.conversation_refusal(session)) is not None:
-        blocks.append(SendBlock(CLI_NOT_OFFERED, why, ANYONE, lambda asker: True))
+    if (refused := clis.conversation_refusal_of(session)) is not None:
+        blocks.append(SendBlock(refused, ANYONE, lambda asker: True))
     if sensitivity.is_sensitive(session):
         blocks.append(SendBlock(
-            NOT_IN_SENSITIVE, sensitivity.NOT_IN_IT_SEND, SOME_PEOPLE,
+            refusal_of(NOT_IN_SENSITIVE, agent=agent, session=session), SOME_PEOPLE,
             lambda asker: not sensitivity.reads_content(session, chat_surface=asker.chat_surface,
                                                         user=asker.user, contact=asker.contact)))
     return tuple(blocks)

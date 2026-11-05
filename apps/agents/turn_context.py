@@ -45,7 +45,7 @@ from apps.harness import caller_context as cc
 from apps.harness import initiator as initiator_mod
 from apps.harness.caller_context import is_verified
 
-from . import grants, roles, sensitive_data
+from . import grants, refusals, roles, sensitive_data
 from . import interface as iface_mod
 from . import session_context as sc
 from .standings import standing_of
@@ -68,14 +68,15 @@ PROFILE_KINDS = frozenset({WHOLE_AGENT, READ_MODE, CONNECTED_SITE, SESSION_REVIE
 #: What a stage reports when the answer needs something only the claim knows.
 PENDING = "pending"
 
-#: `Refusal.code`, a closed set: the refusals the rule makes, then stage 0's.
-NOT_ON_ACCESS_LIST = "not_on_access_list"
-PROFILE_NOT_OPEN = "profile_not_open"
-SENSITIVE_NOT_OPEN = "sensitive_not_open"
+#: `Refusal.code`, a closed set defined once, with its words, in `refusals.Code`: the refusals the rule makes, the
+#: mail door's, then stage 0's.
+NOT_ON_ACCESS_LIST = refusals.Code.NOT_ON_ACCESS_LIST
+SENDER_NOT_PROVEN = refusals.Code.SENDER_NOT_PROVEN
+PROFILE_NOT_OPEN = refusals.Code.PROFILE_NOT_OPEN
+SENSITIVE_NOT_OPEN = refusals.Code.SENSITIVE_NOT_OPEN
 #: Refused at the mail door, before the rule: the sender is blocked (`blocked_sender`).
-SENDER_BLOCKED = "sender_blocked"
-REFUSAL_CODES = frozenset({NOT_ON_ACCESS_LIST, PROFILE_NOT_OPEN, SENSITIVE_NOT_OPEN, SENDER_BLOCKED, sc.CONTENT_DELETED,
-                           sc.CANNOT_WRITE, sc.CLI_NOT_OFFERED, sc.NOT_IN_SENSITIVE})
+SENDER_BLOCKED = refusals.Code.SENDER_BLOCKED
+REFUSAL_CODES = frozenset(refusals.Code)
 
 #: `basis` when a turn is refused, and for a turn with no agent (the envelope's `granted_by`).
 REFUSED_BASIS, NO_INTERFACE = "refused", "no-interface"
@@ -136,14 +137,8 @@ class Review:
     may_pin_runner: bool = False
 
 
-@dataclass(frozen=True)
-class Refusal:
-    """Why a turn is not run. Non-null exactly when `TurnContext.access == REFUSED`."""
-
-    code: str
-    why: str
-    how_to_fix: str = ""
-    who_can_fix: str = ""
+#: Why a turn is not run. Non-null exactly when `TurnContext.access == REFUSED`. Its codes and words: `refusals`.
+Refusal = refusals.Refusal
 
 
 @dataclass(frozen=True)
@@ -278,33 +273,9 @@ class _Reach:
     source: str = ""
     via: str = ""
     permissions: frozenset = frozenset()
+    #: When refused: its `refusals.Code`, and the few facts its words name (`refusals.make`).
     code: str = ""
-    why: str = ""
-
-
-def _list_refusal(agent, *, verified_contact: bool = False) -> str:
-    owner = agent.owner.email if agent.owner_id and agent.owner else "its owner"
-    why = (f"{agent.slug} does not list you on its access list; ask {owner} or an admin of "
-           f"{agent.slug} to add you (read_only can ask it questions, read_write can use all of "
-           "it, an editor can also change it)")
-    if verified_contact:
-        # A verified sender nobody listed is, far more often than a stranger, an automated
-        # one someone subscribed on purpose — CloudWatch alarms went unanswered for nine days
-        # this way (canopy-web#1253). Say what fixes it.
-        why += ("; if this is an automated sender (alarms, CI, a monitor), an admin of the agent "
-                "can bind its address to an inbound-mail trigger on the agent's Triggers tab")
-    return why
-
-
-#: Why a sensitive conversation with no entry that handles sensitive data is refused.
-SENSITIVE_REFUSAL = ("this conversation holds a host's sensitive data, so it runs only in a "
-                     "capability its author declared handles sensitive data (`data: sensitive`), "
-                     "and {slug} has none for it{you}")
-
-
-def _who_can_fix(agent) -> str:
-    owner = agent.owner.email if agent.owner_id and agent.owner else "its owner"
-    return f"{owner} or an admin of {agent.slug}"
+    facts: tuple = ()
 
 
 def _no_list_stage(agent, asker: Asker, session_ctx, turn, trace: list) -> _Reach:
@@ -343,7 +314,7 @@ def _no_list_stage(agent, asker: Asker, session_ctx, turn, trace: list) -> _Reac
                           source="session", permissions=roles.ROLES.close({roles.WRITE}))
         trace.append(TraceEntry("session_grants", "none"))
     return _Reach(relationship=rel, code=NOT_ON_ACCESS_LIST,
-                  why=_list_refusal(agent, verified_contact=rel == CONTACT and bool(asker.verified)))
+                  facts=(("automated", rel == CONTACT and bool(asker.verified)),))
 
 
 def _list_asker(asker: Asker, turn) -> grants.Asker:
@@ -395,10 +366,14 @@ def _base_stage(agent, reach: _Reach, asker: Asker, requested, session_ctx, turn
     """Stage 1's access list, then stage 2's base."""
     if reach.access == FULL:
         return reach
-    got = grants.resolve(agent, _list_asker(asker, turn),
-                         asker.lines if asker.lines is not None else getattr(asker.standing, "lines", None))
+    who = _list_asker(asker, turn)
+    lines = asker.lines if asker.lines is not None else getattr(asker.standing, "lines", None)
+    got = grants.resolve(agent, who, lines)
     if not got.permissions:
         trace.append(TraceEntry("access_list", "holds nothing"))
+        if not who.verified and grants.resolve(agent, replace(who, verified=True), lines).permissions:
+            # Only what it is told: the same answer, said truly. A line names them, but only for a proven message.
+            return replace(reach, code=SENDER_NOT_PROVEN, facts=())
         return reach
     iface = getattr(agent, "interface", None) or {}
     if roles.holds(got.permissions, roles.WRITE):
@@ -408,16 +383,18 @@ def _base_stage(agent, reach: _Reach, asker: Asker, requested, session_ctx, turn
         trace.append(TraceEntry("access_list", "write", got.basis))
         return replace(reach, access=FULL, manual_only=got.manual_only, basis=got.basis, agent_role=got.role,
                        source=f"list:{line.subject_key}", via=grants.describe(line), permissions=got.permissions,
-                       code="", why="")
+                       code="", facts=())
     trace.append(TraceEntry("access_list", ",".join(sorted(got.permissions)), got.basis))
     name = _entry_for(iface, got.permissions, requested, session_ctx, trace)
     if name is None:
-        return replace(reach, code=PROFILE_NOT_OPEN)
+        published = bool(requested) and (iface_mod.published_capability(iface, requested)[0] is not None
+                                         or iface_mod.is_read_mode(requested) or requested == iface_mod.SESSION_REVIEW)
+        return replace(reach, code=PROFILE_NOT_OPEN, facts=(("name", requested), ("published", published)))
     # The review entry is opened by `read`; `line_opening` knows only named entries and read mode.
     line = got.line_for(roles.READ) if name == iface_mod.SESSION_REVIEW else got.line_opening(name)
     return replace(reach, access=CONFINED, name=name, basis=f"capability:{name}", agent_role=got.role,
                    source=f"list:{line.subject_key}", via=grants.describe(line), permissions=got.permissions,
-                   code="", why="")
+                   code="", facts=())
 
 
 def _review_rule(reach: _Reach, trace: list) -> _Reach:
@@ -471,11 +448,9 @@ def _sensitive_rule(agent, reach: _Reach, requested, session_ctx, trace: list) -
         trace.append(TraceEntry("sensitive", entry, "already in its sensitive entry"))
         return reach
     trace.append(TraceEntry("sensitive", REFUSED, "not in a sensitive entry"))
-    you = "" if entry is None else f" that is open to you ('{entry}' does not list you)"
     return replace(reach, access=REFUSED, name=None, may_request_auto=False, may_pin_runner=False,
                    manual_only=False, basis=REFUSED_BASIS, agent_role=None, source="",
-                   permissions=frozenset(), code=SENSITIVE_NOT_OPEN,
-                   why=SENSITIVE_REFUSAL.format(slug=agent.slug, you=you))
+                   permissions=frozenset(), code=SENSITIVE_NOT_OPEN, facts=(("entry", entry),))
 
 
 def _rules(agent, asker: Asker, session_ctx, requested, turn, trace: list) -> _Reach:
@@ -547,7 +522,7 @@ def _finish(agent, reach: _Reach, session_ctx, turn, runner, trace: list) -> Tur
                         agent_role=reach.agent_role, source=reach.source, via=reach.via)
     if reach.access == REFUSED:
         profile, stamped, suffix = None, None, ""
-        refusal = Refusal(code=reach.code, why=reach.why, who_can_fix=_who_can_fix(agent))
+        refusal = refusals.make(reach.code, agent=agent, session=session_ctx._session, **dict(reach.facts))
     elif reach.access == FULL:
         profile, stamped, suffix, refusal = Profile(kind=WHOLE_AGENT, _agent=agent), iface_mod.FULL, "", None
     else:
@@ -567,7 +542,7 @@ def _send_refusal(session_ctx, asker: Asker, turn, trace: list) -> Refusal | Non
     block = next((b for b in session_ctx.send_blocks if b.applies(asker)), None)
     trace.append(TraceEntry("send_blocks", block.code if block is not None else "none",
                             block.why if block is not None else ""))
-    return Refusal(code=block.code, why=block.why) if block is not None else None
+    return block.refusal if block is not None else None
 
 
 def _relationship_without_agent(asker: Asker, session_ctx, turn) -> str:
@@ -622,8 +597,9 @@ def resolve_turn_context(session_ctx, asker: Asker, agent, *, requested: str | N
     reach = _rules(agent, asker, session_ctx, requested, turn, trace)
     if blocked is not None:
         # Who they are is still true: only this message cannot be taken.
-        reach = replace(reach, access=REFUSED, name=None, basis=REFUSED_BASIS, code=blocked.code, why=blocked.why,
+        reach = replace(reach, access=REFUSED, name=None, basis=REFUSED_BASIS, code=blocked.code, facts=(),
                         may_request_auto=False, may_pin_runner=False, manual_only=False)
+        return replace(_finish(agent, reach, session_ctx, turn, runner, trace), refusal=blocked)
     return _finish(agent, reach, session_ctx, turn, runner, trace)
 
 
@@ -695,15 +671,14 @@ def was_refused(turn) -> bool:
 
 
 #: How a refused turn's note begins (`harness.services._apply_capability`, `channels.email`).
-REFUSED_NOTE_PREFIX = "not run:"
+REFUSED_NOTE_PREFIX = refusals.REFUSED_NOTE_PREFIX
 
 
 def blocked_sender(turn, agent) -> TurnContext:
     """A blocked sender's mail, refused at the door before the rule is asked. Never carries why they were
     blocked: that is an admin's note about a person, and it stays on the contact."""
-    why = "the sender is blocked"
+    refusal = refusals.make(SENDER_BLOCKED, agent=agent)
     return TurnContext(standing=Standing(relationship=CONTACT), access=REFUSED, profile=None, basis=REFUSED_BASIS,
-                       session_key_suffix="", review=Review(mode=None), stamped=None,
-                       refusal=Refusal(code=SENDER_BLOCKED, why=why, who_can_fix=_who_can_fix(agent)),
-                       trace=(TraceEntry("blocked_sender", REFUSED, why),), _session_ctx=sc.empty(channel=turn.origin),
-                       _agent=agent, _turn=turn)
+                       session_key_suffix="", review=Review(mode=None), stamped=None, refusal=refusal,
+                       trace=(TraceEntry("blocked_sender", REFUSED, refusal.why),),
+                       _session_ctx=sc.empty(channel=turn.origin), _agent=agent, _turn=turn)

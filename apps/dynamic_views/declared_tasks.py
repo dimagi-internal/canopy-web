@@ -41,7 +41,7 @@ def may_dispatch(user, agent: Agent) -> str | None:
                 "the author must be able to give it a task themselves")
     d = turn_context.for_asker(agent, user, verified=True, channel="api")
     if d.refused:
-        return d.refusal.why
+        return d.refusal.message
     return None
 
 

@@ -297,14 +297,19 @@ def refusal_message(agent: Agent, turn: Turn, *, named: bool, installation: Slac
     The public status line only says it was not run; this says why and what to
     do instead — the difference between "Cancelled." and an answer.
     """
-    reason = (turn.result_note or "").removeprefix("not run:").strip()
-    parts = [f"`{agent.slug}` didn't run this: it only takes requests from the people its owner "
-             f"has opened it to, and that doesn't include you here ({reason})."]
+    # The refusal's own words (`apps/agents/refusals.py`), as the turn stored them; a turn refused before that
+    # record existed has only its note, which says the same.
+    stored = turn.resolved_context if isinstance(turn.resolved_context, dict) else {}
+    refusal = stored.get("refusal") if isinstance(stored.get("refusal"), dict) else None
+    if refusal and refusal.get("why"):
+        reason = f"{refusal['why']}. {refusal.get('how_to_fix') or ''}".strip()
+    else:
+        reason = (turn.result_note or "").removeprefix("not run:").strip()
+    parts = [f"`{agent.slug}` didn't run this: {reason}"]
     if not named:
         parts.append(f"Your message didn't name an agent, so it went to `{agent.slug}`, the agent "
                      f"this thread was already talking to. {NOT_AN_AGENT}")
-    parts.append(f"{agent_list(installation)} If you think you should have access, ask "
-                 f"`{agent.slug}`'s owner.")
+    parts.append(agent_list(installation))
     return " ".join(parts)
 
 
@@ -695,9 +700,13 @@ def _access_in(session: Session, agent: Agent, principal: Principal, team_id: st
     """What a Slack message from `principal` into `session` would reach (`turn_context.FULL`,
     `CONFINED` or `REFUSED`), asked of an unsaved probe turn through THE rule
     (`turn_context.for_turn`), so it cannot disagree with the real turn's stamp."""
+    return _context_in(session, agent, principal, team_id).access
+
+
+def _context_in(session: Session, agent: Agent, principal: Principal, team_id: str):
     probe = Turn(chat_session=session, origin=Turn.ORIGIN_SLACK, origin_ref={},
                  **principal.initiator(team_id).fields())
-    return turn_context.for_turn(probe, agent).access
+    return turn_context.for_turn(probe, agent)
 
 
 def _principal_name(principal: Principal, slack_user_id: str) -> str:
@@ -902,13 +911,12 @@ def restart_from_click(installation: SlackInstallation, *, slack_user_id: str, c
     prompt = str(ask.get("text") or "")
     inbound = Inbound(team_id=installation.team_id, channel_id=channel_id, slack_user_id=slack_user_id,
                       text=prompt, ts=str(ask.get("ts") or message_ts), thread_ts=thread_ts, is_dm=is_dm)
-    reach = _access_in(closed, agent, principal, installation.team_id)
+    ctx = _context_in(closed, agent, principal, installation.team_id)
+    reach = ctx.access
     if reach == turn_context.REFUSED:
-        return Outcome(REFUSED, (
-            f"`{agent.slug}` didn't start a new session: it only takes requests from the people its "
-            f"owner has opened it to, and that doesn't include you here. If you think you should "
-            f"have access, ask `{agent.slug}`'s owner."), session=closed, agent=agent,
-            workspace_id=agent.workspace_id)
+        # The refusal's own words (`apps/agents/refusals.py`), as every other door says them.
+        return Outcome(REFUSED, f"`{agent.slug}` didn't start a new session: {ctx.refusal.text}",
+                       session=closed, agent=agent, workspace_id=agent.workspace_id)
     if reach == turn_context.CONFINED and thread_ts and not is_dm and not _owns(closed, principal):
         # The same as a confined reply into someone else's conversation: answered
         # in a separate thread of the clicker's own; the button stays for others.
@@ -1249,7 +1257,7 @@ def _send(session: Session, created: bool, agent: Agent | None, principal: Princ
                        "Ask its owner to share a new one.", session=session, agent=agent)
     # Held to a CLI its agent no longer runs: nothing would ever take the turn.
     if (why := clis.conversation_refusal(session)) is not None:
-        return Outcome(CLI_REFUSED, f"{why[:1].upper()}{why[1:]}. Nothing you wrote here was sent.",
+        return Outcome(CLI_REFUSED, f"{why} Nothing you wrote here was sent.",
                        session=session, agent=agent)
     if not created and not inbound.files:
         answered = _answer_if_waiting(session, agent, prompt)

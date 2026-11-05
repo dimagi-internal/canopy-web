@@ -205,7 +205,7 @@ def test_a_refused_turn_stores_its_refusal_with_nothing_seeded(world):
     stored = Turn.objects.get(pk=turn.pk).resolved_context
     assert stored["moment"] == "enqueue" and stored["access"] == "refused" and stored["profile"] is None
     assert stored["refusal"]["code"] == turn_context.NOT_ON_ACCESS_LIST and stored["requested"] == "connect"
-    assert stored["refusal"]["how_to_fix"] == ""        # Stage 4
+    assert world.owner.email in stored["refusal"]["how_to_fix"] and world.owner.email in stored["refusal"]["who_can_fix"]
     assert {line["gets"] for line in stored["credentials"]} == {credentials_for_turn.NO}
     _assert_clean(stored)
 
@@ -219,6 +219,35 @@ def test_a_blocked_senders_mail_stores_that_and_never_why_they_were_blocked(worl
     assert stored["access"] == "refused" and stored["refusal"]["code"] == turn_context.SENDER_BLOCKED
     assert stored["refusal"]["who_can_fix"]
     _assert_clean(stored)
+    # Stage 4: its note is built from the refusal, and never says why they were blocked either.
+    assert turn.result_note.startswith("not run: the sender is blocked. ")
+    _assert_clean({"note": Turn.objects.get(pk=turn.pk).result_note})
+
+
+def test_a_refusals_note_and_every_channels_delivery_hold_no_prompt_person_fact_or_secret(world):
+    """Stage 4: `result_note`, the Slack reply, a send door's 403 and the people panel's notice say the refusal, and
+    nothing a person wrote, nothing canopy knows about them and no value."""
+    from apps.slack import services as slack_services
+
+    fact = _seed_fact(world, world.member)
+    Contact.objects.create(email=world.member.email, workspace=world.ws, notes=NOTE)
+    session = _chat(world, creator=world.reader)
+    turn = _enqueue(world.member, session)
+    assert turn.status == Turn.CANCELLED and turn.result_note.startswith("not run: you are not on")
+    with mock.patch.object(slack_services, "agent_list", return_value=""):
+        slack = slack_services.refusal_message(world.agent, Turn.objects.get(pk=turn.pk), named=False, installation=None)
+    assert "you are not on agent's access list" in slack and "add you to its access list" in slack
+    SessionParticipant.objects.create(session=session, user=world.member, role=SessionParticipant.VIEWER)
+    door = _browser(world.member).post(f"/api/canopy-sessions/{session.pk}/send", data={"text": PROMPT},
+                                         content_type="application/json")
+    assert door.status_code == 403 and "read this session but not act in it" in door.json()["detail"]
+    panel = _browser(world.reader).get(f"/api/canopy-sessions/{session.pk}/participants").json()
+    assert any(row["turn_refusal"] for row in panel)
+    for delivered in (Turn.objects.get(pk=turn.pk).result_note, slack, door.json(), panel):
+        _assert_clean({"delivered": delivered}, VAULT_VALUE)
+    # Controls: the prompt, the fact and the note are really there to leak, so their absence above is real.
+    assert Turn.objects.get(pk=turn.pk).prompt == PROMPT
+    assert fact.statement == FACT and Contact.objects.filter(email=world.member.email, notes=NOTE).exists()
 
 
 # --- who sees what ----------------------------------------------------------------------------------

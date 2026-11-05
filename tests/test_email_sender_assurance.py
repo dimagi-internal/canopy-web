@@ -105,7 +105,8 @@ def test_a_blocked_sender_gets_a_cancelled_turn_that_says_why(ctx):
     assert created
     assert turn.status == Turn.CANCELLED
     assert turn.finished_at is not None
-    assert "blocked" in turn.result_note and "spam" in turn.result_note
+    # Says it is blocked and how to undo it, never why: that is an admin's note about a person (Turn Context § 7).
+    assert "blocked" in turn.result_note and "unblock" in turn.result_note and "spam" not in turn.result_note
     # Still says who it was from — the refusal is about someone.
     assert turn.initiator_contact_id == c.pk
     # Not a conversation: no email-thread session was opened for it.

@@ -73,7 +73,8 @@ const REFUSED = {
   standing: { relationship: 'member', permissions: [], agent_role: null, source: '', via: '' },
   access: 'refused', basis: 'refused', profile: null, stamped: null,
   credentials: [{ name: 'agent_vault', kind: 'vault', gets: 'no', why: 'a refused turn does not run' }],
-  refusal: { code: 'not_on_access_list', why: 'agent does not list you on its access list', how_to_fix: '',
+  refusal: { code: 'not_on_access_list', why: "you are not on agent's access list",
+    how_to_fix: 'Have owner@dimagi.com or an admin of agent add you to its access list as read only (to put questions to it).',
     who_can_fix: 'owner@dimagi.com or an admin of agent' },
   trace: [
     { rule: 'send_blocks', outcome: 'none', detail: '' },
@@ -151,22 +152,23 @@ describe('Turn context: for you, now', () => {
     expect(deciding?.textContent).toContain('opens read mode')
   })
 
-  it('refused: why and who can fix it, and no empty "how to fix" label', async () => {
+  it('refused: why, how to fix it and who can, the why said as a sentence', async () => {
     await open({ session_context: FACTS, turn_context: REFUSED, withheld: '' })
     const refused = await screen.findByTestId('turn-context-refused')
     expect(refused.textContent).toContain("You can't send a message here.")
-    expect(refused.textContent).toContain('agent does not list you on its access list')
-    expect(refused.textContent).toContain('owner@dimagi.com or an admin of agent')
-    expect(screen.queryByTestId('turn-context-how-to-fix')).toBeNull()
-    expect(refused.textContent).not.toContain('How to fix')
+    expect(screen.getByTestId('turn-context-why-not').textContent).toContain("You are not on agent's access list.")
+    expect(screen.getByTestId('turn-context-how-to-fix').textContent).toContain('add you to its access list as read only')
+    expect(screen.getByTestId('turn-context-who-can-fix').textContent).toContain('owner@dimagi.com or an admin of agent')
     expect(screen.getByTestId('turn-context-now').querySelector('[data-deciding]')?.textContent).toContain('holds nothing')
     expect(screen.queryByTestId('turn-context-credentials')).toBeNull()
     expect(screen.getByTestId('turn-context-now').textContent).toContain('nothing: a refused turn does not run')
   })
 
-  it('refused with a fix: shows it', async () => {
-    await open({ session_context: FACTS, turn_context: { ...REFUSED, refusal: { ...REFUSED.refusal, how_to_fix: 'ask to be added' } }, withheld: '' })
-    expect((await screen.findByTestId('turn-context-how-to-fix')).textContent).toContain('ask to be added')
+  it('a refusal recorded before refusals said how to fix them: no empty "how to fix" label', async () => {
+    await open({ session_context: FACTS, turn_context: { ...REFUSED, refusal: { ...REFUSED.refusal, how_to_fix: '' } }, withheld: '' })
+    const refused = await screen.findByTestId('turn-context-refused')
+    expect(screen.queryByTestId('turn-context-how-to-fix')).toBeNull()
+    expect(refused.textContent).not.toContain('How to fix')
   })
 
   it('withheld: says so and why, keeps the session facts, and breaks nothing', async () => {

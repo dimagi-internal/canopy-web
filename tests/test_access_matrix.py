@@ -231,7 +231,10 @@ def test_a_refusal_says_what_the_caller_can_do(w):
     editors_run(w["agent"])
     d = turn_context.for_asker(w["agent"], w["viewer"], verified=True, requested="deploy")
     assert d.access == turn_context.REFUSED        # a line cannot use a capability the agent does not have
-    assert "access list" in d.refusal.why and w["owner"].email in d.refusal.why
+    # Why, in plain words, and who can fix it, by name (`apps/agents/refusals.py`). Naming one the agent does not
+    # have is fixed by not naming it, so the fix itself names nobody.
+    assert "access list" in d.refusal.why and "Send without naming 'deploy'" in d.refusal.how_to_fix
+    assert w["owner"].email in d.refusal.who_can_fix
     assert turn_context.for_asker(w["agent"], w["viewer"], verified=True, requested="status").access == access.CONFINED
 
 

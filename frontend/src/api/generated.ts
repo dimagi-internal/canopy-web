@@ -46100,6 +46100,26 @@ export interface components {
              * @default false
              */
             readonly test_key: boolean;
+            readonly turn_refusal?: components["schemas"]["RefusalOut"] | null;
+            /** Access List Agent */
+            readonly access_list_agent?: string | null;
+        };
+        /** RefusalOut */
+        readonly RefusalOut: {
+            /** Code */
+            readonly code: string;
+            /** Why */
+            readonly why: string;
+            /**
+             * How To Fix
+             * @default
+             */
+            readonly how_to_fix: string;
+            /**
+             * Who Can Fix
+             * @default
+             */
+            readonly who_can_fix: string;
         };
         /**
          * ParticipantAddIn
@@ -47022,23 +47042,6 @@ export interface components {
             readonly data?: string | null;
             /** Default Profile Version */
             readonly default_profile_version?: number | null;
-        };
-        /** RefusalOut */
-        readonly RefusalOut: {
-            /** Code */
-            readonly code: string;
-            /** Why */
-            readonly why: string;
-            /**
-             * How To Fix
-             * @default
-             */
-            readonly how_to_fix: string;
-            /**
-             * Who Can Fix
-             * @default
-             */
-            readonly who_can_fix: string;
         };
         /** ReviewOut */
         readonly ReviewOut: {

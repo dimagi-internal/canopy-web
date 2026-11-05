@@ -147,7 +147,7 @@ def test_the_only_way_to_the_whole_agent_is_an_explicit_kind(w):
 ])
 def test_a_turn_context_cannot_be_built_saying_otherwise(access, kind):
     profile = turn_context.Profile(kind=kind) if kind else None
-    refusal = None if access != turn_context.REFUSED else turn_context.Refusal(code="x", why="y")
+    refusal = None if access != turn_context.REFUSED else turn_context.Refusal(code=turn_context.NOT_ON_ACCESS_LIST, why="y")
     with pytest.raises(ValueError):
         turn_context.TurnContext(standing=turn_context.Standing(relationship="member"), access=access, profile=profile,
                                  basis="b", session_key_suffix="", review=turn_context.Review(), stamped="", refusal=refusal,
@@ -163,7 +163,7 @@ def test_a_refusal_with_no_reason_or_a_reason_with_no_refusal_cannot_be_built():
         turn_context.TurnContext(standing=standing, access=turn_context.FULL,
                                  profile=turn_context.Profile(kind=turn_context.WHOLE_AGENT), basis="b",
                                  session_key_suffix="", review=turn_context.Review(), stamped="",
-                                 refusal=turn_context.Refusal(code="x", why="y"), trace=())
+                                 refusal=turn_context.Refusal(code=turn_context.NOT_ON_ACCESS_LIST, why="y"), trace=())
 
 
 def _at_claim(w, turn, stamp):
@@ -315,7 +315,7 @@ def test_every_refusal_carries_a_code_from_the_closed_set_and_who_can_fix_it(w):
     assert [c.refusal.code for c in cases] == [turn_context.NOT_ON_ACCESS_LIST, turn_context.PROFILE_NOT_OPEN,
                                                turn_context.SENSITIVE_NOT_OPEN]
     for ctx in cases:
-        assert ctx.refusal.code in turn_context.REFUSAL_CODES and ctx.refusal.why
+        assert ctx.refusal.code in turn_context.REFUSAL_CODES and ctx.refusal.why and ctx.refusal.how_to_fix
         assert w.owner.email in ctx.refusal.who_can_fix
 
 
@@ -403,7 +403,7 @@ def test_deleted_content_refuses_as_the_send_route_does(w):
     ctx = _preview(w, w.owner, session)
     assert ctx.refused and ctx.refusal.code == session_context.CONTENT_DELETED
     response = _send(w.owner, session)
-    assert response.status_code == 409 and response.json()["detail"] == ctx.refusal.why
+    assert response.status_code == 409 and response.json()["detail"] == ctx.refusal.message
     # Who they are is still true: only this message cannot be taken.
     assert ctx.standing.agent_role == roles.OWNER and ctx.profile is None
 
@@ -414,7 +414,7 @@ def test_reading_without_writing_refuses_as_the_send_route_does(w):
     ctx = _preview(w, w.reader, session)
     assert ctx.refused and ctx.refusal.code == session_context.CANNOT_WRITE
     response = _send(w.reader, session)
-    assert response.status_code == 403 and response.json()["detail"] == ctx.refusal.why
+    assert response.status_code == 403 and response.json()["detail"] == ctx.refusal.message
 
 
 def test_a_cli_the_agent_no_longer_runs_refuses_as_the_send_route_does(w):
@@ -424,7 +424,7 @@ def test_a_cli_the_agent_no_longer_runs_refuses_as_the_send_route_does(w):
     ctx = _preview(w, w.owner, session)
     assert ctx.refused and ctx.refusal.code == session_context.CLI_NOT_OFFERED
     response = _send(w.owner, session)
-    assert response.status_code == 422 and response.json()["detail"] == ctx.refusal.why
+    assert response.status_code == 422 and response.json()["detail"] == ctx.refusal.message
 
 
 def test_a_sensitive_conversation_refuses_a_door_that_is_not_its_chat_surface_as_the_send_route_does(w):
@@ -436,7 +436,7 @@ def test_a_sensitive_conversation_refuses_a_door_that_is_not_its_chat_surface_as
     raw, _token = PersonalToken.create_for_user(user=w.owner, label="t")
     response = Client().post(f"/api/canopy-sessions/{session.pk}/send", data={"text": "hello"},
                              content_type="application/json", headers={"Authorization": f"Bearer {raw}"})
-    assert response.status_code == 403 and response.json()["detail"] == ctx.refusal.why
+    assert response.status_code == 403 and response.json()["detail"] == ctx.refusal.message
 
 
 def test_a_real_turn_is_past_its_door_so_stage_0_never_refuses_it(w):

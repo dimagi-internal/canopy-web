@@ -71,7 +71,7 @@ def _apply_capability(turn: Turn, requested: str | None = None) -> None:
     if cap is None:
         turn.status = Turn.CANCELLED
         turn.finished_at = timezone.now()
-        turn.result_note = f"not run: {resolved.refusal.why}"
+        turn.result_note = resolved.refusal.result_note
         fields = ["status", "finished_at", "result_note"]
         if sensitivity.is_sensitive(turn):
             # Ended before it began, so `turn_close.close_turn` — where a sensitive

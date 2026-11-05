@@ -74,7 +74,7 @@ def test_owner_and_admin_are_named_on_the_ladder_and_a_workspace_editor_with_no_
     d = turn_context.for_asker(agent, editor, verified=True)
     # Being a workspace editor is not a role on the agent: nothing names them, so nothing.
     assert (d.access, d.standing.agent_role) == (turn_context.REFUSED, None)
-    assert "access list" in d.refusal.why and w["owner"].email in d.refusal.why
+    assert "access list" in d.refusal.why and w["owner"].email in d.refusal.how_to_fix
 
 
 def test_a_line_that_says_manual_only_is_the_old_editor_tier(w):

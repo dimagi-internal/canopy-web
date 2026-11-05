@@ -908,6 +908,11 @@ class ParticipantOut(Schema):
     #: An agent's own login holding its agent's TEST vault key, not a person's key
     #: (`apps/agents/credentials/login_test_key.py`).
     test_key: bool = False
+    #: Only to someone who may add people to this chat: they can read it but could not take a turn in it now, and
+    #: why, said about them. None when they could.
+    turn_refusal: RefusalOut | None = None
+    #: The agent whose access list fixes that, when you may add a line to it.
+    access_list_agent: str | None = None
 
 
 class SealedKeyWrapIn(Schema):
