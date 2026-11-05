@@ -651,7 +651,10 @@ def _text(events):
 
 
 def _alive(mod):
-    return subprocess.run(["pgrep", "-f", mod._marker], capture_output=True).returncode == 0
+    got = subprocess.run(["pgrep", "-af", mod._marker], capture_output=True, text=True)
+    mod._diag_seen = getattr(mod, "_diag_seen", [])
+    mod._diag_seen.append((round(time.monotonic(), 3), got.returncode, got.stdout.strip()[:240]))
+    return got.returncode == 0
 
 
 def _stage(mod, tmp_path, token, *, provider="salesforce"):
@@ -996,19 +999,25 @@ def test_restart_sweep_removes_whatever_is_left(jobs):
     assert jobs._box.requests[0][0] == "cleanup" and _left_behind(jobs) == []
 
 
-def test_a_new_daemon_ends_the_old_ones_job(jobs):
+@pytest.mark.parametrize("rep", range(400))
+def test_a_new_daemon_ends_the_old_ones_job(jobs, rep):
     """The old daemon's death closed its connection, which stops the unit."""
     _define(jobs, ["python3", "x.py", jobs._marker], files={"x.py": IGNORES_TERM})
     _exported(jobs)
     c = jobs._job_broker_connect("start", turn=T1, slug="eva", run=["python3", "x.py", jobs._marker],
                                  timeout_seconds=60)
     assert b"running" in c.recv(4096)
+    jobs._diag_seen = []
+    closed_at = time.monotonic()
     c.close()
     for _ in range(400):
         if not _alive(jobs):
             break
         time.sleep(0.05)
-    assert not _alive(jobs)
+    if _alive(jobs):
+        print("DIAG FAIL rep", rep, "closed_at", round(closed_at, 3), "after", round(time.monotonic() - closed_at, 3),
+              "polls", len(jobs._diag_seen), "seen", jobs._diag_seen[-6:], flush=True)
+        pytest.fail("DIAG")
     jobs._box.holders.pop().close()      # and the daemon's death closed its hold on the slot
     for _ in range(400):
         if not _left_behind(jobs):

@@ -1,0 +1,101 @@
+name: DIAG queue flakes (never merge)
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  job-broker:
+    name: DIAG new daemon test (${{ matrix.n }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        n: [1, 2]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --extra dev
+      - name: Repeat the one test under the suite's load
+        working-directory: runner/ec2
+        run: |
+          pgrep --version
+          nproc
+          # What the rest of the suite does to this box: every core busy.
+          for i in 1 2 3 4; do (timeout 600 python3 -c 'while True: pass') & done
+          uv run --with pytest --with pytest-timeout --with pytest-xdist pytest -q -n 4 \
+            tests/test_plain_jobs.py -k test_a_new_daemon_ends_the_old_ones_job -s 2>&1 \
+            | grep -E 'DIAG|passed|failed' | cut -c1-400 | tail -80 || true
+
+  chat:
+    name: DIAG chat suite (${{ matrix.n }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        n: [1, 2, 3, 4, 5, 6]
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: e2e
+          POSTGRES_PASSWORD: e2e
+          POSTGRES_DB: canopy_e2e
+        ports: ["5432:5432"]
+        options: --name pgdiag --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --extra dev
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      - working-directory: frontend
+        run: npm ci && npx playwright install --with-deps chromium
+      - name: Migrate
+        env:
+          DATABASE_URL: postgres://e2e:e2e@127.0.0.1:5432/canopy_e2e
+          SECRET_KEY: e2e-secret-key
+          DEBUG: "True"
+        run: uv run python manage.py migrate --noinput
+      - name: Log what Postgres does
+        env:
+          PGPASSWORD: e2e
+        run: |
+          for s in "session_preload_libraries = 'auto_explain'" "auto_explain.log_min_duration = '500ms'" \
+                   "auto_explain.log_analyze = on" "auto_explain.log_buffers = on" "log_lock_waits = on" \
+                   "deadlock_timeout = '200ms'" "log_autovacuum_min_duration = 0" "log_checkpoints = on"; do
+            psql -h 127.0.0.1 -U e2e -d canopy_e2e -c "ALTER SYSTEM SET $s"
+          done
+          psql -h 127.0.0.1 -U e2e -d canopy_e2e -c "SELECT pg_reload_conf()"
+      - name: Run
+        working-directory: frontend
+        env:
+          E2E_DATABASE_URL: postgres://e2e:e2e@127.0.0.1:5432/canopy_e2e
+          E2E_SERVER_TIMEOUT: "300000"
+        run: npx playwright test e2e/chat-runner.spec.ts --project=desktop 2>&1 | grep -vE 'canopy.provenance|WebSocket|connection open' | cut -c1-260 | tail -60
+      - name: What Postgres said
+        if: always()
+        run: |
+          mkdir -p diag
+          docker logs pgdiag > diag/pg.log 2>&1 || true
+          cp "${TMPDIR:-/tmp}"/e2e-fake-runner-*.log diag/ || true
+          grep -nE 'duration: [0-9]{4,}|still waiting|acquired|automatic (vacuum|analyze)' diag/pg.log | cut -c1-220 | tail -60
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: diag-chat-${{ matrix.n }}
+          path: diag/
+          retention-days: 3
