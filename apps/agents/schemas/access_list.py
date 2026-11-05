@@ -94,6 +94,8 @@ class AccessListOut(StrictModel):
     #: The doors this agent has published (capabilities other than read mode), which a line may
     #: name; the form picks from these.
     doors: list[str] = Field(default_factory=list)
+    #: The site each of `doors` is connected to, so the form can show a site and not an internal name.
+    door_sites: dict[str, str] = Field(default_factory=dict)
 
 
 class AccessInheritIn(StrictModel):

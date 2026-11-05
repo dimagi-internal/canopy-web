@@ -46,6 +46,9 @@ def _load_cloud_runner():
     module._LAZY_CLONER = lambda slug, env: None
     # Also when a test replaces PATH: `_canopy_cli` falls back to ~/.local/bin.
     module._canopy_cli = lambda: CANOPY_STANDIN
+    # A finish a fake `_api` refused is kept on disk for a retry: never in the
+    # developer's real home, and never carried from one test into the next.
+    module.PENDING_FINISH_FILE = pathlib.Path(tempfile.mkdtemp(prefix="pending-finish-")) / "p.json"
     return module
 
 

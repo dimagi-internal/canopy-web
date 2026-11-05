@@ -111,6 +111,36 @@ def test_a_file_saying_internal_beats_what_acp_remembers(tmp_path, monkeypatch):
     assert rows["hal:turn"]["source"] == "acp" and "internal" not in rows["hal:turn"]
 
 
+def _stamp_hal(home, updated="2026-11-04T10:00:00.000Z"):
+    path = home / ".claude" / "plugins" / "installed_plugins.json"
+    data = json.loads(path.read_text())
+    data["plugins"]["hal@hal"][0]["lastUpdated"] = updated
+    path.write_text(json.dumps(data))
+
+
+def test_a_plugins_commands_say_when_it_was_last_updated(tmp_path, monkeypatch):
+    monkeypatch.setattr(slash_commands, "_acp_seen", {})
+    home = _home(tmp_path)
+    _stamp_hal(home)
+    slash_commands.remember_acp([{"name": "hal:turn", "description": "from ACP"},
+                                 {"name": "hal:deleted-from-the-repo"}, {"name": "compact"}])
+    rows = {c["name"]: c for c in slash_commands.scan(home)}
+    # On disk: stamped, even when ACP's words won the clash.
+    assert rows["hal:turn"]["plugin_updated_at"] == "2026-11-04T10:00:00.000Z"
+    assert rows["hal:turn"]["source"] == "acp"
+    # Only ACP's memory, and anything that is not a plugin's: no stamp.
+    assert "plugin_updated_at" not in rows["hal:deleted-from-the-repo"]
+    assert "plugin_updated_at" not in rows["compact"] and "plugin_updated_at" not in rows["browse"]
+
+
+def test_a_new_install_of_the_same_list_is_a_change_worth_reporting(tmp_path, monkeypatch):
+    monkeypatch.setattr(slash_commands, "_acp_seen", {})
+    home = _home(tmp_path)
+    before = slash_commands.digest(slash_commands.scan(home))
+    _stamp_hal(home)
+    assert slash_commands.digest(slash_commands.scan(home)) != before
+
+
 def test_reports_only_when_the_list_changes(tmp_path, monkeypatch):
     monkeypatch.setattr(slash_commands, "_acp_seen", {})
     monkeypatch.setattr(slash_commands, "_state", {"at": 0.0, "sent": ""})

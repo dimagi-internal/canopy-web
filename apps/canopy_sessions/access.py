@@ -14,7 +14,7 @@ someone merely for being in the same workspace:
   a participant removed from the workspace loses the session with it, the
   same as every other tenant surface in canopy. Which workspace that is — the
   filing rule for a new runner session, and moving one — is `filing.py`.
-* **Then one of eight legs** (`visible_session_q`): you created it; you were
+* **Then one of seven legs** (`visible_session_q`): you created it; you were
   made a participant; it is a runner-discovered session on a box YOU OWN (a
   laptop session is its owner's alone); it is the own thread of an agent you
   run; you are an agent's own login and its person let that agent review
@@ -22,9 +22,10 @@ someone merely for being in the same workspace:
   you administer the runner it sits on (`RunnerAdmin`, read-only, so a box
   can be emptied — `may_move`); or its box owner shared their laptop sessions
   in this project's repo with the project's team and you are on it
-  (`ProjectSessionShare`, read + write + pull); or you are an agent's own login,
-  in the conversation a person opened by asking it to review this one session of
-  theirs, with that person as the turn's asker (`SessionReviewAsk`, read-only).
+  (`ProjectSessionShare`, read + write + pull).
+* **Reach** — a request made with an agent turn's caller token reads as the asker, but
+  only as far as `turn_reach` says: that conversation and sessions with that agent, and
+  for a one-session review only that conversation and that session (`limit_reach`).
 * **Writing** (sending, answering, stopping, archiving, page actions,
   attachments) needs a role of owner or editor. A `viewer` participant reads.
 * **Sharing** — adding or removing a participant — is the OWNER's: the
@@ -80,15 +81,19 @@ A box with no owner gives the leg to nobody (it fails closed).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from django.db.models import Exists, OuterRef, Q
 from django.utils import timezone
 
 from apps.agents.models import Agent, AgentProject
 from apps.harness import runner_requirements as rr
 from apps.harness import runners, sensitivity
-from apps.harness.models import Runner
+from apps.harness.models import Runner, Turn
 
+from . import channel_bindings
 from .models import (
+    REVIEW_METADATA_KEY,
     ProjectSessionShare,
     RunnerBinding,
     Session,
@@ -98,13 +103,116 @@ from .models import (
 )
 
 
+#: On a request's user: the `Reach` an agent turn's caller token holds its reads to (`limit_reach`).
+REACH_ATTR = "_canopy_session_reach"
+
+
+@dataclass(frozen=True)
+class Reach:
+    """How far one request may read, whatever its user's legs would allow: the sessions in `q`,
+    and for a turn in no conversation, its own (`turn_id`) and those of `agent_id`, if any."""
+
+    q: Q
+    agent_id: int | None = None
+    turn_id: str = ""
+
+
+#: A request that should be held to a reach and has none it can show: it reads nothing.
+NO_REACH = Reach(Q(pk__in=[]))
+
+
+def is_review_conversation(session) -> bool:
+    """A chat opened by asking an agent to review one session. Everything in it runs in the
+    `interface.SESSION_REVIEW` door, because what it read stays in its context."""
+    return session is not None and REVIEW_METADATA_KEY in (session.metadata or {})
+
+
+def live_review_ask(conversation_id, *, user_id):
+    """The live ask this conversation was opened by, made by `user_id`, or None."""
+    if not conversation_id or not user_id:
+        return None
+    return (SessionReviewAsk.objects
+            .filter(review_session_id=conversation_id, user_id=user_id, revoked_at__isnull=True,
+                    expires_at__gt=timezone.now())
+            .first())
+
+
+def turn_conversation(turn):
+    """The chat session `turn` belongs to: its own, or the one its `origin_ref` names."""
+    if turn.chat_session_id:
+        return turn.chat_session
+    ref = turn.origin_ref if isinstance(turn.origin_ref, dict) else {}
+    named = ref.get("chat_session_id")
+    return Session.objects.filter(pk=named).first() if named else None
+
+
+def turn_reach(turn) -> Reach | None:
+    """How far a caller token on `turn` reads, as the asker. None when it is not an agent's
+    turn: a repo chat's token is the person's own tool.
+
+    An agent turn acts FOR someone who gave it no act-as-you permission, so it reads their
+    sessions only as far as this agent is already in them: its own conversation and sessions
+    with this agent. Their laptop sessions and their chats with other agents take an act-as
+    grant (`canopy:act-as-you`) or a review grant on the agent's own login. A review
+    conversation reads itself and the one session its live ask names, nothing else."""
+    agent = turn.acting_agent
+    if agent is None:
+        return None
+    conversation = turn_conversation(turn)
+    own = Q(pk=conversation.pk) if conversation is not None else Q(pk__in=[])
+    turn_id = str(turn.pk)
+    if is_review_conversation(conversation):
+        ask = live_review_ask(conversation.pk, user_id=turn.initiator_user_id)
+        return Reach(own | Q(pk=ask.session_id) if ask is not None else own, turn_id=turn_id)
+    return Reach(own | Q(agent_id=agent.pk), agent_id=agent.pk, turn_id=turn_id)
+
+
+def limit_reach(user, reach: Reach | None) -> None:
+    """Hold `user` (this request's) to `reach`. Only ever narrows."""
+    if user is not None and reach is not None:
+        setattr(user, REACH_ATTR, reach)
+
+
+def reach_of(user) -> Reach | None:
+    """The reach this request is held to, or None when it is not. A caller token's, or for an
+    agent's login inside a turn scoped to one grantor (`turn_asker.READS_FOR`), that person's
+    own sessions, its own conversation and its own turn: not the agent's other work, nor a
+    channel's or a chat it was let into, whichever text in that person's session asks."""
+    reach = getattr(user, REACH_ATTR, None)
+    if reach is not None:
+        return reach
+    from apps.harness import turn_asker  # noqa: PLC0415 — harness imports this module
+
+    stand = turn_asker.standing(user)
+    if stand is None or stand.reads_for is None:
+        return None
+    own = Q(pk=stand.conversation_id) if stand.conversation_id else Q(pk__in=[])
+    return Reach(own | sessions_of_q([stand.reads_for]), turn_id=stand.turn_id)
+
+
+def turn_in_reach(user, turn) -> bool:
+    """Whether the reach this request is held to, if any, covers `turn`. One in a conversation is
+    that conversation's: its chat FK, or the one its `origin_ref` names. One in none is its own,
+    or its agent's when the reach has one. Any other is out, so this fails closed."""
+    reach = reach_of(user)
+    if reach is None:
+        return True
+    conversation = turn_conversation(turn)
+    if conversation is not None:
+        return Session.objects.filter(pk=conversation.pk).filter(reach.q).exists()
+    if reach.turn_id and str(turn.pk) == reach.turn_id:
+        return True
+    agent = turn.acting_agent
+    return reach.agent_id is not None and agent is not None and agent.pk == reach.agent_id
+
+
 def visible_session_q(user) -> Q:
     """Sessions `user` may read, *within a workspace they already belong to*.
 
     Tenancy is a separate and prior gate (`_visible_slugs`) — this narrows
     inside it and must never be used as the only check.
 
-    Eight ways in, and no ninth:
+    Seven ways in, and no eighth:
 
     1. you created it;
     2. you were made a participant — `SessionParticipant` is what "multiplayer"
@@ -148,12 +256,6 @@ def visible_session_q(user) -> Q:
        never an agent's own login. The person's explicit, revocable choice, per
        project; you work in it as an editor and may pull. Never a sensitive one,
        never an agent's own work.
-    8. you are an agent's own login and its person asked THAT agent to review this
-       one session (a live `SessionReviewAsk`), and this request is made inside a
-       turn of the conversation that ask opened, whose asker is that same person
-       (`_review_ask_q`). No other turn of the agent reads it: not an admin's, not a
-       schedule's, not that person's in another chat. Read-only, no pull, never a
-       sensitive one or a contact's.
 
     **Known consequence — an orphaned session becomes invisible.**
     `Session.created_by` is `on_delete=SET_NULL`, so deleting a user leaves
@@ -163,7 +265,7 @@ def visible_session_q(user) -> Q:
     everyone. Losing them from a list is the cheaper mistake than handing a
     departed colleague's conversations to every co-tenant.
     """
-    return (
+    legs = (
         Q(created_by=user)
         | Q(participants__user=user)
         | _box_owner_q(user)
@@ -172,8 +274,9 @@ def visible_session_q(user) -> Q:
         | _review_grant_q(user)
         | _runner_admin_q(user)
         | _project_share_q(user)
-        | _review_ask_q(user)
     )
+    reach = reach_of(user)
+    return legs if reach is None else legs & reach.q
 
 
 def _project_share_q(user) -> Q:
@@ -181,7 +284,8 @@ def _project_share_q(user) -> Q:
     if not getattr(user, "is_authenticated", False) or Agent.objects.filter(user=user).exists():
         return Q(pk__in=[])
     on_team = AgentProject.objects.filter(
-        Q(owner_user=user) | Q(participant_rows__person__user=user)).values("pk")
+        Q(owner_user=user) | Q(participant_rows__person__user=user),
+        visibility=AgentProject.WORKSPACE).values("pk")
     shares = (ProjectSessionShare.objects
               .filter(revoked_at__isnull=True, project__in=on_team)
               .exclude(project__repo_slug="")
@@ -339,9 +443,12 @@ def review_grantors(user):
     * a turn canopy started on a PERSON's account (a schedule, an agent task's follow-up)
       answers to that person, as if they had asked: whoever may create it chose its prompt;
     * a turn nobody asked for (a schedule or trigger no person owns, or a dispatch from
-      such a turn: the server stamps `unattended_dispatch`) reads every grantor's, which
-      is the coaching sweep; so does one asked by an administrator of the agent itself,
-      who runs it for all it serves (`Agent.is_admin`);
+      such a turn: the server stamps `unattended_dispatch`) sees every grantor on the
+      ROSTER, which is what the coaching sweep needs, and reads none of their sessions
+      (`_review_grant_q`) unless it was dispatched for one of them (`turn_asker.READS_FOR`),
+      when both the roster and the reads are that one person;
+    * a turn asked by an administrator of the agent itself reads every grantor's: they
+      run it for all it serves (`Agent.is_admin`);
     * no turn at all — a stored token, a session, a socket, a finished, confined or
       unverified-asker turn, or a dispatch from a turn like those — reads nobody's: it
       cannot show whom it is answering to.
@@ -354,6 +461,8 @@ def review_grantors(user):
     stand = turn_asker.standing(user)
     if stand is None:
         return grants.none()
+    if stand.reads_for is not None:
+        return grants.filter(user_id=stand.reads_for)
     if stand.unattended or stand.operator:
         return grants
     return grants.filter(user_id=stand.person_id)
@@ -361,29 +470,18 @@ def review_grantors(user):
 
 def _review_grant_q(user) -> Q:
     """Leg 5: the sessions of the people `review_grantors` allows this request to read.
-    Empty for anyone else."""
-    if not getattr(user, "is_authenticated", False):
-        return Q(pk__in=[])
-    return (sessions_of_q(review_grantors(user).values("user_id"))
-            & Q(contact__isnull=True) & _not_sensitive_q())
-
-
-def _review_ask_q(user) -> Q:
-    """Leg 8: the one session a person asked this agent to review, for a request made
-    inside the conversation that ask opened, by a turn answering to that person. Unlike
-    leg 5, `unattended` and `operator` get nothing: nobody but the person asked."""
+    Empty for anyone else, and for a turn nobody asked that names no one grantor: it holds the
+    roster and no transcript, so a dispatch from an older plugin, with no scope, reads nothing.
+    Never a session whose words its person deleted: a coach has no business with the row left."""
     if not getattr(user, "is_authenticated", False):
         return Q(pk__in=[])
     from apps.harness import turn_asker  # noqa: PLC0415 — harness imports this module
 
     stand = turn_asker.standing(user)
-    if stand is None or stand.person_id is None or not stand.conversation_id:
+    if stand is not None and stand.unattended and stand.reads_for is None:
         return Q(pk__in=[])
-    asks = SessionReviewAsk.objects.filter(
-        session_id=OuterRef("pk"), agent__user=user, user_id=stand.person_id,
-        review_session_id=stand.conversation_id, revoked_at__isnull=True, expires_at__gt=timezone.now())
-    return (sessions_of_q([stand.person_id]) & Q(contact__isnull=True) & _not_sensitive_q()
-            & Q(Exists(asks)))
+    return (sessions_of_q(review_grantors(user).values("user_id"))
+            & Q(contact__isnull=True, content_deleted_at__isnull=True) & _not_sensitive_q())
 
 
 def _agent_admin_q(user) -> Q:
@@ -431,7 +529,7 @@ def _tenant_slugs(user) -> set:
 
 
 def readable_sessions(user, *, workspace_slugs=None):
-    """Every session `user` may read — the tenant gate AND the eight legs.
+    """Every session `user` may read — the tenant gate AND the seven legs.
 
     `workspace_slugs` narrows further (a pinned `/api/w/{ws}/` route); it can
     never widen past the caller's own workspaces.
@@ -513,7 +611,10 @@ def role_for(user, session) -> str | None:
 
 
 def can_share(user, session) -> bool:
-    """Only an owner decides who else is in the conversation."""
+    """Only an owner decides who else is in the conversation, and nobody joins one
+    whose words were deleted."""
+    if is_content_deleted(session):
+        return False
     return role_for(user, session) == SessionParticipant.OWNER
 
 
@@ -539,7 +640,52 @@ def can_add_people(user, session) -> bool:
 
 
 def can_write(user, session) -> bool:
+    # A session whose words were deleted takes no more, from anyone: this is every
+    # REST write (`_session_or_404`) and the socket's drafts and sends.
+    if is_content_deleted(session):
+        return False
     return role_for(user, session) in _WRITE_ROLES
+
+
+#: What a write into a session whose words were deleted is told.
+CONTENT_DELETED_REFUSAL = ("This session's content was permanently deleted, so it takes nothing "
+                           "more. Start a new session to carry on.")
+
+
+def is_content_deleted(session) -> bool:
+    return session is not None and session.content_deleted_at is not None
+
+
+def owns_words(user, session) -> bool:
+    """Is this session's content `user`'s to delete? THE rule: the person whose session
+    it is, and nobody else. The chat they started, or a session discovered on a box they
+    own that is not an agent's own work (`is_box_owner`, so a laptop session that has
+    fallen off its box's report is still theirs). Never a contact's conversation, and no
+    role, runner admin or workspace owner has an override. Whether the REQUEST is that
+    person acting as themselves is `harness.acting_person`, asked at the route."""
+    if not getattr(user, "is_authenticated", False) or session is None or session.contact_id is not None:
+        return False
+    if session.created_by_id is not None:
+        return session.created_by_id == user.pk
+    return session.agent_id is None and is_box_owner(user, session)
+
+
+def others_in_it(user, session) -> bool:
+    """Is this someone else's conversation too? Anyone else added to it, a channel
+    thread it lives in, or anyone else who ever spoke in it: a line someone else wrote,
+    or a turn someone else asked for, including people since taken out of it."""
+    if SessionParticipant.objects.filter(session=session).exclude(user=user).exists():
+        return True
+    if any(channel_bindings.of(session).values()):
+        return True
+    authors = (session.messages.filter(author__isnull=False)
+               .values_list("author", flat=True).distinct())
+    if any(isinstance(a, dict) and (a.get("contact_id") or a.get("user_id") not in (None, user.pk))
+           for a in authors):
+        return True
+    return Turn.objects.filter(sensitivity.turns_of_q(session.pk)).filter(
+        Q(initiator_contact__isnull=False)
+        | (Q(initiator_user__isnull=False) & ~Q(initiator_user=user))).exists()
 
 
 #: What a caller who may read a session but not pull from its runner is told.
@@ -562,6 +708,8 @@ def may_pull(user, session) -> bool:
     rows and nothing more."""
     if not getattr(user, "is_authenticated", False) or not can_read(user, session):
         return False
+    if is_content_deleted(session):
+        return False
     return is_box_owner(user, session) or can_write(user, session)
 
 
@@ -570,7 +718,7 @@ def may_move(user, session) -> bool:
     Anyone who may write in it, or an admin of the box it is on — the person
     trusted with emptying that box. Where it may land is the transfer's own rule
     (`transfer_requests.request`)."""
-    if not can_read(user, session):
+    if not can_read(user, session) or is_content_deleted(session):
         return False
     if can_write(user, session):
         return True

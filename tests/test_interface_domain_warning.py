@@ -3,7 +3,7 @@
 Until the access list (agent-roles design, 2026-10-30) an interface rule naming a mail domain that
 can never prove its senders (`member@<domain>`, no DMARC and no aligned DKIM) was WARNED about,
 never refused (canopy-web#1280). Those rules are gone: `parse` refuses the retired keys and points
-at the access list, and the interface API carries neither a `summary` nor `warnings`. What survives
+at the access list, and read mode and connected sites carry neither a `summary` nor `warnings`. What survives
 is the DMARC lookup (`apps.contacts.domain_proof`), which decides whether a sender is proven.
 """
 from __future__ import annotations
@@ -19,14 +19,6 @@ from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
 M = WorkspaceMembership
-
-SOURCE = """\
-full: [member@nodmarc.org, contact@dimagi.com:verified]
-capabilities:
-  ask:
-    callers: [contact, contact@nodmarc.org, member@signs.org:verified]
-"""
-
 
 @pytest.fixture()
 def w():
@@ -50,17 +42,18 @@ def test_parse_refuses_the_retired_rules_and_points_at_the_access_list(doc, key)
     assert f"`{key}:`" in str(exc.value) and "access list" in str(exc.value)
 
 
-def test_publishing_the_old_rules_is_refused_and_saves_nothing(w):
-    r = w["client"].put("/api/agents/ace/interface", {"source": SOURCE}, content_type="application/json")
+def test_saving_the_old_rules_is_refused_and_saves_nothing(w):
+    r = w["client"].put("/api/agents/ace/read-mode", {"callers": ["contact@nodmarc.org"]},
+                        content_type="application/json")
     assert r.status_code == 422, r.content
-    assert "access list" in r.content.decode()
     w["agent"].refresh_from_db()
     assert not w["agent"].interface.get("capabilities")
 
 
-def test_the_interface_api_carries_no_summary_or_warnings(w):
-    body = w["client"].get("/api/agents/ace/interface").json()
-    assert "summary" not in body and "warnings" not in body
+def test_the_settings_carry_no_summary_or_warnings(w):
+    for path in ("read-mode", "connected-sites"):
+        body = w["client"].get(f"/api/agents/ace/{path}").json()
+        assert "summary" not in body and "warnings" not in body
 
 
 def test_the_real_lookup_reads_the_dmarc_txt(monkeypatch):

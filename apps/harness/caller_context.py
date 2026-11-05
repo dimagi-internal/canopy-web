@@ -3,7 +3,7 @@
 Its vocabulary — `relationship` (owner | admin | member | contact | system),
 `profile` (full | confined), `granted_by`, `turn_mode`, `ship_grant` — is defined
 in `docs/architecture/access.md`; the decision behind `profile` and `granted_by`
-is `apps/agents/access.decide`.
+is `apps/agents/turn_context.resolve_turn_context`.
 
 Phase 1b of `docs/superpowers/specs/2026-09-18-who-is-asking-initiator-identity-
 and-access-design.md` (§5). Phase 1a RECORDED the initiator on every turn; this
@@ -29,6 +29,7 @@ from __future__ import annotations
 import re
 import uuid
 
+from django.contrib.auth import get_user_model
 from django.utils import timezone
 
 from apps.agents import rolecatalog, roles
@@ -38,7 +39,6 @@ from apps.canopy_sessions.models import SessionParticipant, SessionReviewAsk
 from apps.contacts.models import Contact
 
 from . import initiator as who
-from . import sensitivity
 from .models import Turn
 
 #: Bump when a field's MEANING changes; adding a field does not need it.
@@ -158,8 +158,11 @@ def _relationship_without_agent(turn, user) -> str:
     if agent_self is not None and owner is not None and agent_self.owner_id == owner:
         return SYSTEM
     session = getattr(turn, "chat_session", None)
-    if session is None:
-        return CONTACT
+    return CONTACT if session is None else session_relationship(user, session)
+
+
+def session_relationship(user, session) -> str:
+    """What someone is to a conversation with no agent, whose session ACL is all there is to ask."""
     from apps.canopy_sessions import access
 
     role = access.role_for(user, session)
@@ -320,7 +323,9 @@ def build(turn, *, reader_user=None) -> dict:
     agent = turn.acting_agent
     ref = turn.origin_ref if isinstance(turn.origin_ref, dict) else {}
     cs = getattr(turn, "chat_session", None)
-    rel = relationship(turn, agent)
+    context = _turn_context(turn, agent)
+    rel = context.standing.relationship
+    grant = _grant(turn, agent, context)
     described = who.describe(turn)
     return {
         "version": VERSION,
@@ -369,7 +374,11 @@ def build(turn, *, reader_user=None) -> dict:
         # agent's FULL profile: its owner, an admin, canopy itself, or a
         # member of an agent that has published no interface. Otherwise the runner and the agent's
         # guard confine the session to exactly this.
-        "profile": CONFINED_PROFILE if turn.capability else FULL_PROFILE,
+        "profile": CONFINED_PROFILE if context.stamped else FULL_PROFILE,
+        # full | confined | refused: how the profile is enforced, in the Turn Context's word. Beside
+        # `profile`, which deployed runners and plugins read and which says `full` on a turn refused
+        # before it ran. Additive: no VERSION bump.
+        "access": _access(turn, context),
         # WHY: owner | admin | system | session:<role> | grant:<access-list line> |
         # capability:<name> | refused | no-interface (a turn with no agent).
         # `role`: WHERE the asker stands on the agent's role ladder (owner | admin | editor |
@@ -377,12 +386,12 @@ def build(turn, *, reader_user=None) -> dict:
         # session | list:<access-list line>) —
         # what an agent reads to say "you are read-only here because ..." instead of
         # guessing. Additive: no VERSION bump. See apps/agents/roles.py.
-        **_grant(turn, agent),
+        **grant,
         # WHY A CONFINED CALLER IS CONFINED and what would change it: their place, the
         # role the FULL profile takes, and who can give it. Roles only, never people or
         # other callers' data. null on a full profile. Additive: no VERSION bump.
-        "access_help": _access_help(turn, agent, rel),
-        "capability": _profile(agent, turn.capability, turn),
+        "access_help": _access_help(turn, agent, rel, grant),
+        "capability": context.profile.as_envelope() if agent is not None and context.profile is not None else None,
         # manual | auto for THIS turn, and why (apps/harness/turn_mode.py). What
         # `canopy agent mode --caller <path>` reads in preference to the agent-wide
         # switch, so a rule like "email from beth → auto" reaches the turn
@@ -394,6 +403,18 @@ def build(turn, *, reader_user=None) -> dict:
         # chose, and the rest follows (`credentials/authority.py`). null for a turn with
         # no agent.
         "authority": _authority(turn, agent),
+        # WHICH REPO IS THIS AGENT'S OWN (`owner/repo`), for the own-repo rail in the
+        # canopy plugin's session hook: it holds wherever the session's directory is.
+        # "" says the agent has no repo set; null says the turn has no agent. Absent
+        # (an older canopy-web) says neither, and the hook must not read it as "".
+        # Additive: no VERSION bump.
+        "agent_repo": _agent_repo(agent),
+        # WHETHER THIS IS THE PERSON'S OWN WORK ON THEIR OWN BOX, with no agent in it: the
+        # one fact `relationship` cannot say. A repo chat's `owner` is also a teammate who
+        # owns a session on someone else's box. The own-repo rail allows the first in an
+        # agent's clone, as it does a person by hand. See `_own_box_turn`. Additive: no
+        # VERSION bump.
+        "own_box_turn": _own_box_turn(turn, agent),
         # The owner-approved REPO-INTERNAL SHIP GRANT (Jonathan, 2026-10-03): when
         # another agent's login that holds this agent's keys (an explicit admin, or
         # the owner) dispatches work AT this agent, the session may push, open PRs
@@ -410,8 +431,11 @@ def build(turn, *, reader_user=None) -> dict:
         # thread 1a0d0a1632cfde4f: 14 `ask` sessions on SES receipts, each guessing.
         "trigger": _trigger(turn, ref),
         # The one session this conversation's asker asked this agent to review from its
-        # page, while that ask is live (`access._review_ask_q`). Null otherwise. Additive.
+        # page, while that ask is live (`read_asked_session`). Null otherwise. Additive.
         "session_review": _session_review(turn, agent),
+        # The one person a turn nobody asked for was dispatched for (`turn_asker.READS_FOR`):
+        # who it answers to, and all it may read or write to. Null otherwise. Additive.
+        "reads_for": _reads_for(turn),
         "thread_history": _thread_history(turn, ref),
         # WHAT THE PERSON IS LOOKING AT, when the conversation is embedded in a
         # page that declared its state: the SELECTION (ids + filters, already
@@ -563,6 +587,13 @@ def _trigger(turn, ref: dict) -> dict:
     }
 
 
+def _reads_for(turn) -> dict | None:
+    stamp = turn.origin_ref.get("reads_for") if isinstance(turn.origin_ref, dict) else None
+    who_id = stamp.get("user_id") if isinstance(stamp, dict) else None
+    person = get_user_model().objects.filter(pk=who_id).first() if isinstance(who_id, int) else None
+    return {"user_id": person.pk, "email": person.email} if person is not None else None
+
+
 def _session_review(turn, agent) -> dict | None:
     if agent is None or not turn.chat_session_id or not turn.initiator_user_id:
         return None
@@ -600,6 +631,27 @@ def _thread_history(turn, ref: dict) -> dict | None:
             _trigger(last, last.origin_ref if isinstance(last.origin_ref, dict) else {})
             ["message_count"] if last is not None else None),
     }
+
+
+def _agent_repo(agent) -> str | None:
+    if agent is None:
+        return None
+    from apps.agents.credentials.delegations import agent_repo
+
+    return agent_repo(agent)
+
+
+def _own_box_turn(turn, agent) -> bool:
+    """True only for a verified person's unconfined no-agent turn on a box they own themselves.
+
+    An agent's own login never counts, though it is `system` on its owner's box: a person with no
+    edit on an agent could otherwise have that agent dispatch a repo turn into its own clone."""
+    if agent is not None or turn.capability or turn.initiator_kind != who.USER or not is_verified(turn):
+        return False
+    user, runner = turn.initiator_user, getattr(turn, "claimed_by", None)
+    if user is None or runner is None or runner.owner_id != user.pk:
+        return False
+    return getattr(user, "agent_identity", None) is None and not acting_cap(turn)
 
 
 #: What a ship grant covers, by name, and what it pointedly does not. Both travel in
@@ -642,9 +694,7 @@ def _ship_grant(turn, agent, rel: str) -> dict | None:
     dispatcher = getattr(user, "agent_identity", None) if user is not None else None
     if dispatcher is None or dispatcher.pk == agent.pk:
         return None
-    from apps.agents.credentials.delegations import agent_repo
-
-    repo = agent_repo(agent)
+    repo = _agent_repo(agent)
     if not repo:
         return None
     return {
@@ -686,19 +736,34 @@ def _turn_mode(turn) -> dict | None:
     return None if resolved is None else {"mode": resolved.mode, "basis": resolved.basis}
 
 
-def _grant(turn, agent) -> dict:
+def _turn_context(turn, agent):
+    """What this turn runs as. The claim that just resolved it left it on the turn, so a claim asks once."""
+    held = getattr(turn, "_turn_context", None)
+    if held is not None:
+        return held
+    from apps.agents import turn_context  # noqa: PLC0415 — it imports this module
+
+    return turn_context.of_turn(turn, agent)
+
+
+def _access(turn, context) -> str:
+    from apps.agents import turn_context  # noqa: PLC0415 — it imports this module
+
+    return turn_context.REFUSED if turn_context.was_refused(turn) else context.access
+
+
+def _grant(turn, agent, context=None) -> dict:
     if agent is None:
         return {"granted_by": "no-interface", "role": None, "source": "",
                 "permissions": [], "manual_only": False}
     from apps.agents.interface import grant_facts
 
-    return grant_facts(turn, agent)
+    return grant_facts(turn, agent, context=context)
 
 
-def _access_help(turn, agent, rel: str) -> dict | None:
+def _access_help(turn, agent, rel: str, grant: dict) -> dict | None:
     if agent is None or not turn.capability:
         return None
-    grant = _grant(turn, agent)
     drivers = rolecatalog.drivers(agent.workspace_id) or [roles.EDITOR]
     return {
         "your_role": grant.get("role") or rel,
@@ -707,18 +772,3 @@ def _access_help(turn, agent, rel: str) -> dict | None:
         "who_can_grant": (f"{agent.slug}'s owner or an admin: add you to the agent's access list "
                           f"as {' or '.join(drivers)}"),
     }
-
-
-def _profile(agent, capability: str, turn=None):
-    if agent is None or not capability:
-        return None
-    from apps.agents.interface import profile
-
-    got = profile(agent, capability)
-    if "default_profile_version" in got and turn is not None and sensitivity.is_sensitive(turn):
-        # A sensitive turn stamped with a read-mode name whose capability has since gone: canopy's
-        # default read profile (Write, mail) is not what it was admitted to. Deny everything,
-        # as an unpublished capability always did.
-        return {"name": capability, "description": "", "entry": None, "tools": [], "bash": [],
-                "read_paths": [], "write_paths": []}
-    return got

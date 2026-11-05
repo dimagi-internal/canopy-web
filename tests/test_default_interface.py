@@ -1,7 +1,7 @@
 """Every agent has an interface: the default, until its owner changes it.
 
 The default is "no capability" — owner and admins only until the access list says more —
-written out, so the page can say so and `GET` never returns `{}`.
+written out, so the page can say so and a read never comes back empty.
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import pytest
 from django.contrib.auth.models import User
 from django.test import Client
 
-from apps.agents.interface import InterfaceError, default_interface, is_default, parse, validate
+from apps.agents.interface import InterfaceError, default_interface, parse, published
 from apps.agents.models import Agent
 from apps.harness import services
 from apps.harness.models import Turn
@@ -43,15 +43,14 @@ def w():
 
 def test_a_new_agent_is_created_with_the_default(w):
     assert w["agent"].interface == default_interface()
-    assert is_default(w["agent"].interface)
+    assert not published(w["agent"].interface)
     assert parse(default_interface()) == default_interface()
 
 
-def test_get_never_returns_an_empty_interface(w):
+def test_an_agent_holding_nothing_reads_as_the_default(w):
     Agent.objects.filter(pk=w["agent"].pk).update(interface={})   # a row from before the default
-    got = w["c"].get("/api/agents/echo/interface").json()
-    assert got["interface"] == default_interface() and got["is_default"] is True
-    assert "summary" not in got and "warnings" not in got
+    assert w["c"].get("/api/agents/echo/read-mode").json()["source"] == "default"
+    assert w["c"].get("/api/agents/echo/connected-sites").json()["sites"] == []
 
 
 def test_an_unknown_contact_emailing_an_agent_on_the_default_is_still_refused(w):
@@ -75,47 +74,31 @@ def test_the_backfill_gives_empty_agents_the_default_and_leaves_published_ones(w
     assert published.interface == ACE
 
 
-def test_aces_published_interface_survives_a_save_unchanged(w):
-    """The form saves the model it loaded: ACE's interface in, the same interface out."""
+def test_aces_published_interface_parses_to_itself_and_reads_as_a_custom_read_mode(w):
     assert parse(ACE) == ACE
-    r = w["c"].put("/api/agents/echo/interface", {"interface": ACE}, content_type="application/json")
-    assert r.status_code == 200, r.content
-    assert r.json()["interface"] == ACE and r.json()["is_default"] is False
-    assert w["c"].get("/api/agents/echo/interface").json()["interface"] == ACE
-    # …and the YAML view of it is the same model again.
-    import yaml
-    assert parse(yaml.safe_load(r.json()["yaml"])) == ACE
+    Agent.objects.filter(pk=w["agent"].pk).update(interface=ACE)
+    assert w["c"].get("/api/agents/echo/read-mode").json()["source"] == "custom"
 
 
-def test_reset_to_default_after_a_save(w):
-    w["c"].put("/api/agents/echo/interface", {"interface": ACE}, content_type="application/json")
-    r = w["c"].delete("/api/agents/echo/interface")
-    assert r.json()["interface"] == default_interface() and r.json()["is_default"] is True
+def test_going_back_to_the_default_after_a_save(w):
+    put = w["c"].put("/api/agents/echo/read-mode", {"tools": ["Read"]}, content_type="application/json")
+    assert put.status_code == 200 and put.json()["source"] == "custom"
+    r = w["c"].delete("/api/agents/echo/read-mode")
+    assert r.json()["source"] == "default"
     w["agent"].refresh_from_db()
-    assert w["agent"].interface == default_interface()
+    assert not published(w["agent"].interface)
 
 
-def test_validate_reports_each_fault_next_to_its_field(w):
-    draft = {"full": ["contactt"], "capabilities": {
-        "ask": {"tool": ["Read"]},
-        "site": {"ceiling": ["x*"]},
-        "old": {"callers": ["member"]},
-        "fine": {}}}
-    r = w["c"].post("/api/agents/echo/interface/validate", {"interface": draft}, content_type="application/json")
-    assert r.status_code == 200
-    paths = {e["path"] for e in r.json()["errors"]}
-    assert paths == {"full", "ask", "site.ceiling", "old.callers"}
-    assert all("access list" in e["message"] for e in r.json()["errors"] if e["path"] in ("full", "old.callers"))
-    assert validate(draft) == r.json()["errors"]
-
-
-def test_validate_a_good_draft_saves_nothing(w):
-    r = w["c"].post("/api/agents/echo/interface/validate",
-                    {"interface": {"capabilities": {"ask": {}}}},
-                    content_type="application/json")
-    assert r.json()["errors"] == [] and "summary" not in r.json() and "warnings" not in r.json()
-    w["agent"].refresh_from_db()
-    assert is_default(w["agent"].interface)
+@pytest.mark.parametrize("doc, where", [
+    ({"full": ["contactt"]}, "full"),
+    ({"capabilities": {"ask": {"tool": ["Read"]}}}, "ask"),
+    ({"capabilities": {"site": {"ceiling": ["x*"]}}}, "site.ceiling"),
+    ({"capabilities": {"old": {"callers": ["member"]}}}, "old.callers"),
+])
+def test_a_refusal_names_the_field_it_is_about(doc, where):
+    with pytest.raises(InterfaceError) as exc:
+        parse(doc)
+    assert exc.value.path == where
 
 
 @pytest.mark.parametrize("doc", [{"full": ["member"]}, {"editors": "confined"},
@@ -123,13 +106,3 @@ def test_validate_a_good_draft_saves_nothing(w):
 def test_parse_refuses_the_retired_keys_and_points_at_the_access_list(doc):
     with pytest.raises(InterfaceError, match="access list"):
         parse(doc)
-
-
-def test_validate_hands_back_the_model_and_its_yaml_so_the_form_and_yaml_can_switch(w):
-    import yaml
-    src = "capabilities:\n  ask:\n    description: Colleagues  # comment\n"
-    r = w["c"].post("/api/agents/echo/interface/validate", {"source": src}, content_type="application/json").json()
-    assert r["yaml"].strip() == src.strip() and r["interface"]["capabilities"]["ask"]["description"] == "Colleagues"
-    back = w["c"].post("/api/agents/echo/interface/validate", {"interface": r["interface"]},
-                       content_type="application/json").json()
-    assert yaml.safe_load(back["yaml"]) == r["interface"]

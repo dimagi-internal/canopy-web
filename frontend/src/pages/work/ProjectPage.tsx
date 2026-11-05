@@ -25,8 +25,10 @@ import { ProjectOverview } from '@/pages/agents/ProjectOverview'
 import { errorText } from '@/api/problem'
 import { MilestonesSection } from '@/pages/work/ProjectMilestones'
 import { PropertyHeader } from '@/pages/work/ProjectProperties'
+import { ProjectMeetings } from '@/pages/work/ProjectMeetings'
 import { ProjectServices } from '@/pages/work/ProjectServices'
 import { UpdatesSection } from '@/pages/work/ProjectUpdates'
+import { ProjectMembers } from '@/pages/work/ProjectMembers'
 import { ProjectShares } from '@/pages/work/ProjectShares'
 import { TASK_RESOURCE, useResource } from '@/widget/useResource'
 
@@ -126,8 +128,19 @@ export function ProjectPage(): JSX.Element {
       <ProjectViewsSection workspace={workspace} handle={handle} projectName={detail.name} />
       <UpdatesSection detail={detail} workspace={workspace} handle={handle} onChanged={reload} />
       <ProjectWork detail={detail} workspace={workspace} handle={handle} address={address} onChanged={reload} />
+      <ProjectMeetings
+        detail={detail}
+        workspace={workspace}
+        handle={handle}
+        onSaveInstructions={(text) => void save({ meeting_instructions: text })}
+      />
       <ProjectServices detail={detail} workspace={workspace} handle={handle} onChanged={reload} />
-      <ProjectShares detail={detail} workspace={workspace} handle={handle} onChanged={reload} />
+      {detail.visibility !== 'personal' && (
+        <>
+          <ProjectMembers detail={detail} workspace={workspace} handle={handle} onChanged={reload} />
+          <ProjectShares detail={detail} workspace={workspace} handle={handle} onChanged={reload} />
+        </>
+      )}
 
       {detail.proposal && (
         <Section id="project-proposal" title="Proposal" description="This project was proposed. Start it or decline it here.">

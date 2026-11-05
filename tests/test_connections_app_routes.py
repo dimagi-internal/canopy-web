@@ -24,6 +24,7 @@ from apps.agents.models import Agent
 from apps.connections.models import Connection, ConnectionApp
 from apps.events.models import Event, SettingChange
 from apps.passkeys.testing import grant_step_up
+from apps.workspaces.links import base_url
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from tests.fixtures.connections import (
     CLIENT_SECRET,
@@ -99,7 +100,8 @@ def test_list_shows_every_provider_set_up_or_not(admin, ws):
             {"name": "access_token_seconds", "label": row["option_fields"][1]["label"], "kind": "int",
              "required": False, "default": 1800, "help": row["option_fields"][1]["help"]},
         ],
-        "callback_url": "http://testserver/auth/connections/salesforce/w/callback/",
+        # canopy's public address, never this request's host (an MCP call runs in-process).
+        "callback_url": f"{base_url()}/auth/connections/salesforce/w/callback/",
         "connection_count": 0, "updated_at": None, "configured_by_email": "",
     }
     assert "session timeout" in row["option_fields"][1]["help"]

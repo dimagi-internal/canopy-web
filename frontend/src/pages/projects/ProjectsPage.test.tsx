@@ -112,4 +112,36 @@ describe('ProjectsPage', () => {
     )
     expect(await screen.findByText('project page')).toBeTruthy()
   })
+
+  it('asks who can see a new project, as a choice, and says what Just me means', async () => {
+    api.createWorkspaceProject.mockResolvedValue(project({ url: '/w/dimagi/projects/mine' }))
+    show()
+    fireEvent.click(await screen.findByRole('button', { name: 'New project' }))
+    const dialog = within(await screen.findByTestId('new-project-dialog'))
+    fireEvent.change(dialog.getByLabelText('Name'), { target: { value: 'Mine' } })
+    expect(dialog.getByRole('group', { name: 'Who can see this' })).toBeTruthy()
+    expect((dialog.getByRole('radio', { name: 'Workspace' }) as HTMLInputElement).checked).toBe(true)
+    expect(dialog.queryByTestId('personal-explainer')).toBeNull()
+    fireEvent.click(dialog.getByRole('radio', { name: 'Just me' }))
+    expect(dialog.getByTestId('personal-explainer').textContent).toContain('Workspace admins cannot see it')
+    // The lead of a project only you see is you: nothing to pick.
+    expect(dialog.queryByLabelText('Lead')).toBeNull()
+    fireEvent.click(dialog.getByRole('button', { name: 'Create project' }))
+    await waitFor(() => expect(api.createWorkspaceProject).toHaveBeenCalled())
+    expect(api.createWorkspaceProject.mock.calls[0][0]).toMatchObject({ name: 'Mine', visibility: 'personal' })
+    expect(api.createWorkspaceProject.mock.calls[0][0]).not.toHaveProperty('owner_email')
+  })
+
+  it('marks a personal project in the list, and no other', async () => {
+    api.listProjects.mockResolvedValue([
+      project({ id: 1, name: 'Mine', visibility: 'personal', address: 'dimagi/mine' }),
+      project({ id: 2, name: 'Ours', visibility: 'workspace', address: 'dimagi/ours' }),
+    ])
+    show()
+    await screen.findByText('Mine')
+    const badges = screen.getAllByTestId('personal-badge')
+    expect(badges).toHaveLength(1)
+    expect(badges[0].textContent).toBe('Personal')
+    expect(badges[0].closest('[data-project]')?.getAttribute('data-project')).toBe('dimagi/mine')
+  })
 })

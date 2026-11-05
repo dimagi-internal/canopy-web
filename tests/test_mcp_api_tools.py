@@ -378,11 +378,17 @@ def test_owner_actions_are_tools_too(db):
     `create_token` is the one omission — a tool would put a raw PAT in a chat."""
     tools = _tools()
     for name in ("transfer_owner", "grant_admin", "revoke_admin", "link_canopy_user",
-                 "set_runner_flags", "publish_interface", "set_agent_credentials",
+                 "set_runner_flags", "set_agent_credentials",
+                 "get_read_mode", "put_read_mode", "reset_read_mode",
+                 "list_connected_sites", "put_connected_site", "delete_connected_site",
                  "create_invite", "set_member_role",
                  "remove_member"):
         assert name in tools, name
     assert "create_token" not in tools
+    for name in ("get_interface", "publish_interface", "validate_interface", "reset_interface",
+                 "set_capability_sensitive"):
+        assert name not in tools, name
+
 
 def test_a_script_prefix_is_not_part_of_a_tool_path():
     """Labs serves canopy under /canopy, and Ninja writes that into every path.

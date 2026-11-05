@@ -4,6 +4,7 @@ import { type ProjectDetail, type ProjectPatch } from '@/api/work'
 import { PriorityPicker } from '@/components/work/bits'
 import { PROJECT_STATUSES, displayAgent, priorityLabel } from '@/components/work/meta'
 import {
+  PersonalBadge,
   AgentPicker,
   AgentsPicker,
   HealthBadge,
@@ -36,6 +37,12 @@ export function PropertyHeader({
         onSave={(name) => void onSave({ name })}
         className="text-xl font-semibold text-foreground"
       />
+      {detail.visibility === 'personal' && (
+        <p className="mt-1 flex items-center gap-2 text-[13px] text-muted-foreground">
+          <PersonalBadge project={detail} />
+          Only its lead and the agents on it can see this project.
+        </p>
+      )}
       <dl className="mt-3 grid grid-cols-[7rem_1fr] gap-x-3 gap-y-1.5 text-[13px] sm:grid-cols-[7rem_1fr_7rem_1fr]" data-testid="project-properties">
         <Prop label="Status">
           <StatusControl detail={detail} onChange={(status) => void onSave({ status })} />

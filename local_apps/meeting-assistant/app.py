@@ -17,6 +17,8 @@ A feed that goes subtly wrong is silent, and what leaks is someone's conversatio
   * ONE ANSWER AT A TIME. Each send starts a turn. While the last one is unfinished, text
     accumulates instead of queueing turns that would answer minutes-old talk.
   * EVENTS ARE COUNTS ONLY. Logs end up in agent transcripts, so no spoken word goes in one.
+  * ONLY A FINISHED MEETING IS KEPT. When a meeting ends by itself the whole transcript is saved,
+    private to the person. Stop and a deleted meeting save nothing: both mean they said no.
 
 The session is opened only when the first batch is ready, so a source that refuses to
 attach (a stale meeting, no meeting) leaves no empty session behind.
@@ -41,6 +43,11 @@ MIN_WORDS = 8
 #: Under the server's limit for one message, leaving room for the notes around the text.
 MAX_BATCH_CHARS = 50_000
 IDLE_STOP_SECONDS = 600.0
+#: How a meeting ends by itself. Stop, time running out and a deleted meeting aren't these.
+KEPT_REASONS = {"meeting_ended", "no_new_speech"}
+#: Under the server's limit for one request, counted as sent: other scripts grow when escaped.
+MAX_SAVED_ENCODED = 2_300_000
+SAVE_RETRY_SECONDS = 5.0
 CALL_TIMEOUT_SECONDS = 90.0
 
 
@@ -80,6 +87,13 @@ def utterances(segments: list) -> list:
         if text:
             out.append((start, speaker or "Unknown speaker", text))
     return out
+
+
+def fit_to_save(text: str) -> str:
+    """Keep the start of a transcript too long for one request, which only a very long meeting is."""
+    while len(json.dumps(text)) > MAX_SAVED_ENCODED:
+        text = text[: int(len(text) * 0.9)]
+    return text
 
 
 def clock(seconds: float) -> str:
@@ -137,6 +151,7 @@ class Feed:
         self.started = self.last_new = self.last_send = now()
         self.sequence = self.sent_batches = self.sent_words = 0
         self.buffer: list = []
+        self.everything: list = []
         self.pending: Batch | None = None
         self.last_turn = None
         self.ended = False
@@ -144,6 +159,7 @@ class Feed:
 
     def add_segment(self, segment: dict) -> None:
         self.buffer.append(segment)
+        self.everything.append(segment)
         self.last_new = self.now()
 
     def mark_ended(self) -> None:
@@ -152,7 +168,7 @@ class Feed:
     def mark_gone(self) -> None:
         """The person may have deleted it: nothing held may go anywhere."""
         words = word_count(self.buffer) + (self.pending.words if self.pending else 0)
-        self.buffer, self.pending = [], None
+        self.buffer, self.pending, self.everything = [], None, []
         if words:
             self.log("dropped_unsent", words=words)
         self.stop_reason = "meeting_gone"
@@ -265,6 +281,9 @@ class CanopyPoster:
         return self._ask("sessions.send", {"session_id": session_id, "text": text,
                                            "client_id": client_id}).get("turn_id")
 
+    def save_meeting(self, text: str) -> dict:
+        return self._ask("meetings.save", {"title": self.title, "text": text, "source": "superwhisper"})
+
     def turn_status(self, turn_id: str):
         return self._ask("turns.status", {"turn_id": turn_id}).get("status")
 
@@ -375,7 +394,40 @@ class App:
                     self._on_message(message)
             self.feed.tick()
             self._report()
+        self._save(poster)
         return self.feed.stop_reason
+
+    def _wait(self, seconds: float) -> None:
+        """Let a stop or a deletion that has already arrived take effect."""
+        deadline = time.monotonic() + seconds
+        while True:
+            message = self.wire.receive(max(0.0, deadline - time.monotonic()) or 0.01)
+            if message is not None:
+                self._on_message(message)
+            elif time.monotonic() >= deadline:
+                return
+
+    def _save(self, poster: CanopyPoster) -> None:
+        """The meeting ended by itself, so what was said goes on the person's private record. A stop
+        or a deletion is honoured right up to the moment it goes: Stopping ends this outright, and
+        a deleted meeting has emptied `everything` and changed the reason."""
+        for attempt in range(1, FINAL_SEND_ATTEMPTS + 1):
+            self._wait(SAVE_RETRY_SECONDS * (attempt - 1))
+            if self.feed.stop_reason not in KEPT_REASONS or not self.feed.everything:
+                return
+            text = fit_to_save("\n".join(
+                f"[{clock(start)}] {speaker}: {spoken}" for start, speaker, spoken in utterances(self.feed.everything)
+            ))
+            try:
+                body = poster.save_meeting(text)
+            except Refused:
+                self.wire.event("save_refused")
+                return
+            except Exception as exc:  # noqa: BLE001 — retried; the name of the failure holds no words
+                self.wire.event("save_failed", attempt=attempt, error=type(exc).__name__)
+                continue
+            self.wire.event("saved", meeting_url=body.get("url") or "")
+            return
 
 
 def main() -> int:

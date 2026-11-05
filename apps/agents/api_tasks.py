@@ -20,9 +20,9 @@ from apps.api.route_gates import gate
 from apps.events import audit
 from apps.harness import turn_status
 from apps.harness.models import Turn
-from apps.workspaces.links import base_url
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
+from apps.workspaces.links import base_url
 from apps.workspaces.models import Workspace
 
 from . import proposals, services, work
@@ -35,6 +35,7 @@ from .gates import (
     project_agent_login,
     project_ws_or_404,
     require_project_edit,
+    task_in_reach,
     task_or_404,
     visible_agent_workspaces,
 )
@@ -109,14 +110,16 @@ def _turn_of(task: AgentTask) -> TaskTurnOut | None:
 
 def task_detail(request: HttpRequest, task: AgentTask) -> TaskDetailOut:
     task = work.task_rows(AgentTask.objects.filter(pk=task.pk)).get()
-    subtasks = list(work.task_rows(task.subtasks.all()).order_by("rank", "id"))
+    subtasks = list(work.task_rows(task.subtasks.filter(services.task_read_q(request.user))).order_by("rank", "id"))
+    parent = task.parent if task.parent_id and task_in_reach(request, task.parent) else None
     return TaskDetailOut(
         **AgentTaskOut.model_validate(task).model_dump(),
         actions=[AgentTaskActionOut.model_validate(a) for a in task.actions.select_related("agent", "task")],
         events=[_event_out(e) for e in work.events_of(task)],
-        relations=[TaskRelationOut(kind=r["kind"], task=_brief(r["task"])) for r in work.relations_of(task)],
+        relations=[TaskRelationOut(kind=r["kind"], task=_brief(r["task"])) for r in work.relations_of(task)
+                   if task_in_reach(request, r["task"])],
         subtasks=[AgentTaskOut.model_validate(t) for t in subtasks],
-        parent=_brief(task.parent) if task.parent_id else None,
+        parent=_brief(parent) if parent else None,
         turn=_turn_of(task),
         blocked=work.is_blocked(task),
         may_edit=may_edit_task(request, task),
@@ -240,7 +243,8 @@ def list_triage(request: HttpRequest, workspace: str = "", project: str = "",
     listed = listed_agent_workspaces(request)
     scope = [workspace] if workspace and workspace in listed else list(listed)
     tasks = services.filter_tasks(
-        work.task_rows(AgentTask.objects.filter(workspace_id__in=scope, status=AgentTask.SUGGESTED)),
+        work.task_rows(AgentTask.objects.filter(services.task_read_q(request.user), workspace_id__in=scope,
+                                                status=AgentTask.SUGGESTED)),
         user=request.user, project=project, snoozed="hide",
     ).filter(Q(origin_ref__kind__isnull=True) | ~Q(origin_ref__kind=proposals.DECISION))
     stances = {r["task_id"]: r for r in ProjectBacking.objects.filter(task__in=tasks).values("task_id").annotate(
@@ -254,7 +258,8 @@ def list_triage(request: HttpRequest, workspace: str = "", project: str = "",
         passes=stances.get(t.pk, {}).get("p", 0), ask_kind=t.ask_kind, confidence=t.confidence,
         priority=t.priority, human_why=t.human_why) for t in tasks.order_by("created_at", "id")[:clamp_limit(limit)]]
     if not project:
-        projects = list(AgentProject.objects.filter(workspace_id__in=scope, status=AgentProject.PROPOSED)
+        projects = list(AgentProject.objects.filter(services.project_read_q(request.user), workspace_id__in=scope,
+                                                    status=AgentProject.PROPOSED)
                         .select_related("agent").annotate(
                             b=Count("backings", filter=~Q(backings__stance=ProjectBacking.PASSES)),
                             p=Count("backings", filter=Q(backings__stance=ProjectBacking.PASSES))))
@@ -442,7 +447,7 @@ def list_milestones(request: HttpRequest, workspace: str, handle: str) -> list[M
 @router.post("/workspace-projects/{workspace}/{handle}/milestones/", response={201: MilestoneOut},
              summary="Add a milestone to a project")
 # an editor of its workspace or its lead agent's, its lead, or a working agent's own login
-@gate("agent.work", "agent-login", "self", kind="content")
+@gate("agent.work", "agent-login", "self", "project-member", kind="content")
 def create_milestone(request: HttpRequest, workspace: str, handle: str, payload: MilestoneIn) -> Status:
     project = project_ws_or_404(request, workspace, handle)
     require_project_edit(request, project)
@@ -463,7 +468,7 @@ def _milestone_or_404(project, milestone_id: int):
 @router.patch("/workspace-projects/{workspace}/{handle}/milestones/{milestone_id}", response=MilestoneOut,
               summary="Change a project's milestone")
 # an editor of its workspace or its lead agent's, its lead, or a working agent's own login
-@gate("agent.work", "agent-login", "self", kind="content")
+@gate("agent.work", "agent-login", "self", "project-member", kind="content")
 def update_milestone(request: HttpRequest, workspace: str, handle: str, milestone_id: int,
                      payload: MilestonePatch) -> MilestoneOut:
     project = project_ws_or_404(request, workspace, handle)
@@ -478,7 +483,7 @@ def update_milestone(request: HttpRequest, workspace: str, handle: str, mileston
 @router.delete("/workspace-projects/{workspace}/{handle}/milestones/{milestone_id}", response={204: None},
                summary="Delete a project's milestone (its tasks stay, without it)")
 # an editor of its workspace or its lead agent's, its lead, or a working agent's own login
-@gate("agent.work", "agent-login", "self", kind="content")
+@gate("agent.work", "agent-login", "self", "project-member", kind="content")
 def delete_milestone(request: HttpRequest, workspace: str, handle: str, milestone_id: int):
     project = project_ws_or_404(request, workspace, handle)
     require_project_edit(request, project)
@@ -501,7 +506,7 @@ def list_project_updates(request: HttpRequest, workspace: str, handle: str,
 @router.post("/workspace-projects/{workspace}/{handle}/updates/", response={201: ProjectUpdateOut},
              summary="Post a project update: its health and a short note")
 # an editor of its workspace or its lead agent's, its lead, or a working agent's own login
-@gate("agent.work", "agent-login", "self", kind="content")
+@gate("agent.work", "agent-login", "self", "project-member", kind="content")
 def post_project_update(request: HttpRequest, workspace: str, handle: str, payload: ProjectUpdateIn) -> Status:
     """A person's update is published (unless `draft`). An agent posting under
     its own login always writes a draft — the lead publishes it, choosing the
@@ -524,7 +529,7 @@ def post_project_update(request: HttpRequest, workspace: str, handle: str, paylo
              summary="Publish a drafted project update, choosing its health")
 # a person who may change the project; an agent's own login only as the project's
 # lead agent, its own draft, where an admin has turned `lead_agent_may_publish` on
-@gate("agent.work", "agent-login", "self", kind="content")
+@gate("agent.work", "agent-login", "self", "project-member", kind="content")
 def publish_project_update(request: HttpRequest, workspace: str, handle: str, update_id: int,
                            payload: ProjectUpdatePublishIn) -> ProjectUpdateOut:
     """A person publishes a draft, choosing its health. An agent drafts and a
@@ -589,7 +594,7 @@ def list_project_services(request: HttpRequest, workspace: str, handle: str) -> 
 @router.post("/workspace-projects/{workspace}/{handle}/services/", response={201: ProjectServiceOut},
              summary="Share an MCP server, a skill or a plugin with the workspace, from this project")
 # an editor of its workspace or its lead agent's, its lead, or a working agent's own login
-@gate("agent.work", "agent-login", "self", kind="content")
+@gate("agent.work", "agent-login", "self", "project-member", kind="content")
 def add_project_service(request: HttpRequest, workspace: str, handle: str, payload: ProjectServiceIn) -> Status:
     """Listed on the project page and, for an MCP server, in the workspace's
     directory (`GET /api/mcp-servers/`). canopy does not proxy or vet a remote
@@ -614,7 +619,7 @@ def _service_or_404(project, service_id: int):
 @router.patch("/workspace-projects/{workspace}/{handle}/services/{service_id}", response=ProjectServiceOut,
               summary="Change a shared MCP server, skill or plugin")
 # an editor of its workspace or its lead agent's, its lead, or a working agent's own login
-@gate("agent.work", "agent-login", "self", kind="content")
+@gate("agent.work", "agent-login", "self", "project-member", kind="content")
 def update_project_service(request: HttpRequest, workspace: str, handle: str, service_id: int,
                            payload: ProjectServicePatch) -> ProjectServiceOut:
     project = project_ws_or_404(request, workspace, handle)
@@ -629,7 +634,7 @@ def update_project_service(request: HttpRequest, workspace: str, handle: str, se
 @router.delete("/workspace-projects/{workspace}/{handle}/services/{service_id}", response={204: None},
                summary="Stop sharing an MCP server, skill or plugin")
 # an editor of its workspace or its lead agent's, its lead, or a working agent's own login
-@gate("agent.work", "agent-login", "self", kind="content")
+@gate("agent.work", "agent-login", "self", "project-member", kind="content")
 def remove_project_service(request: HttpRequest, workspace: str, handle: str, service_id: int):
     """A knowledge base is not removed here: it has its own version log."""
     project = project_ws_or_404(request, workspace, handle)

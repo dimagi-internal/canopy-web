@@ -54,7 +54,7 @@ def problem_for(exc: services.ConnectionError, *, title: str, owner: str, detail
         "insufficient_scope": f"{title} did not grant every permission canopy needs; connect again "
                               "and allow them all.",
         "provider_unavailable": f"{title} could not be reached; try again.",
-        "no_vault_key": f"Set up your vault key first (Settings → Vault key): "
+        "no_vault_key": f"Set up your vault key first (Settings → Security): "
                         f"{owner.lower() if owner == 'Your' else owner} {title} connection is sealed to it.",
         "provider_error": f"{title} refused the request.",
     }.get(exc.code, str(exc))

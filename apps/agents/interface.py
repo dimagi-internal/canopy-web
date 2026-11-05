@@ -14,7 +14,7 @@ Who may use which capability is NOT here: it is the agent's access list
 (`apps/agents/grants.py`, `docs/superpowers/specs/2026-10-30-agent-roles-and-access-list-design.md`).
 This says only what each capability IS — its tools, paths and sites — and never who may use
 it (a capability no longer carries a `role:`). THE rule that decides who gets which is
-`apps/agents/access.decide`; every term is defined in `docs/architecture/access.md`.
+`apps/agents/turn_context.resolve_turn_context`; every term is defined in `docs/architecture/access.md`.
 
 An agent's owner and admins reach its full working session; so does anyone the access list
 gives `write`. Everyone else — a `read_only` line, a line naming one capability — reaches only
@@ -107,7 +107,6 @@ from apps.agents.interface_default import (  # noqa: F401  (re-exported)
     is_read_mode,
 )
 from apps.canopy_sessions.models import SessionParticipant
-from apps.harness import initiator as who
 from apps.harness import invocations
 
 logger = logging.getLogger(__name__)
@@ -115,7 +114,7 @@ logger = logging.getLogger(__name__)
 #: The fallback capability for a free-form channel (email, chat, Slack, a widget on a
 #: page that declared nothing). Named capabilities are for callers that ask for
 #: something specific, or for a page whose declared resource matches one's
-#: `pages` — see `_page_capability`.
+#: `pages` — see `page_entry`.
 ASK = "ask"
 
 #: canopy's gateway to a Connected site's own tools, added to every capability
@@ -128,6 +127,15 @@ GATEWAY_TOOLS = ("mcp__*canopy-web__site_tools", "mcp__*canopy-web__site_call",
 #: page, and what that page offers is part of the capability. Each runs in the visitor's
 #: own tab, as them; a confined turn reaches only its own conversation's page.
 PAGE_TOOLS = ("mcp__*canopy-web__page_*",)
+
+#: The door every turn of a one-session review runs in, whoever asks: canopy's, built here, on
+#: every agent, never publishable (`parse`) and never widened by a published one. It reads the
+#: asked session and replies, because that transcript is text someone may have aimed at it.
+SESSION_REVIEW = "session_review"
+#: What it holds. No Bash, no Write, no other canopy tool. `read_asked_session` takes no
+#: session id; canopy reads the one the conversation's live ask names.
+SESSION_REVIEW_TOOLS = ("Read", "ToolSearch", "mcp__*canopy-web__who_is_asking",
+                        "mcp__*canopy-web__read_asked_session")
 
 #: `Turn.capability` for a turn in the agent's FULL profile. Empty so that every
 #: turn predating this reads as "full", which is what it was.
@@ -231,6 +239,8 @@ def parse(doc) -> dict:
     for name, cap in caps.items():
         if not isinstance(name, str) or not _NAME.match(name):
             raise InterfaceError(f"capability name {name!r} must match {_NAME.pattern}")
+        if name == SESSION_REVIEW:
+            raise InterfaceError(f"capability name {name!r} is canopy's own and cannot be published")
         if not isinstance(cap, dict):
             raise InterfaceError(f"{name} must be a mapping")
         for key in ("callers", "role"):
@@ -364,14 +374,17 @@ def _pages(value, cap: str) -> list[str]:
 
 def _declared_resource(turn) -> str:
     """What the page attached to this turn's conversation says it is showing."""
-    session = getattr(turn, "chat_session", None)
+    return session_resource(getattr(turn, "chat_session", None))
+
+
+def session_resource(session) -> str:
     state = getattr(session, "page_state", None) or {} if session is not None else {}
     resource = state.get("resource")
     return resource if isinstance(resource, str) else ""
 
 
-def _page_capability(turn, iface: dict, opens) -> str | None:
-    """The capability whose `pages` match what this turn's page declared.
+def page_entry(resource: str, iface: dict, opens) -> str | None:
+    """The capability whose `pages` match what this conversation's page declared.
 
     Checked before falling back to `ask`, so a conversation held on a page the
     agent has declared a capability for gets THAT capability, and every other channel is
@@ -386,7 +399,6 @@ def _page_capability(turn, iface: dict, opens) -> str | None:
     """
     from fnmatch import fnmatchcase
 
-    resource = _declared_resource(turn)
     if not resource:
         return None
     for name, cap in (iface.get("capabilities") or {}).items():
@@ -402,20 +414,22 @@ def _conversation_site(turn) -> str:
     """The Connected site this turn's conversation is held on — the session's
     server-owned `embed_app`, stamped from the token that created it, never from
     anything the page or the caller sent."""
-    session = getattr(turn, "chat_session", None)
+    return session_site(getattr(turn, "chat_session", None))
+
+
+def session_site(session) -> str:
     meta = (getattr(session, "metadata", None) or {}) if session is not None else {}
     site = meta.get("embed_app")
     return site.strip() if isinstance(site, str) else ""
 
 
-def _site_capability(turn, iface: dict, opens) -> str | None:
+def site_entry(site: str, iface: dict, opens) -> str | None:
     """The capability whose `sites` include the site this conversation is on.
 
-    Tried after `_page_capability` (a page-specific capability is the narrower one)
+    Tried after `page_entry` (a page-specific capability is the narrower one)
     and before falling back to `ask`. A capability the caller's class is not
     listed for is skipped, exactly as for pages.
     """
-    site = _conversation_site(turn)
     if not site:
         return None
     for name, cap in (iface.get("capabilities") or {}).items():
@@ -494,121 +508,51 @@ def published(iface: dict) -> bool:
     return bool(iface.get("capabilities"))
 
 
-#: THE default interface (`default_interface`, from `interface_default.py`), which every agent
-#: has until its owner changes it: no capability. Only its owner, its admins and the editors
-#: its access list names reach it.
-def is_default(iface: dict | None) -> bool:
-    """Whether this interface is the default (or empty, which reads the same)."""
-    return not published(iface or {})
+def is_review_turn(turn) -> bool:
+    """Whether `turn` belongs to a chat opened by asking for a one-session review."""
+    from apps.canopy_sessions import access as session_access  # noqa: PLC0415 — access imports the agents app
+
+    return session_access.is_review_conversation(session_access.turn_conversation(turn))
 
 
-def validate(doc) -> list[dict]:
-    """Every problem with a draft, as `[{path, message}]` — [] when `parse` accepts it.
+def session_writers(session, agent) -> list[tuple[int, str]]:
+    """Who in `session` holds the agent's whole profile by being in it, as `(user_id, role)`: someone
+    who holds it STARTED the session and gave them an owner/editor participant row in it.
 
-    `parse` stops at the first fault; a form wants one per field, so the top level
-    and each capability are parsed on their own. The server's parser stays the
-    only judge: this never decides what is valid, it only asks `parse` more than once.
+    A person let into the owner's conversation is part of it: their turn continues the SAME session, in
+    its profile. Confining them to a capability instead keys their turn to a separate `cx-` session on
+    the runner, so a colleague replying in the owner's Slack thread landed in a fresh session the owner
+    never saw (Jonathan, 2026-10-01: "if the user has access to my session, it should come back in the
+    session I already started").
+
+    Both halves are load-bearing. The creator must be the agent's owner or an admin: otherwise any
+    member could start their own chat with the agent and be "the owner of a session", which would undo
+    the interface for everyone. And the grant must be an explicit row: `role_for` also makes every
+    tenant member an editor of a runner-discovered session, a convenience for the web UI rather than
+    anyone being let into this conversation.
     """
-    errors: list[dict] = []
-
-    def attempt(piece, path: str = ""):
-        try:
-            parse(piece)
-        except InterfaceError as exc:
-            errors.append({"path": exc.path or path, "message": str(exc)})
-
-    if not isinstance(doc, dict):
-        attempt(doc)
-        return errors
-    attempt({k: v for k, v in doc.items() if k != "capabilities"})
-    caps = doc.get("capabilities") or {}
-    if not isinstance(caps, dict):
-        attempt({"capabilities": caps}, "capabilities")
-        return errors
-    if len(caps) > 50:
-        attempt({"capabilities": caps}, "capabilities")
-    for name, cap in caps.items():
-        attempt({"capabilities": {name: cap}}, str(name))
-    return errors
-
-
-def session_writer(turn, agent) -> str | None:
-    """The asker's role in the session this turn continues, when someone who
-    holds the agent's whole profile STARTED that session and gave the asker an
-    owner/editor participant row in it — else None.
-
-    A person let into the owner's conversation is part of it: their turn
-    continues the SAME session, in its profile. Confining them to a capability
-    instead keys their turn to a separate `cx-` session on the runner, so a
-    colleague replying in the owner's Slack thread landed in a fresh session the
-    owner never saw (Jonathan, 2026-10-01: "if the user has access to my
-    session, it should come back in the session I already started").
-
-    Both halves are load-bearing. The creator must be the agent's owner or an
-    admin: otherwise any member could start their own chat with the agent and
-    be "the owner of a session", which would undo the interface for everyone.
-    And the grant must be an explicit row: `role_for` also makes every tenant
-    member an editor of a runner-discovered session, a convenience for the web
-    UI rather than anyone being let into this conversation.
-    """
-    if agent is None or turn.initiator_kind != who.USER or not getattr(turn, "chat_session_id", None):
-        return None
-    user, session = turn.initiator_user, turn.chat_session
     creator = session.created_by
-    if user is None or creator is None:
-        return None
+    if creator is None:
+        return []
     if creator.pk != agent.owner_id and not agent.is_admin(creator):
-        return None
+        return []
+    rows = (SessionParticipant.objects.filter(
+        session=session, role__in=(SessionParticipant.OWNER, SessionParticipant.EDITOR))
+        .order_by("user_id").values_list("user_id", "role"))
+    return list(rows)
 
-    role = (SessionParticipant.objects.filter(session=session, user=user)
-            .values_list("role", flat=True).first())
-    return role if role in (SessionParticipant.OWNER, SessionParticipant.EDITOR) else None
 
-
-def grant_facts(turn, agent) -> dict:
-    """The envelope's account of the asker's standing, from ONE decision: `granted_by`
+def grant_facts(turn, agent, *, context=None) -> dict:
+    """The envelope's account of the asker's standing, from the Turn Context: `granted_by`
     (one word: owner | admin | system | session:<role> | grant:<line> | capability:<name> | refused), `role` (where they stand on the agent's role ladder, None
     when refused), `source` (what put them there: owner | admin | system |
     capability:<name> | session | list:<access-list line>), `permissions` (what they hold on
-    THIS turn, sorted; see `_held_permissions`) and `manual_only`."""
-    from . import access  # cycle: agents.access -> agents.interface  # noqa: PLC0415
+    THIS turn, sorted) and `manual_only`. `context`: the turn's, when the caller already holds it."""
+    from . import turn_context  # cycle: agents.turn_context -> agents.interface  # noqa: PLC0415
 
-    d = access.decide_for_turn(turn, agent, turn.capability or None)
-    if d.access == access.NONE and turn.capability:
-        d = access.decide_for_turn(turn, agent)   # the stamped capability no longer admits them: as before
-    # The capability the turn was STAMPED with at enqueue (a requested one may differ from
-    # the free-form one `decide` falls back to).
-    why = f"capability:{turn.capability or d.capability}" if d.access == access.CONFINED else d.basis
-    return {"granted_by": why, "role": d.agent_role, "source": d.source,
-            "permissions": _held_permissions(d, turn.capability or None),
-            "manual_only": bool(d.manual_only)}
-
-
-def _held_permissions(d, stamped: str | None) -> list[str]:
-    # What the asker holds on this agent for THIS turn, from the one decision `d`. A full turn
-    # holds everything their role or lines give (closed under the dependency rule, so `write`
-    # is in it exactly when the turn is full). A confined turn holds `read` and its
-    # capability's `use:<name>` only, even for an owner a sensitive conversation confined.
-    # A refusal holds nothing.
-    from . import access  # cycle: agents.access -> agents.interface  # noqa: PLC0415
-
-    if d.access == access.NONE:
-        return []
-    # `system` is not in the role table: it may do what an admin may.
-    role = roles.ADMIN if d.agent_role == roles.SYSTEM else d.agent_role
-    held = d.permissions or roles.permissions_of(role)
-    # `profile` in the envelope is "confined" iff the turn carries a capability stamp, so the
-    # stamp confines here too: `profile == full` iff `write` is in the list.
-    if d.access == access.FULL and not stamped:
-        return sorted(held)
-    name = stamped or d.capability
-    if is_read_mode(name):
-        # Read mode is `read`, not a door: nothing is named after it (no `use:read`, no `use:ask`).
-        return [roles.READ]
-    kept = {p for p in held if p == roles.READ or (p.startswith(f"{roles.USE}:") and p != f"{roles.USE}:*")}
-    if name:
-        kept.add(roles.use(name))
-    return sorted(kept)
+    d = context if context is not None else turn_context.of_turn(turn, agent)
+    return {"granted_by": d.basis, "role": d.standing.agent_role, "source": d.standing.source,
+            "permissions": d.held_permissions, "manual_only": bool(d.review.manual_only)}
 
 
 def reachable(permissions, iface: dict | None) -> list[str]:
@@ -634,13 +578,13 @@ def offered_to(user, agent) -> list[str]:
     caps = iface.get("capabilities") or {}
     if not getattr(user, "is_authenticated", False):
         return []
-    from . import access  # cycle: agents.access -> agents.interface  # noqa: PLC0415
+    from . import turn_context  # cycle: agents.turn_context -> agents.interface  # noqa: PLC0415
 
-    d = access.decide(agent, user, verified=True)
-    if d.access == access.FULL:
+    d = turn_context.for_asker(agent, user, verified=True)
+    if d.access == turn_context.FULL:
         return sorted(caps)
-    if d.access == access.CONFINED:
-        return reachable(d.permissions, iface)
+    if d.access == turn_context.CONFINED:
+        return reachable(d.standing.permissions, iface)
     return []
 
 
@@ -653,6 +597,10 @@ def profile(agent, capability: str) -> dict | None:
     """
     if capability == FULL:
         return None
+    if capability == SESSION_REVIEW:
+        return {"name": SESSION_REVIEW, "entry": None, "tools": list(SESSION_REVIEW_TOOLS), "bash": [],
+                "description": f"{agent.slug} reviews one session someone asked it to, and replies to them.",
+                "read_paths": ["{cwd}/**"], "write_paths": []}
     _published, cap = published_capability(getattr(agent, "interface", None), capability)
     default_version = None
     if cap is None and is_read_mode(capability):

@@ -23,7 +23,7 @@ from apps.harness.models import Turn
 from . import activity as session_activity
 from . import attach, authorship, services, transcript_read
 from . import lifecycle
-from .models import Message, RunnerBinding, Session
+from .models import DeletedTranscript, Message, RunnerBinding, Session
 from .transcript_noise import is_system_noise, scrub_nul
 
 logger = logging.getLogger(__name__)
@@ -263,7 +263,7 @@ def _move_binding_to_successor(old, binding, *, transcript_id: str = "", success
             # The successor of the session whose task name was reused.
             **provenance.session_fields(parent={"session": old}, forked_from=str(old.pk)),
         )
-    elif successor.status != Session.ACTIVE:
+    elif successor.status != Session.ACTIVE and successor.content_deleted_at is None:
         successor.status = Session.ACTIVE
         successor.save(update_fields=["status", "updated_at"])
     # The successor carries the same box conversation on, so it is held to what
@@ -386,6 +386,25 @@ class Recorded:
     created: int = 0
 
 
+def refuses_ship(session, transcript_id: str = "") -> bool:
+    """Must a ship into `session` under `transcript_id` be dropped? THE upload tombstone,
+    read fresh (the caller's instance may predate the delete): the session's words were
+    deleted, or this transcript belongs to a session whose words were. A new session row
+    the deleted transcript landed in, holding nothing else, is emptied with it at once, so
+    its tail and title stop showing that conversation too (`content_deletion.absorb`)."""
+    deleted = (Session.objects.filter(pk=session.pk)
+               .values_list("content_deleted_at", flat=True).first())
+    if deleted is not None:
+        return True
+    if not transcript_id or not DeletedTranscript.objects.filter(transcript_id=transcript_id).exists():
+        return False
+    from . import content_deletion  # noqa: PLC0415 — cycle: content_deletion -> session_state -> transcript_read
+
+    content_deletion.absorb(session)
+    logger.info("dropped a ship of a deleted transcript into session %s", session.pk)
+    return True
+
+
 def persist_transcript_rows(session, rows, *, attribute: bool = True) -> int:
     """`record_transcript` for a caller that needs only how many rows it wrote."""
     return record_transcript(session, rows, attribute=attribute).created
@@ -481,6 +500,8 @@ def record_transcript(session, rows, *, transcript_id: str = "", epoch: int | No
     can already be held: a row with none always gets a FRESH one from
     `_next_index`, one past the session's high-water mark, so it can never
     collide — the precomputed set below only needs to check those."""
+    if refuses_ship(session, transcript_id):
+        return Recorded(session=session)
     if transcript_id:
         session = fork_if_name_reused(session, transcript_id) or session
     rows = conforming_rows(session, rows)
@@ -489,6 +510,11 @@ def record_transcript(session, rows, *, transcript_id: str = "", epoch: int | No
         # binding lock is what makes the identity decision and the offset read
         # one step — a concurrent ship that opens an epoch waits for this write.
         binding = RunnerBinding.objects.select_for_update().filter(session=session).first()
+        # Read again under the locks a delete takes (`content_deletion`): a ship that
+        # raced it either finished first, and its rows went with the rest, or stops here.
+        if (Session.objects.select_for_update().filter(pk=session.pk)
+                .values_list("content_deleted_at", flat=True).first()) is not None:
+            return Recorded(session=session)
         _adopt_transcript(binding, session, transcript_id)
         locked = Session.objects.select_for_update().get(pk=session.pk)
         if epoch is not None:
@@ -894,6 +920,8 @@ def project_events(turn: Turn, rows) -> int:
     if not turn.chat_session_id:
         return 0
     if services.transcript_sourced(turn.chat_session):
+        return 0
+    if turn.chat_session.content_deleted_at is not None:
         return 0
     from apps.harness import sensitivity
 

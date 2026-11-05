@@ -373,6 +373,13 @@ class MessagePageOut(Schema):
     has_more_before: bool
 
 
+class AskedSessionPageOut(Schema):
+    """One backward page of the one session a review chat was asked about."""
+    session_id: uuid.UUID
+    messages: list[MessageOut]
+    has_more_before: bool
+
+
 class HumanInputPageOut(Schema):
     """One forward page of what PEOPLE typed into a session, oldest first."""
     messages: list[MessageOut]
@@ -416,8 +423,8 @@ class NoiseReportOut(Schema):
 
 
 class NoisePurgeIn(Schema):
-    #: Restrict to one session (UUID). Omit for all your sessions.
-    session_id: str | None = None
+    #: Restrict to one session. Omit for all your sessions.
+    session_id: uuid.UUID | None = None
     #: Actually delete. Default False: a dry run that deletes nothing.
     apply: bool = False
     #: Example rows to include (clamped to 50).
@@ -429,7 +436,16 @@ class NoisePurgeOut(NoiseReportOut):
     deleted: int
 
 
+class SessionContentDeletedOut(Schema):
+    deleted_at: dt.datetime
+    messages: int
+    attachments: int
+    turns: int
+
+
 class SessionOut(Schema):
+    # Set once its person deleted this session's words: the row stays and takes no more.
+    content_deleted_at: dt.datetime | None = None
     # A requested full-history ship is still outstanding (the runner has not sent
     # its final chunk). Lets "Load full session" wait on an exact signal rather
     # than on a timer or on rows-stopped-growing, neither of which can tell "still
@@ -628,6 +644,10 @@ class SessionDetailOut(SessionOut):
     # The page offers "Move to workspace…" only when this is true and you can
     # edit in more than one workspace; the server enforces it regardless.
     can_move: bool = False
+    # Is this session's content yours to delete (`DELETE /{id}/content`)? The person whose
+    # session it is (`access.owns_words`). The page offers the action on this alone; other
+    # refusals (a live turn, someone else in the conversation) come back from the route.
+    can_delete_content: bool = False
     # Tail-first cursor: the transcript ships the last N messages by default;
     # these tell the client whether earlier history exists and where the loaded
     # window starts, for scroll-back / "load full". See transcript_read.SESSION_TAIL_DEFAULT.
@@ -713,6 +733,137 @@ class SessionInfoOut(Schema):
     github_identity: GithubIdentityOut = GithubIdentityOut()
 
 
+class StandingOut(Schema):
+    relationship: str
+    permissions: list[str] = []
+    agent_role: str | None = None
+    source: str = ""
+    via: str = ""
+
+
+class ProfileOut(Schema):
+    #: whole_agent | read_mode | connected_site | session_review | deny_all | no_agent.
+    kind: str
+    name: str = ""
+    site: str | None = None
+    description: str | None = None
+    entry: str | None = None
+    #: Null when nothing is enumerated: `kind` alone says what it is. Empty denies.
+    tools: list[str] | None = None
+    bash: list[str] | None = None
+    read_paths: list[str] | None = None
+    write_paths: list[str] | None = None
+    data: str | None = None
+    default_profile_version: int | None = None
+
+
+class CredentialLineOut(Schema):
+    name: str
+    kind: str
+    #: yes | no | pending. Never a value.
+    gets: str
+    why: str = ""
+
+
+class ReviewOut(Schema):
+    #: manual | auto | pending (it needs the claim), or null for a turn with no agent.
+    mode: str | None = None
+    basis: str = ""
+    manual_only: bool = False
+    may_request_auto: bool = False
+    may_pin_runner: bool = False
+
+
+class RefusalOut(Schema):
+    code: str
+    why: str
+    how_to_fix: str = ""
+    who_can_fix: str = ""
+
+
+class TraceEntryOut(Schema):
+    rule: str
+    outcome: str
+    detail: str = ""
+
+
+class TurnContextOut(Schema):
+    """What one turn may do, and why."""
+    standing: StandingOut
+    #: full | confined | refused.
+    access: str
+    basis: str
+    #: Null only when refused.
+    profile: ProfileOut | None = None
+    session_key_suffix: str = ""
+    credentials: list[CredentialLineOut] = []
+    review: ReviewOut
+    stamped: str | None = None
+    refusal: RefusalOut | None = None
+    trace: list[TraceEntryOut] = []
+
+
+class SnapshotRunnerOut(Schema):
+    id: str
+    name: str
+    kind: str
+
+
+class TurnSnapshotOut(TurnContextOut):
+    """What a turn ran as, stored when it happened."""
+    version: int
+    #: claim | enqueue | open.
+    moment: str
+    recorded_at: dt.datetime
+    runner: SnapshotRunnerOut | None = None
+    #: The profile a refused turn named, which nothing else keeps.
+    requested: str | None = None
+    #: What an admission rule did about it, when one did.
+    admission: dict | None = None
+
+
+class SessionContextOut(Schema):
+    """The durable facts of a conversation, whoever is asking."""
+    session_id: str | None = None
+    agent: str | None = None
+    workspace: str | None = None
+    channel: str = ""
+    runner_requested: str | None = None
+    runner_bound: str | None = None
+    site: str = ""
+    #: Blank for a reader outside a sensitive conversation.
+    page: str = ""
+    sensitive: bool = False
+    sensitive_requirement: str = ""
+    is_review: bool = False
+    review_ask: str | None = None
+    audience: dict = {}
+    participants: list[dict] = []
+    session_grants: list[dict] = []
+    send_blocks: list[dict] = []
+
+
+class SessionContextsOut(Schema):
+    session_context: SessionContextOut
+    #: What would happen if you sent a message now. Null when `withheld` says why.
+    turn_context: TurnContextOut | None = None
+    withheld: str = ""
+
+
+class TurnRanAsOut(Schema):
+    """What one turn ran as, beside what the rules say now."""
+    turn_id: uuid.UUID
+    #: recorded | not_recorded (a turn older than the record, or none canopy ran) |
+    #: unavailable (canopy could not build it) | withheld (`note` says why).
+    status: str
+    ran_as: TurnSnapshotOut | None = None
+    #: The same asker and the same ask, resolved on this read. Nothing is stored and its turn mode is `pending`.
+    now: TurnContextOut | None = None
+    #: The two give a different access or profile.
+    differs: bool = False
+    note: str = ""
+
+
 class SendOut(Schema):
     turn_id: uuid.UUID | None
     message: MessageOut
@@ -757,6 +908,11 @@ class ParticipantOut(Schema):
     #: An agent's own login holding its agent's TEST vault key, not a person's key
     #: (`apps/agents/credentials/login_test_key.py`).
     test_key: bool = False
+    #: Only to someone who may add people to this chat: they can read it but could not take a turn in it now, and
+    #: why, said about them. None when they could.
+    turn_refusal: RefusalOut | None = None
+    #: The agent whose access list fixes that, when you may add a line to it.
+    access_list_agent: str | None = None
 
 
 class SealedKeyWrapIn(Schema):

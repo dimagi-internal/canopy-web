@@ -12,8 +12,8 @@ import pytest
 from django.contrib.auth.models import User
 from django.test import Client
 
-from apps.agents import access, roles, sensitive_data
-from apps.agents.interface import InterfaceError, is_default, is_read_mode, parse
+from apps.agents import access, roles, sensitive_data, turn_context
+from apps.agents.interface import InterfaceError, is_read_mode, parse, published
 from apps.agents.models import Agent, AgentAdmin
 from apps.canopy_sessions.models import Session
 from apps.events.models import SettingChange
@@ -35,13 +35,10 @@ IFACE = {"capabilities": {"data": DATA,
                           "ask": {"tools": ["Read", "Bash"]}}}
 #: Who the access list lets in, by capability: "member" (the workspace's members) or "contact".
 WHO = {"data": ["contact", "member"], "ask": ["member"], "connect": ["contact"]}
-SOURCE = """capabilities:
-  data:
-    sites: [connect-labs]
-    data: sensitive
-    tools: [Read, Grep, Glob, Skill, ToolSearch, "mcp__*canopy-web__current_page",
-            "mcp__*canopy-web__who_is_asking"]
-"""
+SITE = "connect-labs"
+#: The internal name a new connected-labs row gets (`answering.key_for`).
+KEY = "connect_labs"
+SAFE = {"tools": DATA["tools"], "sensitive": True}
 
 
 @pytest.fixture()
@@ -71,8 +68,8 @@ def _client(user, stepped_up=True):
     return c
 
 
-def _put(c, slug, **body):
-    return c.put(f"/api/agents/{slug}/interface", data=body, content_type="application/json")
+def _put(c, slug, site=SITE, **body):
+    return c.put(f"/api/agents/{slug}/connected-sites/{site}", data=body, content_type="application/json")
 
 
 def _let_in(agent, who, capability):
@@ -128,55 +125,73 @@ def test_data_takes_only_sensitive():
 def test_an_admin_token_can_set_sensitive_and_it_is_audited(w):
     raw, _ = PersonalToken.create_for_user(user=w["admin"], label="cli")
     c = Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
-    r = _put(c, "labsdata", source=SOURCE)
+    r = _put(c, "labsdata", **SAFE)
     assert r.status_code == 200, r.content
     w["agent"].refresh_from_db()
-    assert sensitive_data.handles_sensitive(w["agent"], "data")
-    [row] = SettingChange.objects.filter(operation="publish_interface")
+    assert sensitive_data.handles_sensitive(w["agent"], KEY)
+    [row] = SettingChange.objects.filter(operation="put_connected_site")
     assert row.actor == w["admin"]
 
 
 def test_a_browser_needs_no_passkey(w):
-    r = _put(_client(w["owner"], stepped_up=False), "labsdata", source=SOURCE)
+    r = _put(_client(w["owner"], stepped_up=False), "labsdata", **SAFE)
     assert r.status_code == 200, r.content
 
 
 def test_someone_who_is_not_an_admin_cannot_set_it(w):
     raw, _ = PersonalToken.create_for_user(user=w["editor"], label="cli")
     c = Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
-    assert _put(c, "labsdata", source=SOURCE).status_code == 403
+    assert _put(c, "labsdata", **SAFE).status_code == 403
+    assert _put(_client(w["editor"]), "labsdata", **SAFE).status_code in (403, 404)
     w["agent"].refresh_from_db()
-    assert is_default(w["agent"].interface)
+    assert not published(w["agent"].interface)
 
 
 def test_a_person_sets_it_and_the_change_is_audited(w):
-    r = _put(_client(w["owner"]), "labsdata", source=SOURCE)
+    r = _put(_client(w["owner"]), "labsdata", **SAFE)
     assert r.status_code == 200, r.content
-    body = r.json()
-    assert body["interface"]["capabilities"]["data"]["data"] == "sensitive"
-    assert body["published_by_email"] == "jj@dimagi.com"
+    assert [row["sensitive"] for row in r.json()["sites"]] == [True]
     w["agent"].refresh_from_db()
-    assert sensitive_data.handles_sensitive(w["agent"], "data")
-    [row] = SettingChange.objects.filter(operation="publish_interface")
-    assert (row.actor, row.via, row.target) == (w["owner"], "ui", "labsdata")
-    assert "data: sensitive" in row.request["body"]["source"]
+    assert sensitive_data.handles_sensitive(w["agent"], KEY)
+    assert w["agent"].interface_published_by == w["owner"]
+    [row] = SettingChange.objects.filter(operation="put_connected_site")
+    assert (row.actor, row.via) == (w["owner"], "ui")
+    assert row.request["body"]["sensitive"] is True
+    [change] = row.changes
+    assert change["scope"] == f"agent:labsdata/site/{SITE}"
+    assert change["before"] == {} and change["after"][KEY]["data"] == "sensitive"
 
 
-def test_turning_it_off_is_audited(w):
-    _put(_client(w["owner"]), "labsdata", source=SOURCE)
-    r = _put(_client(w["owner"], stepped_up=False), "labsdata",
-             source="capabilities:\n  ask:\n    description: Ask\n")
+def test_turning_it_off_is_audited_and_takes_the_setting_out(w):
+    _put(_client(w["owner"]), "labsdata", **SAFE)
+    r = _put(_client(w["owner"], stepped_up=False), "labsdata", sensitive=False)
     assert r.status_code == 200, r.content
     w["agent"].refresh_from_db()
-    assert not sensitive_data.handles_sensitive(w["agent"], "data")
-    assert SettingChange.objects.filter(operation="publish_interface").count() == 2
+    assert not sensitive_data.handles_sensitive(w["agent"], KEY)
+    assert "data" not in w["agent"].interface["capabilities"][KEY]
+    assert SettingChange.objects.filter(operation="put_connected_site").count() == 2
 
 
-def test_unpublishing_turns_it_off(w):
+def test_removing_the_site_turns_it_off(w):
     _declare(w["agent"], w["owner"])
-    assert _client(w["owner"]).delete("/api/agents/labsdata/interface").status_code == 200
+    assert _client(w["owner"]).delete(f"/api/agents/labsdata/connected-sites/{SITE}").status_code == 200
     w["agent"].refresh_from_db()
     assert not sensitive_data.handles_sensitive(w["agent"], "data")
+
+
+def test_a_site_that_could_leak_cannot_turn_it_on_and_nothing_is_saved(w):
+    assert _put(_client(w["owner"]), "labsdata", tools=["Read", "Bash"]).status_code == 200
+    w["agent"].refresh_from_db()
+    stored = w["agent"].interface
+    r = _put(_client(w["owner"]), "labsdata", sensitive=True)
+    assert r.status_code == 422 and "Bash" in r.json()["detail"]
+    w["agent"].refresh_from_db()
+    assert w["agent"].interface == stored
+    assert SettingChange.objects.filter(operation="put_connected_site").count() == 1
+
+
+def test_removing_a_site_the_agent_does_not_have_is_a_404(w):
+    assert _client(w["owner"]).delete("/api/agents/labsdata/connected-sites/nope").status_code == 404
 
 
 # --- confined for everyone ---------------------------------------------------------------
@@ -191,29 +206,29 @@ def _turn(w, user, session=None, **kw):
     t = Turn.objects.create(chat_session=session, prompt="how many visits?",
                             initiator_user=user, initiator_kind=who.USER,
                             idempotency_key=f"{user.pk}-{time.monotonic_ns()}", **kw)
-    return access.decide_for_turn(t, w["agent"])
+    return turn_context.for_turn(t, w["agent"])
 
 
 @pytest.mark.parametrize("who_", ["owner", "admin", "editor"])
 def test_on_the_site_the_sensitive_door_confines_even_the_owner(w, who_):
     _declare(w["agent"], w["owner"])
     d = _turn(w, w[who_], _site_session(w))
-    assert (d.access, d.capability, d.basis) == (access.CONFINED, "data", "sensitive:data")
-    assert d.stamp == "data"
+    assert (d.access, d.stamped, d.basis) == (access.CONFINED, "data", "sensitive:data")
+    assert d.stamped == "data"
 
 
 def test_the_owner_keeps_their_role_and_mode_rights_when_confined(w):
     _declare(w["agent"], w["owner"])
     d = _turn(w, w["owner"], _site_session(w))
-    assert d.relationship == access.OWNER and d.may_pin_runner
+    assert d.standing.relationship == access.OWNER and d.review.may_pin_runner
 
 
 def test_naming_a_sensitive_capability_confines_the_owner_anywhere(w):
     _declare(w["agent"], w["owner"])
-    d = access.decide(w["agent"], w["owner"], verified=True, capability="data")
-    assert (d.access, d.capability) == (access.CONFINED, "data")
+    d = turn_context.for_asker(w["agent"], w["owner"], verified=True, requested="data")
+    assert (d.access, d.stamped) == (access.CONFINED, "data")
     # Not naming it, off the site: the owner's full profile, as ever.
-    assert access.decide(w["agent"], w["owner"], verified=True).access == access.FULL
+    assert turn_context.for_asker(w["agent"], w["owner"], verified=True).access == access.FULL
 
 
 def test_a_sensitive_conversation_with_no_sensitive_door_is_refused_even_for_the_owner(w):
@@ -221,7 +236,7 @@ def test_a_sensitive_conversation_with_no_sensitive_door_is_refused_even_for_the
     _let_in(w["agent"], "member", "ask")
     editors_run(w["agent"])
     d = _turn(w, w["owner"], _site_session(w, {"runner_requirements": ["sensitive_data"]}))
-    assert d.access == access.NONE and "handles sensitive data" in d.reason
+    assert d.access == turn_context.REFUSED and "handles sensitive data" in d.refusal.why
 
 
 def test_a_sensitive_conversation_runs_only_in_its_sensitive_door(w):
@@ -229,7 +244,7 @@ def test_a_sensitive_conversation_runs_only_in_its_sensitive_door(w):
     sensitive = {"runner_requirements": ["sensitive_data"]}
     for who_ in ("owner", "editor", "viewer"):
         d = _turn(w, w[who_], _site_session(w, sensitive))
-        assert (d.access, d.capability) == (access.CONFINED, "data"), who_
+        assert (d.access, d.stamped) == (access.CONFINED, "data"), who_
 
 
 def test_a_sensitive_caller_the_sensitive_door_does_not_list_is_refused(w):
@@ -238,7 +253,7 @@ def test_a_sensitive_caller_the_sensitive_door_does_not_list_is_refused(w):
         "data": {**DATA},
         "ask": {"tools": ["Read"]}}}, who_={"data": ["contact"], "ask": ["member"]})
     d = _turn(w, w["viewer"], _site_session(w, {"runner_requirements": ["sensitive_data"]}))
-    assert d.access == access.NONE and "'data' does not list you" in d.reason
+    assert d.access == turn_context.REFUSED and "'data' does not list you" in d.refusal.why
 
 
 def test_without_sensitive_nothing_changes(w):
@@ -278,123 +293,3 @@ def test_a_runner_that_confines_claims_a_sensitive_turn_and_runs_its_current_cod
     assert r.status_code == 200, r.content
     body = r.json()
     assert body["caller_context"]["profile"] == "confined" and "agent_sha" not in body
-
-
-# --- the switch: one capability, the same setting the YAML holds -------------------------
-
-SWITCHABLE = """# who may read a host's data
-capabilities:
-  data:
-    # the site's data door
-    sites: [connect-labs]
-    tools: [Read, Grep, "mcp__*canopy-web__current_page"]
-  ask:
-    tools: [Read, Bash]
-"""
-
-
-def _switch(c, slug, name, on):
-    return c.put(f"/api/agents/{slug}/interface/capabilities/{name}/sensitive",
-                 data={"handles_sensitive": on}, content_type="application/json")
-
-
-def _publish_source(w, source):
-    r = _put(_client(w["owner"]), "labsdata", source=source)
-    assert r.status_code == 200, r.content
-    w["agent"].refresh_from_db()
-
-
-def test_with_sensitive_writes_one_line_and_keeps_every_comment():
-    on = sensitive_data.with_sensitive(SWITCHABLE, "data", True)
-    assert on.splitlines()[3] == "    data: sensitive"
-    assert "# the site's data door" in on and on.startswith("# who may read")
-    assert sensitive_data.with_sensitive(on, "data", False) == SWITCHABLE
-    assert sensitive_data.with_sensitive(on, "data", True) == on  # already on: unchanged
-
-
-def test_with_sensitive_refuses_a_layout_it_cannot_edit_by_line():
-    flow = 'capabilities: {data: {sites: [connect-labs]}}\n'
-    with pytest.raises(sensitive_data.SourceEditError):
-        sensitive_data.with_sensitive(flow, "data", True)
-    with pytest.raises(sensitive_data.SourceEditError):
-        sensitive_data.with_sensitive(SWITCHABLE, "nope", True)
-
-
-def test_the_switch_is_an_ordinary_edit_no_passkey_from_a_browser_or_a_token(w):
-    _publish_source(w, SWITCHABLE)
-    r = _switch(_client(w["owner"], stepped_up=False), "labsdata", "data", True)
-    assert r.status_code == 200, r.content
-    raw, _ = PersonalToken.create_for_user(user=w["owner"], label="cli")
-    r = _switch(Client(HTTP_AUTHORIZATION=f"Bearer {raw}"), "labsdata", "data", False)
-    assert r.status_code == 200, r.content
-    w["agent"].refresh_from_db()
-    assert not sensitive_data.handles_sensitive(w["agent"], "data")
-
-
-def test_the_switch_writes_the_yaml_and_the_yaml_says_what_the_switch_did(w):
-    _publish_source(w, SWITCHABLE)
-    r = _switch(_client(w["owner"]), "labsdata", "data", True)
-    assert r.status_code == 200, r.content
-    w["agent"].refresh_from_db()
-    assert sensitive_data.handles_sensitive(w["agent"], "data") and not sensitive_data.handles_sensitive(w["agent"], "ask")
-    source = w["agent"].interface_source
-    assert "    data: sensitive" in source and "# the site's data door" in source
-    # Saving that YAML back, untouched, through the YAML path changes nothing.
-    stored = w["agent"].interface
-    r = _put(_client(w["owner"]), "labsdata", source=r.json()["source"])
-    assert r.status_code == 200
-    assert r.json()["interface"] == stored
-
-
-def test_the_switch_is_audited_with_what_it_changed(w):
-    _publish_source(w, SWITCHABLE)
-    _switch(_client(w["owner"]), "labsdata", "data", True)
-    [row] = SettingChange.objects.filter(operation="set_capability_sensitive")
-    assert (row.actor, row.target) == (w["owner"], "labsdata / data")
-    [change] = row.changes
-    assert change["scope"] == "interface:labsdata/data"
-    assert change["before"] == {"sensitive_capabilities": []}
-    assert change["after"] == {"sensitive_capabilities": ["data"]}
-
-
-def test_turning_the_switch_off_takes_the_line_out(w):
-    _publish_source(w, SWITCHABLE)
-    saved = w["agent"].interface_source
-    _switch(_client(w["owner"]), "labsdata", "data", True)
-    r = _switch(_client(w["owner"], stepped_up=False), "labsdata", "data", False)
-    assert r.status_code == 200, r.content
-    w["agent"].refresh_from_db()
-    assert not sensitive_data.handles_sensitive(w["agent"], "data")
-    assert w["agent"].interface_source == saved
-
-
-def test_the_switch_refuses_a_capability_that_could_leak_and_saves_nothing(w):
-    _publish_source(w, SWITCHABLE)
-    saved = w["agent"].interface_source
-    r = _switch(_client(w["owner"]), "labsdata", "ask", True)
-    assert r.status_code == 422 and "Bash" in r.json()["detail"]
-    w["agent"].refresh_from_db()
-    assert w["agent"].interface_source == saved
-    assert not SettingChange.objects.filter(operation="set_capability_sensitive").exists()
-
-
-def test_an_interface_saved_as_a_mapping_is_switched_as_a_mapping(w):
-    cap = {k: v for k, v in DATA.items() if k != "data"}
-    r = _client(w["owner"]).put("/api/agents/labsdata/interface", content_type="application/json",
-                                data={"interface": {"capabilities": {"data": cap}}})
-    assert r.status_code == 200, r.content
-    r = _switch(_client(w["owner"]), "labsdata", "data", True)
-    assert r.status_code == 200, r.content
-    w["agent"].refresh_from_db()
-    assert sensitive_data.handles_sensitive(w["agent"], "data") and w["agent"].interface_source == ""
-
-
-def test_the_switch_names_a_capability_the_interface_has(w):
-    _publish_source(w, SWITCHABLE)
-    assert _switch(_client(w["owner"]), "labsdata", "nope", True).status_code == 404
-
-
-def test_only_the_agents_admins_flip_the_switch(w):
-    _publish_source(w, SWITCHABLE)
-    assert _switch(_client(w["editor"]), "labsdata", "data", True).status_code in (403, 404)
-    assert _switch(_client(w["admin"]), "labsdata", "data", True).status_code == 200

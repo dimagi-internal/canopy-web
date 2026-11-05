@@ -4,7 +4,7 @@
 
 Taken before and after each step of replacing the interface's YAML with plain settings
 (`docs/superpowers/specs/2026-11-04-agent-settings-replace-the-interface-design.md`), so that a step
-that changes an answer shows up as a diff. It holds, per agent: `profile()` per stamp, the `decide()`
+that changes an answer shows up as a diff. It holds, per agent: `profile()` per stamp, the the rule's
 matrix, the access list and roster, `facts_for` when the agent is sensitive, and its A2A cards; per
 registered site, what the site-agents API would sign; per workspace tree, the topology edges; and
 `shape`, the stored facts that design counts on, checked rather than assumed.
@@ -14,7 +14,6 @@ never from a row it writes.
 """
 from __future__ import annotations
 
-import dataclasses
 import datetime as dt
 import hashlib
 import json
@@ -36,7 +35,7 @@ from apps.tokens.models import AppCredential
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
-from . import access, agent_card, roles, sensitive_data, topology
+from . import access, agent_card, answering, roles, sensitive_data, topology, turn_context
 from . import interface as iface_mod
 from .models import Agent, AgentGrant, AgentRole
 from .setup import runner_takers
@@ -147,28 +146,6 @@ def _build() -> dict:
 
 # --- what the plain settings count on ---------------------------------------------------------
 
-def _entry_problems(caps: dict) -> list[str]:
-    # One rule per sentence of the spec's section 3.1. Empty: the agent fits the plain forms as it is.
-    out = []
-    by_site: dict[str, list[str]] = {}
-    for name, cap in caps.items():
-        cap = cap or {}
-        sites = cap.get("sites") or []
-        for site in sites:
-            by_site.setdefault(site, []).append(name)
-        if cap.get("pages"):
-            out.append(f"{name}: uses pages")
-        if iface_mod.is_read_mode(name):
-            if sites or cap.get("ceiling") or cap.get("own_login") or cap.get("data"):
-                out.append(f"{name}: read mode names sites, a ceiling, a login or sensitive data")
-        elif not sites:
-            out.append(f"{name}: has no site")
-        elif len(sites) > 1:
-            out.append(f"{name}: names {len(sites)} sites")
-    out += [f"{site}: named by {', '.join(sorted(names))}" for site, names in by_site.items() if len(names) > 1]
-    return sorted(out)
-
-
 def _shape(agents) -> dict:
     # Where else an entry's name is stored: a name in any of these can never be renamed.
     published = {a.pk: set((a.interface or {}).get("capabilities") or {}) for a in agents}
@@ -176,7 +153,7 @@ def _shape(agents) -> dict:
     named_lines = list(AgentGrant.objects.exclude(capability="").values_list("agent_id", "capability"))
     dangling = sorted(f"{slugs[agent_id]}: {name}" for agent_id, name in named_lines
                       if agent_id and not iface_mod.is_read_mode(name) and name not in published[agent_id])
-    problems = {a.slug: _entry_problems((a.interface or {}).get("capabilities") or {}) for a in agents}
+    problems = {a.slug: answering.document_problems((a.interface or {}).get("capabilities") or {}) for a in agents}
     role_names = {p for row in AgentRole.objects.values_list("permissions", flat=True) for p in row or []
                   if p.startswith(f"{roles.USE}:") and p != f"{roles.USE}:*"}
     return {
@@ -222,7 +199,7 @@ def _lines(lines) -> list[dict]:
 
 def probe_turn(*, user=None, contact=None, site: str = "", sensitive: bool = False, stamp: str = "",
                runner=None) -> Turn:
-    """A turn in memory, never saved: what `decide` and `facts_for` would be handed for a conversation
+    """A turn in memory, never saved: what the rule and `facts_for` would be handed for a conversation
     on `site`, sensitive or not, started by `user` or `contact`."""
     metadata = {}
     if site:
@@ -294,15 +271,32 @@ def _matrix(agent, caps, sites, members, roster, standings) -> dict:
                 turn = probe_turn(user=who if is_user else None, contact=None if is_user else who,
                                   site=site, sensitive=sensitive)
             by_context[context] = {
-                ask or "(free-form)": _decision(access.decide(
-                    agent, who, verified=isinstance(who, get_user_model()), capability=ask, turn=turn,
+                ask or "(free-form)": answer_of(turn_context.for_asker(
+                    agent, who, verified=isinstance(who, get_user_model()), requested=ask, turn=turn,
                     standing=standing, lines=lines))
                 for ask in asks}
     return out
 
 
-def _decision(d) -> dict:
-    return {**dataclasses.asdict(d), "permissions": sorted(d.permissions), "stamp": d.stamp}
+def answer_of(ctx) -> dict:
+    """A Turn Context as this document has always printed an answer, so that its hash keeps meaning the
+    same thing: `access` says `none` for a refusal, and a refusal's reason is `reason`: its whole message, why and
+    how to fix it, so that a change of either shows here."""
+    return {
+        "relationship": ctx.standing.relationship,
+        "access": "none" if ctx.refused else ctx.access,
+        "capability": ctx.stamped or None,
+        "may_request_auto": ctx.review.may_request_auto,
+        "may_pin_runner": ctx.review.may_pin_runner,
+        "manual_only": ctx.review.manual_only,
+        "basis": ctx.basis,
+        "reason": ctx.refusal.message if ctx.refused else "",
+        "agent_role": ctx.standing.agent_role,
+        "source": ctx.standing.source,
+        "via": ctx.standing.via,
+        "permissions": sorted(ctx.standing.permissions),
+        "stamp": ctx.stamped,
+    }
 
 
 def _statements(agent, stamps) -> dict:

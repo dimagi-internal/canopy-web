@@ -17,7 +17,7 @@ the same 404 as a missing agent and never a 403 (no existence leak):
 * `agent_for_edit`  — `access.may_edit_agent` (`agent_edit` on this agent): may change the agent itself.
 * `agent_for_admin` — `Agent.is_admin`: may change its secrets / identity.
 
-Who may make an agent DO what is `apps.agents.access.decide`, not this module;
+Who may make an agent DO what is `apps.agents.turn_context.resolve_turn_context`, not this module;
 these gates answer only "may this caller reach this agent's API at all".
 """
 from __future__ import annotations
@@ -28,7 +28,7 @@ from ninja.errors import HttpError
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from . import services
+from . import project_members, services
 from .models import Agent
 
 
@@ -141,11 +141,12 @@ def listed_agent_workspaces(request: HttpRequest) -> set[str]:
     return wsvc.request_workspace_slugs(request)
 
 
-def project_or_404(agent: Agent, ref: str):
-    """One of `agent`'s projects by ref, else 404. Gate the agent first."""
+def project_or_404(request: HttpRequest, agent: Agent, ref: str):
+    """One of `agent`'s projects by ref, if the caller may read it; else 404. Gate
+    the agent first."""
 
     project = services.get_project(agent, ref)
-    if project is None:
+    if project is None or not services.may_read_project(request.user, project):
         raise HttpError(404, f"project {ref} not found")
     return project
 
@@ -179,7 +180,9 @@ def shared_with_caller(request: HttpRequest, project) -> bool:
 
 def task_in_reach(request: HttpRequest, task) -> bool:
     """May the caller see this task's workspace — or is it in a project shared
-    with a workspace they belong to?"""
+    with a workspace they belong to? Either way, one in a project they may read."""
+    if task.project_id is not None and not services.may_read_project(request.user, task.project):
+        return False
     if task.workspace_id in visible_agent_workspaces(request):
         return True
     return task.project_id is not None and shared_with_caller(request, task.project)
@@ -222,10 +225,11 @@ def require_task_edit(request: HttpRequest, task) -> None:
 def project_ws_or_404(request: HttpRequest, workspace: str, handle: str):
     """A project by address, if the caller may see its workspace or its lead
     agent's (a dimagi agent leading connect's project reads it as the dimagi
-    member it is); else 404 — the same for "no such project"."""
+    member it is), and may read it; else 404 — the same for "no such project"."""
     project = services.get_workspace_project(workspace, handle)
-    if project is None or (workspace not in set(listed_agent_workspaces(request))
-                           and not project_in_reach(request, project)):
+    # By address: this names its workspace, so it is never the read `workspace-required` refuses.
+    if project is None or not project_in_reach(request, project) \
+            or not services.may_read_project(request.user, project):
         raise HttpError(404, f"project {workspace}/{handle} not found")
     return project
 
@@ -233,7 +237,10 @@ def project_ws_or_404(request: HttpRequest, workspace: str, handle: str):
 def project_in_reach(request: HttpRequest, project) -> bool:
     """May the caller read `project`: a member of its workspace or of its lead
     agent's, or of a workspace it is shared with? (A MEMBER agent's workspace
-    is not enough — reaching an agent does not open every project it works on.)"""
+    is not enough — reaching an agent does not open every project it works on.)
+    And it is one they may read at all."""
+    if not services.may_read_project(request.user, project):
+        return False
     visible = visible_agent_workspaces(request)
     if project.workspace_id in visible:
         return True
@@ -259,19 +266,19 @@ def project_agent_login(request: HttpRequest, project):
 
 
 def may_edit_project(request: HttpRequest, project) -> bool:
-    """An editor of its workspace or of its lead agent's, its lead, or the
-    login of an agent leading or working on it."""
+    """An editor of its workspace or of its lead agent's, a person on it (its lead, or
+    `project_members`), or the login of an agent leading or working on it."""
     user = request.user
     if perms.can(user, project.workspace_id, perms.AGENT_WORK):
         return True
     if project.agent_id is not None and (perms.can(user, project.agent.workspace_id, perms.AGENT_WORK)
                                          or project.agent.is_own_login(user)):
         return True
-    if project.owner_user_id is not None and project.owner_user_id == getattr(user, "pk", None):
+    if project_members.is_member(project, user):
         return True
     return project.member_agents.filter(user=user).exists() if getattr(user, "is_authenticated", False) else False
 
 
 def require_project_edit(request: HttpRequest, project) -> None:
     if not may_edit_project(request, project):
-        raise HttpError(403, "changing a project requires the editor role, being its lead, or being its agent")
+        raise HttpError(403, "changing a project requires the editor role, being on it, or being its agent")

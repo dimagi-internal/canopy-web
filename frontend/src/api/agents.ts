@@ -845,82 +845,62 @@ export async function deleteAgentRole(workspace: string, key: string, reassignTo
   ensureOk(res, 'deleteAgentRole')
 }
 
-export type AgentInterfaceOut = Schemas['AgentInterfaceOut']
+export type AnsweringProfile = Schemas['AnsweringProfile']
+export type ReadModeSettingOut = Schemas['ReadModeSettingOut']
+export type ConnectedSiteOut = Schemas['ConnectedSiteOut']
+export type ConnectedSitesOut = Schemas['ConnectedSitesOut']
 
-// The capabilities this agent offers viewers and users, each with its lowest role.
-// Live state on canopy-web: agent admins edit it here (saveAgentInterface).
-export async function getAgentInterface(slug: string): Promise<AgentInterfaceOut> {
-  const res = await apiV2.GET('/api/agents/{slug}/interface', { params: { path: { slug } } })
-  return unwrap(res, 'getAgentInterface') as unknown as AgentInterfaceOut
+// Read mode and connected sites: live state on canopy-web, not a file in the agent's repo. A PUT
+// changes only the fields sent.
+export async function getReadMode(slug: string): Promise<ReadModeSettingOut> {
+  const res = await apiV2.GET('/api/agents/{slug}/read-mode', { params: { path: { slug } } })
+  return unwrap(res, 'getReadMode') as unknown as ReadModeSettingOut
 }
 
-// Save the interface as YAML (kept verbatim, comments and all). Owner/admin only;
-// a 422 carries the parser's reason, which the editor shows as-is.
-export async function saveAgentInterface(slug: string, source: string): Promise<AgentInterfaceOut> {
-  const res = await apiV2.PUT('/api/agents/{slug}/interface', {
-    params: { path: { slug } },
-    body: { source },
-  })
-  return unwrap(res, 'saveAgentInterface') as unknown as AgentInterfaceOut
+export async function putReadMode(slug: string, fields: object): Promise<ReadModeSettingOut> {
+  const res = await apiV2.PUT('/api/agents/{slug}/read-mode', { params: { path: { slug } }, body: fields as never })
+  return unwrap(res, 'putReadMode') as unknown as ReadModeSettingOut
 }
 
-// Save the interface as the model the form edits (a parsed mapping, no YAML source kept).
-// A 422 carries the parser's reason.
-export async function saveAgentInterfaceModel(slug: string, model: object): Promise<AgentInterfaceOut> {
-  const res = await apiV2.PUT('/api/agents/{slug}/interface', {
-    params: { path: { slug } },
-    body: { interface: model as { [key: string]: unknown } },
-  })
-  return unwrap(res, 'saveAgentInterfaceModel') as unknown as AgentInterfaceOut
+export async function resetReadMode(slug: string): Promise<ReadModeSettingOut> {
+  const res = await apiV2.DELETE('/api/agents/{slug}/read-mode', { params: { path: { slug } } })
+  return unwrap(res, 'resetReadMode') as unknown as ReadModeSettingOut
 }
 
-export type AgentInterfaceValidateOut = Schemas['AgentInterfaceValidateOut']
-
-// The server's parser, asked about a draft without saving it: every problem with the field it is
-// about, and (when valid) the access summary, the parsed model and its YAML.
-export async function validateAgentInterface(
-  slug: string,
-  draft: { source: string } | { interface: object },
-): Promise<AgentInterfaceValidateOut> {
-  const res = await apiV2.POST('/api/agents/{slug}/interface/validate', {
-    params: { path: { slug } },
-    body: ('source' in draft ? draft : { interface: draft.interface as { [key: string]: unknown } }),
-  })
-  return unwrap(res, 'validateAgentInterface') as unknown as AgentInterfaceValidateOut
+export async function listConnectedSites(slug: string): Promise<ConnectedSitesOut> {
+  const res = await apiV2.GET('/api/agents/{slug}/connected-sites', { params: { path: { slug } } })
+  return unwrap(res, 'listConnectedSites') as unknown as ConnectedSitesOut
 }
 
-// The sensitive-data switch for one capability: canopy writes (or removes) its
-// `data: sensitive` in the saved YAML and saves it the way saveAgentInterface does, so
-// the editor and the switch always agree.
-export async function setCapabilitySensitive(slug: string, name: string, handlesSensitive: boolean): Promise<AgentInterfaceOut> {
-  const res = await apiV2.PUT('/api/agents/{slug}/interface/capabilities/{name}/sensitive', {
-    params: { path: { slug, name } },
-    body: { handles_sensitive: handlesSensitive },
+export async function putConnectedSite(slug: string, site: string, fields: object): Promise<ConnectedSitesOut> {
+  const res = await apiV2.PUT('/api/agents/{slug}/connected-sites/{site}', {
+    params: { path: { slug, site } }, body: fields as never,
   })
-  return unwrap(res, 'setCapabilitySensitive') as unknown as AgentInterfaceOut
+  return unwrap(res, 'putConnectedSite') as unknown as ConnectedSitesOut
+}
+
+export async function deleteConnectedSite(slug: string, site: string): Promise<ConnectedSitesOut> {
+  const res = await apiV2.DELETE('/api/agents/{slug}/connected-sites/{site}', { params: { path: { slug, site } } })
+  return unwrap(res, 'deleteConnectedSite') as unknown as ConnectedSitesOut
 }
 
 export type SettingChangeOut = Schemas['SettingChangeOut']
 
-// The audited changes to this agent's interface, newest first: every save and
-// reset, from any client. Admins see everyone's; others see their own.
-export async function getAgentInterfaceHistory(slug: string): Promise<SettingChangeOut[]> {
+// The audited changes to this agent's read mode and connected sites, newest first, from any client.
+// Admins see everyone's; others see their own. publish_interface, reset_interface and
+// set_capability_sensitive are retired routes: nothing writes them now, but old history rows still
+// carry those names, so they stay.
+const SETTINGS_OPERATIONS = new Set([
+  'put_read_mode', 'reset_read_mode', 'put_connected_site', 'delete_connected_site',
+  'publish_interface', 'reset_interface', 'set_capability_sensitive',
+])
+
+export async function getAgentSettingsHistory(slug: string): Promise<SettingChangeOut[]> {
   const res = await apiV2.GET('/api/events/setting-changes', {
     params: { query: { target: slug, limit: 50 } },
   })
-  const items = (unwrap(res, 'getAgentInterfaceHistory') as unknown as { items: SettingChangeOut[] }).items
-  return items.filter(
-    (c) =>
-      ((c.operation === 'publish_interface' || c.operation === 'unpublish_interface' || c.operation === 'reset_interface') && c.target === slug) ||
-      // The switch's row names the capability too: "<slug> / <capability>".
-      (c.operation === 'set_capability_sensitive' && c.target.startsWith(`${slug} / `)),
-  )
-}
-
-// Back to the default interface: no capabilities, so viewers and users can use nothing.
-export async function resetAgentInterface(slug: string): Promise<AgentInterfaceOut> {
-  const res = await apiV2.DELETE('/api/agents/{slug}/interface', { params: { path: { slug } } })
-  return unwrap(res, 'resetAgentInterface') as unknown as AgentInterfaceOut
+  const items = (unwrap(res, 'getAgentSettingsHistory') as unknown as { items: SettingChangeOut[] }).items
+  return items.filter((c) => SETTINGS_OPERATIONS.has(c.operation) && (c.target === slug || c.target.startsWith(`${slug} / `)))
 }
 
 /** Remove an agent and everything hanging off it (editor and above). Its GitHub

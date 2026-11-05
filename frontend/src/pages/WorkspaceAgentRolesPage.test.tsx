@@ -71,7 +71,7 @@ describe('WorkspaceAgentRolesPage', () => {
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Reviewer' } })
     expect((screen.getByLabelText('Key') as HTMLInputElement).value).toBe('reviewer')
     fireEvent.click(screen.getByLabelText(/Be answered in read mode/))
-    fireEvent.change(screen.getByLabelText('Doors'), { target: { value: 'report' } })
+    fireEvent.change(screen.getByLabelText('Connected sites'), { target: { value: 'report' } })
     fireEvent.click(screen.getByRole('button', { name: 'Create role' }))
     await waitFor(() => expect(createAgentRole).toHaveBeenCalledWith('dimagi', {
       key: 'reviewer', label: 'Reviewer', description: '', permissions: ['read', 'use:report'],
@@ -110,7 +110,7 @@ describe('WorkspaceAgentRolesPage', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Copy Connect door' }))
     expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Connect door (copy)')
     expect((screen.getByLabelText('Key') as HTMLInputElement).disabled).toBe(false)
-    expect((screen.getByLabelText('Doors') as HTMLInputElement).value).toBe('connect')
+    expect((screen.getByLabelText('Connected sites') as HTMLInputElement).value).toBe('connect')
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
 
     fireEvent.click(screen.getByRole('button', { name: 'Delete Connect door' }))

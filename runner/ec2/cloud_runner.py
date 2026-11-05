@@ -68,32 +68,33 @@ import base64
 import codecs
 import contextlib
 import datetime
-import hashlib
-import hmac
-import io
-import json
-import os
 import fcntl
 import functools
 import glob
+import hashlib
+import hmac
+import http.client
+import io
+import json
+import os
 import pathlib
 import pty
 import re
 import secrets
 import select
-import signal
-import struct
-import socket
 import shutil
+import signal
+import socket
+import struct
 import subprocess
 import sys
 import tarfile
 import tempfile
 import termios
 import threading
-import unicodedata
 import time
 import typing
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -462,6 +463,15 @@ def _api(method: str, path: str, body: dict | None = None, *,
         if not quiet:
             _log(f"{method} {path} -> URLError {exc.reason}")
         return 0, None
+    except (OSError, http.client.HTTPException) as exc:
+        # The connection died AFTER urlopen handed back a response (or before it
+        # parsed one): ConnectionResetError, RemoteDisconnected, a read timeout,
+        # IncompleteRead. None of those are URLError, so they used to escape every
+        # caller — a turn's finish among them, which then sat EXECUTING until the
+        # lease sweep marked finished work LOST. Same answer as "unreachable".
+        if not quiet:
+            _log(f"{method} {path} -> {type(exc).__name__} {exc}")
+        return 0, None
 
 
 # canopy-web refusing this box's token (a 401 on any call). While it does, the
@@ -485,6 +495,133 @@ def _note_token_accepted() -> None:
     if _TOKEN_REFUSED_AT:
         _log("canopy-web accepts this box's token again — claiming resumes")
     _TOKEN_REFUSED_AT = 0.0
+
+
+# ── a turn's finish is delivered, not merely sent ─────────────────────────────
+#
+# A finish that does not land leaves the turn EXECUTING on canopy-web until its
+# lease runs out, and the sweep then marks finished work LOST and starts a
+# debugger on it. So a finish canopy-web did not accept for a reason that can
+# pass (no connection, a 5xx, a refused token) is kept on disk, beside the state
+# file, and re-sent on the following poll ticks with backoff until canopy-web
+# answers. Its turn rides every heartbeat meanwhile, so the lease is renewed while
+# the finish waits. Safe to repeat: canopy-web answers a second finish of an
+# already-terminal turn 200 and changes nothing (runner_protocol.finish).
+#
+# Given up on: an answer that cannot change (404, 409, 422 — the turn is gone or
+# was never this box's), or FINISH_GIVE_UP_SECONDS of trying.
+PENDING_FINISH_FILE = STATE_FILE.with_name(".canopy-pending-finishes.json")
+FINISH_RETRY_BASE_SECONDS = float(os.environ.get("FINISH_RETRY_BASE_SECONDS", "15"))
+FINISH_RETRY_MAX_SECONDS = float(os.environ.get("FINISH_RETRY_MAX_SECONDS", "300"))
+FINISH_GIVE_UP_SECONDS = float(os.environ.get("FINISH_GIVE_UP_SECONDS", str(6 * 3600)))
+_PENDING_FINISH_LOCK = threading.Lock()
+
+
+def _finish_retryable(status: int) -> bool:
+    return status == 0 or status in (401, 408, 429) or status >= 500
+
+
+def _read_pending_finishes() -> dict:
+    try:
+        data = json.loads(PENDING_FINISH_FILE.read_text())
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_pending_finishes(data: dict) -> None:
+    try:
+        if not data:
+            PENDING_FINISH_FILE.unlink(missing_ok=True)
+            return
+        PENDING_FINISH_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = PENDING_FINISH_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data))
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, PENDING_FINISH_FILE)
+    except OSError as exc:
+        _log(f"warn: could not write {PENDING_FINISH_FILE}: {exc}")
+
+
+def _pending_finish_ids() -> list[str]:
+    with _PENDING_FINISH_LOCK:
+        return list(_read_pending_finishes())
+
+
+def _post_finish(turn_id: str, body: dict) -> tuple[int, dict | None]:
+    """POST a turn's finish; keep it for `_retry_pending_finishes` when canopy-web
+    did not take it for a reason that can pass. Returns the first attempt's answer."""
+    status, data = _api("POST", f"/turns/{turn_id}/finish", body)
+    if _finish_retryable(status):
+        now = time.time()
+        with _PENDING_FINISH_LOCK:
+            pending = _read_pending_finishes()
+            pending[turn_id] = {"body": body, "first_at": now, "attempts": 1,
+                                "next_at": now + FINISH_RETRY_BASE_SECONDS, "last": status}
+            _write_pending_finishes(pending)
+        _log(f"finish of turn {turn_id[:8]} not delivered (canopy-web said {status}) — "
+             "kept, and re-sent on the next poll ticks")
+    return status, data
+
+
+def _retry_pending_finishes(*, now: float | None = None) -> None:
+    """One pass over the kept finishes that are due. Called on every poll tick."""
+    now = time.time() if now is None else now
+    with _PENDING_FINISH_LOCK:
+        due = {tid: rec for tid, rec in _read_pending_finishes().items()
+               if isinstance(rec, dict) and float(rec.get("next_at") or 0) <= now}
+    if not due:
+        return
+    outcome: dict[str, dict | None] = {}   # None = drop it
+    for turn_id, rec in due.items():
+        status, _ = _api("POST", f"/turns/{turn_id}/finish", rec.get("body") or {}, quiet=True)
+        attempts = int(rec.get("attempts") or 1) + 1
+        if 200 <= status < 300:
+            _log(f"finish of turn {turn_id[:8]} delivered on attempt {attempts}")
+            outcome[turn_id] = None
+        elif not _finish_retryable(status):
+            _log(f"finish of turn {turn_id[:8]}: canopy-web said {status} on attempt "
+                 f"{attempts} — not retrying")
+            outcome[turn_id] = None
+        elif now - float(rec.get("first_at") or now) >= FINISH_GIVE_UP_SECONDS:
+            _log(f"GAVE UP on the finish of turn {turn_id[:8]} after {attempts} attempts "
+                 f"(last: {status}) — the lease sweep will close it")
+            outcome[turn_id] = None
+        else:
+            wait = min(FINISH_RETRY_MAX_SECONDS, FINISH_RETRY_BASE_SECONDS * 2 ** (attempts - 1))
+            outcome[turn_id] = {**rec, "attempts": attempts, "next_at": now + wait, "last": status}
+    with _PENDING_FINISH_LOCK:
+        pending = _read_pending_finishes()
+        for turn_id, rec in outcome.items():
+            if turn_id not in pending:
+                continue
+            if rec is None:
+                pending.pop(turn_id)
+            else:
+                pending[turn_id] = rec
+        _write_pending_finishes(pending)
+
+
+_FINISH_RETRIER: dict = {"thread": None}
+
+
+def maybe_retry_pending_finishes() -> bool:
+    """Start a retry pass when finishes are waiting and none is running. Its own
+    thread: each re-send can take `_api`'s full timeout, and the WS loop that calls
+    this must keep answering pings. True when started."""
+    running = _FINISH_RETRIER["thread"]
+    if running is not None and running.is_alive():
+        return False
+    if not _pending_finish_ids():
+        return False
+    t = threading.Thread(target=_retry_pending_finishes, name="finish-retry", daemon=True)
+    _FINISH_RETRIER["thread"] = t
+    try:
+        t.start()
+    except RuntimeError as exc:   # no thread to be had: the next tick tries again
+        _log(f"warn: could not start a finish retry: {exc}")
+        return False
+    return True
 
 
 def _token_refused() -> bool:
@@ -631,8 +768,11 @@ def _heartbeat_body(active_turn_ids: list[str], **extra) -> dict:
     """
     info = build_info()
     _mark_in_flight(len(active_turn_ids))
+    # A turn whose finish is still waiting to be delivered keeps its lease: until
+    # canopy-web hears the finish, the sweep would otherwise mark it LOST.
+    waiting = [t for t in _pending_finish_ids() if t not in active_turn_ids]
     body = {
-        "active_turn_ids": active_turn_ids,
+        "active_turn_ids": [*active_turn_ids, *waiting],
         "host": RUNNER_HOST,
         "code_sha": info["sha"],
         "code_committed_at": info["committed_at"],
@@ -1841,6 +1981,9 @@ CONNECTION_STAGE_TIMEOUT_SECONDS = 300
 CONNECTIONS_ZK_MIN_CLI = (0, 2, 838)
 #: A provider key canopy-web may name; anything else never becomes a path or an argv.
 _PROVIDER_KEY = re.compile(r"[a-z][a-z0-9_-]{0,39}")
+#: (turn_id, provider) staged from a person's short-lived access, not a sealed connection. It
+#: cannot be renewed, so no heartbeat re-stages it through the CLI. Under _CONN_LOCK.
+_CONN_TEMPORARY: set = set()
 #: Turns holding staged files: {turn_id: (slug, runner_id, providers)}.
 _CONN_HOLDS: dict = {}
 _CONN_LOCK = threading.Lock()
@@ -1919,17 +2062,52 @@ def _stage_connections(runner_id: str, turn_id: str, slug: str) -> frozenset:
                 listed.append(provider)
             else:
                 _stage_failed_line(slug, "", turn_id, "unusable provider key")
-        if listed and _cli_too_old_for_connections():
+        if [p for p in listed if p not in (body.get("temporary") or [])] and _cli_too_old_for_connections():
             _stage_failed_line(slug, "", turn_id, "canopy CLI too old for connections")
             return frozenset()
+        temporary = [p for p in body.get("temporary") or [] if isinstance(p, str) and _PROVIDER_KEY.fullmatch(p)]
         for provider in listed:
-            _stage_connection_token(runner_id, turn_id, slug, provider)
-        return frozenset(listed)
+            if provider not in temporary:
+                _stage_connection_token(runner_id, turn_id, slug, provider)
+        staged = {p for p in listed if p not in temporary}
+        for provider in temporary:
+            if _stage_temporary_token(runner_id, turn_id, slug, provider):
+                staged.add(provider)
+        return frozenset(staged)
     if status == 0:
         _stage_failed_line(slug, "", turn_id, "listing: canopy-web unreachable")
     elif status not in (-1, 404):
         _stage_failed_line(slug, "", turn_id, f"listing -> {status}")
     return frozenset()
+
+
+def _stage_temporary_token(runner_id: str, turn_id: str, slug: str, provider: str) -> bool:
+    """Stage the short-lived token of the person who started this turn, at the path and in the
+    format the CLI's stage writes, so whatever reads a staged token reads this one the same way.
+    Whether it staged. The turn holds the file like any other, so it goes when the turn ends. No
+    token is ever logged, and a failure costs the turn its token, not its start."""
+    target = _connection_token_path(slug, provider)
+    with _CONN_LOCK:
+        held = _CONN_HOLDS.get(turn_id)
+        _CONN_HOLDS[turn_id] = (slug, runner_id, (held[2] if held else frozenset()) | {provider})
+        _CONN_TEMPORARY.add((turn_id, provider))
+    try:
+        status, body = _api("GET", f"/runners/{runner_id}/turns/{turn_id}/connections/{provider}/temporary", quiet=True)
+        if status != 200 or not isinstance(body, dict) or not body.get("access_token"):
+            raise ValueError(f"temporary -> {status}")
+        expires = datetime.datetime.fromisoformat(str(body["expires_at"]).replace("Z", "+00:00")).timestamp()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        os.chmod(target.parent, 0o700)
+        _write_private_text(target, json.dumps({"access_token": body["access_token"], "instance_url": "",
+                                                "expires_at": expires,
+                                                "account_label": body.get("account_label") or ""}))
+        return True
+    except Exception as exc:  # noqa: BLE001 — never cost the turn its start
+        _stage_failed_line(slug, provider, turn_id, f"temporary: {type(exc).__name__}: {exc}"[:200])
+        with _CONN_LOCK:
+            _CONN_TEMPORARY.discard((turn_id, provider))
+        _stage_failed(turn_id, provider, False)
+        return False
 
 
 def _stage_connection_token(runner_id: str, turn_id: str, slug: str, provider: str, *,
@@ -2051,6 +2229,7 @@ def _drop_holds(turn_id: str) -> None:
     with _CONN_LOCK:
         _CONN_WAITING.difference_update({w for w in _CONN_WAITING if w[0] == turn_id})
         _CONN_NOT_FOR_BOX.difference_update({w for w in _CONN_NOT_FOR_BOX if w[0] == turn_id})
+        _CONN_TEMPORARY.difference_update({w for w in _CONN_TEMPORARY if w[0] == turn_id})
         held = _CONN_HOLDS.pop(turn_id, None)
         if not held:
             return
@@ -2068,6 +2247,9 @@ def _restage_connections(turn_id: str, *, now: float | None = None) -> None:
         return
     slug, runner_id, staged = held
     for provider in sorted(staged):
+        with _CONN_LOCK:
+            if (turn_id, provider) in _CONN_TEMPORARY:
+                continue  # it cannot be renewed: the tool says so when it runs out
         try:
             _stage_connection_token(runner_id, turn_id, slug, provider, now=now, refresh=True)
         except Exception as exc:  # noqa: BLE001 — never cost the lease its heartbeat
@@ -2199,7 +2381,7 @@ def _aws_instance_credentials() -> dict | None:
         try:
             expires = datetime.datetime.strptime(
                 str(doc.get("Expiration")), "%Y-%m-%dT%H:%M:%SZ").replace(
-                tzinfo=datetime.timezone.utc).timestamp()
+                tzinfo=datetime.UTC).timestamp()
         except ValueError:
             expires = 0.0
         creds = {"access_key": str(doc["AccessKeyId"]), "secret_key": str(doc["SecretAccessKey"]),
@@ -5239,7 +5421,7 @@ def _acp_core():
 # recorded THEN — not at finish — for the live stream tail to follow it while it
 # runs. A registry rather than a parameter so neither executor's signature
 # changes (they are deliberately interchangeable; see run_acp).
-_SESSION_HOOKS: dict[str, "object"] = {}
+_SESSION_HOOKS: dict[str, object] = {}
 _SESSION_HOOKS_LOCK = threading.Lock()
 
 
@@ -6556,7 +6738,7 @@ def probe_github_token(token: str, repo: str) -> dict:
     if raw:
         try:
             expires = datetime.datetime.strptime(raw.replace(" UTC", ""), "%Y-%m-%d %H:%M:%S").replace(
-                tzinfo=datetime.timezone.utc).isoformat()
+                tzinfo=datetime.UTC).isoformat()
         except ValueError:
             expires = None
     checks = []
@@ -7099,7 +7281,7 @@ def _job_spec(text: str, name: str) -> JobSpec:
     else. `run` is an argv list, never a string: there is no shell. The file is size-capped
     before it is parsed; `safe_load` builds an alias as a shared reference, so what a
     capped file can expand to is bounded too."""
-    import yaml   # lazy: apt python3-yaml (runner.cfn.yaml); ships with Ubuntu cloud images
+    import yaml  # lazy: apt python3-yaml (runner.cfn.yaml); ships with Ubuntu cloud images
 
     where = ".canopy/jobs.yaml"
     if not _JOB_NAME.fullmatch(name or ""):
@@ -8239,7 +8421,15 @@ def _agent_session_transcript(slug: str, cli_session_id: str) -> pathlib.Path | 
 
 
 def sync_runner_src() -> bool:
-    """Bring RUNNER_SRC_DIR to origin/main and expose its packages.
+    """Bring RUNNER_SRC_DIR to the commit this runner was installed from and
+    expose its packages.
+
+    The commit is build-info.json's `sha` — the deployed cloud sha, whose path
+    list (deploy-labs.yml `cloud_sha`, update_runner.sh SHA_PATHS) covers every
+    package imported from this clone. So the packages are the SAME commit as the
+    cloud_runner.py running them: a restart never pulls undeployed main into a
+    box, and a rollback rolls the packages back with it. Only a box with no
+    stamp (a hand install) tracks origin/main, and says so loudly.
 
     Reset, not merged: this clone belongs to the runner alone, so there is no
     local work to protect, and `pull --ff-only` is exactly what failed on
@@ -8247,29 +8437,40 @@ def sync_runner_src() -> bool:
     clone beats a disabled feature — and the outcome lands in the `code_clone`
     health check instead of one journald line."""
     repo_dir = pathlib.Path(RUNNER_SRC_DIR)
+    pinned = build_info().get("sha") or ""
+    ref = pinned or "main"
+    label = f"deployed sha {pinned[:12]}" if pinned else "origin/main"
+    if not pinned:
+        _log(f"WARNING: {BUILD_INFO_FILE} names no sha — syncing {repo_dir} to origin/main, "
+             "which may be code no deploy has shipped (and a rollback will not undo it)")
     synced = False
     try:
-        if (repo_dir / ".git").is_dir():
-            subprocess.run(["git", "-C", str(repo_dir), "fetch", "--quiet", "--depth", "1",
-                            CANOPY_WEB_REPO_URL, "main"], check=True, timeout=120)
-            subprocess.run(["git", "-C", str(repo_dir), "checkout", "--quiet", "--force",
-                            "--detach", "FETCH_HEAD"], check=True, timeout=60)
-        else:
+        if not (repo_dir / ".git").is_dir():
             repo_dir.parent.mkdir(parents=True, exist_ok=True)
             subprocess.run(["git", "clone", "--quiet", "--depth", "1", CANOPY_WEB_REPO_URL,
                             str(repo_dir)], check=True, timeout=180)
+        # A sha fetches like a branch (GitHub serves any reachable commit), so
+        # one path covers both; FETCH_HEAD is exactly what was asked for.
+        subprocess.run(["git", "-C", str(repo_dir), "fetch", "--quiet", "--depth", "1",
+                        CANOPY_WEB_REPO_URL, ref], check=True, timeout=120)
+        subprocess.run(["git", "-C", str(repo_dir), "checkout", "--quiet", "--force",
+                        "--detach", "FETCH_HEAD"], check=True, timeout=60)
         synced = True
     except Exception as exc:  # noqa: BLE001
-        _log(f"warn: could not sync {repo_dir} to origin/main: {exc}")
+        _log(f"warn: could not sync {repo_dir} to {label}: {exc}")
         _set_check("code_clone", "fail" if not (repo_dir / ".git").is_dir() else "warn",
-                   f"could not sync {repo_dir} to origin/main ({exc}); "
+                   f"could not sync {repo_dir} to {label} ({exc}); "
                    + ("using the clone as it was" if (repo_dir / ".git").is_dir() else "no clone"))
     if not (repo_dir / ".git").is_dir():
         return False
     if synced:
         sha = subprocess.run(["git", "-C", str(repo_dir), "rev-parse", "--short", "HEAD"],
                              capture_output=True, text=True, timeout=10).stdout.strip()
-        _set_check("code_clone", "ok", f"{repo_dir} at origin/main {sha}")
+        if pinned:
+            _set_check("code_clone", "ok", f"{repo_dir} at {label}")
+        else:
+            _set_check("code_clone", "warn", f"{repo_dir} at origin/main {sha}: no build-info "
+                       "sha to pin it to, so it may be ahead of what is deployed")
     _install_transcript_core(repo_dir)
     return True
 
@@ -10420,7 +10621,7 @@ def strip_terminal(raw: bytes) -> str:
     text = _CSI.sub(b"", raw)
     # OSC-8 opens as ESC ] 8 ; id=… ; <URL> BEL — keep everything after the last
     # ';' in the introducer, which is the URL itself.
-    def _keep_url(m: "re.Match[bytes]") -> bytes:
+    def _keep_url(m: re.Match[bytes]) -> bytes:
         body = m.group(0)
         url = body.rsplit(b";", 1)[-1].rstrip(b"\x07\x1b\\")
         # Newline-delimited, and that is load-bearing rather than tidiness. The
@@ -11309,7 +11510,7 @@ def _candidate_gog_clients(account: str, declared: str, slug: str = "") -> list:
                          if (cfg_dir / f"credentials-{c}.json").is_file())]
     try:
         data = json.loads((cfg_dir / "config.json").read_text())
-        order.append(((data.get("account_clients") or {}).get(account) or ""))
+        order.append((data.get("account_clients") or {}).get(account) or "")
     except Exception:  # noqa: BLE001 — no map yet is a normal first-boot state
         pass
     try:
@@ -13793,7 +13994,7 @@ def _adopt_one(runner_id: str, d: pathlib.Path, summary: dict) -> None:
     if turn.get("job"):
         # A job the last daemon held: `_job_restart_sweep` has already stopped whatever it
         # left. It may have written, so it is reported, and never run again.
-        fstatus, _ = _api("POST", f"/turns/{turn_id}/finish",
+        fstatus, _ = _post_finish(turn_id,
                           {"status": "failed", "result_note": JOB_RESTARTED_NOTE})
         _lifecycle(turn_id, "lost", reason="restarted during a job", agent=state.get("slug"), http=fstatus)
         _unstage_connections(turn_id)
@@ -13804,7 +14005,7 @@ def _adopt_one(runner_id: str, d: pathlib.Path, summary: dict) -> None:
     if state.get("phase") != "running" or attempt is None or not attempt.is_dir():
         note = ("[runner] the runner restarted while this turn was being set up; "
                 "its agent never started, so canopy-web may run it again")
-        _api("POST", f"/turns/{turn_id}/finish", {"status": "failed", "result_note": note})
+        _post_finish(turn_id, {"status": "failed", "result_note": note})
         _lifecycle(turn_id, "lost", reason="restarted during setup", agent=state.get("slug"))
         _adopted_cleanup(turn_id, state)
         summary["reported"].append(f"{turn_id[:8]} (setup)")
@@ -13818,7 +14019,7 @@ def _adopt_one(runner_id: str, d: pathlib.Path, summary: dict) -> None:
         body = {"status": "failed", "result_note": _result_note(note, turn)}
         if state.get("cli_session_id"):
             body["session_key"] = state["cli_session_id"]
-        fstatus, _ = _api("POST", f"/turns/{turn_id}/finish", body)
+        fstatus, _ = _post_finish(turn_id, body)
         _lifecycle(turn_id, "lost", reason="process gone at adoption", pid=info.get("child_pid"),
                    agent=state.get("slug"), session=state.get("cli_session_id"), http=fstatus)
         _adopted_cleanup(turn_id, state)
@@ -14060,7 +14261,7 @@ def _conclude_adopted(runner_id, turn_id, turn, state, ok, text, cli_session_id,
         body = {"status": finish, "result_note": _result_note(text, turn)}
         if cli_session_id:
             body["session_key"] = cli_session_id
-        fstatus, _ = _api("POST", f"/turns/{turn_id}/finish", body)
+        fstatus, _ = _post_finish(turn_id, body)
         _update_turn_state(turn_id, reported=True)
         _lifecycle(turn_id, "reported", status=finish, http=fstatus, agent=slug,
                    session=cli_session_id, adopted=True)
@@ -14126,7 +14327,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
     # run on another: canopy-web picked that CLI (`apps/harness/clis.py`), and its
     # conversation's history lives there. Refused before anything is built.
     if not job and (refused := _cli_refusal(turn)) is not None:
-        _api("POST", f"/turns/{turn_id}/finish", {"status": "failed", "result_note": refused})
+        _post_finish(turn_id, {"status": "failed", "result_note": refused})
         _log(f"turn {turn_id[:8]} NOT run — {refused}")
         _TURN_ENV.model = None
         return
@@ -14139,7 +14340,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         if job and confined:
             # canopy-web never sends one (a job starts only from a schedule); nor would
             # this box run a caller's turn as one.
-            _api("POST", f"/turns/{turn_id}/finish",
+            _post_finish(turn_id,
                  {"status": "failed", "result_note": "A caller's turn can't run a job."})
             _log(f"turn {turn_id[:8]} NOT run — a confined turn named a job")
             return
@@ -14154,7 +14355,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             # blindly.
             note = ("sensitive_data_unconfined: a sensitive-data runner runs only turns confined "
                     "to a capability that handles sensitive data; this turn's envelope is not confined")
-            _api("POST", f"/turns/{turn_id}/finish", {"status": "failed", "result_note": note})
+            _post_finish(turn_id, {"status": "failed", "result_note": note})
             _log(f"turn {turn_id[:8]} NOT run — {note}")
             return
         # A turn held on a site's page never holds the agent's own login there
@@ -14174,7 +14375,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             try:
                 scoped_env = _scoped_token_env(turn)
             except ConfineError as exc:
-                _api("POST", f"/turns/{turn_id}/finish",
+                _post_finish(turn_id,
                      {"status": "failed", "result_note": f"turn not run: {exc}"})
                 _log(f"turn {turn_id[:8]} NOT run — {exc}")
                 return
@@ -14207,14 +14408,14 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                 until = note_cred_failure(slug)
                 _log(f"{slug}: not claiming its turns until "
                      f"{time.strftime('%H:%M:%S', time.gmtime(until))}Z (credentials)")
-                _api("POST", f"/turns/{turn_id}/finish", {"status": "failed", "result_note": note})
+                _post_finish(turn_id, {"status": "failed", "result_note": note})
                 _log(f"turn {turn_id[:8]} NOT run — {note}")
                 return
             env_path = write_turn_env(slug, str(turn_id), withheld=_withheld())
             if env_path is None:
                 note = (f"[runner] could not write {slug}'s per-turn credentials file: "
                         f"{_TURN_ENV_ERRORS.get(slug) or 'no tmpfs root'}")
-                _api("POST", f"/turns/{turn_id}/finish", {"status": "failed", "result_note": note})
+                _post_finish(turn_id, {"status": "failed", "result_note": note})
                 _log(f"turn {turn_id[:8]} NOT run — {note}")
                 return
             per_turn["CANOPY_AGENT_ENV_FILE"] = str(env_path)
@@ -14285,7 +14486,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                     first, sep, rest = prompt.partition("\n")
                     prompt = f"{first} --caller {caller_path}{sep}{rest}"
             except ConfineError as exc:
-                _api("POST", f"/turns/{turn_id}/finish",
+                _post_finish(turn_id,
                      {"status": "failed", "result_note": f"a caller's turn was not run: {exc}"})
                 _log(f"turn {turn_id[:8]} NOT run — cannot confine: {exc}")
                 return
@@ -14311,7 +14512,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                 _TURN_ENV.settings = _TURN_ENV.read_settings(sessions=())
                 _TURN_ENV.mcp_config = _sensitive_data_mcp_config(turn)
             except ConfineError as exc:
-                _api("POST", f"/turns/{turn_id}/finish",
+                _post_finish(turn_id,
                      {"status": "failed", "result_note": f"a sensitive-data turn was not run: {exc}"})
                 _log(f"turn {turn_id[:8]} NOT run — {exc}")
                 return
@@ -14320,7 +14521,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             try:
                 resume_id = _cut_fork(cwd, turn["_fork"], _turn_agent_slug(turn))
             except ForkError as exc:
-                _api("POST", f"/turns/{turn_id}/finish",
+                _post_finish(turn_id,
                      {"status": "failed", "result_note": f"Could not fork: {exc}"})
                 _log(f"turn {turn_id[:8]} NOT run — could not fork: {exc}")
                 return
@@ -14466,7 +14667,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             # never re-run blind as "sessionless" (services.finish_turn).
             finish_body["session_key"] = cli_session_id
         _FINISHING.add(turn_id)
-        fstatus, _ = _api("POST", f"/turns/{turn_id}/finish", finish_body)
+        fstatus, _ = _post_finish(turn_id, finish_body)
         if _relay_turn_id() == turn_id:
             _update_turn_state(turn_id, reported=True)
         _lifecycle(turn_id, "reported", status=finish, http=fstatus, agent=slug or "",
@@ -14477,6 +14678,9 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             note_off_disk_success(slug)
         if fstatus == 200:
             _log(f"finished turn {turn_id[:8]}: {finish}")
+        elif _finish_retryable(fstatus):
+            _log(f"turn {turn_id[:8]} not finished yet ({finish} here; canopy-web said "
+                 f"{fstatus}) — the finish is kept and re-sent until it lands")
         else:
             _log(f"COULD NOT FINISH turn {turn_id[:8]} ({finish} here; canopy-web said "
                  f"{fstatus}) — it will sit EXECUTING until the lease sweep")
@@ -14614,6 +14818,7 @@ def run_over_rest(runner_id: str) -> None:
         _, beat = _api("POST", f"/runners/{runner_id}/heartbeat", _heartbeat_body(_in_flight_ids()))
         _observe_beat(beat)
         honour_stops(beat)
+        maybe_retry_pending_finishes()
         maybe_self_refresh(bool((beat or {}).get("refresh_pending")))
         _drain_session_interrupts(runner_id)
         maybe_sweep_disk()
@@ -14792,6 +14997,7 @@ def run_over_ws(runner_id: str) -> bool:
                               "heartbeat.ack", timeout=15)
             _observe_beat(ack)
             honour_stops(ack)
+            maybe_retry_pending_finishes()
             # This thread is the one that claims, so "idle" holds until the
             # restart; see maybe_self_refresh.
             maybe_self_refresh(bool((ack or {}).get("refresh_pending")))

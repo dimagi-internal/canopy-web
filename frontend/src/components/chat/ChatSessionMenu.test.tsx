@@ -73,6 +73,22 @@ describe('ChatSessionMenu — Others see while you type', () => {
   })
 })
 
+describe('ChatSessionMenu — Delete this session\'s content', () => {
+  it('is offered only when it is yours to delete', async () => {
+    render(<ChatSessionMenu {...baseProps()} />)
+    await openMenu()
+    expect(screen.queryByTestId('delete-session-content')).toBeNull()
+  })
+
+  it('calls through on click', async () => {
+    const onDeleteContent = vi.fn()
+    render(<ChatSessionMenu {...baseProps({ onDeleteContent })} />)
+    await openMenu()
+    fireEvent.click(screen.getByTestId('delete-session-content'))
+    expect(onDeleteContent).toHaveBeenCalledOnce()
+  })
+})
+
 describe('ChatSessionMenu — Load all messages / Load full session', () => {
   it('hides both when there is nothing to offer', async () => {
     render(<ChatSessionMenu {...baseProps()} />)

@@ -19,16 +19,19 @@ export type ProviderOut = components['schemas']['ProviderOut']
 export type ShareStateOut = components['schemas']['ShareStateOut']
 export type ShareIn = components['schemas']['ShareIn']
 
+export type TemporaryAccessOut = components['schemas']['TemporaryAccessOut']
+
 export interface ConnectionsView {
   providers: ProviderOut[]
   connections: ConnectionOut[]
+  temporary: TemporaryAccessOut[]
 }
 
 // The `--immutable` codegen types arrays as non-iterable objects; cast through
 // `unknown` (the idiom in api/github.ts and api/workspaces.ts).
 function view(d: unknown): ConnectionsView {
   const v = d as ConnectionsView
-  return { providers: [...v.providers], connections: [...v.connections] }
+  return { providers: [...v.providers], connections: [...v.connections], temporary: [...(v.temporary ?? [])] }
 }
 
 export async function listMyConnections(): Promise<ConnectionsView> {
@@ -43,6 +46,15 @@ export async function disconnectMine(id: string): Promise<DisconnectOut> {
     params: { path: { connection_id: id } },
   })
   return unwrap(res, 'Could not disconnect.')
+}
+
+export type TemporaryEndedOut = components['schemas']['TemporaryEndedOut']
+
+export async function endTemporaryAccess(id: string): Promise<TemporaryEndedOut> {
+  const res = await apiV2.DELETE('/api/connections/temporary/{access_id}', {
+    params: { path: { access_id: id } },
+  })
+  return unwrap(res, 'Could not end it.')
 }
 
 // ---- Sharing: what the owner's browser reads and writes (`vault/connectionShare.ts`) ----

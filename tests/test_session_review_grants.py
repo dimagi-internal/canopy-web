@@ -62,9 +62,9 @@ def _let_in(w, slug="trellis"):
     return r.json()
 
 
-def _sweep(agent) -> Client:
-    """The agent's login inside a running turn canopy started (a coaching sweep: nobody
-    asked, so every grantor's sessions are in reach — who may ask is
+def _sweep(agent, for_user=None) -> Client:
+    """The agent's login inside a running turn canopy started: nobody asked, so it has the
+    roster, and with `for_user` the one grantor it was dispatched for (who may ask is
     tests/test_agent_session_reads_bind_to_the_asker.py)."""
     from django.utils import timezone
 
@@ -77,13 +77,14 @@ def _sweep(agent) -> Client:
     turn = Turn.objects.create(agent=agent, origin=Turn.ORIGIN_CANOPY_WEB_CHAT, prompt="sweep",
                                idempotency_key=f"sweep-{agent.slug}-{Turn.objects.count()}",
                                status=Turn.RUNNING, claimed_by=box, initiator_kind="system",
-                               initiator_via="schedule", initiator_assurance="internal")
+                               initiator_via="schedule", initiator_assurance="internal",
+                               origin_ref={"reads_for": {"user_id": for_user.pk}} if for_user else {})
     bearer = turn_agent_tokens.issue(turn, box)["token"]
     return Client(HTTP_AUTHORIZATION=f"Bearer {bearer}")
 
 
 def _reads(agent, session) -> bool:
-    return _sweep(agent).get(f"/api/canopy-sessions/{session.pk}").status_code == 200
+    return _sweep(agent, session.created_by).get(f"/api/canopy-sessions/{session.pk}").status_code == 200
 
 
 def test_the_person_lets_the_coach_in_and_it_is_audited(w):
@@ -131,12 +132,12 @@ def test_reading_works_while_live_and_stops_on_revoke(w):
     _let_in(w)
     assert _reads(trellis, w["chat"])
     assert not _reads(trellis, w["bos"])                                  # only the granter's sessions
-    listed = _sweep(trellis).get(f"/api/canopy-sessions/?of_user={w['lili'].pk}").json()
+    listed = _sweep(trellis, w["lili"]).get(f"/api/canopy-sessions/?of_user={w['lili'].pk}").json()
     assert {s["id"] for s in listed} == {str(w["chat"].pk)}
     # Read-only: the grant never lets it write, send or share.
     from apps.harness import turn_asker
 
-    setattr(trellis.user, "_canopy_turn_standing", turn_asker.Standing("t", unattended=True))
+    setattr(trellis.user, "_canopy_turn_standing", turn_asker.Standing("t", person_id=0, operator=True))
     assert access.role_for(trellis.user, w["chat"]) == "viewer"
     assert not access.can_write(trellis.user, w["chat"])
     assert not access.can_share(trellis.user, w["chat"])

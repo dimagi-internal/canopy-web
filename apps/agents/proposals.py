@@ -211,12 +211,13 @@ def propose(agent: Agent, *, name: str, outcome: str, why: str, plan: list[str],
     now = timezone.now()
 
     project = (AgentProject.objects.select_for_update(of=("self",)).select_related("agent")
-               .filter(agent=agent, status=AgentProject.PROPOSED, name__iexact=name).first())
+               .filter(agent=agent, status=AgentProject.PROPOSED, name__iexact=name,
+                       visibility=AgentProject.WORKSPACE).first())
     created = project is None
     if created:
         if not new_evidence.strip() and any(
                 _declined_by_a_person(p) for p in agent.projects.filter(
-                    status=AgentProject.ARCHIVED, name__iexact=name)):
+                    status=AgentProject.ARCHIVED, name__iexact=name, visibility=AgentProject.WORKSPACE)):
             raise DeclinedBefore(f"{agent.slug} proposed {name!r} before and it was declined: "
                                  "send new_evidence to propose it again")
         project = services.new_project(
@@ -625,6 +626,9 @@ def propose_task(project: AgentProject, *, title: str, why: str, done_when: str,
     agent = agent or project.agent
     if agent is None:
         raise ProposalError(f"{project.name} has no lead agent to propose its tasks")
+    if partners and project.is_personal:
+        # A partner joins the project, and joining a personal one is its lead's call.
+        raise ProposalError(f"{project.name} is personal: its lead adds agents to it, a proposal does not")
     if not (title and why and done_when):
         raise ProposalError("a proposed task needs a title, a why and a done_when")
     if any(p.pk == agent.pk for p in partners):
@@ -686,7 +690,8 @@ def spawned_of(task: AgentTask) -> list[dict]:
 
     return [{"agent": p.agent_slug or "", "ref": p.ext_id or p.handle, "name": p.name, "status": p.status,
              "url": wslinks.scoped_path(p.workspace_id, page_path(p))}
-            for p in task.spawned_projects.select_related("agent").order_by("pk")]
+            for p in task.spawned_projects.filter(visibility=AgentProject.WORKSPACE)
+            .select_related("agent").order_by("pk")]
 
 
 def _partner_rows(tasks) -> list[dict]:

@@ -346,7 +346,7 @@ def unarchive_session(session: Session, *, user=None, reason: str = "unarchived"
     runner session past the liveness window stays out until it is reported).
     Returns whether anything changed."""
     held = Session.HAND_ARCHIVED_KEY in (session.metadata or {})
-    if session.status != Session.ARCHIVED and not held:
+    if session.content_deleted_at is not None or (session.status != Session.ARCHIVED and not held):
         return False
     session.status = Session.ACTIVE
     session.metadata = {k: v for k, v in (session.metadata or {}).items() if k != Session.HAND_ARCHIVED_KEY}

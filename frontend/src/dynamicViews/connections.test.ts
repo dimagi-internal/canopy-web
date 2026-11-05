@@ -2,10 +2,12 @@ import { describe, expect, it, vi } from 'vitest'
 
 const disconnectMine = vi.fn()
 const listMyConnections = vi.fn()
+const endTemporaryAccess = vi.fn()
 vi.mock('@/api/connections', async (orig) => ({
   ...(await orig<typeof import('@/api/connections')>()),
   disconnectMine: (id: string) => disconnectMine(id),
   listMyConnections: () => listMyConnections(),
+  endTemporaryAccess: (id: string) => endTemporaryAccess(id),
 }))
 
 import { checkConnect, connectOutcome, disconnectLent, lendStartPath } from './connections'
@@ -15,6 +17,12 @@ describe('disconnectLent', () => {
     listMyConnections.mockResolvedValue({ connections: [{ id: 'c1', state: 'active', statement: { agents: ['bailey'] } }] })
     disconnectMine.mockResolvedValue({ outcome: 'revoked', machine_revokes: false })
     await expect(disconnectLent('c1', 'bailey', ['bailey'])).resolves.toBe('revoked')
+  })
+  it('ends short-lived access through its own route, only for the agent it was lent to', async () => {
+    listMyConnections.mockResolvedValue({ connections: [], temporary: [{ id: 't1', agent: 'bailey' }] })
+    endTemporaryAccess.mockResolvedValue({ outcome: 'revoked' })
+    await expect(disconnectLent('t1', 'bailey', ['bailey'])).resolves.toBe('revoked')
+    await expect(disconnectLent('t1', 'eva', ['bailey', 'eva'])).rejects.toThrow(/not lent to eva/)
   })
 })
 
@@ -29,6 +37,20 @@ describe('checkConnect', () => {
   it('keeps the limits it was given', () => {
     expect(checkConnect({ agent: 'bailey', provider: 'google', minutes: 240, ownerTurnsOnly: true }, ['bailey']))
       .toEqual({ agent: 'bailey', provider: 'google', minutes: 240, ownerTurnsOnly: true })
+  })
+})
+
+describe('temporary access', () => {
+  it('asks for it, always kept to turns the viewer starts, and any time limit is dropped', () => {
+    expect(checkConnect({ agent: 'bailey', provider: 'google', temporary: true, minutes: 240 }, ['bailey']))
+      .toEqual({ agent: 'bailey', provider: 'google', ownerTurnsOnly: true, temporary: true })
+  })
+  it('starts with temporary=1 and no lend limits', () => {
+    const path = lendStartPath({ agent: 'bailey', provider: 'google', ownerTurnsOnly: true, temporary: true }, 'w', '/w/w/views/2')
+    expect(path).toContain('temporary=1')
+    expect(path).toContain('for_agent=bailey')
+    expect(path).not.toContain('lend_minutes')
+    expect(path).not.toContain('owner_turns_only')
   })
 })
 

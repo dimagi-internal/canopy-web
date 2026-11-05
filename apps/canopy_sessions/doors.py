@@ -60,8 +60,16 @@ class NotInIt(PermissionError):
     """A send into a sensitive conversation from someone not in it, or through a
     door that is not its chat surface (a PAT, MCP, a minted session, Slack)."""
 
-    def __init__(self):
-        super().__init__(sensitivity.NOT_IN_IT_SEND)
+    def __init__(self, session=None):
+        super().__init__(not_in_it_message(session))
+
+
+def not_in_it_message(session) -> str:
+    """What every send door says to someone a sensitive conversation takes nothing from."""
+    from apps.agents import refusals  # noqa: PLC0415 — the agents app imports this one
+
+    return refusals.make(refusals.Code.NOT_IN_SENSITIVE, agent=getattr(session, "agent", None),
+                         session=session).message
 
 
 def send_from(
@@ -102,8 +110,8 @@ def send_from(
     if not sensitivity.reads_content(session, chat_surface=chat_surface,
                                      user=None if contact is not None else user, contact=contact):
         if not spec.http:
-            raise NotInIt()
-        raise HttpError(403, sensitivity.NOT_IN_IT_SEND)
+            raise NotInIt(session)
+        raise HttpError(403, not_in_it_message(session))
     if context is not None:
         from apps.common import request_context
 

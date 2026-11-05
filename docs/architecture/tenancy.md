@@ -72,7 +72,7 @@ key outside that file — that pair is the signature of an access decision.
 ## Runners and tenancy
 
 A runner's tenant is its pairing owner's workspaces it is enrolled in, never
-`Runner.workspace` (`apps/harness/routing.py::runner_tenant_slugs`; a NULL owner fails closed) —
+`Runner.workspace` (`apps/harness/routing_orders.py::runner_tenant_slugs`; a NULL owner fails closed) —
 the rule, its claim/schedule parity test and the routing hint:
 [runners.md § Which workspaces a runner serves](runners.md#which-workspaces-a-runner-serves-the-tenant-gate).
 
@@ -232,7 +232,7 @@ failure again.
 
 One module decides who may see and act on a chat session: `apps/canopy_sessions/access.py`.
 
-- **Tenant first** (member of `Session.workspace`), then one of eight legs: creator ·
+- **Tenant first** (member of `Session.workspace`), then one of seven legs: creator ·
   explicit participant (`SessionParticipant`) · a runner-discovered session on a box you
   OWN (`Runner.owner`; never the whole tenant — a laptop session is single-player until
   its owner adds someone) · the own thread of an agent you administer (`Agent.is_admin`:
@@ -243,8 +243,7 @@ One module decides who may see and act on a chat session: `apps/canopy_sessions/
   `owner_user` or a `ProjectParticipant`; never an agent's own login, never a sensitive
   session; editor, may pull). Per person × project, opt-in, revocable, each change an
   audited setting (`ProjectSessionShare`, `canopy_sessions/sharing.py`,
-  `/api/me/session-sharing/`, the Settings → Opted-in repos panel) · a **one-session
-  review ask** (`SessionReviewAsk`; read-only, only in the chat the ask opened). Who sees what per
+  `/api/me/session-sharing/`, Settings → Account). Who sees what per
   channel: `access-sessions-and-people.md` § Who can see a session.
 - **Pulling from a machine is `access.may_pull`.** Asking a runner to stream a session
   (`POST /{id}/attach`, and the chat socket's connect) or to ship its history
@@ -252,7 +251,7 @@ One module decides who may see and act on a chat session: `apps/canopy_sessions/
   Everyone else who can read it — a coach, a runner admin, a viewer, an agent login not
   explicitly added — reads the stored rows: their attach is a no-op and their backfill a 403.
 - **A session review grant lets one agent's own login read one person's sessions** — a
-  coach (`SessionReviewGrant`; leg 5, `access._review_grant_q`; one session asked from its page is leg 8, `SessionReviewAsk`, `access-sessions-and-people.md`). Only the person makes
+  coach (`SessionReviewGrant`; leg 5, `access._review_grant_q`; one session asked from its page is no leg: `SessionReviewAsk`, `access-sessions-and-people.md`). Only the person makes
   or ends it, for an agent of a workspace they are in (`/api/people/me/session-reviewers/`,
   `apps/contacts/session_reviewers.py`), each act on their memory audit
   (`sessionReviewer.granted` / `.revoked`); revoking drops the agent's next read. "Their
@@ -373,6 +372,40 @@ Built and **off** unless `CANOPY_RETENTION_ENFORCE=true`.
   workspace rule still wins when enforcement is on.
 - Spec: `docs/superpowers/specs/2026-10-05-content-retention-design.md`.
 
+## Deleting your own session's content
+
+`DELETE /api/canopy-sessions/{id}/content`, the "Delete this session's content" item in a session's
+menu (`canopy_sessions/content_deletion.py`). Retention is a workspace's clock; this is one person's
+act, and it does not depend on a rule, on enforcement being on, or on being coached.
+
+- **Who: the person whose session it is, nobody else** (`access.owns_words`): the chat they started,
+  or a session discovered on a box they own that is not an agent's own work, also once it has fallen
+  off that box's report. No role overrides it: not a workspace owner, an agent admin or a runner admin.
+- **As themselves** (`harness.acting_person`, and `delegation.acting_app`): 403 for an agent's login,
+  any token issued to a turn (a turn's login, a caller token, an act-as-you token, which also lists it
+  in `act_as.EXCLUDED_PATTERNS`), a runner, and a site's token for its visitor. Their own browser
+  session, PAT or OAuth token may. It does not ask for a passkey.
+- **Only while it is theirs alone** (`access.others_in_it`), else 409: nobody else added, no channel
+  thread it lives in, no line anyone else wrote and no turn anyone else asked for, including people
+  since removed. A contact's conversation is never anyone's to delete this way.
+- **Only while it is quiet** (`content_deletion.blocker`), else 409: no open turn, its engine not
+  working, no move under way, no fork still holding a copy. Rechecked under the row locks.
+- **It leaves a metadata row.** The session is archived and empty, stays readable by those who could
+  read it (its row, not its words), and takes nothing more. A coach's legs stop reading it at all
+  (`_review_grant_q`, `_review_ask_q`; a live ask is revoked), and a grant or ask given later does
+  not bring it back. The chat a review ask opened is a conversation of its own, deleted the same way. The tombstone and what honours
+  it: chat-sessions.md § A person deleting their own session.
+- **What it cannot reach**, and the confirm dialog and route docs say so: the transcript on the person's
+  computer; what a coach already read into its notes, logs and mailbox; any chat a review ask opened (a
+  conversation of its own, deleted the same way); words posted to Slack; a `/canopy:share-session`
+  link (`session_sharing`, its own delete); facts on their memory page; artifacts made from the session
+  (a walkthrough, a review, a storyboard); and sessions or turns this conversation dispatched to, which
+  are other conversations with their own records.
+- A failed delete of a file's stored object answers 503: objects already removed stay removed, no row
+  has changed, and a retry finishes the rest.
+- Recorded as `session.content_deleted` in the workspace's event log and `session.contentDeleted` on the
+  person's own audit, ids only. It is not a setting and not an analytics fact.
+
 ## Sensitive conversations (`apps/harness/sensitivity.py`)
 
 `is_sensitive(session | turn)` — the requirements (`runner_requirements.requirements_of`,
@@ -419,19 +452,22 @@ THE predicate; every surface below asks it, one test each in
     `canopy-chat/v1/wrap|<conversation>|<user>`) to the starter's vault key
     (`GET /my-vault-key`) — its PUBLIC half, so starting a chat or sending in one, private
     or not, never asks for a passkey (`sealedChat.offerForNewChat`). A key pinned in this
-    browser (`trust.checkSelf`) is used silently. A key CHANGED since this browser pinned it
-    stops the new chat with a sentence (a substituted key looks like that); the panel and
-    the chat page show it and keep what was typed. A key never seen in this browser (a fresh
-    browser, the panel's frame, storage the browser will not keep) is **trusted on first
-    use**: the chat starts wrapped to the key canopy names, pinned here as unconfirmed with
-    the chat's id (`trust.trustSelfOnFirstUse`). The first time the person opens their vault
-    key in that browser for any reason (`unlockLocally`, `useVaultUnlock` → `trust.rememberSelf`),
-    the key they actually hold — derived from its private scalar — is checked against it;
-    a mismatch is a warning naming those chats on the sealed-conversation banner
-    (`useSealedConversation.warning`), and the pin becomes the key they hold, so the
-    substituted key is refused from then on. **The trade-off:** a key substituted on a
-    browser's very first chat is DETECTED at the first unlock there, not prevented; with
-    storage blocked nothing is remembered, so each start trusts anew and nothing is checked.
+    browser (`trust.checkSelf`) is used silently. A key never seen in this browser (a fresh
+    browser, the panel's frame, storage the browser will not keep), or CHANGED since this
+    browser pinned it (the person replaced their key in another browser), is **trusted on
+    first use**: the chat starts wrapped to the key canopy names, pinned here as unconfirmed
+    with the chat's id (`trust.trustSelfOnFirstUse`). The next time the person opens their
+    vault key in that browser for any reason (`unlockVaultKey`, `stepUpAndUnlock`,
+    `unlockLocally` → `trust.rememberSelf`), the key they actually hold — derived from its
+    private scalar — is checked against it; a mismatch is a warning naming those chats on the
+    sealed-conversation banner (`useSealedConversation.warning`), the pin becomes the key
+    they hold, and the disproven key stops any later chat here (the panel and the chat page
+    say why and keep what was typed). **The trade-off (owner decision, 2026-11-05):** a key
+    substituted by a write to the database, with no login or passkey, is DETECTED at the
+    next unlock in that browser, not prevented, so a chat that turns private before then
+    could be read by whoever holds that key. Refusing instead stopped every browser but
+    one, for everyone who replaced their key, with no way to tell the two apart. With storage
+    blocked nothing is remembered, so each start trusts anew and nothing is checked.
     canopy-web keeps it (`SessionKey.public_jwk`, a `SessionKeyWrap`) even
     while the chat is ordinary, so if it becomes sensitive its words are sealed to a key
     canopy-web never saw the private half of (`conversation_keys.check_offer`, `ensure_key`).
@@ -523,7 +559,7 @@ THE predicate; every surface below asks it, one test each in
     which they are `needs_key` again. A re-add or role change keeps a current copy. Until they hold a copy the
     live socket, whose frames carry the words, turns them away (`sensitivity.hears_live`,
     asked at connect and on every re-check; `session.error` `needs_key`).
-  - *A new vault key.* Settings → Vault key → Create a new vault key needs no passphrase,
+  - *A new vault key.* Settings → Security → Create a new vault key needs no passphrase,
     Secret Key or passkey that opens the current key, and deletes nothing stored in any vault. One screen lists
     every vault the person holds a copy of, who can let them back in, and any only they can
     open (`vault/newKeyImpact.ts`). If they are in private conversations it asks whether they

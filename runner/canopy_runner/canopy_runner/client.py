@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import functools
+import http.client
 import json
 import logging
 import pathlib
@@ -142,11 +143,13 @@ class Client:
                               body=full_body) from exc
         except urllib.error.URLError as exc:
             raise ClientError(f"{method} {label} -> {exc.reason}", transient=True) from exc
-        except (TimeoutError, ConnectionError) as exc:
+        except (TimeoutError, ConnectionError, http.client.HTTPException) as exc:
             # Siblings of URLError under OSError, not subclasses — a read timeout
             # on urlopen(timeout=) surfaces as a bare TimeoutError and would
-            # otherwise escape this handler entirely.
-            raise ClientError(f"{method} {label} -> {exc}", transient=True) from exc
+            # otherwise escape this handler entirely. So does a body cut short
+            # after the headers (IncompleteRead) or a garbled status line: neither
+            # is an OSError, and an escaped one cost a turn its finish.
+            raise ClientError(f"{method} {label} -> {exc!r}", transient=True) from exc
         if status == 204 or not raw:
             return status, None
         return status, json.loads(raw)

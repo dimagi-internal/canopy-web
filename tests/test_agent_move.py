@@ -268,6 +268,7 @@ def test_an_agent_session_points_at_the_agent_move(m):
 #: the plan, moved or left behind.
 _NOT_THE_AGENTS = {
     "contacts.PersonAccess": "a person's audit of who read them stays where it happened",
+    "meetings.Meeting": "a person's or a project's, and `agent` only says who helped; it stays when the agent moves",
     "harness.FailureInvestigation": "the DEBUGGER agent's workspace; `agents` only lists who failed",
     "shareouts.Shareout": "a workspace's briefing, produced by the agent for that workspace",
     "beta_requests.BetaRequest": "`user_agent` is a browser string, not an agent",

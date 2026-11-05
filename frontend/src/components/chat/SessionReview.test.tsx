@@ -50,6 +50,7 @@ describe('SessionReviewPanel', () => {
     const onChange = vi.fn()
     render(<SessionReviewPanel sessionId="s1" offer={live} onChange={onChange} />)
     expect(screen.getByRole('link').getAttribute('href')).toContain('/w/dimagi/sessions/c1')
+    expect(screen.getByTestId('session-review-withdraw-says').textContent).toContain("can't make")
     fireEvent.click(screen.getByTestId('session-review-withdraw'))
     await waitFor(() => expect(onChange).toHaveBeenCalledWith(offer))
   })

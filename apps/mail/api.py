@@ -22,10 +22,12 @@ from ninja import File, Router
 from ninja.errors import HttpError
 from ninja.files import UploadedFile
 
-from apps.agents import access
+from apps.agents import turn_context
 from apps.api.auth import session_auth
+from apps.api.pagination import clamp_offset
 from apps.api.route_gates import gate
 from apps.events import audit
+from apps.harness import turn_asker
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.gates import workspace_for
@@ -407,14 +409,14 @@ def _need(user, ws, cap):
 
 
 def _agent_full(user, route) -> None:
-    """THE rule (`access.decide`) decides what a person may make this agent do; mail needs FULL."""
+    """THE rule (`turn_context.resolve_turn_context`) decides what a person may make this agent do; mail needs FULL."""
     if route is None:
         raise HttpError(409, "this address no longer exists")
     if not route.agent_id:
         raise HttpError(409, "this address is not an agent mailbox")
-    d = access.decide(route.agent, user, verified=True, origin="email")
-    if d.access != access.FULL:
-        raise HttpError(403, d.reason or f"you may not act as {route.agent.slug}")
+    d = turn_context.for_asker(route.agent, user, verified=True, channel="email")
+    if d.access != turn_context.FULL:
+        raise HttpError(403, d.refusal.message if d.refused else f"you may not act as {route.agent.slug}")
 
 
 def _presign(a) -> str:
@@ -632,7 +634,7 @@ def list_mail_threads(request: HttpRequest, workspace: str, agent: str = "", arc
                      _name=Subquery(newest.values("from_name")[:1]),
                      _text=Subquery(newest.annotate(_start=Substr("text", 1, 1000)).values("_start")[:1]),
                      _files=Exists(MailAttachment.objects.filter(message__thread=OuterRef("pk"))))
-    offset, limit = max(offset, 0), min(max(limit, 1), 200)
+    offset, limit = clamp_offset(offset), min(max(limit, 1), 200)
     page = list(qs[offset:offset + limit + 1])
     items = []
     for t in page[:limit]:
@@ -793,6 +795,17 @@ def _uuids(ids: list[str]) -> list[uuidlib.UUID]:
     return out
 
 
+def _check_scoped_recipients(user, *lists) -> None:
+    """A turn scoped to one grantor writes to that person alone (`turn_asker.scoped_recipient`):
+    what it read is theirs, whatever text in it asks for another address."""
+    allowed = turn_asker.scoped_recipient(user)
+    if allowed is None:
+        return
+    addresses = [str(a).strip().lower() for addrs in lists for a in (addrs or [])]
+    if not allowed or any(a != allowed for a in addresses):
+        raise HttpError(403, "this turn reviews one person's sessions, and may write only to them")
+
+
 def _send_as(sender: _Sender, *, uploads: list[MailUpload] = (), **kw) -> MailMessage:
     try:
         files = [parse.Attachment(u.filename, u.content_type, ses.get_object(u.s3_key)) for u in uploads]
@@ -905,11 +918,13 @@ def reply_mail_thread(request: HttpRequest, workspace: str, uuid: str, payload: 
     """Reply as the thread's agent, or — on your own kept mail — as your own address."""
     ws = workspace_for(request.user, workspace)
     _need(request.user, ws, perms.AGENT_WORK)
+    _check_scoped_recipients(request.user, payload.to, payload.cc, payload.bcc)
     t = _thread(ws, uuid, request.user)
     sender = _thread_sender(t, request.user)
     to = payload.to or _reply_recipients(t)
     if not to:
         raise HttpError(422, "no one to reply to")
+    _check_scoped_recipients(request.user, to, payload.cc, payload.bcc)
     uploads = _uploads(ws, request.user, payload.attachments)
     return _msg_out(_send_as(sender, uploads=uploads, to=to, cc=payload.cc, bcc=payload.bcc, text=payload.text,
                              html=payload.html, thread=t))
@@ -922,6 +937,7 @@ def send_mail(request: HttpRequest, workspace: str, payload: MailSendIn) -> dict
     no `agent` — from one of your own forwarding addresses, as a thread private to you."""
     ws = workspace_for(request.user, workspace)
     _need(request.user, ws, perms.AGENT_WORK)
+    _check_scoped_recipients(request.user, payload.to, payload.cc, payload.bcc)
     sender = _new_sender(ws, request.user, payload.agent, payload.from_address)
     uploads = _uploads(ws, request.user, payload.attachments)
     m = _send_as(sender, uploads=uploads, to=payload.to, cc=payload.cc, bcc=payload.bcc, subject=payload.subject,

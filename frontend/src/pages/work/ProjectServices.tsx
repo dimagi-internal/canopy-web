@@ -201,7 +201,7 @@ export function ProjectServices({
           <div className="font-medium text-foreground">Vaults</div>
           <p className="text-[12px] text-muted-foreground">
             Secrets this project&apos;s skills may need. Each member agent in the vault&apos;s workspace tree reads them in its
-            turns; joining the project gives them, leaving takes them away. Names only.
+            turns; joining the project gives them, leaving takes them away. Only the people on this project can open them. Names only.
           </p>
           <ul className="mt-1 space-y-1">
             {vaults.map((v) => (

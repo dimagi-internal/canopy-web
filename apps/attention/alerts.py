@@ -65,6 +65,10 @@ SOURCES: list[str] = [
 ]
 
 
+FINGERPRINT_MAX = Alert._meta.get_field("fingerprint").max_length
+TITLE_MAX = Alert._meta.get_field("title").max_length
+
+
 @dataclass(frozen=True)
 class Raise:
     """One currently-true condition, as a source reports it.
@@ -95,9 +99,12 @@ class Raise:
             raise ValueError(f"alert {self.subject_key!r}: an agent OR a person has it, not both")
 
     def digest(self) -> str:
-        if self.fingerprint:
+        """What `Alert.fingerprint` holds. A source's own fingerprint is kept readable while
+        it fits the column; one that does not (it names a branch, an error's text) is hashed,
+        because a value too long for the column fails the whole of that source's tick."""
+        if self.fingerprint and len(self.fingerprint) <= FINGERPRINT_MAX:
             return self.fingerprint
-        return hashlib.sha256(f"{self.title}\n{self.body}".encode()).hexdigest()
+        return hashlib.sha256((self.fingerprint or f"{self.title}\n{self.body}").encode()).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -266,7 +273,7 @@ def _notify_handler(alert_pk: int, user_id: int, ask: str) -> None:
 
 def _upsert(kind: str, severity: str, r: Raise, now) -> None:
     fingerprint = r.digest()
-    fields = dict(workspace_id=r.workspace, scopes=list(r.scopes), severity=severity, title=r.title,
+    fields = dict(workspace_id=r.workspace, scopes=list(r.scopes), severity=severity, title=r.title[:TITLE_MAX],
                   body=r.body, url=r.url, fingerprint=fingerprint)
     with transaction.atomic():
         alert = _find_locked(kind, r.subject_key)

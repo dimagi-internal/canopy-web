@@ -114,7 +114,7 @@ def test_dropping_a_cli_stops_its_conversations(client):
     session.refresh_from_db()
     Agent.objects.filter(pk=agent.pk).update(clis=["claude-code"])
     session.agent.refresh_from_db()
-    assert clis.conversation_refusal(session).startswith("this conversation runs on Codex")
+    assert clis.conversation_refusal(session).startswith("This conversation runs on Codex")
     turn = _send(session, "k1")
     assert clis.allowed(turn) == []
     assert claim.claim_next_turn(runner) is None

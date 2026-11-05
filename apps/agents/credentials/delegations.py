@@ -440,6 +440,38 @@ def requested_by(turn) -> str:
     return ""
 
 
+def github_refusal(turn) -> str:
+    """Why this turn gets no git identity, or "" when it gets one. Reads only: the statement of what a
+    turn gets (`for_turn.py`) and `github_token_for_turn` ask this one question."""
+    if turn.capability:
+        # A CALLER's turn (confined to a capability of the agent's interface) is
+        # never lent the owner's GitHub identity: no published capability needs it,
+        # and in a session a stranger steers it is the most valuable thing on the
+        # box. The runner does not ask for one either; this is the server's half,
+        # so a runner that did would still get nothing.
+        return (f"this turn is confined to the caller capability '{turn.capability}', and a "
+                f"caller's turn is never given its agent owner's GitHub identity")
+    from apps.harness import turn_asker  # noqa: PLC0415 — harness imports this package
+
+    if turn_asker.READS_FOR in (turn.origin_ref if isinstance(turn.origin_ref, dict) else {}):
+        # A turn scoped to one grantor reads text they wrote, and does no repo work.
+        return ("this turn reads one person's sessions for review, and a review is "
+                "never given its agent owner's GitHub identity")
+    agent = turn_agent(turn)
+    if agent is None:
+        return "this turn runs as no agent, so it has no GitHub identity"
+    entry = github_entry(agent)
+    if entry is not None:
+        if not accounts.serves(entry, agent):
+            return (f"{entry.delegated_by.email if entry.delegated_by_id else 'its person'} is no longer an "
+                    f"admin of {agent.slug}, so the GitHub token they delegated is not used — delegate one "
+                    f"at /agents/{agent.slug}/settings → External accounts → GitHub")
+        return ""
+    who = agent.owner.email if agent.owner else "nobody (the agent has no owner)"
+    return (f"neither {agent.slug}'s owner {who} nor an admin has delegated it a GitHub identity — "
+            f"add a token at /agents/{agent.slug}/settings → External accounts → GitHub")
+
+
 def github_token_for_turn(turn) -> dict:
     """The git identity to commit with for one turn, and where its token is.
 
@@ -447,33 +479,15 @@ def github_token_for_turn(turn) -> dict:
     run it: this hands out no token, only `delegated` (the vault entry's name) and
     `agent` — the box opens the entry from its own resolve. `credentials/resolve` never
     returns it to a person."""
-    if turn.capability:
-        # A CALLER's turn (confined to a capability of the agent's interface) is
-        # never lent the owner's GitHub identity: no published capability needs it,
-        # and in a session a stranger steers it is the most valuable thing on the
-        # box. The runner does not ask for one either; this is the server's half,
-        # so a runner that did would still get nothing.
-        raise DelegationError(
-            f"this turn is confined to the caller capability '{turn.capability}', and a "
-            f"caller's turn is never given its agent owner's GitHub identity")
+    why = github_refusal(turn)
+    if why:
+        raise DelegationError(why)
     agent = turn_agent(turn)
-    if agent is None:
-        raise DelegationError("this turn runs as no agent, so it has no GitHub identity")
     entry = github_entry(agent)
-    if entry is not None:
-        if not accounts.serves(entry, agent):
-            raise DelegationError(
-                f"{entry.delegated_by.email if entry.delegated_by_id else 'its person'} is no longer an "
-                f"admin of {agent.slug}, so the GitHub token they delegated is not used — delegate one "
-                f"at /agents/{agent.slug}/settings → External accounts → GitHub")
-        ident = entry.identity or {}
-        return _issued(turn, agent, token="", login=ident.get("login", ""), user_id=ident.get("user_id", 0),
-                       name=ident.get("name", ""), expires_at=entry.provider_expires_at,
-                       delegated=entry.name)
-    who = agent.owner.email if agent.owner else "nobody (the agent has no owner)"
-    raise DelegationError(
-        f"neither {agent.slug}'s owner {who} nor an admin has delegated it a GitHub identity — "
-        f"add a token at /agents/{agent.slug}/settings → External accounts → GitHub")
+    ident = entry.identity or {}
+    return _issued(turn, agent, token="", login=ident.get("login", ""), user_id=ident.get("user_id", 0),
+                   name=ident.get("name", ""), expires_at=entry.provider_expires_at,
+                   delegated=entry.name)
 
 
 def _issued(turn, agent: Agent, *, token: str, login: str, user_id, name: str, expires_at,

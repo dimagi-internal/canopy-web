@@ -57,7 +57,7 @@ export function SiteNeedsTable({ needs }: { needs: SiteNeeds }): JSX.Element {
   }
   const req = needs.requires
   const asks = [
-    req.handles_sensitive && 'an agent capability that handles sensitive data',
+    req.handles_sensitive && 'an agent that handles sensitive data',
     req.runner_flag && `running on a ${runnerFlagLabel(req.runner_flag)} runner`,
   ]
     .filter(Boolean)

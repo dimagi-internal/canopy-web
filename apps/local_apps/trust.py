@@ -17,6 +17,7 @@ _OPS = {
     "sessions.create": "open a new Canopy session with your agent",
     "sessions.send": "send text to that session",
     "turns.status": "check whether your agent has finished",
+    "meetings.save": "save a meeting's transcript to your private Meetings page",
 }
 
 

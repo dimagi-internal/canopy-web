@@ -10,14 +10,14 @@ from __future__ import annotations
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from . import access
+from . import access, turn_context
 from .models import Agent
 from .standings import Standings
 
 
 def edit_rights(agents=None) -> list[dict]:
     """One row per (agent, person) who may change the agent today: `before` is the old rule,
-    `after` is `may_edit_agent`, `via` says what the new rule found (`decide`'s `source`)."""
+    `after` is `may_edit_agent`, `via` says what the new rule found (the rule's `source`)."""
     agents = list(agents if agents is not None else Agent.objects.select_related("workspace", "owner"))
     members = {ws: wsvc.effective_memberships(ws) for ws in {a.workspace_id for a in agents}}
     standings = Standings([m.user for ms in members.values() for m in ms], agents)
@@ -29,12 +29,12 @@ def edit_rights(agents=None) -> list[dict]:
             before = perms.role_allows(m.role, perms.AGENT_WORK) or standings.is_admin(m.user, agent)
             if not before:
                 continue
-            d = access.decide(agent, m.user, verified=True, origin="canopy_web", standing=st, lines=lines)
+            d = turn_context.for_asker(agent, m.user, verified=True, channel="canopy_web", standing=st, lines=lines)
             rows.append({
                 "workspace": agent.workspace_id, "agent": agent.slug, "email": m.user.email,
                 "workspace_role": m.role, "before": True,
                 "after": access.may_edit_agent(m.user, agent, standing=st, lines=lines),
-                "agent_role": d.agent_role, "via": d.source,
+                "agent_role": d.standing.agent_role, "via": d.standing.source,
             })
     rows.sort(key=lambda r: (r["workspace"], r["agent"], r["email"]))
     return rows

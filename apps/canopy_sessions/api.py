@@ -16,6 +16,7 @@ from django.utils import timezone
 from ninja import Router
 from ninja.errors import HttpError
 
+from apps.agents import refusals
 from apps.api.auth import session_auth
 from apps.embedding import delegation
 from apps.harness import sensitivity
@@ -81,8 +82,10 @@ def _session_or_404(request: HttpRequest, session_id: uuid.UUID, *, write: bool 
         .annotate(_last_msg_at=transcript_read.last_message_at()),
         pk=session_id,
     )
+    if write and access.is_content_deleted(session):
+        raise HttpError(409, access.CONTENT_DELETED_REFUSAL)
     if write and not access.can_write(request.user, session):
-        raise HttpError(403, "you can read this session but not act in it")
+        raise HttpError(403, refusals.cannot_write_message(session))
     return session
 
 

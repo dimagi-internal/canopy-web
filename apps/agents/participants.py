@@ -88,13 +88,16 @@ def of_project(project: AgentProject) -> list[dict]:
             for r in rows]
 
 
-def projects_of(person, workspace_slug: str, *, limit: int | None = None,
+def projects_of(person, workspace_slug: str, *, reader, limit: int | None = None,
                 include_archived: bool = True):
     """The participations of `person` in projects of `workspace_slug`'s agents,
     most recently active project first. Only that workspace's: a project is
-    served only where its agent lives."""
+    served only where its agent lives. Only projects `reader` may read (None: what
+    anyone may): taking part in a personal project never opens it to anybody."""
+    from .services import project_read_q  # noqa: PLC0415 — services imports this module
+
     qs = (ProjectParticipant.objects
-          .filter(person=person, project__workspace_id=workspace_slug)
+          .filter(project_read_q(reader, "project__"), person=person, project__workspace_id=workspace_slug)
           .select_related("project", "project__agent")
           .order_by("-project__updated_at", "-created_at", "-pk"))
     if not include_archived:

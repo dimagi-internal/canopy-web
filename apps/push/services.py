@@ -152,10 +152,11 @@ def refresh_agent_waiting(agent: Agent) -> None:
     are not on the supervisor feed, and you are pushed only about the feed.
     """
     # Everything on this agent that needs a human — `agents.services.waiting_q`,
-    # the one definition (open asks + live tasks parked on a person).
-    from apps.agents.services import waiting_q
+    # the one definition (open asks + live tasks parked on a person). A stored figure
+    # every viewer shares, so it counts only what anyone may read (`task_read_q(None)`).
+    from apps.agents.services import task_read_q, waiting_q
 
-    count = AgentTask.objects.filter(waiting_q(), agent=agent).count()
+    count = AgentTask.objects.filter(task_read_q(None), waiting_q(), agent=agent).count()
     snap, created = AgentWaitingSnapshot.objects.get_or_create(agent=agent)
     if created or count != snap.waiting_count:
         snap.waiting_count = count

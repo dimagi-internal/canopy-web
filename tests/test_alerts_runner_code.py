@@ -66,6 +66,35 @@ def test_wrong_branch_outranks_outdated(box):
     assert src.BRANCH_CMD in r.body
 
 
+def test_a_long_branch_name_fits_the_alert(box):
+    """A merge-queue checkout's branch (`gh-readonly-queue/main/pr-1-<sha>`) is longer than
+    the fingerprint column, and the one error would stop the source for every runner. SQLite
+    ignores a column's length, so this measures what Postgres would refuse."""
+    branch = "x" * Runner._meta.get_field("code_branch").max_length
+    _set(box["runner"], code_branch=branch, name="n" * Runner._meta.get_field("name").max_length)
+    alerts.tick(timezone.now())
+    a = Alert.objects.get(kind=src.KIND)
+    for column in ("fingerprint", "title", "subject_key", "url"):
+        assert len(getattr(a, column)) <= Alert._meta.get_field(column).max_length, column
+
+    # Hashing keeps what the fingerprint is for: the same branch is no news, another one is.
+    was = a.fingerprint
+    alerts.tick(timezone.now())
+    a.refresh_from_db()
+    assert a.fingerprint == was and a.events.filter(kind="changed").count() == 0
+    _set(box["runner"], code_branch="y" * 200)
+    alerts.tick(timezone.now())
+    a.refresh_from_db()
+    assert a.fingerprint != was and a.events.filter(kind="changed").count() == 1
+
+
+def test_a_short_fingerprint_is_kept_as_written(box):
+    """So a deploy of the hashing does not report every open alert as changed."""
+    _set(box["runner"], code_branch="feature/x")
+    alerts.tick(timezone.now())
+    assert Alert.objects.get(kind=src.KIND).fingerprint == "branch:feature/x"
+
+
 @pytest.mark.parametrize("fields", [
     {"code_sha": "b" * 40},                          # current
     {"code_sha": ""},                                # unknown

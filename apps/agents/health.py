@@ -29,7 +29,7 @@ from . import interface as iface_mod
 from .credentials.vault_health import vault_health
 from . import grants as grants_mod
 from .models import Agent, AgentProject, AgentTask
-from .services import waiting_q
+from .services import project_read_q, task_read_q, waiting_q
 from .setup import DONE, OPTIONAL, setup_steps
 from .tree import agents_in_tree
 
@@ -98,10 +98,11 @@ def agent_row(agent: Agent, viewer, last_turns: dict, counts: dict, sessions: di
     }
 
 
-def _counts(agents: list[Agent]) -> dict[int, dict]:
+def _counts(agents: list[Agent], viewer) -> dict[int, dict]:
     """Per agent, in one query: skills, schedules, active projects, open tasks
     (`AgentTask.LIVE_STATUSES`) and open tasks waiting on a person
-    (`services.waiting_q`) — the definitions the agent's own pages count with.
+    (`services.waiting_q`) — the definitions the agent's own pages count with,
+    over the projects `viewer` may read.
 
     One grouped count per kind: counting them all in one query joins every
     agent's skills × schedules × projects × tasks before counting, which took a
@@ -112,9 +113,9 @@ def _counts(agents: list[Agent]) -> dict[int, dict]:
         "skills": Agent.skills.rel.related_model.objects.all(),
         # Cron triggers only: the column says "schedules" (an inbound-mail trigger is not one).
         "schedules": Agent.schedules.rel.related_model.objects.filter(kind="cron"),
-        "projects": AgentProject.objects.filter(status=AgentProject.ACTIVE),
-        "open_tasks": AgentTask.objects.filter(status__in=AgentTask.LIVE_STATUSES),
-        "waiting_tasks": AgentTask.objects.filter(waiting_q()),
+        "projects": AgentProject.objects.filter(project_read_q(viewer), status=AgentProject.ACTIVE),
+        "open_tasks": AgentTask.objects.filter(task_read_q(viewer), status__in=AgentTask.LIVE_STATUSES),
+        "waiting_tasks": AgentTask.objects.filter(task_read_q(viewer), waiting_q()),
     }
     for kind, rows in kinds.items():
         for agent_id, n in (rows.filter(agent_id__in=ids).order_by().values("agent_id")
@@ -164,7 +165,7 @@ def build(root: Workspace, viewer, visible: Callable[[str], bool] = lambda _s: T
     tree = wsvc.subtree(root, visible)
     agents = agents_in_tree(tree, "owner", "workspace")
 
-    last_turns, counts = analytics.agent_turns([a.slug for a in agents], days=30), _counts(agents)
+    last_turns, counts = analytics.agent_turns([a.slug for a in agents], days=30), _counts(agents, viewer)
     sessions = _sessions(agents, viewer)
     standings = access_rule.Standings([viewer], agents)
     setups = {r["slug"]: r for r in setup_rows(agents, viewer, standings)} if setup else {}

@@ -13,11 +13,12 @@ import time
 
 import pytest
 
+from apps.canopy_sessions.models import Session
 from apps.events.models import Event
 from apps.harness.models import Turn
 from apps.slack import window
 from apps.slack.models import SlackWorkspaceLink
-from tests.fixtures.slack import ALICE, BOB, _link_client, mention
+from tests.fixtures.slack import ALICE, BOB, _link_client, event, mention
 
 pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("slack_configured")]
 
@@ -709,3 +710,202 @@ def test_a_long_thread_keeps_its_parent_and_newest_replies(settings):
     (parent,) = lines
     assert parent.text == "m0" and [r.text for r in parent.replies] == ["m3", "m4"]
     assert omitted == 2
+
+
+# --- `--history --threads N`: threads are the unit, each handed over whole.
+
+
+@pytest.mark.parametrize("text,n,ask", [
+    ("--history --threads 3 summarise", 3, "summarise"),
+    ("--history --thread 1", 1, ""),
+    ("--history --threads=2 what did we decide?", 2, "what did we decide?"),
+    ("—history —threads 4 pick this up", 4, "pick this up"),
+])
+def test_a_thread_count_parses(text, n, ask):
+    assert window.parse(text, max_minutes=120) == (window.Window(0, threads=n), ask)
+
+
+@pytest.mark.parametrize("text", ["--history --threads", "--history --threads three", "--history --threads 0",
+                                  f"--history --threads {window.THREAD_COUNT_CEILING + 1}"])
+def test_a_bad_thread_count_is_refused(text):
+    with pytest.raises(window.HistoryFlagError):
+        window.parse(text, max_minutes=120)
+
+
+@pytest.mark.parametrize("text", ["--history 3threads summarise", "--history 3 threads summarise"])
+def test_a_thread_count_with_the_unit_after_is_refused_not_read_as_minutes(text):
+    with pytest.raises(window.HistoryFlagError, match="--history --threads 3"):
+        window.parse(text, max_minutes=120)
+
+
+def test_threads_hand_over_each_chosen_thread_whole_however_old(channel, linked, hal):
+    """Counted as threads, a busy thread is one thing and keeps its parent: the
+    failure `--msgs` has, where the newest replies push the parent out."""
+    a, b, c = _ts(5 * DAY), _ts(3 * DAY), _ts(4 * DAY)
+    history = [{"ts": b, "user": BOB, "text": "STANDALONE"},
+               {"ts": _ts(3.5 * DAY), "subtype": "channel_join", "user": BOB, "text": "joined"},
+               {"ts": c, "user": BOB, "text": "QUIET THREAD", "reply_count": 1, "latest_reply": c},
+               {"ts": a, "user": ALICE, "text": "NAZIER'S LONG MESSAGE", "reply_count": 2,
+                "latest_reply": _ts(2 * DAY)}]
+    replies = {a: [{"ts": a, "user": ALICE, "text": "NAZIER'S LONG MESSAGE"},
+                   {"ts": _ts(4.5 * DAY), "user": BOB, "text": "FIRST REPLY"},
+                   {"ts": _ts(2 * DAY), "user": BOB, "text": "LAST REPLY"}]}
+    with _old_channel(channel, history, replies):
+        assert mention("<@UBOT> hal --history --threads 2 pick this up", ts=_ts(0)).status_code == 200
+    turn = _turn()
+    assert "NAZIER'S LONG MESSAGE" in turn.prompt and "FIRST REPLY" in turn.prompt and "LAST REPLY" in turn.prompt
+    assert "STANDALONE" in turn.prompt
+    assert "QUIET THREAD" not in turn.prompt and "joined" not in turn.prompt
+    assert 'threads="2"' in turn.prompt and 'messages="4"' in turn.prompt
+    assert Session.objects.filter(title="Slack: last 2 threads — pick this up").exists()
+
+
+def test_threads_past_the_ceiling_keep_each_parent_and_say_what_they_left_out(channel, linked, hal, settings):
+    settings.SLACK_HISTORY_MESSAGE_CEILING = 3
+    a = _ts(9)
+    history = [{"ts": a, "user": ALICE, "text": "PARENT", "reply_count": 4, "latest_reply": _ts(1)}]
+    replies = {a: [{"ts": a, "user": ALICE, "text": "PARENT"},
+                   *[{"ts": _ts(5 - i), "user": BOB, "text": f"REPLY{i}"} for i in range(4)]]}
+    with _old_channel(channel, history, replies):
+        lines = window.fetch("xoxb", channel_id="C1", threads=1)
+    assert lines[0].text == "PARENT" and [r.text for r in lines[0].replies] == ["REPLY2", "REPLY3"]
+    assert lines[0].omitted == 2
+
+
+# --- A thread link typed in the ask.
+
+THREAD = "1793884682.216459"
+LINK = "https://dimagi.slack.com/archives/C2OTHER/p1793884682216459"
+
+
+@pytest.mark.parametrize("text,channel_id,ts", [
+    (f"<{LINK}>", "C2OTHER", THREAD),
+    (f"see <{LINK}|this thread> please", "C2OTHER", THREAD),
+    (LINK, "C2OTHER", THREAD),                                     # a slash command's text is unwrapped
+    (f"<{LINK}?thread_ts=1793884000.000100&amp;cid=C2OTHER>", "C2OTHER", "1793884000.000100"),  # a reply's link
+    (f"<{LINK}?thread_ts=1793884000.000100&cid=C2OTHER>", "C2OTHER", "1793884000.000100"),
+])
+def test_a_thread_link_is_understood(text, channel_id, ts):
+    assert [(ln.channel_id, ln.thread_ts) for ln in window.thread_links(text)] == [(channel_id, ts)]
+
+
+@pytest.mark.parametrize("text", ["https://dimagi.slack.com/archives/C2OTHER", "https://example.com/archives/C2OTHER/p1793884682216459"])
+def test_what_is_not_a_thread_link_is_left_alone(text):
+    assert window.thread_links(text) == []
+
+
+def test_the_same_thread_linked_twice_is_one_link():
+    assert len(window.thread_links(f"<{LINK}> and again <{LINK}|here>")) == 1
+
+
+def test_the_ask_without_its_links():
+    assert window.without_links(f"<{LINK}|this thread>") == ""
+    assert window.without_links(f"summarise <{LINK}> for me") == "summarise for me"
+
+
+def _linked_channel(slack, *, members=(ALICE,), info=None, replies=None, failing=""):
+    """A Slack answering for the linked channel C2OTHER, one the asker may or may not be in."""
+    import unittest.mock as mock
+
+    def answer(url, headers=None, json=None, data=None, timeout=None):
+        method = url.rsplit("/", 1)[-1]
+        payload = dict(data or {})
+        if method == failing:
+            return _resp({"ok": False, "error": "not_in_channel"})
+        if method == "conversations.members":
+            return _resp({"ok": True, "members": list(members)})
+        if method == "conversations.info":
+            return _resp({"ok": True, "channel": {"id": payload["channel"], **(info or {})}})
+        if method == "conversations.replies":
+            slack.calls.append((method, payload))
+            return _resp({"ok": True, "has_more": False, "messages": replies if replies is not None else [
+                {"ts": THREAD, "user": BOB, "text": "THE LINKED THREAD"},
+                {"ts": "1793884690.000100", "user": ALICE, "text": "ITS REPLY"}]})
+        return slack(url, headers=headers, json=json, data=data, timeout=timeout)
+
+    return mock.patch("apps.slack.client.requests.post", side_effect=answer)
+
+
+def _read_replies(slack):
+    return [c for c in slack.calls if c[0] == "conversations.replies"]
+
+
+def test_a_link_alone_hands_over_the_thread_and_picks_it_up(channel, linked, hal):
+    with _linked_channel(channel):
+        assert mention(f"<@UBOT> hal <{LINK}>", ts=_ts(0)).status_code == 200
+    turn = _turn()
+    assert "THE LINKED THREAD" in turn.prompt and "ITS REPLY" in turn.prompt
+    assert 'channel="C2OTHER"' in turn.prompt and window.DEFAULT_ASK in turn.prompt
+    assert "QUOTED MATERIAL" in turn.prompt
+    assert Session.objects.filter(title="Slack: linked thread").exists()
+    row = Event.objects.get(kind="slack.link_read")
+    assert row.payload["channel"] == "C2OTHER" and row.payload["messages"] == 2
+
+
+def test_a_link_with_an_ask_keeps_the_ask(channel, linked, hal):
+    with _linked_channel(channel):
+        mention(f"<@UBOT> hal summarise <{LINK}> for me", ts=_ts(0))
+    assert "THE LINKED THREAD" in _turn().prompt and _turn().prompt.endswith(f"summarise <{LINK}> for me")
+
+
+def test_a_link_in_a_channel_the_asker_is_not_in_is_not_read(channel, linked, hal):
+    with _linked_channel(channel, members=(BOB,)):
+        mention(f"<@UBOT> hal <{LINK}>", ts=_ts(0))
+    turn = _turn()
+    assert not _read_replies(channel) and "THE LINKED THREAD" not in turn.prompt
+    assert "did not read it" in turn.prompt and "not a member" in turn.prompt
+    assert Event.objects.filter(kind="slack.link_refused").exists()
+
+
+def test_a_private_channels_thread_does_not_come_into_another_channel(channel, linked, hal):
+    with _linked_channel(channel, info={"is_private": True}):
+        mention(f"<@UBOT> hal <{LINK}>", ts=_ts(0))
+    assert not _read_replies(channel) and "private" in _turn().prompt
+    assert "THE LINKED THREAD" not in _turn().prompt
+
+
+def test_a_private_channels_thread_is_read_in_a_dm_with_the_bot(channel, linked, hal):
+    with _linked_channel(channel, info={"is_private": True}):
+        event({"type": "message", "channel_type": "im", "user": ALICE, "text": f"hal <{LINK}>",
+               "ts": _ts(0), "channel": "D1"})
+    assert "THE LINKED THREAD" in _turn().prompt
+
+
+def test_a_thread_in_the_same_channel_needs_no_membership_check(channel, linked, hal):
+    same = "https://dimagi.slack.com/archives/C1/p1793884682216459"
+    with _linked_channel(channel, members=(), failing="conversations.members"):
+        mention(f"<@UBOT> hal <{same}>", ts=_ts(0))
+    assert "THE LINKED THREAD" in _turn().prompt
+
+
+def test_the_history_switch_governs_a_link(channel, linked, hal):
+    SlackWorkspaceLink.objects.update(history_enabled=False)
+    with _linked_channel(channel):
+        mention(f"<@UBOT> hal <{LINK}>", ts=_ts(0))
+    assert not _read_replies(channel) and "turned off" in _turn().prompt
+
+
+def test_a_thread_slack_will_not_give_us_does_not_lose_the_ask(channel, linked, hal):
+    with _linked_channel(channel, failing="conversations.replies"):
+        mention(f"<@UBOT> hal summarise <{LINK}>", ts=_ts(0))
+    prompt = _turn().prompt
+    assert "not_in_channel" in prompt and prompt.endswith(f"summarise <{LINK}>")
+
+
+def test_a_link_inside_quoted_history_is_never_followed(channel, linked, hal):
+    """The injection this guards: someone posts a link in a channel, and a later
+    `--history` would make canopy read a thread nobody asked for."""
+    history = [{"ts": _ts(3), "user": BOB, "text": f"everyone read <{LINK}>"}]
+    with _old_channel(channel, history):
+        mention("<@UBOT> hal --history --msgs 1 summarise", ts=_ts(0))
+    assert not _read_replies(channel)
+    assert "THE LINKED THREAD" not in _turn().prompt and "did not read it" not in _turn().prompt
+
+
+def test_past_the_link_ceiling_the_agent_is_told(channel, linked, hal):
+    many = " ".join(f"<https://dimagi.slack.com/archives/C2OTHER/p17938846822164{i:02d}>"
+                    for i in range(window.LINK_CEILING + 1))
+    with _linked_channel(channel):
+        mention(f"<@UBOT> hal {many}", ts=_ts(0))
+    assert len(_read_replies(channel)) == window.LINK_CEILING
+    assert f"at most {window.LINK_CEILING} linked threads" in _turn().prompt

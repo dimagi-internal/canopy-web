@@ -32,10 +32,11 @@ from apps.passkeys import stepup
 from apps.tokens import kinds
 from apps.workspaces import permissions as perms
 from apps.workspaces.gates import workspace_for
+from apps.workspaces.links import base_url
 
-from . import call_service, proofs, providers, server_key, services, sharing, tokens
+from . import call_service, proofs, providers, server_key, services, sharing, temporary, tokens
 from . import recipients as rcpt
-from .models import Connection, ConnectionApp, ConnectionSurfaceShare
+from .models import Connection, ConnectionApp, ConnectionSurfaceShare, TemporaryAccess
 from .problems import problem_for, problem_for_call, problem_for_wire
 from .schemas import (
     ConnectionAppIn,
@@ -64,6 +65,8 @@ from .schemas import (
     SurfaceShareOut,
     SurfaceSharePreviewOut,
     SurfaceSharesOut,
+    TemporaryAccessOut,
+    TemporaryEndedOut,
     UnreachableOut,
     WaitingOut,
     WriteBackIn,
@@ -198,11 +201,13 @@ def _disconnected(conn: Connection, by) -> DisconnectOut:
 
 def _start_url(request: HttpRequest, provider: str, workspace: str) -> str:
     # Absolute: the CLI prints it for a person to open, far from any page.
-    return request.build_absolute_uri(reverse("connections_start", args=[provider, workspace]))
+    return f"{base_url()}{reverse('connections_start', args=[provider, workspace])}"
 
 
 def _callback_url(request: HttpRequest, provider: str, workspace: str) -> str:
-    return request.build_absolute_uri(reverse("connections_callback", args=[provider, workspace]))
+    # The address the provider will call back: canopy's public one, never this request's
+    # host (an MCP call runs in-process, where that is `localhost`).
+    return f"{base_url()}{reverse('connections_callback', args=[provider, workspace])}"
 
 
 def _provider_or_404(provider: str) -> type[providers.Provider]:
@@ -233,7 +238,20 @@ def my_connections(request: HttpRequest) -> ConnectionsOut:
     return ConnectionsOut(providers=_person_provider_rows(request.user),
                           connections=[_out(c, usable=c.app.workspace_id in readable and not c.expired, facts=facts,
                                             replaced=replaced)
-                                       for c in rows])
+                                       for c in rows],
+                          temporary=[TemporaryAccessOut(id=t.pk, provider=t.provider, workspace=t.app.workspace_id,
+                                                        agent=t.agent.slug, account_label=t.account_label,
+                                                        expires_at=t.expires_at)
+                                     for t in temporary.mine(request.user)])
+
+
+@router.delete("/temporary/{access_id}", response=TemporaryEndedOut, summary="End short-lived access I lent an agent")
+@gate("self", setting=True)
+def end_temporary(request: HttpRequest, access_id: uuid.UUID) -> TemporaryEndedOut:
+    """End it now and revoke it at the provider. Needs no passkey: ending access only takes it away.
+    Only my own: someone else's id is a 404."""
+    row = get_object_or_404(TemporaryAccess.objects.select_related("app"), pk=access_id, user=request.user)
+    return TemporaryEndedOut(outcome=temporary.end(row, by=request.user))
 
 
 def _visible(request: HttpRequest, connection_id: uuid.UUID) -> Connection:

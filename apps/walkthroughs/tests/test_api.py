@@ -288,7 +288,7 @@ def test_upload_oversize_returns_413(auth_client, fake_drive):
 
 
 # ---------------------------------------------------------------------------
-# 5. test_upload_drive_not_configured_returns_500
+# 5. test_upload_drive_not_configured_returns_503
 # ---------------------------------------------------------------------------
 
 
@@ -298,7 +298,7 @@ def test_upload_oversize_returns_413(auth_client, fake_drive):
     CANOPY_DRIVE_ROOT_FOLDER_ID="root-folder",
     CANOPY_DRIVE_SA_KEY_JSON='{"x":"y"}',
 )
-def test_upload_drive_not_configured_returns_500(auth_client, monkeypatch):
+def test_upload_drive_not_configured_returns_503(auth_client, monkeypatch):
     from apps.walkthroughs.drive_client import DriveNotConfigured
 
     def _raise(*args, **kwargs):
@@ -315,7 +315,7 @@ def test_upload_drive_not_configured_returns_500(auth_client, monkeypatch):
         },
         format="multipart",
     )
-    assert resp.status_code == 500
+    assert resp.status_code == 503
     body = resp.json()
     assert body.get("type", "").endswith("/drive-not-configured")
     # no orphan row

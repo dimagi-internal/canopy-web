@@ -11,6 +11,7 @@ from apps.workspaces import services as wsvc
 from ..definition import definition_key, siblings
 from ..models import Agent, AgentSkill, AgentSync
 from ._base import _aware
+from .projects import task_read_q
 from .agent_credentials import set_agent_credentials
 
 # ---- agents ----
@@ -285,7 +286,8 @@ def agent_detail(agent: Agent) -> dict:
         "updated_at": agent.updated_at,
         "sync_count": agent.syncs.count(),
         "skill_count": agent.skills.count(),
-        "task_count": agent.tasks.count(),
+        # A figure on a card every member reads: what anyone may read.
+        "task_count": agent.tasks.filter(task_read_q(None)).count(),
         # Same set as `GET /api/harness/turns/?agent=` (agent_turns_q): counting
         # only `agent.turns` left out every email/Slack turn, which targets the
         # agent's session, so the card and the turn list disagreed (#359).

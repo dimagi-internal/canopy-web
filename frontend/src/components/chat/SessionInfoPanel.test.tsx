@@ -1,10 +1,14 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getSessionInfo = vi.fn()
+const getSessionContext = vi.fn()
+const getTurnContext = vi.fn()
 vi.mock('@/api/chat', () => ({
   getSessionInfo: (...a: unknown[]) => getSessionInfo(...a),
+  getSessionContext: (...a: unknown[]) => getSessionContext(...a),
+  getTurnContext: (...a: unknown[]) => getTurnContext(...a),
 }))
 
 const { SessionInfoPanel, credentialText, originText, githubIdentityText } = await import('./SessionInfoPanel')
@@ -79,6 +83,10 @@ const INFO = {
   github_identity: { agent: 'hal', source: 'agent', repo: '' },
   message_count: 12,
 }
+
+beforeEach(() => {
+  getSessionContext.mockReturnValue(new Promise(() => {}))
+})
 
 afterEach(() => {
   cleanup()

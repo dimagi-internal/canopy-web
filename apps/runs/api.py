@@ -359,7 +359,7 @@ def upload_narrative_source(
         )
     except DriveNotConfigured as exc:
         raise ProblemError(
-            500, "Drive not configured", type_=TYPE_DRIVE_NOT_CONFIGURED, detail=str(exc),
+            503, "Drive not configured", type_=TYPE_DRIVE_NOT_CONFIGURED, detail=str(exc),
         )
     except Exception as exc:  # noqa: BLE001 — surfaced as a 502, row already rolled back
         raise ProblemError(
@@ -398,7 +398,7 @@ def get_narrative_source_content(request: HttpRequest, slug: str, source_id: uui
         data, _start, _end, _total = storage.download(file_id=src.drive_file_id)
     except DriveNotConfigured as exc:
         raise ProblemError(
-            500, "Drive not configured", type_=TYPE_DRIVE_NOT_CONFIGURED, detail=str(exc),
+            503, "Drive not configured", type_=TYPE_DRIVE_NOT_CONFIGURED, detail=str(exc),
         )
     resp = HttpResponse(data, content_type=src.content_type)
     resp["Content-Disposition"] = f'attachment; filename="{src.filename}"'

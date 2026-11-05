@@ -173,6 +173,6 @@ def walkthrough_content(request, ws, wid):
         resp["ETag"] = _etag(w)
         return _harden(resp, w)
     except DriveNotConfigured:
-        return HttpResponse(status=500)
+        return HttpResponse(status=503)
     except Exception:
         return HttpResponse(status=502)

@@ -191,9 +191,9 @@ def test_an_agent_starts_a_connect_and_its_turn_lists_the_connection(acme, user,
     box = Client(HTTP_AUTHORIZATION=f"Bearer {bearer}")
     listed = f"/api/harness/runners/{runner.pk}/turns/{turn.pk}/connections"
     # Not shared yet: no machine can use it, so the turn stages nothing.
-    assert box.get(listed).json() == {"providers": []}
+    assert box.get(listed).json() == {"providers": [], "temporary": []}
     in_force(Connection.objects.get(provider="acme", agent=eva))
-    assert box.get(listed).json() == {"providers": ["acme"]}
+    assert box.get(listed).json() == {"providers": ["acme"], "temporary": []}
 
 
 def test_an_unregistered_provider_is_404_everywhere(user):

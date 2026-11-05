@@ -104,6 +104,8 @@ class AgentProjectPatch(StrictModel):
     drive_folder_url: str | None = Field(default=None, max_length=500)
     repo_slug: str | None = Field(default=None, max_length=100)
     notes: str | None = None
+    #: What this project's people want done with meeting notes: read by the agent following up.
+    meeting_instructions: str | None = Field(default=None, max_length=10000)
     links: list[AgentTaskLink] | None = None
     priority: int | None = Field(default=None, ge=0, le=4)
     start_date: dt.date | None = None
@@ -121,6 +123,10 @@ class AgentProjectPatch(StrictModel):
     workspace: str | None = Field(default=None, max_length=100)
     #: Its lead agent, by slug (`""`: no agent leads it).
     steward: str | None = Field(default=None, max_length=100)
+    #: Who may read it. Only its lead changes this; `personal` is refused (409)
+    #: while it is shared, has check-ins, a vault, views or linked artifacts, or
+    #: while open work is held by someone not on it.
+    visibility: Literal["workspace", "personal"] | None = None
 
 
 class WorkspaceProjectIn(AgentProjectIn):
@@ -132,6 +138,9 @@ class WorkspaceProjectIn(AgentProjectIn):
     workspace: str = Field(default="", max_length=100)
     #: The agents working on it, by slug, beside its lead agent.
     member_agents: list[str] = Field(default_factory=list, max_length=50)
+    #: `personal`: only its lead (default: you) and the logins of its agents read
+    #: it; a workspace admin does not. Only here: an agent's route makes none.
+    visibility: Literal["workspace", "personal"] = "workspace"
 
 
 class ProjectShareIn(StrictModel):
@@ -379,6 +388,8 @@ class AgentProjectOut(StrictModel):
     name: str
     outcome: str
     status: Literal["proposed", "planned", "active", "paused", "done", "canceled", "archived"]
+    #: `personal`: only its lead and its agents' logins read it.
+    visibility: Literal["workspace", "personal"] = "workspace"
     #: triage | unstarted | started | paused | completed | canceled.
     category: str = ""
     priority: int = 0
@@ -400,6 +411,8 @@ class AgentProjectOut(StrictModel):
     drive_folder_url: str
     repo_slug: str
     notes: str
+    #: What this project's people want done with meeting notes.
+    meeting_instructions: str = ""
     links: list[AgentTaskLink] = Field(default_factory=list)
     task_count: int = 0
     open_task_count: int = 0
@@ -1214,6 +1227,38 @@ class ProjectServiceOut(StrictModel):
     #: A skill's instructions: what an agent reads when it uses the skill.
     instructions: str = ""
     updated_at: dt.datetime
+
+
+class ProjectMemberOut(StrictModel):
+    """A person on a project, and why."""
+
+    user_id: int
+    email: str
+    #: `owner` (its lead), `admin` or `member`.
+    role: str
+    #: `lead` and/or `direct`.
+    sources: list[str] = []
+
+
+class ProjectMemberIn(StrictModel):
+    email: str = Field(min_length=3, max_length=254)
+    #: `admin` (may change who is on it) or `member`.
+    role: str = Field(default="member", max_length=10)
+
+
+class ProjectBoxOwnerOut(StrictModel):
+    """Someone whose machine runs a member agent but who is not a member of the vault serving it."""
+
+    email: str
+    agents: list[str] = []
+
+
+class ProjectPeopleOut(StrictModel):
+    members: list[ProjectMemberOut] = []
+    #: The caller may change the list: the lead, an admin on it, or an owner of its workspace.
+    may_manage: bool = False
+    #: Who must join before their machines can read the project's vaults. Only for a caller who may change the list.
+    box_owners_missing: list[ProjectBoxOwnerOut] = []
 
 
 class ProjectVaultOut(StrictModel):

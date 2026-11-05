@@ -73,6 +73,9 @@ def rule_out(rule: AdmissionRule) -> dict:
     }
 
 
+_ACCESS_LABELS = {AdmissionRule.CONFINED: "Confined: answered in read mode or from a connected site"}
+
+
 def choices() -> dict:
     def pairs(items):
         return [{"value": v, "label": label} for v, label in items]
@@ -81,7 +84,9 @@ def choices() -> dict:
         "origins": pairs(AdmissionRule.ORIGIN_CHOICES),
         "principals": pairs(AdmissionRule.PRINCIPAL_CHOICES),
         "senders": pairs(AdmissionRule.SENDER_CHOICES),
-        "access": pairs(AdmissionRule.ACCESS_CHOICES),
+        # The stored choice's own label stays: changing it would be a migration for a word.
+        "access": [{**row, "label": _ACCESS_LABELS.get(row["value"], row["label"])}
+                   for row in pairs(AdmissionRule.ACCESS_CHOICES)],
         "turn_modes": pairs(AdmissionRule.TURN_MODE_CHOICES),
         "runner_kinds": pairs(AdmissionRule.RUNNER_KIND_CHOICES),
         "reaches": pairs(AdmissionRule.REACH_CHOICES),

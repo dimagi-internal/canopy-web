@@ -25,20 +25,22 @@ import re
 from dataclasses import dataclass, field, replace
 from urllib.parse import urlencode
 
+import requests
 from django.conf import settings
 from django.contrib.auth.models import AnonymousUser
 from django.core import signing
 from django.db import transaction
 
-from apps.agents import access
+from apps.agents import turn_context
 from apps.agents.models import Agent
 from apps.canopy_sessions import control as session_control
 from apps.canopy_sessions import doors
 from apps.canopy_sessions import services as session_services
 from apps.canopy_sessions.models import Session
-from apps.harness import clis
+from apps.events import services as events_services
+from apps.events.models import Event
+from apps.harness import clis, sensitivity
 from apps.harness import initiator as who
-from apps.harness import sensitivity
 from apps.harness.models import Turn
 from apps.workspaces import links
 from apps.workspaces import services as wsvc
@@ -295,14 +297,19 @@ def refusal_message(agent: Agent, turn: Turn, *, named: bool, installation: Slac
     The public status line only says it was not run; this says why and what to
     do instead — the difference between "Cancelled." and an answer.
     """
-    reason = (turn.result_note or "").removeprefix("not run:").strip()
-    parts = [f"`{agent.slug}` didn't run this: it only takes requests from the people its owner "
-             f"has opened it to, and that doesn't include you here ({reason})."]
+    # The refusal's own words (`apps/agents/refusals.py`), as the turn stored them; a turn refused before that
+    # record existed has only its note, which says the same.
+    stored = turn.resolved_context if isinstance(turn.resolved_context, dict) else {}
+    refusal = stored.get("refusal") if isinstance(stored.get("refusal"), dict) else None
+    if refusal and refusal.get("why"):
+        reason = f"{refusal['why']}. {refusal.get('how_to_fix') or ''}".strip()
+    else:
+        reason = (turn.result_note or "").removeprefix("not run:").strip()
+    parts = [f"`{agent.slug}` didn't run this: {reason}"]
     if not named:
         parts.append(f"Your message didn't name an agent, so it went to `{agent.slug}`, the agent "
                      f"this thread was already talking to. {NOT_AN_AGENT}")
-    parts.append(f"{agent_list(installation)} If you think you should have access, ask "
-                 f"`{agent.slug}`'s owner.")
+    parts.append(agent_list(installation))
     return " ".join(parts)
 
 
@@ -634,11 +641,17 @@ def handle_message(inbound: Inbound) -> Outcome:
                                     tz=lambda: str(slack_profile(installation, inbound.slack_user_id).get("tz") or ""))
         except window.HistoryFlagError as e:
             return Outcome(WINDOW_REFUSED, str(e), agent=agent, workspace_id=agent.workspace_id)
+    # From what the person typed, before any quoted material joins it: a link inside
+    # someone else's message is not a request.
+    linked = window.thread_links(ask)
+    if linked and not window.without_links(ask):
+        ask, prompt, title = "", "", "Slack: linked thread"
     if win is not None:
         prompt, refusal = _with_window(installation, principal, agent, inbound, win, ask)
         if refusal is not None:
             return refusal
-        title = (f"Slack: last {win.last} messages" if win.last
+        title = (f"Slack: last {win.threads} thread{'s' if win.threads != 1 else ''}" if win.threads
+                 else f"Slack: last {win.last} messages" if win.last
                  else f"Slack: since {win.since}" if win.since else f"Slack: last {win.minutes} min") \
             + (f" — {ask}" if ask else "")
     session, created = thread_session(agent=agent, principal=principal, key=key, inbound=inbound,
@@ -647,7 +660,9 @@ def handle_message(inbound: Inbound) -> Outcome:
     if refused is not None:
         return refused
     if not created and win is None and _confined_elsewhere(session, agent, principal, inbound):
-        return _fork_confined(installation, session, agent, principal, inbound, prompt, named=named)
+        return _fork_confined(installation, session, agent, principal, inbound, prompt, named=named,
+                              linked=linked)
+    prompt = _with_links(installation, principal, agent, inbound, linked, prompt)
     if created and win is None and inbound.thread_ts and not inbound.is_dm:
         # Mentioned partway into a thread: the agent starts with the thread so
         # far, not just the line that named it. Only on creation — from here on
@@ -669,7 +684,7 @@ def _owns(session: Session, principal: Principal) -> bool:
 def _confined_elsewhere(session: Session, agent: Agent, principal: Principal, inbound: Inbound) -> bool:
     """Would this message run confined in SOMEONE ELSE'S thread session?
 
-    Asked of an unsaved probe turn through THE rule (`access.decide_for_turn`),
+    Asked of an unsaved probe turn through THE rule (`turn_context.for_turn`),
     so it cannot disagree with the capability the real turn would be stamped.
     A confined turn in the owner's conversation reaches nothing of it — it runs
     apart on the runner — yet it shared the owner's chat session, so it queued
@@ -678,16 +693,20 @@ def _confined_elsewhere(session: Session, agent: Agent, principal: Principal, in
     """
     if inbound.is_dm or not inbound.thread_ts or _owns(session, principal):
         return False
-    return _access_in(session, agent, principal, inbound.team_id) == access.CONFINED
+    return _access_in(session, agent, principal, inbound.team_id) == turn_context.CONFINED
 
 
 def _access_in(session: Session, agent: Agent, principal: Principal, team_id: str) -> str:
-    """What a Slack message from `principal` into `session` would reach (`access.FULL`,
-    `CONFINED` or `NONE`), asked of an unsaved probe turn through THE rule
-    (`access.decide_for_turn`), so it cannot disagree with the real turn's stamp."""
+    """What a Slack message from `principal` into `session` would reach (`turn_context.FULL`,
+    `CONFINED` or `REFUSED`), asked of an unsaved probe turn through THE rule
+    (`turn_context.for_turn`), so it cannot disagree with the real turn's stamp."""
+    return _context_in(session, agent, principal, team_id).access
+
+
+def _context_in(session: Session, agent: Agent, principal: Principal, team_id: str):
     probe = Turn(chat_session=session, origin=Turn.ORIGIN_SLACK, origin_ref={},
                  **principal.initiator(team_id).fields())
-    return access.decide_for_turn(probe, agent).access
+    return turn_context.for_turn(probe, agent)
 
 
 def _principal_name(principal: Principal, slack_user_id: str) -> str:
@@ -704,7 +723,7 @@ def _link(url: str, label: str) -> str:
 
 
 def _fork_confined(installation: SlackInstallation, parent: Session, agent: Agent, principal: Principal,
-                   inbound: Inbound, prompt: str, *, named: bool) -> Outcome:
+                   inbound: Inbound, prompt: str, *, named: bool, linked: tuple | list = ()) -> Outcome:
     """Answer a confined reply in a Slack thread OF ITS OWN, and say so in the original.
 
     The reply gets its own top-level message, its own thread and its own canopy
@@ -742,6 +761,7 @@ def _fork_confined(installation: SlackInstallation, parent: Session, agent: Agen
     else:
         root_ts = str((fork.metadata or {}).get("slack_thread_ts") or "")
         fork_inbound = replace(inbound, thread_ts=root_ts, follow=False, adopt_ts="", adopt_prefix="")
+    prompt = _with_links(installation, principal, agent, inbound, linked, prompt)
     outcome = _send(fork, created, agent, principal, prompt, fork_inbound, named=named)
     if outcome.status == SENT:
         fork_url = client.permalink(token, channel=inbound.channel_id, ts=root_ts)
@@ -891,14 +911,13 @@ def restart_from_click(installation: SlackInstallation, *, slack_user_id: str, c
     prompt = str(ask.get("text") or "")
     inbound = Inbound(team_id=installation.team_id, channel_id=channel_id, slack_user_id=slack_user_id,
                       text=prompt, ts=str(ask.get("ts") or message_ts), thread_ts=thread_ts, is_dm=is_dm)
-    reach = _access_in(closed, agent, principal, installation.team_id)
-    if reach == access.NONE:
-        return Outcome(REFUSED, (
-            f"`{agent.slug}` didn't start a new session: it only takes requests from the people its "
-            f"owner has opened it to, and that doesn't include you here. If you think you should "
-            f"have access, ask `{agent.slug}`'s owner."), session=closed, agent=agent,
-            workspace_id=agent.workspace_id)
-    if reach == access.CONFINED and thread_ts and not is_dm and not _owns(closed, principal):
+    ctx = _context_in(closed, agent, principal, installation.team_id)
+    reach = ctx.access
+    if reach == turn_context.REFUSED:
+        # The refusal's own words (`apps/agents/refusals.py`), as every other door says them.
+        return Outcome(REFUSED, f"`{agent.slug}` didn't start a new session: {ctx.refusal.text}",
+                       session=closed, agent=agent, workspace_id=agent.workspace_id)
+    if reach == turn_context.CONFINED and thread_ts and not is_dm and not _owns(closed, principal):
         # The same as a confined reply into someone else's conversation: answered
         # in a separate thread of the clicker's own; the button stays for others.
         return _fork_confined(installation, closed, agent, principal, inbound, prompt, named=True)
@@ -950,7 +969,7 @@ def deliver_channel_read(inbound: Inbound, agent: Agent, material: str, ask: str
 def _with_window(installation: SlackInstallation, principal: Principal, agent: Agent,
                  inbound: Inbound, win: window.Window, ask: str) -> tuple[str, Outcome | None]:
     """The ask, with the channel's window in front of it (see `window`): its last
-    `win.minutes`, or its newest `win.last` messages however old.
+    `win.minutes`, or its newest `win.last` messages or `win.threads` threads however old.
 
     Members only: the window can hold a private channel's messages, and a
     contact's session is one no member can open — nobody could check what it
@@ -965,7 +984,7 @@ def _with_window(installation: SlackInstallation, principal: Principal, agent: A
                            workspace_id=agent.workspace_id)
     try:
         lines = window.fetch(installation.bot_token, channel_id=inbound.channel_id, minutes=win.minutes,
-                             thread_ts=inbound.thread_ts, skip_ts=inbound.ts, last=win.last)
+                             thread_ts=inbound.thread_ts, skip_ts=inbound.ts, last=win.last, threads=win.threads)
     except client.SlackApiError as e:
         _record_window(agent, principal, inbound, win, 0, error=e.error)
         return "", Outcome(WINDOW_REFUSED, f"canopy couldn't read this channel ({e.error}). "
@@ -1002,12 +1021,99 @@ def _with_thread(installation: SlackInstallation, principal: Principal, agent: A
     return f"{material}\n\n{ask or window.DEFAULT_ASK}"
 
 
+def _with_links(installation: SlackInstallation, principal: Principal, agent: Agent, inbound: Inbound,
+                linked: list[window.ThreadLink] | tuple, ask: str) -> str:
+    """The ask, with the threads it linked in front of it (see `window`).
+
+    A link canopy won't or can't read never loses the ask: the agent is told why
+    and tells the person. The thread the ask was made in is already the agent's.
+    """
+    links_ = [ln for ln in linked if (ln.channel_id, ln.thread_ts) != (inbound.channel_id, inbound.thread_ts)]
+    if not links_:
+        return ask or (window.DEFAULT_ASK if linked else "")
+    parts = []
+    for i, ln in enumerate(links_):
+        if i >= window.LINK_CEILING:
+            why = f"canopy reads at most {window.LINK_CEILING} linked threads from one message"
+        else:
+            why = _link_refusal(installation, principal, agent, inbound, ln)
+        if why is None:
+            try:
+                lines, omitted = window.fetch_thread(installation.bot_token, channel_id=ln.channel_id,
+                                                     thread_ts=ln.thread_ts, skip_ts=inbound.ts)
+                parts.append(window.render_linked(installation.bot_token, lines, channel_id=ln.channel_id,
+                                                  thread_ts=ln.thread_ts, omitted=omitted))
+                _record_link_read(agent, principal, inbound, ln, window.count(lines))
+                continue
+            except (client.SlackApiError, client.RateLimited, requests.RequestException) as e:
+                why = _read_failure(e)
+        _record_link_read(agent, principal, inbound, ln, 0, error=why)
+        parts.append(f"(The person linked a Slack thread, {ln.url}, and canopy did not read it: {why}. "
+                     "Tell them, since you have not seen it.)")
+    return "\n\n".join([*parts, ask or window.DEFAULT_ASK])
+
+
+def _read_failure(e: Exception) -> str:
+    error = getattr(e, "error", "") or type(e).__name__
+    return f"Slack answered {error}. If the channel is private, the canopy app must be invited to it first"
+
+
+def _link_refusal(installation: SlackInstallation, principal: Principal, agent: Agent, inbound: Inbound,
+                  ln: window.ThreadLink) -> str | None:
+    """Why this person's link to this thread won't be read here, or None if it will.
+
+    Anything canopy hands over is answered where the ask was made, so the question
+    is who is there as well as who asked: the asker must be in the linked channel,
+    and a private channel's thread goes only to that channel or the asker's DM.
+    """
+    if principal.user is None:
+        return "only members of this canopy workspace can have an agent read a linked thread"
+    settings_link = SlackWorkspaceLink.objects.filter(installation=installation,
+                                                      workspace_id=agent.workspace_id).first()
+    if settings_link is None or not settings_link.history_enabled:
+        return "reading channel history is turned off for this workspace"
+    if ln.channel_id == inbound.channel_id:
+        return None
+    if ln.channel_id.startswith("D"):
+        return "canopy does not read direct messages from a link"
+    try:
+        if not client.is_channel_member(installation.bot_token, ln.channel_id, inbound.slack_user_id):
+            return "the person asking is not a member of that channel"
+        info = client.channel_info(installation.bot_token, ln.channel_id)
+    except (client.SlackApiError, client.RateLimited, requests.RequestException) as e:
+        return _read_failure(e)
+    if info.get("is_im"):
+        return "canopy does not read direct messages from a link"
+    if (info.get("is_private") or info.get("is_mpim")) and not inbound.is_dm:
+        return ("that channel is private and this one is not the same channel, so its messages would "
+                "be answered in front of other people. Ask in that channel, or in a DM with canopy")
+    return None
+
+
+def _record_link_read(agent: Agent, principal: Principal, inbound: Inbound, ln: window.ThreadLink, n: int,
+                      *, error: str = "") -> None:
+    """Every linked read, or refusal to read, leaves a row: who, which thread, how much."""
+    who = principal.user.email if principal.user is not None else f"contact {inbound.slack_user_id}"
+    try:
+        events_services.record([{
+            "source": "slack",
+            "kind": "slack.link_read" if not error else "slack.link_refused",
+            "level": Event.INFO if not error else Event.WARN,
+            "key": f"link:{ln.channel_id}:{ln.thread_ts}:{inbound.ts}",
+            "summary": (f"{who} linked a thread in <#{ln.channel_id}> for {agent.slug} from "
+                        f"<#{inbound.channel_id}>: " + (f"not read ({error})" if error else f"{n} message(s)"))[:500],
+            "payload": {"team": inbound.team_id, "channel": ln.channel_id, "thread_ts": ln.thread_ts,
+                        "asked_in": inbound.channel_id, "ts": inbound.ts,
+                        "user": principal.user.pk if principal.user is not None else None,
+                        "agent": agent.slug, "messages": n, "error": error},
+        }], workspace=agent.workspace)
+    except Exception:  # noqa: BLE001 — bookkeeping must not fail the ask
+        logger.exception("could not record a linked Slack thread read")
+
+
 def _record_thread_read(agent: Agent, principal: Principal, inbound: Inbound, n: int,
                         *, error: str = "") -> None:
     """Every thread read leaves a row, like a window read (`_record_window`)."""
-    from apps.events import services as events_services
-    from apps.events.models import Event
-
     who = principal.user.email if principal.user is not None else f"contact {inbound.slack_user_id}"
     try:
         events_services.record([{
@@ -1029,9 +1135,6 @@ def _record_thread_read(agent: Agent, principal: Principal, inbound: Inbound, n:
 def _record_window(agent: Agent, principal: Principal, inbound: Inbound, win: window.Window, n: int,
                    *, error: str = "") -> None:
     """Every read leaves a row: who asked, which channel, how far back, how much."""
-    from apps.events import services as events_services
-    from apps.events.models import Event
-
     try:
         events_services.record([{
             "source": "slack",
@@ -1042,7 +1145,8 @@ def _record_window(agent: Agent, principal: Principal, inbound: Inbound, win: wi
                         f"for {agent.slug}: " + (f"failed ({error})" if error else f"{n} message(s)"))[:500],
             "payload": {"team": inbound.team_id, "channel": inbound.channel_id, "ts": inbound.ts,
                         "user": principal.user.pk, "agent": agent.slug, "minutes": win.minutes,
-                        "since": win.since, "last": win.last, "messages": n, "error": error},
+                        "since": win.since, "last": win.last, "threads": win.threads,
+                        "messages": n, "error": error},
         }], workspace=agent.workspace)
     except Exception:  # noqa: BLE001 — bookkeeping must not fail the ask
         logger.exception("could not record a Slack window read")
@@ -1089,7 +1193,7 @@ def choice_refusal(session: Session, principal: Principal) -> Outcome | None:
     if not agent.slack_enabled:
         return Outcome(NO_AGENT, f"`{agent.slug}` isn't turned on for Slack. Your click did nothing.",
                        session=session, agent=agent)
-    if not _owns(session, principal) and _access_in(session, agent, principal, session_team(session)) != access.FULL:
+    if not _owns(session, principal) and _access_in(session, agent, principal, session_team(session)) != turn_context.FULL:
         return Outcome(MEMBERS_ONLY, f"You aren't a member of this conversation in canopy, so `{agent.slug}` "
                        "can't take this choice from you. Your click did nothing.", session=session, agent=agent)
     return None
@@ -1153,7 +1257,7 @@ def _send(session: Session, created: bool, agent: Agent | None, principal: Princ
                        "Ask its owner to share a new one.", session=session, agent=agent)
     # Held to a CLI its agent no longer runs: nothing would ever take the turn.
     if (why := clis.conversation_refusal(session)) is not None:
-        return Outcome(CLI_REFUSED, f"{why[:1].upper()}{why[1:]}. Nothing you wrote here was sent.",
+        return Outcome(CLI_REFUSED, f"{why} Nothing you wrote here was sent.",
                        session=session, agent=agent)
     if not created and not inbound.files:
         answered = _answer_if_waiting(session, agent, prompt)

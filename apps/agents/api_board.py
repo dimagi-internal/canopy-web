@@ -20,10 +20,11 @@ from apps.api.route_gates import gate
 from apps.contacts import services as contacts
 from apps.harness import turn_access
 from apps.harness.models import Turn, agent_turns_q
-from apps.workspaces.links import base_url
 from apps.workspaces import permissions as perms
+from apps.workspaces.links import base_url
 
 from . import engagement, ideas, participants, proposals, services, work
+from .api_proposals import resolve_task_ref
 from .credentials import workspace_vaults
 from .gates import (
     agent_for_read,
@@ -39,7 +40,6 @@ from .gates import (
     visible_agent_workspaces,
 )
 from .models import AgentProject, AgentTask
-from .api_proposals import resolve_task_ref
 from .schemas import (
     ActionAppliedIn,
     ActOut,
@@ -76,7 +76,7 @@ router = Router(auth=session_auth, tags=["agents"])
 @gate("member")
 def list_projects(request: HttpRequest, slug: str, status: str = "") -> list[AgentProjectOut]:
     agent = agent_for_read(request, slug)
-    projects = services.list_projects(agent, status=status)
+    projects = services.list_projects(agent, status=status, user=request.user)
     work.annotate_projects(projects)
     return [AgentProjectOut.model_validate(p) for p in projects]
 
@@ -131,7 +131,7 @@ def _turn_brief(turn) -> TurnBriefOut:
 @gate("member")
 def get_project(request: HttpRequest, slug: str, ref: str) -> AgentProjectDetailOut:
     agent = agent_for_read(request, slug)
-    return project_detail(request, project_or_404(agent, ref))
+    return project_detail(request, project_or_404(request, agent, ref))
 
 
 def project_detail(request: HttpRequest, project) -> AgentProjectDetailOut:
@@ -183,11 +183,11 @@ def project_detail(request: HttpRequest, project) -> AgentProjectDetailOut:
 
 
 @router.patch("/{slug}/projects/{ref}/", response=AgentProjectOut, summary="Update a project",)
-@gate("agent.work", kind="content")
+@gate("agent.work", "project-member", kind="content")
 def patch_project(request: HttpRequest, slug: str, ref: str,
                   payload: AgentProjectPatch) -> AgentProjectOut:
     agent = agent_for_read(request, slug)
-    project = project_or_404(agent, ref)
+    project = project_or_404(request, agent, ref)
     require_project_edit(request, project)
     data = payload.model_dump(exclude_unset=True)
     if "links" in data and data["links"] is not None:
@@ -207,10 +207,18 @@ def require_workspace_editor(request: HttpRequest, workspace: str, steward=None)
         raise HttpError(404, f"workspace '{workspace}' not found")
 
 
+#: What decides who reads a personal project, so its lead's alone to change: a
+#: working agent's login may edit the project, not open it to someone else.
+_PERSONAL_ACCESS_FIELDS = frozenset({"owner_email", "lead_email", "steward", "member_agents", "workspace"})
+
+
 def apply_project_patch(request: HttpRequest, project, data: dict):
     """A PATCH body against one project, from either address. `handle` promotes
     it to a workspace project; `steward` hands a workspace project on — and the
-    caller must be able to write the new steward too."""
+    caller must be able to write the new steward too. `visibility` is its lead's."""
+    if project.is_personal and data.keys() & _PERSONAL_ACCESS_FIELDS and project.owner_user_id != request.user.pk:
+        raise HttpError(403, "only a personal project's lead may change its lead or its agents, or move it")
+    visibility = data.pop("visibility", None)
     if "spawned_from" in data:
 
         ref_ = (data.pop("spawned_from") or "").strip()
@@ -224,6 +232,8 @@ def apply_project_patch(request: HttpRequest, project, data: dict):
         require_workspace_editor(request, workspace)
     try:
         with transaction.atomic():
+            if visibility is not None:
+                project = services.set_visibility(project, visibility, by=request.user)
             if handle is not None:
                 project = services.promote_project(project, handle, workspace)
             if steward is not None:
@@ -278,7 +288,7 @@ def list_tasks(request: HttpRequest, slug: str, project: str = "", status: str =
             board |= Q(project=target)
         board &= Q(project=target)
     qs = services.filter_tasks(
-        work.task_rows(AgentTask.objects.filter(board)),
+        work.task_rows(AgentTask.objects.filter(services.task_read_q(request.user), board)),
         user=request.user, project="" if target is not None else project, status=status,
         waiting=waiting, ask=ask, batch=batch, parent=parent)
     return [AgentTaskOut.model_validate(t) for t in qs]
@@ -467,10 +477,11 @@ def list_task_actions(request: HttpRequest, slug: str, status: str = "",
     carries the agent's whole queue before any history."""
     agent = agent_for_read(request, slug)
     limit = clamp_limit(limit)
+    readable = services.task_read_q(request.user, "task__")
     if status == "pending":
-        rows = services.pending_actions(agent)  # oldest first: the order to carry them out
+        rows = services.pending_actions(agent).filter(readable)  # oldest first: the order to carry them out
     else:
-        rows = agent.task_actions.select_related("agent", "task")
+        rows = agent.task_actions.filter(readable).select_related("agent", "task")
         if status:
             rows = rows.filter(status=status).order_by("-created_at", "-id")
         else:
@@ -491,6 +502,6 @@ def mark_task_action_applied(request: HttpRequest, slug: str, action_id: int,
     if not agent.is_own_login(request.user):
         agent = agent_for_work(request, slug)
     row = agent.task_actions.filter(id=action_id).select_related("agent", "task").first()
-    if row is None:
+    if row is None or (row.task.project_id and not services.may_read_project(request.user, row.task.project)):
         raise HttpError(404, f"action {action_id} not found")
     return AgentTaskActionOut.model_validate(services.mark_applied(row, payload.result_note))

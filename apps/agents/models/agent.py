@@ -39,10 +39,10 @@ class Agent(models.Model):
     )
     #: The DECLARED INTERFACE — what callers (anyone not the owner or an admin)
     #: may ask this agent for. LIVE STATE held here, not in the agent's repo:
-    #: edited on the agent's page (or `canopy agent interface set`), validated by
-    #: `apps.agents.interface.parse`.
+    #: edited as read mode and connected sites (`apps/agents/answering.py`, the one writer),
+    #: validated by `apps.agents.interface.parse`.
     #: Never empty: an agent is created with the default interface (owner, admins and
-    #: editors only), which `interface.is_default` recognises. See `apps/agents/interface.py`.
+    #: editors only). See `apps/agents/interface.py`.
     interface = models.JSONField(default=default_interface, blank=True)
     #: The interface as its editor wrote it (YAML, comments and all). `interface`
     #: is its parsed, validated form — the one everything enforces.
@@ -499,9 +499,9 @@ class AgentGrant(models.Model):
 class AgentLicense(models.Model):
     """A person's license to use an agent DIRECTLY — "Aathithya uses ACE directly, since …".
 
-    The agent's caller list (`access.decide`) still decides who MAY hold one; this row
+    The agent's caller list (`turn_context.resolve_turn_context`) still decides who MAY hold one; this row
     is who DOES (`apps/agents/credentials/licenses.py`). Requested on first local
-    use and issued at once when `decide` gives the person the whole agent; an admin
+    use and issued at once when the rule gives the person the whole agent; an admin
     revokes it per person without touching the rule, and a revoked license is not
     re-issued automatically — only an admin's approve brings it back. Direct turns and
     credential reads point at it, so "who uses this agent outside canopy, and what did
@@ -515,7 +515,7 @@ class AgentLicense(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
                              related_name="agent_licenses")
     status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=REQUESTED)
-    #: Why it was issued, in `access.decide`'s words: `admin`, `grant:<access-list line>`, or
+    #: Why it was issued, in `turn_context.resolve_turn_context`'s words: `admin`, `grant:<access-list line>`, or
     #: `approved by <email>`.
     basis = models.CharField(max_length=200, blank=True, default="")
     requested_at = models.DateTimeField(auto_now_add=True)
@@ -686,9 +686,9 @@ class AgentSkill(models.Model):
     internal = models.BooleanField(
         default=False, help_text="Claude loads this skill; a person is not offered it as a command."
     )
-    # Who wrote the row: the agent itself (`PUT …/skills/`, authoritative) or
-    # canopy-web from what a runner reports it can run (`skill_catalog`, a
-    # fallback that never overwrites a published catalog).
+    # Who wrote the row: the agent itself (`PUT …/skills/`) or canopy-web from what
+    # a runner reports it can run (`skill_catalog`, which merges a report into the
+    # catalog and keeps what a published row alone can say).
     PUBLISHED, FROM_RUNNER = "published", "runner"
     source = models.CharField(max_length=16, default="published")
     created_at = models.DateTimeField(auto_now_add=True)

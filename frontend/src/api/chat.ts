@@ -30,9 +30,9 @@ export type SlashCommand = components["schemas"]["SlashCommandOut"];
 /** A key pair for a chat this browser starts (`offerForNewChat`), or null — and the chat
  *  starts with no key — when the person has no vault key (404). Starting a chat never
  *  asks to unlock the vault key: the key is wrapped to its public half, pinned here, or
- *  trusted on first use and checked at the first unlock here. A vault key that CHANGED
- *  since this browser pinned it, or a failed read, THROWS: the chat is not started, and
- *  the caller shows why. */
+ *  trusted on first use and checked at the next unlock here. A vault key an unlock here
+ *  proved is not theirs, or a failed read, THROWS: the chat is not started, and the
+ *  caller shows why. */
 export async function browserConversationKey(
   mine: () => Promise<MyVaultKey | VaultKeyNamed>,
 ): Promise<ConversationKeyOffer | null> {
@@ -281,6 +281,24 @@ export function getSessionInfo(id: string): Promise<SessionInfo> {
   return request<SessionInfo>(`/api/canopy-sessions/${encodeURIComponent(id)}/info`);
 }
 
+export type SessionContexts = components["schemas"]["SessionContextsOut"];
+export type SessionContextFacts = components["schemas"]["SessionContextOut"];
+export type TurnContextView = components["schemas"]["TurnContextOut"];
+export type TurnRanAs = components["schemas"]["TurnRanAsOut"];
+export type TurnSnapshot = components["schemas"]["TurnSnapshotOut"];
+
+/** This session's facts, and what would happen if you sent a message now. Writes nothing. */
+export function getSessionContext(id: string): Promise<SessionContexts> {
+  return request<SessionContexts>(`/api/canopy-sessions/${encodeURIComponent(id)}/context`);
+}
+
+/** What one turn ran as, beside what the rules say now. Asked when that turn is opened, never up front. */
+export function getTurnContext(sessionId: string, turnId: string): Promise<TurnRanAs> {
+  return request<TurnRanAs>(
+    `/api/canopy-sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/context`,
+  );
+}
+
 export type SlackDetachResult = components["schemas"]["SlackDetachOut"];
 
 /**
@@ -367,6 +385,12 @@ export function closeSession(id: string): Promise<CloseResult> {
   return request<CloseResult>(`/api/canopy-sessions/${encodeURIComponent(id)}/close`, {
     method: "POST",
   });
+}
+
+/** Permanently delete what canopy stores of your own session. Refusals are thrown
+ *  (`ApiError`), with the reason to show in `message`. */
+export function deleteSessionContent(id: string): Promise<components["schemas"]["SessionContentDeletedOut"]> {
+  return request(`/api/canopy-sessions/${encodeURIComponent(id)}/content`, { method: "DELETE" });
 }
 
 /** Retire a session row by hand without touching emdash; /unarchive undoes it. */

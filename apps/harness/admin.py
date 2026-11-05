@@ -15,11 +15,18 @@ class TurnAdmin(admin.ModelAdmin):
     list_filter = ("status", "origin")
     search_fields = ("id", "agent__slug")
 
+    def get_queryset(self, request):
+        # A turn on a personal project's task carries the project: its log stays its readers'.
+        return super().get_queryset(request).exclude(raised_from_task__project__visibility="personal")
+
 
 @admin.register(TurnEvent)
 class TurnEventAdmin(admin.ModelAdmin):
     list_display = ("turn", "seq", "kind", "ts")
     list_filter = ("kind",)
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).exclude(turn__raised_from_task__project__visibility="personal")
 
 
 @admin.register(AgentSchedule)

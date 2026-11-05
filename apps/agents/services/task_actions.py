@@ -126,7 +126,8 @@ def act(task: AgentTask, *, action: str, comment: str = "", by: str, by_user=Non
         duplicate_of = work.task_by_key(comment) if comment else None
         if duplicate_of is None and comment and task.created_by_agent_id:
             duplicate_of = get_task(task.created_by_agent, comment)
-        if duplicate_of is None or duplicate_of.workspace_id != task.workspace_id or duplicate_of.pk == task.pk:
+        if (duplicate_of is None or duplicate_of.workspace_id != task.workspace_id or duplicate_of.pk == task.pk
+                or work.crosses_personal(task, duplicate_of)):
             raise ValueError("duplicate needs the key of the task this one duplicates, in the comment")
     snooze_until = _snooze_until(comment) if action == AgentTaskAction.SNOOZE else None
     # A proposed project's decision card: who may start or decline it is narrower

@@ -30,6 +30,7 @@ INTERVAL_SECONDS = 300
 MAX_COMMANDS = 1000
 MAX_DESCRIPTION = 300
 MAX_ARGS_HINT = 120
+MAX_STAMP = 40
 
 _state = {"at": 0.0, "sent": ""}
 #: What ACP sessions on this box announced, by name — the latest wins.
@@ -133,7 +134,8 @@ def _scan_dir(root: pathlib.Path, prefix: str, source: str) -> list[dict]:
     return [e for e in found if e]
 
 
-def _enabled_plugins(home: pathlib.Path) -> list[tuple[str, pathlib.Path]]:
+def _enabled_plugins(home: pathlib.Path) -> list[tuple[str, pathlib.Path, str]]:
+    """(name, install path, when Claude Code last updated it, "" if it does not say)."""
     installed = _load_json(home / ".claude" / "plugins" / "installed_plugins.json") or {}
     settings = _load_json(home / ".claude" / "settings.json") or {}
     enabled = settings.get("enabledPlugins") if isinstance(settings, dict) else None
@@ -149,7 +151,7 @@ def _enabled_plugins(home: pathlib.Path) -> list[tuple[str, pathlib.Path]]:
             root = pathlib.Path(path)
             manifest = _load_json(root / ".claude-plugin" / "plugin.json") or {}
             name = manifest.get("name") if isinstance(manifest, dict) else None
-            out.append((name or key.split("@", 1)[0], root))
+            out.append((name or key.split("@", 1)[0], root, str(entry.get("lastUpdated") or "")[:MAX_STAMP]))
             break
     return out
 
@@ -184,19 +186,28 @@ def scan(home: pathlib.Path | None = None) -> list[dict]:
     clash the first wins: what ACP announced (Claude's own list), then the
     account's own, then plugins. The exception is a file that says it is internal,
     which beats ACP: `_acp_seen` lives as long as the process, so it still holds
-    what a session announced before the skill was marked."""
+    what a session announced before the skill was marked.
+
+    A command whose file is in an installed plugin carries `plugin_updated_at`, which
+    tells canopy-web which box has the newest copy of an agent's plugin. One without
+    it, in a plugin that has it, is only ACP's memory of a file now gone."""
     home = home or pathlib.Path.home()
     found: list[dict] = [_acp_seen[k] for k in sorted(_acp_seen)]
     found += _scan_dir(home / ".claude", "", "user")
-    for plugin, root in _enabled_plugins(home):
-        found += _scan_dir(root, f"{plugin}:", "plugin")
+    installed_at: dict[str, str] = {}
+    for plugin, root, updated in _enabled_plugins(home):
+        entries = _scan_dir(root, f"{plugin}:", "plugin")
+        found += entries
+        if updated:
+            installed_at.update({e["name"]: updated for e in entries})
     by_name: dict[str, dict] = {}
     for e in found:
         if e.get("internal"):
             by_name[e["name"]] = e
         else:
             by_name.setdefault(e["name"], e)
-    return [by_name[k] for k in sorted(by_name)][:MAX_COMMANDS]
+    rows = [by_name[k] for k in sorted(by_name)][:MAX_COMMANDS]
+    return [{**e, "plugin_updated_at": installed_at[e["name"]]} if e["name"] in installed_at else e for e in rows]
 
 
 def digest(commands: list[dict]) -> str:

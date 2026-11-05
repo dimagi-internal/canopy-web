@@ -5,6 +5,7 @@ from django.db import models
 from django.db.models.functions import Lower
 
 from .agent import Agent
+from .members import NamedMember
 
 
 class AgentProject(models.Model):
@@ -48,6 +49,10 @@ class AgentProject(models.Model):
     #: Statuses a project is still open in, in the order a list shows them.
     OPEN_STATUSES = (ACTIVE, PAUSED, PLANNED, PROPOSED)
     HANDLE_RE = r"^[a-z0-9][a-z0-9-]{1,58}[a-z0-9]$"
+    #: Who may read it (`services.project_read_q`, on top of the tenant scope):
+    #: its workspace's readers as always, or only its lead and its agents' logins.
+    WORKSPACE, PERSONAL = "workspace", "personal"
+    VISIBILITY_CHOICES = [(WORKSPACE, "Workspace"), (PERSONAL, "Personal")]
 
     #: The workspace that owns it. The lead agent's workspace or one below it
     #: (`services.may_hold_workspace_project`).
@@ -73,6 +78,7 @@ class AgentProject(models.Model):
     name = models.CharField(max_length=200, help_text="What the project is called — and its Drive folder's name.")
     outcome = models.TextField(blank=True, default="", help_text="What done looks like.")
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=ACTIVE)
+    visibility = models.CharField(max_length=16, choices=VISIBILITY_CHOICES, default=WORKSPACE)
     #: 0 none, 1 urgent, 2 high, 3 medium, 4 low — the same scale as a task's.
     priority = models.PositiveSmallIntegerField(default=0)
     start_date = models.DateField(null=True, blank=True)
@@ -101,6 +107,9 @@ class AgentProject(models.Model):
     repo_slug = models.CharField(max_length=100, blank=True, default="")
 
     notes = models.TextField(blank=True, default="")
+    #: What this project's people want done with meeting notes, in their words. A follow-up on
+    #: a meeting attached here works from it (`apps/meetings/services.py`).
+    meeting_instructions = models.TextField(blank=True, default="")
     links = models.JSONField(default=list, blank=True)
     #: Where its knowledge base's objects are stored (`kb_store.root`): fixed for good,
     #: so a new handle or workspace moves nothing (#2047). Blank: `kb-projects/<pk>/`.
@@ -188,6 +197,10 @@ class AgentProject(models.Model):
     @property
     def category(self) -> str:
         return self.CATEGORY.get(self.status, "started")
+
+    @property
+    def is_personal(self) -> bool:
+        return self.visibility == self.PERSONAL
 
     @property
     def member_slugs(self) -> list[str]:
@@ -286,6 +299,9 @@ class AgentProject(models.Model):
         if not self.spawned_from_id:
             return None
         t = self.spawned_from
+        # A personal project's task is nobody's business on another project's page.
+        if t.project_id and t.project.is_personal:
+            return None
         return {"agent": t.agent_slug or "", "ref": t.ref, "key": t.key, "title": t.title,
                 "status": t.status,
                 "project_ref": (t.project.ext_id or t.project.handle) if t.project_id else "",
@@ -317,6 +333,24 @@ class AgentProject(models.Model):
         from apps.agents.services import waiting_q  # cycle: agents.services -> agents.models  # noqa: PLC0415
 
         return self.tasks.filter(waiting_q()).count()
+
+
+class ProjectMember(NamedMember):
+    """A person on a project, added by name: `admin` (may change who else is on it) or
+    `member`. Its lead (`AgentProject.owner_user`) is on it without a row. Being on a
+    project lets you change it and makes you a member of every vault attached to it.
+    `project_members` answers every question about this; `ProjectParticipant` is only who
+    canopy has seen take part and grants nothing."""
+
+    project = models.ForeignKey(AgentProject, on_delete=models.CASCADE, related_name="people")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="project_memberships")
+
+    class Meta:
+        ordering = ["project_id", "added_at"]
+        constraints = [models.UniqueConstraint(fields=["project", "user"], name="one_project_member_row")]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.project_id}:{self.user_id} ({self.role})"
 
 
 class ProjectShare(models.Model):
@@ -873,11 +907,20 @@ class AgentTask(models.Model):
 
     @property
     def parent_ext_id(self) -> str | None:
-        return self.parent.ref if self.parent_id else None
+        return self.parent.ref if self._parent_shown else None
 
     @property
     def parent_key(self) -> str | None:
-        return self.parent.key if self.parent_id else None
+        return self.parent.key if self._parent_shown else None
+
+    @property
+    def _parent_shown(self) -> bool:
+        """A subtask lives in its parent's project; if one ever does not, a task never
+        names a parent in a personal project it is not in itself."""
+        if not self.parent_id:
+            return False
+        parent = self.parent
+        return parent.project_id == self.project_id or not (parent.project_id and parent.project.is_personal)
 
     @property
     def agent_slug(self) -> str | None:

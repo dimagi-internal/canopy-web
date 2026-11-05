@@ -158,7 +158,7 @@ def set_settings(workspace_slug: str, data: dict) -> TaskSettings:
 def task_rows(qs):
     """A task queryset joined up for the list shape (`AgentTaskOut`): one query
     for the rows and one per prefetched relation, never one per task."""
-    return (qs.select_related("agent", "project", "waiting_on_user", "parent", "assignee_user",
+    return (qs.select_related("agent", "project", "waiting_on_user", "parent__project", "assignee_user",
                               "created_by_agent", "milestone")
             .prefetch_related("human_whys", "labels"))
 
@@ -273,7 +273,9 @@ def move_task(task: AgentTask, *, before_key: str = "", after_key: str = "") -> 
         if not key:
             return None
         other = task_by_key(key)
-        return other.rank if other is not None and other.workspace_id == task.workspace_id else None
+        if other is None or other.workspace_id != task.workspace_id or crosses_personal(task, other):
+            return None
+        return other.rank
 
     task.rank = rank_between(rank_of(before_key), rank_of(after_key))
     task.save(update_fields=["rank", "updated_at"])
@@ -352,8 +354,15 @@ def resolve_labels(workspace_slug: str, names: list[str], *, create: bool = Fals
 # ---- relations --------------------------------------------------------------
 
 
+def crosses_personal(a: AgentTask, b: AgentTask) -> bool:
+    """Two tasks in different projects, one of them personal: neither may name the other."""
+    return a.project_id != b.project_id and any(t.project_id and t.project.is_personal for t in (a, b))
+
+
 def add_relation(task: AgentTask, kind: str, other: AgentTask, *, by_user=None, by_agent=None) -> TaskRelation:
     """`task` <kind> `other`. `blocked_by` is `blocks` the other way round."""
+    if crosses_personal(task, other):
+        raise ValueError("a task in a personal project relates only to tasks of that project")
     if kind == "blocked_by":
         task, other, kind = other, task, TaskRelation.BLOCKS
     if kind not in TaskRelation.KINDS:
@@ -393,10 +402,10 @@ def relations_of(task: AgentTask) -> list[dict]:
     """Every relation, read from `task`'s side: blocks, blocked_by, related,
     duplicate_of, duplicated_by."""
     out = []
-    for rel in task.relations_out.select_related("to_task"):
+    for rel in task.relations_out.select_related("to_task__project__agent"):
         kind = {"duplicate": "duplicate_of"}.get(rel.kind, rel.kind)
         out.append({"kind": kind, "task": rel.to_task})
-    for rel in task.relations_in.select_related("from_task"):
+    for rel in task.relations_in.select_related("from_task__project__agent"):
         kind = {"blocks": "blocked_by", "duplicate": "duplicated_by"}.get(rel.kind, rel.kind)
         out.append({"kind": kind, "task": rel.from_task})
     return out

@@ -16,7 +16,8 @@ _ACTIONS = {AgentTask.ASK_REVIEW: ("approve", "decline", "reply"), AgentTask.ASK
 
 def items(request, *, slugs: set[str]) -> list[AttentionRow]:
     qs = services.filter_tasks(
-        AgentTask.objects.filter(workspace_id__in=slugs).select_related("agent", "project", "created_by_agent"),
+        AgentTask.objects.filter(services.task_read_q(request.user), workspace_id__in=slugs)
+        .select_related("agent", "project", "created_by_agent"),
         user=request.user, waiting="me",
     )
     out = []

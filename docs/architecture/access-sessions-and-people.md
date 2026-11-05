@@ -12,7 +12,7 @@ in the same workspace. Multiplayer is always an explicit choice (a participant
 row, added by the session's owner). Agents get no implicit access: an agent's own
 login reads a session only if it was made a participant, it is running a live
 turn in it (`access.own_turn_session`), the person granted it review (a coach), or
-the person asked it to review that one session (below). Canopy only operates on what a machine has already **sent**; it asks a
+the person asked it to review that one session, read through a pinned token (below). Canopy only operates on what a machine has already **sent**; it asks a
 machine for more (live streaming, history) only when its owner, or someone they
 explicitly added, asks (`access.may_pull`). Adding someone is the session owner's
 (`access.can_share`), with one more way in: the owner of the agent a member's
@@ -32,8 +32,8 @@ chat-session ACL.
 | **Panel** (an embedded widget) | the visitor (a contact: `contact_session_q`) | the visitor |
 | **An agent's own work** (an alarm, a scheduled turn) | the agent's admins (`Agent.is_admin`) | the agent's admins |
 | **Work an agent starts for you** (a dispatched session) | you + the parent conversation's people (`services._inherit_participants`) | the same |
-| **Coaching** | + the agent the person granted (`SessionReviewGrant`), read-only, never a sensitive one | no — it reads what is already uploaded |
-| **One session, asked from its page** | + the coach the person asked (`SessionReviewAsk`), read-only, only inside the chat the ask opened, never a sensitive one | no — it reads what is already uploaded |
+| **Coaching** | + the agent the person granted (`SessionReviewGrant`), read-only, in a turn asked by them or by the agent's admin, or dispatched for that one person, never a sensitive one, never one whose words its person deleted | no — it reads what is already uploaded |
+| **One session, asked from its page** | + the coach the person asked (`SessionReviewAsk`), as the person, with a token pinned to that session, only inside the chat the ask opened, never a sensitive one, never one whose words its person deleted | no — it reads what is already uploaded |
 
 **Every session says who can see it.** `GET /api/canopy-sessions/{id}` carries `audience`
 (`{label, extras, count}`, `apps/canopy_sessions/audience.py`) — e.g. "Only you", "You and 2
@@ -54,6 +54,26 @@ write one `session.*` event to the workspace's log, ids only, naming who did it 
 under which turn — so a workspace admin can say what happened to a session without reading it
 (`chat-sessions.md` § A session's lifecycle is in the event log).
 
+## The weekly coaching pass
+
+A turn nobody asked for (the schedule's sweep) sees the coach's whole roster and reads no session
+(`access._review_grant_q`). It starts one turn per person with `reads_for` (`POST /api/harness/turns/`,
+`canopy agent dispatch --reads-for`), which only that agent's own login, inside such a turn, may name, and only
+for a live grantor (`turn_gates.check_reads_for`). The stamp is the server's (`turn_asker.READS_FOR`,
+`enqueue_turn` drops a client's copy). Held by canopy-web on that turn:
+
+* it reads that person's own sessions, its own conversation and its own turn (`access.reach_of`), not
+  another grantor's, a channel it was given, or the agent's other work, and its roster is that person;
+* it writes mail only to that person's account address (`mail.api._check_scoped_recipients`);
+* it gets no GitHub identity (`delegations.github_token_for_turn`, a 409 at the runner's route);
+* anything it starts carries the same scope (`dispatch_stamp`), and naming another person is refused.
+
+The envelope's `reads_for` names the person to the turn, which is who its scripts treat as asking.
+
+A dispatch with no scope, from an older plugin, is still a turn nobody asked for: it reads nothing.
+It keeps the full profile, because it must run the mail and ledger scripts. So the box's other
+credentials and its ledger file are still in its hands, and the ledger's limits are the script's.
+
 ## Asking a coach to review one session
 
 The person whose session it is (`access.is_own_session`, never someone added to it) presses
@@ -63,15 +83,40 @@ That writes one `SessionReviewAsk` per (session, agent, person), live for 7 days
 (`WINDOW`), opens a chat with the coach owned by the person, and starts a turn there whose
 verified asker is them.
 
-The coach's login reads the session only when ALL hold (`access._review_ask_q`, leg 8): the
-session matches the row, the reader is that agent's login, the request is made inside a running
-turn of the conversation the ask opened, that turn answers to the person who asked
-(`turn_asker.standing`), and the row is live. Any other turn of the agent reads nothing:
-a schedule's, an admin's (both of which a review grant lets in), or the person's own in another
-chat. Read-only, no pull, never a sensitive or contact conversation, even if it becomes sensitive
-after the ask. Withdrawing (`DELETE` on that route) or expiry stops the next read. The envelope's
-`session_review` names the session to the turn, and `audience` says so on the session's
-"Who can see this" line. Each change is a `session.sharing_changed` event and on the person's audit.
+**The door.** Every turn in that chat runs confined in canopy's built-in `session_review`
+capability (`interface.SESSION_REVIEW`, `access._review_rule`), whoever asks: owner, admin and
+canopy too, as a sensitive conversation does, and a fork or a Slack branch of it stays in it or is
+refused. `turn_context.resolve_turn_context` decides this; nothing is started as canopy. The transcript is text someone
+may have written to steer whoever reads it, so the turn holds:
+
+* no agent login (`turn_agent_tokens.refusal`), no GitHub identity (`github_token_for_turn`), and on
+  a cloud runner no agent `.env`, no vault and no mail credentials (`_confined_env`);
+* a confined caller token that lists only `who_is_asking` and `read_asked_session`, refused on REST
+  (`_authenticate_caller_token`), so no send, task, dispatch or write exists for it;
+* a profile with no Bash and no Write, which `profile_guard` and the native deny rules hold on the
+  box. Those two are the box's: on a laptop every session is the same OS user
+  (access-confinement-and-act-as.md § Known limit).
+
+**The read** (`GET /api/canopy-sessions/asked-review/messages`, tool `read_asked_session`) takes no
+session id. Only the turn's caller token gets through. It finds the live ask its conversation was
+opened by and its asker made, then reads that session through the session ACL as the person, held to
+`access.turn_reach`, which for this chat is itself and that session. Any other session is refused, on
+every route that asks the ACL, whatever a transcript asks for. A later turn asked by someone else in
+that chat finds no ask. Never a sensitive or contact conversation, even if it becomes sensitive after
+the ask. The envelope's `session_review` names the session to the turn, and `audience` says so on the
+session's "Who can see this" line. Each change is a `session.sharing_changed` event and on the person's
+audit.
+
+**Withdrawing** (`DELETE` on that route) refuses the next read and stops the turn through
+`control.stop_session`: a queued turn ends at once, a running one gets `cancel_requested` in its
+ledger, which the lease sweep honours if the runner is gone, and bound work with no turn gets
+`RunnerBinding.pending_interrupt`. None of that depends on a socket frame. **It cannot take back what
+the turn has already read**, nor what it has already said in that chat, and the panel says so.
+Expiry refuses the next read and stops nothing, since a turn does not run for 7 days.
+
+**A successful injection** can still make the reply wrong or misleading, and can quote this session
+back into that chat, which is the person's own. It can read the agent's own repo (`{cwd}/**`). That
+is what stays open, and no canopy check covers it.
 
 **Nothing a grant reads, reads this.** It enrols no one in the weekly pass, uploads no other session
 and appears on no roster: `is_coached`, `full_upload_session_ids`, `session_reviewers.live`,
@@ -79,11 +124,10 @@ and appears on no roster: `is_coached`, `full_upload_session_ids`, `session_revi
 scope is a separate table (`tests/test_session_review_asks.py`).
 
 **Who is offered it** (`session_review_asks.state`): only the agent `COACHING_AGENT_SLUG` names, and
-only someone in its workspace, since the reply is in a chat there. It says plainly why not when
-the session is sensitive, the coach's login is outside the session's workspace, canopy holds none of
-the session's messages, or the person's turn would be confined: `access.decide` puts a person with
-only `read` in read mode, and a confined turn holds no agent login, so it could read nothing. That
-is never stretched here; such a person needs a line that gives `write`.
+only someone in its workspace, since the reply is in a chat there. It says plainly why not when the
+session is sensitive, canopy holds none of the session's messages, or `turn_context.resolve_turn_context` gives them nothing
+on the agent. Any access opens it, `read_only` too, because the door is narrower than read mode. The
+coach needs no membership of the session's workspace: it reads as the person.
 
 ## Who is in a session
 
@@ -118,7 +162,7 @@ Slack behaviours live here (`apps/slack/`, pinned in `tests/test_slack.py`).
 
 * **A confined reply in someone else's thread gets a thread of its own**
   (`services._fork_confined`). When a message in an existing thread would run
-  confined — asked of a probe turn through `access.decide_for_turn`, so it cannot
+  confined — asked of a probe turn through `turn_context.for_turn`, so it cannot
   disagree with the real stamp — and the thread's session is not the sender's,
   canopy posts a new top-level message, opens a session keyed to THAT thread
   (owned by the sender, `metadata.slack_forked_from` / `slack_forked_session`,

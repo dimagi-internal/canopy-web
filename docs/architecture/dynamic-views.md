@@ -64,7 +64,7 @@ call `canopy.runAgentTask(...)` (below), and the page starts that agent task
 
 - **Checked when written** (`declared_tasks.validate`, from `services.create`/`update`): each agent
   is one of the view's workspace's agents, and the person saving it may give that agent a task
-  themselves — `agent.work` in its workspace and `access.decide` not refusing them, the same two
+  themselves — `agent.work` in its workspace and `turn_context.resolve_turn_context` not refusing them, the same two
   gates `POST /api/agent-tasks/` runs. New code on a view that declares tasks is checked against its
   writer the same way, so a project lead who is only a workspace viewer can keep a view's title but
   cannot rewrite code that calls an agent. A restore restores the declaration with the code.
@@ -73,7 +73,7 @@ call `canopy.runAgentTask(...)` (below), and the page starts that agent task
 - **Run as the viewer.** The page POSTs `/api/w/<the view's workspace>/agent-tasks/` with the
   viewer's own session, then long-polls `GET …/{id}?wait_s=20` until done, failed or cancelled. The
   server's gate decides: **a workspace editor, admin or owner may run a declared task** (when the agent
-  takes work from them: `access.decide` must not refuse them, so a workspace editor the
+  takes work from them: `turn_context.resolve_turn_context` must not refuse them, so a workspace editor the
   agent's access list does not name is refused); **a workspace viewer, a project lead who is only a viewer, a
   contact or a non-member may not** — the server's 403/404 reaches the view as a rejected promise
   with its message. The task is the viewer's: they are its creator and the turn's initiator, and

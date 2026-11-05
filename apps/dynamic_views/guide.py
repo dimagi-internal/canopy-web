@@ -46,6 +46,13 @@ PROPS
                                          their passkey) and comes back here. `minutes` 5-10080 ends it by
                                          itself and revokes it; `ownerTurnsOnly` keeps it to turns they
                                          started. Read `my_connections` for its state and `expires_at`.
+    canopy.connections.connect({agent, provider, temporary: true})
+                                         the same, for about an hour and with no passkey or share screen: the
+                                         viewer signs in at the provider and comes back here, and the agent
+                                         gets the token only on turns they start. It can't be renewed, so they
+                                         sign in again when it runs out. Google only. Read `temporary` in
+                                         `my_connections` (`{id, provider, workspace, agent, account_label,
+                                         expires_at}`); disconnect ends it with the same call below.
     canopy.connections.outcome() -> Promise<{provider, status, reason} | null>  how the connect that
                                          brought them back here went (a failure's `reason` is a code; for
                                          `no_vault_key`, canopy.navigate("/settings#vault-key") sets one up)

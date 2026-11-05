@@ -169,9 +169,32 @@ class ServerUseIn(StrictModel):
     on: bool = Field(description="Only `false` is accepted here; turning canopy-web on goes through Share.")
 
 
+class TemporaryAccessOut(StrictModel):
+    id: uuid.UUID
+    provider: str
+    workspace: str
+    agent: str = Field(description="The slug of the agent it is lent to.")
+    account_label: str
+    expires_at: datetime = Field(description="When the token runs out. It cannot be renewed.")
+
+
 class ConnectionsOut(StrictModel):
     providers: list[ProviderOut]
     connections: list[ConnectionOut]
+    temporary: list[TemporaryAccessOut] = Field(
+        default_factory=list, description="Short-lived access I lent an agent, for turns I start, while it lasts.")
+
+
+class TemporaryEndedOut(StrictModel):
+    outcome: Literal["revoked", "ended"] = Field(
+        description="`revoked` at the provider, or `ended`: gone from canopy-web, the provider could not be reached, "
+                    "and the token runs out by itself.")
+
+
+class TemporaryTokenOut(StrictModel):
+    access_token: str
+    expires_at: datetime
+    account_label: str
 
 
 class OptionFieldOut(StrictModel):
@@ -233,6 +256,10 @@ class TurnConnectionsOut(StrictModel):
     providers: list[str] = Field(
         description="Provider keys the turn's agent has a connection for (its own or one shared "
                     "with it), sorted. Empty for most agents.")
+    temporary: list[str] = Field(
+        default_factory=list,
+        description="Provider keys this turn has short-lived access for, from the person who started it. Read each "
+                    "from `connections/{provider}/temporary`, not through the sealed route.")
 
 
 class ShareCandidateOut(StrictModel):

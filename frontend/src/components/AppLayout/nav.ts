@@ -75,6 +75,7 @@ export const NAV: NavEntry[] = [
     label: 'Projects',
     items: [
       { path: 'projects', label: 'All projects', tenant: true },
+      { path: 'meetings', label: 'Meetings', tenant: true },
       { path: 'tasks', label: 'Tasks', tenant: true },
       { path: 'triage', label: 'Triage', tenant: true },
       // What the work produces for people to read and review.

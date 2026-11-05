@@ -25,7 +25,7 @@ from django.utils import timezone
 from apps.api.errors import TYPE_CONFLICT, ProblemError
 
 from . import clis as cli_vocab
-from . import mail_coalesce, runner_refresh, sensitivity
+from . import mail_coalesce, runner_refresh, sensitivity, turn_snapshot
 from .channels import email as email_channel
 from .claim import DEFAULT_LEASE_SECONDS
 from .ledger import append_events
@@ -49,7 +49,7 @@ def _apply_capability(turn: Turn, requested: str | None = None) -> None:
     """Decide which profile a new turn runs in, inside the transaction that
     creates it — so no runner can claim it before the decision is recorded.
 
-    THE rule, `apps.agents.access.decide` (docs/architecture/access.md): FULL
+    THE rule, `apps.agents.turn_context.resolve_turn_context` (docs/architecture/access.md): FULL
     for its owner, admins, canopy's own turns and an editor on its access list (whose
     turn runs manual if their line says so — `turn_mode.editor_cap`); a user or a viewer
     gets the capability their role may use. Anyone
@@ -59,19 +59,19 @@ def _apply_capability(turn: Turn, requested: str | None = None) -> None:
     in the turn log). Every door that makes an agent work — the harness API, a
     chat send, Slack, email — comes through here.
     """
-    from apps.agents import access
+    from apps.agents import turn_context
 
     agent = turn.acting_agent
     if agent is None:
         return
-    decision = access.decide_for_turn(turn, agent, requested)
-    cap = decision.stamp
+    resolved = turn_context.for_turn(turn, agent, requested)
+    cap = resolved.stamped
     if cap == "":
         return
     if cap is None:
         turn.status = Turn.CANCELLED
         turn.finished_at = timezone.now()
-        turn.result_note = f"not run: {decision.reason or agent.slug + ' does not take work from you'}"
+        turn.result_note = resolved.refusal.result_note
         fields = ["status", "finished_at", "result_note"]
         if sensitivity.is_sensitive(turn):
             # Ended before it began, so `turn_close.close_turn` — where a sensitive
@@ -80,6 +80,7 @@ def _apply_capability(turn: Turn, requested: str | None = None) -> None:
             turn.prompt = ""
             fields.append("prompt")
         turn.save(update_fields=fields)
+        turn_snapshot.record(turn, turn_snapshot.ENQUEUE, context=resolved, requested=requested)
         # Refused whatever the rules say; the workspace's `offered-nothing` rule
         # decides what is recorded and who is told (canopy-web#1416).
         from apps.admission import evaluate as admission
@@ -146,6 +147,7 @@ def enqueue_turn(
     coalesce: bool = True,
     job: str = "",
     job_repo: str = "",
+    reads_for: int | None = None,
 ) -> tuple[Turn, bool]:
     """Queued turns stack freely — the executing-turn index never blocks intake
     (new turns are born `queued`, which the index does not cover).
@@ -168,6 +170,9 @@ def enqueue_turn(
     (apps/harness/mail_coalesce.py): folded into the thread's queued turn, or held
     for the trigger's quiet window, and then the answer is that turn and `False`.
     `coalesce=False` is the held batch's own release.
+
+    `reads_for`: the one grantor a dispatch is for, already checked by the caller
+    (`turn_gates.check_reads_for`). Never taken from `origin_ref`.
 
     `job` / `job_repo` (a schedule's fire and "Run now" only) make it a PLAIN JOB: it must
     be an agent's turn, routes `cloud_only`, and carries no prompt.
@@ -238,6 +243,9 @@ def enqueue_turn(
         if not (job and job_repo) or agent is None or session is not None or project:
             raise ValueError("a job turn names its job and repo and targets an agent")
         routing, prompt = Turn.CLOUD_ONLY, ""
+    # A conversation whose words its person deleted takes no more, from any door.
+    if session is not None and session.content_deleted_at is not None:
+        raise ValueError("this session's content was deleted")
     # Looked up inside the target's workspace: another workspace holding the
     # same key is no business of this one (and cannot pre-claim it).
     scope = Turn.scope_for(agent=agent, session=session, workspace=workspace)
@@ -258,11 +266,13 @@ def enqueue_turn(
     from . import turn_asker  # noqa: PLC0415 — cycle: turn_asker -> turn_agent_tokens -> services
 
     on_behalf = turn_asker.of(getattr(initiator, "user", None))
-    origin_ref = {k: v for k, v in (origin_ref or {}).items() if k != turn_asker.UNATTENDED_DISPATCH}
+    origin_ref = {k: v for k, v in (origin_ref or {}).items()
+                  if k not in (turn_asker.UNATTENDED_DISPATCH, turn_asker.READS_FOR)}
     if on_behalf is not None:
         origin_ref = {**origin_ref, "on_behalf_of": on_behalf.record()}
     elif initiator.kind == "user":  # initiator.USER: an agent's login dispatching (stamp or nothing)
-        origin_ref = {**origin_ref, **turn_asker.dispatch_stamp(getattr(initiator, "user", None))}
+        origin_ref = {**origin_ref, **turn_asker.dispatch_stamp(getattr(initiator, "user", None),
+                                                                reads_for=reads_for)}
     from apps.threads import guard as thread_guard
 
     from . import provenance

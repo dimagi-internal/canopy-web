@@ -33,6 +33,7 @@ from starlette.middleware import Middleware  # noqa: E402
 from starlette.routing import Mount  # noqa: E402
 
 from apps.canopy_sessions.routing import websocket_urlpatterns as chat_ws_urlpatterns  # noqa: E402
+from apps.common.thread_context import PerConnectionThread  # noqa: E402
 from apps.mcp.server import build_http_app  # noqa: E402
 from apps.realtime.channels_auth import RealtimeAuthMiddleware  # noqa: E402
 from apps.realtime.origin import OriginValidator  # noqa: E402
@@ -66,9 +67,10 @@ _django_with_ws = ProtocolTypeRouter(
     {
         "http": _django_asgi_app,
         # Origins, not hosts: ALLOWED_HOSTS is `*` here (apps/realtime/origin.py).
-        "websocket": OriginValidator(
+        # Each socket gets its own sync thread (apps/common/thread_context.py).
+        "websocket": PerConnectionThread(OriginValidator(
             RealtimeAuthMiddleware(URLRouter(_websocket_urlpatterns))
-        ),
+        )),
     }
 )
 
@@ -120,8 +122,8 @@ application = Starlette(
         # gate verifies the proof and hands FastMCP a plain bearer. Every other
         # request passes through untouched.
         # A project's own server, ahead of the main one so its prefix wins.
-        Mount(_MCP_PREFIX + "/projects", app=_dpop_gate(ProjectMcpDispatch(_project_mcp_app, gateway=_gateway_mcp_app))),
-        Mount(_MCP_PREFIX, app=_dpop_gate(_mcp_app)),
+        Mount(_MCP_PREFIX + "/projects", app=PerConnectionThread(_dpop_gate(ProjectMcpDispatch(_project_mcp_app, gateway=_gateway_mcp_app)))),
+        Mount(_MCP_PREFIX, app=PerConnectionThread(_dpop_gate(_mcp_app))),
         # Django + realtime WS handle everything else (mounted last as catch-all).
         Mount("/", app=_django_with_ws),
     ],

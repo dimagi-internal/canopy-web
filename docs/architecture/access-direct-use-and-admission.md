@@ -1,6 +1,6 @@
 # Access: direct use, admission rules and the caller envelope
 
-How a person who is not the agent's owner uses an agent directly, what a caller's turn tells the owner, the admission rules a workspace's admins write to refuse or let turns run `auto`, and the caller envelope an agent receives with a caller's turn. The words and the one rule (`apps/agents/access.decide`) are defined in [access.md](access.md).
+How a person who is not the agent's owner uses an agent directly, what a caller's turn tells the owner, the admission rules a workspace's admins write to refuse or let turns run `auto`, and the caller envelope an agent receives with a caller's turn. The words and the one rule (`apps/agents/turn_context.resolve_turn_context`) are defined in [access.md](access.md).
 
 **See also:** [access.md](access.md) (glossary, roles, access list, decision table), [access-confinement-and-act-as.md](access-confinement-and-act-as.md), [access-sessions-and-people.md](access-sessions-and-people.md), [roles.md](roles.md).
 
@@ -46,7 +46,7 @@ direct (a direct turn).
   The cap rides on the user object (`apps/workspaces/role_cap.py`) and is honoured
   where roles are read — `member_role`/`member_roles`/`membership`,
   `Agent.is_admin`, `relationship_for_user`, `caller_runs_agent` — so a capped owner or agent
-  admin is neither, and `decide` gives them only what the access list does (their own lines,
+  admin is neither, and the rule gives them only what the access list does (their own lines,
   and any workspace line at the lowered workspace role). It only ever lowers, so anyone may ask
   for it with no proof. It is how anyone, an agent included, runs the path of someone who is
   not an agent admin for real.
@@ -65,7 +65,7 @@ direct (a direct turn).
   initiator (verified, `via=local`), it is RUNNING from the start and never
   claimed, and it carries the same caller envelope a runner turn gets
   (`trigger.private_runner` names the machine; `trigger.runner` is null).
-* **Who may.** Exactly whom `decide` gives the WHOLE agent (rows 1–3): its owner
+* **Who may.** Exactly whom the rule gives the WHOLE agent (rows 1–3): its owner
   or an agent admin, anyone whose lines give `write`. A read_only or capability line, or a contact, is refused
   (403) and keeps the confined path through canopy.
 * **Mode.** `manual`, always — except an agent admin who asks for `auto`. Stamped
@@ -77,17 +77,17 @@ direct (a direct turn).
   (No agent turn holds the agent either: an agent is not a lane.)
 * A **license** (`AgentLicense`, `apps/agents/credentials/licenses.py`) is person × agent: the
   record that someone uses the agent directly. The access list decides who MAY
-  (`decide`, in [access.md](access.md)); the license is who DOES. Requested on the first direct turn and
-  issued at once when `decide` gives the whole agent (basis `owner`, `admin` or
+  (the rule, in [access.md](access.md)); the license is who DOES. Requested on the first direct turn and
+  issued at once when the rule gives the whole agent (basis `owner`, `admin` or
   `grant:<line>`, an editor line); anyone else gets a `requested` row the agent's admins
   see, and a refusal. An agent admin **revokes** it per person without editing the
   rule, and a revoked license is never re-issued automatically; **approve**
-  reinstates it, re-asking `decide`, so it cannot license someone the access list
+  reinstates it, re-asking the rule, so it cannot license someone the access list
   does not give the whole agent. `GET /api/agents/{slug}/licenses` (any member)
   lists holders, their private runners, direct turns, credential reads and last use;
   the agent's Settings → Roles → Direct use shows it.
 * **Credentials.** `/credentials/resolve` has a third principal beside `runner` and
-  `admin`: **`license`** — an ACTIVE license (re-checked against `decide` on every
+  `admin`: **`license`** — an ACTIVE license (re-checked against the rule on every
   read) AND one of the caller's OWN live turns on that agent named in
   `X-Canopy-Turn-Id`: their running direct turn, or — on their private runner's
   token — a turn of theirs that runner claimed. No turn, no secrets. A request naming
@@ -235,7 +235,7 @@ and waits for a human yes, and a cloud session that ends cannot receive one.
 
 What the runner hands the agent beside each turn (`apps/harness/caller_context.py`,
 VERSION 3 — 3 only added `person` and `trigger.kind`, so a v2 reader is unaffected): `who`, `verified` (THIS message), `role` and `source`
-(below), `relationship`, `profile` (`full` | `confined`), `permissions`, `manual_only`, `granted_by`, `capability` (the confined
+(below), `relationship`, `profile` (`full` | `confined`), `access` (`full` | `confined` | `refused`, the Turn Context's word; `profile` says `full` on a turn refused before it ran, and stays for the runners and plugins that read it), `permissions`, `manual_only`, `granted_by`, `capability` (the confined
 profile), `turn_mode` (`{mode, basis}`), and:
 
 * **`role`** — the asker's named role on the agent: `owner` | `admin` | `editor` |
@@ -273,6 +273,15 @@ profile), `turn_mode` (`{mode, basis}`), and:
   workspace, or not). It is how canopy knows the asker, not a role: it says nothing about what
   they may do. Read `role`.
 
+* **`agent_repo`** — the agent's own repo as `owner/repo`, on every turn and whoever asks. The
+  canopy plugin's own-repo rail reads it, so the rail holds in a session outside the agent's clone.
+  `""` means the agent has no repo set, and a turn whose asker lacks `agent_edit` then cannot make
+  repo writes from a session where the hook finds none either. `null` means the turn has no agent. An
+  envelope without the field (an older canopy-web) means neither.
+* **`own_box_turn`** — true only for a verified person's unconfined turn with no agent, on a box
+  that person owns. `relationship: owner` cannot say this, since a teammate who owns a session on
+  someone else's box is `owner` too. The own-repo rail allows such a turn in an agent's clone, as it
+  does a person by hand. An agent's own login, on its owner's box or not, is never one.
 * **`ship_grant`** — when ANOTHER agent's verified login that is this agent's
   owner or an agent admin dispatched the turn at it, push / PR / merge in this agent's OWN
   repo are pre-approved even in `manual`. Nothing else is.

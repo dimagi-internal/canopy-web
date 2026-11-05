@@ -83,6 +83,13 @@ tool; and beside every delivered prompt — the runner leaves
   `canopy-web-mcp-headers.js` sends it and never falls back to a PAT once it has
   one; a write failure refuses the turn. A scoped token does not serve a
   confined turn's conversation, and a confined token does not serve a full turn's.
+  **Its reads stop where the agent's part in them stops** (`access.turn_reach`, both doors): an agent
+  turn's caller token, scoped or confined, reads the asker's sessions only if the session is its own
+  conversation or is with that agent. Their laptop sessions and their chats with other agents take
+  an act-as-you grant (`canopy:act-as-you`), because the asker granted this agent nothing over them.
+  A repo chat's token has no agent and is not limited. The reach covers a turn's content too
+  (`turn_access.can_read_turn_log`, `access.turn_in_reach`): a turn in a conversation is that
+  conversation's, one in none is its own or that agent's, whatever the asker's logs permission.
   **REST takes a scoped token too, but only where MCP would** (`tokens.middleware._authenticate_caller_token`): re-resolved on every request
   as above, it signs in as the asker on a route the MCP server serves as a tool
   (`api_tools.is_tool_route`) and is refused (403) on every other one. The routes

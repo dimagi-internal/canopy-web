@@ -475,6 +475,79 @@ def test_someone_elses_repo_chat_on_someone_elses_box_is_not_theirs(ctx):
     assert env["relationship"] == caller_context.CONTACT
 
 
+# --- own_box_turn: what the plugin's own-repo rail reads for a turn with no agent --------------
+
+def _box(owner):
+    from apps.harness.models import Runner
+
+    return Runner.objects.create(name="a-box", kind=Runner.EMDASH, owner=owner)
+
+
+def test_a_persons_repo_chat_on_their_own_box_is_an_own_box_turn(ctx):
+    owner, ws, _agent = ctx
+    env = caller_context.build(_repo_turn(ws, owner, creator=owner, runner=_box(owner)))
+    assert env["own_box_turn"] is True and env["agent"] is None and env["permissions"] == []
+
+
+def test_a_teammates_own_session_on_my_box_is_owner_but_not_an_own_box_turn(ctx):
+    # The case `relationship` cannot tell apart: both say `owner`. A workspace order puts a
+    # teammate's project chat on someone else's box (`routing.project_session_allows`).
+    owner, ws, _agent = ctx
+    teammate = User.objects.create_user("t", "t@dimagi.com", "pw")
+    WorkspaceMembership.objects.create(user=teammate, workspace=ws, role=WorkspaceMembership.EDITOR)
+    env = caller_context.build(_repo_turn(ws, teammate, creator=teammate, runner=_box(owner)))
+    assert env["relationship"] == caller_context.OWNER
+    assert env["own_box_turn"] is False
+
+
+def test_a_session_owner_with_no_box_yet_is_not_an_own_box_turn(ctx):
+    owner, ws, _agent = ctx
+    assert caller_context.build(_repo_turn(ws, owner, creator=owner))["own_box_turn"] is False
+
+
+def test_an_agents_login_on_its_owners_box_is_system_but_not_an_own_box_turn(ctx):
+    # Or anyone with no edit on the agent could have it dispatch a repo turn into its own clone.
+    owner, _ws, agent = ctx
+    agent.user = User.objects.create_user("ace-bot", "ace@dimagi-ai.com", "pw")
+    agent.save(update_fields=["user"])
+    env = caller_context.build(_dispatched_turn(agent.user, _box(owner)))
+    assert env["relationship"] == caller_context.SYSTEM
+    assert env["own_box_turn"] is False
+
+
+def test_an_agents_login_on_a_box_it_owns_itself_is_not_an_own_box_turn(ctx):
+    _owner, _ws, agent = ctx
+    agent.user = User.objects.create_user("ace-bot", "ace@dimagi-ai.com", "pw")
+    agent.save(update_fields=["user"])
+    assert caller_context.build(_dispatched_turn(agent.user, _box(agent.user)))["own_box_turn"] is False
+
+
+def test_the_box_owners_turn_for_an_agent_is_not_an_own_box_turn(ctx):
+    # With an agent in the turn, the agent's access list decides, whoever owns the box.
+    owner, _ws, agent = ctx
+    turn = _user_turn(agent, owner, "p-own-box")
+    Turn.objects.filter(pk=turn.pk).update(claimed_by=_box(owner))
+    turn.refresh_from_db()
+    assert caller_context.build(turn)["own_box_turn"] is False
+
+
+def test_a_confined_or_capped_or_unverified_turn_on_my_own_box_is_not_an_own_box_turn(ctx):
+    owner, ws, _agent = ctx
+    box = _box(owner)
+    confined = _repo_turn(ws, owner, creator=owner, runner=box)
+    Turn.objects.filter(pk=confined.pk).update(capability="ask")
+    confined.refresh_from_db()
+    assert caller_context.build(confined)["own_box_turn"] is False
+    capped = _repo_turn(ws, owner, creator=owner, runner=box)
+    Turn.objects.filter(pk=capped.pk).update(origin_ref={"acts_as": "viewer"})
+    capped.refresh_from_db()
+    assert caller_context.build(capped)["own_box_turn"] is False
+    unverified = _repo_turn(ws, owner, creator=owner, runner=box)
+    Turn.objects.filter(pk=unverified.pk).update(initiator_assurance="")
+    unverified.refresh_from_db()
+    assert caller_context.build(unverified)["own_box_turn"] is False
+
+
 # --- an agent's own login dispatching onto its owner's runner (canopy-web#1011) ------
 #
 # 2026-09-28: Jonathan asked an ACE session on emdash to dispatch a validation session
@@ -1026,6 +1099,48 @@ def test_a_manual_only_line_says_so(ctx):
 def test_a_turn_with_no_agent_holds_nothing():
     assert caller_context._grant(None, None) == {
         "granted_by": "no-interface", "role": None, "source": "", "permissions": [], "manual_only": False}
+
+
+# --- agent_repo: what the plugin's own-repo rail reads -------------------------------------------
+
+@pytest.mark.parametrize("url", ["https://github.com/dimagi-internal/ace",
+                                 "https://github.com/dimagi-internal/ace.git",
+                                 "git@github.com:dimagi-internal/ace.git"])
+def test_the_envelope_names_the_agents_own_repo(ctx, url):
+    owner, _ws, agent = ctx
+    Agent.objects.filter(pk=agent.pk).update(repo_url=url)
+    agent.refresh_from_db()
+    assert caller_context.build(_user_turn(agent, owner, "p-repo"))["agent_repo"] == "dimagi-internal/ace"
+
+
+def test_the_repo_is_named_whoever_asks_since_the_rail_guards_the_ones_without_edit(ctx):
+    owner, _ws, agent = ctx
+    Agent.objects.filter(pk=agent.pk).update(repo_url="https://github.com/dimagi-internal/ace")
+    agent.refresh_from_db()
+    assert caller_context.build(_email(agent))["agent_repo"] == "dimagi-internal/ace"      # a stranger's mail
+    reader = _line_user(ctx, "ro-repo", role=roles.READ_ONLY)
+    assert caller_context.build(_user_turn(agent, reader, "p-ro"))["agent_repo"] == "dimagi-internal/ace"
+    schedule, _ = services.enqueue_turn(agent=agent, origin=Turn.ORIGIN_CANOPY_SCHEDULER, idempotency_key="s-repo",
+                                        initiator=who.system(via="schedule:1", accountable=owner))
+    assert caller_context.build(schedule)["agent_repo"] == "dimagi-internal/ace"
+
+
+def test_an_agent_with_no_repo_says_so_with_an_empty_string_not_by_leaving_it_out(ctx):
+    # The hook tells "" (this canopy-web knows of no repo) from absent (an older canopy-web).
+    owner, _ws, agent = ctx
+    assert agent.repo_url == ""
+    env = caller_context.build(_user_turn(agent, owner, "p-norepo"))
+    assert "agent_repo" in env and env["agent_repo"] == ""
+
+
+def test_a_turn_with_no_agent_has_no_repo_to_name():
+    assert caller_context._agent_repo(None) is None
+
+
+def test_agent_repo_does_not_bump_the_version(ctx):
+    owner, _ws, agent = ctx
+    assert caller_context.VERSION == 3
+    assert caller_context.build(_user_turn(agent, owner, "p-v"))["version"] == 3
 
 
 def test_permissions_and_manual_only_do_not_bump_the_version(ctx):

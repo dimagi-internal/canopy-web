@@ -148,7 +148,7 @@ def _metadata(fact: PersonFact) -> dict:
     meta["canopy:workspace"] = fact.workspace_id      # None: a personal entry
     if fact.instance_ref:
         meta["canopy:instance"] = fact.instance_ref
-    if fact.project_id:
+    if fact.project_id and not fact.project.is_personal:
         meta["canopy:project"] = fact.project.ext_id or str(fact.project_id)
     return meta
 

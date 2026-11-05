@@ -595,6 +595,9 @@ class AgentOwnerOut(StrictModel):
 
 class AgentDetailOut(AgentOut):
     definition: AgentDefinitionOut | None = None
+    # What this agent does for someone who may only read, and the sites it can be reached from.
+    read_mode: "ReadModeSettingOut | None" = None
+    connected_sites: "list[ConnectedSiteOut]" = []
     #: A model per CLI; a CLI not named here starts on its own default.
     cli_models: dict[str, str] = {}
     # The person who operates this agent. Its GitHub-backed features (skill
@@ -710,60 +713,61 @@ class AgentAccessOut(StrictModel):
     slack_enabled: bool
 
 
-class AgentInterfaceIn(StrictModel):
-    # Exactly one of: `source`, the YAML an editor wrote (kept, comments and all),
-    # or `interface`, an already-parsed mapping. See apps/agents/interface.py.
-    source: str | None = None
-    interface: dict | None = None
+class AnsweringProfile(StrictModel):
+    description: str = ""
+    # The command a conversation starts with (`/<plugin>:<skill> [args]`), or none.
+    entry: str | None = None
+    tools: list[str] = []
+    bash: list[str] = []
+    read_paths: list[str] = []
+    write_paths: list[str] = []
 
 
-class CapabilitySensitiveIn(StrictModel):
-    # On writes `data: sensitive` into the capability's block of the saved YAML;
-    # off removes it. An ordinary interface edit, as the YAML path is.
-    handles_sensitive: bool
+class ReadModeSettingOut(StrictModel):
+    # `default`: canopy's own, built from the agent. `custom`: this agent's own list.
+    source: Literal["default", "custom"]
+    profile: AnsweringProfile
 
 
-class InterfaceProblemOut(StrictModel):
-    # The field the parser's message is about: `full`, a capability name, or
-    # `<capability>.<field>`; "" when it is about the whole document.
-    path: str
-    message: str
+class ReadModeIn(StrictModel):
+    # Only the fields sent change. `sites`, `data` and the like are refused here: read mode has none.
+    description: str | None = None
+    entry: str | None = None
+    tools: list[str] | None = None
+    bash: list[str] | None = None
+    read_paths: list[str] | None = None
+    write_paths: list[str] | None = None
+    dry_run: bool = False
 
 
-class AgentInterfaceValidateOut(StrictModel):
-    errors: list[InterfaceProblemOut]
-    # When the draft is valid: the parsed model (what the form edits) and the same model as
-    # YAML (what the Advanced view edits) — so the form and the YAML switch without a YAML
-    # library in the browser.
-    interface: dict | None = None
-    yaml: str = ""
+class ConnectedSiteOut(AnsweringProfile):
+    site: str
+    # The internal name a turn is stamped with and an access line names. Never renamed.
+    key: str
+    # Tool globs narrowing the site's own tools; empty: whatever the site allows.
+    ceiling: list[str] = []
+    # Names of the agent's own credentials that are its login on this site, kept out of its conversations.
+    own_login: list[str] = []
+    sensitive: bool = False
 
 
-class ReadModeOut(StrictModel):
-    """What a person who holds `read` and not `write` gets from this agent."""
-
-    # `default`: canopy's own profile, on every agent from the start. `override`: the agent
-    # published its own `ask`, which replaces the default whole.
-    source: str
-    # The published capability that overrides it (`ask`), else null.
-    override: str | None = None
-    # The default profile as it stands for this agent now, whether or not an override hides it.
-    default_profile: dict
-    default_profile_version: int
+class NewSiteDefaults(AnsweringProfile):
+    ceiling: list[str] = []
+    own_login: list[str] = []
+    sensitive: bool = False
 
 
-class AgentInterfaceOut(StrictModel):
-    # Never empty: an agent without a declared interface has the default one.
-    interface: dict
-    read_mode: ReadModeOut
-    # The YAML as last saved; "" when it was published as a parsed mapping.
-    source: str = ""
-    # `source` when there is one, else the interface rendered as YAML.
-    yaml: str = ""
-    # True while the interface is the default: no capability published.
-    is_default: bool = True
-    published_at: dt.datetime | None = None
-    published_by_email: str | None = None
+class ConnectedSitesOut(StrictModel):
+    sites: list[ConnectedSiteOut]
+    # Every live site registered in the agent's workspace, connected to it or not.
+    available: list[str]
+    new_site_defaults: NewSiteDefaults
+
+
+class ConnectedSiteIn(ReadModeIn):
+    ceiling: list[str] | None = None
+    own_login: list[str] | None = None
+    sensitive: bool | None = None
 
 
 class AgentCanopyUserIn(StrictModel):

@@ -110,3 +110,65 @@ describe('ChatPeoplePanel', () => {
     expect(addParticipant).not.toHaveBeenCalled()
   })
 })
+
+describe('someone added who can read this but could not take a turn', () => {
+  const REFUSED = {
+    code: 'not_on_access_list', why: "New is not on ada's access list",
+    how_to_fix: 'Have jj@dimagi.com or an admin of ada add New to its access list as read only (to put questions to it).',
+    who_can_fix: 'jj@dimagi.com or an admin of ada',
+  }
+
+  it('tells whoever added them, with the fix when they may edit the access list', async () => {
+    listParticipants.mockResolvedValue([OWNER])
+    listParticipantCandidates.mockResolvedValue([NEW])
+    addParticipant.mockResolvedValue([OWNER, { ...NEW, role: 'editor', turn_refusal: REFUSED, access_list_agent: 'ada' }])
+    render(<ChatPeoplePanel sessionId="s1" myRole="owner" />)
+    await screen.findByText('Op')
+    await pickPerson('new', 'New')
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    const notice = await screen.findByTestId('added-cannot-take-a-turn')
+    expect(notice.textContent).toContain("New can read this but can't take a turn.")
+    expect(screen.getByTestId('added-cannot-take-a-turn-why').textContent).toBe("New is not on ada's access list.")
+    expect(screen.getByTestId('added-cannot-take-a-turn-fix').textContent).toBe(REFUSED.how_to_fix)
+    expect(screen.getByTestId('add-to-access-list').textContent).toBe("Add New to ada's access list as read only")
+    // The row says it too.
+    expect(screen.getByText("can read it, can't take a turn")).toBeTruthy()
+  })
+
+  it('adding the line adds read only for that person and says they can take a turn now', async () => {
+    const { CannotTakeATurn } = await import('./ChatPeople')
+    const addLine = vi.fn().mockResolvedValue({})
+    listParticipants.mockResolvedValue([OWNER, { ...NEW, role: 'editor', turn_refusal: null }])
+    const onFixed = vi.fn()
+    render(<CannotTakeATurn sessionId="s1" onFixed={onFixed} onDismiss={() => undefined} addLine={addLine}
+      person={{ ...NEW, role: 'editor', joined_at: null, needs_key: false, test_key: false, turn_refusal: REFUSED,
+                access_list_agent: 'ada' }} />)
+    fireEvent.click(screen.getByTestId('add-to-access-list'))
+    await waitFor(() => expect(addLine).toHaveBeenCalledWith('ada', expect.objectContaining(
+      { kind: 'person', user_id: 3, role: 'read_only' })))
+    await waitFor(() => expect(onFixed).toHaveBeenCalled())
+    expect(listParticipants).toHaveBeenCalledWith('s1')
+  })
+
+  it('without the right to edit the access list: the words, and no button', async () => {
+    const { CannotTakeATurn } = await import('./ChatPeople')
+    render(<CannotTakeATurn sessionId="s1" onFixed={() => undefined} onDismiss={() => undefined}
+      person={{ ...NEW, role: 'editor', joined_at: null, needs_key: false, test_key: false, turn_refusal: REFUSED,
+                access_list_agent: null }} />)
+    expect(screen.getByTestId('added-cannot-take-a-turn').textContent).toContain('jj@dimagi.com or an admin of ada')
+    expect(screen.queryByTestId('add-to-access-list')).toBeNull()
+  })
+
+  it('someone who can take a turn gets no notice', async () => {
+    listParticipants.mockResolvedValue([OWNER])
+    listParticipantCandidates.mockResolvedValue([NEW])
+    addParticipant.mockResolvedValue([OWNER, { ...NEW, role: 'editor', turn_refusal: null }])
+    render(<ChatPeoplePanel sessionId="s1" myRole="owner" />)
+    await screen.findByText('Op')
+    await pickPerson('new', 'New')
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    await waitFor(() => expect(addParticipant).toHaveBeenCalled())
+    await screen.findByLabelText('Change role for new@dimagi.com')
+    expect(screen.queryByTestId('added-cannot-take-a-turn')).toBeNull()
+  })
+})

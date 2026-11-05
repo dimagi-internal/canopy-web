@@ -491,7 +491,8 @@ def test_a_blocked_senders_refusal_fires_its_rule_and_by_default_tells_nobody(
     with django_capture_on_commit_callbacks(execute=True):
         turn = _mail(fleet["hal"], thread="t-b")
     rule = _seeded(fleet["ws"], "blocked-sender")
-    assert turn.status == Turn.CANCELLED and turn.result_note == "not run: the sender is blocked (spam)"
+    assert turn.status == Turn.CANCELLED and turn.result_note.startswith("not run: the sender is blocked. ")
+    assert "spam" not in turn.result_note
     assert turn.events.filter(kind="status", payload__admission_rule=rule.pk).exists()
     rule.refresh_from_db()
     assert rule.fired_count == 1

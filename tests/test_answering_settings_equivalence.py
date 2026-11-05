@@ -22,12 +22,11 @@ from django.contrib.auth import get_user_model
 from django.test import override_settings
 from django.utils import timezone
 
-from apps.agents import access, grants, interface, roles, sensitive_data
+from apps.agents import answering_snapshot, grants, interface, roles, sensitive_data, session_context, turn_context
 from apps.agents.answering_snapshot import probe_turn
 from apps.agents.models import Agent, AgentAdmin, AgentGrant
 from apps.canopy_sessions.models import Session
 from apps.contacts.models import Contact
-from apps.harness import caller_context
 from apps.harness import runner_requirements as rr
 from apps.harness.models import Runner, RunnerAssignment, RunnerFlag, Turn
 from apps.harness.testing import enrolled
@@ -35,7 +34,7 @@ from apps.host_grants import execution, site_agents
 from apps.tokens.models import AppCredential
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
-from . import legacy_interface
+from . import legacy_decide, legacy_interface
 
 pytestmark = pytest.mark.django_db
 
@@ -45,15 +44,34 @@ RETIRED = "retired_probe"
 
 #: The hash of every answer the frozen copy gives over the fixture. It moves only if the frozen
 #: copy or the fixture moves, and neither should: see the module docstring.
-FROZEN_ANSWERS = "46dcecc0c7a46cd4e4538cee92b18cd2359e0c5850c217425f6527769f0f4f90"
+FROZEN_ANSWERS = "1877f8032a283484c7a5ec18e667fe5cba2eb51e24006dd9fd68b1cc7acc657f"
+
+def _as_decision(ctx):
+    """A Turn Context in the frozen copy's shape, so the two compare field by field."""
+    answer = answering_snapshot.answer_of(ctx)
+    del answer["stamp"]
+    return legacy_decide.Decision(**{**answer, "permissions": frozenset(answer["permissions"])})
+
+
+def _real_decide(agent, who, *, verified, capability, turn):
+    return _as_decision(turn_context.for_asker(agent, who, verified=verified, requested=capability, turn=turn))
+
+
+def _envelope_profile(agent, capability, turn):
+    """What the envelope hands the runner for a stamp: the Turn Context's profile."""
+    if agent is None or not capability:
+        return None
+    facts = session_context.build(None, turn, agent=agent)
+    return turn_context.stamped_profile(agent, capability, facts).as_envelope()
+
 
 REAL = SimpleNamespace(
-    profile=interface.profile, envelope_profile=caller_context._profile, reachable=interface.reachable,
+    profile=interface.profile, envelope_profile=_envelope_profile, reachable=interface.reachable,
     page_sites=interface.page_sites, site_ceiling=interface.site_ceiling, own_login_of=interface.own_login_of,
     page_turn=interface.page_turn, page_site_of=interface.page_site_of,
     handles_sensitive=sensitive_data.handles_sensitive, as_claim=sensitive_data.as_claim,
     sensitive_capabilities=sensitive_data.sensitive_capabilities, facts_for=execution.facts_for,
-    site_capabilities=site_agents.site_capabilities, agent_entry=site_agents.agent_entry, decide=access.decide,
+    site_capabilities=site_agents.site_capabilities, agent_entry=site_agents.agent_entry, decide=_real_decide,
 )
 
 
@@ -203,12 +221,20 @@ def _differences(left, right, path="") -> list[str]:
     return [] if left == right else [f"{path}: real {left!r} != frozen {right!r}"]
 
 
+def _outcomes(doc):
+    """A refusal's outcome, not its wording: whether it has a reason, never what the reason says. Its words are
+    `apps/agents/refusals.py`'s, rewritten on purpose by Turn Context Stage 4; who gets what is compared whole."""
+    if isinstance(doc, dict):
+        return {k: (bool(v) if k == "reason" else _outcomes(v)) for k, v in doc.items()}
+    return doc
+
+
 @override_settings(CANOPY_PUBLIC_BASE_URL=BASE_URL)
 def test_the_real_code_answers_as_the_frozen_copy_does(world):
     wrong = []
     for agent, row in world.agents:
-        wrong += [f"{agent.slug}{d}" for d in _differences(answers(REAL, world, agent, row),
-                                                           answers(legacy_interface, world, agent, row))]
+        wrong += [f"{agent.slug}{d}" for d in _differences(_outcomes(answers(REAL, world, agent, row)),
+                                                           _outcomes(answers(legacy_interface, world, agent, row)))]
     assert not wrong, "\n".join(wrong[:30])
 
 
@@ -235,7 +261,7 @@ def test_the_fixture_has_the_shape_the_spec_counts_on(world):
 
 
 def test_a_saved_turn_on_a_real_session_gets_the_same_answers(world):
-    """The same comparison through what a claim reads: a saved session and turn, `decide_for_turn`,
+    """The same comparison through what a claim reads: a saved session and turn, `turn_context.for_turn`,
     the envelope's profile and standing, and the statement for it."""
     ace = next(agent for agent, _row in world.agents if agent.slug == "ace")
     labsdata = next(agent for agent, _row in world.agents if agent.slug == "labsdata")
@@ -246,14 +272,14 @@ def test_a_saved_turn_on_a_real_session_gets_the_same_answers(world):
             turn = Turn.objects.create(chat_session=session, origin=Turn.ORIGIN_CANOPY_WEB_CHAT,
                                        initiator_kind="user", initiator_user=person, initiator_assurance="session",
                                        prompt="hello", idempotency_key=f"{agent.slug}-{person.pk}")
-            real = access.decide_for_turn(turn, agent)
+            real = _as_decision(turn_context.for_turn(turn, agent))
             frozen = legacy_interface.decide(agent, person, verified=True, turn=turn)
-            assert dataclasses.asdict(real) == dataclasses.asdict(frozen)
+            assert _outcomes(dataclasses.asdict(real)) == _outcomes(dataclasses.asdict(frozen))
             turn.capability = real.stamp or ""
             turn.save(update_fields=["capability"])
             facts = interface.grant_facts(turn, agent)
             assert facts["granted_by"]
-            assert caller_context._profile(agent, turn.capability, turn) == \
+            assert _envelope_profile(agent, turn.capability, turn) == \
                 legacy_interface.envelope_profile(agent, turn.capability, turn)
             assert interface.page_turn(turn, agent) == legacy_interface.page_turn(turn, agent)
             assert execution.facts_for(turn, agent, session, [rr.SENSITIVE_DATA]) == \

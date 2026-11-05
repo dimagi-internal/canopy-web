@@ -683,7 +683,7 @@ class Runner(models.Model):
 class RunnerSlashCommands(models.Model):
     """The slash commands a Claude session on this box can run (its account's
     skills and commands, its enabled plugins', and what ACP announced), as
-    [{name, description, args_hint, source, internal}] — REPORTED by the box when
+    [{name, description, args_hint, source, internal, plugin_updated_at}] — REPORTED by the box when
     the list changes (`canopy_runner.slash_commands`), never typed. Feeds the chat
     composer's `/` autocomplete, which leaves out `internal` entries, and the skill
     catalog, which keeps them. No row = never reported (an older runner); no

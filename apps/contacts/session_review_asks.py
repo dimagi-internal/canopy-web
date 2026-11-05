@@ -6,12 +6,14 @@ whose asker is that person; the coach replies there. Nothing that reads a
 `SessionReviewGrant` reads this table: it enrols nobody in the weekly pass, uploads no other
 session, and appears on no roster (`tests/test_session_review_asks.py` pins each).
 
-The read itself is the session ACL's leg 8 (`access._review_ask_q`). Withdrawing or the
-window running out ends it on the next read.
+The turn runs confined in canopy's `interface.SESSION_REVIEW` door, whoever asks
+(`turn_context.resolve_turn_context`), because the transcript is text someone may have aimed at whoever reads it:
+no agent login, no GitHub, no Bash, no canopy tool but `read_asked_session`, which reads the
+session as the person through the session ACL (`access.turn_reach`). Anyone with any access to
+the agent may ask, since this adds nothing to what they could already make it do.
 
-An asker whose turn would be confined is not offered this: a confined turn holds no agent
-login, so it could read nothing. Their access is `agents.access.decide`'s to say, never
-stretched here.
+Withdrawing stops the turn (`control.stop_session`, the durable stop) and refuses its next
+read. It cannot take back what the turn already read. The window running out refuses the read.
 """
 from __future__ import annotations
 
@@ -21,10 +23,11 @@ import uuid
 from django.db import transaction
 from django.utils import timezone
 
-from apps.agents import access as agent_access
+from apps.agents import turn_context
+from apps.agents import interface as agent_iface
 from apps.api.errors import TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
-from apps.canopy_sessions import access, doors, lifecycle, services
-from apps.canopy_sessions.models import SessionReviewAsk
+from apps.canopy_sessions import access, control, doors, lifecycle, services
+from apps.canopy_sessions.models import REVIEW_METADATA_KEY, SessionReviewAsk
 from apps.harness import initiator as who
 from apps.harness import sensitivity
 from apps.harness.models import Turn
@@ -46,26 +49,23 @@ def prompt(session) -> str:
     """The first message of the review conversation, in the person's words. Names the
     session by id only: its title and content are data the agent reads, not instructions."""
     return (f"Please review one of my sessions: {session.pk}. I asked from its page, which lets "
-            "you read this one session and nothing else of mine. Reply here in this conversation: "
-            "no email, and keep no record of me. I have not turned coaching on by asking.")
+            "you read this one session and nothing else of mine, with `read_asked_session`. Reply "
+            "here in this conversation. I have not turned coaching on by asking.")
 
 
 def _reason(agent, user, session) -> str:
     """Why `agent` cannot be asked to review `session` now, in plain words, or ""."""
     name = _name(agent)
+    if access.is_content_deleted(session):
+        return f"This session's content was deleted, so {name} has nothing to review."
     if sensitivity.is_sensitive(session):
         return f"This conversation is sensitive, so {name} cannot be asked to review it."
-    if agent.user_id is None or not agent.user.is_active:
-        return f"{name} has no working canopy login, so it cannot read this session."
     if not wsvc.is_member(user, agent.workspace_id):
         return (f"{name} is in the {agent.workspace_id} workspace, which you are not in, "
                 "so you could not read its reply.")
-    if session.workspace_id not in wsvc.user_workspace_slugs(agent.user):
-        return f"{name} is not in the {session.workspace_id} workspace, so it cannot read this session."
-    decision = agent_access.decide(agent, user, verified=True, origin=Turn.ORIGIN_CANOPY_WEB_CHAT)
-    if decision.access != agent_access.FULL:
-        return (f"Your access to {name} is read mode, where it can read no session. Someone who runs "
-                f"{name} can give you read and write access.")
+    decision = turn_context.for_asker(agent, user, verified=True, channel=Turn.ORIGIN_CANOPY_WEB_CHAT)
+    if decision.refused:
+        return decision.refusal.message
     if not session.messages.exists():
         return (f"canopy does not hold this session's messages, so {name} would have nothing to read. "
                 "Load its full history on this page first.")
@@ -124,7 +124,7 @@ def ask(request, person: Person, session) -> SessionReviewAsk:
         if conversation is None:
             conversation = services.create_session(
                 workspace=agent.workspace, created_by=user, agent=agent,
-                title=f"{_name(agent)} reviews a session", metadata={"reviews_session": str(session.pk)})
+                title=f"{_name(agent)} reviews a session", metadata={REVIEW_METADATA_KEY: str(session.pk)})
         if was_live and Turn.objects.filter(chat_session=conversation, status__in=list(Turn.NON_TERMINAL)).exists():
             return row
         row, _ = SessionReviewAsk.objects.update_or_create(
@@ -139,23 +139,30 @@ def ask(request, person: Person, session) -> SessionReviewAsk:
         runner_requirements=getattr(request, "runner_requirements", ()),
         chat_surface=sensitivity.request_is_chat_surface(request),
         initiator=who.for_request(request, via=VIA))
-    if turn is not None and (turn.status == Turn.CANCELLED or turn.capability):
-        # `decide` changed its mind between the check and the stamp: nothing could read.
+    if turn is not None and (turn.status == Turn.CANCELLED or turn.capability != agent_iface.SESSION_REVIEW):
+        # the rule changed its mind between the check and the stamp: nothing may read.
         withdraw(person, session, user=user)
         raise ProblemError(422, turn.result_note or f"{_name(agent)} could not take this", type_=TYPE_VALIDATION)
     return row
 
 
 def withdraw(person: Person, session, *, user) -> bool:
-    """End this person's live asks about `session`, at once. False when there were none."""
+    """End this person's live asks about `session` and stop any turn running under them, at
+    once: its next read is refused, and the stop is the durable one a lost frame cannot lose
+    (`control.stop_session`). What it already read stays in its conversation. False when there
+    were none."""
     with transaction.atomic():
         rows = list(SessionReviewAsk.objects.filter(session=session, user=user, revoked_at__isnull=True,
-                                                    expires_at__gt=timezone.now()).select_related("agent"))
+                                                    expires_at__gt=timezone.now())
+                    .select_related("agent", "review_session"))
         SessionReviewAsk.objects.filter(pk__in=[r.pk for r in rows]).update(revoked_at=timezone.now())
         for r in rows:
             _changed(session, user, r.agent, after=False, before=True)
             hcp.audit(person, "sessionReviewAsk.withdrawn", actor=hcp.user_actor(user),
                       purpose=f"withdrew {_name(r.agent)}'s review of one session")
+    for r in rows:
+        if r.review_session is not None:
+            control.stop_session(r.review_session, by=control.person_name(user))
     return bool(rows)
 
 

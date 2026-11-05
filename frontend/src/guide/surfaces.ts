@@ -550,6 +550,21 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Look through the screenshots', 'Read what the app keeps and who sees it', 'Install the app'],
   },
   {
+    path: '/w/:workspace/meetings',
+    title: 'Meetings',
+    audience: 'Anyone with meeting notes, or on a project that has them',
+    what: "Your private meetings and those of the projects you're on, from any tool: a Google Meet transcript, Gemini's notes, Granola, Superwhisper. Search what was said, and add a meeting by pasting its text or a link.",
+    actions: ['Search titles, people and what was said', 'Paste a transcript or a link to a Doc', 'Ask an agent for help with it'],
+  },
+  {
+    path: '/w/:workspace/meetings/:id',
+    home: '/w/:workspace/meetings',
+    title: 'Meeting',
+    audience: 'Whoever saved it, and everyone on its project',
+    what: 'One meeting: everything saved on it whichever tool made it, the project it belongs to, and the conversation with the agent helping with it.',
+    actions: ['Read the transcript, notes and follow-up', 'Put it in a project, or take it out', 'Ask an agent for help', 'Delete it'],
+  },
+  {
     path: '/w/:workspace/apps/personal/:key',
     home: '/w/:workspace/apps',
     title: 'Personal app',
@@ -865,7 +880,7 @@ export const SURFACES: SurfaceDescriptor[] = [
     title: 'Agent settings',
     audience: "The agent's owner and admins (some controls are workspace-owner only)",
     what: "Everything that configures this agent, one tab per question: Overview (what is left to set up, what it is, where it runs — routing and the repository its runners clone — and delete it), Roles (owner, admins, who runs it in their own Claude Code), Channels (capabilities, Slack, email, Google account), External accounts (one list, a row per account: GitHub, Google, Salesforce and any other connected service, each with its status and one action; GitHub opens a link to make the token and a box to paste it) and Security (its secrets in one table you change in place, where they live, its canopy login, then who and what can open them and read alerts). A tab with a setup step left carries a dot. The workspace's SHARED vault is elsewhere, under the workspace's own Settings → Secrets.",
-    actions: ['Transfer the owner', 'Grant or revoke an admin', 'Publish the capabilities viewers and users may use, each with its lowest role', 'Change turn mode', 'Turn Slack access on or off', 'Order the runners that execute its turns', 'Change, add, reveal or delete a secret', 'Connect its Google mailbox'],
+    actions: ['Transfer the owner', 'Grant or revoke an admin', 'Customise read mode and connect sites, each with its lowest role', 'Change turn mode', 'Turn Slack access on or off', 'Order the runners that execute its turns', 'Change, add, reveal or delete a secret', 'Connect its Google mailbox'],
   },
   {
     path: '/w/:workspace/ddd',

@@ -65,7 +65,7 @@ def list_huddles(request: HttpRequest, agent: str | None = None, limit: int = 50
         kept.append(a)
         if len(kept) >= limit:
             break
-    return services.summaries(kept, vis, workspaces)
+    return services.summaries(kept, vis, workspaces, user=request.user)
 
 
 @router.get("/{huddle_id}", response=HuddleOut, summary="Get one huddle")

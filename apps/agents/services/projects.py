@@ -10,7 +10,7 @@ from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
 from .. import participants, work
-from ..models import Agent, AgentProject, ProjectShare
+from ..models import Agent, AgentProject, AgentTask, ProjectShare, TaskRelation
 
 
 def agent_projects_q(agent: Agent):
@@ -18,8 +18,70 @@ def agent_projects_q(agent: Agent):
     return Q(agent=agent) | Q(member_agents=agent)
 
 
-def list_projects(agent: Agent, status: str = "") -> list:
-    qs = (AgentProject.objects.filter(agent_projects_q(agent)).distinct()
+# ---- who may read a project ----
+#
+# Tenancy says which workspaces a caller reaches; this says which of the projects
+# there they may read, and is ANDed with that scope, never instead of it. A
+# personal project is its lead's (`owner_user`) and the logins of its lead and
+# member agents, and nobody else's: a workspace admin, an inherited role and a
+# `ProjectParticipant` (filled automatically) do not read one.
+
+
+def project_read_q(user, prefix: str = "") -> Q:
+    """The projects `user` may read, within whatever tenant scope the query already
+    has. `prefix` reaches the project from another model ("project__"); a row with
+    no project is the caller's to add: `Q(project__isnull=True) | project_read_q(user,
+    "project__")`, or `task_read_q`. No user means what anyone may read, for a
+    figure or a row that is not read per person. A subquery rather than a join on
+    `member_agents`, so a query needs no `.distinct()` for it."""
+    q = Q(**{f"{prefix}visibility": AgentProject.WORKSPACE})
+    if not getattr(user, "is_authenticated", False):
+        return q
+    on_it = AgentProject.member_agents.through.objects.filter(agent__user=user).values("agentproject_id")
+    return (q | Q(**{f"{prefix}owner_user": user}) | Q(**{f"{prefix}agent__user": user})
+            | Q(**{f"{prefix}pk__in": on_it}))
+
+
+def task_read_q(user, prefix: str = "") -> Q:
+    """`project_read_q` for tasks: one in no project, or in a project `user` may read."""
+    return Q(**{f"{prefix}project__isnull": True}) | project_read_q(user, f"{prefix}project__")
+
+
+def may_read_project(user, project: AgentProject) -> bool:
+    """`project_read_q` for one row in hand."""
+    if not project.is_personal:
+        return True
+    if not getattr(user, "is_authenticated", False):
+        return False
+    if project.owner_user_id == user.pk or (project.agent_id is not None and project.agent.is_own_login(user)):
+        return True
+    return project.member_agents.filter(user=user).exists()
+
+
+def agent_is_on_project(agent: Agent, project: AgentProject) -> bool:
+    return project.agent_id == agent.pk or project.member_agents.filter(pk=agent.pk).exists()
+
+
+def may_use_project(project: AgentProject, *, user=None, agent: Agent | None = None) -> bool:
+    """May this actor name `project` at all, as a task's home or a parent's? Every
+    workspace project; a personal one for its reader, or (machinery, no person
+    behind it) an agent on it. Otherwise it behaves as a project that is not there."""
+    if not project.is_personal:
+        return True
+    if getattr(user, "is_authenticated", False):
+        return may_read_project(user, project)
+    return agent is not None and agent_is_on_project(agent, project)
+
+
+def refuse_on_personal(project: AgentProject, what: str) -> None:
+    """A surface that would reach past a personal project's readers. Ask it after
+    the read gate, so only a reader ever learns the project is personal."""
+    if project.is_personal:
+        raise ProjectScopeError(f"a personal project cannot have {what} yet: make it a workspace project first")
+
+
+def list_projects(agent: Agent, status: str = "", *, user) -> list:
+    qs = (AgentProject.objects.filter(agent_projects_q(agent)).filter(project_read_q(user)).distinct()
           .select_related("agent", "owner_user", "workspace"))
     if status:
         qs = qs.filter(status__in=[s.strip() for s in status.split(",") if s.strip()])
@@ -138,6 +200,7 @@ def share_project(project: AgentProject, workspace_slug: str, *, by=None) -> Pro
     422 unless that workspace is in the project's own organisation and is
     neither the project's workspace nor one above it (those reach it already).
     Sharing again is a no-op."""
+    refuse_on_personal(project, "shares")
     slug = (workspace_slug or "").strip()
     ws = Workspace.objects.filter(slug=slug).first()
     if ws is None:
@@ -213,16 +276,16 @@ def get_workspace_project(workspace_slug: str, handle: str):
             .filter(workspace_id=workspace_slug, handle__iexact=(handle or "").strip()).first())
 
 
-def workspace_projects(workspace_slugs, status: str = "", steward_workspaces=()) -> list:
+def workspace_projects(workspace_slugs, status: str = "", steward_workspaces=(), *, user) -> list:
     """Owned by any of `workspace_slugs` — or led from any of
     `steward_workspaces` (a parent's agent leading a division's project) — or
     shared with one of them (or an ancestor of one: a share covers what is below
-    it); those carry `shared_in`."""
+    it); those carry `shared_in`. Only what `user` may read."""
     workspace_slugs, steward_workspaces = set(workspace_slugs), set(steward_workspaces)
     qs = (AgentProject.objects.select_related("agent", "owner_user", "workspace").prefetch_related("shares")
           .filter(Q(workspace_id__in=list(workspace_slugs))
                   | Q(agent__workspace_id__in=list(steward_workspaces))
-                  | shared_with_q(workspace_slugs)).distinct())
+                  | shared_with_q(workspace_slugs)).filter(project_read_q(user)).distinct())
     if status:
         qs = qs.filter(status__in=[s.strip() for s in status.split(",") if s.strip()])
     return mark_shared_in(list(qs.order_by("workspace_id", "handle")),
@@ -263,6 +326,10 @@ def promote_project(project: AgentProject, handle: str, workspace: str = "") -> 
     workspace = (workspace or "").strip() or project.workspace_id
     if project.handle == handle and project.workspace_id == workspace:
         return project
+    if (project.is_personal and project.workspace_id != workspace
+            and not (project.owner_user_id and wsvc.is_member(project.owner_user, workspace))):
+        # The read rule is ANDed with the tenant scope: its lead would lose it.
+        raise ProjectScopeError(f"'{project.address}' is personal, and its lead is not a member of '{workspace}'", 409)
     if project.agent_id is not None and not may_hold_workspace_project(project.agent, workspace):
         raise ProjectScopeError(f"'{project.agent.slug}' can only lead a project of "
                                 f"'{project.agent.workspace_id}' or a workspace below it")
@@ -279,6 +346,7 @@ def promote_project(project: AgentProject, handle: str, workspace: str = "") -> 
     # A task lives where its project does.
     for task in project.tasks.exclude(workspace_id=workspace):
         work.rehome(task, workspace)
+    project.meetings.exclude(workspace_id=workspace).update(workspace_id=workspace)
     _settle_shares(project)
     _settle_vault_attachments(project)
     return project
@@ -342,6 +410,72 @@ def set_member_agents(project: AgentProject, agents: list[Agent]) -> AgentProjec
     if project.agent_id:
         keep.add(project.agent_id)
     project.member_agents.set(list(keep))
+    if project.is_personal:
+        # An agent taken off a personal project no longer reads it, so it cannot hold
+        # its work either: approving the task would hand it the project in a prompt.
+        for task in project.tasks.filter(agent__isnull=False).exclude(agent_id__in=keep):
+            before = work.snapshot(task)
+            task.agent = None
+            task.save(update_fields=["agent", "updated_at"])
+            work.record_changes(task, before)
+    return project
+
+
+def _personal_blockers(project: AgentProject) -> list[str]:
+    """What stands between `project` and being personal: everything a personal
+    project refuses, and work held by someone who could not read it there."""
+    relations = TaskRelation.objects
+    outside = (relations.filter(from_task__project=project).exclude(to_task__project=project).exists()
+               or relations.filter(to_task__project=project).exclude(from_task__project=project).exists())
+    links = {
+        "it is shared with other workspaces": project.shares.exists(),
+        "people have been added to it": project.people.exists(),
+        "it has check-ins": project.checkins.exists(),
+        "someone shares their sessions with its team": project.session_shares.filter(revoked_at__isnull=True).exists(),
+        "a vault serves it": project.vault_attachments.exists(),
+        "it has dynamic views": project.dynamic_views.exists(),
+        "run documents are filed under it": project.runs.exists(),
+        "its tasks are related to tasks outside it": outside,
+        "other people's meetings are in it": project.meetings.exclude(owner=project.owner_user).exists(),
+    }
+    out = [why for why, holds in links.items() if holds]
+    for model, label in _artifact_models():
+        if model.objects.filter(agent_project=project).exists():
+            out.append(f"{label} are linked to it")
+    on_it = {a.pk for a in project.member_agents.all()} | ({project.agent_id} if project.agent_id else set())
+    tasks = project.tasks.filter(status__in=AgentTask.LIVE_STATUSES)
+    if (tasks.filter(agent__isnull=False).exclude(agent_id__in=on_it).exists()
+            or tasks.filter(assignee_user__isnull=False).exclude(assignee_user=project.owner_user).exists()
+            or tasks.filter(waiting_on_user__isnull=False).exclude(waiting_on_user=project.owner_user).exists()):
+        out.append("open tasks are assigned to or waiting on someone not on it")
+    return out
+
+
+def _artifact_models() -> list:
+    """The artifacts that link to a project with no reverse accessor."""
+    from django.apps import apps  # noqa: PLC0415 — by name: those product apps import this one
+
+    return [(apps.get_model("walkthroughs", "Walkthrough"), "walkthroughs"),
+            (apps.get_model("reviews", "ReviewRequest"), "reviews"),
+            (apps.get_model("storyboards", "Storyboard"), "storyboards")]
+
+
+def set_visibility(project: AgentProject, visibility: str, *, by) -> AgentProject:
+    """Switch who may read it. Its lead's call, either way (403 for anyone else);
+    going personal is refused (409) while something would still reach past its
+    readers."""
+    if visibility == project.visibility:
+        return project
+    if visibility not in dict(AgentProject.VISIBILITY_CHOICES):
+        raise ProjectScopeError(f"visibility must be workspace or personal, got {visibility!r}")
+    if project.owner_user_id is None or project.owner_user_id != getattr(by, "pk", None):
+        raise ProjectScopeError("only the project's lead may change who can see it", 403)
+    if visibility == AgentProject.PERSONAL:
+        blockers = _personal_blockers(project)
+        if blockers:
+            raise ProjectScopeError(f"'{project.address}' cannot be personal while " + "; ".join(blockers), 409)
+    project.visibility = visibility
+    project.save(update_fields=["visibility", "updated_at"])
     return project
 
 
@@ -366,7 +500,7 @@ def next_project_ext_id(agent: Agent) -> str:
 
 
 _PROJECT_FIELDS = ("name", "outcome", "status", "owner_note", "drive_folder_id",
-                   "drive_folder_url", "repo_slug", "notes", "priority", "start_date", "target_date")
+                   "drive_folder_url", "repo_slug", "notes", "priority", "start_date", "target_date", "meeting_instructions")
 
 
 _PROJECT_STATUS = {s for s, _ in AgentProject.STATUS_CHOICES}
@@ -412,6 +546,8 @@ def create_project(agent: Agent | None, data, *, workspace: str = "", by_user=No
     ws = workspace or agent.workspace_id
     owner_email = getattr(data, "owner_email", "") or getattr(data, "lead_email", "")
     payload["owner_user"] = resolve_project_owner_in(ws, owner_email)
+    if getattr(data, "visibility", AgentProject.WORKSPACE) == AgentProject.PERSONAL:
+        payload.update(visibility=AgentProject.PERSONAL, owner_user=_personal_owner(agent, via_agent, payload["owner_user"], by_user))
     name = payload.pop("name")
     ext_id = ""
     if via_agent:
@@ -419,6 +555,19 @@ def create_project(agent: Agent | None, data, *, workspace: str = "", by_user=No
     return new_project(workspace=ws, name=name, agent=agent, by_agent=agent if via_agent else None,
                        by_user=by_user, handle=(getattr(data, "handle", "") or "").strip(),
                        ext_id=ext_id, **payload)
+
+
+def _personal_owner(agent: Agent | None, via_agent: bool, named, by_user):
+    """Who a new personal project is led by: the person named, else its creator —
+    a person, on a person's route. An agent's route, or an agent's login, makes none."""
+    if via_agent or (getattr(by_user, "is_authenticated", False) and Agent.objects.filter(user=by_user).exists()):
+        raise ProjectScopeError("a personal project is made by a person, not through an agent")
+    owner = named or (by_user if getattr(by_user, "is_authenticated", False) else None)
+    if owner is None:
+        raise ProjectScopeError("a personal project needs a lead")
+    if Agent.objects.filter(user=owner).exists():
+        raise ProjectScopeError("a personal project's lead is a person, not an agent's login")
+    return owner
 
 
 def patch_project(project: AgentProject, data: dict) -> AgentProject:
@@ -442,7 +591,10 @@ def patch_project(project: AgentProject, data: dict) -> AgentProject:
         project.links = data["links"]
     for key in ("owner_email", "lead_email"):
         if key in data:
-            project.owner_user = resolve_project_owner_in(project.workspace_id, data[key])
+            owner = resolve_project_owner_in(project.workspace_id, data[key])
+            if project.is_personal and (owner is None or Agent.objects.filter(user=owner).exists()):
+                raise ProjectScopeError("a personal project keeps a person as its lead")
+            project.owner_user = owner
     project.save()
     return project
 

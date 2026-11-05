@@ -42,6 +42,7 @@ from django.utils import timezone
 from apps.api.renderers import OrjsonRenderer
 from apps.common.rate_limit import over
 from apps.common.views_debug import is_machine
+from apps.workspaces.links import base_url
 
 from . import calls, declarations, providers, server_key, server_tokens, services
 from .models import Connection, ConnectionOperation, ConnectionSurfaceShare
@@ -117,8 +118,8 @@ def call(request, provider: str, payload) -> dict:
         said = _said_to_this_caller(exc, provider, payload.as_, payload.agent)
         # Connecting their own account wouldn't bring an agent's back.
         if payload.as_ == "viewer" and (said.code == "not_connected" or getattr(said, "connect_again", False)):
-            said.members = {"connect_url": request.build_absolute_uri(
-                reverse("connections_start", args=[provider, surface.workspace]))}
+            start = reverse("connections_start", args=[provider, surface.workspace])
+            said.members = {"connect_url": f"{base_url()}{start}"}
         raise said from None
 
 

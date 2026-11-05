@@ -11,6 +11,7 @@ from django.conf import settings
 from django.http import JsonResponse
 from django.shortcuts import redirect
 
+from apps.api.errors import TYPE_AUTH
 from apps.common.script_prefix import self_full_path
 from config import public_site
 from config.views import FLAT_ARTIFACT_PATH
@@ -293,7 +294,12 @@ class LoginRequiredMiddleware:
             return self.get_response(request)
 
         if request.path.startswith("/api/"):
-            return JsonResponse({"detail": "Authentication required"}, status=401)
+            # RFC 7807 like every other API error; `detail` keeps the text it always had.
+            return JsonResponse(
+                {"type": TYPE_AUTH, "title": "Authentication required", "status": 401,
+                 "detail": "Authentication required", "instance": request.path},
+                status=401, content_type="application/problem+json",
+            )
 
         # Build the post-login target so it works both locally (no prefix) and
         # on the labs sub-path deployment — a bare request.path would bounce the

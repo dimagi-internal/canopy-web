@@ -63,6 +63,12 @@ sessions_closed = Signal()
 # Post-commit.
 transcript_rows_streamed = Signal()
 
+#: A person deleted a session's stored words (`canopy_sessions.content_deletion`).
+#: Sent inside the deleting transaction with `session`, `turn_ids` and `by` (the person,
+#: None when a tombstoned transcript's new session row was emptied with no one asking),
+#: so an app the session layer may not import drops its own copy, or fails the delete.
+session_content_deleted = Signal()
+
 # Sent with: sender=Turn, turn=<Turn> the moment an ask is ENQUEUED and has a
 # status worth telling somebody about. Post-commit.
 #

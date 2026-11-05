@@ -8,7 +8,7 @@ Not here: IMAP, composing HTML, custom folders or labels, shared inboxes, replyi
 
 ## Tier and removability
 
-`apps/mail/` is a **product-tier** app: framework apps never import it (`tests/test_architecture_boundary.py`). It does not extend `apps/inbound` — `InboundMailbox` is Gmail-push routing and stays Gmail-only; SES routes are `MailRoute`, so `/runner-mailboxes` never lists them and no runner polls them with `gog`. Gate: the `perms.INTEGRATIONS` capability for domains and routes, `AGENT_WORK` (plus `access.decide` FULL on the agent) to send, reply or change a thread's state, and workspace membership to view threads.
+`apps/mail/` is a **product-tier** app: framework apps never import it (`tests/test_architecture_boundary.py`). It does not extend `apps/inbound` — `InboundMailbox` is Gmail-push routing and stays Gmail-only; SES routes are `MailRoute`, so `/runner-mailboxes` never lists them and no runner polls them with `gog`. Gate: the `perms.INTEGRATIONS` capability for domains and routes, `AGENT_WORK` (plus `turn_context.resolve_turn_context` FULL on the agent) to send, reply or change a thread's state, and workspace membership to view threads.
 
 **Rip-out list** — the code and config to delete, in this order. It is step 4 of the runbook's removal sequence ([mail-domain-onboarding.md § Remove the feature](../runbooks/mail-domain-onboarding.md#remove-the-feature)), which first removes the domains and the `canopy-web-mail` stack:
 

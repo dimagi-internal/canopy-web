@@ -8,8 +8,11 @@ the sessions that stopped being active before their history was all sent
 (`apps/harness/api_session_sync.list_streams`, the `ship_full` descriptor field).
 
 Revoking the last grant empties the set on the runner's next poll (ACTIVE sessions
-keep shipping, as they do for everyone). What was already uploaded stays: no route
-deletes a session's messages, `reset` re-ships them and `archive` keeps them.
+keep shipping, as they do for everyone). What was already uploaded stays until its
+person deletes it: `DELETE /api/canopy-sessions/{id}/content`, the person's own act
+(`content_deletion`), which works whether or not they are still coached and leaves a
+tombstone so this set never lists that session again. `reset` re-ships a session's rows
+and `archive` keeps them; neither deletes anything.
 """
 from __future__ import annotations
 
@@ -31,8 +34,9 @@ def is_coached(user_id) -> bool:
 def full_upload_session_ids(runner) -> set:
     """The ids of the sessions `runner` should ship in full for its owner's coach:
     the runner-discovered sessions it backs that are its owner's own work (not an
-    agent's, not a contact's), never a sensitive one, and none at all from a
-    sensitive-data box or a box whose owner has no live grant. The project opt-in
+    agent's, not a contact's), never a sensitive one, never one whose words its person
+    deleted, and none at all from a sensitive-data box or a box whose owner has no live
+    grant. The project opt-in
     is applied where every stream is (`_is_canopys`), not here."""
     if runner.owner_id is None or rr.is_sensitive_data_box(runner):
         return set()
@@ -41,7 +45,8 @@ def full_upload_session_ids(runner) -> set:
     return set(
         Session.objects.filter(sessions_of_q([runner.owner_id]))
         .filter(Q(origin=Session.ORIGIN_RUNNER, created_by__isnull=True, agent__isnull=True,
-                  contact__isnull=True, runner_binding__runner=runner))
+                  contact__isnull=True, content_deleted_at__isnull=True,
+                  runner_binding__runner=runner))
         # Any runner requirement at all reads as sensitive (fails closed), the
         # same test the review-grant leg of the session ACL applies.
         .exclude(metadata__has_key=rr.METADATA_KEY)

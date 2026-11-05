@@ -11,7 +11,7 @@ import type { Project } from '@/api/work'
 import { relativeAge } from '@/lib/relativeAge'
 
 import { PROJECT_STATUSES } from './meta'
-import { AgentList, AgentName, HealthBadge, PersonName, ProgressBar, ProjectStatusBadge } from './projectBits'
+import { AgentList, AgentName, HealthBadge, PersonalBadge, PersonName, ProgressBar, ProjectStatusBadge } from './projectBits'
 import { Td, Th, Tr } from '@/components/DataTable'
 
 /** Still in play: what "Open" means on the Projects page (the server's `status=open`). */
@@ -172,9 +172,12 @@ export function ProjectTable({
             return (
               <Tr rule="bottom-last" key={p.id} data-project={p.address || p.id} className="hover:bg-muted/50">
                 <Td density="cozy-gutter" className="max-w-[22rem] pl-3">
-                  <Link to={p.url} className="block truncate font-medium text-foreground hover:text-primary">
-                    {p.name}
-                  </Link>
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <Link to={p.url} className="block truncate font-medium text-foreground hover:text-primary">
+                      {p.name}
+                    </Link>
+                    <PersonalBadge project={p} />
+                  </div>
                   {p.outcome && <div className="truncate text-[12px] text-muted-foreground">{p.outcome}</div>}
                 </Td>
                 <Td density="tight">

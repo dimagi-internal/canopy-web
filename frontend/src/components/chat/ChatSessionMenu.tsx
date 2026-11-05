@@ -70,9 +70,9 @@ function MenuSection({ children }: { children: React.ReactNode }) {
  * Opening or closing every tool call at once lives here too: it was a bar
  * pinned above the transcript that took a row on a phone and was never used.
  *
- * Grouped under headings (see the comment in the menu); the last two items,
- * set apart, cannot be undone — Reset replaces the transcript, Close deletes
- * the emdash task.
+ * Grouped under headings (see the comment in the menu); the last items, set
+ * apart, cannot be undone: Reset replaces the transcript, Close deletes the emdash
+ * task, and Delete removes what canopy stores of the session for good.
  */
 export function ChatSessionMenu({
   sessionId,
@@ -93,6 +93,8 @@ export function ChatSessionMenu({
   resetting,
   onClose,
   closing,
+  onDeleteContent,
+  deletingContent,
   typingVisibility,
   onTypingVisibilityChange,
   slackThread,
@@ -128,6 +130,9 @@ export function ChatSessionMenu({
   resetting: boolean;
   onClose: () => void;
   closing: boolean;
+  /** Permanently delete this session's stored words. Omitted unless it is yours to delete. */
+  onDeleteContent?: () => void;
+  deletingContent?: boolean;
   /** Both undefined for a viewer (nothing to choose) — the section hides. */
   typingVisibility?: TypingVisibility;
   onTypingVisibilityChange?: (visibility: TypingVisibility) => void;
@@ -173,8 +178,8 @@ export function ChatSessionMenu({
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="max-h-[calc(100dvh-5rem)] w-60 overflow-y-auto">
           {/* Sections, top to bottom: how you hear about and appear in this chat; the
-              conversation itself; Slack; how the transcript is drawn; then the two that can't be
-              undone (Reset, Close), set apart and unheaded. A new item goes in the section it is about, not at the end. */}
+              conversation itself; Slack; how the transcript is drawn; then the ones that can't be
+              undone (Reset, Close, Delete), set apart and unheaded. A new item goes in the section it is about, not at the end. */}
           {(notifyEveryCompletion !== undefined || (typingVisibility != null && onTypingVisibilityChange != null)) && (
             <>
               <MenuSection>Your settings</MenuSection>
@@ -317,6 +322,17 @@ export function ChatSessionMenu({
           >
             {closing ? "Closing…" : "Close session"}
           </DropdownMenuItem>
+          {onDeleteContent && (
+            <DropdownMenuItem
+              inset
+              data-testid="delete-session-content"
+              disabled={deletingContent}
+              onClick={onDeleteContent}
+              className="text-destructive data-[highlighted]:text-destructive"
+            >
+              {deletingContent ? "Deleting…" : "Delete this session's content"}
+            </DropdownMenuItem>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
 

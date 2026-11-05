@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 
 import {
   closeSession,
+  deleteSessionContent,
   detachSessionFromSlack,
   getSession,
   moveSession,
@@ -21,7 +22,21 @@ import {
 } from '@/components/chat/closeAction'
 import type { MoveTarget } from '@/components/chat/MoveWorkspaceForm'
 import { scopedPath } from '@/lib/scopedLinks'
+import { forget as forgetSession } from './sessionCache'
 import { ApiError } from '@/api/problem'
+
+/** Says what goes, what stays out of reach, and that it cannot be undone. */
+export const DELETE_CONTENT_CONFIRM =
+  'Delete everything canopy stores of this session? This can’t be undone.\n\n' +
+  'Its messages, transcript, attachments and title go, and your computer won’t upload it again.\n\n' +
+  'This does not reach:\n' +
+  '• The copy on your computer\n' +
+  '• A coach’s existing notes, logs and mailbox\n' +
+  '• Any chat a review request opened\n' +
+  '• Slack’s own copy and share links\n' +
+  '• Memory facts\n' +
+  '• Artifacts made from the session\n' +
+  '• Work it dispatched to other agents'
 
 export interface SessionActionsOptions {
   sessionId: string
@@ -151,6 +166,29 @@ export function useSessionActions({
     }
   }, [sessionId, meta, navigate, onLeave])
 
+  // --- delete: the session's words, for good. The server decides who and when; a
+  // refusal's reason (a live turn, someone else in the conversation) is shown as it comes.
+  const [deletingContent, setDeletingContent] = useState(false)
+  const [deleteNote, setDeleteNote] = useState<string | null>(null)
+  const deleteContent = useCallback(async () => {
+    if (!meta) return
+    if (!window.confirm(DELETE_CONTENT_CONFIRM)) return
+    setDeletingContent(true)
+    setDeleteNote(null)
+    try {
+      await deleteSessionContent(sessionId)
+      forgetSession(sessionId)
+      if (onLeave) return onLeave(false)
+      const to = closeDestination(window.history.state?.idx, meta.workspace)
+      if (to === -1) navigate(-1)
+      else navigate(to, { replace: true })
+    } catch (err) {
+      setDeleteNote(err instanceof Error ? err.message : 'Could not delete this session')
+    } finally {
+      setDeletingContent(false)
+    }
+  }, [sessionId, meta, navigate, onLeave])
+
   // --- "Disconnect from Slack": stop the session posting into its bound thread
   // and the thread's replies reaching it. Confirmed first — re-attaching means a
   // fresh share, which starts a new thread.
@@ -224,6 +262,9 @@ export function useSessionActions({
     closing,
     closeNote,
     closeThisSession,
+    deletingContent,
+    deleteNote,
+    deleteContent,
     detachingSlack,
     slackNote,
     detachSlack,

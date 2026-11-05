@@ -19,7 +19,7 @@ from apps.harness.turn_queries import huddle_anchors, visible_turns_qs
 from apps.realtime.groups import turn_workspace_slug
 from apps.workspaces import services as wsvc
 
-from . import engagement
+from . import engagement, services
 from .gates import listed_agent_workspaces, visible_agent_workspaces
 from .models import AgentProject
 from .schemas import EngagementSummaryOut, EngagementViewIn, EngagementViewOut
@@ -58,7 +58,7 @@ def record_engagement_view(request: HttpRequest, payload: EngagementViewIn) -> d
     surface = engagement.surface_of(request)
     if payload.project is not None:
         project = (AgentProject.objects.select_related("agent")
-                   .filter(pk=payload.project,
+                   .filter(services.project_read_q(request.user), pk=payload.project,
                            agent__workspace_id__in=visible_agent_workspaces(request)).first())
         if project is None:
             raise HttpError(404, f"project {payload.project} not found")
@@ -82,4 +82,5 @@ def engagement_summary(request: HttpRequest, days: int = 14, checkin: str = "", 
     for proposed projects and for the tasks check-ins proposed; and check-in runs
     announced vs confirmed vs skipped vs expired, with the median time to
     confirm. `checkin` (a check-in's id, or its name) and `agent` narrow it."""
-    return engagement.summary(listed_agent_workspaces(request), days=days, checkin=checkin, agent=agent)
+    return engagement.summary(listed_agent_workspaces(request), days=days, checkin=checkin, agent=agent,
+                              user=request.user)

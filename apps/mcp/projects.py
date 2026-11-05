@@ -38,6 +38,7 @@ import re
 
 from asgiref.sync import sync_to_async
 from django.db import close_old_connections
+from apps.common import thread_context as _thread_context
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.server.providers.base import Provider
@@ -81,7 +82,7 @@ def readable_project(user, workspace: str, handle: str):
     # its workspace, its lead agent's, and the ones it is shared with and below them
     if not (services.project_reader_slugs(project) & wsvc.user_workspace_slugs(user)):
         return None
-    return project
+    return project if services.may_read_project(user, project) else None
 
 
 def _specs(workspace: str, handle: str) -> list[dict]:
@@ -175,6 +176,7 @@ def _build() -> FastMCP:
     from .server import _verifier
 
     server = FastMCP("canopy-project", auth=_verifier(), instructions=INSTRUCTIONS)
+    server.middleware.insert(0, _thread_context.mcp_middleware())
     server.add_provider(ProjectToolsProvider())
     return server
 

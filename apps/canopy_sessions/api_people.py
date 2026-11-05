@@ -8,6 +8,7 @@ from django.db import transaction
 from django.http import HttpRequest
 from ninja.errors import HttpError
 
+from apps.agents import refusals, session_context, turn_context
 from apps.agents.models import Agent
 from apps.agents.credentials import login_test_key
 from apps.api.errors import TYPE_CONFLICT, ProblemError
@@ -152,14 +153,43 @@ def cancel_join_request(request: HttpRequest, request_id: uuid.UUID):
     return _join_request_out(req)
 
 
-def _participants(session: Session) -> list[dict]:
+def _participants(session: Session, viewer=None) -> list[dict]:
     rows = list(session.participants.select_related("user").order_by("created_at"))
     # Who in a sensitive conversation cannot read it yet, for its people to give a copy.
     keyless = (conversation_keys.without_current_copy(session, [p.user_id for p in rows])
                if sensitivity.is_sensitive(session) else set())
     test_keys = login_test_key.logins_with_test_key([p.user_id for p in rows])
+    turns = _who_cannot_take_a_turn(session, [p.user for p in rows], viewer)
     return [{**serializers.participant_dto(p), "needs_key": p.user_id in keyless,
-             "test_key": p.user_id in test_keys} for p in rows]
+             "test_key": p.user_id in test_keys, **turns.get(p.user_id, {})} for p in rows]
+
+
+#: The refusals a line on the agent's access list fixes.
+_FIXED_BY_A_LINE = frozenset({refusals.Code.NOT_ON_ACCESS_LIST, refusals.Code.PROFILE_NOT_OPEN})
+
+
+def _who_cannot_take_a_turn(session: Session, users, viewer) -> dict[int, dict]:
+    """For whoever may add people to this conversation: which of its people can read it but could not take a turn
+    in it now, and why, said about them (`refusals.Refusal.about`). It is THE rule's preview for each, the same one
+    their own composer reads, and it reads nothing a member could not: the agent's access list is readable by its
+    workspace. `access_list_agent` is set when the fix is a line on that list and `viewer` may add one."""
+    if viewer is None or not users or not access.can_add_people(viewer, session):
+        return {}
+    facts = session_context.build(session)
+    agent = session.agent
+    may_edit_list = agent is not None and agent.is_admin(viewer)
+    out = {}
+    for user in users:
+        ctx = turn_context.resolve_turn_context(facts, turn_context.Asker(who=user, verified=True), agent)
+        if not ctx.refused:
+            continue
+        said = ctx.refusal.about((user.get_full_name() or "").strip() or user.email)
+        out[user.pk] = {
+            "turn_refusal": {"code": said.code, "why": said.why, "how_to_fix": said.how_to_fix,
+                             "who_can_fix": said.who_can_fix},
+            "access_list_agent": agent.slug if may_edit_list and said.code in _FIXED_BY_A_LINE else None,
+        }
+    return out
 
 
 @router.get("/{session_id}/participants", response=list[ParticipantOut],
@@ -167,7 +197,7 @@ def _participants(session: Session) -> list[dict]:
 @gate("session-acl")
 def list_participants(request: HttpRequest, session_id: uuid.UUID):
     """Everyone explicitly in this conversation, with their role."""
-    return _participants(_session_or_404(request, session_id))
+    return _participants(_session_or_404(request, session_id), request.user)
 
 
 @router.get("/{session_id}/participants/candidates", response=list[ParticipantCandidateOut],
@@ -222,7 +252,7 @@ def add_participant(request: HttpRequest, session_id: uuid.UUID, payload: Partic
             _store_wrap(request, session, target, payload.wrap)
         # Their request to be added, if they asked, is answered by this.
         join_requests.settle_on_add(session, target, by=request.user)
-    return _participants(session)
+    return _participants(session, request.user)
 
 
 def _store_wrap(request: HttpRequest, session, target, wrap) -> None:
@@ -339,7 +369,7 @@ def remove_participant(request: HttpRequest, session_id: uuid.UUID, user_id: int
     # A tab they still hold on it re-asks who may read it — for a sensitive
     # conversation, someone no longer in it must stop hearing it now.
     transaction.on_commit(lambda: services.recheck_sockets(session.pk, user_ids=[user_id]))
-    return _participants(session)
+    return _participants(session, request.user)
 
 
 @router.post("/{session_id}/join-requests", response=JoinRequestOut,

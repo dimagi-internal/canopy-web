@@ -1,6 +1,6 @@
 """THE rule, asked through every entry point — docs/architecture/access.md.
 
-Owner decisions of 2026-10-04: one function (`apps.agents.access.decide`) decides
+Owner decisions of 2026-10-04: one function (`apps.agents.turn_context.resolve_turn_context`) decides
 what a person may make an agent do, and every entry point that makes an agent
 work asks it — the harness API, a canopy-web chat send, Slack intake, email
 intake and the caller envelope. This matrix walks roles × entry points ×
@@ -17,7 +17,7 @@ from allauth.account.models import EmailAddress
 from django.contrib.auth.models import User
 from django.test import Client
 
-from apps.agents import access, roles
+from apps.agents import access, roles, turn_context
 from apps.agents.models import Agent, AgentAdmin, AgentGrant
 from apps.canopy_sessions import send as session_send
 from apps.canopy_sessions import services as chat
@@ -52,7 +52,7 @@ def _hal(agent):
 #: `editors` is that line alone; `*_confined` leave it off.
 IFACES = {"none": (None, False), "editors": (None, True), "eva": (_eva, True), "hal": (_hal, True),
           "eva_confined": (_eva, False), "hal_confined": (_hal, False)}
-#: Why, for each access-list line the matrix uses (`Decision.basis`).
+#: Why, for each access-list line the matrix uses (`TurnContext.basis`).
 MEMBER_LINE = "grant:workspace:connect::"
 EDITORS_LINE = "grant:workspace:connect:editor:"
 DIMAGI_STAFF_LINE = "grant:contact:dimagi.com"
@@ -229,10 +229,13 @@ def test_a_refusal_says_what_the_caller_can_do(w):
     allow(w["agent"], role=roles.READ_ONLY)
     allow(w["agent"], capability="status")
     editors_run(w["agent"])
-    d = access.decide(w["agent"], w["viewer"], verified=True, capability="deploy")
-    assert d.access == access.NONE        # a line cannot use a capability the agent does not have
-    assert "access list" in d.reason and w["owner"].email in d.reason
-    assert access.decide(w["agent"], w["viewer"], verified=True, capability="status").access == access.CONFINED
+    d = turn_context.for_asker(w["agent"], w["viewer"], verified=True, requested="deploy")
+    assert d.access == turn_context.REFUSED        # a line cannot use a capability the agent does not have
+    # Why, in plain words, and who can fix it, by name (`apps/agents/refusals.py`). Naming one the agent does not
+    # have is fixed by not naming it, so the fix itself names nobody.
+    assert "access list" in d.refusal.why and "Send without naming 'deploy'" in d.refusal.how_to_fix
+    assert w["owner"].email in d.refusal.who_can_fix
+    assert turn_context.for_asker(w["agent"], w["viewer"], verified=True, requested="status").access == access.CONFINED
 
 
 def test_the_mcp_tool_list_follows_the_rule(w):
@@ -295,7 +298,7 @@ def test_each_kind_of_line_by_verified_email(w, kind):
 
 
 def test_the_api_door_gives_the_same_answer_to_a_workspace_editor(w):
-    """The harness API asks `decide` like every other door: `write` is the whole agent, `read` or a
+    """The harness API asks the rule like every other door: `write` is the whole agent, `read` or a
     capability line is a confined turn, and a line naming another capability is refused."""
     declare(w["agent"], HAL_NO_CALLERS)
     user = w["editor"]                    # a workspace editor may start work through the API
@@ -371,7 +374,7 @@ def test_who_may_request_which_mode(w, role, may_auto, mode):
         assert got == "auto"          # requested auto, or the agent's own switch
     else:
         assert got == "manual"        # the editor tier: always manual
-    assert access.decide(w["agent"], w[role], verified=True).may_request_auto is may_auto
+    assert turn_context.for_asker(w["agent"], w[role], verified=True).review.may_request_auto is may_auto
 
 
 def test_an_editor_promoted_while_queued_gets_the_agents_mode_at_claim(w):

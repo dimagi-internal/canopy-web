@@ -275,6 +275,8 @@ def list_streams(request: HttpRequest, runner_id: uuid.UUID):
         RunnerBinding.objects.select_related("session")
         .filter(runner=runner)
         .filter(Q(session__status=Session.ACTIVE) | Q(session_id__in=full))
+        # Its person deleted its words: never asked of this box again, coached or not.
+        .filter(session__content_deleted_at__isnull=True)
         .exclude(session_key="")
         # ACTIVE only (bar the coached ones above). Widening this from `stream_desired` to "every session"
         # would otherwise sweep in every session the box has ever held — labs
@@ -411,7 +413,7 @@ def list_backfills(request: HttpRequest, runner_id: uuid.UUID):
         return {"backfills": []}
     bindings = (
         RunnerBinding.objects.select_related("session")
-        .filter(runner=runner, backfill_requested=True)
+        .filter(runner=runner, backfill_requested=True, session__content_deleted_at__isnull=True)
     )
     return {"backfills": [
         {"session_id": str(b.session_id), "session_key": b.session_key,
@@ -453,7 +455,8 @@ def _handoff_for(runner, handoff_id: uuid.UUID, *, side: str):
     now, for a late restore). Anything else is the same 404 as no such id."""
     h = (SessionHandoff.objects.select_related("source_runner", "target_runner", "session")
          .filter(pk=handoff_id).first())
-    if h is None:
+    # A session whose words its person deleted takes no late snapshot and gives none out.
+    if h is None or h.session.content_deleted_at is not None:
         raise HttpError(404, "no such handoff")
     if side == "source" and h.source_runner_id == runner.id:
         return h
@@ -754,6 +757,9 @@ def post_session_backfill(request: HttpRequest, runner_id: uuid.UUID, payload: S
     if binding is None:
         raise HttpError(404, "session not bound to this runner")
     session = Session.objects.get(pk=payload.session_id)
+    if session.content_deleted_at is not None:
+        # Its person deleted its words. Accepted and dropped, so a box mid-ship stops.
+        return {"written": 0}
     # The same write as the live path, transcript identity included: history from
     # a different transcript lands in its own epoch rather than merging into what
     # is held. Idempotent across chunks — the first one records the id, so the

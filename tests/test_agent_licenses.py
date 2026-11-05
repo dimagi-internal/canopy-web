@@ -1,7 +1,7 @@
 """Licenses: who uses an agent directly, and what that lets them read (canopy-web#1704).
 
 The caller list decides who MAY; the license records who DOES. It is issued on
-first local use when `access.decide` gives the person the whole agent, revoked per
+first local use when `turn_context.resolve_turn_context` gives the person the whole agent, revoked per
 person without editing the rule, and it is the third principal of
 `/credentials/resolve` — only during the holder's own open direct turn.
 """

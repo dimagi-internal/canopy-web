@@ -756,3 +756,23 @@ def test_only_the_workspace_that_published_an_app_can_change_it(world, settings)
     )
     assert r.status_code == 403 and "another workspace" in r.json()["detail"]
     assert submit(world, manifest(version="0.2.0")).status == "released"
+
+
+def test_a_run_saves_a_private_meeting_only_if_its_manifest_declares_it(world):
+    from apps.meetings.models import Meeting  # noqa: PLC0415 — only this test needs it
+
+    sub = released(world, manifest(canopy=["sessions.create", "meetings.save"]))
+    install(world, sub)
+    run = start(world)
+    r = call(world, run, "meetings.save", {"title": "Sync", "text": "we ship", "source": "superwhisper"})
+    assert r["status"] == 200, r
+    meeting = Meeting.objects.get(pk=r["body"]["id"])
+    assert meeting.owner == world["person"] and meeting.project is None
+    assert meeting.artifacts.get().source == "superwhisper"
+    # Sent again after a lost answer, it finds the same meeting.
+    assert call(world, run, "meetings.save", {"title": "Sync", "text": "we ship"})["body"]["id"] == r["body"]["id"]
+
+
+def test_a_run_without_the_op_cannot_save_a_meeting(world):
+    install(world, released(world))
+    assert call(world, start(world), "meetings.save", {"text": "we ship"})["status"] == 403

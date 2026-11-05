@@ -159,7 +159,7 @@ def _doc_or_404(request, ext_id: str) -> AgentRun:
 
 
 def _project_out(p) -> RunDocProjectOut | None:
-    if p is None:
+    if p is None or p.is_personal:
         return None
     return RunDocProjectOut(ext_id=p.ext_id, name=p.name, repo_slug=p.repo_slug, status=p.status)
 
@@ -288,7 +288,8 @@ def create_run_doc(request: HttpRequest, payload: RunDocCreateIn) -> Status:
     agent = _agent_for_write(request, payload.agent)
     project = None
     if payload.project:
-        project = AgentProject.objects.filter(agent=agent, ext_id=payload.project).first()
+        project = AgentProject.objects.filter(agent=agent, ext_id=payload.project,
+                                              visibility=AgentProject.WORKSPACE).first()
         if project is None:
             raise HttpError(404, f"project '{payload.project}' not found for agent '{agent.slug}'")
     for _attempt in range(5):

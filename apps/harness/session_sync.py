@@ -70,7 +70,10 @@ def _session_is_this_threads(session, agent, project, workspace, runner) -> bool
     this box, so a session id must not be a key to someone else's conversation:
     it has to be a session OF this target — the same agent, or the same repo in
     the same workspace — in a workspace the runner's owner belongs to. Fails
-    closed on a runner with no owner (no pairing human, no tenant)."""
+    closed on a runner with no owner (no pairing human, no tenant). Never one whose
+    words its person deleted: it runs nothing more."""
+    if session.content_deleted_at is not None:
+        return False
     if agent is not None:
         if session.agent_id != agent.pk:
             return False
@@ -374,6 +377,10 @@ def record_session(
     owner against `workspace` — this stores, it does not authorize."""
     with transaction.atomic():
         binding = _binding_for_thread(agent, project, workspace, thread_key)
+        if binding is not None and binding.session.content_deleted_at is not None:
+            # Its person deleted its words. The turn runs on the box, and nothing of it
+            # is written here: not a summary, a title or a link to this session.
+            return binding
         if binding is None:
             session = _thread_session(agent, project, workspace, thread_key, runner=runner,
                                       turn=turn)
@@ -990,7 +997,8 @@ def replace_reported_sessions(
                 # The cheap comparison first: in the steady state the title already
                 # IS the task name, and `_title_is_derived` reads a message to decide.
                 try:
-                    if binding.session.title != s.emdash_task[:200]:
+                    if (binding.session.content_deleted_at is None
+                            and binding.session.title != s.emdash_task[:200]):
                         with transaction.atomic():
                             if _title_is_derived(binding.session, binding.thread_key or ""):
                                 binding.session.title = s.emdash_task[:200]
@@ -1058,8 +1066,10 @@ def replace_reported_sessions(
             binding.reported_at = binding.live_seen_at
             from . import sensitivity
 
-            # A sensitive conversation's screen never comes to rest here.
-            binding.tail = ([] if sensitivity.is_sensitive(binding.session)
+            # A sensitive conversation's screen never comes to rest here, nor does one
+            # whose words its person deleted (nor its dialog, below).
+            words_deleted = binding.session.content_deleted_at is not None
+            binding.tail = ([] if words_deleted or sensitivity.is_sensitive(binding.session)
                             else list(s.recent_messages or []))
             # Written unconditionally, INCLUDING None. The report is a fresh
             # observation of the session's screen every ~10s, so "no dialog" has
@@ -1070,7 +1080,7 @@ def replace_reported_sessions(
             # getattr, not attribute access: this service is also called
             # directly with lightweight session objects, and a dialog must
             # never be the reason a liveness report fails.
-            binding.pending_question = getattr(s, "question", None) or None
+            binding.pending_question = None if words_deleted else (getattr(s, "question", None) or None)
             # A sensitive conversation's dialog is kept as metadata: the question
             # and its options are the host's data as often as not.
             if binding.pending_question and sensitivity.is_sensitive(binding.session):
@@ -1112,6 +1122,7 @@ def replace_reported_sessions(
         with transaction.atomic(), lifecycle.acting(by=runner, reason="reported open again"):
             for revived in Session.objects.select_for_update().filter(
                 runner_binding__id__in=touched_ids, status=Session.ARCHIVED,
+                content_deleted_at__isnull=True,
             ).exclude(metadata__has_key=HAND_ARCHIVED_KEY):
                 revived.metadata = {**(revived.metadata or {}), REOPENED_KEY: True}
                 revived.status = Session.ACTIVE
@@ -1294,6 +1305,8 @@ def report_session_subagents(runner: Runner, session_id, subagents: list[dict]) 
     binding = RunnerBinding.objects.filter(session_id=session_id, runner=runner).first()
     if binding is None:
         return False
+    if binding.session.content_deleted_at is not None:
+        return True  # its person deleted its words; nothing of it is kept
     from . import sensitivity  # noqa: PLC0415 — as report_session_menu below
 
     hidden = sensitivity.is_sensitive(binding.session)
@@ -1330,6 +1343,8 @@ def report_session_menu(runner: Runner, session_id, menu: dict | None) -> bool:
     binding = RunnerBinding.objects.filter(session_id=session_id, runner=runner).first()
     if binding is None:
         return False
+    if binding.session.content_deleted_at is not None:
+        return True  # as report_session_subagents
     was_asking = binding.pending_question or None
     binding.pending_question = menu or None
     if binding.pending_question:
@@ -1553,6 +1568,9 @@ def _ingest(session, *, transcript_id, events, live, epoch=None, fan_out_held=Tr
     from apps.canopy_sessions import transcript_ingest as chat_transcript_ingest
     from apps.realtime import groups
 
+    # Its person deleted these words: not stored, and not shown to anyone either.
+    if chat_transcript_ingest.refuses_ship(session, transcript_id):
+        return 0
     # A transcript row that breaks the row contract is neither stored nor shown:
     # shown live and gone on reload is the worst of both. Only that event drops —
     # the rest of the batch, and every non-row kind (`activity:`, `stop:`), go on.

@@ -280,8 +280,8 @@ export function WorkspaceAgentRolesPage(): JSX.Element {
               <span className="text-muted-foreground">includes driving the agent</span>
             </label>
             <label className="flex items-baseline gap-2 text-[12px] text-foreground">
-              <span>Use these doors</span>
-              <input value={draft.doors} aria-label="Doors" placeholder="connect, report" className={`${FIELD} w-56`}
+              <span>Use only from these connected sites</span>
+              <input value={draft.doors} aria-label="Connected sites" placeholder="connect, report" className={`${FIELD} w-56`}
                 onChange={(e) => setDraft((d) => d && { ...d, doors: e.target.value })} />
               <span className="text-muted-foreground">names of capabilities an agent published</span>
             </label>

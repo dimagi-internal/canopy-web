@@ -14,6 +14,7 @@ describe('navigate-fallback ownership', () => {
       '/app',
       '/apps', // the menu bar's door into the Personal apps tab
       '/w/connect/apps/personal/meeting-assistant',
+      '/w/connect/meetings',
       '/supervisor',
       '/insights',
       '/system',

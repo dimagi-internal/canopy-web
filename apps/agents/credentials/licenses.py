@@ -1,18 +1,18 @@
 """Licenses: who uses an agent DIRECTLY, in their own Claude Code (canopy-web#1704).
 
-The caller list decides who MAY — `access.decide`, asked as the person on a signed-in
+The caller list decides who MAY — `turn_context.resolve_turn_context`, asked as the person on a signed-in
 request. A license records who DOES, since when, from which private runner, and what
 they read. The rules, in order (`request`):
 
 1. A REVOKED license stays revoked. An admin revoked it on purpose, per person,
    without editing the rule that would otherwise grant it, so neither a re-request
    nor the caller list brings it back — only an admin's `approve`.
-2. `decide` gives the person the WHOLE agent → the license is ACTIVE at once.
-   Its basis is `decide`'s: `owner`/`admin` (an owner holds one implicitly — it is
+2. the rule gives the person the WHOLE agent → the license is ACTIVE at once.
+   Its basis is the rule's: `owner`/`admin` (an owner holds one implicitly — it is
    written on first use, never asked for), `admin`, or a line on its access list (`grant:<line>`).
 3. Anything less (a viewer, a contact: confined or none) → a REQUESTED row the
    agent's admins see, and a refusal that says what to ask for. Approving it
-   re-asks `decide`, so an admin cannot license someone the caller list does not
+   re-asks the rule, so an admin cannot license someone the caller list does not
    give the whole agent: raise their role on its access list first.
 
 What a license admits: a direct turn (`apps/harness/local_turns.py`) and the credential
@@ -26,7 +26,7 @@ from django.utils import timezone
 
 from apps.harness.models import Turn
 
-from .. import access
+from .. import access, turn_context
 from ..models import AgentLicense
 
 
@@ -36,7 +36,7 @@ class LicenseRefusedError(Exception):
 
 def _decision(agent, user):
 
-    return access.decide(agent, user, verified=True, origin=Turn.ORIGIN_LOCAL)
+    return turn_context.for_asker(agent, user, verified=True, channel=Turn.ORIGIN_LOCAL)
 
 
 def _row(agent, user) -> AgentLicense:
@@ -61,8 +61,8 @@ def request(agent, user) -> AgentLicense:
             + f"; ask an admin of {agent.slug} to approve it again")
     decision = _decision(agent, user)
     if decision.access != access.FULL:
-        why = decision.reason or (f"{agent.slug}'s caller list gives you "
-                                  f"{decision.capability or 'no'} access, not the whole agent")
+        why = decision.refusal.why if decision.refused else (f"{agent.slug}'s caller list gives you "
+                                                             f"{decision.stamped} access, not the whole agent")
         AgentLicense.objects.filter(pk=lic.pk, status=AgentLicense.REQUESTED).update(note=why[:300])
         raise LicenseRefusedError(
             f"you may not use {agent.slug} directly: {why}. Your request is recorded for "

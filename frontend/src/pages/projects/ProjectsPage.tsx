@@ -104,6 +104,7 @@ export function NewProjectDialog({
   const [steward, setSteward] = useState('')
   const [owner, setOwner] = useState('')
   const [target, setTarget] = useState('')
+  const [visibility, setVisibility] = useState<'workspace' | 'personal'>('workspace')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -117,8 +118,10 @@ export function NewProjectDialog({
       workspace,
       outcome: outcome.trim(),
       ...(steward ? { steward, member_agents: [steward] } : {}),
-      ...(owner ? { owner_email: owner } : {}),
+      // Just me: it is yours, so the lead is you (the server's default).
+      ...(owner && visibility === 'workspace' ? { owner_email: owner } : {}),
       ...(target ? { target_date: target } : {}),
+      ...(visibility === 'personal' ? { visibility } : {}),
     })
       .then((p) => {
         invalidateDirectory(workspace)
@@ -143,6 +146,23 @@ export function NewProjectDialog({
             <span className="text-muted-foreground">Outcome — what done looks like</span>
             <textarea value={outcome} onChange={(e) => setOutcome(e.target.value)} aria-label="Outcome" rows={2} className={field} />
           </label>
+          <fieldset className="flex flex-col gap-1">
+            <legend className="mb-1 text-muted-foreground">Who can see this</legend>
+            <label className="flex items-center gap-2 text-foreground">
+              <input type="radio" name="project-visibility" checked={visibility === 'workspace'} onChange={() => setVisibility('workspace')} />
+              Workspace
+            </label>
+            <label className="flex items-center gap-2 text-foreground">
+              <input type="radio" name="project-visibility" checked={visibility === 'personal'} onChange={() => setVisibility('personal')} />
+              Just me
+            </label>
+            {visibility === 'personal' && (
+              <p className="text-[12px] text-muted-foreground" data-testid="personal-explainer">
+                Only you and the agents you put on it. Workspace admins cannot see it. It cannot be shared, have check-ins or
+                a vault, or hold other people's tasks, until you make it a workspace project.
+              </p>
+            )}
+          </fieldset>
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="flex flex-col gap-1">
               <span className="text-muted-foreground">Lead agent</span>
@@ -155,17 +175,19 @@ export function NewProjectDialog({
                 ))}
               </select>
             </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-muted-foreground">Lead</span>
-              <select value={owner} onChange={(e) => setOwner(e.target.value)} aria-label="Lead" className={field}>
-                <option value="">None</option>
-                {directory.people.map((m) => (
-                  <option key={m.user_id} value={m.email}>
-                    {m.email}
-                  </option>
-                ))}
-              </select>
-            </label>
+            {visibility === 'workspace' && (
+              <label className="flex flex-col gap-1">
+                <span className="text-muted-foreground">Lead</span>
+                <select value={owner} onChange={(e) => setOwner(e.target.value)} aria-label="Lead" className={field}>
+                  <option value="">None</option>
+                  {directory.people.map((m) => (
+                    <option key={m.user_id} value={m.email}>
+                      {m.email}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <label className="flex flex-col gap-1">
               <span className="text-muted-foreground">Target date</span>
               <input type="date" value={target} onChange={(e) => setTarget(e.target.value)} aria-label="Target date" className={field} />

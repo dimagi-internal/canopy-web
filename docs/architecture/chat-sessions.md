@@ -33,7 +33,7 @@ close).
   (`frontend/packages/canopy-ui/src/chat/turnStatus.ts`). The embedded widget gets
   it because it mounts the same `ChatPanel`.
 - **"Is the last turn live" is answered once in the browser**:
-  `canopy-ui/chat/turnView.ts::useTurnView` → `{phase, inFlight, live, listLive,
+  `frontend/packages/canopy-ui/src/chat/turnView.ts::useTurnView` → `{phase, inFlight, live, listLive,
   canStop, label, runner}`, read by the chat header (`SessionStatusChip`) and by
   `ChatPanel` (activity line, Stop, the fold); `MessageList`/`planFold` take `live`
   as given. Only the NEWEST assistant row can be in flight, and not once the
@@ -41,7 +41,7 @@ close).
   (`inFlightRow`) — a lost `chat.stream_complete` never holds "working" up.
 - **The placement banner and the composer lock read the turn status**:
   `waiting_runner` (paused when `parked`) or `paused` raise them
-  (`pages/chat/useRunnerPlacement.ts::heldByAbsentRunner`); the fleet list is read
+  (`frontend/src/pages/chat/useRunnerPlacement.ts::heldByAbsentRunner`); the fleet list is read
   only for the "Continue on…" choices and Resume's runner id.
 - **Claude Code's own error notice is not a reply.** An `isApiErrorMessage` record
   ("Not logged in · Please run /login", a usage cap) becomes an assistant row with
@@ -49,7 +49,7 @@ close).
   on the live `chat.stream_complete` frame too; the kit draws it as a one-line
   "Didn't run" row (`MessageItem.tsx::apiErrorOf`), not as the agent talking.
 - **A quiet `working` turn says so.** The status carries `claimed_at` and `last_progress_at` (the claim, or the newest ledger event) for `working`; after `QUIET_AFTER_MS` (5 min) with nothing back — counting messages on screen and a reply still streaming — the chat kit replaces silence with a fact: "cloud-ec2-2 took this 6m ago and nothing has come back from it since." No verdict ("stuck"); it never speaks over a pending dialog. Slack says the same from `TurnStatus.quiet_since` (`apps/harness/turn_status.py`, `QUIET_AFTER_SECONDS`) in Slack date tokens — "*cloud-ec2-2* took this at 15:45 and nothing has come back from it since" — so its sweep edits the line only when something changes, never every minute.
-- **The composer says whether a follow-up rides the running turn.** For `working`, the status carries `midturn` (a message sent now is typed into the live session and read mid-turn, `Turn.rides_turn`) or `midturn_blocked` — `runner` (the holding box does not report `midturn`: the cloud runner), `dialog` (a parsed menu is up; it waits for the answer) or `confined` — from `turn_status.midturn_of`, the holder-side half of `routing.may_ride`. `canopy-ui/chat/turnStatus.ts::composerPlaceholder` words it; a claimed rider is listed in `queued` as `state: "midturn"` and drawn "delivered into the current turn".
+- **The composer says whether a follow-up rides the running turn.** For `working`, the status carries `midturn` (a message sent now is typed into the live session and read mid-turn, `Turn.rides_turn`) or `midturn_blocked` — `runner` (the holding box does not report `midturn`: the cloud runner), `dialog` (a parsed menu is up; it waits for the answer) or `confined` — from `turn_status.midturn_of`, the holder-side half of `routing.may_ride`. `frontend/packages/canopy-ui/src/chat/turnStatus.ts::composerPlaceholder` words it; a claimed rider is listed in `queued` as `state: "midturn"` and drawn "delivered into the current turn".
 - **Context meter.** Each assistant record's last row carries `content.usage` = `{context_tokens, model}` (input + both cache counts, `canopy_transcript.record_window`; never a sidechain call), stored and on `chat.stream_complete`. `ChatPanel` draws `ContextMeter` from the newest row that has it. The window is 1M when the model id or the bound runner's model setting (`SessionOut.runner_model`, reported on the heartbeat as `claude_model`) has `[1m]` or the prompt is past 200k, 200k when the runner names a model without it, else "unknown" — the transcript's model id never carries `[1m]`. A compaction summary row (`record.compact_summary`) draws as a divider and voids the older reading.
 - **What a session is doing: `apps/canopy_sessions/session_state.py`.** One
   resolver for every list (the session list's `running`, `/ide`, Home, the
@@ -145,14 +145,47 @@ agent's or a contact's session, never a sensitive one (any runner requirement),
 never another person's box, nothing from a sensitive-data box, and only repos the
 owner opted in to (the server's `_is_canopys`, and the runner again off its
 heartbeat's `report_projects`). Revoking the last grant drops them from the next
-poll; ACTIVE sessions keep shipping. Rows already uploaded stay: no route deletes a
-session's messages (`reset` re-ships them, `archive` keeps them), only a retention rule.
-The set has no workspace filter, so a session filed where the coach is not a member is
+poll; ACTIVE sessions keep shipping. Rows already uploaded stay until a retention rule
+or the person removes them (`DELETE /{id}/content`, § A person deleting their own session);
+`reset` re-ships them and `archive` keeps them. The set has no workspace filter, so a session filed where the coach is not a member is
 uploaded and still unreadable to it.
 
 What a person is told when they tick the box is `CoachConsentDetails`
 (`frontend/src/components/settings/SessionReviewersPanel.tsx`), whose comment names the
 code each paragraph rests on: change them together.
+
+### A person deleting their own session: the tombstone
+
+`DELETE /api/canopy-sessions/{id}/content` (`canopy_sessions/content_deletion.py`; who may is
+tenancy.md § Deleting your own session's content). The rows are a cache of a file on the runner's
+disk and canopy cannot delete that file, so a delete with no tombstone would undo itself on the
+next ship. `Session.content_deleted_at` is the tombstone, and **every writer of a session's words
+must honour it**:
+
+- Everything a runner ships funnels through `transcript_ingest.refuses_ship`: `record_transcript`
+  (rechecked under the binding and session locks a delete takes, so a racing ship stops there) and
+  `session_sync._ingest`, which also drops the live fan-out. A drop answers success, so the runner
+  moves on rather than retrying.
+- Nothing asks for it again: `list_streams` and `list_backfills` leave it out,
+  `coaching.full_upload_session_ids` too, `request_backfill` answers `unavailable`, `reset` refuses
+  (`content_deleted`, before `prune_ghosts` could drop the row holding the tombstone), and a
+  handoff's archive routes 404.
+- The report keeps the box's liveness and writes none of its words: no tail, dialog, subagents or
+  retitle, and it never revives the session. `record_session` returns early. A late turn event or
+  transcript flush is dropped (`ledger`, on `Turn.content_purged_at`).
+- It takes nothing new: `access.can_write`, `may_pull`, `can_share` and `may_move` are false, so
+  every REST write answers 409 and the socket's drafts stop; `send_message` and `enqueue_turn` refuse.
+- `DeletedTranscript` holds its Claude transcript ids, read from the binding, its turns, its usage
+  rows and its handoffs. The same file shipped into a NEW session row (a box paired again, whose
+  report finds no binding for the task) is dropped too, and if it is all that row holds, the row
+  gets the same tombstone at once (`content_deletion.absorb`). A transcript another live session
+  still uses is left out of the list.
+
+What goes is every place a session's words are kept; `tests/test_session_content_deletion.py` walks
+every model pointing at a `Session` or `Turn` and fails until a new one is placed as words, ids or
+someone's own record. No search index holds session words (the list's `q` reads the title and
+`session_key`). What stays: the `Session`, `Turn` and binding rows with their ids, `SessionUsage`
+and `Activity`, so analytics does not change.
 
 ### A session's worktree project is not its `project`
 
@@ -396,6 +429,7 @@ session, or changes who can see it or where it is listed, is ONE `Event` row
 | `session.participant_added` / `_removed` / `_role_changed` | a `SessionParticipant` row; one going with its session is the deletion, not a removal | observed on the participant row |
 | `session.sharing_changed` | a person's project sharing (`ProjectSessionShare`) or a coach's review grant — `session` blank, it covers many | `sharing.set_shared`, `contacts.session_reviewers` |
 | `session.sensitivity_changed` | it became sensitive | `services.add_runner_requirements` |
+| `session.content_deleted` | its person deleted its stored words (with `session.archived` if it was open); the person's own audit gets `session.contentDeleted` | `content_deletion.delete_content` (`record`) |
 | `session.reset` / `session.forked` / `session.transferred` | rows re-derived; a fork made (`fork` = the new id); moved to another runner (`change.runner`) | `services.reset_session`, `placement.fork_session`, `placement.transfer_session` |
 
 Payload — ids only, never a title, prompt, message or page: `session`, `workspace`,

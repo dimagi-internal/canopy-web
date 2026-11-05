@@ -27,6 +27,7 @@ from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
+from . import services
 from .credentials import vault_keeper, vault_members, workspace_vaults
 from .credentials.zk import ZkError
 from .gates import project_ws_or_404
@@ -61,7 +62,9 @@ def _vault(request: HttpRequest, vault_id: uuid.UUID, *, manage: bool = False) -
     """A workspace vault in a workspace the caller belongs to (else 404); `manage=True`
     also needs the caller to be its owner or admin, and a passkey step-up from a browser."""
     v = Vault.objects.filter(pk=vault_id, kind=Vault.WORKSPACE).select_related("workspace").first()
-    if v is None or wsvc.membership(request.user, v.workspace) is None:
+    # A project's person may be a member from a workspace below the vault's, where it is not inherited.
+    if v is None or (wsvc.membership(request.user, v.workspace) is None
+                     and request.user.pk not in vault_members.member_ids(v)):
         raise ProblemError(404, "Not found", detail="no such vault", type_=TYPE_NOT_FOUND)
     if manage:
         if not vault_members.is_admin(vault_members.role_of(v, request.user)):
@@ -77,7 +80,8 @@ def _out(v: Vault, user) -> WorkspaceVaultOut:
     rank = {"owner": 0, "admin": 1, "member": 2}
     rows = sorted(ms.values(), key=lambda m: (rank[m.role], (m.user.email or "").lower()))
     held, keepers = workspace_vaults.copies(v)
-    attached = list(VaultAttachment.objects.filter(vault=v).select_related("agent", "runner", "project"))
+    attached = [a for a in VaultAttachment.objects.filter(vault=v).select_related("agent", "runner", "project__agent")
+                if not a.project_id or services.may_read_project(user, a.project)]
     # A runner it serves is a member at the hardware level: say where its key lives and
     # whether it holds a copy of the vault's key, is waiting for one, or cannot have one yet.
     runner_ids = [a.runner_id for a in attached if a.runner_id]
@@ -208,7 +212,7 @@ def remove_workspace_vault_member(request: HttpRequest, vault_id: uuid.UUID, use
 def attach_workspace_vault(request: HttpRequest, vault_id: uuid.UUID, payload: VaultAttachIn):
     """`{agent}`, `{workspace}` (the vault's own workspace or one below it), `{project}`
     (`<workspace>/<handle>`, in the vault's tree: every current member agent in that tree is
-    served, and joining or leaving the project changes it) or `{runner}`:
+    served, the project's people become members, and joining or leaving changes both) or `{runner}`:
     a cloud runner whose Claude credentials the vault then holds. A project needs the caller
     to be an editor of the project's workspace too. A runner needs the
     caller to administer it too, and must share an isolation boundary with every runner
@@ -245,6 +249,8 @@ def _editable_project(request: HttpRequest, address: str):
         project = None
     if project is None or not perms.can(request.user, project.workspace_id, perms.AGENT_WORK):
         raise ProblemError(404, "Not found", detail="no such project you may edit", type_=TYPE_NOT_FOUND)
+    if project.is_personal:
+        raise HttpError(422, "a personal project cannot have a vault yet: make it a workspace project first")
     return project
 
 

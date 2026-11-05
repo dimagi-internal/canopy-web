@@ -22,9 +22,9 @@ from apps.harness import routing
 from apps.harness.models import Turn
 from apps.harness.runner_queries import runner_or_404
 
-from . import proofs, providers, services, tokens
+from . import proofs, providers, services, temporary, tokens
 from .problems import problem_for, problem_for_wire
-from .schemas import ConnectionMaterialOut, TurnConnectionsOut
+from .schemas import ConnectionMaterialOut, TemporaryTokenOut, TurnConnectionsOut
 from .wire import WireError
 
 router = Router(tags=["connections"])
@@ -65,7 +65,25 @@ def turn_connections(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.U
     the turn (always for a caller's turn); 409 `no_agent` for a turn that runs
     as no agent."""
     _, turn, agent = _turn_agent(request, runner_id, turn_id)
-    return TurnConnectionsOut(providers=services.providers_for_agent(agent, turn=turn))
+    return TurnConnectionsOut(providers=services.providers_for_agent(agent, turn=turn),
+                              temporary=temporary.providers_for_turn(agent, turn))
+
+
+@router.get("/runners/{runner_id}/turns/{turn_id}/connections/{provider}/temporary", response=TemporaryTokenOut,
+            summary="The short-lived token of the person who started this turn")
+# turn must be claimed by this box. Unlike the sealed route, this one hands over a usable token.
+@gate("runner", "runner-holds-agent", step_up="runner protocol: a token that cannot be renewed, for this turn")
+def turn_temporary_token(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.UUID,
+                         provider: str) -> TemporaryTokenOut:
+    """The access token the person who started this turn lent its agent. 404 unless this runner holds the
+    turn and that person has one for `provider` now; never anyone else's, and never on a turn someone
+    else started. It cannot be renewed: when it runs out, they sign in again."""
+    runner, turn, agent = _turn_agent(request, runner_id, turn_id)
+    row = temporary.for_turn(agent, provider, turn)
+    if row is None:
+        raise HttpError(404, "no temporary access")
+    return TemporaryTokenOut(access_token=temporary.token_for(row, turn=turn, runner=runner),
+                             expires_at=row.expires_at, account_label=row.account_label)
 
 
 @router.get("/runners/{runner_id}/turns/{turn_id}/connections/{provider}", response=ConnectionMaterialOut,

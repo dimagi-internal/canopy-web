@@ -13,10 +13,7 @@ a harness view, so its operationId (= MCP tool name) is qualified by this
 module's app label (`agents_list_turns`), and moving it would change it."""
 from __future__ import annotations
 
-import copy
-
 import requests
-import yaml
 from django.db import transaction
 from django.db.models import Q
 from django.http import HttpRequest
@@ -48,7 +45,7 @@ from apps.tokens.middleware import minting_refusal
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from . import access, agent_login, command_sync, creation, mailbox, sensitive_data, services
+from . import access, agent_login, answering, command_sync, creation, mailbox, services
 from . import move as agent_move
 from .creation import repo_url
 from .credentials import delegations, licenses, login_test_key
@@ -57,16 +54,6 @@ from .gates import (
     agent_for_read,
     agent_for_work,
     listed_agent_workspaces,
-)
-from .interface import (
-    READ_PROFILE_VERSION,
-    InterfaceError,
-    default_interface,
-    default_read_profile,
-    is_default,
-    parse,
-    read_mode_override,
-    validate,
 )
 from .models import (
     AgentAdmin,
@@ -86,9 +73,6 @@ from .schemas import (
     AgentHoldIn,
     AgentHoldOut,
     AgentIn,
-    AgentInterfaceIn,
-    AgentInterfaceOut,
-    AgentInterfaceValidateOut,
     AgentLicenseOut,
     AgentLicenseRevokeIn,
     AgentMoveIn,
@@ -103,7 +87,6 @@ from .schemas import (
     AgentSyncOut,
     AgentTurnIn,
     AgentTurnOut,
-    CapabilitySensitiveIn,
     RepoCheckIn,
     RepoCheckOut,
     RepositoryIn,
@@ -509,6 +492,8 @@ def _detail(request: HttpRequest, agent) -> AgentDetailOut:
     pending = agent_login.pending_request(agent) if agent.is_admin(request.user) else None
     return AgentDetailOut.model_validate({
         **services.agent_detail(agent),
+        "read_mode": answering.read_mode_of(agent),
+        "connected_sites": answering.connected_sites_of(agent),
         "canopy_user_request": login_request_out(pending) if pending is not None else None,
         "can_transfer_owner": _may_transfer_owner(request, agent),
         "is_admin": agent.is_admin(request.user),
@@ -672,141 +657,6 @@ def _admin_rows(agent) -> list[dict]:
     return rows
 
 
-def _interface_out(agent) -> dict:
-    """An agent always has an interface; a row that somehow holds none (`{}`) reads as the default."""
-    by = agent.interface_published_by
-    iface = agent.interface or default_interface()
-    override = read_mode_override(iface)
-    return {"interface": iface, "source": agent.interface_source or "",
-            "read_mode": {"source": "override" if override else "default", "override": override,
-                          "default_profile": default_read_profile(agent),
-                          "default_profile_version": READ_PROFILE_VERSION},
-            # The same model as YAML, for the Advanced view and the CLI, when no
-            # hand-written source was kept.
-            "yaml": agent.interface_source or yaml.safe_dump(iface, sort_keys=False),
-            "is_default": is_default(iface),
-            "published_at": agent.interface_published_at,
-            "published_by_email": by.email if by is not None else None}
-
-
-@router.get("/{slug}/interface", response=AgentInterfaceOut,
-            summary="What this agent offers callers — its declared interface")
-@gate("member")
-def get_interface(request: HttpRequest, slug: str):
-    return _interface_out(agent_for_read(request, slug))
-
-
-# Owner-or-admin, not the editor tier the skill catalog uses: the interface is
-# a SECURITY POLICY — it decides what people outside the agent's admins can make
-# it do — so loosening it is the same kind of act as handing over its keys.
-@router.post("/{slug}/interface/validate", response=AgentInterfaceValidateOut,
-             summary="Check a draft interface with the server's parser, without saving it")
-@gate("agent-admin", kind="action")
-def validate_interface(request: HttpRequest, slug: str, payload: AgentInterfaceIn):
-    agent_for_admin(request, slug)
-    if (payload.source is None) == (payload.interface is None):
-        raise HttpError(422, "send exactly one of `source` (YAML) or `interface` (a mapping)")
-    doc = payload.interface
-    if payload.source is not None:
-        try:
-            doc = yaml.safe_load(payload.source) or {}
-        except yaml.YAMLError as exc:
-            return {"errors": [{"path": "", "message": f"not valid YAML: {exc}"}]}
-    errors = validate(doc)
-    if errors:
-        return {"errors": errors}
-    parsed = parse(doc)
-    return {"errors": [], "interface": parsed,
-            "yaml": payload.source if payload.source is not None else yaml.safe_dump(parsed, sort_keys=False)}
-
-
-@router.put("/{slug}/interface", response=AgentInterfaceOut,
-            summary="Save the agent's declared interface (YAML source, or a parsed mapping)")
-@gate("agent-admin", setting=True)
-def publish_interface(request: HttpRequest, slug: str, payload: AgentInterfaceIn):
-    agent = agent_for_admin(request, slug)
-    if (payload.source is None) == (payload.interface is None):
-        raise HttpError(422, "send exactly one of `source` (YAML) or `interface` (a mapping)")
-    doc, source = payload.interface, ""
-    if payload.source is not None:
-        source = payload.source
-        try:
-            # safe_load: no tags, no object construction — it is a person's text.
-            doc = yaml.safe_load(source) or {}
-        except yaml.YAMLError as exc:
-            raise HttpError(422, f"not valid YAML: {exc}") from exc
-    return _save_interface(request, agent, doc, source)
-
-
-def _save_interface(request: HttpRequest, agent, doc, source: str) -> dict:
-    """The one way an interface is saved — the YAML editor and the sensitive-data switch
-    both come here, so they are validated and audited alike."""
-    try:
-        parsed = parse(doc)
-    except InterfaceError as exc:
-        raise HttpError(422, str(exc)) from exc
-    # `data: sensitive` needs nothing more than any other interface change: the
-    # agent's owner or an admin, from the browser or a token. What makes it safe is
-    # that `parse` refuses such a capability if it could leak, and the save is audited
-    # (spec 2026-10-22-sensitive-data-agents §5).
-    agent.interface = parsed
-    agent.interface_source = source
-    agent.interface_published_at = timezone.now()
-    agent.interface_published_by = request.user
-    agent.save(update_fields=["interface", "interface_source", "interface_published_at",
-                              "interface_published_by", "updated_at"])
-    return _interface_out(agent)
-
-
-@router.put("/{slug}/interface/capabilities/{name}/sensitive", response=AgentInterfaceOut,
-            summary="Say whether one capability handles sensitive data: writes or removes its `data: sensitive` in the saved YAML")
-@gate("agent-admin", setting=True)
-def set_capability_sensitive(request: HttpRequest, slug: str, name: str,
-                             payload: CapabilitySensitiveIn):
-    # The switch is the YAML path with the typing done for you: it edits the saved
-    # source in place (comments kept, `sensitive_data.with_sensitive`) and saves it through
-    # `_save_interface` — same parse, same audit — so the YAML and
-    # the switch never disagree. An interface saved as a mapping (no source) is
-    # edited as a mapping.
-    agent = agent_for_admin(request, slug)
-    caps = (agent.interface or {}).get("capabilities") or {}
-    if name not in caps:
-        raise HttpError(404, f"{agent.slug} has no capability {name!r} in its saved interface")
-    before = sensitive_data.sensitive_capabilities(agent.interface)
-    source = agent.interface_source or ""
-    if source.strip():
-        try:
-            source = sensitive_data.with_sensitive(source, name, payload.handles_sensitive)
-        except sensitive_data.SourceEditError as exc:
-            raise HttpError(422, f"{exc} — edit the YAML instead") from exc
-        doc = yaml.safe_load(source) or {}
-    else:
-        doc = copy.deepcopy(agent.interface)
-        cap = doc["capabilities"][name]
-        if payload.handles_sensitive:
-            cap["data"] = sensitive_data.SENSITIVE
-        else:
-            cap.pop("data", None)
-    out = _save_interface(request, agent, doc, source)
-    audit.note_change(scope=f"interface:{agent.slug}/{name}",
-                      before={"sensitive_capabilities": before},
-                      after={"sensitive_capabilities":
-                             sensitive_data.sensitive_capabilities(agent.interface)},
-                      summary=(f"handles sensitive data {'on' if payload.handles_sensitive else 'off'}"
-                               f" for {agent.slug}/{name}"))
-    return out
-
-
-@router.delete("/{slug}/interface", response=AgentInterfaceOut,
-               summary="Reset the declared interface to the default: only the agent's admins and its workspace's editors can reach it")
-@gate("agent-admin", setting=True)
-def reset_interface(request: HttpRequest, slug: str):
-    # Never "no interface": every agent has one, and this is the one that changes
-    # nobody's access but takes away what the owner had added.
-    agent = agent_for_admin(request, slug)
-    return _save_interface(request, agent, default_interface(), "")
-
-
 @router.get("/{slug}/admins", response=list[AgentAdminOut],
             summary="Who holds this agent's keys: its owner and admins")
 @gate("member")
@@ -900,7 +750,7 @@ def revoke_agent_license(request: HttpRequest, slug: str, user_id: int,
 
 @router.post("/{slug}/licenses/{user_id}/approve", response=AgentLicenseOut,
              summary="Issue or reinstate a person's license to use this agent directly")
-@gate("agent-admin", setting=True)  # + access.decide must give them the whole agent (409)
+@gate("agent-admin", setting=True)  # + turn_context.resolve_turn_context must give them the whole agent (409)
 def approve_agent_license(request: HttpRequest, slug: str, user_id: int):
     """Re-asks the access list: refused (409) unless it gives them the whole agent —
     put them on it as an editor first."""

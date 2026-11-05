@@ -119,6 +119,7 @@ EXCLUDED_PATTERNS: dict[str, str] = {
     r"^/api/canopy-sessions/[^/]+/(key-copies|secrets|sealed-attachments)(/|$)":
         "a conversation's key copies and secrets",
     r"^/api/canopy-sessions/attachments/[^/]+/sealed$": "sealed attachments",
+    r"^/api/canopy-sessions/[^/]+/content$": "permanently deleting a session's content",
     r"^/api/harness/runners/[^/]+/(vault|vault-keeper|mint|credential|credentials|logins|google-mint"
     r"|delegated-checks|turns/[^/]+/agent-token)(/|$)": "the runner protocol and runner credentials",
     r"^/api/(sessions|sessions/arcs|storyboards|walkthroughs)/[^/]+/rotate-token$": "rotating a share token",

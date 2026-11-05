@@ -9,7 +9,9 @@ import inspect
 import logging
 
 from django.core.exceptions import RequestDataTooBig
+from django.db import DataError
 from django.http import Http404, HttpRequest, HttpResponse
+from django.http.multipartparser import MultiPartParserError
 from ninja import NinjaAPI
 from ninja.errors import AuthenticationError, HttpError, ValidationError
 
@@ -228,6 +230,38 @@ def _on_too_big(request: HttpRequest, exc: RequestDataTooBig) -> HttpResponse:
     return _problem_response(request, problem)
 
 
+@api.exception_handler(MultiPartParserError)
+def _on_malformed_multipart(request: HttpRequest, exc: MultiPartParserError) -> HttpResponse:
+    """A multipart body Django cannot parse (e.g. a `Content-Type` with no boundary): the caller's, not a 500."""
+    problem = Problem(
+        type="about:blank",
+        title=status_title(400),
+        status=400,
+        detail=f"Malformed multipart body: {exc}",
+        instance=request.path,
+    )
+    return _problem_response(request, problem)
+
+
+@api.exception_handler(OverflowError)
+@api.exception_handler(DataError)
+def _on_out_of_range(request: HttpRequest, exc: Exception) -> HttpResponse:
+    """A caller's value the database cannot store: a number past int32/int64, or a NUL in text.
+
+    Ninja's `int` is unbounded, so `/members/9223372036854775808/` reaches the
+    database, which refuses it (`DataError` on Postgres, `OverflowError` on
+    SQLite); Postgres also refuses `\\x00` in text with a `DataError`. That is
+    the caller's input, not a server fault."""
+    problem = Problem(
+        type=TYPE_VALIDATION,
+        title="Value cannot be stored",
+        status=400,
+        detail="A value in the request is out of range, or holds a character the database refuses.",
+        instance=request.path,
+    )
+    return _problem_response(request, problem)
+
+
 @api.exception_handler(Exception)
 def _on_unhandled(request: HttpRequest, exc: Exception) -> HttpResponse:
     logger.exception("Unhandled exception in v2 handler")
@@ -264,6 +298,7 @@ from apps.agents.api_vault_zk import router as agent_vault_zk_router  # noqa: E4
 from apps.agents.api_readiness import router as agent_readiness_router  # noqa: E402
 from apps.agents.api_access_list import defaults_router as agent_defaults_router  # noqa: E402
 from apps.agents.api_access_list import router as agent_access_list_router  # noqa: E402
+from apps.agents.api_answering import router as agent_answering_router  # noqa: E402
 from apps.agents.api_roles import router as agent_roles_router  # noqa: E402
 from apps.agents.api_routing import router as agent_routing_router  # noqa: E402
 from apps.agents.api_skills import router as agent_skills_router  # noqa: E402
@@ -358,6 +393,7 @@ from apps.shareouts.api import router as shareouts_router  # noqa: E402
 from apps.dynamic_views.api import router as dynamic_views_router  # noqa: E402
 from apps.local_apps.api import router as local_apps_router  # noqa: E402
 from apps.local_apps.api import runner_router as local_apps_runner_router  # noqa: E402
+from apps.meetings.api import router as meetings_router  # noqa: E402
 from apps.workspace_apps.api import public_router as public_apps_router  # noqa: E402
 from apps.workspace_apps.api import router as workspace_apps_router  # noqa: E402
 from apps.slack.api import router as slack_config_router  # noqa: E402
@@ -414,6 +450,7 @@ api.add_router("/dynamic-views", dynamic_views_router)
 api.add_router("", workspace_apps_router)
 api.add_router("", public_apps_router)
 api.add_router("/local-apps", local_apps_router)
+api.add_router("/meetings", meetings_router)
 api.add_router("/harness/runners", local_apps_runner_router)
 api.add_router("/sessions", sessions_router)
 # Agents are workspace-scoped. Mounted flat (single, clean schema); the canonical
@@ -427,6 +464,7 @@ api.add_router("/agents", agents_router)
 # routes were written in, which is the order of /api/openapi.json's paths.
 api.add_router("/agents", agent_routing_router)
 api.add_router("/agents", agent_access_list_router)
+api.add_router("/agents", agent_answering_router)
 api.add_router("/workspaces", agent_defaults_router)
 api.add_router("/workspaces", agent_roles_router)
 api.add_router("/agents", agent_turns_router)

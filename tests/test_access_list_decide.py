@@ -1,4 +1,4 @@
-"""`access.decide` gives everyone but the owner, the admins and canopy exactly what their line says.
+"""`turn_context.resolve_turn_context` gives everyone but the owner, the admins and canopy exactly what their line says.
 
 `docs/superpowers/specs/2026-10-30-agent-roles-and-access-list-design.md`: an agent's access list
 is the only way in beyond its owner and admins, every decision says which role it put the asker in
@@ -11,7 +11,7 @@ import uuid
 import pytest
 from django.contrib.auth import get_user_model
 
-from apps.agents import access, roles
+from apps.agents import access, roles, turn_context
 from apps.agents.interface import parse
 from apps.agents.models import Agent, AgentAdmin, AgentGrant
 from apps.contacts.models import Contact
@@ -64,38 +64,38 @@ def _slack_turn(w, contact, assurance="slack_member"):
 
 def test_owner_and_admin_are_named_on_the_ladder_and_a_workspace_editor_with_no_line_is_refused(w):
     agent = w["agent"]
-    d = access.decide(agent, w["owner"], verified=True)
-    assert (d.agent_role, d.source) == (roles.OWNER, "owner")
+    d = turn_context.for_asker(agent, w["owner"], verified=True)
+    assert (d.standing.agent_role, d.standing.source) == (roles.OWNER, "owner")
     AgentAdmin.objects.create(agent=agent, user=w["vw"], granted_by=w["owner"])
-    d = access.decide(agent, w["vw"], verified=True)
-    assert (d.agent_role, d.source) == (roles.ADMIN, "admin")
+    d = turn_context.for_asker(agent, w["vw"], verified=True)
+    assert (d.standing.agent_role, d.standing.source) == (roles.ADMIN, "admin")
     editor = get_user_model().objects.create_user("ce", "ce@elsewhere.org", "pw")
     M.objects.create(user=editor, workspace=w["connect"], role=M.EDITOR)
-    d = access.decide(agent, editor, verified=True)
+    d = turn_context.for_asker(agent, editor, verified=True)
     # Being a workspace editor is not a role on the agent: nothing names them, so nothing.
-    assert (d.access, d.agent_role) == (access.NONE, None)
-    assert "access list" in d.reason and w["owner"].email in d.reason
+    assert (d.access, d.standing.agent_role) == (turn_context.REFUSED, None)
+    assert "access list" in d.refusal.why and w["owner"].email in d.refusal.how_to_fix
 
 
 def test_a_line_that_says_manual_only_is_the_old_editor_tier(w):
     editor = get_user_model().objects.create_user("ce", "ce@elsewhere.org", "pw")
     M.objects.create(user=editor, workspace=w["connect"], role=M.EDITOR)
     _line(w, roles.EDITOR, kind=G.WORKSPACE, subject_workspace=w["connect"], at_least=M.EDITOR, manual_only=True)
-    d = access.decide(w["agent"], editor, verified=True)
-    assert (d.access, d.agent_role, d.manual_only) == (access.FULL, roles.EDITOR, True)
-    assert d.source.startswith("list:workspace:connect:editor")
-    assert d.via == "Everyone in connect, editor or above"
+    d = turn_context.for_asker(w["agent"], editor, verified=True)
+    assert (d.access, d.standing.agent_role, d.review.manual_only) == (access.FULL, roles.EDITOR, True)
+    assert d.standing.source.startswith("list:workspace:connect:editor")
+    assert d.standing.via == "Everyone in connect, editor or above"
 
 
 def test_a_confined_decision_is_a_read_only_role_or_a_named_capability(w):
-    d = access.decide(w["agent"], w["vw"], verified=True, capability="ask")
-    assert (d.access, d.agent_role) == (access.NONE, None)        # nothing on the list names them
+    d = turn_context.for_asker(w["agent"], w["vw"], verified=True, requested="ask")
+    assert (d.access, d.standing.agent_role) == (turn_context.REFUSED, None)        # nothing on the list names them
     # A connect viewer with a line naming ONE capability: a door, not a role.
     _line(w, "", kind=G.PERSON, user=w["vw"], capability="canopy")
-    d = access.decide(w["agent"], w["vw"], verified=True, capability="canopy")
-    assert (d.access, d.capability, d.agent_role) == (access.CONFINED, "canopy", None)
-    assert d.permissions == {roles.use("canopy")} and d.source.startswith("list:person:")
-    assert access.decide(w["agent"], w["vw"], verified=True, capability="ask").access == access.NONE
+    d = turn_context.for_asker(w["agent"], w["vw"], verified=True, requested="canopy")
+    assert (d.access, d.stamped, d.standing.agent_role) == (access.CONFINED, "canopy", None)
+    assert d.standing.permissions == {roles.use("canopy")} and d.standing.source.startswith("list:person:")
+    assert turn_context.for_asker(w["agent"], w["vw"], verified=True, requested="ask").access == turn_context.REFUSED
 
 
 # --- the list is a way in --------------------------------------------------------------
@@ -104,69 +104,69 @@ def test_a_colleague_by_address_is_read_only_through_a_domain_line_with_slack_pr
     """Ismaïla: an editor of `dimagi`, not a member of `connect`, writing in from Slack."""
     contact = _contact(w, "idiene@dimagi.com")
     turn = _slack_turn(w, contact)
-    assert access.decide_for_turn(turn, w["agent"]).access == access.NONE        # nothing names him yet
+    assert turn_context.for_turn(turn, w["agent"]).access == turn_context.REFUSED        # nothing names him yet
     _line(w, roles.READ_ONLY, kind=G.DOMAIN, domain="dimagi.com")
-    d = access.decide_for_turn(turn, w["agent"])
-    assert (d.access, d.capability, d.agent_role) == (access.CONFINED, "ask", roles.READ_ONLY)
-    assert d.source.startswith("list:domain:dimagi.com")
+    d = turn_context.for_turn(turn, w["agent"])
+    assert (d.access, d.stamped, d.standing.agent_role) == (access.CONFINED, "ask", roles.READ_ONLY)
+    assert d.standing.source.startswith("list:domain:dimagi.com")
 
 
 def test_an_address_that_is_not_proven_does_not_match_a_verified_domain_line(w):
     _line(w, roles.READ_ONLY, kind=G.DOMAIN, domain="dimagi.com")
     guest = _slack_turn(w, _contact(w, "x@dimagi.com"), assurance="slack")        # a Slack guest: tier 2
-    assert access.decide_for_turn(guest, w["agent"]).access == access.NONE
+    assert turn_context.for_turn(guest, w["agent"]).access == turn_context.REFUSED
 
 
 def test_read_only_opens_ask_and_a_second_line_opens_a_named_door(w):
     _line(w, roles.READ_ONLY, kind=G.DOMAIN, domain="dimagi.com")
     contact = _contact(w, "idiene@dimagi.com")
-    assert access.decide(w["agent"], contact, verified=True, capability="ask").access == access.CONFINED
-    d = access.decide(w["agent"], contact, verified=True, capability="canopy")
-    assert d.access == access.NONE                                              # read opens `ask` and nothing else
+    assert turn_context.for_asker(w["agent"], contact, verified=True, requested="ask").access == access.CONFINED
+    d = turn_context.for_asker(w["agent"], contact, verified=True, requested="canopy")
+    assert d.access == turn_context.REFUSED                                              # read opens `ask` and nothing else
     _line(w, "", kind=G.CONTACT, domain="dimagi.com", capability="canopy")
-    d = access.decide(w["agent"], contact, verified=True, capability="canopy")
-    assert (d.access, d.capability, d.agent_role) == (access.CONFINED, "canopy", roles.READ_ONLY)
-    assert d.permissions == {roles.READ, roles.use("canopy")}
+    d = turn_context.for_asker(w["agent"], contact, verified=True, requested="canopy")
+    assert (d.access, d.stamped, d.standing.agent_role) == (access.CONFINED, "canopy", roles.READ_ONLY)
+    assert d.standing.permissions == {roles.READ, roles.use("canopy")}
 
 
 def test_write_drives_the_whole_agent_whatever_the_role_is_called(w):
     _line(w, roles.READ_WRITE, kind=G.PERSON, user=w["vw"])
-    d = access.decide(w["agent"], w["vw"], verified=True)
-    assert (d.access, d.agent_role, d.manual_only, d.may_request_auto) == (
+    d = turn_context.for_asker(w["agent"], w["vw"], verified=True)
+    assert (d.access, d.standing.agent_role, d.review.manual_only, d.review.may_request_auto) == (
         access.FULL, roles.READ_WRITE, False, False)
-    assert d.permissions >= {roles.READ, roles.WRITE} and roles.AGENT_EDIT not in d.permissions
+    assert d.standing.permissions >= {roles.READ, roles.WRITE} and roles.AGENT_EDIT not in d.standing.permissions
 
 
 def test_a_line_cannot_use_a_door_the_agent_does_not_have(w):
     bare = Agent.objects.create(slug="bare", name="Bare", workspace=w["connect"], owner=w["owner"])
     _line({**w, "agent": bare}, "", kind=G.DOMAIN, domain="dimagi.com", capability="canopy")
     contact = _contact(w, "idiene@dimagi.com")
-    assert access.decide(bare, contact, verified=True).access == access.NONE
+    assert turn_context.for_asker(bare, contact, verified=True).access == turn_context.REFUSED
 
 
 def test_read_mode_needs_no_published_capability(w):
     bare = Agent.objects.create(slug="bare", name="Bare", workspace=w["connect"], owner=w["owner"])
     _line({**w, "agent": bare}, roles.READ_ONLY, kind=G.DOMAIN, domain="dimagi.com")
     contact = _contact(w, "idiene@dimagi.com")
-    d = access.decide(bare, contact, verified=True)
-    assert (d.access, d.capability) == (access.CONFINED, "read")
+    d = turn_context.for_asker(bare, contact, verified=True)
+    assert (d.access, d.stamped) == (access.CONFINED, "read")
 
 
 def test_everyone_in_another_workspace_can_be_named_and_an_editor_line_runs_the_whole_agent(w):
     """An editor of the root workspace is a stranger in `connect` until the list names them."""
-    assert access.decide(w["agent"], w["ed"], verified=True).access == access.NONE
+    assert turn_context.for_asker(w["agent"], w["ed"], verified=True).access == turn_context.REFUSED
     _line(w, roles.EDITOR, kind=G.WORKSPACE, subject_workspace=w["root"], at_least=M.EDITOR)
-    d = access.decide(w["agent"], w["ed"], verified=True)
-    assert (d.access, d.agent_role, d.manual_only) == (access.FULL, roles.EDITOR, False)
-    assert access.decide(w["agent"], w["vw"], verified=True).access != access.FULL
+    d = turn_context.for_asker(w["agent"], w["ed"], verified=True)
+    assert (d.access, d.standing.agent_role, d.review.manual_only) == (access.FULL, roles.EDITOR, False)
+    assert turn_context.for_asker(w["agent"], w["vw"], verified=True).access != access.FULL
 
 
 def test_a_line_can_keep_the_manual_gate_and_a_second_line_can_lift_it(w):
     gated = _line(w, roles.EDITOR, kind=G.WORKSPACE, subject_workspace=w["root"], at_least=M.EDITOR,
                   manual_only=True)
-    assert access.decide(w["agent"], w["ed"], verified=True).manual_only is True
+    assert turn_context.for_asker(w["agent"], w["ed"], verified=True).review.manual_only is True
     _line(w, roles.EDITOR, kind=G.PERSON, user=w["ed"])
-    assert access.decide(w["agent"], w["ed"], verified=True).manual_only is False
+    assert turn_context.for_asker(w["agent"], w["ed"], verified=True).review.manual_only is False
     assert gated.pk                                                              # the gated line is still there
 
 
@@ -175,17 +175,17 @@ def test_the_strongest_line_wins_even_when_a_weaker_one_also_names_them(w):
     M.objects.create(user=editor, workspace=w["connect"], role=M.EDITOR)
     _line(w, roles.EDITOR, kind=G.PERSON, user=editor)
     _line(w, roles.READ_ONLY, kind=G.WORKSPACE, subject_workspace=w["connect"])
-    d = access.decide(w["agent"], editor, verified=True)
-    assert (d.access, d.agent_role) == (access.FULL, roles.EDITOR)
+    d = turn_context.for_asker(w["agent"], editor, verified=True)
+    assert (d.access, d.standing.agent_role) == (access.FULL, roles.EDITOR)
 
 
 def test_a_workspace_default_reaches_the_agent_unless_it_opts_out(w):
     G.objects.create(workspace=w["root"], kind=G.DOMAIN, domain="dimagi.com", role=roles.READ_ONLY)
     contact = _contact(w, "idiene@dimagi.com")
-    assert access.decide(w["agent"], contact, verified=True).access == access.CONFINED
+    assert turn_context.for_asker(w["agent"], contact, verified=True).access == access.CONFINED
     Agent.objects.filter(pk=w["agent"].pk).update(inherit_workspace_defaults=False)
     w["agent"].refresh_from_db()
-    assert access.decide(w["agent"], contact, verified=True).access == access.NONE
+    assert turn_context.for_asker(w["agent"], contact, verified=True).access == turn_context.REFUSED
 
 
 def test_the_sensitive_data_rule_still_confines_a_listed_editor(w):
@@ -195,8 +195,8 @@ def test_the_sensitive_data_rule_still_confines_a_listed_editor(w):
     Agent.objects.filter(pk=w["agent"].pk).update(interface=parse(iface))
     w["agent"].refresh_from_db()
     _line(w, roles.EDITOR, kind=G.PERSON, user=w["ed"])
-    d = access.decide(w["agent"], w["ed"], verified=True, capability="data")
-    assert (d.access, d.capability, d.agent_role, d.basis) == (
+    d = turn_context.for_asker(w["agent"], w["ed"], verified=True, requested="data")
+    assert (d.access, d.stamped, d.standing.agent_role, d.basis) == (
         access.CONFINED, "data", roles.EDITOR, "sensitive:data")
 
 

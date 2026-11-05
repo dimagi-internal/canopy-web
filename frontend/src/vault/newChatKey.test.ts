@@ -3,7 +3,8 @@
 // key's PUBLIC half, so starting never asks to unlock. A key pinned here is used; one
 // never seen here is trusted on first use — pinned as unconfirmed with the chat's id —
 // and checked against the key the person actually holds the first time they unlock it
-// here, which names the chats if it does not match. A CHANGED key stops the chat. Driven through chat creation
+// here, which names the chats if it does not match. A key replaced since is treated the same
+// way, and only a key an unlock here proved is not theirs stops the chat. Driven through chat creation
 // itself (`createSession`, the chat page's; `offeredKey`, the panel's), real crypto,
 // only fetch and the unlock mocked.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -55,13 +56,18 @@ describe('starting a chat from the chat page', () => {
       .resolves.toBeTruthy()
   })
 
-  it('stops, and starts nothing, when the key named as mine changed', async () => {
-    const mine = await generateKeyPair()
-    const substituted = await generateKeyPair()
-    pinPerson('7', await jkt(mine.publicJwk), '')
-    const created = server({ pair: substituted, jkt: await jkt(substituted.publicJwk) })
-    await expect(createSession({ agentSlug: 'a' })).rejects.toThrow(/not the one this browser last opened/)
-    expect(created).toEqual([])
+  it('a key replaced elsewhere: starts at once, wrapped to the new key, pinned unconfirmed', async () => {
+    const old = await generateKeyPair()
+    const replaced = await generateKeyPair()
+    const thumb = await jkt(replaced.publicJwk)
+    pinPerson('7', await jkt(old.publicJwk), '')
+    const created = server({ pair: replaced, jkt: thumb })
+    await createSession({ agentSlug: 'a' })
+    const offer = (created[0] as { conversation_key: { wrap: never; conversation: string } }).conversation_key
+    await expect(unwrapEcdhEs(offer.wrap, replaced.privateKey, replaced.publicJwk, wrapInfo(offer.conversation, '7')))
+      .resolves.toBeTruthy()
+    expect(JSON.parse(store.get('canopy-vault/v1/pins')!)['7'])
+      .toMatchObject({ jkt: thumb, unconfirmed: true, conversations: [offer.conversation] })
   })
 
   it('stops on a key that does not match its thumbprint', async () => {
@@ -89,7 +95,46 @@ describe('starting a chat from the chat page', () => {
   })
 })
 
-describe('the first unlock checks a key trusted on first use', () => {
+describe('the next unlock checks a key trusted on first use', () => {
+  it('a key I really replaced: no warning, and later chats just start', async () => {
+    const old = await generateKeyPair()
+    const replaced = await generateKeyPair()
+    pinPerson('7', await jkt(old.publicJwk), '')
+    const created = server({ pair: replaced, jkt: await jkt(replaced.publicJwk) })
+    await createSession({ agentSlug: 'a' })
+    await expect(rememberSelf('7', replaced.publicJwk, replaced.scalar)).resolves.toBeNull()
+    expect(selfMismatch('7')).toBeNull()
+    expect(JSON.parse(store.get('canopy-vault/v1/pins')!)['7'].unconfirmed).toBeUndefined()
+    await createSession({ agentSlug: 'a' })
+    expect(created).toHaveLength(2)
+  })
+
+  it('a key swapped over a pinned one: names the chats at the unlock, then refuses that key', async () => {
+    const mine = await generateKeyPair()
+    const substituted = await generateKeyPair()
+    pinPerson('7', await jkt(mine.publicJwk), '')
+    const created = server({ pair: substituted, jkt: await jkt(substituted.publicJwk) })
+    await createSession({ agentSlug: 'a' })
+    const id = (created[0] as { conversation_key: { conversation: string } }).conversation_key.conversation
+    const found = await rememberSelf('7', mine.publicJwk, mine.scalar)
+    expect(found).toMatchObject({ wrongJkt: await jkt(substituted.publicJwk), conversations: [id] })
+    await expect(createSession({ agentSlug: 'a' })).rejects.toThrow(/already found is not yours/)
+    expect(created).toHaveLength(1)
+  })
+
+  it('a second swap still lists the chats no unlock has checked', async () => {
+    const mine = await generateKeyPair()
+    const first = await generateKeyPair()
+    const second = await generateKeyPair()
+    pinPerson('7', await jkt(mine.publicJwk), '')
+    const onFirst = server({ pair: first, jkt: await jkt(first.publicJwk) })
+    await createSession({ agentSlug: 'a' })
+    const onSecond = server({ pair: second, jkt: await jkt(second.publicJwk) })
+    await createSession({ agentSlug: 'a' })
+    const ids = [...onFirst, ...onSecond].map((c) => (c as { conversation_key: { conversation: string } }).conversation_key.conversation)
+    expect(await rememberSelf('7', mine.publicJwk, mine.scalar)).toMatchObject({ conversations: ids })
+  })
+
   it('the key I hold matches: confirmed, no warning', async () => {
     const mine = await generateKeyPair()
     server({ pair: mine, jkt: await jkt(mine.publicJwk) })
@@ -108,9 +153,9 @@ describe('the first unlock checks a key trusted on first use', () => {
     const found = await rememberSelf('7', mine.publicJwk, mine.scalar)
     expect(found).toMatchObject({ wrongJkt: await jkt(substituted.publicJwk), conversations: [id] })
     expect(selfMismatch('7')).toMatchObject({ conversations: [id] })
-    // The pin is now the key I hold: the substituted one stops the next chat.
-    expect(checkSelf('7', await jkt(substituted.publicJwk))).toBe('changed')
-    await expect(createSession({ agentSlug: 'a' })).rejects.toThrow(/not the one this browser last opened/)
+    // The pin is now the key I hold, and the substituted one stops the next chat.
+    expect(checkSelf('7', await jkt(substituted.publicJwk))).toBe('disproven')
+    await expect(createSession({ agentSlug: 'a' })).rejects.toThrow(/already found is not yours/)
   })
 })
 
@@ -122,12 +167,23 @@ describe('starting a chat from the embedded panel', () => {
     }) },
   }) as never
 
-  it('refuses a changed key', async () => {
+  it('a key replaced elsewhere: offers a key wrapped to the new one', async () => {
+    const old = await generateKeyPair()
+    const replaced = await generateKeyPair()
+    pinPerson('7', await jkt(old.publicJwk), '')
+    const got = await offeredKey(client({ pair: replaced, jkt: await jkt(replaced.publicJwk) }), 'w1')
+    const offer = got.conversation_key as { wrap: never; conversation: string }
+    await expect(unwrapEcdhEs(offer.wrap, replaced.privateKey, replaced.publicJwk, wrapInfo(offer.conversation, '7')))
+      .resolves.toBeTruthy()
+  })
+
+  it('refuses a key an unlock here proved is not theirs', async () => {
     const mine = await generateKeyPair()
     const substituted = await generateKeyPair()
-    pinPerson('7', await jkt(mine.publicJwk), '')
-    await expect(offeredKey(client({ pair: substituted, jkt: await jkt(substituted.publicJwk) }), 'w1'))
-      .rejects.toThrow(/not the one this browser last opened/)
+    const c = client({ pair: substituted, jkt: await jkt(substituted.publicJwk) })
+    await offeredKey(c, 'w1')
+    await rememberSelf('7', mine.publicJwk, mine.scalar)
+    await expect(offeredKey(c, 'w1')).rejects.toThrow(/already found is not yours/)
   })
 
   it('with no pin, offers a key wrapped to the named key, without unlocking anything', async () => {

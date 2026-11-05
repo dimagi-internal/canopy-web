@@ -29,6 +29,7 @@ const chat = vi.hoisted(() => ({
   transferSession: vi.fn(),
   requestBackfill: vi.fn(),
   resetSession: vi.fn(),
+  deleteSessionContent: vi.fn(),
   setSessionNotify: vi.fn(),
   setSessionTitle: vi.fn(),
   uploadAttachment: vi.fn(),
@@ -374,6 +375,43 @@ describe('useSessionActions', () => {
     await act(async () => { await result.current.closeThisSession() })
     expect(onLeave).not.toHaveBeenCalled()
     expect(result.current.closeNote).toMatch(/Could not close/)
+  })
+
+  it('deletes only after a confirm that says it cannot be undone, then leaves', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    chat.deleteSessionContent.mockResolvedValue({ deleted_at: 'now', messages: 1, attachments: 0, turns: 0 })
+    const onLeave = vi.fn()
+    const { result } = renderHook(
+      () => useSessionActions({ sessionId: 's1', meta: meta(), setMeta: vi.fn(), onLeave }),
+      { wrapper },
+    )
+    await act(async () => { await result.current.deleteContent() })
+    expect(chat.deleteSessionContent).not.toHaveBeenCalled()
+    const asked = confirm.mock.calls[0][0]
+    expect(asked).toMatch(/can’t be undone/)
+    for (const out of ['copy on your computer', 'notes, logs and mailbox', 'review request', 'share links',
+      'Memory facts', 'Artifacts', 'other agents']) {
+      expect(asked).toContain(out)
+    }
+    confirm.mockReturnValue(true)
+    await act(async () => { await result.current.deleteContent() })
+    expect(chat.deleteSessionContent).toHaveBeenCalledWith('s1')
+    expect(onLeave).toHaveBeenCalled()
+    confirm.mockRestore()
+  })
+
+  it('shows why a delete was refused and stays', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    chat.deleteSessionContent.mockRejectedValue(new Error('Other people are or were in this conversation'))
+    const onLeave = vi.fn()
+    const { result } = renderHook(
+      () => useSessionActions({ sessionId: 's1', meta: meta(), setMeta: vi.fn(), onLeave }),
+      { wrapper },
+    )
+    await act(async () => { await result.current.deleteContent() })
+    expect(result.current.deleteNote).toMatch(/Other people/)
+    expect(onLeave).not.toHaveBeenCalled()
+    confirm.mockRestore()
   })
 
   it('describes a reset the runner could not do', async () => {

@@ -77,12 +77,16 @@ PARTICIPANT_ROLE_CHANGED = "session.participant_role_changed"
 SHARING_CHANGED = "session.sharing_changed"
 SENSITIVITY_CHANGED = "session.sensitivity_changed"
 RESET = "session.reset"
+#: The person whose session it is deleted its stored words; the row stays, and takes
+#: no more (`content_deletion`).
+CONTENT_DELETED = "session.content_deleted"
 FORKED = "session.forked"
 TRANSFERRED = "session.transferred"
 
 KINDS = (CREATED, CLOSED, CLOSE_REQUESTED, ARCHIVED, UNARCHIVED, DELETED, MOVED, SLACK_BOUND,
          SLACK_DETACHED, SLACK_REBOUND, PARTICIPANT_ADDED, PARTICIPANT_REMOVED,
-         PARTICIPANT_ROLE_CHANGED, SHARING_CHANGED, SENSITIVITY_CHANGED, RESET, FORKED, TRANSFERRED)
+         PARTICIPANT_ROLE_CHANGED, SHARING_CHANGED, SENSITIVITY_CHANGED, RESET, CONTENT_DELETED, FORKED,
+         TRANSFERRED)
 
 #: Where a session keeps its Slack thread (`apps.slack.services.SLACK_THREAD_KEY`;
 #: this app knows no Slack, so the key is repeated, as `audience.py` does).
@@ -236,7 +240,8 @@ _VERBS = {
     SLACK_DETACHED: "detached from Slack", SLACK_REBOUND: "moved to another Slack thread",
     PARTICIPANT_ADDED: "participant added", PARTICIPANT_REMOVED: "participant removed",
     PARTICIPANT_ROLE_CHANGED: "participant role changed", SHARING_CHANGED: "sharing changed",
-    SENSITIVITY_CHANGED: "sensitivity changed", RESET: "reset", FORKED: "forked",
+    SENSITIVITY_CHANGED: "sensitivity changed", RESET: "reset",
+    CONTENT_DELETED: "content deleted", FORKED: "forked",
     TRANSFERRED: "transferred",
 }
 

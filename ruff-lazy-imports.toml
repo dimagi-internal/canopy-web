@@ -19,7 +19,6 @@
 "apps/agent_runs/documents.py" = ["PLC0415"]  # 6
 "apps/agent_runs/resolver.py" = ["PLC0415"]  # 2
 "apps/agent_runs/stores.py" = ["PLC0415"]  # 15
-"apps/agents/access.py" = ["PLC0415"]  # 3
 "apps/agents/api.py" = ["PLC0415"]  # 6
 "apps/agents/api_board.py" = ["PLC0415"]  # 1
 "apps/agents/api_fleet.py" = ["PLC0415"]  # 3
@@ -145,7 +144,7 @@
 "apps/harness/artifact_origin.py" = ["PLC0415"]  # 2
 "apps/harness/auto_debug.py" = ["PLC0415"]  # 9
 "apps/harness/aws_iam_proof.py" = ["PLC0415"]  # 2
-"apps/harness/caller_context.py" = ["PLC0415"]  # 14
+"apps/harness/caller_context.py" = ["PLC0415"]  # 13
 "apps/harness/caller_tokens.py" = ["PLC0415"]  # 3
 "apps/harness/channels/email.py" = ["PLC0415"]  # 3
 "apps/harness/claim.py" = ["PLC0415"]  # 6
@@ -181,7 +180,7 @@
 "apps/harness/signals.py" = ["PLC0415"]  # 2
 "apps/harness/sweeps.py" = ["PLC0415"]  # 1
 "apps/harness/topology.py" = ["PLC0415"]  # 2
-"apps/harness/turn_access.py" = ["PLC0415"]  # 2
+"apps/harness/turn_access.py" = ["PLC0415"]  # 1
 "apps/harness/turn_agent_tokens.py" = ["PLC0415"]  # 2
 "apps/harness/turn_close.py" = ["PLC0415"]  # 8
 "apps/harness/turn_mode.py" = ["PLC0415"]  # 8
@@ -268,7 +267,7 @@
 "apps/slack/location.py" = ["PLC0415"]  # 6
 "apps/slack/management/commands/slack_declare_agent.py" = ["PLC0415"]  # 1
 "apps/slack/relay.py" = ["PLC0415"]  # 21
-"apps/slack/services.py" = ["PLC0415"]  # 28
+"apps/slack/services.py" = ["PLC0415"]  # 24
 "apps/slack/share.py" = ["PLC0415"]  # 11
 "apps/slack/signals.py" = ["PLC0415"]  # 10
 "apps/slack/status.py" = ["PLC0415"]  # 11

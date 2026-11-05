@@ -78,7 +78,7 @@ def _own_login(session) -> set[int]:
 def _coaches(session) -> dict[int, str]:
     """Leg 5: the logins of agents the session's person let review their sessions
     (`access.sessions_of_q`), never a sensitive or a contact's session. {user id: agent name}."""
-    if session.contact_id or sensitivity.is_sensitive(session):
+    if session.contact_id or session.content_deleted_at or sensitivity.is_sensitive(session):
         return {}
     person = session.created_by_id
     if person is None and _discovered(session) and not session.agent_id:
@@ -92,8 +92,9 @@ def _coaches(session) -> dict[int, str]:
 
 
 def _asked_reviewers(session) -> dict[int, str]:
-    """Leg 8: the logins of agents the session's person asked to review this one session,
-    never a sensitive or a contact's session. {user id: agent name}."""
+    """Agents the session's person asked to review this one session: {agent id: name}. Not a
+    leg (their turn reads as the person, `access.turn_reach`), so `readers` leaves them out;
+    the line says it anyway, since it is who else will see the words."""
     if session.contact_id or sensitivity.is_sensitive(session):
         return {}
     person = session.created_by_id
@@ -104,9 +105,9 @@ def _asked_reviewers(session) -> dict[int, str]:
         return {}
     asks = (SessionReviewAsk.objects
             .filter(session=session, user_id=person, revoked_at__isnull=True, expires_at__gt=timezone.now(),
-                    agent__user__isnull=False, review_session__isnull=False)
+                    review_session__isnull=False)
             .select_related("agent"))
-    return {a.agent.user_id: (a.agent.name or a.agent.slug) for a in asks}
+    return {a.agent_id: (a.agent.name or a.agent.slug) for a in asks}
 
 
 def _runner_admins(session) -> set[int]:
@@ -128,7 +129,8 @@ def _project_teams(session) -> dict[str, set[int]]:
     projects = AgentProject.objects.filter(
         pk__in=ProjectSessionShare.objects.filter(user_id=b.runner.owner_id, revoked_at__isnull=True)
         .values("project_id"),
-        workspace_id=session.workspace_id, repo_slug__iexact=b.emdash_project)
+        workspace_id=session.workspace_id, repo_slug__iexact=b.emdash_project,
+        visibility=AgentProject.WORKSPACE)
     logins = set(Agent.objects.filter(user__isnull=False).values_list("user_id", flat=True))
     out = {}
     for p in projects:
@@ -153,7 +155,7 @@ def pieces(session) -> dict:
         "agent_admins": within(_agent_admins(session)),
         "own_login": within(_own_login(session)),
         "coaches": {uid: name for uid, name in coaches.items() if uid in members},
-        "asked_reviewers": {uid: name for uid, name in asked.items() if uid in members},
+        "asked_reviewers": asked,
         "runner_admins": within(_runner_admins(session)),
         "project_teams": {name: within(team) for name, team in _project_teams(session).items()},
     }
@@ -164,7 +166,7 @@ def readers(session) -> set[int]:
     session (the panel) has no member readers beyond these."""
     p = pieces(session)
     out = p["creator"] | p["participants"] | p["box_owner"] | p["agent_admins"] | p["own_login"]
-    out |= set(p["coaches"]) | set(p["asked_reviewers"]) | p["runner_admins"]
+    out |= set(p["coaches"]) | p["runner_admins"]
     for team in p["project_teams"].values():
         out |= team
     return out

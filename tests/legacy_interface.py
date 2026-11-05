@@ -16,11 +16,13 @@ from __future__ import annotations
 from dataclasses import replace
 from fnmatch import fnmatchcase
 
-from apps.agents import access, grants, roles
+from apps.agents import grants, roles
 from apps.harness import runner_requirements as rr
 from apps.harness import sensitivity
 from apps.host_grants import execution, site_agents
 from apps.workspaces.links import scoped_url
+
+from . import legacy_decide as access
 
 ASK, READ = "ask", "read"
 READ_MODE_NAMES = (ASK, READ)
@@ -254,8 +256,7 @@ def agent_entry(app, agent) -> dict:
     reach, running = f"{settings_url}#reach", f"{settings_url}#running"
     found: list[tuple[str, str]] = []
     if not capabilities:
-        found.append((f"{agent.name} has no capability naming {app.name} in `sites:` — publish "
-                      f"one on its interface: canopy › {reach}", reach))
+        found.append((f"{agent.name} is not connected to {app.name} — connect it under Channels on its settings: canopy › {reach}", reach))
     if not takers:
         found.append((f"no runner takes {agent.name}'s turns: canopy › {running}", running))
     elif not ready_runners:
@@ -280,7 +281,7 @@ def agent_entry(app, agent) -> dict:
     }
 
 
-# --- the decision: every part of `access.decide` that reads the interface ---------------------
+# --- the decision: every part of the rule that reads the interface ---------------------------
 
 def _page_capability(turn, iface, permissions) -> str | None:
     resource = _declared_resource(turn)
