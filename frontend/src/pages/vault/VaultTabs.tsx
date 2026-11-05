@@ -146,7 +146,7 @@ export function VaultOverviewTab({ vault: v, onChange, reload, unlock }: VaultOu
                     <span className="font-medium text-foreground">{p.runner_name || 'A machine'}</span>
                     <span className="text-muted-foreground">
                       {p.person_email ? ` — ${p.person_email}'s` : ''}
-                      {p.serves.length ? ` · runs ${p.serves.join(', ')}` : ''}
+                      {p.serves?.length ? ` · runs ${p.serves.join(', ')}` : ''}
                     </span>
                     {p.waiting_reason === 'unendorsed' && (
                       <p className="text-warning" data-testid={`vault-machine-unendorsed-${p.target}`}>
