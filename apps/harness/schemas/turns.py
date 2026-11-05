@@ -63,6 +63,10 @@ class TurnIn(Schema):
     # The agent CLI to run it on: one the agent is set up for (`clis.refusal`), or
     # Claude Code for a project turn. Omit for the agent's default.
     cli: cli_vocab.CliName | None = None
+    # Who a turn nobody asked for is starting this one for: the email of ONE person who let this
+    # agent review them. The turn reads their sessions alone (`turn_asker.READS_FOR`). Only that
+    # agent's own login, inside such a turn, may name one.
+    reads_for: str | None = None
 
     _norm_origin = field_validator("origin")(staticmethod(normalize_origin))
 

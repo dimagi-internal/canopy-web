@@ -176,6 +176,27 @@ def resolve_pin(request: HttpRequest, payload: TurnIn, agent, workspace=None):
     return pinned
 
 
+def check_reads_for(request: HttpRequest, payload: TurnIn, agent) -> int | None:
+    """The user id `payload.reads_for` names, once it is shown to be someone this request may
+    scope a turn to: this agent's own login, inside a turn nobody asked for, naming a live
+    grantor of it. A turn already scoped may name only its own person, and its scope passes on
+    whatever this says (`turn_asker.dispatch_stamp`). 403 or 422 otherwise, before any turn."""
+    email = (payload.reads_for or "").strip()
+    if not email:
+        return None
+    from apps.canopy_sessions import access as session_access  # noqa: PLC0415 — sessions import the harness
+
+    stand = turn_asker.standing(request.user)
+    if (agent is None or not agent.is_own_login(request.user) or stand is None or not stand.unattended):
+        raise HttpError(403, "only an agent's own login, inside a turn nobody asked for, may scope a "
+                             "turn to one person")
+    grant = (session_access.review_grantors(request.user).filter(agent=agent, user__email__iexact=email)
+             .first())
+    if grant is None:
+        raise HttpError(422, f"{email} has no live review grant to {agent.slug} that this turn may use")
+    return grant.user_id
+
+
 def check_asker(request: HttpRequest, payload: TurnIn, agent):
     """The turn's initiator (None for email: enqueue_turn names that sender),
     after asking THE rule and the turn-mode gate of the requester."""

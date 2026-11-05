@@ -5,7 +5,8 @@ a running turn of Trellis, and only as far as that turn's asker goes
 (`access.review_grantors`, the asker taken from the server's `Turn.initiator_*`):
 
 * a person asked  -> that person's sessions alone ("coach me" is me only);
-* nobody asked (schedule, trigger, canopy or another agent started it) -> every grantor's;
+* nobody asked (schedule, trigger, canopy or another agent started it) -> the roster and no
+  session, unless it was dispatched for one grantor (tests/test_weekly_pass_one_grantor.py);
 * an administrator of the agent asked -> every grantor's (they run it for all it serves);
 * a contact or an unverified user asked, a stored token, a session sign-in, a finished
   or confined turn -> nobody's.
@@ -122,20 +123,24 @@ def test_a_forged_on_behalf_header_is_refused(w):
     assert r.status_code == 403
 
 
-def test_a_turn_nobody_asked_reads_every_grantor(w):
-    """A schedule's coaching sweep: canopy started it, no person is behind it."""
+def test_a_schedule_its_owner_made_answers_to_them_as_if_they_asked(w):
+    """Canopy started it on the agent's admin's account: every grantor's, as they would read."""
     bearer = _login(w, _turn(w, kind="system", by=w["owner"], assurance="internal"))
     assert _reads(bearer, w["chat"]["lili"]) and _reads(bearer, w["chat"]["bo"])
     assert not _reads(bearer, w["chat"]["col"])          # not a grantor
     assert not _reads(bearer, w["sealed"])               # sensitive: never
 
 
-def test_an_agent_dispatch_from_a_turn_nobody_asked_reads_every_grantor(w):
+def test_an_agent_dispatch_from_a_turn_nobody_asked_reads_no_one_unless_it_names_one(w):
     """The server stamps `unattended_dispatch` only when the dispatching turn was itself
     nobody-asked (`turn_asker.dispatch_stamp`); tests/test_adversarial_agent_reads.py."""
-    bearer = _login(w, _turn(w, kind="user", by=_another_agent(w), assurance="pat",
+    other = _another_agent(w)
+    bearer = _login(w, _turn(w, kind="user", by=other, assurance="pat",
                              origin_ref={"unattended_dispatch": True}))
-    assert _reads(bearer, w["chat"]["lili"]) and _reads(bearer, w["chat"]["bo"])
+    assert not _reads(bearer, w["chat"]["lili"]) and not _reads(bearer, w["chat"]["bo"])
+    bearer = _login(w, _turn(w, kind="user", by=other, assurance="pat",
+                             origin_ref={"unattended_dispatch": True, "reads_for": {"user_id": w["lili"].pk}}))
+    assert _reads(bearer, w["chat"]["lili"]) and not _reads(bearer, w["chat"]["bo"])
 
 
 def test_an_agent_dispatch_the_server_did_not_stamp_reads_nothing(w):

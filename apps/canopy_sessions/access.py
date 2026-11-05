@@ -81,6 +81,8 @@ A box with no owner gives the leg to nobody (it fails closed).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from django.db.models import Exists, OuterRef, Q
 from django.utils import timezone
 
@@ -101,8 +103,22 @@ from .models import (
 )
 
 
-#: On a request's user: the `Q` an agent turn's caller token holds its reads to (`limit_reach`).
+#: On a request's user: the `Reach` an agent turn's caller token holds its reads to (`limit_reach`).
 REACH_ATTR = "_canopy_session_reach"
+
+
+@dataclass(frozen=True)
+class Reach:
+    """How far one request may read, whatever its user's legs would allow: the sessions in `q`,
+    and for a turn in no conversation, its own (`turn_id`) and those of `agent_id`, if any."""
+
+    q: Q
+    agent_id: int | None = None
+    turn_id: str = ""
+
+
+#: A request that should be held to a reach and has none it can show: it reads nothing.
+NO_REACH = Reach(Q(pk__in=[]))
 
 
 def is_review_conversation(session) -> bool:
@@ -130,7 +146,7 @@ def turn_conversation(turn):
     return Session.objects.filter(pk=named).first() if named else None
 
 
-def turn_reach(turn) -> Q | None:
+def turn_reach(turn) -> Reach | None:
     """How far a caller token on `turn` reads, as the asker. None when it is not an agent's
     turn: a repo chat's token is the person's own tool.
 
@@ -144,16 +160,50 @@ def turn_reach(turn) -> Q | None:
         return None
     conversation = turn_conversation(turn)
     own = Q(pk=conversation.pk) if conversation is not None else Q(pk__in=[])
+    turn_id = str(turn.pk)
     if is_review_conversation(conversation):
         ask = live_review_ask(conversation.pk, user_id=turn.initiator_user_id)
-        return own | Q(pk=ask.session_id) if ask is not None else own
-    return own | Q(agent_id=agent.pk)
+        return Reach(own | Q(pk=ask.session_id) if ask is not None else own, turn_id=turn_id)
+    return Reach(own | Q(agent_id=agent.pk), agent_id=agent.pk, turn_id=turn_id)
 
 
-def limit_reach(user, reach: Q | None) -> None:
+def limit_reach(user, reach: Reach | None) -> None:
     """Hold `user` (this request's) to `reach`. Only ever narrows."""
     if user is not None and reach is not None:
         setattr(user, REACH_ATTR, reach)
+
+
+def reach_of(user) -> Reach | None:
+    """The reach this request is held to, or None when it is not. A caller token's, or for an
+    agent's login inside a turn scoped to one grantor (`turn_asker.READS_FOR`), that person's
+    own sessions, its own conversation and its own turn: not the agent's other work, nor a
+    channel's or a chat it was let into, whichever text in that person's session asks."""
+    reach = getattr(user, REACH_ATTR, None)
+    if reach is not None:
+        return reach
+    from apps.harness import turn_asker  # noqa: PLC0415 — harness imports this module
+
+    stand = turn_asker.standing(user)
+    if stand is None or stand.reads_for is None:
+        return None
+    own = Q(pk=stand.conversation_id) if stand.conversation_id else Q(pk__in=[])
+    return Reach(own | sessions_of_q([stand.reads_for]), turn_id=stand.turn_id)
+
+
+def turn_in_reach(user, turn) -> bool:
+    """Whether the reach this request is held to, if any, covers `turn`. One in a conversation is
+    that conversation's: its chat FK, or the one its `origin_ref` names. One in none is its own,
+    or its agent's when the reach has one. Any other is out, so this fails closed."""
+    reach = reach_of(user)
+    if reach is None:
+        return True
+    conversation = turn_conversation(turn)
+    if conversation is not None:
+        return Session.objects.filter(pk=conversation.pk).filter(reach.q).exists()
+    if reach.turn_id and str(turn.pk) == reach.turn_id:
+        return True
+    agent = turn.acting_agent
+    return reach.agent_id is not None and agent is not None and agent.pk == reach.agent_id
 
 
 def visible_session_q(user) -> Q:
@@ -225,8 +275,8 @@ def visible_session_q(user) -> Q:
         | _runner_admin_q(user)
         | _project_share_q(user)
     )
-    reach = getattr(user, REACH_ATTR, None)
-    return legs if reach is None else legs & reach
+    reach = reach_of(user)
+    return legs if reach is None else legs & reach.q
 
 
 def _project_share_q(user) -> Q:
@@ -393,9 +443,12 @@ def review_grantors(user):
     * a turn canopy started on a PERSON's account (a schedule, an agent task's follow-up)
       answers to that person, as if they had asked: whoever may create it chose its prompt;
     * a turn nobody asked for (a schedule or trigger no person owns, or a dispatch from
-      such a turn: the server stamps `unattended_dispatch`) reads every grantor's, which
-      is the coaching sweep; so does one asked by an administrator of the agent itself,
-      who runs it for all it serves (`Agent.is_admin`);
+      such a turn: the server stamps `unattended_dispatch`) sees every grantor on the
+      ROSTER, which is what the coaching sweep needs, and reads none of their sessions
+      (`_review_grant_q`) unless it was dispatched for one of them (`turn_asker.READS_FOR`),
+      when both the roster and the reads are that one person;
+    * a turn asked by an administrator of the agent itself reads every grantor's: they
+      run it for all it serves (`Agent.is_admin`);
     * no turn at all — a stored token, a session, a socket, a finished, confined or
       unverified-asker turn, or a dispatch from a turn like those — reads nobody's: it
       cannot show whom it is answering to.
@@ -408,6 +461,8 @@ def review_grantors(user):
     stand = turn_asker.standing(user)
     if stand is None:
         return grants.none()
+    if stand.reads_for is not None:
+        return grants.filter(user_id=stand.reads_for)
     if stand.unattended or stand.operator:
         return grants
     return grants.filter(user_id=stand.person_id)
@@ -415,9 +470,15 @@ def review_grantors(user):
 
 def _review_grant_q(user) -> Q:
     """Leg 5: the sessions of the people `review_grantors` allows this request to read.
-    Empty for anyone else, and never a session whose words its person deleted: a coach
-    has no business with the row that is left."""
+    Empty for anyone else, and for a turn nobody asked that names no one grantor: it holds the
+    roster and no transcript, so a dispatch from an older plugin, with no scope, reads nothing.
+    Never a session whose words its person deleted: a coach has no business with the row left."""
     if not getattr(user, "is_authenticated", False):
+        return Q(pk__in=[])
+    from apps.harness import turn_asker  # noqa: PLC0415 — harness imports this module
+
+    stand = turn_asker.standing(user)
+    if stand is not None and stand.unattended and stand.reads_for is None:
         return Q(pk__in=[])
     return (sessions_of_q(review_grantors(user).values("user_id"))
             & Q(contact__isnull=True, content_deleted_at__isnull=True) & _not_sensitive_q())

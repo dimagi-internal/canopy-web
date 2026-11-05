@@ -123,9 +123,11 @@ def test_a_sweep_an_administrator_scheduled_still_reads_every_grantor(w):
     assert _reads(bearer, w["chat"]["lili"]) and _reads(bearer, w["chat"]["bo"])
 
 
-def test_a_schedule_with_nobody_accountable_still_sweeps(w):
+def test_a_schedule_with_nobody_accountable_has_the_roster_and_reads_no_session(w):
+    """The sweep names who is enrolled and hands each to a turn of their own
+    (tests/test_weekly_pass_one_grantor.py); it holds no transcript itself."""
     bearer = _login(w, _turn(w, kind="system", by=None, assurance="internal"))
-    assert _reads(bearer, w["chat"]["lili"]) and _reads(bearer, w["chat"]["bo"])
+    assert not _reads(bearer, w["chat"]["lili"]) and not _reads(bearer, w["chat"]["bo"])
 
 
 def test_a_schedule_an_agent_login_made_proves_no_person_and_reads_nothing(w):
@@ -168,10 +170,10 @@ def test_a_client_cannot_stamp_its_own_unattended_dispatch(w):
     assert not _reads(_login(w, trellis), w["chat"]["lili"])
 
 
-def test_a_dispatch_from_an_unattended_turn_is_unattended(w):
+def test_a_dispatch_from_an_unattended_turn_naming_no_one_reads_nothing(w):
     ada = _turn(w, "ada", kind="system", by=None, assurance="internal")
     bearer = _login(w, _dispatch(w, _login(w, ada)))
-    assert _reads(bearer, w["chat"]["lili"]) and _reads(bearer, w["chat"]["bo"])
+    assert not _reads(bearer, w["chat"]["lili"]) and not _reads(bearer, w["chat"]["bo"])
 
 
 def test_a_dispatch_from_a_person_asked_turn_is_that_persons(w):

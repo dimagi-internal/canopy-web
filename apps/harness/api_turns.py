@@ -109,6 +109,7 @@ def enqueue_turn(request: HttpRequest, payload: TurnIn):
     turn_gates.check_email_poster(request, payload, agent)
     pinned = turn_gates.resolve_pin(request, payload, agent, workspace)
     initiator = turn_gates.check_asker(request, payload, agent)
+    reads_for = turn_gates.check_reads_for(request, payload, agent)
     # An agent dispatching for the person in its turn (turn_asker): enqueue_turn stamps
     # them on the turn, and they are who asked for its mode (the claim re-checks them).
     if (refused := clis.refusal(agent, payload.cli or "")) is not None:
@@ -135,6 +136,7 @@ def enqueue_turn(request: HttpRequest, payload: TurnIn):
         # What the caller was running inside (overrides X-Canopy-Parent-*).
         parent=payload.parent,
         requested_cli=payload.cli or "",
+        reads_for=reads_for,
     )
     from . import turn_access
 
