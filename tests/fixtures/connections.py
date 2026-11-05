@@ -221,7 +221,10 @@ SEALED = "zks1:test-envelope"
 def _stored(owner_kw, by, *, app=None, sealed=SEALED, **fields):
     """A stored Salesforce connection, sealed (`sealed="zks1:…"`), made with `app` —
     by default the agent's workspace's app, or the person's `home` workspace's
-    (each created if missing). No token: canopy-web holds none."""
+    (each created if missing). No token: canopy-web holds none.
+
+    An agent's comes back unfinished (statement version 0), which the agent's list hides:
+    a suite about the list passes `statement_version=1`."""
     if app is None:
         owner = owner_kw.get("agent") or owner_kw.get("user")
         app = sf_app(owner.workspace if "agent" in owner_kw else home(owner))

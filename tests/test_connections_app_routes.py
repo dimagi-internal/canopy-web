@@ -382,7 +382,7 @@ def test_my_list_has_a_row_per_workspace_that_set_the_provider_up(admin, ws):
 
 def test_an_agents_list_names_its_workspace(admin, ws):
     agent = Agent.objects.create(slug="eva", name="Eva", workspace=ws, owner=admin)
-    _stored({"agent": agent}, admin)
+    _stored({"agent": agent}, admin, statement_version=1)
     body = _browser(admin).get("/api/agents/eva/connections").json()
     assert body["providers"] == [{"name": "salesforce", "title": "Salesforce", "workspace": "w",
                                   "workspace_name": "Dimagi", "configured": True},

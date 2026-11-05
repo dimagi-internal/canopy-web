@@ -119,10 +119,10 @@ def test_delete_an_agents_connection_through_the_person_route_is_404(client, use
 # ---- an agent's ------------------------------------------------------------------
 
 def test_agent_list_has_own_and_granted(client, user, eva, echo):
-    own = _stored({"agent": echo}, user)
+    own = _stored({"agent": echo}, user, statement_version=1)
     shared = Connection.objects.create(
         provider="salesforce", account_id="00Dorg/005eva", account_label="eva@dimagi-ai.com",
-        agent=eva, connected_by=user, app=sf_app(eva.workspace))
+        agent=eva, connected_by=user, app=sf_app(eva.workspace), statement_version=1)
     ConnectionGrant.objects.create(connection=shared, agent=echo, granted_by=user)
     rows = client.get("/api/agents/echo/connections").json()["connections"]
     by_id = {r["id"]: r for r in rows}
@@ -134,7 +134,7 @@ def test_agent_list_has_own_and_granted(client, user, eva, echo):
 
 
 def test_owned_row_lists_its_grantees_until_revoked(client, user, eva, echo):
-    conn = _stored({"agent": eva}, user)
+    conn = _stored({"agent": eva}, user, statement_version=1)
     assert client.get("/api/agents/eva/connections").json()["connections"][0]["shared_with"] == []
     grant = ConnectionGrant.objects.create(connection=conn, agent=echo, granted_by=user)
     row = client.get("/api/agents/eva/connections").json()["connections"][0]
@@ -258,7 +258,7 @@ def test_deleting_the_person_who_connected_keeps_the_agents_connection(client, u
     """M2: an agent's Salesforce identity outlives the admin who attached it
     (and the one who shared it)."""
     admin = _mk("former-admin")
-    conn = _stored({"agent": eva}, admin)
+    conn = _stored({"agent": eva}, admin, statement_version=1)
     grant = ConnectionGrant.objects.create(connection=conn, agent=echo, granted_by=admin)
     admin.delete()
     conn.refresh_from_db()
@@ -271,7 +271,7 @@ def test_deleting_the_person_who_connected_keeps_the_agents_connection(client, u
 def test_rows_carry_their_scopes(client, user, eva):
     """M3: what the grant allows is visible, on both lists."""
     for kw in ({"user": user}, {"agent": eva}):
-        c = _stored(kw, user)
+        c = _stored(kw, user, statement_version=1)
         c.scopes = "api refresh_token"
         c.save()
     mine = client.get("/api/connections/").json()["connections"]
@@ -296,7 +296,7 @@ def test_a_connection_in_a_workspace_i_left_is_listed_as_not_usable(client, user
 def test_an_agents_connection_from_before_a_move_is_listed_as_not_usable(client, user, ws, eva, echo):
     other_ws = Workspace.objects.create(slug="x", display_name="X", created_by=user)
     WorkspaceMembership.objects.create(workspace=other_ws, user=user, role=WorkspaceMembership.EDITOR)
-    old = _stored({"agent": eva}, user, app=sf_app(ws))
+    old = _stored({"agent": eva}, user, app=sf_app(ws), statement_version=1)
     ConnectionGrant.objects.create(connection=old, agent=echo, granted_by=user)
     Agent.objects.filter(pk=eva.pk).update(workspace=other_ws)
     eva_rows = client.get("/api/agents/eva/connections").json()["connections"]
@@ -310,7 +310,8 @@ def test_a_scope_added_to_the_app_shows_on_existing_connections(client, user, ws
     app = sf_app(ws, provider="google", allowed_domains="")
     send, read = ("https://www.googleapis.com/auth/gmail.send", "https://www.googleapis.com/auth/gmail.readonly")
     for kw in ({"user": user}, {"agent": eva}):
-        _stored(kw, user, app=app, scopes=f"openid https://www.googleapis.com/auth/userinfo.email {read}")
+        _stored(kw, user, app=app, statement_version=1,
+                scopes=f"openid https://www.googleapis.com/auth/userinfo.email {read}")
     app.scopes = f"{read} {send}"
     app.save()
     want = [{"scope": send, "label": "Send mail"}]
