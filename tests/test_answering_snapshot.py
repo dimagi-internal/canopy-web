@@ -86,13 +86,13 @@ def test_it_holds_everything_the_spec_lists(w):
     assert set(doc) == {"agents", "sites", "topology", "shape"}
     ace, labsdata, plain = doc["agents"]["ace"], doc["agents"]["labsdata"], doc["agents"]["plain"]
 
-    # profile() per stamp: the full profile, read mode either way, each door, and a retired name.
+    # profile() per stamp: the full profile, read mode either way, each connected site, and a retired name.
     assert ace["profile"][""] is None
     assert ace["profile"]["connect"]["tools"][-1] == "mcp__*canopy-web__page_*"
     assert ace["profile"]["read"]["name"] == "read"
     assert ace["profile"]["ask"]["entry"] == "/ace:ask --thread {thread_id}"
     assert ace["profile"]["retired_probe"]["tools"] == []
-    assert plain["profile"]["read"]["default_profile_version"] == 3
+    assert plain["profile"]["read"]["default_profile_version"] == 4
 
     # decide(): each posture, in each kind of conversation.
     assert ace["decide"]["owner"]["chat"]["(free-form)"]["access"] == "full"
@@ -219,7 +219,7 @@ def test_shape_names_each_thing_the_plain_forms_cannot_hold(w):
         "again": {"sites": ["a"]}}}
     w["plain"].save(update_fields=["interface"])
     AgentGrant.objects.create(agent=w["ace"], kind=AgentGrant.CONTACT, capability="gone", verified=False)
-    AgentRole.objects.create(workspace=w["ace"].workspace, key="door_role", label="Door", permissions=["use:connect"])
+    AgentRole.objects.create(workspace=w["ace"].workspace, key="site_role", label="Site", permissions=["use:connect"])
     AdmissionRule.objects.create(workspace=w["ace"].workspace, reason="r", capability="connect")
     shape = _doc()["shape"]
     assert shape["agent_problems"]["plain"] == [

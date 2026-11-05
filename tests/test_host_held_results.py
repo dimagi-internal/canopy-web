@@ -729,7 +729,7 @@ def _sensitive(w):
     return box
 
 
-def test_site_read_is_a_tool_a_sensitive_capability_holds(w, host):
+def test_site_read_is_a_tool_a_sensitive_connected_site_holds(w, host):
     _sensitive(w)
     sg.grant(w)
     out = _visitor_call(w, host, "site_call", {"tool": "data_query", "arguments": {"sql": "x"}})
@@ -754,9 +754,9 @@ def test_site_read_is_refused_outside_the_requirements_and_never_reaches_the_hos
     if breach == "runner":
         RunnerFlag.objects.filter(runner=box).delete()
     uri = host.store.save("query", {"rows": ROWS}, owner="u-42", name="r")["uri"]
-    # Refused by the caller token itself (an undeclared capability's sensitive turn
+    # Refused by the caller token itself (an undeclared connected site's sensitive turn
     # stands for nothing) or by the gateway — either way before any request.
-    with pytest.raises(Exception):  # noqa: B017 - which door refuses is not the point
+    with pytest.raises(Exception):  # noqa: B017 - which check refuses is not the point
         with sg.visitor(w):
             sg.call(host, "site_read", {"uri": uri})
     assert host.seen == [], "a refused read must not reach the host by any route"
@@ -900,7 +900,7 @@ def test_nothing_canopy_stores_for_a_sensitive_conversation_holds_a_row(w, host,
 # looking" from a MISSING `Canopy-Execution`, so anything that could make canopy issue a
 # delegated read without a statement read as the person. canopy now states it — only when
 # the principal behind the View request is a person acting as themselves
-# (`harness.acting_person`, by credential, never by door), only in a conversation they are
+# (`harness.acting_person`, by credential, never by route), only in a conversation they are
 # in — bound to the person, the resource, the conversation, the DPoP key and the token.
 # The host's recorded headers are verified here with the SDK's `verify_view`, as Labs does.
 
@@ -997,7 +997,7 @@ def test_a_colleague_in_the_conversation_gets_a_statement_naming_them(w, host):
 
 
 def test_an_agents_login_at_a_browser_gets_no_view_statement(w, host, monkeypatch):
-    """An agent's own canopy login is not a person, whichever door it uses — even a
+    """An agent's own canopy login is not a person, whichever way in it uses — even a
     session cookie in a conversation it was added to."""
     link = _link(_converse(w, host, sensitive=True))
     bot = User.objects.create_user("ace-bot", "ace-bot@agents.test", "pw")
@@ -1012,7 +1012,7 @@ def test_an_agents_login_at_a_browser_gets_no_view_statement(w, host, monkeypatc
     assert not any(VIEW_H in h for h in host.seen), "...without saying the person is looking"
 
 
-# --- an agent's door always carries its execution statement, never a view one ---------------
+# --- an agent's route always carries its execution statement, never a view one --------------
 
 
 def test_site_read_carries_the_agents_execution_statement_and_never_a_view(w, host):
@@ -1041,7 +1041,7 @@ def jwt_claims(raw):
     return jwt.decode(raw, options={"verify_signature": False})
 
 
-# --- can an agent reach the View's own door at all? (the suspicion, tested) -----------------
+# --- can an agent reach the View's own route at all? (the suspicion, tested) -----------------
 
 
 def _turn_in(w):
@@ -1049,7 +1049,7 @@ def _turn_in(w):
                                initiator_kind="user", idempotency_key=uuid.uuid4().hex)
 
 
-def test_an_agents_credentials_cannot_reach_the_view_read_door(w, host):
+def test_an_agents_credentials_cannot_reach_the_view_read_route(w, host):
     """Every credential an agent's turn holds is refused at the View routes, so no turn can
     make canopy issue a View's delegated read: a conversation's caller token (it reaches
     only routes MCP serves as tools, and these are not), the turn's own login and a PAT

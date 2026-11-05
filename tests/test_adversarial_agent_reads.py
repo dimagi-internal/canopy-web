@@ -87,7 +87,7 @@ def _post_turn(bearer, agent_slug, **extra):
 
 
 def _dispatch(w, ada_bearer, **extra):
-    """Ada's login asks Trellis to run a turn (the generic enqueue door); returns Trellis's
+    """Ada's login asks Trellis to run a turn (the generic enqueue route); returns Trellis's
     turn, made RUNNING on the box so its own login can be issued."""
     turn = _post_turn(ada_bearer, "trellis", **extra)
     Turn.objects.filter(pk=turn.pk).update(status=Turn.RUNNING, claimed_by=w["box"])

@@ -332,7 +332,7 @@ def test_the_contacts_admin_list_is_not_the_contact_prefix():
     assert c.get("/api/contacts/", **hdr).status_code in (401, 403)
 
 
-def test_a_blocked_contact_stops_at_the_door():
+def test_a_blocked_contact_stops_at_the_token_lookup():
     """Refusing one person, without disconnecting the site. Enforced in the
     token lookup so it takes effect on the next request rather than whenever a
     view remembers."""

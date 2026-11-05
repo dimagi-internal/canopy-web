@@ -168,7 +168,7 @@ def test_a_contact_principal_never_becomes_a_user():
         "the contact branch now assigns request.user; every /api/contact/ "
         "boundary depends on it NOT doing that"
     )
-    # And at the resolver every door shares: a contact principal has no user.
+    # And at the resolver every entry point shares: a contact principal has no user.
     principal_src = inspect.getsource(__import__("apps.tokens.principal", fromlist=["x"]))
     contact_return = principal_src[principal_src.index("return Principal(CONTACT"):]
     contact_return = contact_return[: contact_return.index("\n    if DELEGATED")]

@@ -1,4 +1,4 @@
-"""The Slack front door's test world: a faked Slack Web API, an installation, a linked
+"""Slack's test world: a faked Slack Web API, an installation, a linked
 member and an agent, and the signed-request helpers that drive apps/slack end to end.
 Registered as a pytest plugin (root conftest.py), so its fixtures need no import; a
 suite that wants the Slack settings asks for `slack_configured`

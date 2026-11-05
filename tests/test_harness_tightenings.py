@@ -1,4 +1,4 @@
-"""Five doors that skipped a rule the design already states — each closed, and the
+"""Five entry points that skipped a rule the design already states — each closed, and the
 legitimate path through it pinned beside the bypass.
 
 1. `origin=email` names its own (possibly VERIFIED) asker from `origin_ref`, so
@@ -76,7 +76,7 @@ def test_the_agents_admin_runner_owner_still_posts_email_turns(world):
     owner, editor, _ws, agent = world
     r = _post(pat_client(owner), "/api/harness/turns/", _email_turn())
     assert r.status_code == 201, r.content
-    # An explicit admin is a holder too (runner_may_hold_agent) — same door.
+    # An explicit admin is a holder too (runner_may_hold_agent) — same rule.
     AgentAdmin.objects.create(agent=agent, user=editor, granted_by=owner)
     r2 = _post(pat_client(editor), "/api/harness/turns/", _email_turn("e-2"))
     assert r2.status_code == 201, r2.content

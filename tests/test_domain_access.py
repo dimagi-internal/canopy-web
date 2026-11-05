@@ -13,7 +13,7 @@ import pytest
 from django.contrib.auth.models import User
 
 from apps.agents import roles
-from apps.agents.interface import ASK, FULL
+from apps.agents.interface import FULL, READ_MODE_STAMP
 from apps.agents.models import Agent
 from apps.contacts.email_auth import grade_of
 from apps.contacts.models import Contact
@@ -28,15 +28,15 @@ M = WorkspaceMembership
 DOMAINS = ["dimagi.com", "dimagi-ai.com", "dimagi-associate.com"]
 
 
-def _ace(agent, *extra_contact_capabilities):
-    """Verified contacts and members of each trusted domain are editors; any contact may `ask`
-    (and use `extra_contact_capabilities`)."""
-    declare(agent, {name: {} for name in ("ask", *extra_contact_capabilities)})
+def _ace(agent, *extra_contact_sites):
+    """Verified contacts and members of each trusted domain are editors; any contact may use read mode
+    (and use `extra_contact_sites`)."""
+    declare(agent, {name: {} for name in ("ask", *extra_contact_sites)})
     for d in DOMAINS:
         allow(agent, role=roles.EDITOR, contact=True, domain=d, verified=True)
         allow(agent, role=roles.EDITOR, domain=d)
     allow(agent, role=roles.READ_ONLY, contact=True)
-    for name in extra_contact_capabilities:
+    for name in extra_contact_sites:
         allow(agent, capability=name, contact=True)
 
 
@@ -99,7 +99,7 @@ def test_a_verified_sender_at_each_trusted_domain_gets_the_whole_agent(w, domain
 
 def test_an_unverified_message_from_a_trusted_domain_is_only_a_caller(w):
     t = _email(w["agent"], "someone@dimagi.com", "spoof", _hdr("dimagi.com", dmarc="fail"))
-    assert t.capability == ASK
+    assert t.capability == READ_MODE_STAMP
     assert caller_context.build(t)["granted_by"] == "capability:ask"
 
 
@@ -107,12 +107,12 @@ def test_an_unverified_message_from_a_trusted_domain_is_only_a_caller(w):
 def test_the_domain_is_matched_exactly(w, addr):
     dom = addr.split("@")[1]
     t = _email(w["agent"], addr, addr, _hdr(dom, dmarc="pass", dkim_d=dom))
-    assert t.capability == ASK
+    assert t.capability == READ_MODE_STAMP
 
 
 def test_an_outsider_is_a_caller(w):
     t = _email(w["agent"], "ppi@povertyindex.org", "p", _hdr("povertyindex.org", dmarc="pass"))
-    assert t.capability == ASK
+    assert t.capability == READ_MODE_STAMP
 
 
 def test_a_member_at_a_trusted_domain_gets_every_mcp_tool(w):

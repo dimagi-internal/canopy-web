@@ -1,7 +1,7 @@
 """A workspace editor who is only a reader: the access list gives editors a `read_only` line, so
-they go through the capabilities like any member instead of driving the whole agent. The retired
+they go through read mode and the connected sites like any member instead of driving the whole agent. The retired
 `editors: confined` setting is refused at publish and points at the access list.
-docs/architecture/access.md; the door-by-door matrix is in tests/test_access_matrix.py."""
+docs/architecture/access.md; the entry-point-by-entry-point matrix is in tests/test_access_matrix.py."""
 from __future__ import annotations
 
 import pytest
@@ -14,7 +14,7 @@ from apps.workspaces.models import Workspace
 from apps.workspaces.models import WorkspaceMembership as M
 from tests.access_helpers import allow, declare, editors_run
 
-ASK = {"ask": {"tools": ["Read"]}}
+READ_MODE_DOC = {"ask": {"tools": ["Read"]}}
 
 
 @pytest.mark.parametrize("value", ["confined", "full", "confine", "", None, True])
@@ -47,7 +47,7 @@ def _editors_are_users(agent, role=roles.READ_ONLY):
 
 
 def _support(w):
-    declare(w["agent"], ASK)
+    declare(w["agent"], READ_MODE_DOC)
     allow(w["agent"], role=roles.READ_ONLY)
     _editors_are_users(w["agent"])
 
@@ -68,19 +68,19 @@ def test_editor_given_an_editor_line_is_full(w):
     assert (d.access, d.review.manual_only) == (access.FULL, False)
 
 
-def test_an_editor_whose_line_names_another_capability_is_refused_ask(w):
+def test_an_editor_whose_line_names_another_connected_site_is_refused_read_mode(w):
     declare(w["agent"], {"ask": {"tools": ["Read"]}, "data": {"tools": ["Read"]}})
     AgentGrant.objects.create(agent=w["agent"], kind=AgentGrant.WORKSPACE,
                               subject_workspace_id=w["agent"].workspace_id, at_least="editor",
                               capability="data")
     d = turn_context.for_asker(w["agent"], w["editor"], verified=True, requested="data")
     assert (d.access, d.stamped) == (access.CONFINED, "data")
-    assert d.standing.agent_role is None and d.standing.permissions == {roles.use("data")}      # a door, not a role
-    assert turn_context.for_asker(w["agent"], w["editor"], verified=True).access == turn_context.REFUSED   # no `ask` line
+    assert d.standing.agent_role is None and d.standing.permissions == {roles.use("data")}      # a connected site, not a role
+    assert turn_context.for_asker(w["agent"], w["editor"], verified=True).access == turn_context.REFUSED   # no read-mode line
 
 
 def test_editors_who_run_the_agent_are_full_and_manual(w):
-    declare(w["agent"], ASK)
+    declare(w["agent"], READ_MODE_DOC)
     allow(w["agent"], role=roles.READ_ONLY)
     editors_run(w["agent"])
     d = turn_context.for_asker(w["agent"], w["editor"], verified=True)
@@ -95,7 +95,7 @@ def test_owner_and_admins_unaffected(w, who):
 
 
 def test_viewer_unaffected_by_the_editor_line(w):
-    declare(w["agent"], ASK)
+    declare(w["agent"], READ_MODE_DOC)
     allow(w["agent"], role=roles.READ_ONLY)
     before = turn_context.for_asker(w["agent"], w["viewer"], verified=True)
     _editors_are_users(w["agent"])

@@ -146,7 +146,7 @@ def test_a_disconnected_name_can_be_registered_again():
 
 def test_there_is_no_endpoint_for_granting_another_tenants_site():
     """Granting a site someone else registered was the shared-row model's
-    second door. A tenant that wants the system registers it."""
+    second way in. A tenant that wants the system registers it."""
     _p, _pb, _a, (_ob, c_b, _app_b) = _world()
 
     r = c_b.post("/api/workspaces/beta/connected-apps/grants",

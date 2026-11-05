@@ -272,7 +272,7 @@ def _capability_for(agent, iface: dict, permissions, capability, turn):
     name = capability
     if name is None and turn is not None:
         name = _page_capability(turn, iface, opens) or _site_capability(turn, iface, opens)
-    name = name or iface_mod.ASK
+    name = name or iface_mod.READ_MODE_STAMP
     published, cap = iface_mod.published_capability(iface, name)
     if published is None and iface_mod.is_read_mode(name):
         published, cap = iface_mod.READ_MODE, {}   # {}: canopy's default, built at claim (`profile`)

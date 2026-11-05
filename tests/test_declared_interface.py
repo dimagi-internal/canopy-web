@@ -2,7 +2,8 @@
 
 Phases 4-5 (canopy-web half) of the who-is-asking spec. An agent publishes
 `config/interface.yaml`; from then on a turn from anyone but its owner, admins
-or canopy itself runs in the capability their class is offered — or is refused.
+or canopy itself runs in the profile their class is offered (read mode or a connected site) — or
+is refused.
 """
 from __future__ import annotations
 
@@ -11,7 +12,7 @@ from django.contrib.auth.models import User
 from django.test import Client
 
 from apps.agents import roles
-from apps.agents.interface import ASK, FULL, InterfaceError, parse
+from apps.agents.interface import FULL, READ_MODE_STAMP, InterfaceError, parse
 from apps.agents.models import Agent, AgentAdmin
 from apps.harness import caller_context, claim, services
 from apps.harness import initiator as who
@@ -24,8 +25,8 @@ M = WorkspaceMembership
 DMARC = [{"name": "Authentication-Results",
           "value": "mx.google.com; dkim=pass; spf=pass; dmarc=pass header.from=llo-foo.org"}]
 
-#: What `ask` IS: the part an interface still declares.
-ASK_CAP = dict(
+#: What read mode IS: the part an interface still declares.
+READ_MODE_PROFILE = dict(
     description="Ask ACE about your programme.",
     entry="/ace:ask --thread {thread_id}",
     tools=["Read", "mcp__canopy-web__who_is_asking"],
@@ -33,20 +34,20 @@ ASK_CAP = dict(
     read_paths=["{cwd}/**"],
 )
 #: The same interface as it is published now: no one named, and no role: it says only what it is.
-PLAIN = {"capabilities": {"ask": ASK_CAP}}
-#: A document in the retired words (who may use `ask` inside the interface): refused.
-RETIRED_WORDS = {"capabilities": {"ask": {**ASK_CAP, "callers": ["contact:verified", "member"]}},
+PLAIN = {"capabilities": {"ask": READ_MODE_PROFILE}}
+#: A document in the retired words (who may use read mode inside the interface): refused.
+RETIRED_WORDS = {"capabilities": {"ask": {**READ_MODE_PROFILE, "callers": ["contact:verified", "member"]}},
                  "callers_default": "none"}
-#: The capabilities most tests publish; who may use `ask` is the access list (`_publish`).
-IFACE = {"ask": ASK_CAP}
+#: The profiles most tests publish; who may use read mode is the access list (`_publish`).
+IFACE = {"ask": READ_MODE_PROFILE}
 
 
-def _ask_for_verified_contacts_and_members(agent):
+def _read_mode_for_verified_contacts_and_members(agent):
     allow(agent, role=roles.READ_ONLY, contact=True, verified=True)
     allow(agent, role=roles.READ_ONLY)
 
 
-def _ask_for_contacts(agent):
+def _read_mode_for_contacts(agent):
     allow(agent, role=roles.READ_ONLY, contact=True)
 
 
@@ -64,7 +65,7 @@ def w():
     return {"op": op, "ed": ed, "ws": ws, "agent": agent}
 
 
-def _publish(agent, caps=IFACE, lines=_ask_for_verified_contacts_and_members):
+def _publish(agent, caps=IFACE, lines=_read_mode_for_verified_contacts_and_members):
     """Declare `caps` and write the access-list `lines`, and workspace editors drive it manually."""
     declare(agent, caps)
     lines(agent)
@@ -104,7 +105,7 @@ def test_parse_refuses_what_it_does_not_understand(doc, msg):
 
 
 def test_parse_normalises():
-    got = parse({"capabilities": {"ask": ASK_CAP}})
+    got = parse({"capabilities": {"ask": READ_MODE_PROFILE}})
     assert "version" not in got and "callers_default" not in got
     assert "role" not in got["capabilities"]["ask"]     # a capability says what it is, never who may use it
     assert got["capabilities"]["ask"]["bash"] == ["canopy email read --repo . {thread_id}"]
@@ -116,9 +117,9 @@ def test_write_paths_are_their_own_list_and_reach_the_profile():
     # none published means none allowed (the guard reads an empty list as deny).
     from apps.agents.interface import profile
 
-    got = parse({"capabilities": {"ask": {**ASK_CAP, "write_paths": ["{cwd}/.ace-ask/*"]}}})
+    got = parse({"capabilities": {"ask": {**READ_MODE_PROFILE, "write_paths": ["{cwd}/.ace-ask/*"]}}})
     assert got["capabilities"]["ask"]["write_paths"] == ["{cwd}/.ace-ask/*"]
-    assert parse({"capabilities": {"ask": ASK_CAP}})["capabilities"]["ask"]["write_paths"] == []
+    assert parse({"capabilities": {"ask": READ_MODE_PROFILE}})["capabilities"]["ask"]["write_paths"] == []
 
     class _A:
         interface = got
@@ -198,17 +199,17 @@ def test_another_agents_login_is_not_trusted_through_it(w):
 
 # --- who gets what ---------------------------------------------------------------------
 
-def test_a_verified_emailer_gets_ask_and_its_profile(w):
+def test_a_verified_emailer_gets_read_mode_and_its_profile(w):
     _publish(w["agent"])
     t = _email(w["agent"], "e1", headers=DMARC)
-    assert t.capability == ASK and t.status == Turn.QUEUED
+    assert t.capability == READ_MODE_STAMP and t.status == Turn.QUEUED
     env = caller_context.build(t)
     assert env["profile"] == "confined"
     assert env["capability"]["entry"] == "/ace:ask --thread {thread_id}"
     assert env["capability"]["bash"] == ["canopy email read --repo . {thread_id}"]
 
 
-def test_an_unverified_emailer_is_refused_when_ask_needs_verified(w):
+def test_an_unverified_emailer_is_refused_when_read_mode_needs_verified(w):
     _publish(w["agent"])
     t = _email(w["agent"], "e1")
     assert t.status == Turn.CANCELLED and "access list" in t.result_note
@@ -227,11 +228,11 @@ def test_owner_workspace_owner_and_admin_stay_full(w):
 def test_a_plain_member_is_a_caller(w):
     _publish(w["agent"])
     t = _as_user(w["agent"], w["ed"], "k")
-    assert t.capability == ASK
+    assert t.capability == READ_MODE_STAMP
 
 
-def test_a_member_is_refused_when_members_are_not_offered_ask(w):
-    _publish(w["agent"], lines=_ask_for_contacts)
+def test_a_member_is_refused_when_members_are_not_offered_read_mode(w):
+    _publish(w["agent"], lines=_read_mode_for_contacts)
     assert _as_user(w["agent"], w["ed"], "k").status == Turn.CANCELLED
 
 
@@ -246,10 +247,10 @@ def test_an_email_thread_session_turn_is_decided_too(w):
     """Email turns bind to a SESSION, not the agent — the decision must follow."""
     _publish(w["agent"])
     t = _email(w["agent"], "e1", thread_id="t-1", headers=DMARC)
-    assert t.chat_session_id and t.capability == ASK
+    assert t.chat_session_id and t.capability == READ_MODE_STAMP
 
 
-def test_unpublishing_a_capability_denies_everything_to_turns_already_queued(w):
+def test_unpublishing_a_profile_denies_everything_to_turns_already_queued(w):
     """A turn restricted when queued must never become unrestricted because
     the file changed under it."""
     _publish(w["agent"])
@@ -258,12 +259,12 @@ def test_unpublishing_a_capability_denies_everything_to_turns_already_queued(w):
     w["agent"].save(update_fields=["interface"])
     env = caller_context.build(t)
     assert env["profile"] == "confined"
-    # Stamped `ask` is read mode: with no override left it runs canopy's default read profile,
+    # Stamped `READ_MODE_STAMP` is read mode: with no override left it runs canopy's default read profile,
     # never the full one.
     assert env["capability"]["name"] == "ask" and env["capability"]["write_paths"] == ["{cwd}/.ace-read/*", "{cwd}/.ace-ask/*"]
-    assert env["capability"]["default_profile_version"] == 3
-    # A retired DOOR, though, yields the empty deny-all profile.
-    t.capability = "retired-door"
+    assert env["capability"]["default_profile_version"] == 4
+    # A retired connected site, though, yields the empty deny-all profile.
+    t.capability = "retired-site"
     env = caller_context.build(t)
     assert env["profile"] == "confined"
     assert env["capability"]["tools"] == [] and env["capability"]["bash"] == []
@@ -278,14 +279,14 @@ def _client(u):
 
 
 def test_the_owner_publishes_and_any_member_reads(w):
-    r = _client(w["op"]).put("/api/agents/ace/read-mode", ASK_CAP, content_type="application/json")
+    r = _client(w["op"]).put("/api/agents/ace/read-mode", READ_MODE_PROFILE, content_type="application/json")
     assert r.status_code == 200, r.content
     w["agent"].refresh_from_db()
     assert w["agent"].interface_published_by == w["op"]
     stored = w["agent"].interface["capabilities"]["ask"]
     assert "role" not in stored and "callers" not in stored
     got = _client(w["ed"]).get("/api/agents/ace/read-mode").json()
-    assert got["source"] == "custom" and got["profile"]["tools"] == ASK_CAP["tools"]
+    assert got["source"] == "custom" and got["profile"]["tools"] == READ_MODE_PROFILE["tools"]
 
 
 def test_the_old_who_keys_are_refused_and_point_at_the_access_list(w):
@@ -297,7 +298,7 @@ def test_the_old_who_keys_are_refused_and_point_at_the_access_list(w):
 
 
 def test_an_editor_cannot_publish_it_is_a_security_policy(w):
-    r = _client(w["ed"]).put("/api/agents/ace/read-mode", ASK_CAP, content_type="application/json")
+    r = _client(w["ed"]).put("/api/agents/ace/read-mode", READ_MODE_PROFILE, content_type="application/json")
     assert r.status_code == 403
 
 
@@ -314,7 +315,7 @@ def test_reset_returns_to_the_default_not_to_nothing(w):
     r = _client(w["op"]).delete("/api/agents/ace/read-mode")
     assert r.status_code == 200 and r.json()["source"] == "default"
     w["agent"].refresh_from_db()
-    # `ed`'s members' read line still stands, and read mode needs no published capability.
+    # `ed`'s members' read line still stands, and read mode needs no published profile.
     assert _as_user(w["agent"], w["ed"], "k").capability == "read"
 
 
@@ -478,13 +479,13 @@ def test_full_rules_are_refused_and_point_at_the_access_list():
         parse({"full": ["contact@*.com"]})
 
 
-# --- a page can pick the door --------------------------------------------------
-# The gap this closes: every free-form channel collapsed to `ask`, so an agent
-# embedded in a page shared one door with its mailbox. Equipping the page meant
+# --- a page can pick the connected site --------------------------------------------------
+# The gap this closes: every free-form channel collapsed to read mode, so an agent
+# embedded in a page shared one profile with its mailbox. Equipping the page meant
 # equipping an email stranger identically.
 
 PAGED = {
-    "ask": ASK_CAP,
+    "ask": READ_MODE_PROFILE,
     "marketplace": {
         "description": "Ask about the organisations on this page.",
         "pages": ["labs-marketplace://*"],
@@ -495,7 +496,7 @@ PAGED = {
 
 
 def _paged_lines(agent):
-    _ask_for_verified_contacts_and_members(agent)
+    _read_mode_for_verified_contacts_and_members(agent)
     allow(agent, capability="marketplace", contact=True)
     allow(agent, capability="marketplace")
 
@@ -517,38 +518,38 @@ def _on_page(agent, user, key, resource):
     return t
 
 
-def test_a_conversation_on_a_declared_page_runs_in_that_capability(w):
+def test_a_conversation_on_a_declared_page_runs_in_that_connected_site(w):
     _publish(w["agent"], PAGED, _paged_lines)
     t = _on_page(w["agent"], w["ed"], "p1", "labs-marketplace://orgs")
     assert t.capability == "marketplace"
 
 
-def test_the_same_caller_elsewhere_still_gets_ask(w):
-    """The page selects a door; it does not change the agent for everyone."""
+def test_the_same_caller_elsewhere_still_gets_read_mode(w):
+    """The page selects a connected site; it does not change the agent for everyone."""
     _publish(w["agent"], PAGED, _paged_lines)
-    assert _as_user(w["agent"], w["ed"], "p2").capability == ASK
-    assert _email(w["agent"], "p3", headers=DMARC).capability == ASK
+    assert _as_user(w["agent"], w["ed"], "p2").capability == READ_MODE_STAMP
+    assert _email(w["agent"], "p3", headers=DMARC).capability == READ_MODE_STAMP
 
 
-def test_a_page_that_declared_nothing_gets_ask(w):
+def test_a_page_that_declared_nothing_gets_read_mode(w):
     _publish(w["agent"], PAGED, _paged_lines)
-    assert _on_page(w["agent"], w["ed"], "p4", "").capability == ASK
+    assert _on_page(w["agent"], w["ed"], "p4", "").capability == READ_MODE_STAMP
 
 
-def test_an_unmatched_resource_gets_ask(w):
+def test_an_unmatched_resource_gets_read_mode(w):
     _publish(w["agent"], PAGED, _paged_lines)
     t = _on_page(w["agent"], w["ed"], "p5", "stock://on-hand")
-    assert t.capability == ASK
+    assert t.capability == READ_MODE_STAMP
 
 
-def test_a_page_capability_a_caller_is_not_offered_is_skipped_not_fatal(w):
-    """`ask` may still admit them, so a page door they cannot open must not
-    refuse the turn outright. (Now: their lines open `ask` but not the page's capability.)"""
+def test_a_page_site_a_caller_is_not_offered_is_skipped_not_fatal(w):
+    """Read mode may still admit them, so a page's connected site they cannot open must not
+    refuse the turn outright. (Now: their lines open read mode but not the page's connected site.)"""
     declare(w["agent"], PAGED)
     editors_run(w["agent"])
-    allow(w["agent"], role=roles.READ_ONLY)          # read_only: `ask`, not the page's door
+    allow(w["agent"], role=roles.READ_ONLY)          # read_only: read mode, not the page's site
     t = _on_page(w["agent"], w["ed"], "p6", "labs-marketplace://orgs")
-    assert t.capability == ASK
+    assert t.capability == READ_MODE_STAMP
 
 
 def test_the_owner_is_unaffected_by_a_page(w):
@@ -556,7 +557,7 @@ def test_the_owner_is_unaffected_by_a_page(w):
     assert _on_page(w["agent"], w["op"], "p7", "labs-marketplace://orgs").capability == FULL
 
 
-def test_the_page_cannot_widen_what_the_capability_grants(w):
+def test_the_page_cannot_widen_what_the_connected_site_grants(w):
     """The security property. The page supplies the resource; the OWNER supplies
     the tools. A page declaring a resource reaches exactly the profile its owner
     wrote for that resource — never a tool nobody listed."""
@@ -572,7 +573,7 @@ def test_an_existing_interface_is_unchanged_by_the_feature(w):
     """No `pages` anywhere means selection behaves exactly as before."""
     _publish(w["agent"])  # the original IFACE, no pages
     t = _on_page(w["agent"], w["ed"], "p9", "labs-marketplace://orgs")
-    assert t.capability == ASK
+    assert t.capability == READ_MODE_STAMP
 
 
 @pytest.mark.parametrize("pattern, msg", [
@@ -626,9 +627,9 @@ def test_without_a_grant_in_the_session_the_member_stays_confined(w):
 
     _publish(w["agent"])
     session = _owners_session(w)
-    assert _in_session(session, w["ed"], "s2").capability == ASK
+    assert _in_session(session, w["ed"], "s2").capability == READ_MODE_STAMP
     SessionParticipant.objects.create(session=session, user=w["ed"], role=SessionParticipant.VIEWER)
-    assert _in_session(session, w["ed"], "s3").capability == ASK
+    assert _in_session(session, w["ed"], "s3").capability == READ_MODE_STAMP
 
 
 def test_a_session_a_member_started_themselves_grants_nothing(w):
@@ -640,15 +641,15 @@ def test_a_session_a_member_started_themselves_grants_nothing(w):
     M.objects.create(user=other, workspace=w["ws"], role=M.VIEWER)
     session = Session.objects.create(workspace=w["ws"], agent=w["agent"], created_by=other, title="t")
     SessionParticipant.objects.create(session=session, user=w["ed"], role=SessionParticipant.EDITOR)
-    assert _in_session(session, other, "s4").capability == ASK
-    assert _in_session(session, w["ed"], "s5").capability == ASK
+    assert _in_session(session, other, "s4").capability == READ_MODE_STAMP
+    assert _in_session(session, w["ed"], "s5").capability == READ_MODE_STAMP
 
 
 def test_retired_fields_are_ignored_not_refused_so_a_stored_interface_republishes(caplog):
     """Every interface saved before `input` and `version` were retired carries them (`input: {}` on
-    each capability, `version: 1`); loading one and saving it back must not 422."""
+    each profile, `version: 1`); loading one and saving it back must not 422."""
     stored = {"version": 1, "callers_default": "none",
-              "capabilities": {"ask": {**ASK_CAP, "input": {"opportunity_id": "integer"}}, "x": {"input": {}}}}
+              "capabilities": {"ask": {**READ_MODE_PROFILE, "input": {"opportunity_id": "integer"}}, "x": {"input": {}}}}
     with caplog.at_level("WARNING"):
         got = parse(stored)
     assert "version" not in got and "callers_default" not in got

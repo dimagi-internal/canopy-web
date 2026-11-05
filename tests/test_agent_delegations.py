@@ -624,7 +624,7 @@ def test_a_callers_confined_turn_is_never_given_the_owners_identity(agent, owner
     turn = _turn(agent, runner=runner, capability="ask")
     r = _as_runner(runner).post(_token_url(runner, turn))
     assert r.status_code == 409, r.content
-    assert "confined to the caller capability 'ask'" in r.content.decode()
+    assert "confined to read mode" in r.content.decode()
     # The same turn, run in the agent's full profile, still gets it.
     Turn.objects.filter(pk=turn.pk).update(capability="")
     assert _as_runner(runner).post(_token_url(runner, turn)).status_code == 200

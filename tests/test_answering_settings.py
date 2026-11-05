@@ -90,7 +90,7 @@ def test_read_mode_starts_on_the_default_and_customising_starts_from_it(w):
 
     w["agent"].refresh_from_db()
     assert list(w["agent"].interface["capabilities"]) == ["ask"]
-    # A read-mode ask now stamps the override, as a published `ask` always has.
+    # Read mode now stamps the override (`READ_MODE_STAMP`), as an owner's own read mode always has.
     reader = AgentGrant.objects.create(agent=w["agent"], kind=AgentGrant.PERSON, user=w["member"], role=roles.READ_ONLY)
     assert turn_context.for_asker(w["agent"], reader.user, verified=True).stamped == "ask"
 
@@ -192,9 +192,9 @@ def test_two_sites_that_clean_up_to_one_name_get_two_keys(w):
 
 def test_session_review_stays_canopys_through_every_new_route(w):
     """No route publishes it: not by naming a site after it, nor by a field. A row that cleans up to its
-    name gets another key, so canopy's door stays canopy's and a person cannot open it with a line."""
+    name gets another key, so canopy's profile stays canopy's and a person cannot open it with a line."""
     client = _as(w["admin"])
-    canopy_door = interface.profile(w["agent"], interface.SESSION_REVIEW)
+    canopy_review = interface.profile(w["agent"], interface.SESSION_REVIEW)
     for site in ("session_review", "Session-Review", "session-review"):
         assert _put(client, f"{SITES}/{site}", {"tools": ["Bash"]}).status_code == 200
     assert _put(client, f"{SITES}/x", {"key": "session_review"}).status_code == 422
@@ -203,9 +203,9 @@ def test_session_review_stays_canopys_through_every_new_route(w):
 
     w["agent"].refresh_from_db()
     assert interface.SESSION_REVIEW not in w["agent"].interface["capabilities"]
-    assert interface.profile(w["agent"], interface.SESSION_REVIEW) == canopy_door
-    # A key like it is an ordinary door: what it opens is that row, never the review.
-    assert "Bash" not in canopy_door["tools"]
+    assert interface.profile(w["agent"], interface.SESSION_REVIEW) == canopy_review
+    # A key like it is an ordinary connected site: what it opens is that row, never the review.
+    assert "Bash" not in canopy_review["tools"]
     # The parser refuses the name too, whatever asks it.
     with pytest.raises(interface.InterfaceError):
         interface.parse({"capabilities": {"session_review": {}}})
@@ -392,7 +392,7 @@ def test_the_agents_own_page_carries_both(w):
 RETIRED_OPERATIONS = ("get_interface", "publish_interface", "validate_interface", "reset_interface",
                       "set_capability_sensitive")
 RETIRED_ROUTES = [("get", "interface"), ("put", "interface"), ("delete", "interface"),
-                  ("post", "interface/validate"), ("put", "interface/capabilities/door/sensitive")]
+                  ("post", "interface/validate"), ("put", "interface/capabilities/x/sensitive")]
 #: What each old route used to take: had one survived, this would reset or rewrite the agent.
 OLD_BODY = {"interface": {"capabilities": {}}, "source": "capabilities: {}\n", "handles_sensitive": True}
 

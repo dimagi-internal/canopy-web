@@ -1,7 +1,7 @@
 """Connecting a site to canopy, as a person actually does it.
 
 Everything the widget needs was reachable only through the Django admin, which
-is the wrong door twice: it is staff-only, and "connect my site" is a product
+is the wrong way in twice: it is staff-only, and "connect my site" is a product
 act rather than a row an administrator edits. These tests pin the surface that
 replaces it, and in particular the refusals — every one of the widget's inputs
 fails CLOSED and silently, so a wrong value shows up as a launcher that never
@@ -424,7 +424,7 @@ def test_an_injected_second_directive_is_refused_on_update():
 
 def test_no_management_command_registers_a_site_or_writes_what_it_may_do():
     """A command would skip `embed_apps`' validation and the settings audit; the
-    routes above (and their MCP tools) are the only door."""
+    routes above (and their MCP tools) are the only way in."""
     from pathlib import Path
 
     root = Path(__file__).resolve().parent.parent / "apps"

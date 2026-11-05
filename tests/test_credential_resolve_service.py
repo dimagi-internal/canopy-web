@@ -61,7 +61,7 @@ def alerts(monkeypatch):
 
 
 def _request(user, *, bearer=True, **meta):
-    """`bearer`: a token authenticated the request, as the bearer door records it."""
+    """`bearer`: a token authenticated the request, as the bearer path records it."""
     req = RequestFactory().get("/api/agents/eva/credentials/resolve",
                                **({"HTTP_AUTHORIZATION": "Bearer t"} if bearer else {}), **meta)
     req.user = user

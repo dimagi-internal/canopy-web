@@ -8,7 +8,7 @@ plus interaction — could enqueue a turn with any prompt against any agent in
 their workspace and have the fleet run it.
 
 That is the same shape the schedule surface had (`tests/test_schedule_api.py`),
-reached by a different door: a schedule is a prompt that fires later, a turn is
+reached by a different route: a schedule is a prompt that fires later, a turn is
 a prompt that fires now.
 
 Session turns are deliberately NOT gated the same way, and that distinction is

@@ -12,7 +12,7 @@ from allauth.account.models import EmailAddress
 from django.contrib.auth.models import User
 
 from apps.agents import roles
-from apps.agents.interface import ASK, FULL
+from apps.agents.interface import FULL, READ_MODE_STAMP
 from apps.agents.models import Agent, AgentAdmin
 from apps.contacts.models import Contact
 from apps.harness import caller_context, services
@@ -109,7 +109,7 @@ def test_with_an_interface_the_owner_by_email_stays_full_and_a_stranger_is_confi
     allow(w["agent"], role=roles.READ_ONLY, contact=True, verified=True)
     assert _email(w["agent"], "op@dimagi.com", "o", _hdr("pass")).capability == FULL
     partner = _email(w["agent"], "fatima@llo-foo.org", "p", _hdr("pass", domain="llo-foo.org"))
-    assert partner.capability == ASK
+    assert partner.capability == READ_MODE_STAMP
 
 
 def _agent_login(w, *, member=True):

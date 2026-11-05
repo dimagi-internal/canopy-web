@@ -57,12 +57,12 @@ def _real_decide(agent, who, *, verified, capability, turn):
     return _as_decision(turn_context.for_asker(agent, who, verified=verified, requested=capability, turn=turn))
 
 
-def _envelope_profile(agent, capability, turn):
+def _envelope_profile(agent, stamp, turn):
     """What the envelope hands the runner for a stamp: the Turn Context's profile."""
-    if agent is None or not capability:
+    if agent is None or not stamp:
         return None
     facts = session_context.build(None, turn, agent=agent)
-    return turn_context.stamped_profile(agent, capability, facts).as_envelope()
+    return turn_context.stamped_profile(agent, stamp, facts).as_envelope()
 
 
 REAL = SimpleNamespace(
@@ -180,7 +180,7 @@ def answers(impl, world, agent, row) -> dict:
     """Everything `impl` says about one agent, as plain data."""
     keys = _keys(agent)
     stamps = ["", legacy_interface.READ, legacy_interface.ASK, *keys, RETIRED]
-    asks = [None, legacy_interface.READ, legacy_interface.ASK, *keys, RETIRED]
+    requests = [None, legacy_interface.READ, legacy_interface.ASK, *keys, RETIRED]
     contexts = _contexts(agent, row)
     site_turns = {c["name"]: _turn(world.owner, c) for c in contexts if "turn" in c}
     permission_sets = [{roles.READ}, {roles.WRITE}, {roles.use("ask")}, {roles.use("read")},
@@ -206,9 +206,9 @@ def answers(impl, world, agent, row) -> dict:
         "decide": {
             label: {
                 c["name"]: {
-                    str(ask): _decision(impl.decide(agent, who, verified=isinstance(who, get_user_model()),
-                                                    capability=ask, turn=_turn(who, c)), world)
-                    for ask in asks}
+                    str(requested): _decision(impl.decide(agent, who, verified=isinstance(who, get_user_model()),
+                                                    capability=requested, turn=_turn(who, c)), world)
+                    for requested in requests}
                 for c in contexts}
             for label, who in _people(world, agent)},
     }

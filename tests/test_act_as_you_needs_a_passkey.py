@@ -129,7 +129,7 @@ def test_lookup_says_unconfirmed_and_views_get_the_passkey_message(w):
     # Outside a conversation too: only a confirmed grant is ever the person's latest.
     assert host_grants.grant_for(w["app"], agent=w["agent"], user=w["visitor"]) is None
     assert "passkey" in host_gateway.no_grant_message("connect-labs", found.reason, "ACE")
-    # The gateway's one door for a stored grant refuses it as well.
+    # The gateway's one way in for a stored grant refuses it as well.
     with pytest.raises(host_gateway.GatewayRefusal) as refused:
         host_gateway.context_for_grant(w["app"], grant, turn_id="t", agent_slug="ace", ceiling=[])
     assert refused.value.code == "unconfirmed"
@@ -318,7 +318,7 @@ def test_a_contact_is_never_redeemed_a_grant(w, redeemable):
 def test_the_live_probe_still_redeems_its_own_grant_no_one_can_reach(w, redeemable):
     probe = host_grants.redeem(w["app"], "id-jag", subject="canopy-probe", probe=True)
     assert probe.user is None and probe.contact is None and probe.confirmed_at is not None
-    # Usable by the probe's own door, and by no person's lookup.
+    # Usable by the probe's own route, and by no person's lookup.
     host_gateway.context_for_grant(w["app"], probe, turn_id="probe", agent_slug="canopy-probe",
                                    ceiling=[])
     assert host_grants.grant_for(w["app"], agent=None, user=w["visitor"]) is None
