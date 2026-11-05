@@ -456,6 +456,12 @@ def github_token_for_turn(turn) -> dict:
         raise DelegationError(
             f"this turn is confined to the caller capability '{turn.capability}', and a "
             f"caller's turn is never given its agent owner's GitHub identity")
+    from apps.harness import turn_asker  # noqa: PLC0415 — harness imports this package
+
+    if turn_asker.READS_FOR in (turn.origin_ref if isinstance(turn.origin_ref, dict) else {}):
+        # A turn scoped to one grantor reads text they wrote, and does no repo work.
+        raise DelegationError("this turn reads one person's sessions for review, and a review is "
+                              "never given its agent owner's GitHub identity")
     agent = turn_agent(turn)
     if agent is None:
         raise DelegationError("this turn runs as no agent, so it has no GitHub identity")

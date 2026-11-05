@@ -181,7 +181,7 @@
 "apps/harness/signals.py" = ["PLC0415"]  # 2
 "apps/harness/sweeps.py" = ["PLC0415"]  # 1
 "apps/harness/topology.py" = ["PLC0415"]  # 2
-"apps/harness/turn_access.py" = ["PLC0415"]  # 2
+"apps/harness/turn_access.py" = ["PLC0415"]  # 1
 "apps/harness/turn_agent_tokens.py" = ["PLC0415"]  # 2
 "apps/harness/turn_close.py" = ["PLC0415"]  # 8
 "apps/harness/turn_mode.py" = ["PLC0415"]  # 8

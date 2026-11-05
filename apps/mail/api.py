@@ -26,6 +26,7 @@ from apps.agents import access
 from apps.api.auth import session_auth
 from apps.api.route_gates import gate
 from apps.events import audit
+from apps.harness import turn_asker
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.gates import workspace_for
@@ -793,6 +794,17 @@ def _uuids(ids: list[str]) -> list[uuidlib.UUID]:
     return out
 
 
+def _check_scoped_recipients(user, *lists) -> None:
+    """A turn scoped to one grantor writes to that person alone (`turn_asker.scoped_recipient`):
+    what it read is theirs, whatever text in it asks for another address."""
+    allowed = turn_asker.scoped_recipient(user)
+    if allowed is None:
+        return
+    addresses = [str(a).strip().lower() for addrs in lists for a in (addrs or [])]
+    if not allowed or any(a != allowed for a in addresses):
+        raise HttpError(403, "this turn reviews one person's sessions, and may write only to them")
+
+
 def _send_as(sender: _Sender, *, uploads: list[MailUpload] = (), **kw) -> MailMessage:
     try:
         files = [parse.Attachment(u.filename, u.content_type, ses.get_object(u.s3_key)) for u in uploads]
@@ -905,11 +917,13 @@ def reply_mail_thread(request: HttpRequest, workspace: str, uuid: str, payload: 
     """Reply as the thread's agent, or — on your own kept mail — as your own address."""
     ws = workspace_for(request.user, workspace)
     _need(request.user, ws, perms.AGENT_WORK)
+    _check_scoped_recipients(request.user, payload.to, payload.cc, payload.bcc)
     t = _thread(ws, uuid, request.user)
     sender = _thread_sender(t, request.user)
     to = payload.to or _reply_recipients(t)
     if not to:
         raise HttpError(422, "no one to reply to")
+    _check_scoped_recipients(request.user, to, payload.cc, payload.bcc)
     uploads = _uploads(ws, request.user, payload.attachments)
     return _msg_out(_send_as(sender, uploads=uploads, to=to, cc=payload.cc, bcc=payload.bcc, text=payload.text,
                              html=payload.html, thread=t))
@@ -922,6 +936,7 @@ def send_mail(request: HttpRequest, workspace: str, payload: MailSendIn) -> dict
     no `agent` — from one of your own forwarding addresses, as a thread private to you."""
     ws = workspace_for(request.user, workspace)
     _need(request.user, ws, perms.AGENT_WORK)
+    _check_scoped_recipients(request.user, payload.to, payload.cc, payload.bcc)
     sender = _new_sender(ws, request.user, payload.agent, payload.from_address)
     uploads = _uploads(ws, request.user, payload.attachments)
     m = _send_as(sender, uploads=uploads, to=payload.to, cc=payload.cc, bcc=payload.bcc, subject=payload.subject,

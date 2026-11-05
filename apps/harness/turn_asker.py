@@ -283,6 +283,11 @@ CREDENTIAL_ATTR = "_canopy_turn_credential"
 STANDING_ATTR = "_canopy_turn_standing"
 #: On a turn's `origin_ref`: set by the server when an agent turn nobody asked for starts it.
 UNATTENDED_DISPATCH = "unattended_dispatch"
+#: On a turn's `origin_ref`: {"user_id": n}, set by the server alone. A turn nobody asked for was
+#: dispatched for ONE person who let its agent review them (one person per turn): it reads that
+#: person's sessions only, sends mail only to them and gets no GitHub identity, and anything it
+#: starts carries the same scope.
+READS_FOR = "reads_for"
 
 
 @dataclass(frozen=True)
@@ -291,12 +296,15 @@ class Standing:
     (its verified human asker, or the person it was started on behalf of), or `unattended`
     (canopy or another agent started it and no person is behind it: a schedule, a trigger,
     a dispatch with no person stamped). `operator`: that person administers the agent
-    itself (`Agent.is_admin`), who runs it for everyone it serves."""
+    itself (`Agent.is_admin`), who runs it for everyone it serves. `reads_for`: the one grantor
+    a turn nobody asked for was dispatched for (`READS_FOR`). `conversation_id`: its chat, if any."""
 
     turn_id: str
     person_id: int | None = None
     unattended: bool = False
     operator: bool = False
+    reads_for: int | None = None
+    conversation_id: str = ""
 
 
 def remember(user, credential: dict | None) -> None:
@@ -345,24 +353,49 @@ def _standing_of(turn: Turn, agent: Agent) -> Standing | None:
     if person is not None:
         acting_cap(turn)  # their `acts_as` lowers their administering too, as on their turn
         return Standing(str(turn.pk), person_id=person.pk, operator=agent.is_admin(person))
-    if turn.initiator_kind in (who.SYSTEM, who.AGENT):
-        return Standing(str(turn.pk), unattended=True)
     ref = turn.origin_ref if isinstance(turn.origin_ref, dict) else {}
+    nobody = Standing(str(turn.pk), unattended=True, reads_for=reads_for_of(turn),
+                      conversation_id=str(turn.chat_session_id or ref.get("chat_session_id") or ""))
+    if turn.initiator_kind in (who.SYSTEM, who.AGENT):
+        return nobody
     if (turn.initiator_kind == who.USER and _agent_login(turn.initiator_user)
             and ref.get(UNATTENDED_DISPATCH) is True):
         # Another agent's dispatch, from a turn nobody asked for (`dispatch_stamp`).
-        return Standing(str(turn.pk), unattended=True)
+        return nobody
     return None  # a contact, an unvouched chain, or nobody established
 
 
-def dispatch_stamp(user) -> dict:
+def reads_for_of(turn) -> int | None:
+    """The one grantor `turn` is scoped to (`READS_FOR`), or None. Malformed reads as none on
+    the turn's own record, and every door that asks treats a scope it cannot read as absent."""
+    ref = turn.origin_ref if isinstance(turn.origin_ref, dict) else {}
+    stamp = ref.get(READS_FOR)
+    who_id = stamp.get("user_id") if isinstance(stamp, dict) else None
+    return who_id if isinstance(who_id, int) else None
+
+
+def dispatch_stamp(user, *, reads_for: int | None = None) -> dict:
     """What `enqueue_turn` adds to the origin_ref of a turn started by `user`, an agent's
     login, when no person is behind it: `unattended_dispatch`, only if `user`'s own request
-    runs inside a turn nobody asked for. A dispatch from anything else (a contact's or an
-    unverified user's turn, a stored token) is NOT nobody-asked: it carries no stamp and
-    its standing is None. Server-only: `enqueue_turn` drops a client's copy."""
+    runs inside a turn nobody asked for, and the one grantor it is for. A scoped turn's scope
+    passes down whatever is asked, so it can never start a wider one. A dispatch from anything
+    else (a contact's or an unverified user's turn, a stored token) is NOT nobody-asked: it
+    carries no stamp and its standing is None. Server-only: `enqueue_turn` drops a client's copy."""
     stand = standing(user)
-    return {UNATTENDED_DISPATCH: True} if stand is not None and stand.unattended else {}
+    if stand is None or not stand.unattended:
+        return {}
+    scope = stand.reads_for if stand.reads_for is not None else reads_for
+    return {UNATTENDED_DISPATCH: True, **({READS_FOR: {"user_id": scope}} if scope is not None else {})}
+
+
+def scoped_recipient(user):
+    """The one address this request may send mail to, when it is an agent's login inside a turn
+    scoped to one grantor (`READS_FOR`), else None. The address is their canopy account's."""
+    stand = standing(user)
+    if stand is None or stand.reads_for is None:
+        return None
+    person = get_user_model().objects.filter(pk=stand.reads_for).first()
+    return (person.email or "").strip().lower() if person is not None else ""
 
 
 def _agent_login(user) -> bool:

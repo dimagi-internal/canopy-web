@@ -23,6 +23,10 @@ its prompt carries the project. This is not the sensitivity mechanism, which is 
 what a runner may keep and would ground the turn on sensitive-data boxes; and it covers
 the turn's log here, not a session the turn ran in (`canopy_sessions.access` decides that).
 
+A request held to a reach (`access.reach_of`) reads only turns inside it, whichever of these it
+would otherwise pass (`access.turn_in_reach`), and a turn naming its chat only in `origin_ref` is
+that chat's for it. For everyone else such a turn is still judged by the legs above.
+
 A SENSITIVE turn's content is nobody's through these doors (`harness.sensitivity`):
 its words belong to its conversation, which its own people read on the chat page,
 and every door here is a log a review or another AI could read.
@@ -102,14 +106,23 @@ def can_read_turn_log(user, turn, _memo: dict | None = None) -> bool:
     if not getattr(user, "is_authenticated", False):
         return False
     memo = _memo if _memo is not None else {}
+    from apps.canopy_sessions import access as session_access  # noqa: PLC0415 — sessions import the harness
+
+    # A request held to a reach (a caller token, a turn scoped to one grantor): none of the legs
+    # below are its to use outside that reach, whoever it reads as, a project's reader included.
+    held = session_access.reach_of(user) is not None
+    if held and not session_access.turn_in_reach(user, turn):
+        return False
     project = _personal_project(turn, memo)
     if project is not None:
         from apps.agents.services import may_read_project  # noqa: PLC0415 — agents imports this package
 
         return may_read_project(user, project)
+    if held:
+        named = session_access.turn_conversation(turn)
+        if named is not None:
+            return session_access.can_read(user, named)
     if turn.chat_session_id:
-        from apps.canopy_sessions import access as session_access
-
         key = ("chat", turn.chat_session_id)
         if key not in memo:
             memo[key] = session_access.can_read(user, turn.chat_session)

@@ -43477,6 +43477,8 @@ export interface components {
             readonly parent?: components["schemas"]["ParentIn"] | null;
             /** Cli */
             readonly cli?: ("claude-code" | "codex") | null;
+            /** Reads For */
+            readonly reads_for?: string | null;
         };
         /** EmdashSessionOut */
         readonly EmdashSessionOut: {

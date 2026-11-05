@@ -146,6 +146,7 @@ def enqueue_turn(
     coalesce: bool = True,
     job: str = "",
     job_repo: str = "",
+    reads_for: int | None = None,
 ) -> tuple[Turn, bool]:
     """Queued turns stack freely — the executing-turn index never blocks intake
     (new turns are born `queued`, which the index does not cover).
@@ -168,6 +169,9 @@ def enqueue_turn(
     (apps/harness/mail_coalesce.py): folded into the thread's queued turn, or held
     for the trigger's quiet window, and then the answer is that turn and `False`.
     `coalesce=False` is the held batch's own release.
+
+    `reads_for`: the one grantor a dispatch is for, already checked by the caller
+    (`turn_gates.check_reads_for`). Never taken from `origin_ref`.
 
     `job` / `job_repo` (a schedule's fire and "Run now" only) make it a PLAIN JOB: it must
     be an agent's turn, routes `cloud_only`, and carries no prompt.
@@ -261,11 +265,13 @@ def enqueue_turn(
     from . import turn_asker  # noqa: PLC0415 — cycle: turn_asker -> turn_agent_tokens -> services
 
     on_behalf = turn_asker.of(getattr(initiator, "user", None))
-    origin_ref = {k: v for k, v in (origin_ref or {}).items() if k != turn_asker.UNATTENDED_DISPATCH}
+    origin_ref = {k: v for k, v in (origin_ref or {}).items()
+                  if k not in (turn_asker.UNATTENDED_DISPATCH, turn_asker.READS_FOR)}
     if on_behalf is not None:
         origin_ref = {**origin_ref, "on_behalf_of": on_behalf.record()}
     elif initiator.kind == "user":  # initiator.USER: an agent's login dispatching (stamp or nothing)
-        origin_ref = {**origin_ref, **turn_asker.dispatch_stamp(getattr(initiator, "user", None))}
+        origin_ref = {**origin_ref, **turn_asker.dispatch_stamp(getattr(initiator, "user", None),
+                                                                reads_for=reads_for)}
     from apps.threads import guard as thread_guard
 
     from . import provenance

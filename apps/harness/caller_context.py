@@ -29,6 +29,7 @@ from __future__ import annotations
 import re
 import uuid
 
+from django.contrib.auth import get_user_model
 from django.utils import timezone
 
 from apps.agents import rolecatalog, roles
@@ -412,6 +413,9 @@ def build(turn, *, reader_user=None) -> dict:
         # The one session this conversation's asker asked this agent to review from its
         # page, while that ask is live (`read_asked_session`). Null otherwise. Additive.
         "session_review": _session_review(turn, agent),
+        # The one person a turn nobody asked for was dispatched for (`turn_asker.READS_FOR`):
+        # who it answers to, and all it may read or write to. Null otherwise. Additive.
+        "reads_for": _reads_for(turn),
         "thread_history": _thread_history(turn, ref),
         # WHAT THE PERSON IS LOOKING AT, when the conversation is embedded in a
         # page that declared its state: the SELECTION (ids + filters, already
@@ -561,6 +565,13 @@ def _trigger(turn, ref: dict) -> dict:
         # on `who.trigger`.
         "agent_trigger": who.describe(turn).get("trigger"),
     }
+
+
+def _reads_for(turn) -> dict | None:
+    stamp = turn.origin_ref.get("reads_for") if isinstance(turn.origin_ref, dict) else None
+    who_id = stamp.get("user_id") if isinstance(stamp, dict) else None
+    person = get_user_model().objects.filter(pk=who_id).first() if isinstance(who_id, int) else None
+    return {"user_id": person.pk, "email": person.email} if person is not None else None
 
 
 def _session_review(turn, agent) -> dict | None:
