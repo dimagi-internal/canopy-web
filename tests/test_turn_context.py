@@ -303,7 +303,9 @@ def test_a_session_grant_is_only_for_the_person_it_names(w):
 
 
 def test_a_view_judging_many_pairs_reads_nothing_per_pair(w, django_assert_num_queries):
-    # Handed what `Standings` read once, the rule itself asks the database nothing.
+    # Handed what `Standings` read once, the rule itself asks the database nothing, even for a line
+    # that names a workspace, whose answer is the person's role there.
+    AgentGrant.objects.create(agent=w.agent, kind=AgentGrant.WORKSPACE, subject_workspace=w.ws, role=roles.READ_ONLY)
     standings = Standings([w.owner, w.reader, w.stranger], [w.agent])
     asked = [(user, standings.of(user, w.agent), standings.lines_of(w.agent)) for user in (w.owner, w.reader, w.stranger)]
     w.agent.owner  # noqa: B018 — the refusal names them, and that is not the rule's to read
