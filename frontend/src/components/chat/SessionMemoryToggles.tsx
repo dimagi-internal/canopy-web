@@ -15,7 +15,7 @@ type Choice = 'on' | 'off' | 'inherit'
 
 /** Where the toggles read and write. canopy's own pages use the person's routes;
  *  the embedded widget passes its own (its frame authenticates with a bearer
- *  token, not the app's session) — one component, two doors. */
+ *  token, not the app's session) — one component, two ways in. */
 export interface SessionMemorySource {
   /** The session's state, and whether THIS viewer may change it. `null` hides
    *  the toggles entirely (not your session, or not a person). */

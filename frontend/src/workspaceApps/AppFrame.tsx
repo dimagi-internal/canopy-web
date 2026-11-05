@@ -15,7 +15,7 @@ import { DynamicViewFrame, readSources } from '@/dynamicViews/DynamicViewFrame'
 import type { DeclaredConnection } from '@/dynamicViews/connectionCalls'
 import type { AppContext, AppOp, ViewScope } from '@/dynamicViews/protocol'
 
-export type Door = 'member' | 'preview' | 'public' | 'link'
+export type Surface = 'member' | 'preview' | 'public' | 'link'
 
 interface Props {
   workspace: { slug: string; name: string }
@@ -23,14 +23,14 @@ interface Props {
   page: AppPage
   roles: string[]
   params: Record<string, string>
-  door: Door
+  surface: Surface
   /** The draft whose test copy this page runs on, if any. */
   draft?: number | null
-  /** On the link door: the private link's token, and the record it opens (the page's `data.record`). */
+  /** On the link surface: the private link's token, and the record it opens (the page's `data.record`). */
   link?: { token: string; record: Record<string, unknown> }
   dataModel: Record<string, unknown>
   settings: Record<string, unknown>
-  /** The app's declared connections (member door); the server stays the authority. */
+  /** The app's declared connections (member surface); the server stays the authority. */
   connections?: readonly DeclaredConnection[]
   viewer: { email: string; name: string }
   onGo: (page: string, params: Record<string, string>) => void
@@ -40,7 +40,7 @@ function isCollection(s: Record<string, unknown>): s is CollectionSource {
   return typeof s.collection === 'string'
 }
 
-export function AppFrame({ workspace, app, page, roles, params, door, draft, link, dataModel, settings, connections, viewer, onGo }: Props) {
+export function AppFrame({ workspace, app, page, roles, params, surface, draft, link, dataModel, settings, connections, viewer, onGo }: Props) {
   const [error, setError] = useState<string | null>(null)
   const paramsKey = JSON.stringify(params)
   const rolesKey = roles.join(',')
@@ -48,24 +48,24 @@ export function AppFrame({ workspace, app, page, roles, params, door, draft, lin
 
   const context: AppContext = useMemo(
     () => ({
-      key: app.key, name: app.name, page: page.slug, params, roles, public: door !== 'member',
+      key: app.key, name: app.name, page: page.slug, params, roles, public: surface !== 'member',
       dataModel, settings, fills: (page.fills ?? {}) as AppContext['fills'], draft: !!draft,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [app.key, app.name, page.slug, paramsKey, rolesKey, door, modelKey, draft],
+    [app.key, app.name, page.slug, paramsKey, rolesKey, surface, modelKey, draft],
   )
 
   const hosted = useMemo(() => {
-    const call = (op: AppOp) => callApp(workspace.slug, app.key, op, door, draft, link?.token)
+    const call = (op: AppOp) => callApp(workspace.slug, app.key, op, surface, draft, link?.token)
     return {
       context,
       call,
       go: onGo,
-      canopyReads: door === 'member',
-      canConnect: door === 'member',
-      connections: door === 'member' ? connections : undefined,
+      canopyReads: surface === 'member',
+      canConnect: surface === 'member',
+      connections: surface === 'member' ? connections : undefined,
       async load() {
-        if (door === 'link') return { record: link?.record ?? {} }
+        if (surface === 'link') return { record: link?.record ?? {} }
         const sources = page.sources as Record<string, unknown>[]
         const own = sources.filter(isCollection)
         const canopy = sources.filter((s) => !isCollection(s)) as unknown as DynamicViewSource[]
@@ -77,7 +77,7 @@ export function AppFrame({ workspace, app, page, roles, params, door, draft, lin
           }
         }))
         const data: Record<string, unknown> = Object.fromEntries(entries)
-        if (canopy.length && door === 'member') {
+        if (canopy.length && surface === 'member') {
           const guide = await getDynamicViewGuide()
           Object.assign(data, await readSources(guide.catalog, { workspace: workspace.slug, project: null }, canopy))
         }
@@ -85,7 +85,7 @@ export function AppFrame({ workspace, app, page, roles, params, door, draft, lin
       },
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [context, page, workspace.slug, door, draft, link?.token, connections])
+  }, [context, page, workspace.slug, surface, draft, link?.token, connections])
 
   const scope: ViewScope = useMemo(
     () => ({ workspace, project: null, view: { id: 0, slug: page.slug, title: page.title, version: 0 }, viewer }),

@@ -2,7 +2,7 @@
 //
 // Vocabulary (docs/superpowers/specs/2026-11-04-configurable-roles-design.md): a role is a named
 // bundle of permissions (read, write, agent_edit, use:<site key>) a workspace defines; read_only,
-// read_write and editor are the built-ins; admin and owner are fixed, never lines. A line gives ONE role or, rarely, ONE named capability. Say "agent admin"
+// read_write and editor are the built-ins; admin and owner are fixed, never lines. A line gives ONE role or, rarely, ONE connected site. Say "agent admin"
 // or "workspace admin", never a bare "admin"; "member", "viewer" and "user" are not agent roles.
 
 import type { AccessLineIn, AccessRoleOut, AgentAccessRowOut } from '@/api/agents'
@@ -19,7 +19,7 @@ export const KIND_OPTIONS: { kind: LineKind; label: string }[] = [
 ]
 
 /** Lines that name people only by an address a message can claim: they can give read only or open a
- *  named capability, never a role that drives the whole agent. */
+ *  connected site, never a role that drives the whole agent. */
 export const ADDRESS_ONLY_KINDS: readonly LineKind[] = ['domain', 'contact']
 
 /** The roles a line may give, weakest first: what the server sent (`roles`, strongest first), without the

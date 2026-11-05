@@ -112,7 +112,7 @@ describe('ConnectionCalls', () => {
     expect(client.request).toHaveBeenCalledTimes(1)
   })
 
-  it('public door refused', async () => {
+  it('public page refused', async () => {
     const { calls, client } = setup({ active: true, ctx: { canConnect: false, surface: { kind: 'app', workspace: 'w', key: 'k' } } })
     await expect(calls.handle(READ)).rejects.toThrow("A public page can't use connections.")
     expect(client.request).not.toHaveBeenCalled()

@@ -99,7 +99,7 @@ export function describeSelection(input: {
   /** The MCP resource URI this page is showing, e.g. `task://`.
    *
    *  This is what canopy keys INVALIDATION on: when the data behind it changes
-   *  — by any actor, through any door — every page declaring this resource is
+   *  — by any actor, through any route — every page declaring this resource is
    *  told to re-read. A page that omits it still describes itself to the agent
    *  but will never be told its data moved, which is a worse page rather than a
    *  broken one. */

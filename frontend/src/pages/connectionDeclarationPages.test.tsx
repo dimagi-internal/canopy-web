@@ -42,7 +42,7 @@ describe('an app page', () => {
     </Routes></MemoryRouter>,
   )
 
-  it("says it on a member's door", async () => {
+  it("says it on a member's page", async () => {
     m.getInstalledApp.mockResolvedValue(app())
     open('/w/apps/crm')
     expect(await screen.findByText(/This screen can use your Salesforce:/)).toBeTruthy()

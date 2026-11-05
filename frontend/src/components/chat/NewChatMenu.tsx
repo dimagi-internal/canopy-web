@@ -27,7 +27,7 @@ export type NewChatTarget =
  * "+ New chat": pick an agent (or a repo, for an agentless project chat), pick
  * where it runs, start. CROSS-WORKSPACE — an agent chat is created in the
  * agent's own workspace, a repo chat in its runner's. One implementation, two
- * doors: the Sessions list and the supervisor feed.
+ * entry points: the Sessions list and the supervisor feed.
  *
  * The repos offered are the ones the fleet's online, session-capable runners
  * offer this person (`repoChoices`), each in the workspace it would start in.

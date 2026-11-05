@@ -49,7 +49,7 @@ export default function LinkAppPage() {
         page={link.page}
         roles={['link']}
         params={{}}
-        door="link"
+        surface="link"
         link={{ token, record: link.record }}
         dataModel={link.data_model}
         settings={link.settings}

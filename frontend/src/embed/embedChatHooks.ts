@@ -153,7 +153,7 @@ export function useSessionDetail({ client, sessionId, isContact, link, sealedRow
     }
   }, [client, sessionId, isContact, sealedRows, link, setSensitive])
   // A contact's conversation is never private (a contact holds no key); its report
-  // comes from the contact door.
+  // comes from the contact route.
   useEffect(() => {
     if (!isContact) return
     let live = true

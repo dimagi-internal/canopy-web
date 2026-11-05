@@ -11,7 +11,7 @@
  * (`WorkspaceMembership.ROLE_RANK` is `{viewer: 0, editor: 1, admin: 2, owner: 3}`,
  * and `apps/workspaces/permissions.py` says what each may do), and
  * a reader asking "what can I do here?" is asking about their role, not about
- * which door they came through.
+ * which way they came in.
  *
  * One of those five was NOT a role and was lost in the reframe: "you want
  * canopy's skills in your own Claude Code sessions" — mint a token, install

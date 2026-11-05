@@ -327,7 +327,7 @@ export const routeTable: RouteObject[] = [
       { path: '/me', element: <Navigate to="/settings/profile" replace /> },
       { path: '/people/:personId/page', element: <PersonPageView /> },
       { path: '/hcp-clients', element: <HcpClientsPage /> },
-      // What is waiting on you, across every workspace — the app's front door.
+      // What is waiting on you, across every workspace — the app's front page.
       { path: '/home', element: <HomePage /> },
       // What the runner's menu bar opens: it knows no workspace.
       { path: '/apps', element: <TenantRedirect to="apps?tab=personal" /> },
@@ -570,7 +570,7 @@ export const routeTable: RouteObject[] = [
       // --- Legacy flat paths → active workspace (or new viewer) ---
       { path: '/', element: <RootRedirect /> },
       // The public site owns a full page load of `/` (config/public_site.py); `/app`
-      // is the server-loadable door into the app — the site's Sign in, and where a
+      // is the server-loadable way into the app — the site's Sign in, and where a
       // login with no `next` lands.
       { path: '/app', element: <RootRedirect /> },
       { path: '/timeline', element: <TenantRedirect to="timeline" /> },

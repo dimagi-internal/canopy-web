@@ -21,7 +21,7 @@ import { ApiError } from '@/api/problem'
 // receiving agent that login is just a person — owner, admin, a member its
 // interface confines, or nobody. Whether Ada could send Hal work was spread
 // across Hal's interface, Hal's admin list and two workspaces' member lists,
-// and the answer ("ask" only — which needs an email thread) left every direct
+// and the answer (read mode only — which needs an email thread) left every direct
 // Ada→Hal dispatch failing for a week while each of those screens looked fine.
 //
 // The one-click fix is making the sender's login an admin of the receiver, and

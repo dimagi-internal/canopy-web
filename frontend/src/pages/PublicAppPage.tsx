@@ -74,7 +74,7 @@ export default function PublicAppPage() {
         page={page}
         roles={['public']}
         params={Object.fromEntries(search.entries())}
-        door="public"
+        surface="public"
         dataModel={app.data_model as Record<string, unknown>}
         settings={app.settings as Record<string, unknown>}
         viewer={{ email: '', name: '' }}

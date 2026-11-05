@@ -26,7 +26,7 @@ import { Td, Tr } from '@/components/DataTable'
 // An agent has ONE access list of (who, role) lines (docs/superpowers/specs/
 // 2026-10-30-agent-roles-and-access-list-design.md, roles in 2026-11-02-agent-permissions-and-roles-design.md).
 // Roles: read only < read & write < editor < agent admin < owner; a line may instead open one
-// named capability. This agent's own lines are changed here by its agent admins; lines
+// connected site. This agent's own lines are changed here by its agent admins; lines
 // inherited from a workspace are read-only (changed on the workspace); the owner and the
 // agent admins hold their role without a line. The server decides every rule (a refusal is
 // shown next to what was tried); this draws it.

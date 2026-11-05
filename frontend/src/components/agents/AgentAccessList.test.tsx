@@ -114,7 +114,7 @@ describe('AgentAccessList', () => {
     const own = screen.getAllByTestId('access-line')
     expect(own).toHaveLength(3)
     expect((within(own[0]).getByLabelText('Role for ann@dimagi.com') as HTMLSelectElement).value).toBe('read_write')
-    // a line that opens one capability says so, and has no role to change or approval gate to flip
+    // a line that opens one connected site says so, and has no role to change or approval gate to flip
     expect(own[2].textContent).toContain('Only the “connect” connected site')
     expect(within(own[2]).queryByRole('combobox')).toBeNull()
     const inherited = screen.getByTestId('access-line-inherited')

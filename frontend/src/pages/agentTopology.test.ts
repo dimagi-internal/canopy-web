@@ -4,7 +4,7 @@ import type { AgentEdgeOut, AgentTopologyAgentOut } from '@/api/workspaces'
 import { explainEdge, grantable } from './agentTopology'
 
 const edge = (over: Partial<AgentEdgeOut>): AgentEdgeOut => ({
-  source: 'ada', target: 'hal', access: 'confined', basis: 'capabilities', capabilities: ['ask'],
+  source: 'ada', target: 'hal', access: 'confined', basis: 'capabilities', capabilities: ['connect'],
   explicit_admin: false, can_grant: true, can_revoke: false, ...over,
 })
 const agent = (slug: string, login: string | null): AgentTopologyAgentOut => ({
@@ -13,8 +13,8 @@ const agent = (slug: string, login: string | null): AgentTopologyAgentOut => ({
 })
 
 describe('explainEdge', () => {
-  it('names the capability a confined sender is held to', () => {
-    expect(explainEdge(edge({}), agent('ada', 'ada@x'), agent('hal', null))).toContain('confines ada@x to ask')
+  it('names the profile a confined sender is held to', () => {
+    expect(explainEdge(edge({}), agent('ada', 'ada@x'), agent('hal', null))).toContain('confines ada@x to connect')
   })
   it('says nothing about a removed whole-agent rule for an unknown basis', () => {
     expect(explainEdge(edge({ basis: 'something-else' }), agent('ada', 'ada@x'), agent('hal', null))).toBe('something-else')

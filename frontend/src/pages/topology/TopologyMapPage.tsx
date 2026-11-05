@@ -27,7 +27,7 @@ import { SidePanel } from '@/pages/topology/panels/SidePanel'
 //
 // It is also where runners are CONFIGURED: the panel mounts the supervisor's own
 // runner detail (login, admins, flags, drills, pause, retire) and the agent's own
-// routing table, so there is one implementation of each and two doors onto it;
+// routing table, so there is one implementation of each and two ways onto it;
 // every control gates on what the server says the viewer may do (can_manage /
 // can_administer, the routing PUT's own check). An owner lane's "Add a runner"
 // gives the pairing command, since pairing is something you run on the box.
