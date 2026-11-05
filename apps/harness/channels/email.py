@@ -19,6 +19,7 @@ from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
+from apps.agents import refusals
 from apps.agents.models import Agent, SenderTrust
 from apps.canopy_sessions.models import SessionParticipant
 from apps.canopy_sessions.participants import ensure_participant
@@ -410,7 +411,8 @@ def refused_email_turn(agent, contact, *, origin, idempotency_key, prompt,
     existing = Turn.keyed(idempotency_key, scope).first()
     if existing is not None:
         return replay_email(existing, agent), False
-    reason = contact.blocked_reason or "no reason given"
+    # Never why they were blocked: that is an admin's note about a person, kept on the contact.
+    note = refusals.make(refusals.Code.SENDER_BLOCKED, agent=agent).result_note
     try:
         with transaction.atomic():
             turn = Turn.objects.create(
@@ -423,7 +425,7 @@ def refused_email_turn(agent, contact, *, origin, idempotency_key, prompt,
                 routing=routing,
                 status=Turn.CANCELLED,
                 finished_at=timezone.now(),
-                result_note=f"not run: the sender is blocked ({reason})",
+                result_note=note,
             )
     except IntegrityError:
         replay = Turn.keyed(idempotency_key, scope).first()

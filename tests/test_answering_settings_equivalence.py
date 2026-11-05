@@ -221,12 +221,20 @@ def _differences(left, right, path="") -> list[str]:
     return [] if left == right else [f"{path}: real {left!r} != frozen {right!r}"]
 
 
+def _outcomes(doc):
+    """A refusal's outcome, not its wording: whether it has a reason, never what the reason says. Its words are
+    `apps/agents/refusals.py`'s, rewritten on purpose by Turn Context Stage 4; who gets what is compared whole."""
+    if isinstance(doc, dict):
+        return {k: (bool(v) if k == "reason" else _outcomes(v)) for k, v in doc.items()}
+    return doc
+
+
 @override_settings(CANOPY_PUBLIC_BASE_URL=BASE_URL)
 def test_the_real_code_answers_as_the_frozen_copy_does(world):
     wrong = []
     for agent, row in world.agents:
-        wrong += [f"{agent.slug}{d}" for d in _differences(answers(REAL, world, agent, row),
-                                                           answers(legacy_interface, world, agent, row))]
+        wrong += [f"{agent.slug}{d}" for d in _differences(_outcomes(answers(REAL, world, agent, row)),
+                                                           _outcomes(answers(legacy_interface, world, agent, row)))]
     assert not wrong, "\n".join(wrong[:30])
 
 
@@ -266,7 +274,7 @@ def test_a_saved_turn_on_a_real_session_gets_the_same_answers(world):
                                        prompt="hello", idempotency_key=f"{agent.slug}-{person.pk}")
             real = _as_decision(turn_context.for_turn(turn, agent))
             frozen = legacy_interface.decide(agent, person, verified=True, turn=turn)
-            assert dataclasses.asdict(real) == dataclasses.asdict(frozen)
+            assert _outcomes(dataclasses.asdict(real)) == _outcomes(dataclasses.asdict(frozen))
             turn.capability = real.stamp or ""
             turn.save(update_fields=["capability"])
             facts = interface.grant_facts(turn, agent)

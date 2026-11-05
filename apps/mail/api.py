@@ -416,7 +416,7 @@ def _agent_full(user, route) -> None:
         raise HttpError(409, "this address is not an agent mailbox")
     d = turn_context.for_asker(route.agent, user, verified=True, channel="email")
     if d.access != turn_context.FULL:
-        raise HttpError(403, d.refusal.why if d.refused else f"you may not act as {route.agent.slug}")
+        raise HttpError(403, d.refusal.message if d.refused else f"you may not act as {route.agent.slug}")
 
 
 def _presign(a) -> str:

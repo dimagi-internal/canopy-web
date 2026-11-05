@@ -65,7 +65,7 @@ def _reason(agent, user, session) -> str:
                 "so you could not read its reply.")
     decision = turn_context.for_asker(agent, user, verified=True, channel=Turn.ORIGIN_CANOPY_WEB_CHAT)
     if decision.refused:
-        return decision.refusal.why
+        return decision.refusal.message
     if not session.messages.exists():
         return (f"canopy does not hold this session's messages, so {name} would have nothing to read. "
                 "Load its full history on this page first.")

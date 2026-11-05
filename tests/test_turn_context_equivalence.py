@@ -5,7 +5,8 @@ this file is the proof. It first ran green against the real `decide`, in the com
 deleted; `tests/legacy_decide.py` is that code, unchanged. It walks every combination `tests/test_access_matrix.py` and
 `tests/fixtures/answering_interfaces.json` name: relationship, role, verified, named capability, site,
 page, sensitive, review chat, stamped turns, retired names, agentless. Same access, same stamp, same
-permissions, same role, source, basis and reason.
+permissions, same role, source and basis, and a reason exactly when there is a refusal. The reason's words are
+compared by nobody: they are `apps/agents/refusals.py`'s, and Stage 4 rewrote them on purpose.
 
 A difference means someone's access would change. The fix is in the resolver, never here.
 """
@@ -53,12 +54,17 @@ EVERYTHING = {
 }
 
 
+def _outcome(answer: dict) -> dict:
+    # The outcome, not its wording: whether there is a reason, never what it says.
+    return {**answer, "reason": bool(answer["reason"])}
+
+
 def _old_answer(d) -> dict:
-    return {**dataclasses.asdict(d), "permissions": sorted(d.permissions), "stamp": d.stamp}
+    return _outcome({**dataclasses.asdict(d), "permissions": sorted(d.permissions), "stamp": d.stamp})
 
 
 def _new_answer(ctx) -> dict:
-    return answering_snapshot.answer_of(ctx)
+    return _outcome(answering_snapshot.answer_of(ctx))
 
 
 @pytest.fixture()

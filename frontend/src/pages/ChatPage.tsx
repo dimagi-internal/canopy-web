@@ -57,6 +57,8 @@ import { useSlashCommands } from './chat/useSlashCommands'
 import { CanopyAIButton } from '@/widget/CanopyAIButton'
 import { useTranscriptPaging } from './chat/useTranscriptPaging'
 import { useTailCheck } from './chat/useTailCheck'
+import { COMPOSER_REFUSED, usePreviewRefusal } from './chat/usePreviewRefusal'
+import { RefusalNotice } from '@/components/chat/RefusalNotice'
 import { openInBrowser, passkeysWorkHere } from '@/auth/passkeyHere'
 import { cachedMessages, rememberMessages } from './chat/sessionCache'
 
@@ -272,10 +274,18 @@ function ChatPageInner({
     }
   }, [id])
 
+  // Before you type: would the rule let you take a turn here? The preview says why
+  // not and how to fix it, in the server's own words (apps/agents/refusals.py). It
+  // only ever adds a refusal: if it cannot be read, the server still decides on send.
+  const refusal = usePreviewRefusal(id, `${meta?.my_role}|${meta?.content_deleted_at}|${meta?.cli}`)
+
   // The composer refuses rather than queueing — see sendBlockReason.
   // A viewer was given this chat to read (canopy_sessions.access); the server
   // refuses their send with a 403, so say so here instead of letting it bounce.
-  const disabledReason = meta?.content_deleted_at
+  // The notice above the input says why and how to fix it; the input only points at it.
+  const disabledReason = refusal
+    ? COMPOSER_REFUSED
+    : meta?.content_deleted_at
     ? "This session's content was permanently deleted. Start a new session to carry on."
     : meta?.my_role === 'viewer'
       ? "You were given this chat as a viewer, so you can read it but not send."
@@ -314,13 +324,19 @@ function ChatPageInner({
           <span className="h-6 w-6 animate-spin rounded-full border-2 border-muted border-t-primary" aria-hidden="true" />
           <div>Loading the conversation…</div>
         </div>
+      ) : refusal ? (
+        // Not "type a message below": the note above the composer says why you can't, and how to fix it.
+        <div className="flex h-full flex-col items-center justify-center gap-1 p-8 text-center text-sm text-muted-foreground"
+          data-testid="chat-empty-refused">
+          <div className="text-foreground">No messages yet</div>
+        </div>
       ) : (
         <div className="flex h-full flex-col items-center justify-center gap-1 p-8 text-center text-sm text-muted-foreground">
           <div className="text-foreground">Start the conversation</div>
           <div className="text-xs">Type a message below to begin.</div>
         </div>
       ),
-    [contentDeleted, loadingTranscript],
+    [contentDeleted, loadingTranscript, refusal],
   )
 
   // "Load all messages" / "Load full session" live in the ⋯ menu
@@ -557,7 +573,9 @@ function ChatPageInner({
           // cannot answer — the banner above holds the ways out.
           disabledReason={disabledReason}
           banner={
-            visibleMenu ? (
+            refusal ? (
+              <RefusalNotice title="You can't send a message here" refusal={refusal} testId="composer-refusal" />
+            ) : visibleMenu ? (
               <MenuPrompt
                 menu={visibleMenu}
                 busy={menuAnswer.answering}

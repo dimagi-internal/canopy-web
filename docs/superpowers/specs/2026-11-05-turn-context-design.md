@@ -369,3 +369,18 @@ The panel was drawn from the two routes and nothing else. These are what drawing
 | 3.1, 5 | Session Context, every field | `participants`, `audience` and `session_grants` hold user ids only. The panel shows counts and "you", and the ids stay under Raw. Showing names needs a field on the route |
 | 5, "Who sees it" | An outsider to a sensitive conversation is told it is withheld | In chat they never reach the panel: the page stops at "Private conversation" first. Only the IDE's row menu opens it for them, and it says withheld there |
 | 9 | No `door`, `ask` or `capability` in UI text | The panel's own words have none. Text the server writes still does, shown as it is: a refusal's and a credential line's `why`, and a read-mode profile's `description`. Stages 4 and 5 |
+
+### What building Stage 4 corrected
+
+Every refusal now says why, how to fix it and who can, from one closed set of codes with one builder each
+(`apps/agents/refusals.py`). These are what writing those words found.
+
+| Section | The spec said | What it is |
+|---|---|---|
+| 7 | `why` says why | `why` is plain words starting lower-case, to follow "not run: ". A door's 403 says `message` (why, capitalised, then the fix), a turn's note `result_note`, Slack `text`. So a stale page, Slack and the composer say the same words |
+| 7 | Refusals the rule makes | A sender whose address a line admits only from proven mail, writing unproven mail, was told "not on the access list". It now has its own code, `sender_not_proven`, read by asking the list again as if proven. Nobody's outcome changes |
+| 7 | `result_note` from the refusal | A blocked sender's note used to carry why they were blocked, an admin's note about a person. It no longer does, as the snapshot already did not |
+| 7, stage 0 | Stage 0's blocks keep their door's words | The send doors now say the refusal's `message`. Content deleted is byte-identical; "can read but not act" gains its fix and the session owner; a dropped CLI says ". Start a new conversation…" where it said ": start a new conversation" |
+| 7 | Whoever adds someone sees the notice | The same refusal said `about` them, on each participant row, only to someone who may add people (`turn_refusal`), and `access_list_agent` only when the fix is a line and they may add one. An editor added to a session the agent's owner or an admin started is a session writer and is never flagged; a viewer is told "can read but not act", whose fix is their role |
+| 8 | The equivalence test compares `reason` | It compares outcomes: a reason exactly when refused, never its words. `test_answering_settings_equivalence` against `legacy_interface` likewise |
+| 3.3 | Turn gates that depend on who is asking move to `refusal` | `check_access` says the rule's refusal. The harness route's other gates (`agent_for_work`, email poster, pin, `reads_for`, `turn_mode=auto`) refuse a request before a turn exists, not a turn in a session someone reached; they keep their messages. Listed in the Stage 4 PR |

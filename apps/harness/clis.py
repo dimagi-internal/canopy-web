@@ -213,14 +213,22 @@ def allowed(turn) -> list[str]:
     return [c for c in wanted if c in have]
 
 
-def conversation_refusal(session) -> str | None:
-    """Why nothing more can be sent into `session` on the CLI it is held to: its
-    agent is no longer set up for it. None when it can (or holds to none yet)."""
+def conversation_refusal_of(session):
+    """Why nothing more can be sent into `session` on the CLI it is held to, as a
+    `refusals.Refusal`: its agent is no longer set up for it. None when it can (or
+    holds to none yet)."""
     if session is None or not session.cli or session.cli in offered(session.agent):
         return None
-    return (f"this conversation runs on {label(session.cli)}, and "
-            f"{session.agent.name if session.agent else 'its agent'} is no longer set up for "
-            f"{label(session.cli)}: start a new conversation")
+    from apps.agents import refusals  # noqa: PLC0415 — the agents app imports this module
+
+    return refusals.make(refusals.Code.CLI_NOT_OFFERED, agent=session.agent, session=session,
+                         cli=label(session.cli))
+
+
+def conversation_refusal(session) -> str | None:
+    """`conversation_refusal_of`, as the sentences a send door says. None when it can."""
+    refused = conversation_refusal_of(session)
+    return None if refused is None else refused.message
 
 
 def pin_conversation(session_ids, cli: str) -> None:

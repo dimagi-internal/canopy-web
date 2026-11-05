@@ -1,4 +1,5 @@
 import type { SessionContextFacts, SessionContexts, SessionInfo, TurnContextView, TurnRanAs } from "@/api/chat";
+import { sentence } from "./RefusalNotice";
 import { Row, Section } from "./SessionInfoRows";
 import {
   admissionText,
@@ -174,10 +175,10 @@ function Refused({ ctx, who }: { ctx: TurnContextView; who: "you" | "they" }) {
       <p className="font-medium text-destructive">{headline(ctx, who)}</p>
       {r && (
         <dl className="mt-1 space-y-0.5">
-          <Row label="Why not" value={r.why} />
-          {/* Blank until refusals say how to fix them: an empty field is not shown at all. */}
+          {/* The server's words (apps/agents/refusals.py); `why` starts lower-case to follow "not run: ". */}
+          <Row label="Why not" value={sentence(r.why)} testId="turn-context-why-not" />
           <Row label="How to fix it" value={r.how_to_fix} testId="turn-context-how-to-fix" />
-          <Row label="Who can fix it" value={r.who_can_fix} />
+          <Row label="Who can fix it" value={r.who_can_fix} testId="turn-context-who-can-fix" />
         </dl>
       )}
     </div>

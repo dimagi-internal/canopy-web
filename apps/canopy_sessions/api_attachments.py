@@ -10,6 +10,7 @@ from ninja import File, Form
 from ninja.errors import HttpError
 from ninja.files import UploadedFile
 
+from apps.agents import refusals
 from apps.api.route_gates import gate
 from apps.harness import sensitivity
 
@@ -279,7 +280,7 @@ def delete_attachment(request: HttpRequest, attachment_id: uuid.UUID):
             request.user, attachment.session):
         raise HttpError(404, "attachment not found")
     if not access.can_write(request.user, attachment.session):
-        raise HttpError(403, "you can read this session but not act in it")
+        raise HttpError(403, refusals.cannot_write_message(attachment.session))
     if attachment.message_id is not None or (attachment.sensitive and attachment.sent_at is not None):
         raise HttpError(409, "this attachment has already been sent")
     if attachment_storage.is_configured():

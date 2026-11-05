@@ -265,4 +265,4 @@ def check_access(request, payload: TurnIn, agent, initiator) -> None:
     d = turn_context.for_asker(agent, user, verified=initiator.kind == who.USER
                                and initiator.assurance in TURN_MODE_VERIFIED, channel=payload.origin)
     if d.refused:
-        raise HttpError(403, d.refusal.why)
+        raise HttpError(403, d.refusal.message)

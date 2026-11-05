@@ -280,7 +280,8 @@ def _matrix(agent, caps, sites, members, roster, standings) -> dict:
 
 def answer_of(ctx) -> dict:
     """A Turn Context as this document has always printed an answer, so that its hash keeps meaning the
-    same thing: `access` says `none` for a refusal, and a refusal's reason is `reason`."""
+    same thing: `access` says `none` for a refusal, and a refusal's reason is `reason`: its whole message, why and
+    how to fix it, so that a change of either shows here."""
     return {
         "relationship": ctx.standing.relationship,
         "access": "none" if ctx.refused else ctx.access,
@@ -289,7 +290,7 @@ def answer_of(ctx) -> dict:
         "may_pin_runner": ctx.review.may_pin_runner,
         "manual_only": ctx.review.manual_only,
         "basis": ctx.basis,
-        "reason": ctx.refusal.why if ctx.refused else "",
+        "reason": ctx.refusal.message if ctx.refused else "",
         "agent_role": ctx.standing.agent_role,
         "source": ctx.standing.source,
         "via": ctx.standing.via,
