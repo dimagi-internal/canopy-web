@@ -19,12 +19,6 @@ where granting is one passkey touch.
   DIM-SI-W021"), and is not mentioned at all while its person is waiting too:
   granting the person is the question, and one Grant pending covers both.
 
-* A waiting machine is asked of the vault's admins, who can grant it in the browser,
-  whether or not its person ever confirmed it. (A notice to the machine's own person
-  pointed at Confirm access, which never renders for a box whose only agent is kv 0 or
-  administered by that person; and its per-machine diagnosis ran on every sweep. Both
-  were removed 2026-11-05.)
-
 * After a grace period (GRACE): approving a device usually grants it in the
   same click (`approveAndGrant`), and a keeper (a canopy runner that holds the
   key, `canopy vault zk keep`) grants every endorsed target within a minute or
@@ -49,7 +43,6 @@ from functools import partial
 from html import escape
 
 from django.core.cache import cache
-from django.core.mail import EmailMultiAlternatives
 from django.utils import timezone
 
 from apps.harness.models import RunnerDeviceKey
@@ -87,7 +80,6 @@ class _Waiting:
     pending: Callable[[], list]
     holders: Callable[[], list]
     had_copy: Callable[[int], bool]    # did this person ever hold a copy (any kv)?
-    vault: Vault | None = None         # the workspace vault itself (None: an agent's own)
 
 
 def _vaults():
@@ -100,8 +92,7 @@ def _vaults():
         yield _Waiting(f"the {v.name} vault", v.kv,
                        wslinks.scoped_url(v.workspace, f"/vaults/{v.pk}"), {"vault": v},
                        partial(workspace_vaults.pending_targets, v), partial(workspace_holders, v),
-                       lambda uid, v=v: VaultKeyWrap.objects.filter(vault=v, kind="member", user_id=uid).exists(),
-                       v)
+                       lambda uid, v=v: VaultKeyWrap.objects.filter(vault=v, kind="member", user_id=uid).exists())
 
 
 def sweep(now=None) -> int:
@@ -238,6 +229,8 @@ def _notify(w: _Waiting, notice, *, why: str, person: str = "", machine: str = "
     """Email + Web Push to each admin of the vault who holds its key. Never raises.
     `new_key`: when the person started over with a new vault key — the grant is then
     also the confirmation that the new key is theirs."""
+    from django.core.mail import EmailMultiAlternatives
+
     result: dict = {"emailed": [], "failed": [], "not_configured": False, "pushed": 0, "why": why}
     try:
         subject, detail = _message(w, why, person, machine, new_key)

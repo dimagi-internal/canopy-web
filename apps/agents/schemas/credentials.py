@@ -8,7 +8,6 @@ from typing import Any, Literal
 from pydantic import Field
 
 from apps.common.schemas import StrictModel
-from apps.harness.schemas.credentials import VaultWaitOut
 
 
 # ---- shared ----
@@ -249,8 +248,6 @@ class ResolveVaultLayerOut(StrictModel):
     kv: int
     wrap: dict[str, Any] | None = None
     values: dict[str, str] = Field(default_factory=dict)
-    #: Set when `wrap` is null: why, and who can fix it.
-    waiting: VaultWaitOut | None = None
 
 
 class MyDelegatedCredentialOut(StrictModel):

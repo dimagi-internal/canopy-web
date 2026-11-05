@@ -31851,38 +31851,6 @@ export interface components {
             readonly values?: {
                 readonly [key: string]: string;
             };
-            readonly waiting?: components["schemas"]["VaultWaitOut"] | null;
-        };
-        /**
-         * VaultWaitOut
-         * @description Why this machine holds no copy of a vault's key, and who can fix it
-         *     (`credentials.machine_waits.why_waiting`). `reason`: `unendorsed` (its own person
-         *     confirms it on Device keys — no keeper grants it), `waiting_for_keeper`,
-         *     `key_not_approved` or `not_a_member`. `fix` is the sentence to show as is.
-         */
-        readonly VaultWaitOut: {
-            /** Reason */
-            readonly reason: string;
-            /**
-             * Machine
-             * @default
-             */
-            readonly machine: string;
-            /**
-             * Person Email
-             * @default
-             */
-            readonly person_email: string;
-            /**
-             * Fix
-             * @default
-             */
-            readonly fix: string;
-            /**
-             * Link
-             * @default
-             */
-            readonly link: string;
         };
         /**
          * DeviceProofRequiredOut
@@ -32347,18 +32315,6 @@ export interface components {
              * @default
              */
             readonly email: string;
-            /**
-             * Person Email
-             * @default
-             */
-            readonly person_email: string;
-            /** Serves */
-            readonly serves?: readonly string[];
-            /**
-             * Waiting Reason
-             * @default
-             */
-            readonly waiting_reason: string;
         };
         /** ZkWrapOut */
         readonly ZkWrapOut: {
@@ -41572,7 +41528,6 @@ export interface components {
             readonly values?: {
                 readonly [key: string]: string;
             };
-            readonly waiting?: components["schemas"]["VaultWaitOut"] | null;
         };
         /** RunnerVaultValuesOut */
         readonly RunnerVaultValuesOut: {

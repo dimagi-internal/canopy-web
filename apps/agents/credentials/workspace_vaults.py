@@ -317,53 +317,12 @@ def pending_targets(vault: Vault) -> list[dict]:
     return engine.pending_targets(_store(vault), has_key=bool(vault.kv))
 
 
-def describe_waiting_machines(vault: Vault, pending: list[dict]) -> list[dict]:
-    """`pending`, each waiting MACHINE annotated for the vault's page: whose it is, which
-    agents this vault serves that it runs, and whether anyone has confirmed it
-    (`waiting_reason`: `unendorsed` — no keeper will pass it the key, an admin's grant is
-    the way in — or `waiting_for_keeper`).
-
-    BATCHED: one read of the vault's agents, one query for which of them each runner is
-    routed, one endorsement query — however many machines wait. The first version ran `machine_waits.why_waiting`
-    per machine, recomputing membership across every agent the vault serves each time;
-    on Shared that pinned canopy-web's CPU and starved every keeper (2026-11-05 23:00Z)."""
-    from ..models import AgentVaultEndorsement  # noqa: PLC0415 — keeps the module's model imports as they were
-
-    ids = [t["target"] for t in pending if t.get("kind") == "device"]
-    if not ids:
-        return pending
-    keys = {str(k.pk): k for k in RunnerDeviceKey.objects.filter(pk__in=ids)
-            .select_related("runner__owner", "approved_by")}
-    agents = vault_members.attached_agents(vault)
-    # "Runs": the agents of this vault routed to the machine's runner — one query. Not
-    # `runner_serves_agent` per machine x agent: its access checks cost ~8 queries each.
-    from apps.harness.models import RunnerAssignment  # noqa: PLC0415 — kept beside its only use
-
-    runs: dict = {}
-    for rid, slug in (RunnerAssignment.objects.filter(agent__in=agents, runner_id__in={k.runner_id for k in keys.values()})
-                      .values_list("runner_id", "agent__slug")):
-        runs.setdefault(rid, set()).add(slug)
-    jkts = [k.ecdh_jkt for k in keys.values() if k.ecdh_jkt]
-    signed = set(AgentVaultEndorsement.objects.filter(
-        agent__in=agents, kind="device", target__in=jkts).values_list("target", flat=True))
-    out = []
-    for t in pending:
-        k = keys.get(str(t.get("target"))) if t.get("kind") == "device" else None
-        if k is not None:
-            person = k.runner.owner if k.runner.owner_id else k.approved_by
-            t = {**t, "person_email": getattr(person, "email", "") or "",
-                 "serves": sorted(runs.get(k.runner_id, ())),
-                 "waiting_reason": "waiting_for_keeper" if k.ecdh_jkt in signed else "unendorsed"}
-        out.append(t)
-    return out
-
-
 def state(vault: Vault, *, include_values: bool = False) -> dict:
     """The agent-vault `ZkStateOut` shape, so the browser and the CLI drive either:
     `agent` is the vault's name and `agent_id` its binding id."""
     wraps = engine.wrap_rows(_store(vault))
     out = {"agent": vault.name, "agent_id": binding_id(vault), "enabled": vault.kv > 0, "kv": vault.kv,
-           "wraps": wraps, "pending": describe_waiting_machines(vault, pending_targets(vault)),
+           "wraps": wraps, "pending": pending_targets(vault),
            "rotation_recommended": engine.rotation_recommended(wraps),
            "values": None, "sealed": []}
     if include_values:
@@ -457,14 +416,9 @@ def _layers(vaults, device_key, wanted: set[str] | None) -> list[dict]:
         qs = VaultSecret.objects.filter(vault=v)
         if wanted is not None:
             qs = qs.filter(name__in=sorted(wanted))
-        layer = {"vault_id": str(v.pk), "name": v.name, "workspace": v.workspace_id,
-                 "binding_id": binding_id(v), "kv": v.kv, "wrap": mine.wrap if mine else None,
-                 "values": dict(qs.values_list("name", "value_zk")) if mine else {}}
-        # No per-layer diagnosis here: this is the credential resolve every runner calls
-        # before each turn and on each lease heartbeat, and `why_waiting` (membership over
-        # every agent the vault serves) on it starved canopy-web (2026-11-05 23:00Z). The
-        # CLI says "no copy" and points at Device keys; the vault page says why.
-        out.append(layer)
+        out.append({"vault_id": str(v.pk), "name": v.name, "workspace": v.workspace_id,
+                    "binding_id": binding_id(v), "kv": v.kv, "wrap": mine.wrap if mine else None,
+                    "values": dict(qs.values_list("name", "value_zk")) if mine else {}})
     return out
 
 
