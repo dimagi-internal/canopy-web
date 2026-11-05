@@ -148,6 +148,12 @@ export function VaultOverviewTab({ vault: v, onChange, reload, unlock }: VaultOu
                       {p.person_email ? ` — ${p.person_email}'s` : ''}
                       {p.serves?.length ? ` · runs ${p.serves.join(', ')}` : ''}
                     </span>
+                    {p.waiting_reason === 'needs_admin_grant' && (
+                      <p className="text-warning" data-testid={`vault-machine-needs-admin-${p.target}`}>
+                        {p.person_email || 'Its person'} can&rsquo;t confirm it (they are in no vault of an agent this
+                        vault serves), so no keeper ever will. Only your grant lets it in.
+                      </p>
+                    )}
                     {p.waiting_reason === 'unendorsed' && (
                       <p className="text-warning" data-testid={`vault-machine-unendorsed-${p.target}`}>
                         Not confirmed by {p.person_email || 'its person'}, so no keeper will pass it the key. Your

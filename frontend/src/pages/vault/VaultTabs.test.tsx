@@ -84,11 +84,22 @@ describe('vault page', () => {
     expect(row).toContain("DIM-SA-W175 — idiene@dimagi.com's · runs gshubdesk")
     expect(screen.getByTestId('vault-machine-unendorsed-dk175').textContent).toContain('no keeper will pass it the key')
     expect(screen.queryByTestId('vault-machine-unendorsed-dk153')).toBeNull()
+    expect(screen.queryByTestId('vault-machine-needs-admin-dk175')).toBeNull()
     fireEvent.click(screen.getByTestId('vault-machine-grant-dk175'))
     await waitFor(() => expect(ops.grantWorkspaceVaultPending).toHaveBeenCalledTimes(1))
     const only = ops.grantWorkspaceVaultPending.mock.calls[0][2] as (t: unknown) => boolean
     expect(pending.filter(only).map((t) => t.target)).toEqual(['dk175'])
     await waitFor(() => expect(screen.queryByTestId('vault-machine-waiting-dk175')).toBeNull())
+  })
+
+  it('says when nobody but an admin can let a waiting machine in', async () => {
+    api.getWorkspaceVaultZk.mockResolvedValue({ pending: [
+      { kind: 'device', target: 'dk9', public_jwk: {}, runner: 'r9', runner_name: 'orphan-box',
+        person_email: 'o@dimagi.com', serves: ['eva'], waiting_reason: 'needs_admin_grant' },
+    ] })
+    render(<MemoryRouter><VaultOverviewTab {...ctx()} /></MemoryRouter>)
+    expect((await screen.findByTestId('vault-machine-needs-admin-dk9')).textContent).toContain('Only your grant lets it in')
+    expect(screen.queryByTestId('vault-machine-unendorsed-dk9')).toBeNull()
   })
 
   it('lists its runners under Members: where each key lives, its access, and Give access for that runner only', async () => {
