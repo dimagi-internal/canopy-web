@@ -429,6 +429,7 @@ def _personal_blockers(project: AgentProject) -> list[str]:
                or relations.filter(to_task__project=project).exclude(from_task__project=project).exists())
     links = {
         "it is shared with other workspaces": project.shares.exists(),
+        "people have been added to it": project.people.exists(),
         "it has check-ins": project.checkins.exists(),
         "someone shares their sessions with its team": project.session_shares.filter(revoked_at__isnull=True).exists(),
         "a vault serves it": project.vault_attachments.exists(),

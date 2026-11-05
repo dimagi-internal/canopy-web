@@ -28,6 +28,7 @@ import { PropertyHeader } from '@/pages/work/ProjectProperties'
 import { ProjectMeetings } from '@/pages/work/ProjectMeetings'
 import { ProjectServices } from '@/pages/work/ProjectServices'
 import { UpdatesSection } from '@/pages/work/ProjectUpdates'
+import { ProjectMembers } from '@/pages/work/ProjectMembers'
 import { ProjectShares } from '@/pages/work/ProjectShares'
 import { TASK_RESOURCE, useResource } from '@/widget/useResource'
 
@@ -135,7 +136,10 @@ export function ProjectPage(): JSX.Element {
       />
       <ProjectServices detail={detail} workspace={workspace} handle={handle} onChanged={reload} />
       {detail.visibility !== 'personal' && (
-        <ProjectShares detail={detail} workspace={workspace} handle={handle} onChanged={reload} />
+        <>
+          <ProjectMembers detail={detail} workspace={workspace} handle={handle} onChanged={reload} />
+          <ProjectShares detail={detail} workspace={workspace} handle={handle} onChanged={reload} />
+        </>
       )}
 
       {detail.proposal && (

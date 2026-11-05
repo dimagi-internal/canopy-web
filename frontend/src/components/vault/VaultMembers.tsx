@@ -16,6 +16,7 @@ export function sourceLabel(source: string, self?: string): string {
   const [kind, name] = source.split(':')
   if (kind === 'workspace_owners') return `Owner of ${name}`
   if (kind === 'workspace_admins') return `Admin of ${name}`
+  if (kind === 'project') return `On the project ${name}`
   if (kind === 'agent' || kind === 'attached') return name === self ? 'Full access to this agent' : `Full access to ${name}`
   if (kind === 'license') return name === self ? 'Licensed to use this agent' : `Licensed to use ${name}`
   return source

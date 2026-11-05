@@ -5,6 +5,7 @@ from django.db import models
 from django.db.models.functions import Lower
 
 from .agent import Agent
+from .members import NamedMember
 
 
 class AgentProject(models.Model):
@@ -332,6 +333,24 @@ class AgentProject(models.Model):
         from apps.agents.services import waiting_q  # cycle: agents.services -> agents.models  # noqa: PLC0415
 
         return self.tasks.filter(waiting_q()).count()
+
+
+class ProjectMember(NamedMember):
+    """A person on a project, added by name: `admin` (may change who else is on it) or
+    `member`. Its lead (`AgentProject.owner_user`) is on it without a row. Being on a
+    project lets you change it and makes you a member of every vault attached to it.
+    `project_members` answers every question about this; `ProjectParticipant` is only who
+    canopy has seen take part and grants nothing."""
+
+    project = models.ForeignKey(AgentProject, on_delete=models.CASCADE, related_name="people")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="project_memberships")
+
+    class Meta:
+        ordering = ["project_id", "added_at"]
+        constraints = [models.UniqueConstraint(fields=["project", "user"], name="one_project_member_row")]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.project_id}:{self.user_id} ({self.role})"
 
 
 class ProjectShare(models.Model):

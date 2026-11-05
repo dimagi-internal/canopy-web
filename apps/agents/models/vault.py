@@ -6,6 +6,7 @@ from django.conf import settings
 from django.db import models
 
 from .agent import Agent
+from .members import NamedMember
 
 
 class VaultEntryAccount(models.Model):
@@ -463,7 +464,7 @@ class VaultAttachment(models.Model):
         return f"{self.vault_id} -> {self.agent_id or self.workspace_id or self.project_id or self.runner_id}"
 
 
-class VaultMember(models.Model):
+class VaultMember(NamedMember):
     """A person added to a vault by name — a direct membership, kept until an
     admin removes it, whatever happens to any agent the vault is linked to.
 
@@ -471,15 +472,8 @@ class VaultMember(models.Model):
     is never stored: it comes only from owning the linked agent (or the workspace,
     for a workspace vault). A row or a link gives `admin` or `member`."""
 
-    OWNER, ADMIN, MEMBER = "owner", "admin", "member"
-    ROLE_CHOICES = [(ADMIN, "Admin"), (MEMBER, "Member")]
-
     vault = models.ForeignKey(Vault, on_delete=models.CASCADE, related_name="members")
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="vault_memberships")
-    role = models.CharField(max_length=10, choices=ROLE_CHOICES, default=MEMBER)
-    added_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
-                                 related_name="+")
-    added_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ["vault_id", "added_at"]
@@ -499,10 +493,11 @@ class VaultLink(models.Model):
       (as `role`) of `workspace`, inherited down the tree as those roles are."""
 
     AGENT, WORKSPACE_OWNERS, WORKSPACE_ADMINS = "agent", "workspace_owners", "workspace_admins"
-    #: Everyone with full access to any agent this (workspace) vault is attached to.
+    #: Everyone with full access to an agent this (workspace) vault is attached to, by
+    #: itself or through a workspace, and the people of a project it is attached to.
     ATTACHED = "attached"
     KIND_CHOICES = [(AGENT, "Full access to an agent"), (WORKSPACE_OWNERS, "Owners of a workspace"),
-                    (WORKSPACE_ADMINS, "Admins of a workspace"), (ATTACHED, "Full access to an attached agent")]
+                    (WORKSPACE_ADMINS, "Admins of a workspace"), (ATTACHED, "What the vault is attached to")]
 
     vault = models.ForeignKey(Vault, on_delete=models.CASCADE, related_name="links")
     kind = models.CharField(max_length=20, choices=KIND_CHOICES)

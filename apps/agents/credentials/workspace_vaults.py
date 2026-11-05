@@ -8,7 +8,8 @@ agent's id takes in every AAD and HKDF info — so the browser and the canopy CL
 for either with the same code, and a copy made for one can never open the other.
 
 * **Who may open it** is its membership (`vault_members`): by default the workspace's
-  owners (`owner`) and everyone with full access to an agent it is attached to (`member`).
+  owners (`owner`), everyone with full access to an agent it is attached to (`member`),
+  and the people of a project it is attached to (never the rosters of that project's agents).
 * **Which agents it serves** are its attachments: one agent, every agent in a
   workspace and below it, or every current member agent of a project that lie in the
   vault's tree. A turn reads every vault attached to its agent, layered under
@@ -25,7 +26,7 @@ the same owner, serving the same tree or agent, the same sensitive-data standing
 """
 from __future__ import annotations
 
-
+from django.contrib.auth import get_user_model
 from django.db import transaction
 
 from apps.harness import device_keys, runner_requirements
@@ -229,7 +230,8 @@ def project_vaults(project, user) -> list[dict]:
     for a in (VaultAttachment.objects.filter(project=project, vault__kind=Vault.WORKSPACE)
               .select_related("vault__workspace").order_by("created_at", "pk")):
         v = a.vault
-        if not getattr(user, "is_authenticated", False) or wsvc.membership(user, v.workspace) is None:
+        if not getattr(user, "is_authenticated", False) or not (
+                wsvc.membership(user, v.workspace) is not None or user.pk in vault_members.member_ids(v)):
             continue
         served, unserved = vault_members.project_agents(v, project)
         out.append({"vault_id": str(v.pk), "workspace": v.workspace_id, "name": v.name,
@@ -237,6 +239,22 @@ def project_vaults(project, user) -> list[dict]:
                     "served": [x.slug for x in served], "not_served": [x.slug for x in unserved],
                     "project_outside_tree": project.workspace_id not in vault_members.vault_tree(v)})
     return out
+
+
+def project_vault_box_owners(project) -> dict[str, list[str]]:
+    """`{email: [agent slugs]}`: the people whose machines run a member agent a vault of this
+    project serves, and who are not members of that vault. Such a machine gets no copy of the
+    key (`device_may_hold`), so the agent's turn there runs without the secret until they join."""
+    out: dict[str, set[str]] = {}
+    for a in VaultAttachment.objects.filter(project=project, vault__kind=Vault.WORKSPACE).select_related("vault"):
+        ids = vault_members.member_ids(a.vault)
+        served, _ = vault_members.project_agents(a.vault, project)
+        for agent in served:
+            keys = device_keys.keys_for_agent(agent).filter(status=RunnerDeviceKey.ACTIVE)
+            people = {vault_members.person_of_device(k) for k in keys} - ids - {None}
+            for user in get_user_model().objects.filter(pk__in=people - vault_members.not_a_person(people)):
+                out.setdefault(user.email or "", set()).add(agent.slug)
+    return {email: sorted(slugs) for email, slugs in sorted(out.items())}
 
 
 def layered_names(agent: Agent) -> set[str]:

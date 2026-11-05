@@ -28,7 +28,7 @@ from ninja.errors import HttpError
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from . import services
+from . import project_members, services
 from .models import Agent
 
 
@@ -227,8 +227,8 @@ def project_ws_or_404(request: HttpRequest, workspace: str, handle: str):
     agent's (a dimagi agent leading connect's project reads it as the dimagi
     member it is), and may read it; else 404 — the same for "no such project"."""
     project = services.get_workspace_project(workspace, handle)
-    if project is None or (workspace not in set(listed_agent_workspaces(request))
-                           and not project_in_reach(request, project)) \
+    # By address: this names its workspace, so it is never the read `workspace-required` refuses.
+    if project is None or not project_in_reach(request, project) \
             or not services.may_read_project(request.user, project):
         raise HttpError(404, f"project {workspace}/{handle} not found")
     return project
@@ -266,19 +266,19 @@ def project_agent_login(request: HttpRequest, project):
 
 
 def may_edit_project(request: HttpRequest, project) -> bool:
-    """An editor of its workspace or of its lead agent's, its lead, or the
-    login of an agent leading or working on it."""
+    """An editor of its workspace or of its lead agent's, a person on it (its lead, or
+    `project_members`), or the login of an agent leading or working on it."""
     user = request.user
     if perms.can(user, project.workspace_id, perms.AGENT_WORK):
         return True
     if project.agent_id is not None and (perms.can(user, project.agent.workspace_id, perms.AGENT_WORK)
                                          or project.agent.is_own_login(user)):
         return True
-    if project.owner_user_id is not None and project.owner_user_id == getattr(user, "pk", None):
+    if project_members.is_member(project, user):
         return True
     return project.member_agents.filter(user=user).exists() if getattr(user, "is_authenticated", False) else False
 
 
 def require_project_edit(request: HttpRequest, project) -> None:
     if not may_edit_project(request, project):
-        raise HttpError(403, "changing a project requires the editor role, being its lead, or being its agent")
+        raise HttpError(403, "changing a project requires the editor role, being on it, or being its agent")

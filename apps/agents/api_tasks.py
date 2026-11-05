@@ -20,9 +20,9 @@ from apps.api.route_gates import gate
 from apps.events import audit
 from apps.harness import turn_status
 from apps.harness.models import Turn
-from apps.workspaces.links import base_url
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
+from apps.workspaces.links import base_url
 from apps.workspaces.models import Workspace
 
 from . import proposals, services, work
@@ -447,7 +447,7 @@ def list_milestones(request: HttpRequest, workspace: str, handle: str) -> list[M
 @router.post("/workspace-projects/{workspace}/{handle}/milestones/", response={201: MilestoneOut},
              summary="Add a milestone to a project")
 # an editor of its workspace or its lead agent's, its lead, or a working agent's own login
-@gate("agent.work", "agent-login", "self", kind="content")
+@gate("agent.work", "agent-login", "self", "project-member", kind="content")
 def create_milestone(request: HttpRequest, workspace: str, handle: str, payload: MilestoneIn) -> Status:
     project = project_ws_or_404(request, workspace, handle)
     require_project_edit(request, project)
@@ -468,7 +468,7 @@ def _milestone_or_404(project, milestone_id: int):
 @router.patch("/workspace-projects/{workspace}/{handle}/milestones/{milestone_id}", response=MilestoneOut,
               summary="Change a project's milestone")
 # an editor of its workspace or its lead agent's, its lead, or a working agent's own login
-@gate("agent.work", "agent-login", "self", kind="content")
+@gate("agent.work", "agent-login", "self", "project-member", kind="content")
 def update_milestone(request: HttpRequest, workspace: str, handle: str, milestone_id: int,
                      payload: MilestonePatch) -> MilestoneOut:
     project = project_ws_or_404(request, workspace, handle)
@@ -483,7 +483,7 @@ def update_milestone(request: HttpRequest, workspace: str, handle: str, mileston
 @router.delete("/workspace-projects/{workspace}/{handle}/milestones/{milestone_id}", response={204: None},
                summary="Delete a project's milestone (its tasks stay, without it)")
 # an editor of its workspace or its lead agent's, its lead, or a working agent's own login
-@gate("agent.work", "agent-login", "self", kind="content")
+@gate("agent.work", "agent-login", "self", "project-member", kind="content")
 def delete_milestone(request: HttpRequest, workspace: str, handle: str, milestone_id: int):
     project = project_ws_or_404(request, workspace, handle)
     require_project_edit(request, project)
@@ -506,7 +506,7 @@ def list_project_updates(request: HttpRequest, workspace: str, handle: str,
 @router.post("/workspace-projects/{workspace}/{handle}/updates/", response={201: ProjectUpdateOut},
              summary="Post a project update: its health and a short note")
 # an editor of its workspace or its lead agent's, its lead, or a working agent's own login
-@gate("agent.work", "agent-login", "self", kind="content")
+@gate("agent.work", "agent-login", "self", "project-member", kind="content")
 def post_project_update(request: HttpRequest, workspace: str, handle: str, payload: ProjectUpdateIn) -> Status:
     """A person's update is published (unless `draft`). An agent posting under
     its own login always writes a draft — the lead publishes it, choosing the
@@ -529,7 +529,7 @@ def post_project_update(request: HttpRequest, workspace: str, handle: str, paylo
              summary="Publish a drafted project update, choosing its health")
 # a person who may change the project; an agent's own login only as the project's
 # lead agent, its own draft, where an admin has turned `lead_agent_may_publish` on
-@gate("agent.work", "agent-login", "self", kind="content")
+@gate("agent.work", "agent-login", "self", "project-member", kind="content")
 def publish_project_update(request: HttpRequest, workspace: str, handle: str, update_id: int,
                            payload: ProjectUpdatePublishIn) -> ProjectUpdateOut:
     """A person publishes a draft, choosing its health. An agent drafts and a
@@ -594,7 +594,7 @@ def list_project_services(request: HttpRequest, workspace: str, handle: str) -> 
 @router.post("/workspace-projects/{workspace}/{handle}/services/", response={201: ProjectServiceOut},
              summary="Share an MCP server, a skill or a plugin with the workspace, from this project")
 # an editor of its workspace or its lead agent's, its lead, or a working agent's own login
-@gate("agent.work", "agent-login", "self", kind="content")
+@gate("agent.work", "agent-login", "self", "project-member", kind="content")
 def add_project_service(request: HttpRequest, workspace: str, handle: str, payload: ProjectServiceIn) -> Status:
     """Listed on the project page and, for an MCP server, in the workspace's
     directory (`GET /api/mcp-servers/`). canopy does not proxy or vet a remote
@@ -619,7 +619,7 @@ def _service_or_404(project, service_id: int):
 @router.patch("/workspace-projects/{workspace}/{handle}/services/{service_id}", response=ProjectServiceOut,
               summary="Change a shared MCP server, skill or plugin")
 # an editor of its workspace or its lead agent's, its lead, or a working agent's own login
-@gate("agent.work", "agent-login", "self", kind="content")
+@gate("agent.work", "agent-login", "self", "project-member", kind="content")
 def update_project_service(request: HttpRequest, workspace: str, handle: str, service_id: int,
                            payload: ProjectServicePatch) -> ProjectServiceOut:
     project = project_ws_or_404(request, workspace, handle)
@@ -634,7 +634,7 @@ def update_project_service(request: HttpRequest, workspace: str, handle: str, se
 @router.delete("/workspace-projects/{workspace}/{handle}/services/{service_id}", response={204: None},
                summary="Stop sharing an MCP server, skill or plugin")
 # an editor of its workspace or its lead agent's, its lead, or a working agent's own login
-@gate("agent.work", "agent-login", "self", kind="content")
+@gate("agent.work", "agent-login", "self", "project-member", kind="content")
 def remove_project_service(request: HttpRequest, workspace: str, handle: str, service_id: int):
     """A knowledge base is not removed here: it has its own version log."""
     project = project_ws_or_404(request, workspace, handle)
