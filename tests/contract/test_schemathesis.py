@@ -77,6 +77,7 @@ _PER_ENDPOINT_EXCLUSIONS: dict[tuple[str, str], tuple[list, str]] = {
     ("GET", "/api/sites/agents"): ([positive_data_acceptance], _OPAQUE_CREDENTIAL),
     ("POST", "/api/sites/sign-offs"): ([positive_data_acceptance], _OPAQUE_CREDENTIAL),
     ("GET", "/api/sites/sign-offs/{sign_off_id}"): ([positive_data_acceptance], _OPAQUE_CREDENTIAL),
+    ("POST", "/api/sites/resources-updated"): ([positive_data_acceptance], _OPAQUE_CREDENTIAL),
     ("POST", "/api/beta-requests"): (
         [positive_data_acceptance],
         "`email` is validated as a deliverable address (pydantic EmailStr), which "
