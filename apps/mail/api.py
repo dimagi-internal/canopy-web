@@ -24,6 +24,7 @@ from ninja.files import UploadedFile
 
 from apps.agents import turn_context
 from apps.api.auth import session_auth
+from apps.api.pagination import clamp_offset
 from apps.api.route_gates import gate
 from apps.events import audit
 from apps.harness import turn_asker
@@ -633,7 +634,7 @@ def list_mail_threads(request: HttpRequest, workspace: str, agent: str = "", arc
                      _name=Subquery(newest.values("from_name")[:1]),
                      _text=Subquery(newest.annotate(_start=Substr("text", 1, 1000)).values("_start")[:1]),
                      _files=Exists(MailAttachment.objects.filter(message__thread=OuterRef("pk"))))
-    offset, limit = max(offset, 0), min(max(limit, 1), 200)
+    offset, limit = clamp_offset(offset), min(max(limit, 1), 200)
     page = list(qs[offset:offset + limit + 1])
     items = []
     for t in page[:limit]:

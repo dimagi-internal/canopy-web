@@ -9,7 +9,9 @@ import inspect
 import logging
 
 from django.core.exceptions import RequestDataTooBig
+from django.db import DataError
 from django.http import Http404, HttpRequest, HttpResponse
+from django.http.multipartparser import MultiPartParserError
 from ninja import NinjaAPI
 from ninja.errors import AuthenticationError, HttpError, ValidationError
 
@@ -223,6 +225,37 @@ def _on_too_big(request: HttpRequest, exc: RequestDataTooBig) -> HttpResponse:
         title="Payload too large",
         status=413,
         detail="That is too much to send in one request.",
+        instance=request.path,
+    )
+    return _problem_response(request, problem)
+
+
+@api.exception_handler(MultiPartParserError)
+def _on_malformed_multipart(request: HttpRequest, exc: MultiPartParserError) -> HttpResponse:
+    """A multipart body Django cannot parse (e.g. a `Content-Type` with no boundary): the caller's, not a 500."""
+    problem = Problem(
+        type="about:blank",
+        title=status_title(400),
+        status=400,
+        detail=f"Malformed multipart body: {exc}",
+        instance=request.path,
+    )
+    return _problem_response(request, problem)
+
+
+@api.exception_handler(OverflowError)
+@api.exception_handler(DataError)
+def _on_out_of_range(request: HttpRequest, exc: Exception) -> HttpResponse:
+    """A caller's number too big for its column (an id or count past int32/int64).
+
+    Ninja's `int` is unbounded, so `/members/9223372036854775808/` reaches the
+    database, which refuses it (`DataError` on Postgres, `OverflowError` on
+    SQLite). That is the caller's input, not a server fault."""
+    problem = Problem(
+        type=TYPE_VALIDATION,
+        title="Value out of range",
+        status=400,
+        detail="A value in the request is too large for the field it names.",
         instance=request.path,
     )
     return _problem_response(request, problem)

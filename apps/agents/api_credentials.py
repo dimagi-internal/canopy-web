@@ -3,6 +3,8 @@ read log, device keys and credential alerts. The rest of the vault lives beside 
 `api_vault_members`, `api_secret_requests`, `api_sender_trust`, `api_github`, `api_pat_rotation`."""
 from __future__ import annotations
 
+from typing import Union
+
 from django.http import HttpRequest
 from ninja import Router
 from ninja.errors import HttpError
@@ -11,6 +13,7 @@ from apps.api.auth import session_auth
 from apps.api.errors import (
     TYPE_AUTH,
     TYPE_CONFLICT,
+    Problem,
     ProblemError,
 )
 from apps.api.route_gates import gate
@@ -115,7 +118,10 @@ def agent_credential_access(request: HttpRequest, slug: str) -> AgentCredentialA
 
 
 @router.get("/{slug}/credentials/resolve",
-            response={200: AgentCredentialsResolveOut, 401: DeviceProofRequiredOut,
+            # A 401 is either resolve's own device-proof refusal or the generic
+            # "no credential at all" problem every authenticated route can answer.
+            response={200: AgentCredentialsResolveOut,
+                      401: Union[DeviceProofRequiredOut, Problem],  # noqa: UP007 — ninja reads typing.Union
                       409: ZkWrapMissingOut},
             summary="PLAINTEXT — a runner stages this agent's secrets")
 @gate("runner-holds-agent", "agent-admin", "license", step_up="runner protocol")  # bearer only

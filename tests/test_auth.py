@@ -33,7 +33,11 @@ def test_api_requires_auth_returns_401(db):
     client = Client()
     resp = client.get("/api/agents/")
     assert resp.status_code == 401
-    assert resp.json() == {"detail": "Authentication required"}
+    assert resp["Content-Type"] == "application/problem+json"
+    body = resp.json()
+    assert body["detail"] == "Authentication required"  # what older clients read
+    assert body["status"] == 401
+    assert body["type"].endswith("/problems/auth")
 
 
 @override_settings(REQUIRE_AUTH=True)

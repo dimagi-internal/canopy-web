@@ -420,8 +420,9 @@ def upload_walkthrough(
         )
     except DriveNotConfigured as exc:
         w.delete()
+        # 503, not 500: the server works; the storage it needs is not set up here.
         raise ProblemError(
-            500,
+            503,
             "Drive not configured",
             type_=TYPE_DRIVE_NOT_CONFIGURED,
             detail=str(exc),

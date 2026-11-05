@@ -16,6 +16,7 @@ from ninja.errors import HttpError
 
 from apps.agents.models import Agent
 from apps.api.auth import session_auth
+from apps.api.pagination import MAX_OFFSET
 from apps.api.route_gates import gate
 from apps.contacts import people
 from apps.harness import initiator as who
@@ -152,7 +153,7 @@ def list_meetings(
     workspace: str = "",
     project: str = "",
     limit: int = Query(30, ge=1, le=100),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=MAX_OFFSET),
 ) -> dict:
     """Newest first. `q` matches words in the titles, attendees and saved text. `project` is an
     address ("connect/weekly-sync")."""

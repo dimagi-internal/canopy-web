@@ -423,8 +423,8 @@ class NoiseReportOut(Schema):
 
 
 class NoisePurgeIn(Schema):
-    #: Restrict to one session (UUID). Omit for all your sessions.
-    session_id: str | None = None
+    #: Restrict to one session. Omit for all your sessions.
+    session_id: uuid.UUID | None = None
     #: Actually delete. Default False: a dry run that deletes nothing.
     apply: bool = False
     #: Example rows to include (clamped to 50).

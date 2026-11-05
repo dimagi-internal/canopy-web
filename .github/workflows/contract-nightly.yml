@@ -16,9 +16,11 @@ on:
         required: false
         default: "100"
 
-# Checks out and fuzzes a local server; nothing writes back to GitHub.
+# Checks out and fuzzes a local server. The one write back to GitHub is the
+# failure issue below (issues: write); it never touches the repo's contents.
 permissions:
   contents: read
+  issues: write
 
 jobs:
   contract-tests-nightly:
@@ -114,3 +116,39 @@ jobs:
           SCHEMATHESIS_SCHEMA_URL: http://localhost:8000/api/openapi.json
           SCHEMATHESIS_AUTH_BEARER: ${{ steps.pat.outputs.raw }}
           SCHEMATHESIS_MAX_EXAMPLES: ${{ github.event.inputs.max_examples || '100' }}
+
+      # A red nightly that nobody sees is not a check. On main only (a dispatch on
+      # a branch is someone trying a change, and is watched by whoever ran it),
+      # keep ONE open issue with a fixed title: open it on the first failure,
+      # comment on it for each later one. A passing scheduled run closes it.
+      - name: Open or update the failure issue
+        if: failure() && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          TITLE="Contract nightly failing"
+          N=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$TITLE\" in:title" \
+                --json number,title --jq "map(select(.title == \"$TITLE\")) | .[0].number // empty")
+          if [ -n "$N" ]; then
+            gh issue comment "$N" --repo "$GITHUB_REPOSITORY" \
+              --body "Failed again ($GITHUB_EVENT_NAME, $(git rev-parse --short HEAD)): $RUN_URL"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body "$(printf '%s\n\n%s\n\n%s' \
+              "The nightly contract job (.github/workflows/contract-nightly.yml) failed on main: $RUN_URL" \
+              "Failing endpoints are in the run's \"Run schemathesis\" step log (gh run view <id> --log-failed). Fix the server, or exclude a check per endpoint in tests/contract/test_schemathesis.py with its reason." \
+              "This issue gets a comment on each later failure and is closed by the next passing scheduled run.")"
+          fi
+
+      - name: Close the failure issue
+        if: success() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          TITLE="Contract nightly failing"
+          N=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$TITLE\" in:title" \
+                --json number,title --jq "map(select(.title == \"$TITLE\")) | .[0].number // empty")
+          if [ -n "$N" ]; then
+            gh issue close "$N" --repo "$GITHUB_REPOSITORY" --comment "Passing again: $RUN_URL"
+          fi

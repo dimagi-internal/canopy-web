@@ -201,7 +201,7 @@ def reset_sessions(request: HttpRequest, payload: ResetIn):
 
 @router.get("/noise", response=NoiseReportOut, summary="Find harness output stored as your messages")
 @gate("session-acl")  # rows of sessions the caller can read
-def audit_session_noise(request: HttpRequest, session_id: str | None = None, sample: int = 5):
+def audit_session_noise(request: HttpRequest, session_id: uuid.UUID | None = None, sample: int = 5):
     """Report harness output stored as USER messages in your sessions.
 
     Claude Code writes task notifications, system reminders, skill bodies and
