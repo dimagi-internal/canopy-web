@@ -371,12 +371,21 @@ jobs:
       # tests/test_migrations_apply.py) and saves a dump; a queue run on the same
       # inputs restores it in seconds (a merge_group ref reads main's caches). A
       # PR that adds a migration misses the key and replays for real.
+      # The dump is also a function of the runner's pg_dump/pg_restore: `ubuntu-latest`
+      # moved from 24.04 to 26.04 on 2026-11-05, and a dump written by the old image's
+      # client failed to restore on the new one ("unrecognized configuration parameter
+      # transaction_timeout" against the PG16 server), ejecting every queue run. So the
+      # image is part of the key.
+      - name: Note the runner image
+        id: image
+        run: echo "id=$(. /etc/os-release; echo "$ID$VERSION_ID")" >> "$GITHUB_OUTPUT"
+
       - name: Restore the migrated test DB
         id: testdb
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /tmp/testdb.dump
-          key: pg-testdb-v1-${{ hashFiles('apps/**/migrations/*.py', 'sdk/python/src/**/migrations/*.py', 'config/settings/*.py', 'uv.lock', 'pyproject.toml') }}
+          key: pg-testdb-v1-${{ steps.image.outputs.id }}-${{ hashFiles('apps/**/migrations/*.py', 'sdk/python/src/**/migrations/*.py', 'config/settings/*.py', 'uv.lock', 'pyproject.toml') }}
 
       - name: Build the test DB (every migration) — or load the cached build
         env:
@@ -386,10 +395,16 @@ jobs:
           HIT: ${{ steps.testdb.outputs.cache-hit }}
         run: |
           psql -h localhost -U postgres -c "CREATE DATABASE test_canopy_web"
-          if [ "$HIT" = "true" ]; then
-            pg_restore -h localhost -U postgres -d test_canopy_web --no-owner --exit-on-error /tmp/testdb.dump
+          if [ "$HIT" = "true" ] && pg_restore -h localhost -U postgres -d test_canopy_web --no-owner --exit-on-error /tmp/testdb.dump; then
             echo "::notice::Restored the migrated test DB (migrations unchanged since main built it)."
           else
+            # A cached dump that will not restore must not eject the queue: replay the
+            # migrations for real (the same coverage a cache miss gets) and rebuild.
+            if [ "$HIT" = "true" ]; then
+              echo "::warning::The cached test DB dump failed to restore; replaying every migration instead."
+              psql -h localhost -U postgres -c "DROP DATABASE test_canopy_web"
+              psql -h localhost -U postgres -c "CREATE DATABASE test_canopy_web"
+            fi
             uv run python manage.py migrate --noinput
             pg_dump -h localhost -U postgres -Fc -f /tmp/testdb.dump test_canopy_web
           fi
