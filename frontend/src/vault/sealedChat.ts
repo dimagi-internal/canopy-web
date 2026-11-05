@@ -166,10 +166,9 @@ export class VaultKeyRefused extends Error {
   }
 }
 
-export const CHANGED_SELF =
-  'The vault key canopy names as yours is not the one this browser last opened, so this chat was ' +
-  'not started. If you did not replace your vault key, someone may be trying to read your chats: ' +
-  'tell your canopy admin. If you did, open it once (Settings → Vault key) and start again.'
+export const DISPROVEN_SELF =
+  'The vault key canopy names as yours is one this browser has already found is not yours, so this ' +
+  'chat was not started. Someone may be trying to read your chats: tell your canopy admin.'
 export const UNCONFIRMED_SELF =
   'Open your vault key in this browser once to start a chat here: its key is made for you, and ' +
   'this browser must first see that the vault key canopy names is yours.'
@@ -180,23 +179,23 @@ export const UNCONFIRMED_SELF =
  * unlock anything:
  *
  *  - pinned here (`trust.checkSelf`) → used, silently;
- *  - changed since → refused (`VaultKeyRefused`): that is what a substituted key looks
- *    like, and no chat starts on it;
- *  - never seen here (a fresh browser, or the panel's frame) → trusted on first use:
- *    wrapped to the key canopy names, and that key pinned here as UNCONFIRMED with the
- *    chat's id (`trust.trustSelfOnFirstUse`). The first time this browser opens the vault
- *    key for any reason, the key it actually holds is checked against it, and a mismatch
- *    is shown naming those chats (`trust.rememberSelf`, `useSealedConversation.warning`).
- *    So a key substituted on a browser's very first chat is DETECTED at first unlock, not
- *    prevented (tenancy.md § Sensitive conversations).
+ *  - already proven not yours by an unlock here → refused (`VaultKeyRefused`);
+ *  - never seen here (a fresh browser, or the panel's frame), or changed since (you
+ *    replaced your key elsewhere) → trusted on first use: wrapped to the key canopy names,
+ *    and that key pinned here as UNCONFIRMED with the chat's id
+ *    (`trust.trustSelfOnFirstUse`). The next time this browser opens the vault key for any
+ *    reason, the key it actually holds is checked against it, and a mismatch is shown
+ *    naming those chats (`trust.rememberSelf`, `useSealedConversation.warning`). So a
+ *    substituted key is DETECTED at that unlock, not prevented
+ *    (tenancy.md § Sensitive conversations).
  */
 export async function offerForNewChat(me: MyVaultKey): Promise<ConversationKeyOffer> {
   const thumb = await jkt(me.public_jwk as Jwk)
   if (thumb !== me.jkt) throw new VaultKeyRefused('Your vault key does not match its thumbprint, so this chat was not started.')
   const seen = checkSelf(me.user_id, thumb)
-  if (seen === 'changed') throw new VaultKeyRefused(CHANGED_SELF)
+  if (seen === 'disproven') throw new VaultKeyRefused(DISPROVEN_SELF)
   const offer = await newConversationKey(me, { confirmed: true })
-  if (seen === 'new' || isUnconfirmed(me.user_id)) trustSelfOnFirstUse(me.user_id, thumb, offer.conversation)
+  if (seen !== 'pinned' || isUnconfirmed(me.user_id)) trustSelfOnFirstUse(me.user_id, thumb, offer.conversation)
   return offer
 }
 
@@ -212,9 +211,9 @@ export async function newConversationKey(me: MyVaultKey,
   const thumb = await jkt(mine)
   if (thumb !== me.jkt) throw new VaultKeyRefused('your vault key does not match its thumbprint')
   const seen = checkSelf(me.user_id, thumb)
-  if (seen === 'changed') throw new VaultKeyRefused(CHANGED_SELF)
-  // A key never seen here is used only on first use, recorded (`offerForNewChat`).
-  if (seen === 'new' && !opts.confirmed) throw new VaultKeyRefused(UNCONFIRMED_SELF)
+  if (seen === 'disproven') throw new VaultKeyRefused(DISPROVEN_SELF)
+  // A key not confirmed here is used only on first use, recorded (`offerForNewChat`).
+  if (seen !== 'pinned' && !opts.confirmed) throw new VaultKeyRefused(UNCONFIRMED_SELF)
   const pair = await generateKeyPair()
   const conversation = globalThis.crypto.randomUUID()
   const wrap = await wrapEcdhEs(pair.scalar, mine as PublicJwk, wrapInfo(conversation, me.user_id), opts)

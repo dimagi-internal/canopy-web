@@ -143,7 +143,7 @@ export interface PreparedZk {
 export async function prepareTurnOnZk(slug: string, storedNames: string[], unlock?: Unlock,
                                       opts: { personRecovery?: boolean } = {}): Promise<PreparedZk> {
   const ks = await getKeyset()
-  if (!ks.exists || !ks.public_jwk) throw new Error('Set up your vault key first (Settings → Vault key).')
+  if (!ks.exists || !ks.public_jwk) throw new Error('Set up your vault key first (Settings → Security).')
   // An agent born zero-knowledge (kv 0) has only sealed values and no vault
   // key yet: this creates it, opening each sealed value with my keyset.
   const state = await getZkState(slug, true)

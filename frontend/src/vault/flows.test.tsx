@@ -364,6 +364,31 @@ describe('Create a new vault key', () => {
   })
 })
 
+describe('Any unlock tells this browser which key is yours', () => {
+  it('pins the key it opened, so a page that is not about chats still settles a replaced key', async () => {
+    const store = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+    })
+    try {
+      const { pinPerson, checkSelf } = await import('./trust')
+      const old = await person()
+      const me = await person()
+      pinPerson(USER, await zk.jkt(old.publicJwk), '')
+      const secret = zk.randomBytes(16)
+      const seal = await zk.sealUserKey2skd(me.scalar, USER, 'the right passphrase', secret)
+      const sk = zk.secretKeyCode(secret)
+      await unlockVaultKey(async () => ({ method: 'passphrase', passphrase: 'the right passphrase', secretKey: sk }),
+        keysetOut({ exists: true, public_jwk: me.publicJwk, seals: [seal] }) as never)
+      expect(checkSelf(USER, await zk.jkt(me.publicJwk))).toBe('pinned')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  }, 20000)
+})
+
 describe('An agent page: nothing to set up by hand', () => {
   it('shows a born agent (no key of its own yet) as private, with no setup button', async () => {
     api.getKeyset.mockResolvedValue(keysetOut())

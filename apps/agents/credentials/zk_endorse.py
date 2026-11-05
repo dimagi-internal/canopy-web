@@ -130,7 +130,7 @@ def add(agent, *, user, items: list, own_machines_only: bool = False) -> int:
                               "machine; a manager of the vault confirms anyone else")
     ks = UserVaultKeyset.objects.filter(user=user).first()
     if ks is None:
-        raise ZkError(409, "zk_no_keyset", "set up your vault key first (Settings → Vault key)")
+        raise ZkError(409, "zk_no_keyset", "set up your vault key first (Settings → Security)")
     my_jkt = device_keys.thumbprint(ks.public_jwk)
     live = {(r["kind"], r["target"]): r["key_jkt"] for r in recipients(agent)}
     rows = []

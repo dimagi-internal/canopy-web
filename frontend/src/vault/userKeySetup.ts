@@ -7,7 +7,7 @@ import {
 } from '@/api/vault'
 import { } from '@/api/problem'
 import { assertWithPrf, PrfUnsupportedError } from './prf'
-import type { } from './trust'
+import { rememberSelf } from './trust'
 import {
   generateKeyPair,
   openUserKeyRecovery,
@@ -25,6 +25,8 @@ import {
 
 import { type UnlockPrompt, openScalar, prfSeals, rememberSecretKey, stepUpAndUnlock, unlockVaultKey, unlockedFrom, upgradePasskey, vaultKeyRoute } from './userKey'
 import { type Unlocked } from './userKey'
+
+type Jwk = { x?: string; y?: string }
 
 
 
@@ -104,6 +106,7 @@ export async function recoverVaultKey(code: string, how: { passkey: true } | { p
   } catch {
     throw new Error('That recovery code does not open your vault key.')
   }
+  await rememberSelf(ks.user_id, ks.public_jwk as Jwk, scalar).catch(() => undefined)
   const pub = ks.public_jwk as Record<string, unknown>
   if ('passkey' in how) {
     const touch = await assertWithPrf(ks.prf_input)
@@ -173,6 +176,7 @@ export async function setUpVaultKeyWithPassphrase(passphrase: string, replace = 
 export async function addPasskeyToVaultKey(prompt: UnlockPrompt): Promise<VaultKeysetOut> {
   const ks = await getKeyset()
   const scalar = await openScalar(ks, prompt)
+  await rememberSelf(ks.user_id, ks.public_jwk as Jwk, scalar).catch(() => undefined)
   const unsealed = (ks.passkeys ?? []).filter((p) => !p.sealed).map((p) => p.credential_id)
   const touch = await assertWithPrf(ks.prf_input, { allow: unsealed })
   if (!touch.prf) throw new PrfUnsupportedError()
@@ -190,6 +194,7 @@ export async function addPassphraseToVaultKey(prompt: UnlockPrompt, passphrase: 
   if (problem) throw new Error(problem)
   const ks = await getKeyset()
   const scalar = await openScalar(ks, prompt)
+  await rememberSelf(ks.user_id, ks.public_jwk as Jwk, scalar).catch(() => undefined)
   const sk = randomBytes(16)
   const added = await sealUserKey2skd(scalar, ks.user_id, passphrase, sk)
   const keep = ((ks.seals ?? []) as unknown as AnySeal[]).filter((s) => s.alg !== '2skd')

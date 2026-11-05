@@ -7,10 +7,10 @@ import { offerForNewChat, type MyVaultKey } from '@/vault/sealedChat'
 /** `{conversation_key}` for a new chat: a key pair made in this frame, wrapped to the
  *  visitor's own vault key (`GET …/my-vault-key`, which the frame's token may read) —
  *  its public half only, so nothing is unlocked: a key pinned in this frame is used, one
- *  never seen here is trusted on first use and checked at the first unlock here
- *  (`offerForNewChat`). Nothing when they have no vault key (404). A key that CHANGED
- *  since this frame pinned it THROWS: the conversation is not started, and the panel
- *  says why. */
+ *  never seen here or replaced since is trusted on first use and checked at the next
+ *  unlock here (`offerForNewChat`). Nothing when they have no vault key (404). A key an
+ *  unlock here proved is not theirs THROWS: the conversation is not started, and the
+ *  panel says why. */
 export async function offeredKey(client: CanopyClient, workspace: string):
     Promise<{ conversation_key?: unknown }> {
   let mine: MyVaultKey

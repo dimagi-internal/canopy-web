@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react'
 import { getKeyset } from '@/api/vault'
 import { stepUpAndUnlock, unlockVaultKey, type Unlocked, type UnlockPrompt } from './operations'
-import { rememberSelf } from './trust'
 import { useUnlockPrompt } from './UnlockPrompt'
 
 const hasSeal = (ks: { seals?: unknown }, alg: string) =>
@@ -19,8 +18,7 @@ export interface UnlockOptions { passkeyOnly?: boolean }
  */
 export function useVaultUnlock(): { unlock: (opts?: UnlockOptions) => Promise<Unlocked>; element: ReactNode } {
   const unlocker = useUnlockPrompt()
-  const unlock = async (opts: UnlockOptions = {}): Promise<Unlocked> => remembered(await open(opts))
-  const open = async ({ passkeyOnly = false }: UnlockOptions): Promise<Unlocked> => {
+  const unlock = async ({ passkeyOnly = false }: UnlockOptions = {}): Promise<Unlocked> => {
     const ks = await getKeyset()
     let failed: unknown = null
     try {
@@ -42,11 +40,4 @@ export function useVaultUnlock(): { unlock: (opts?: UnlockOptions) => Promise<Un
     return unlockVaultKey(passphraseOnly, ks)
   }
   return { unlock, element: unlocker.element }
-}
-
-/** The key just opened is this person's own: pinned, so a key the server later names as
- *  theirs is checked against it (`trust.checkSelf`). */
-async function remembered(me: Unlocked): Promise<Unlocked> {
-  await rememberSelf(me.userId, me.publicJwk, me.scalar).catch(() => undefined)
-  return me
 }

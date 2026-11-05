@@ -65,7 +65,7 @@ export function usePersonTrust(): { confirm: ConfirmPerson; element: ReactNode }
             <b>{ask.email}</b>&apos;s vault key changed since this browser last trusted it
             (was <span className="font-mono">{fingerprint(ask.verdict.was ?? '')}</span>). That is what a substituted
             key looks like. Ask them, by a channel other than canopy, whether they replaced it, and to read you the
-            fingerprint Settings → Vault key shows them. Type it here to go on:
+            fingerprint Settings → Security shows them. Type it here to go on:
           </p>
           <input
             type="text" autoComplete="off" spellCheck={false} value={typed}
@@ -85,7 +85,7 @@ export function usePersonTrust(): { confirm: ConfirmPerson; element: ReactNode }
         <>
           <p className="m-0 text-foreground">
             This browser has not trusted <b>{ask.email}</b>&apos;s vault key before. Check this fingerprint with them
-            (Settings → Vault key shows theirs) before you give them this private conversation:
+            (Settings → Security shows theirs) before you give them this private conversation:
           </p>
           <p className="m-0 font-mono text-foreground" data-testid="person-trust-fingerprint">{fingerprint(ask.verdict.jkt)}</p>
         </>

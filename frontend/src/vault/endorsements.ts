@@ -80,7 +80,7 @@ export async function sealAndStore(slug: string, name: string, plaintext: string
 export async function recoverWithCode(slug: string, code: string): Promise<ZkStateOut> {
   const secret = parseRecoveryCode(code)
   const [state, ks] = await Promise.all([getZkState(slug), getKeyset()])
-  if (!ks.exists || !ks.public_jwk) throw new Error('Set up your vault key first (Settings → Vault key).')
+  if (!ks.exists || !ks.public_jwk) throw new Error('Set up your vault key first (Settings → Security).')
   const rec = state.wraps.find((w) => w.kind === 'recovery' && w.kv === state.kv)
   if (!rec) throw new Error('This agent has no recovery wrap at its current vault key.')
   let vk: Uint8Array

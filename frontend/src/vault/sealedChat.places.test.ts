@@ -70,12 +70,12 @@ describe('a chat started in this browser makes its own key', () => {
       wrapInfo(offer.conversation, '7'))).rejects.toThrow()
   })
 
-  it('refuses to wrap to a key that is not the one this browser last opened as mine', async () => {
+  it('without a first-use record, refuses to wrap to a key this browser has not opened', async () => {
     const mine = await generateKeyPair()
     const substituted = await generateKeyPair()
     pinPerson('7', await jkt(mine.publicJwk), '')
     await expect(newConversationKey({ user_id: '7', public_jwk: substituted.publicJwk,
-                                      jkt: await jkt(substituted.publicJwk) })).rejects.toThrow(/last opened/)
+                                      jkt: await jkt(substituted.publicJwk) })).rejects.toThrow(/Open your vault key/)
     await expect(newConversationKey({ user_id: '7', public_jwk: mine.publicJwk, jkt: 'wrong' }))
       .rejects.toThrow(/thumbprint/)
     await expect(newConversationKey({ user_id: '7', public_jwk: mine.publicJwk, jkt: await jkt(mine.publicJwk) }))

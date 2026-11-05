@@ -38,7 +38,7 @@ import { recordGranted, rotateWith } from './agentKeyOps'
 export async function makeWorkspaceVaultKey(vaultId: string, me: Unlocked): Promise<ZkStateOut> {
   const ks = await getKeyset()
   if (!hasRecoveryCode(ks)) {
-    throw new Error('Add a recovery code to your vault key first (Settings → Vault key): it is how this vault comes back if you lose your passkey.')
+    throw new Error('Add a recovery code to your vault key first (Settings → Security): it is how this vault comes back if you lose your passkey.')
   }
   const state = await getWorkspaceVaultZk(vaultId)
   if (state.kv !== 0) return state
@@ -79,7 +79,7 @@ export async function grantWorkspaceVaultPending(
  */
 export async function rotateWorkspaceVaultKey(vaultId: string, me: Unlocked): Promise<ZkStateOut> {
   if (!hasRecoveryCode(await getKeyset())) {
-    throw new Error('Add a recovery code to your vault key first (Settings → Vault key): it is how this vault comes back if you lose your passkey.')
+    throw new Error('Add a recovery code to your vault key first (Settings → Security): it is how this vault comes back if you lose your passkey.')
   }
   const state = await getWorkspaceVaultZk(vaultId, true)
   if (state.kv === 0) throw new Error('This vault has no key yet: make its key first.')
