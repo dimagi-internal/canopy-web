@@ -74,6 +74,22 @@ jobs:
           ALLOWED_HOSTS: localhost,127.0.0.1
           AUTH_ALLOWED_EMAIL_DOMAIN: dimagi-ai.com
 
+      # Push answers 503 "not configured" without VAPID keys, which is right for
+      # a push-less deployment but means the fuzz never reaches its real path.
+      # A throwaway pair, made here and never stored, lets it.
+      - name: Make throwaway VAPID keys
+        run: |
+          uv run python - >> "$GITHUB_ENV" <<'EOF'
+          import base64
+          from cryptography.hazmat.primitives import serialization
+          from cryptography.hazmat.primitives.asymmetric import ec
+          b64 = lambda b: base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+          key = ec.generate_private_key(ec.SECP256R1())
+          print("VAPID_PRIVATE_KEY=" + b64(key.private_numbers().private_value.to_bytes(32, "big")))
+          print("VAPID_PUBLIC_KEY=" + b64(key.public_key().public_bytes(
+              serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)))
+          EOF
+
       - name: Start backend
         run: |
           uv run python manage.py runserver 0.0.0.0:8000 > /tmp/runserver.log 2>&1 &
@@ -91,6 +107,17 @@ jobs:
           ALLOWED_HOSTS: localhost,127.0.0.1
           AUTH_ALLOWED_EMAIL_DOMAIN: dimagi-ai.com
           REQUIRE_AUTH: "True"
+
+      # Without a workspace every create answers 422 workspace-required, so the
+      # fuzz stops at the door. Made through the API, as a person would: the CI
+      # user becomes its owner, and as their SOLE workspace a create resolves to
+      # it. The suite keeps it sole and intact (test_schemathesis.py).
+      - name: Give the CI user a workspace
+        run: |
+          curl -fsS -X POST http://localhost:8000/api/workspaces/ \
+            -H "Authorization: Bearer ${{ steps.pat.outputs.raw }}" \
+            -H "Content-Type: application/json" \
+            -d '{"slug": "contract-ci", "display_name": "Contract CI"}'
 
       # Schemathesis is installed HERE, not in the project's dev extra.
       #
@@ -116,6 +143,7 @@ jobs:
           SCHEMATHESIS_SCHEMA_URL: http://localhost:8000/api/openapi.json
           SCHEMATHESIS_AUTH_BEARER: ${{ steps.pat.outputs.raw }}
           SCHEMATHESIS_MAX_EXAMPLES: ${{ github.event.inputs.max_examples || '100' }}
+          SCHEMATHESIS_CI_WORKSPACE: contract-ci
 
       # A red nightly that nobody sees is not a check. On main only (a dispatch on
       # a branch is someone trying a change, and is watched by whoever ran it),

@@ -310,6 +310,10 @@ def create_tasks(agent: Agent | None, payloads: list[dict], *, workspace: str = 
         raised_by = p.get("raised_by") or None
         if raised_by and agent is not None and not Turn.objects.filter(pk=raised_by, agent=agent).exists():
             raise ValueError(f"raised_by {raised_by} is not a turn of {agent.slug}")
+        # A person filing (no agent) may still name a turn; it must exist, or the
+        # insert fails on the foreign key and the caller's typo becomes a 500.
+        if raised_by and agent is None and not Turn.objects.filter(pk=raised_by).exists():
+            raise ValueError(f"raised_by {raised_by} is not a turn")
         project = _project_ref(agent, ref, workspace, user=by_user) if ref else None
         parent_ref = str(p.get("parent") or "").strip()
         parent = None

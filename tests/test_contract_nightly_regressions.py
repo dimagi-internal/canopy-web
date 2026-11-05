@@ -7,6 +7,7 @@ malformed request is the caller's mistake and answers 4xx, never 500.
 from __future__ import annotations
 
 import json
+import uuid
 
 import jsonschema
 import pytest
@@ -15,6 +16,7 @@ from django.test import Client, override_settings
 
 from apps.api.api import api
 from apps.tokens.schemas import MAX_TTL_DAYS
+from apps.workspaces.models import Workspace, WorkspaceMembership
 
 User = get_user_model()
 
@@ -93,3 +95,26 @@ def test_unauthenticated_resolve_matches_its_declared_401_schema(db):
     # Round-trip through JSON so the schema is what /api/openapi.json serves.
     components = json.loads(json.dumps(spec["components"]))
     jsonschema.validate(r.json(), {**declared, "components": components})
+
+
+def test_a_task_raised_by_a_turn_that_does_not_exist_is_a_422_not_a_500(client):
+    # A person filing (no agent) named an unknown turn: the FK insert used to 500.
+    user = User.objects.get(username="fuzz")
+    ws = Workspace.objects.create(slug="fuzz", display_name="Fuzz", created_by=user)
+    WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.OWNER)
+    body = {"title": "t", "workspace": "fuzz", "raised_by": str(uuid.uuid4())}
+    r = client.post("/api/tasks/", data=json.dumps(body), content_type="application/json")
+    assert r.status_code == 422, r.content
+
+
+@override_settings(VAPID_PUBLIC_KEY="", VAPID_PRIVATE_KEY="")
+def test_push_without_keys_says_so_with_a_503(client):
+    # Unconfigured push is the deployment's state, not a fault: 503, as designed.
+    # The nightly configures throwaway keys so it reaches the real path instead.
+    assert client.get("/api/push/vapid-public-key").status_code == 503
+
+
+@override_settings(VAPID_PUBLIC_KEY="pub", VAPID_PRIVATE_KEY="priv")
+def test_push_with_keys_serves_the_public_key(client):
+    r = client.get("/api/push/vapid-public-key")
+    assert r.status_code == 200 and r.json()["public_key"] == "pub"
