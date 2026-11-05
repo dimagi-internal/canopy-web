@@ -33,7 +33,7 @@ from apps.agents.credentials import vault_engine, zk_seal
 from apps.harness.models import Runner, RunnerDeviceKey
 
 from . import recipients as rcpt
-from . import server_key, server_tokens, services, tokens, wire
+from . import server_key, server_tokens, services, temporary, tokens, wire
 from .models import Connection, ConnectionApp, ConnectionOperation
 from .wire import WireError
 
@@ -187,6 +187,7 @@ def sweep(now: datetime | None = None) -> dict:
     apps_deleted, operations_expired}`."""
     now = now or timezone.now()
     operations = _expired_operations(now)
+    temporary.sweep(now)
     lapsed = 0
     for conn in (Connection.objects.filter(expires_at__lte=now).exclude(state=Connection.REVOKING)
                  .select_related("app__workspace", "agent__workspace").order_by("pk")):

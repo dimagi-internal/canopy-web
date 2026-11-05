@@ -918,3 +918,53 @@ def test_no_thread_for_a_restage_does_not_stop_the_lease(cr, monkeypatch):
     finally:
         stop.set()
         assert _until(_no_lease_threads)
+
+
+# ── A person's short-lived access: no CLI, nothing to renew ───────────────────
+
+def _temporary_api(cr, monkeypatch, *, status=200, listed=("google",)):
+    def api(method, path, body=None, **kw):
+        cr.calls.append(path)
+        if path.endswith("/connections"):
+            return 200, {"providers": [], "temporary": list(listed)}
+        return status, ({"access_token": "SECRET", "expires_at": "2030-01-01T00:00:00Z", "account_label": "a@b.c"}
+                        if status == 200 else None)
+    monkeypatch.setattr(cr, "_api", api)
+    monkeypatch.setattr(cr, "_CONN_TEMPORARY", set())
+
+
+def test_a_temporary_token_is_staged_private_in_the_cli_format_without_the_cli(cr, monkeypatch, tmp_path):
+    _temporary_api(cr, monkeypatch)
+    monkeypatch.setattr(cr.subprocess, "run", lambda *a, **k: pytest.fail("the CLI opens nothing here"))
+    assert cr._stage_connections("r1", "t1", "eva") == frozenset({"google"})
+    path = _path(tmp_path, provider="google")
+    staged = json.loads(path.read_text())
+    assert staged["access_token"] == "SECRET" and staged["account_label"] == "a@b.c"
+    assert isinstance(staged["expires_at"], float)
+    assert path.stat().st_mode & 0o077 == 0
+    assert path.parent.stat().st_mode & 0o077 == 0
+
+
+def test_a_heartbeat_never_tries_to_renew_a_temporary_token(cr, monkeypatch, tmp_path):
+    _temporary_api(cr, monkeypatch)
+    cr._stage_connections("r1", "t1", "eva")
+    monkeypatch.setattr(cr.subprocess, "run", lambda *a, **k: pytest.fail("nothing can renew it"))
+    cr._restage_connections("t1", now=9_999_999_999)
+    assert _path(tmp_path, provider="google").exists()
+
+
+def test_a_temporary_token_goes_when_the_turn_ends(cr, monkeypatch, tmp_path):
+    _temporary_api(cr, monkeypatch)
+    cr._stage_connections("r1", "t1", "eva")
+    cr._drop_holds("t1")
+    assert not _path(tmp_path, provider="google").exists()
+    assert not cr._CONN_TEMPORARY
+
+
+def test_a_refused_temporary_token_leaves_no_file_and_never_logs_a_token(cr, monkeypatch, tmp_path):
+    _temporary_api(cr, monkeypatch, status=404)
+    assert cr._stage_connections("r1", "t1", "eva") == frozenset()
+    assert not _path(tmp_path, provider="google").exists()
+    assert "t1" not in cr._CONN_HOLDS
+    assert any("stage_failed" in line for line in cr.logs)
+    assert not any("SECRET" in line for line in cr.logs)

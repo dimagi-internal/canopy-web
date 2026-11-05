@@ -319,3 +319,39 @@ class ConnectionSurfaceShare(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["connection", "kind", "ref"], name="connectionsurfaceshare_unique"),
         ]
+
+
+class TemporaryAccess(models.Model):
+    """A person's short-lived access token, lent to one agent for turns that person starts.
+
+    The other way to lend an account, for a clean-up rather than a standing connection: no refresh
+    token is ever asked for, so nothing can renew it, and it dies with the token (about an hour at
+    Google). No vault key or passkey: the provider's own consent screen is the person's yes.
+
+    The price, chosen on purpose: unlike a `Connection`, canopy-web can read this one. `token` is
+    encrypted with canopy-web's own key (`apps.common.encryption`), and it hands the token to the
+    runner holding the turn, so a hacked canopy-web could use or redirect a token while it lives.
+    What it cannot do is outlive that token or mint another. Ended or run out, the row is deleted.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    app = models.ForeignKey(ConnectionApp, on_delete=models.CASCADE, related_name="temporary_accesses")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
+    agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE, related_name="+")
+    provider = models.CharField(max_length=40)
+    account_id = models.CharField(max_length=255)
+    account_label = models.CharField(max_length=255, blank=True, default="")
+    scopes = models.TextField(blank=True, default="")
+    token = models.TextField()
+    expires_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            # One per person, agent and provider: a new sign-in replaces it, so which token a
+            # turn gets is never a guess.
+            models.UniqueConstraint(fields=["user", "agent", "provider"], name="one_temporary_access_per_lend"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.provider} {self.account_label} for {self.agent_id} until {self.expires_at}"

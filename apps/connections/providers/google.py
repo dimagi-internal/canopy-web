@@ -66,6 +66,7 @@ class GoogleProvider(Provider):
     # Revoking at Google ends every token of that account on this OAuth client, so
     # a grant refused at connect is only dropped: other connections may hold one.
     revokes_refused_grant = False
+    temporary_access = True
     server_use_default = False
     server_calls = False
     option_fields = (
@@ -112,6 +113,10 @@ class GoogleProvider(Provider):
         # Google revokes by `token` alone and ignores the client credentials the
         # base sends with it (RFC 7009 shape), which is harmless.
         return REVOKE_URL
+
+    def temporary_params(self) -> Mapping[str, str]:
+        # `online` is what makes Google issue no refresh token. It overrides `offline` below.
+        return {"access_type": "online", "prompt": "consent"}
 
     def authorize_params(self, *, owner_kind, owner) -> Mapping[str, str]:
         # `offline` is what makes Google issue a refresh token; `consent` makes it

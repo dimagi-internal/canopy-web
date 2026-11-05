@@ -120,7 +120,7 @@ def test_a_moved_agents_turn_lists_no_connection(user, dimagi, x):
                                idempotency_key=uuid.uuid4().hex, status=Turn.CLAIMED, claimed_by=runner)
     base = f"/api/harness/runners/{runner.pk}/turns/{turn.pk}"
     listed = Client().get(f"{base}/connections", HTTP_AUTHORIZATION=f"Bearer {raw}")
-    assert listed.json() == {"providers": []}
+    assert listed.json() == {"providers": [], "temporary": []}
 
 
 def test_the_move_dry_run_names_the_connections_that_stop(user, dimagi, x):

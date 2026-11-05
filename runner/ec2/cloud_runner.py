@@ -68,32 +68,32 @@ import base64
 import codecs
 import contextlib
 import datetime
+import fcntl
+import functools
+import glob
 import hashlib
 import hmac
 import io
 import json
 import os
-import fcntl
-import functools
-import glob
 import pathlib
 import pty
 import re
 import secrets
 import select
-import signal
-import struct
-import socket
 import shutil
+import signal
+import socket
+import struct
 import subprocess
 import sys
 import tarfile
 import tempfile
 import termios
 import threading
-import unicodedata
 import time
 import typing
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -1841,6 +1841,9 @@ CONNECTION_STAGE_TIMEOUT_SECONDS = 300
 CONNECTIONS_ZK_MIN_CLI = (0, 2, 838)
 #: A provider key canopy-web may name; anything else never becomes a path or an argv.
 _PROVIDER_KEY = re.compile(r"[a-z][a-z0-9_-]{0,39}")
+#: (turn_id, provider) staged from a person's short-lived access, not a sealed connection. It
+#: cannot be renewed, so no heartbeat re-stages it through the CLI. Under _CONN_LOCK.
+_CONN_TEMPORARY: set = set()
 #: Turns holding staged files: {turn_id: (slug, runner_id, providers)}.
 _CONN_HOLDS: dict = {}
 _CONN_LOCK = threading.Lock()
@@ -1919,17 +1922,52 @@ def _stage_connections(runner_id: str, turn_id: str, slug: str) -> frozenset:
                 listed.append(provider)
             else:
                 _stage_failed_line(slug, "", turn_id, "unusable provider key")
-        if listed and _cli_too_old_for_connections():
+        if [p for p in listed if p not in (body.get("temporary") or [])] and _cli_too_old_for_connections():
             _stage_failed_line(slug, "", turn_id, "canopy CLI too old for connections")
             return frozenset()
+        temporary = [p for p in body.get("temporary") or [] if isinstance(p, str) and _PROVIDER_KEY.fullmatch(p)]
         for provider in listed:
-            _stage_connection_token(runner_id, turn_id, slug, provider)
-        return frozenset(listed)
+            if provider not in temporary:
+                _stage_connection_token(runner_id, turn_id, slug, provider)
+        staged = {p for p in listed if p not in temporary}
+        for provider in temporary:
+            if _stage_temporary_token(runner_id, turn_id, slug, provider):
+                staged.add(provider)
+        return frozenset(staged)
     if status == 0:
         _stage_failed_line(slug, "", turn_id, "listing: canopy-web unreachable")
     elif status not in (-1, 404):
         _stage_failed_line(slug, "", turn_id, f"listing -> {status}")
     return frozenset()
+
+
+def _stage_temporary_token(runner_id: str, turn_id: str, slug: str, provider: str) -> bool:
+    """Stage the short-lived token of the person who started this turn, at the path and in the
+    format the CLI's stage writes, so whatever reads a staged token reads this one the same way.
+    Whether it staged. The turn holds the file like any other, so it goes when the turn ends. No
+    token is ever logged, and a failure costs the turn its token, not its start."""
+    target = _connection_token_path(slug, provider)
+    with _CONN_LOCK:
+        held = _CONN_HOLDS.get(turn_id)
+        _CONN_HOLDS[turn_id] = (slug, runner_id, (held[2] if held else frozenset()) | {provider})
+        _CONN_TEMPORARY.add((turn_id, provider))
+    try:
+        status, body = _api("GET", f"/runners/{runner_id}/turns/{turn_id}/connections/{provider}/temporary", quiet=True)
+        if status != 200 or not isinstance(body, dict) or not body.get("access_token"):
+            raise ValueError(f"temporary -> {status}")
+        expires = datetime.datetime.fromisoformat(str(body["expires_at"]).replace("Z", "+00:00")).timestamp()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        os.chmod(target.parent, 0o700)
+        _write_private_text(target, json.dumps({"access_token": body["access_token"], "instance_url": "",
+                                                "expires_at": expires,
+                                                "account_label": body.get("account_label") or ""}))
+        return True
+    except Exception as exc:  # noqa: BLE001 — never cost the turn its start
+        _stage_failed_line(slug, provider, turn_id, f"temporary: {type(exc).__name__}: {exc}"[:200])
+        with _CONN_LOCK:
+            _CONN_TEMPORARY.discard((turn_id, provider))
+        _stage_failed(turn_id, provider, False)
+        return False
 
 
 def _stage_connection_token(runner_id: str, turn_id: str, slug: str, provider: str, *,
@@ -2051,6 +2089,7 @@ def _drop_holds(turn_id: str) -> None:
     with _CONN_LOCK:
         _CONN_WAITING.difference_update({w for w in _CONN_WAITING if w[0] == turn_id})
         _CONN_NOT_FOR_BOX.difference_update({w for w in _CONN_NOT_FOR_BOX if w[0] == turn_id})
+        _CONN_TEMPORARY.difference_update({w for w in _CONN_TEMPORARY if w[0] == turn_id})
         held = _CONN_HOLDS.pop(turn_id, None)
         if not held:
             return
@@ -2068,6 +2107,9 @@ def _restage_connections(turn_id: str, *, now: float | None = None) -> None:
         return
     slug, runner_id, staged = held
     for provider in sorted(staged):
+        with _CONN_LOCK:
+            if (turn_id, provider) in _CONN_TEMPORARY:
+                continue  # it cannot be renewed: the tool says so when it runs out
         try:
             _stage_connection_token(runner_id, turn_id, slug, provider, now=now, refresh=True)
         except Exception as exc:  # noqa: BLE001 — never cost the lease its heartbeat
@@ -2199,7 +2241,7 @@ def _aws_instance_credentials() -> dict | None:
         try:
             expires = datetime.datetime.strptime(
                 str(doc.get("Expiration")), "%Y-%m-%dT%H:%M:%SZ").replace(
-                tzinfo=datetime.timezone.utc).timestamp()
+                tzinfo=datetime.UTC).timestamp()
         except ValueError:
             expires = 0.0
         creds = {"access_key": str(doc["AccessKeyId"]), "secret_key": str(doc["SecretAccessKey"]),
@@ -5239,7 +5281,7 @@ def _acp_core():
 # recorded THEN — not at finish — for the live stream tail to follow it while it
 # runs. A registry rather than a parameter so neither executor's signature
 # changes (they are deliberately interchangeable; see run_acp).
-_SESSION_HOOKS: dict[str, "object"] = {}
+_SESSION_HOOKS: dict[str, object] = {}
 _SESSION_HOOKS_LOCK = threading.Lock()
 
 
@@ -6556,7 +6598,7 @@ def probe_github_token(token: str, repo: str) -> dict:
     if raw:
         try:
             expires = datetime.datetime.strptime(raw.replace(" UTC", ""), "%Y-%m-%d %H:%M:%S").replace(
-                tzinfo=datetime.timezone.utc).isoformat()
+                tzinfo=datetime.UTC).isoformat()
         except ValueError:
             expires = None
     checks = []
@@ -7099,7 +7141,7 @@ def _job_spec(text: str, name: str) -> JobSpec:
     else. `run` is an argv list, never a string: there is no shell. The file is size-capped
     before it is parsed; `safe_load` builds an alias as a shared reference, so what a
     capped file can expand to is bounded too."""
-    import yaml   # lazy: apt python3-yaml (runner.cfn.yaml); ships with Ubuntu cloud images
+    import yaml  # lazy: apt python3-yaml (runner.cfn.yaml); ships with Ubuntu cloud images
 
     where = ".canopy/jobs.yaml"
     if not _JOB_NAME.fullmatch(name or ""):
@@ -10420,7 +10462,7 @@ def strip_terminal(raw: bytes) -> str:
     text = _CSI.sub(b"", raw)
     # OSC-8 opens as ESC ] 8 ; id=… ; <URL> BEL — keep everything after the last
     # ';' in the introducer, which is the URL itself.
-    def _keep_url(m: "re.Match[bytes]") -> bytes:
+    def _keep_url(m: re.Match[bytes]) -> bytes:
         body = m.group(0)
         url = body.rsplit(b";", 1)[-1].rstrip(b"\x07\x1b\\")
         # Newline-delimited, and that is load-bearing rather than tidiness. The
@@ -11309,7 +11351,7 @@ def _candidate_gog_clients(account: str, declared: str, slug: str = "") -> list:
                          if (cfg_dir / f"credentials-{c}.json").is_file())]
     try:
         data = json.loads((cfg_dir / "config.json").read_text())
-        order.append(((data.get("account_clients") or {}).get(account) or ""))
+        order.append((data.get("account_clients") or {}).get(account) or "")
     except Exception:  # noqa: BLE001 — no map yet is a normal first-boot state
         pass
     try:

@@ -407,6 +407,27 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/connections/temporary/{access_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * End short-lived access I lent an agent
+         * @description End it now and revoke it at the provider. Needs no passkey: ending access only takes it away.
+         *     Only my own: someone else's id is a 404.
+         */
+        readonly delete: operations["end_temporary"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/connections/{provider}/request": {
         readonly parameters: {
             readonly query?: never;
@@ -12073,6 +12094,28 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/turns/{turn_id}/connections/{provider}/temporary": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The short-lived token of the person who started this turn
+         * @description The access token the person who started this turn lent its agent. 404 unless this runner holds the
+         *     turn and that person has one for `provider` now; never anyone else's, and never on a turn someone
+         *     else started. It cannot be renewed: when it runs out, they sign in again.
+         */
+        readonly get: operations["turn_temporary_token"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/{runner_id}/turns/{turn_id}/connections/{provider}": {
         readonly parameters: {
             readonly query?: never;
@@ -19557,6 +19600,11 @@ export interface components {
             readonly providers: readonly components["schemas"]["ProviderOut"][];
             /** Connections */
             readonly connections: readonly components["schemas"]["ConnectionOut"][];
+            /**
+             * Temporary
+             * @description Short-lived access I lent an agent, for turns I start, while it lasts.
+             */
+            readonly temporary?: readonly components["schemas"]["TemporaryAccessOut"][];
         };
         /** MyMachineOut */
         readonly MyMachineOut: {
@@ -19619,6 +19667,31 @@ export interface components {
              */
             readonly label: string;
         };
+        /** TemporaryAccessOut */
+        readonly TemporaryAccessOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Provider */
+            readonly provider: string;
+            /** Workspace */
+            readonly workspace: string;
+            /**
+             * Agent
+             * @description The slug of the agent it is lent to.
+             */
+            readonly agent: string;
+            /** Account Label */
+            readonly account_label: string;
+            /**
+             * Expires At
+             * Format: date-time
+             * @description When the token runs out. It cannot be renewed.
+             */
+            readonly expires_at: string;
+        };
         /** UnreachableOut */
         readonly UnreachableOut: {
             /**
@@ -19645,6 +19718,15 @@ export interface components {
              * @description The machine's runner name.
              */
             readonly runner: string;
+        };
+        /** TemporaryEndedOut */
+        readonly TemporaryEndedOut: {
+            /**
+             * Outcome
+             * @description `revoked` at the provider, or `ended`: gone from canopy-web, the provider could not be reached, and the token runs out by itself.
+             * @enum {string}
+             */
+            readonly outcome: "revoked" | "ended";
         };
         /** ConnectionCallOut */
         readonly ConnectionCallOut: {
@@ -39955,6 +40037,23 @@ export interface components {
              * @description Provider keys the turn's agent has a connection for (its own or one shared with it), sorted. Empty for most agents.
              */
             readonly providers: readonly string[];
+            /**
+             * Temporary
+             * @description Provider keys this turn has short-lived access for, from the person who started it. Read each from `connections/{provider}/temporary`, not through the sealed route.
+             */
+            readonly temporary?: readonly string[];
+        };
+        /** TemporaryTokenOut */
+        readonly TemporaryTokenOut: {
+            /** Access Token */
+            readonly access_token: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            readonly expires_at: string;
+            /** Account Label */
+            readonly account_label: string;
         };
         /** ConnectionKeeperOut */
         readonly ConnectionKeeperOut: {
@@ -48926,6 +49025,28 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ConnectionsOut"];
+                };
+            };
+        };
+    };
+    readonly end_temporary: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly access_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TemporaryEndedOut"];
                 };
             };
         };
@@ -64577,6 +64698,30 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["TurnConnectionsOut"];
+                };
+            };
+        };
+    };
+    readonly turn_temporary_token: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly turn_id: string;
+                readonly provider: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TemporaryTokenOut"];
                 };
             };
         };
