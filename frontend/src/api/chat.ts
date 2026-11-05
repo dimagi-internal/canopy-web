@@ -281,6 +281,24 @@ export function getSessionInfo(id: string): Promise<SessionInfo> {
   return request<SessionInfo>(`/api/canopy-sessions/${encodeURIComponent(id)}/info`);
 }
 
+export type SessionContexts = components["schemas"]["SessionContextsOut"];
+export type SessionContextFacts = components["schemas"]["SessionContextOut"];
+export type TurnContextView = components["schemas"]["TurnContextOut"];
+export type TurnRanAs = components["schemas"]["TurnRanAsOut"];
+export type TurnSnapshot = components["schemas"]["TurnSnapshotOut"];
+
+/** This session's facts, and what would happen if you sent a message now. Writes nothing. */
+export function getSessionContext(id: string): Promise<SessionContexts> {
+  return request<SessionContexts>(`/api/canopy-sessions/${encodeURIComponent(id)}/context`);
+}
+
+/** What one turn ran as, beside what the rules say now. Asked when that turn is opened, never up front. */
+export function getTurnContext(sessionId: string, turnId: string): Promise<TurnRanAs> {
+  return request<TurnRanAs>(
+    `/api/canopy-sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/context`,
+  );
+}
+
 export type SlackDetachResult = components["schemas"]["SlackDetachOut"];
 
 /**

@@ -357,3 +357,15 @@ Stage 1's fan-out was tested and unread. These are what real callers found.
 | 5, stored snapshot | Written at each claim and when refused at enqueue | Also when a direct session opens, which is never claimed, and when an admission rule closes the turn (3.3 asks for that), at enqueue or claim. A blocked sender's mail is refused before the rule, so it has its own code, `sender_blocked`, and never stores the reason |
 | 5 | Older turns show "not recorded" | So do turns canopy never ran: a closeout report (`agent_report`), and a queued turn. A snapshot that could not be built is `unavailable`, and overwrites the last run's |
 | 4 | The envelope reads the Turn Context | Its `turn_mode` and `authority` still read `turn_mode.for_turn`: a queued turn's Turn Context says `pending`, and the envelope has always resolved it live |
+
+### What building Stage 3 corrected
+
+The panel was drawn from the two routes and nothing else. These are what drawing it found.
+
+| Section | The spec said | What it is |
+|---|---|---|
+| 3.2, 5 | The `trace` ends at the deciding rule | The narrowing rules (review chat, sensitive) always run after it and usually change nothing. The panel highlights the last step that changed the answer; for a refusal, the send block whose code is the refusal's, else the step that said no |
+| 3.2 | `basis` says why | At claim every confined turn's `basis` is `capability:<stamp>`, an owner's sensitive turn too, so it does not mean "from the access list". The panel reads it beside `standing.source` |
+| 3.1, 5 | Session Context, every field | `participants`, `audience` and `session_grants` hold user ids only. The panel shows counts and "you", and the ids stay under Raw. Showing names needs a field on the route |
+| 5, "Who sees it" | An outsider to a sensitive conversation is told it is withheld | In chat they never reach the panel: the page stops at "Private conversation" first. Only the IDE's row menu opens it for them, and it says withheld there |
+| 9 | No `door`, `ask` or `capability` in UI text | The panel's own words have none. Text the server writes still does, shown as it is: a refusal's and a credential line's `why`, and a read-mode profile's `description`. Stages 4 and 5 |
