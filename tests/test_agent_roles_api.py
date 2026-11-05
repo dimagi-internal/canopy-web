@@ -50,7 +50,7 @@ def _json(c, method, path, body=None):
     return getattr(c, method)(path, json.dumps(body) if body is not None else None, content_type="application/json")
 
 
-DOOR = {"key": "connector", "label": "Connect door", "description": "Uses Connect", "permissions": ["read", "use:connect"]}
+SITE_ROLE = {"key": "connector", "label": "Connect site", "description": "Uses Connect", "permissions": ["read", "use:connect"]}
 DRIVER = {"key": "pilot", "label": "Pilot", "permissions": ["write"]}
 
 
@@ -74,8 +74,8 @@ def test_a_child_sees_its_roots_roles_and_a_stranger_gets_404(w):
     assert {x["key"] for x in r.json()["roles"]} == {"editor", "read_write", "read_only"}
 
 
-def test_an_admin_defines_a_door_role_and_it_is_one_audited_change(w):
-    r = _json(_c(w["radmin"]), "post", BASE, DOOR)
+def test_an_admin_defines_a_connected_site_role_and_it_is_one_audited_change(w):
+    r = _json(_c(w["radmin"]), "post", BASE, SITE_ROLE)
     assert r.status_code == 201, r.content
     out = r.json()
     assert out["key"] == "connector" and out["permissions"] == ["read", "use:connect"] and not out["builtin"]
@@ -95,14 +95,14 @@ def test_a_role_that_drives_or_changes_the_agent_is_the_owners(w, body):
 
 
 def test_it_takes_a_passkey_step_up_from_a_browser(w):
-    r = _json(_c(w["radmin"], step_up=False), "post", BASE, DOOR)
+    r = _json(_c(w["radmin"], step_up=False), "post", BASE, SITE_ROLE)
     assert r.status_code == 403 and r.json().get("error") == "step_up_required"
 
 
 def test_a_token_may_define_a_role_that_only_reads_and_never_one_that_drives(w):
     raw, _ = PersonalToken.create_for_user(user=w["boss"], label="t")
     c = Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
-    assert _json(c, "post", BASE, DOOR).status_code == 201
+    assert _json(c, "post", BASE, SITE_ROLE).status_code == 201
     r = _json(c, "post", BASE, DRIVER)
     assert r.status_code == 403 and "passkey" in r.json()["detail"]
 
@@ -120,17 +120,17 @@ def test_reserved_malformed_and_taken_keys_are_refused(w, key):
 
 
 def test_keys_are_unique_along_a_chain_in_both_directions(w):
-    assert _json(_c(w["cadmin"]), "post", "/api/workspaces/connect/agent-roles", DOOR).status_code == 201
-    r = _json(_c(w["boss"]), "post", BASE, DOOR)       # root defining what a child already defines
+    assert _json(_c(w["cadmin"]), "post", "/api/workspaces/connect/agent-roles", SITE_ROLE).status_code == 201
+    r = _json(_c(w["boss"]), "post", BASE, SITE_ROLE)       # root defining what a child already defines
     assert r.status_code == 409 and "connect" in r.json()["detail"]
-    other = {**DOOR, "key": "reader2"}
+    other = {**SITE_ROLE, "key": "reader2"}
     assert _json(_c(w["boss"]), "post", BASE, other).status_code == 201
     r = _json(_c(w["cadmin"]), "post", "/api/workspaces/connect/agent-roles", other)   # child redefining
     assert r.status_code == 409 and "dimagi" in r.json()["detail"]
 
 
 def test_a_role_defined_on_the_child_is_listed_there_and_not_above(w):
-    _json(_c(w["cadmin"]), "post", "/api/workspaces/connect/agent-roles", DOOR)
+    _json(_c(w["cadmin"]), "post", "/api/workspaces/connect/agent-roles", SITE_ROLE)
     child = {x["key"] for x in _c(w["cadmin"], False).get("/api/workspaces/connect/agent-roles").json()["roles"]}
     root = {x["key"] for x in _c(w["radmin"], False).get(BASE).json()["roles"]}
     assert "connector" in child and "connector" not in root

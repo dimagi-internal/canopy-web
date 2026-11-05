@@ -1,11 +1,11 @@
 # ruff: noqa: F811 — the fixtures below are imported from test_slack and then requested by name.
-"""Sharing a session TO Slack — the reverse of the front door.
+"""Sharing a session TO Slack — the reverse of Slack starting one.
 
 Every other Slack thread canopy knows is born in Slack. Here the session exists
 first and posts into a channel: as a one-way broadcast, or bound so that the
 thread behaves from then on exactly as if Slack had started it. Slack's Web API
 is faked at the ``requests`` boundary, as in test_slack.py; the bound-thread
-tests then drive a real signed reply through the front door, because "the
+tests then drive a real signed reply through the events webhook, because "the
 metadata looks right" is not the same claim as "a reply reaches the session".
 """
 from __future__ import annotations

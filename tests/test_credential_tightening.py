@@ -2,7 +2,7 @@
 tokens are dead.
 
 Each test pairs the bypass with the legitimate path beside it, because every
-one of these doors has a real caller — the Settings page, the
+one of these entry points has a real caller — the Settings page, the
 `canopy:canopy-web-pat-mint` loopback flow, the menubar's mint-session, and
 canopy's own widget panel — and a tightening that broke one of them would be
 worse than the hole.

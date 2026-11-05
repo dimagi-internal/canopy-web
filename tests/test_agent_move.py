@@ -1,7 +1,7 @@
 """Moving an agent between workspaces carries its history (#1532).
 
 Before this, the upsert's `workspace` field set `Agent.workspace` and nothing
-else: the agent's sessions, mail, capability grants and agent-scoped rules all
+else: the agent's sessions, mail, machine capability grants and agent-scoped rules all
 carry their own `workspace` FK, so they stayed in the old tenant — invisible
 from the new one, or 404 through the by-slug gates. Jonathan, 2026-10-16: "we
 want to move the agent and its history which should all be possible and first

@@ -24,7 +24,7 @@ def back_to_the_top():
     executor.migrate(executor.loader.graph.leaf_nodes())
 
 
-def test_use_ask_lines_become_read_only_and_a_duplicate_is_dropped(default_workspace):
+def test_stamped_read_mode_lines_become_read_only_and_a_duplicate_is_dropped(default_workspace):
     apps = _state(BEFORE)
     Agent, Grant = apps.get_model("agents", "Agent"), apps.get_model("agents", "AgentGrant")
     user = get_user_model().objects.create_user("o", "o@dimagi.com", "pw")
@@ -45,7 +45,7 @@ def test_use_ask_lines_become_read_only_and_a_duplicate_is_dropped(default_works
     Grant = apps.get_model("agents", "AgentGrant")
     ask = Grant.objects.get(pk=ask.pk)
     assert (ask.role, ask.capability, ask.subject_key) == ("read_only", "", "contact:dimagi.com")
-    assert Grant.objects.get(pk=other.pk).capability == "canopy"          # a real door is untouched
+    assert Grant.objects.get(pk=other.pk).capability == "canopy"          # a real connected site is untouched
     assert Grant.objects.get(pk=dup_role.pk).role == "read_write"
     assert not Grant.objects.filter(pk=dup_cap.pk).exists()               # already held a role
     default = Grant.objects.get(pk=default.pk)

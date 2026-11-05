@@ -117,7 +117,7 @@ def test_the_documented_page_exists_and_the_admin_is_no_longer_the_path(doc):
     # The surface behind it must be real, and mounted where the client expects.
     resolve("/api/workspaces/w1/connected-apps")
 
-    # The old door must not still be advertised: it is read-only now, so
+    # The old admin page must not still be advertised: it is read-only now, so
     # following the doc there would be a dead end with no explanation.
     assert "/admin/tokens/appcredential/add/" not in doc
 

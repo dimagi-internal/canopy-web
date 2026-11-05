@@ -127,7 +127,7 @@ class Host:
         assert response.status_code == 200
         return response.json()
 
-    # The host's HTTP surface, as canopy's outbound door reaches it.
+    # The host's HTTP surface, as canopy's one way out reaches it.
     def get_json(self, url, *, what="URL"):
         assert url == contract.metadata_url(ISSUER)
         return authorization_server_metadata(self.config)
@@ -334,7 +334,7 @@ def test_a_host_requiring_sensitive_keeps_its_visitor_off_a_ordinary_runner(site
 
     settings.CHAT_STUB_EXECUTOR = False   # leave the turn queued for a real runner
     host.config = dataclasses.replace(host.config, runner_requirements=("sensitive_data",))
-    # A sensitive conversation runs only in a capability that handles sensitive data (spec
+    # A sensitive conversation runs only in a profile that handles sensitive data (spec
     # 2026-10-22-sensitive-data-agents §5).
     declare(site["agent"], {"connect": {**IFACE["capabilities"]["connect"], "data": "sensitive"}})
     r = _arrive(host, scopes=(), member=False)

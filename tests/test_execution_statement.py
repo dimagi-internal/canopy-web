@@ -133,7 +133,7 @@ def test_a_host_that_trusts_another_canopy_refuses_it(w, host):
     assert exc.value.code == "bad_issuer"
 
 
-def test_turning_sensitive_off_closes_the_door(w, host):
+def test_turning_sensitive_off_closes_the_way_in(w, host):
     _sensitive_cap(w)
     declare(w["agent"], IFACE["capabilities"])
     # The sensitive turn's caller token itself now stands for nothing

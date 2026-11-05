@@ -213,7 +213,7 @@ def test_junk_bearer_on_credentials_route_still_needs_step_up(user, eva):
 
 def test_cookie_plus_a_valid_pat_is_a_browser_and_needs_step_up(user, eva):
     """Pinned behaviour after the is_machine fix (I6): when a session cookie
-    already signed the request in, the bearer door does not even look the PAT up
+    already signed the request in, the bearer path does not even look the PAT up
     (`auth_method` stays unset), so the request is a BROWSER — a step-up route
     asks for a passkey rather than letting the PAT skip it."""
     conn = _stored({"agent": eva}, user)

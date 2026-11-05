@@ -176,7 +176,7 @@ def test_only_its_owner_in_it_declines_and_only_the_asker_withdraws(w):
     assert r.status_code == 200 and r.json()["status"] == "declined"
     assert w["c"].post(f"/api/canopy-sessions/join-requests/{req['id']}/decline").status_code == 409
     assert w["ac"].get(f"/api/canopy-sessions/{w['hot'].pk}").json()["your_join_request"] == "declined"
-    # Asking again waits an hour (tests/test_sealed_server_doors.py); after it, a new request.
+    # Asking again waits an hour (tests/test_sealed_server_routes.py); after it, a new request.
     assert w["ac"].post(f"/api/canopy-sessions/{w['hot'].pk}/join-requests").status_code == 429
     JoinRequest.objects.filter(pk=req["id"]).update(created_at=timezone.now() - dt.timedelta(hours=2))
     again = w["ac"].post(f"/api/canopy-sessions/{w['hot'].pk}/join-requests").json()
