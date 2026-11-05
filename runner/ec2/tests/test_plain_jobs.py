@@ -22,9 +22,17 @@ from types import SimpleNamespace
 
 import pytest
 import yaml
-from _job_broker_harness import Harness, load_broker
+from _job_broker_harness import Harness, carrying, load_broker
 
 EC2 = pathlib.Path(__file__).resolve().parent.parent
+
+if os.environ.get("DIAG_OLD"):
+    def _old_kill_all(self):
+        subprocess.run(["pkill", "-KILL", "-f", self.marker], capture_output=True)
+        for proc in self.procs:
+            if proc.poll() is None:
+                proc.kill()
+    Harness.kill_all = _old_kill_all
 
 
 T1, T2 = "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"
@@ -651,10 +659,15 @@ def _text(events):
 
 
 def _alive(mod):
-    got = subprocess.run(["pgrep", "-af", mod._marker], capture_output=True, text=True)
+    if os.environ.get("DIAG_OLD"):
+        got = subprocess.run(["pgrep", "-af", mod._marker], capture_output=True, text=True)
+        rc, out = got.returncode, got.stdout.strip()[:240]
+    else:
+        pids = carrying(mod._marker)
+        rc, out = (0 if pids else 1), str(pids)
     mod._diag_seen = getattr(mod, "_diag_seen", [])
-    mod._diag_seen.append((round(time.monotonic(), 3), got.returncode, got.stdout.strip()[:240]))
-    return got.returncode == 0
+    mod._diag_seen.append((round(time.monotonic(), 3), rc, out))
+    return rc == 0
 
 
 def _stage(mod, tmp_path, token, *, provider="salesforce"):
