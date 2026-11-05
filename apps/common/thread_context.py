@@ -19,6 +19,8 @@ from __future__ import annotations
 import os
 
 from asgiref.sync import ThreadSensitiveContext, sync_to_async
+from django.db import connections
+from fastmcp.server.middleware import Middleware
 
 
 async def close_thread_connections() -> None:
@@ -28,8 +30,6 @@ async def close_thread_connections() -> None:
     its connection open, and a thread that exits without closing it holds a socket on the
     shared RDS until garbage collection. Django's own handler closes at request end the same
     way (`request_finished`)."""
-    from django.db import connections
-
     await sync_to_async(connections.close_all, thread_sensitive=True)()
 
 
@@ -56,8 +56,6 @@ def mcp_middleware():
     task the session manager started at lifespan, outside any HTTP request's context, so the
     ASGI wrapper alone never reaches a tool call. Register FIRST (outermost), so the scope
     middlewares' own DB reads run inside it too."""
-    from fastmcp.server.middleware import Middleware
-
     class McpPerMessageThread(Middleware):
         async def on_message(self, context, call_next):
             if not enabled():

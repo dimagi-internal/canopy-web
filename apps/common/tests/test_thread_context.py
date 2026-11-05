@@ -95,6 +95,6 @@ def test_close_thread_connections_closes_django_connections(monkeypatch):
     from django.db import connections
 
     closed = []
-    monkeypatch.setattr(connections, "close_all", lambda: closed.append(threading.get_ident()))
+    monkeypatch.setattr(thread_context.connections, "close_all", lambda: closed.append(threading.get_ident()))
     asyncio.run(thread_context.close_thread_connections())
     assert len(closed) == 1
