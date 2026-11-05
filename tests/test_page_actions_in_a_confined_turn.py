@@ -81,9 +81,9 @@ def _page_answers(monkeypatch, result):
 # --- the profile and the listing -----------------------------------------------------
 
 
-def test_a_connected_site_carries_the_page_tools(w):
+def test_a_site_capability_carries_the_page_tools(w):
     assert set(PAGE_TOOLS) <= set(profile(w["agent"], "connect")["tools"])
-    # A profile with no site gains nothing.
+    # A capability with no site gains nothing.
     assert not set(PAGE_TOOLS) & set(profile(w["agent"], "ask")["tools"])
 
 
@@ -124,7 +124,7 @@ def test_another_conversations_page_tool_is_refused_to_this_token(w):
     assert not PageAction.objects.filter(session=w["other"]).exists()
 
 
-def test_a_profile_that_does_not_list_page_tools_does_not_reach_them(w):
+def test_a_capability_that_does_not_list_page_tools_does_not_reach_them(w):
     t = Turn.objects.create(chat_session=w["session"], prompt="q", initiator_contact=w["contact"],
                             initiator_kind="contact", capability="ask", idempotency_key="ask-1")
     with sg.as_token(caller_tokens.mint(t)):
@@ -132,7 +132,7 @@ def test_a_profile_that_does_not_list_page_tools_does_not_reach_them(w):
     assert not any(n.startswith("page_") for n in names)
 
 
-def test_a_sensitive_profile_may_name_the_page_tools_and_nothing_broader():
+def test_a_sensitive_capability_may_name_the_page_tools_and_nothing_broader():
     cap = {"sites": ["labs"], "tools": ["mcp__*canopy-web__page_*"]}
     assert structural_refusals("data", cap) == []
     assert structural_refusals("data", {"sites": ["labs"], "tools": ["mcp__*canopy-web__*"]})

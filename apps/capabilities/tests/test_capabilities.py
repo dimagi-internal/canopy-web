@@ -481,7 +481,7 @@ def test_the_agents_own_pat_leases_below_the_editor_role(ready_to_lease, tenancy
 
 
 def test_the_agents_own_login_is_a_stranger_once_it_is_not_a_member(ready_to_lease, tenancy, world):
-    """No own-login way past membership: a login a workspace admin removed (or
+    """No own-login door past membership: a login a workspace admin removed (or
     one a move left behind) gets the same 404 as anyone outside the workspace."""
     lease = _acquire(ready_to_lease).json()
     M.objects.filter(user=tenancy["bot"]).delete()

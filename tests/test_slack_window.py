@@ -1,7 +1,7 @@
 # ruff: noqa: F811 — the fixtures below are imported from test_slack and then requested by name.
 """The channel window — `@canopy hal --history 10 <ask>`.
 
-Driven through the real signed events webhook, with Slack faked at the `requests`
+Driven through the real signed front door, with Slack faked at the `requests`
 boundary as in test_slack.py. What is pinned is the spec's list of guarantees
 (docs/superpowers/specs/2026-09-18-slack-front-door-design.md § "Feeding it
 context from several threads"): only on request, only the channel the request
@@ -419,7 +419,7 @@ def test_the_message_ceiling_is_server_policy(channel, settings):
     assert window.count(lines) <= 2          # one parent, plus at most the one reply it can still afford
 
 
-# ---- the events webhook ------------------------------------------------------------
+# ---- the front door ------------------------------------------------------------
 
 def test_read_back_puts_the_channel_in_front_of_the_ask(channel, linked, hal):
     assert mention("<@UBOT> hal --history 10 pick this up", ts=_ts(0)).status_code == 200

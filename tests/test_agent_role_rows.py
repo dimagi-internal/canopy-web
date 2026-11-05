@@ -17,7 +17,7 @@ def test_a_new_root_workspace_is_seeded_with_the_builtins(default_workspace):
     for seed in roles.SEED:
         row = rows[seed.key]
         assert row.builtin and row.label == seed.label
-        # stored CLOSED: write carries read and every connected site, agent_edit carries write
+        # stored CLOSED: write carries read and every door, agent_edit carries write
         assert set(row.permissions) == roles.ROLES.close(seed.permissions)
     assert "write" in rows["editor"].permissions and "agent_edit" in rows["editor"].permissions
 

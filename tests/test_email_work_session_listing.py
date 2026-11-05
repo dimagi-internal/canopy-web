@@ -148,7 +148,7 @@ def test_an_older_web_chat_does_not_hide_a_new_reply(ctx):
 
 @pytest.mark.parametrize("thread_key", [THREAD, f"{THREAD}#reader"])
 def test_a_runner_that_names_no_turn_still_links_and_reopens(ctx, thread_key):
-    """The laptop runner sends no `turn_id`; a confined turn's key carries `#<stamp>`."""
+    """The laptop runner sends no `turn_id`; a confined turn's key carries `#<capability>`."""
     first = _mail_turn(ctx, "m1")
     work = _record(ctx, thread=thread_key)
     first.refresh_from_db()

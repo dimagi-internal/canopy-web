@@ -110,7 +110,7 @@ def test_the_persons_message_is_kept_as_a_fact_not_its_words(ctx):
     row = Message.objects.get(pk=message.pk)
     assert row.plaintext == "" and SECRET not in str(row.content)
     assert row.content["redacted"] == "sensitive" and row.content["client_id"] == "c1"
-    # This agent offers no `data: sensitive` profile, so the turn is refused as it
+    # This agent offers no `data: sensitive` capability, so the turn is refused as it
     # is created — it has ended, so its prompt is not kept (`services._apply_capability`).
     turn.refresh_from_db()
     assert turn.status == Turn.CANCELLED and turn.prompt == ""

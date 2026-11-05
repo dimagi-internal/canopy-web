@@ -58,7 +58,7 @@ def test_a_field_only_one_role_reads_is_absent_for_everyone_else(world, hiring):
     anon = Client()
     r = anon.post(f"{PUB}/actions/apply", {"input": {"job": job, "name": "Grace", "email": "grace@example.org",
                                                      "eeo_gender": "Female", "region": "US"}}, content_type=J)
-    # The app is not public yet: the public pages are shut.
+    # The app is not public yet: the public door is shut.
     assert r.status_code == 404
     _client(world["admin"]).patch(f"{BASE}/hiring", {"public": True}, content_type=J)
     r = anon.post(f"{PUB}/actions/apply", {"input": {"job": job, "name": "Grace", "email": "grace@example.org",

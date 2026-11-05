@@ -1,4 +1,4 @@
-"""Deleting a workspace, and deleting an agent — the two one-way actions.
+"""Deleting a workspace, and deleting an agent — the two one-way doors.
 
 Both `POST /api/workspaces/` and `POST /api/agents/` were create-only, so a
 typo'd slug was permanent and fleet-visible. That made the onboarding path

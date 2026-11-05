@@ -72,7 +72,7 @@ def _by_name(body):
 
 
 class Host:
-    """A host built only from the SDK, reachable only through canopy's outbound path."""
+    """A host built only from the SDK, reachable only through canopy's outbound door."""
 
     def __init__(self, *, accept_client=True):
         self.key = generate_private_key("EdDSA")

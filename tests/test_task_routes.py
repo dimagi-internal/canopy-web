@@ -397,7 +397,7 @@ def test_cross_workspace_target_is_422_and_the_ask_stays_open(c):
 
 def test_a_malformed_on_approve_is_422(c):
     client, agent, _u = c
-    # Refused on arrival...
+    # Refused at the door...
     r = client.post("/api/agents/eva/tasks/", [{
         "title": "x", "on_approve": [{"prompt": "go", "routing": "anywhere"}]}],
         content_type="application/json")

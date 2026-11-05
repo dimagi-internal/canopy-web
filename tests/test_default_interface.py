@@ -1,6 +1,6 @@
 """Every agent has an interface: the default, until its owner changes it.
 
-The default is "no profile" — owner and admins only until the access list says more —
+The default is "no capability" — owner and admins only until the access list says more —
 written out, so the page can say so and a read never comes back empty.
 """
 from __future__ import annotations
@@ -22,9 +22,9 @@ from apps.workspaces.models import Workspace, WorkspaceMembership
 pytestmark = pytest.mark.django_db
 M = WorkspaceMembership
 _ACE_OLD = json.loads((pathlib.Path(__file__).parent.parent / "apps/agents/tests/fixtures/ace_interface.json").read_text())
-# ACE's published interface in today's words: the `full:` rules and each profile's `callers` are
-# the access list's business; a profile keeps only what it is.
-# `version` and a profile's `input` are retired (accepted on a save, never written back).
+# ACE's published interface in today's words: the `full:` rules and each capability's `callers` are
+# the access list's business; a capability keeps only what it is.
+# `version` and a capability's `input` are retired (accepted on a save, never written back).
 ACE = {"capabilities": {
     name: {k: v for k, v in cap.items() if k not in ("callers", "input")}
     for name, cap in _ACE_OLD["capabilities"].items()}}

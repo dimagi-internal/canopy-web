@@ -31,7 +31,7 @@ def w():
     jj = _user("jj@dimagi.com")
     root = Workspace.objects.create(slug="dimagi", display_name="Dimagi", created_by=jj)
     child = Workspace.objects.create(slug="connect", display_name="Connect", created_by=jj, parent=root)
-    people = {k: _user(f"{k}@dimagi.com") for k in ("owner", "siteuser", "writer", "reader", "tool")}
+    people = {k: _user(f"{k}@dimagi.com") for k in ("owner", "door", "writer", "reader", "tool")}
     for p in people.values():
         M.objects.create(workspace=root, user=p, role=M.VIEWER)
     agent = Agent.objects.create(slug="hal", name="Hal", workspace=child, owner=people["owner"])
@@ -43,16 +43,16 @@ def _line(agent, user, role):
     return AgentGrant.objects.create(agent=agent, kind=AgentGrant.PERSON, user=user, role=role)
 
 
-def test_a_connected_site_role_opens_that_site_and_nothing_else(w):
+def test_a_door_role_opens_that_door_and_nothing_else(w):
     make_role(w["root"], "connector", {roles.READ, roles.use("connect")})
-    _line(w["agent"], w["siteuser"], "connector")
-    d = turn_context.for_asker(w["agent"], w["siteuser"], verified=True, requested="connect")
+    _line(w["agent"], w["door"], "connector")
+    d = turn_context.for_asker(w["agent"], w["door"], verified=True, requested="connect")
     assert d.access == access.CONFINED and roles.can_use(d.standing.permissions, "connect")
     assert not roles.can_use(d.standing.permissions, "report") and not roles.holds(d.standing.permissions, roles.WRITE)
     assert d.standing.agent_role == "connector"
 
 
-def test_a_role_holding_write_drives_the_agent_and_carries_read_and_every_connected_site(w):
+def test_a_role_holding_write_drives_the_agent_and_carries_read_and_every_door(w):
     make_role(w["root"], "pilot", {roles.WRITE})
     _line(w["agent"], w["writer"], "pilot")
     d = turn_context.for_asker(w["agent"], w["writer"], verified=True)
@@ -71,8 +71,8 @@ def test_editing_a_role_changes_its_holders_from_the_next_read(w):
 
 def test_the_envelope_role_is_the_key_and_permissions_are_the_contract(w):
     make_role(w["root"], "connector", {roles.use("connect")})
-    _line(w["agent"], w["siteuser"], "connector")
-    d = turn_context.for_asker(w["agent"], w["siteuser"], verified=True, requested="connect")
+    _line(w["agent"], w["door"], "connector")
+    d = turn_context.for_asker(w["agent"], w["door"], verified=True, requested="connect")
     assert d.standing.agent_role == "connector"
     assert "use:connect" in d.held_permissions
 
@@ -80,9 +80,9 @@ def test_the_envelope_role_is_the_key_and_permissions_are_the_contract(w):
 def test_the_strongest_role_of_a_person_is_the_one_that_allows_most(w):
     make_role(w["root"], "connector", {roles.READ, roles.use("connect")})
     make_role(w["root"], "pilot", {roles.WRITE})
-    _line(w["agent"], w["siteuser"], "connector")
-    AgentGrant.objects.create(workspace=w["root"], kind=AgentGrant.PERSON, user=w["siteuser"], role="pilot")
-    got = grants.resolve(w["agent"], grants.Asker(user=w["siteuser"], verified=True))
+    _line(w["agent"], w["door"], "connector")
+    AgentGrant.objects.create(workspace=w["root"], kind=AgentGrant.PERSON, user=w["door"], role="pilot")
+    got = grants.resolve(w["agent"], grants.Asker(user=w["door"], verified=True))
     assert got.role == "pilot" and roles.holds(got.permissions, roles.WRITE)
 
 
@@ -106,9 +106,9 @@ def test_an_address_only_line_can_never_give_a_custom_role_that_drives(w):
 def test_standings_agree_with_decide_for_custom_roles(w):
     make_role(w["root"], "connector", {roles.READ, roles.use("connect")})
     make_role(w["root"], "pilot", {roles.WRITE})
-    _line(w["agent"], w["siteuser"], "connector")
+    _line(w["agent"], w["door"], "connector")
     _line(w["agent"], w["writer"], "pilot")
-    users = [w[k] for k in ("owner", "siteuser", "writer", "reader", "tool")]
+    users = [w[k] for k in ("owner", "door", "writer", "reader", "tool")]
     standings = access.Standings(users, [w["agent"]])
     for u in users:
         for cap in (None, "connect", "report"):
@@ -120,11 +120,11 @@ def test_reading_lines_costs_the_same_with_one_custom_role_or_twenty(w):
     def cost():
         with CaptureQueriesContext(connection) as q:
             grants.lines_for_many([w["agent"]])
-            access.Standings([w["siteuser"]], [w["agent"]])
+            access.Standings([w["door"]], [w["agent"]])
         return len(q)
 
     make_role(w["root"], "r0", {roles.READ, roles.use("connect")})
-    _line(w["agent"], w["siteuser"], "r0")
+    _line(w["agent"], w["door"], "r0")
     one = cost()
     for i in range(1, 20):
         make_role(w["root"], f"r{i}", {roles.READ, roles.use("report")})
@@ -138,7 +138,7 @@ def test_reading_lines_costs_the_same_with_one_custom_role_or_twenty(w):
 
 
 def test_validation_refuses_admin_own_empty_and_unknown():
-    for bad in ({roles.ADMINISTER}, {roles.OWN}, set(), {"use:*"}, {"wirte"}, {"use:Bad Site"}):
+    for bad in ({roles.ADMINISTER}, {roles.OWN}, set(), {"use:*"}, {"wirte"}, {"use:Bad Door"}):
         with pytest.raises(roles.InvalidRole):
             roles.validate_permissions(bad)
     assert roles.validate_permissions({roles.AGENT_EDIT}) >= {roles.WRITE, roles.READ}

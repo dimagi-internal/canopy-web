@@ -1,6 +1,6 @@
 """A caller's turn hands its `For <Agent>'s owner:` line to the owner (canopy-web#1416).
 
-#1400 item 5: hal's read-mode procedure tells a caller their request "is noted in this
+#1400 item 5: hal's ask procedure tells a caller their request "is noted in this
 conversation's record on canopy-web where the owner reviews it". The runner
 lifts that line into an `owner_ask` turn event, and canopy-web appends it to the
 turn's result note, for a confined turn only.

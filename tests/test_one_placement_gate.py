@@ -1,5 +1,5 @@
 """Choosing which runner a chat turn runs on is one decision,
-`canopy_sessions.services.may_place`, asked by every route that chooses: a send
+`canopy_sessions.services.may_place`, asked by every door that chooses: a send
 with `placement`, re-pinning a queued turn (`/place`), and moving queued turns
 off an offline box (`move_queued_turns`, Slack's move-to-cloud). For a chat with
 an agent it is `agents.access.may_pin_runner`; for a project chat, administering

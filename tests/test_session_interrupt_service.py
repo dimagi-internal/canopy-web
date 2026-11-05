@@ -257,7 +257,7 @@ def test_rest_stop_interrupts_an_agent_session_with_no_open_turn(seeded, monkeyp
 
 
 def test_rest_and_websocket_stop_are_the_same_stop(seeded, monkeypatch):
-    """One function behind both routes, so they cannot drift apart again."""
+    """One function behind both doors, so they cannot drift apart again."""
     from apps.canopy_sessions.consumers import SessionConsumer
 
     _owner, _ws, _agent, session, _runner = seeded

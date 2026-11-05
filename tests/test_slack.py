@@ -1,4 +1,4 @@
-"""Slack as a channel (apps/slack) — driven through the real signed webhooks.
+"""Slack front door (apps/slack) — driven through the real signed webhooks.
 
 Slack's Web API is faked at the ``requests`` boundary; nothing between the
 signed request and the queued Turn is mocked. That is the lesson of ace-web's
@@ -59,7 +59,7 @@ def hal(hal):
     return hal
 
 
-# ---- the channel --------------------------------------------------------------
+# ---- the door --------------------------------------------------------------
 
 def test_unconfigured_deployment_says_so(settings, slack):
     settings.SLACK_SIGNING_SECRET = "PLACEHOLDER"   # what the CFN container is born holding
@@ -211,7 +211,7 @@ def test_member_matched_by_email_is_linked_without_a_click(slack, installation, 
 
 def test_an_unverified_account_email_is_not_linked(slack, installation, hal, ws):
     """`User.email` is a free field: an account that merely says alice@ is not
-    alice (contacts.services.user_for_verified_email, as on every channel)."""
+    alice (contacts.services.user_for_verified_email, as on every door)."""
     claimant = a_user("alice@dimagi.com")
     wsvc.ensure_member(ws, claimant, WorkspaceMembership.EDITOR)
     mention("hal hello")
@@ -511,7 +511,7 @@ def test_slash_command_when_bot_is_not_in_the_channel(slack, linked, hal):
 
 
 def test_slash_command_from_a_contact_is_answered(slack, installation, hal):
-    """hal publishes no interface, so a contact is refused on arrival — and told
+    """hal publishes no interface, so a contact is refused at the door — and told
     so. It used to say "Sent … the reply will come back here" over a turn that
     was already cancelled: a promise of a reply that could never come."""
     resp = command("hal draft the update")
@@ -2312,7 +2312,7 @@ def test_declaring_without_a_config_token_says_so(slack, ws, installation, owner
 def test_a_confined_reply_says_it_is_a_separate_session(slack, installation, hal):
     """In Slack a confined turn looks exactly like typing into the thread, but it
     runs in its own session on the runner. Shayoni's reply did this, 2026-10-01."""
-    _read_mode_for_contacts(hal, "Ask Hal")
+    _ask_for_contacts(hal, "Ask Hal")
     mention("hal who owns the budget?")
     assert Turn.objects.get().capability == "ask"
     text = _line(slack)["text"]
@@ -2330,7 +2330,7 @@ def test_a_member_in_full_gets_no_separate_session_note(slack, linked, hal):
 ROOT = "1700000999.000100"   # FakeSlack's ts for every chat.postMessage
 
 
-def _read_mode_for_contacts(agent, description="Ask"):
+def _ask_for_contacts(agent, description="Ask"):
     declare(agent, {"ask": {"description": description}})
     allow(agent, role=roles.READ_ONLY, contact=True)
     editors_run(agent)
@@ -2342,7 +2342,7 @@ def test_a_confined_reply_in_a_members_thread_forks_to_its_own_thread(slack, lin
     Slack thread and session, and the original thread links to it."""
     from apps.harness import routing
 
-    _read_mode_for_contacts(hal)
+    _ask_for_contacts(hal)
     mention("hal build the bot", ts="1700000000.000100")
     owner_turn = Turn.objects.get()
     owner_turn.status = Turn.RUNNING
@@ -2373,7 +2373,7 @@ def test_a_confined_reply_in_a_members_thread_forks_to_its_own_thread(slack, lin
 
 
 def test_writing_again_in_the_original_thread_continues_the_same_fork(slack, linked, hal):
-    _read_mode_for_contacts(hal)
+    _ask_for_contacts(hal)
     mention("hal build the bot", ts="1700000000.000100")
     mention("hal one", user=BOB, ts="1700000050.000100", thread_ts="1700000000.000100")
     mention("hal two", user=BOB, ts="1700000060.000100", thread_ts="1700000000.000100")
@@ -2385,7 +2385,7 @@ def test_writing_again_in_the_original_thread_continues_the_same_fork(slack, lin
 
 
 def test_a_reply_inside_the_fork_continues_it_without_forking_again(slack, linked, hal):
-    _read_mode_for_contacts(hal)
+    _ask_for_contacts(hal)
     mention("hal build the bot", ts="1700000000.000100")
     mention("hal one", user=BOB, ts="1700000050.000100", thread_ts="1700000000.000100")
     mention("hal and another", user=BOB, ts="1700000070.000100", thread_ts=ROOT)
@@ -2398,14 +2398,14 @@ def test_a_member_in_full_still_joins_the_owners_thread(slack, linked, hal, inst
     bob = a_user("bob@dimagi.com")
     wsvc.ensure_member(ws, bob, WorkspaceMembership.EDITOR)
     SlackUserLink.objects.create(installation=installation, slack_user_id=BOB, user=bob)
-    _read_mode_for_contacts(hal)
+    _ask_for_contacts(hal)
     mention("hal first")
     mention("hal me too", user=BOB, ts="1700000060.000100", thread_ts="1700000000.000100")
     assert Session.objects.count() == 1
 
 
 def test_a_contact_starting_their_own_thread_is_not_forked(slack, installation, hal):
-    _read_mode_for_contacts(hal)
+    _ask_for_contacts(hal)
     mention("hal who owns the budget?", user=BOB)
     mention("hal and the timeline?", user=BOB, ts="1700000060.000100", thread_ts="1700000000.000100")
     assert Session.objects.count() == 1

@@ -73,7 +73,7 @@ def _socket_pulls(user, session):
 
 
 def test_rest_the_socket_and_the_list_agree_for_every_shape_and_person():
-    """ONE answer per (person, session), whichever route they come in by."""
+    """ONE answer per (person, session), whichever door they knock on."""
     people, shapes, _ws = _world()
     for who, user in people.items():
         c = _client(user)
@@ -92,7 +92,7 @@ def test_rest_the_socket_and_the_list_agree_for_every_shape_and_person():
 
 def test_rest_and_the_socket_agree_on_who_may_pull_from_a_machine():
     """Asking a runner for something — live streaming (`attach`, REST or the
-    socket) or history (`backfill`) — is `access.may_pull`, at every route. Nobody
+    socket) or history (`backfill`) — is `access.may_pull`, at every door. Nobody
     else's open tab makes canopy reach down to a laptop."""
     people, shapes, _ws = _world()
     for who, user in people.items():

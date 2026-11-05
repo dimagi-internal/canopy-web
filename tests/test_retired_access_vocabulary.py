@@ -1,7 +1,7 @@
 """The agent-access vocabulary that was retired must not come back in the docs people copy from.
 
-An agent's published profile used to carry `role: viewer|user`, and access-list lines were `viewer|user|editor`.
-Today lines are `read_only|read_write|editor` (or name one connected site) and a profile carries no
+An agent's capability used to carry `role: viewer|user`, and access-list lines were `viewer|user|editor`.
+Today lines are `read_only|read_write|editor` (or name one capability) and a capability carries no
 role (`apps/agents/roles.py`, `docs/architecture/access.md`). A doc that still shows the old words
 teaches an author a 422. The interface keys `full:`, `callers:` and `editors:` are refused the same way
 (`apps/agents/interface.py::parse`), so a YAML example using one is guarded too.

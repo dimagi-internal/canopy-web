@@ -3,7 +3,7 @@ does not hold (`canopy_sessions.conversation_keys`), and the ciphertext has ONE 
 the gate in `apps/harness/sensitivity.py` (`reads_content` → `readable`,
 `sealed_call_for`), which hands it only to the conversation's own people, whose browsers
 decrypt it. Anything else that reaches for `sealed` — a new review, a search, an export,
-another AI's route — fails here, so a new reader is closed until it asks the gate.
+another AI's door — fails here, so a new reader is closed until it asks the gate.
 Writers, the fork that copies a conversation whole, and the one-time re-seal of rows
 from before keys were per conversation are named below.
 

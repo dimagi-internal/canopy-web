@@ -314,7 +314,7 @@ def test_a_stamped_grant_bound_to_another_agent_is_never_this_agents(site, host)
 # --- seeing and stopping one's own act-as-you permissions ------------------------------
 
 
-def test_a_contact_holds_no_grant_and_has_no_grant_route(site, host):
+def test_a_contact_holds_no_grant_and_has_no_grant_door(site, host):
     """A contact has no passkey, so never holds an act-as-you permission: the site's
     grant is never redeemed for them, and the contact surface has no grant route."""
     r = _arrive(site, id_jag=_id_jag(site["priv"]), email="")

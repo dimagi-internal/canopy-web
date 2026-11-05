@@ -106,7 +106,7 @@ def test_a_token_under_another_kinds_prefix_is_refused(user, app):
     assert P.resolve_bearer(PersonalToken.PREFIX + dt[len(DelegatedToken.PREFIX):]) is None
 
 
-def test_a_prefixed_token_an_entry_point_does_not_take_is_refused_without_a_lookup(user, app):
+def test_a_prefixed_token_a_door_does_not_take_is_refused_without_a_lookup(user, app):
     dt, _ = DelegatedToken.issue(app=app, user=user, ttl_seconds=60)
     with CaptureQueriesContext(connection) as q:
         assert P.resolve_bearer(dt, accept={P.PAT}) is None

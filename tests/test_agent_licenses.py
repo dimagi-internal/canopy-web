@@ -41,7 +41,7 @@ def world(monkeypatch):
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=jj)
     WorkspaceMembership.objects.create(workspace=ws, user=jj, role=WorkspaceMembership.OWNER)
     # vic is a viewer from a partner domain: `member@dimagi.com` does not name them, so
-    # the caller list offers them only confined read mode. (A dimagi.com viewer
+    # the caller list offers them only the confined `ask` door. (A dimagi.com viewer
     # WOULD get the whole agent from that rule — rule 3 comes before the editor tier.)
     aath, sarvesh = _user("aath"), _user("sarvesh")
     vic, hal = _user("vic", "partner.org"), _user("hal", "dimagi-ai.com")

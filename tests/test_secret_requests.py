@@ -227,7 +227,7 @@ def test_a_contacts_chat_is_never_asked_for_a_secret(f):
     assert not AgentSecretRequest.objects.exists()
 
 
-def test_the_contact_route_never_carries_a_seal_card():
+def test_the_contact_door_never_carries_a_seal_card():
     # The contact transcript route doesn't annotate `secret_request`, on purpose.
     from pathlib import Path
 

@@ -236,7 +236,7 @@ def test_ensure_member_is_no_longer_called_from_any_create_path():
     from tests._source import iter_app_sources
 
     allowed = {
-        # The deliberate ways in, and nothing else. Each is an explicit human
+        # The deliberate doors, and nothing else. Each is an explicit human
         # action; none can be reached as a side effect of writing a row. See
         # docs/architecture/access.md, "Getting into a workspace".
         "apps/workspaces/services.py",      # ensure_member itself (default-workspace bootstrap)

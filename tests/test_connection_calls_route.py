@@ -401,8 +401,8 @@ def test_app_member_read_uses_the_live_manifest(w):
         assert error_of(post(w, surface=app_surface(w), path="limits", query=None)) == "not_declared"
 
 
-def test_public_app_surface_refused(w):
-    """A public app, and someone signed in who is not a member: only the `public` surface is theirs."""
+def test_public_app_door_refused(w):
+    """A public app, and someone signed in who is not a member: only the `public` door is theirs."""
     install_app(w, public=True)
     stranger = type(w.person).objects.create_user(username="stranger", email="stranger@example.com")
     c = Client()

@@ -1,7 +1,7 @@
 """An agent's own login reads the caller envelope of the turn it is RUNNING (`who_is_asking`).
 
 A person's chat is private to its people, so the agent's own login can never read it
-through the content gate; `turn_access.can_read_caller_context` adds the one way in the
+through the content gate; `turn_access.can_read_caller_context` adds the one door the
 mid-turn re-read needs: the per-turn login, on the turn it serves, while it runs.
 """
 from __future__ import annotations

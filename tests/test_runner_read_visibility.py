@@ -116,7 +116,7 @@ def test_seeing_a_runner_does_not_confer_declaring_on_it(teammate, runner):
 
 def test_seeing_a_runner_does_not_confer_heartbeating_as_it(teammate, runner):
     """Claiming turns AS a runner is the capability that must stay owner-only —
-    heartbeat is its way in."""
+    heartbeat is its front door."""
     resp = _client(teammate).post(
         f"/api/harness/runners/{runner.id}/heartbeat",
         {"active_turn_ids": [], "degraded": False, "note": ""},

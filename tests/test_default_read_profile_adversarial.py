@@ -184,27 +184,27 @@ def w(db):
     return {"agent": agent, "owner": owner, "vw": vw}
 
 
-SENSITIVE_READ_MODE = {"ask": {"sites": ["connect-labs"], "data": "sensitive", "tools": ["Read"]}}
+SENSITIVE_ASK = {"ask": {"sites": ["connect-labs"], "data": "sensitive", "tools": ["Read"]}}
 
 
-def _sensitive_read_mode(agent):
-    agent.interface = parse({"capabilities": SENSITIVE_READ_MODE})
+def _sensitive_ask(agent):
+    agent.interface = parse({"capabilities": SENSITIVE_ASK})
     agent.save(update_fields=["interface"])
 
 
 @pytest.mark.django_db
-def test_naming_read_cannot_dodge_a_sensitive_read_mode(w):
-    """`read` and `READ_MODE_STAMP` are one thing (`is_read_mode`), so an agent whose read mode handles sensitive data
+def test_naming_read_cannot_dodge_a_sensitive_ask(w):
+    """`read` and `ask` are one thing (`is_read_mode`), so an agent whose `ask` handles sensitive data
     is confined in it for everyone who names either: the owner naming `read` must not run FULL."""
-    _sensitive_read_mode(w["agent"])
+    _sensitive_ask(w["agent"])
     for name in ("ask", "read"):
         d = turn_context.for_asker(w["agent"], w["owner"], verified=True, requested=name)
         assert (d.access, d.stamped, d.basis) == (access.CONFINED, "ask", "sensitive:ask"), name
 
 
 @pytest.mark.django_db
-def test_a_sensitive_conversation_gets_no_default_profile_when_its_read_mode_is_gone(w, monkeypatch):
-    """A sensitive turn stamped `READ_MODE_STAMP` whose read mode was unpublished before the claim: the envelope
+def test_a_sensitive_conversation_gets_no_default_profile_when_its_ask_is_gone(w, monkeypatch):
+    """A sensitive turn stamped `ask` whose capability was unpublished before the claim: the envelope
     must carry the empty deny-all profile, not canopy's default read profile (Write, mail)."""
     from apps.harness import sensitivity
 

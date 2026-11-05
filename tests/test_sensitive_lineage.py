@@ -2,7 +2,7 @@
 behind the caller-token tool limit hold on their own.
 
 The first line is that a sensitive turn's caller token reaches only the four tools
-a `data: sensitive` profile may hold. Each test here pins a rule that would
+a `data: sensitive` capability may hold. Each test here pins a rule that would
 stop a leak the moment that limit loosened: the hard server rule on the token,
 lineage that cannot be dropped or shed, a conversation started from a sensitive
 one being sensitive itself, one sealing decision for writers and readers, a
@@ -44,7 +44,7 @@ pytestmark = pytest.mark.django_db
 
 SENSITIVE = {"runner_requirements": ["sensitive_data"]}
 ROW = "patient Amina, HIV+, visit 2026-10-01"
-#: A profile that says `data: sensitive` but lists more canopy tools than the
+#: A capability that says `data: sensitive` but lists more canopy tools than the
 #: structural rule allows — what a loosened `structural_refusals` would let through.
 LOOSE = {"capabilities": {"ask": {"data": "sensitive", "callers": ["contact", "member"],
                                   "sites": ["labs"], "tools": ["mcp__*canopy-web__*"]}}}
@@ -96,12 +96,12 @@ def test_a_sensitive_tokens_tools_are_at_most_the_four_whatever_the_interface_li
     assert grant is not None and grant.sensitive and not grant.all_tools
     assert set(grant.tool_globs) == SENSITIVE_CANOPY_TOOLS | {PAGE_TOOL_GLOB}
     assert not grant.allows_tool("create_turn") and not grant.allows_tool("create_schedule")
-    # An ordinary turn of the same profile gets what the interface lists.
+    # An ordinary turn of the same capability gets what the interface lists.
     plain = caller_tokens.resolve(caller_tokens.mint(_turn(w["cold"], capability="ask")))
     assert "*" in plain.tool_globs and not plain.sensitive
 
 
-def test_a_sensitive_token_resolves_to_nothing_once_its_profile_stops_saying_so(w):
+def test_a_sensitive_token_resolves_to_nothing_once_its_capability_stops_saying_so(w):
     turn = _turn(w["hot"], capability="ask")
     raw = caller_tokens.mint(turn)
     assert caller_tokens.resolve(raw) is not None

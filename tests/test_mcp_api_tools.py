@@ -285,7 +285,7 @@ def test_writes_are_rate_limited(tenancy, settings):
 
 
 def test_a_confined_session_does_not_see_the_api(tenancy):
-    """A caller token reaches only what its profile lists (TurnScopeMiddleware)."""
+    """A caller token reaches only what its capability lists (TurnScopeMiddleware)."""
     with as_claims(sub="turn:1", user_id=None, auth_method="caller_token",
                    turn_id="1", turn_ids=["1"], tool_globs=[]), \
             pytest.raises(ToolError, match="not part of what this caller"):

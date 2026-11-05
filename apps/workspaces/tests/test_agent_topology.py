@@ -28,7 +28,7 @@ def _get(user, slug="dimagi"):
 @pytest.fixture
 def fleet():
     """Ada (dimagi) and Hal (connect, a division). Hal's interface gives members
-    only read mode — exactly the shape that made every Ada→Hal dispatch fail."""
+    only `ask` — exactly the shape that made every Ada→Hal dispatch fail."""
     jj = _user("jj@dimagi.com")
     ada_login, eva_login = _user("ada@dimagi-ai.com"), _user("eva@dimagi-ai.com")
     dimagi = Workspace.objects.create(slug="dimagi", display_name="Dimagi", created_by=jj)

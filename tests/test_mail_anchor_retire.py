@@ -152,7 +152,7 @@ def test_refused_turn_retires_its_anchor(agent, django_capture_on_commit_callbac
     """Cancelled at admission ("hal offers nothing to this caller"): no handoff."""
     with django_capture_on_commit_callbacks(execute=True):
         turn = _mail(agent, sender="stranger@example.com")
-    assert turn.status == Turn.CANCELLED, "offered nothing: refused on arrival"
+    assert turn.status == Turn.CANCELLED, "offered nothing: refused at the door"
     assert _status(turn.chat_session) == Session.ARCHIVED
 
 

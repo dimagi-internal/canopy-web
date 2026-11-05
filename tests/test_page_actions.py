@@ -93,7 +93,7 @@ def test_a_page_declares_its_actions_and_the_agent_can_discover_them():
 def test_a_host_may_spell_the_schema_the_way_mcp_does():
     """`inputSchema` over HTTP survives to the stored declaration.
 
-    This is the route the widget actually calls, and it was where the field
+    This is the door the widget actually knocks on, and it was where the field
     was lost: the Ninja schema named only `parameters`, so MCP's own spelling
     was dropped before any of the code that reads it ran.
     """

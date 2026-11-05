@@ -221,7 +221,7 @@ def test_a_closed_private_conversation_takes_nothing_from_slack(slack, linked, h
 
 
 def test_a_click_that_would_run_confined_forks_like_a_confined_reply(slack, linked, hal, ace, alice):
-    """Bob is a contact and hal answers contacts only in read mode: in someone
+    """Bob is a contact and hal answers contacts only through `ask`: in someone
     else's (closed) conversation he gets a thread of his own, as a reply would."""
     declare(hal, {"ask": {"description": "Ask"}})
     allow(hal, role=roles.READ_ONLY, contact=True)

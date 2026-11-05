@@ -119,7 +119,7 @@ def test_a_turn_a_resolved_user_starts_says_host_signed(w):
 # --- An agent's OWN login (Agent.user, #983) arriving through a host. -------
 # Observed 2026-10-01, turn 2727e227: ace-web started an ACE run as
 # ace@dimagi-ai.com — ACE's own login, a member of the workspace — and it came in
-# as a contact, confined to read mode, which refused the run. Agent logins are minted
+# as a contact, confined to `ask`, which refused the run. Agent logins are minted
 # by `create_token --create-user`, so they have no allauth EmailAddress row, and
 # arrival only ever looked there.
 
@@ -138,7 +138,7 @@ def _agent_login(w, *, member=True, bind=True):
     return bot, agent
 
 
-def _publish_read_mode(agent):
+def _publish_ask_interface(agent):
     from apps.agents import roles
     from tests.access_helpers import allow, declare, editors_run
 
@@ -165,7 +165,7 @@ def test_an_agents_own_login_arrives_as_itself_and_runs_unconfined(w):
     from apps.harness import caller_context
 
     bot, agent = _agent_login(w)
-    _publish_read_mode(agent)
+    _publish_ask_interface(agent)
     got = _arrive(w["priv"], sub="ace-owner", email="ace@dimagi-ai.com", email_verified=True)
     assert got["kind"] == "user"
     assert DelegatedToken.lookup(got["token"]).user == bot

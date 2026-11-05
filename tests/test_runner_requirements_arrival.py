@@ -30,7 +30,7 @@ from tests.token_helpers import bearer_client
 
 pytestmark = pytest.mark.django_db
 
-# `data: sensitive`: a sensitive-data box holds only an agent with a sensitive-data profile (dedicated box).
+# `data: sensitive`: a sensitive-data box holds only an agent with a sensitive-data capability (dedicated box).
 IFACE = {"connect": {"sites": ["connect-labs"], "data": "sensitive",
                      "tools": ["mcp__*canopy-web__who_is_asking"]}}
 

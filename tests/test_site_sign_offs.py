@@ -122,7 +122,7 @@ def test_a_members_own_request_is_theirs_and_lasts_fifteen_minutes(w):
 
 
 @override_settings(REQUIRE_AUTH=True)
-def test_a_site_reaches_its_routes_with_no_login_and_a_person_does_not(w):
+def test_a_site_reaches_its_doors_with_no_login_and_a_person_does_not(w):
     # The site's request is its own credential, so the login gate must let it through
     # (test settings turn that gate off, which hid this until labs called it).
     body = _asked(w, "mo@dimagi.com")

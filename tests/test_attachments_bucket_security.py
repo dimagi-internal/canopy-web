@@ -29,7 +29,7 @@ def doc():
     return yaml.load(TEMPLATE.read_text(), Loader=_Loader)
 
 
-def test_every_public_access_block_is_on(doc):
+def test_every_public_access_door_is_shut(doc):
     bucket = doc["Resources"]["AttachmentsBucket"]["Properties"]
     assert all(bucket["PublicAccessBlockConfiguration"].values()), "all four blocks must be on"
 

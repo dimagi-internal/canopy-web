@@ -2,7 +2,7 @@
 
 `docs/superpowers/specs/2026-10-30-agent-roles-and-access-list-design.md`: an agent's access list
 is the only way in beyond its owner and admins, every decision says which role it put the asker in
-and why, and a line can only use a profile the agent actually has.
+and why, and a line can only use a capability the agent actually has.
 """
 from __future__ import annotations
 
@@ -21,8 +21,7 @@ from apps.workspaces.models import Workspace, WorkspaceMembership
 pytestmark = pytest.mark.django_db
 M, G = WorkspaceMembership, AgentGrant
 
-#: `ask` is read mode, what `read` opens; `canopy` is a connected site only a line that names it (or
-#: `write`) opens.
+#: `ask` is what `read` opens; `canopy` is a door only a line that names it (or `write`) opens.
 IFACE = {"capabilities": {
     "ask": {"tools": ["Read"]},
     "canopy": {"tools": ["Read", "Grep"]},
@@ -88,10 +87,10 @@ def test_a_line_that_says_manual_only_is_the_old_editor_tier(w):
     assert d.standing.via == "Everyone in connect, editor or above"
 
 
-def test_a_confined_decision_is_a_read_only_role_or_a_named_connected_site(w):
+def test_a_confined_decision_is_a_read_only_role_or_a_named_capability(w):
     d = turn_context.for_asker(w["agent"], w["vw"], verified=True, requested="ask")
     assert (d.access, d.standing.agent_role) == (turn_context.REFUSED, None)        # nothing on the list names them
-    # A connect viewer with a line naming ONE connected site: not a role.
+    # A connect viewer with a line naming ONE capability: a door, not a role.
     _line(w, "", kind=G.PERSON, user=w["vw"], capability="canopy")
     d = turn_context.for_asker(w["agent"], w["vw"], verified=True, requested="canopy")
     assert (d.access, d.stamped, d.standing.agent_role) == (access.CONFINED, "canopy", None)
@@ -118,12 +117,12 @@ def test_an_address_that_is_not_proven_does_not_match_a_verified_domain_line(w):
     assert turn_context.for_turn(guest, w["agent"]).access == turn_context.REFUSED
 
 
-def test_read_only_opens_read_mode_and_a_second_line_opens_a_named_connected_site(w):
+def test_read_only_opens_ask_and_a_second_line_opens_a_named_door(w):
     _line(w, roles.READ_ONLY, kind=G.DOMAIN, domain="dimagi.com")
     contact = _contact(w, "idiene@dimagi.com")
     assert turn_context.for_asker(w["agent"], contact, verified=True, requested="ask").access == access.CONFINED
     d = turn_context.for_asker(w["agent"], contact, verified=True, requested="canopy")
-    assert d.access == turn_context.REFUSED                                              # read opens read mode and nothing else
+    assert d.access == turn_context.REFUSED                                              # read opens `ask` and nothing else
     _line(w, "", kind=G.CONTACT, domain="dimagi.com", capability="canopy")
     d = turn_context.for_asker(w["agent"], contact, verified=True, requested="canopy")
     assert (d.access, d.stamped, d.standing.agent_role) == (access.CONFINED, "canopy", roles.READ_ONLY)
@@ -138,14 +137,14 @@ def test_write_drives_the_whole_agent_whatever_the_role_is_called(w):
     assert d.standing.permissions >= {roles.READ, roles.WRITE} and roles.AGENT_EDIT not in d.standing.permissions
 
 
-def test_a_line_cannot_use_a_connected_site_the_agent_does_not_have(w):
+def test_a_line_cannot_use_a_door_the_agent_does_not_have(w):
     bare = Agent.objects.create(slug="bare", name="Bare", workspace=w["connect"], owner=w["owner"])
     _line({**w, "agent": bare}, "", kind=G.DOMAIN, domain="dimagi.com", capability="canopy")
     contact = _contact(w, "idiene@dimagi.com")
     assert turn_context.for_asker(bare, contact, verified=True).access == turn_context.REFUSED
 
 
-def test_read_mode_needs_no_published_profile(w):
+def test_read_mode_needs_no_published_capability(w):
     bare = Agent.objects.create(slug="bare", name="Bare", workspace=w["connect"], owner=w["owner"])
     _line({**w, "agent": bare}, roles.READ_ONLY, kind=G.DOMAIN, domain="dimagi.com")
     contact = _contact(w, "idiene@dimagi.com")

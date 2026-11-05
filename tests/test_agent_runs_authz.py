@@ -178,7 +178,7 @@ def test_the_agents_own_login_writes_its_runs_below_the_editor_role(workspace, a
 
 
 def test_the_agents_own_login_is_a_stranger_once_it_is_not_a_member(owner_client, agent):
-    """No own-login way in past membership: a login a workspace admin removed, or
+    """No own-login door past membership: a login a workspace admin removed, or
     one a move left behind, gets the 404 any non-member gets — reads and writes."""
     run_id = _create_run(owner_client).json()["id"]
     login = User.objects.create_user("echo-login", "echo@dimagi-ai.com", "pw")

@@ -250,7 +250,7 @@ def test_a_drill_whose_stop_was_ignored_still_resolves(canopy, jj):
 
     Such a turn used to arrive at the drill hook as CANCELLED and resolve its
     RunnerDrill. Keying that hook on status alone would now let it through as DONE
-    and strand OUTCOME_PENDING forever — reintroducing, by a side route, the exact
+    and strand OUTCOME_PENDING forever — reintroducing, by the side door, the exact
     failure the hook exists to prevent."""
     from django.utils import timezone
 

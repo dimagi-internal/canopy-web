@@ -345,7 +345,7 @@ def test_ordinary_turns_unchanged(w):
 
 def test_the_websocket_channel_asks_the_same_claim(w):
     """The cloud runner's normal path is the socket; it must end in `claim_next_turn`
-    (and `claim_payload`) like REST, or the gate would have a side entrance."""
+    (and `claim_payload`) like REST, or the gate would have a side door."""
     import inspect
 
     from apps.harness import api_runners_protocol

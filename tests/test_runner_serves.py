@@ -4,7 +4,7 @@
 Two runners on one machine — one for the `connect` tree and one for agent eva —
 each paired by the machine's one approval, each with its own software key and its own
 runner token. The rule is per runner and already exists; this pins that it holds
-for every route a secret could leave by:
+for every door a secret could leave by:
 
 * runner A's proof for an agent routed only to B is `401 not_routed`;
 * runner A's runner token is refused for that agent, and cannot open B's runner routes;

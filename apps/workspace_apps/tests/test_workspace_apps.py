@@ -1,4 +1,4 @@
-"""Workspace apps: the store, the role rules, the public pages, and the bundled Hiring app end to end."""
+"""Workspace apps: the store, the role rules, the public door, and the bundled Hiring app end to end."""
 from __future__ import annotations
 
 import copy
@@ -306,7 +306,7 @@ def test_the_guide_hands_an_agent_the_contract_and_the_draft(world, hiring):
     assert "add_field" in g["contract"] and g["draft"] and g["manifest"]["key"] == "hiring"
 
 
-# --- the public pages --------------------------------------------------------------------
+# --- the public door ---------------------------------------------------------------------
 
 
 def test_the_public_door_is_shut_until_the_app_is_public(world, hiring):

@@ -10,7 +10,7 @@ a running turn of Trellis, and only as far as that turn's asker goes
 * an administrator of the agent asked -> every grantor's (they run it for all it serves);
 * a contact or an unverified user asked, a stored token, a session sign-in, a finished
   or confined turn -> nobody's.
-Every entry point asks the one ACL, so REST (by id, list, search, messages) and MCP agree.
+Every door is the one ACL, so REST (by id, list, search, messages) and MCP agree.
 """
 from __future__ import annotations
 
@@ -98,7 +98,7 @@ def test_a_person_asking_reads_only_their_own_sessions(w):
     assert not _reads(bearer, w["chat"]["col"])          # never granted anyone
 
 
-def test_every_entry_point_agrees_for_a_person_asking(w):
+def test_every_door_agrees_for_a_person_asking(w):
     bearer = _asked_by(w, "lili")
     mine, theirs = str(w["chat"]["lili"].pk), str(w["chat"]["bo"].pk)
     assert _get(bearer, f"/api/canopy-sessions/{mine}/messages?before=100").status_code == 200

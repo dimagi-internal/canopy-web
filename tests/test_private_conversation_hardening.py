@@ -134,7 +134,7 @@ def test_a_real_fork_names_its_source_and_its_lineage(w):
 
 
 def test_an_owner_forks_their_private_conversation(w):
-    """The existing route test checks only `!= 403`; this one checks it really forks,
+    """The existing door test checks only `!= 403`; this one checks it really forks,
     and the fork is private with its rows still readable by its owner."""
     hot = w["hot"]
     _bound(w, hot)

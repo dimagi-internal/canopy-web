@@ -154,7 +154,7 @@ def test_a_reachable_source_packs_the_target_restores_then_the_source_closes(ctx
 
 
 def test_an_ace_web_session_stays_ace_web_work_when_it_moves(ctx):
-    # `send.default_origin`: which product the work is, not which route asked.
+    # `send.default_origin`: which product the work is, not which door asked.
     s = _session(ctx)
     s.metadata = {"source": "ace-web"}
     s.save(update_fields=["metadata"])

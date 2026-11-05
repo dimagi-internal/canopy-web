@@ -31,7 +31,7 @@ from apps.workspaces.testing import a_workspace
 
 pytestmark = pytest.mark.django_db
 SECRET = "the words of someone else's turn"
-#: Every MCP tool that reads a turn's content.
+#: Every door that reads a turn's content.
 READS = ("read_turn_events", "read_turn_messages")
 
 
@@ -89,7 +89,7 @@ def _rest(raw, path):
 
 
 def _rest_reads(raw, turn) -> bool:
-    """Whether REST hands this token the turn's content, by every route."""
+    """Whether REST hands this token the turn's content, by every door."""
     base = f"/api/harness/turns/{turn.pk}"
     got = [_rest(raw, f"{base}/events").status_code == 200,
            _rest(raw, f"{base}/messages").status_code == 200,
@@ -183,8 +183,8 @@ def test_a_personal_projects_reader_is_still_held_to_the_reach(w, monkeypatch):
     assert _rest_reads(raw, _turn(by=w["ana"], agent=w["trellis"])) is True    # in reach: its rule
 
 
-def test_the_session_routes_hold_to_the_reach_too(w):
-    """The sweep of what serves a session's words: each route asks the one ACL, so each stops here."""
+def test_the_session_doors_hold_to_the_reach_too(w):
+    """The sweep of what serves a session's words: each door asks the one ACL, so each stops here."""
     _t, raw = _token(w)
     out = Session.objects.create(workspace=w["ws"], created_by=w["ana"], title="her laptop-like chat")
     base = f"/api/canopy-sessions/{out.pk}"

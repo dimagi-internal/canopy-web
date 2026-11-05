@@ -3,7 +3,7 @@
 connect-labs puts `labsdata` (on sensitive-data runners) on its data pages and keeps ACE (on any runner)
 on the marketplace. The page signs its choice into the visitor assertion
 (`canopy_agent`, `canopy_sdk.contract.AGENT_CLAIM`); canopy checks it is the agent
-the arrival names and one the site offers, then holds the token — every route a
+the arrival names and one the site offers, then holds the token — every door a
 site's token reaches — and the host grant it redeems to that agent alone. An
 arrival with no claim is exactly what it was before: the site's whole allow-list.
 """
@@ -129,7 +129,7 @@ def test_a_member_arrival_is_bound_too(site, key):
     assert ok.status_code == 200, ok.content
 
 
-# --- a contact's routes ------------------------------------------------------------
+# --- a contact's doors ------------------------------------------------------------
 
 
 def test_a_bound_contact_reaches_only_its_agent(site, key):
