@@ -283,6 +283,26 @@ def _decision(d) -> dict:
     return {**dataclasses.asdict(d), "permissions": sorted(d.permissions), "stamp": d.stamp}
 
 
+def answer_of(ctx) -> dict:
+    """A Turn Context as this document has always printed an answer, so that its hash keeps meaning the
+    same thing: `access` says `none` for a refusal, and a refusal's reason is `reason`."""
+    return {
+        "relationship": ctx.standing.relationship,
+        "access": "none" if ctx.refused else ctx.access,
+        "capability": ctx.stamped or None,
+        "may_request_auto": ctx.review.may_request_auto,
+        "may_pin_runner": ctx.review.may_pin_runner,
+        "manual_only": ctx.review.manual_only,
+        "basis": ctx.basis,
+        "reason": ctx.refusal.why if ctx.refused else "",
+        "agent_role": ctx.standing.agent_role,
+        "source": ctx.standing.source,
+        "via": ctx.standing.via,
+        "permissions": sorted(ctx.standing.permissions),
+        "stamp": ctx.stamped,
+    }
+
+
 def _statements(agent, stamps) -> dict:
     # Every stamp on no runner and on each box that would take the turn: the facts, unsigned.
     takers = sorted((r for r in runner_takers(agent)[0] if not serves_refusal(r, agent.slug)),

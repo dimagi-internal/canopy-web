@@ -1,0 +1,628 @@
+"""THE rule: what one turn may do, resolved from who is asking, the agent and the conversation.
+
+Every word is defined in `docs/architecture/access.md` and the design is
+`docs/superpowers/specs/2026-11-05-turn-context-design.md`. Every entry point that makes an agent do
+work calls `resolve_turn_context`, directly or through `for_turn` / `for_asker`, and everything
+downstream reads the `TurnContext` it returns, so no two of them can disagree.
+
+    Session Context ─┐
+    Asker           ─┼─→ resolve_turn_context() → Turn Context
+    Agent settings  ─┘
+
+An agent's access is decided by two things: who the agent itself trusts without a list (its owner, its
+admins, canopy itself, and a writer in an admin's own session) and its **access list**
+(`apps/agents/grants.py`), which gives everyone else a role. A role is a named bundle of permissions
+(`roles.py`), and a line may instead open one named connected site (`use:<name>`). The resolver runs:
+
+* **Stage 0, can this session take a message from them.** A preview only: a real turn is past its door.
+* **Stage 1, standing**, first match: canopy itself, the agent's own login or an approved dispatch
+  (`system`); its owner and admins; a session grant; the access list; otherwise nothing.
+* **Stage 2, profile.** A base, then two rules that only narrow. Owner, admin, system, a session grant
+  or `write` get `whole_agent`. Someone holding only `read` or named lines gets what they named if it
+  opens for them, else (naming nothing) the first page or site entry that opens for them, else read
+  mode. Anyone else is refused. Then a review chat is `session_review` for anyone not refused, and
+  sensitive data confines the whole agent to its entry and refuses anything else in a sensitive
+  conversation.
+* **Stage 3, fan-out**: turn mode, the runner session's suffix, and a true account of credentials.
+
+It writes nothing: `caller_context.build` writes a `PersonAccess` row, and that stays in the envelope's
+`person` block outside this module.
+
+Three different things are called a standing. `Standing` here is what the asker holds on this agent
+and why, on the result. `standings.Standing` is what the database says about a person, read in bulk
+and passed in on `Asker`. `harness.turn_asker.Standing` is who a turn's login answers to.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field, replace
+from fnmatch import fnmatchcase
+from functools import cached_property
+
+from django.contrib.auth import get_user_model
+
+from apps.contacts.models import Contact
+from apps.harness import caller_context as cc
+from apps.harness import initiator as initiator_mod
+from apps.harness.caller_context import is_verified
+
+from . import grants, roles, sensitive_data
+from . import interface as iface_mod
+from . import session_context as sc
+from .standings import standing_of
+
+#: How canopy knows the asker, strongest first (defined once, in `caller_context`).
+OWNER, ADMIN, MEMBER, CONTACT, SYSTEM = cc.OWNER, cc.ADMIN, cc.MEMBER, cc.CONTACT, cc.SYSTEM
+
+#: `TurnContext.access`.
+FULL, CONFINED, REFUSED = "full", "confined", "refused"
+
+#: `Profile.kind`, a closed set.
+WHOLE_AGENT = "whole_agent"
+READ_MODE = "read_mode"
+CONNECTED_SITE = "connected_site"
+SESSION_REVIEW = "session_review"
+DENY_ALL = "deny_all"
+NO_AGENT = "no_agent"
+PROFILE_KINDS = frozenset({WHOLE_AGENT, READ_MODE, CONNECTED_SITE, SESSION_REVIEW, DENY_ALL, NO_AGENT})
+
+#: What a stage reports when the answer needs something only the claim knows.
+PENDING = "pending"
+
+#: `Refusal.code`, a closed set: the refusals the rule makes, then stage 0's.
+NOT_ON_ACCESS_LIST = "not_on_access_list"
+PROFILE_NOT_OPEN = "profile_not_open"
+SENSITIVE_NOT_OPEN = "sensitive_not_open"
+REFUSAL_CODES = frozenset({NOT_ON_ACCESS_LIST, PROFILE_NOT_OPEN, SENSITIVE_NOT_OPEN, sc.CONTENT_DELETED,
+                           sc.CANNOT_WRITE, sc.CLI_NOT_OFFERED, sc.NOT_IN_SENSITIVE})
+
+#: `basis` when a turn is refused, and for a turn with no agent (the envelope's `granted_by`).
+REFUSED_BASIS, NO_INTERFACE = "refused", "no-interface"
+
+
+@dataclass(frozen=True)
+class Asker:
+    """Who this turn is for, and whether this message proves it (`verified`). `who` is a canopy user,
+    a contact or None. `standing` and `lines` are the facts about them when the caller read those in
+    bulk (`Standings`), so a view judging many pairs does not read per pair."""
+
+    who: object = None
+    verified: bool = False
+    standing: object = None
+    lines: list | None = None
+    #: Whether this asker is at one of a sensitive conversation's chat surfaces (a preview's stage 0).
+    chat_surface: bool = True
+
+    @classmethod
+    def of_turn(cls, turn) -> Asker:
+        return cls(who=turn.initiator_user or turn.initiator_contact, verified=is_verified(turn))
+
+    @property
+    def user(self):
+        return self.who if isinstance(self.who, get_user_model()) else None
+
+    @property
+    def contact(self):
+        return self.who if isinstance(self.who, Contact) else None
+
+
+@dataclass(frozen=True)
+class Standing:
+    """What the asker holds on this agent, and why."""
+
+    relationship: str            # owner | admin | member | contact | system
+    #: Everything their lines grant (read, write, use:<name>, ...). Empty for the owner, admin and
+    #: system tiers, who need no list, and for a refusal.
+    permissions: frozenset = frozenset()
+    #: Owner | admin | editor | read_write | read_only | system, or a workspace's own role. None when
+    #: refused, or when they hold only named lines.
+    agent_role: str | None = None
+    #: `owner` | `admin` | `system` | `session` | `list:<line>`.
+    source: str = ""
+    #: `source` in words a person can read.
+    via: str = ""
+
+
+@dataclass(frozen=True)
+class Review:
+    """How the turn is overseen. `mode` and `basis` come from `turn_mode`, whose rules need the claim:
+    `PENDING` until then, or None for a turn with no agent."""
+
+    mode: str | None = PENDING
+    basis: str = ""
+    manual_only: bool = False
+    may_request_auto: bool = False
+    may_pin_runner: bool = False
+
+
+@dataclass(frozen=True)
+class Refusal:
+    """Why a turn is not run. Non-null exactly when `TurnContext.access == REFUSED`."""
+
+    code: str
+    why: str
+    how_to_fix: str = ""
+    who_can_fix: str = ""
+
+
+@dataclass(frozen=True)
+class TraceEntry:
+    rule: str
+    outcome: str
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class Profile:
+    """The complete definition of what a turn can do. For `whole_agent` and `no_agent` nothing is
+    enumerated and the lists are None; on any other kind an empty or absent list denies. Only an
+    explicit `kind` means the whole agent, never a missing list, profile or name.
+
+    Read when asked, because canopy's default read profile reads the agent's skills, and the roster
+    asks the rule per member."""
+
+    kind: str
+    #: What a turn in it is stamped: "" for the whole agent.
+    name: str = ""
+    #: The site a `connected_site` serves, None for one with no site.
+    site: str | None = None
+    #: The envelope's account of a sensitive turn that lost its entry (`caller_context._profile`).
+    _agent: object = field(default=None, compare=False, repr=False)
+
+    @cached_property
+    def _definition(self) -> dict | None:
+        if self.kind in (WHOLE_AGENT, NO_AGENT):
+            return None
+        if self.kind == DENY_ALL:
+            return {"name": self.name, "description": "", "entry": None, "tools": [], "bash": [],
+                    "read_paths": [], "write_paths": []}
+        return iface_mod.profile(self._agent, self.name)
+
+    def _read(self, key):
+        return (self._definition or {}).get(key)
+
+    description = property(lambda self: self._read("description"))
+    entry = property(lambda self: self._read("entry"))
+    tools = property(lambda self: self._read("tools"))
+    bash = property(lambda self: self._read("bash"))
+    read_paths = property(lambda self: self._read("read_paths"))
+    write_paths = property(lambda self: self._read("write_paths"))
+    data = property(lambda self: self._read("data"))
+    default_profile_version = property(lambda self: self._read("default_profile_version"))
+
+    def as_envelope(self) -> dict | None:
+        """The profile as the runner and its guard read it, None for the whole agent."""
+        return self._definition
+
+
+@dataclass(frozen=True)
+class TurnContext:
+    """What one turn may do. Always produced, even when refused."""
+
+    standing: Standing
+    access: str                       # full | confined | refused
+    profile: Profile | None           # None only when refused
+    #: WHY in one word: owner | admin | system | session:<role> | grant:<line> | capability:<name> |
+    #: sensitive:<name> | refused | no-interface.
+    basis: str
+    session_key_suffix: str           # "#<name>" for a confined turn, "" otherwise (§ 6)
+    review: Review
+    #: `Turn.capability` for this answer: "" for the whole agent, a name, or None when refused.
+    stamped: str | None
+    refusal: Refusal | None
+    trace: tuple[TraceEntry, ...]
+    _session_ctx: object = field(default=None, compare=False, repr=False)
+    _agent: object = field(default=None, compare=False, repr=False)
+    _turn: object = field(default=None, compare=False, repr=False)
+    _runner: object = field(default=None, compare=False, repr=False)
+
+    def __post_init__(self):
+        # What the rest of canopy relies on, held at the one place each answer is made.
+        if (self.access == REFUSED) != (self.profile is None) or (self.access == REFUSED) != (self.refusal is not None):
+            raise ValueError("a Turn Context has a profile exactly when it is not refused, and a refusal "
+                             "exactly when it is")
+        if self.profile is not None and (self.access == FULL) != (self.profile.kind in (WHOLE_AGENT, NO_AGENT)):
+            raise ValueError(f"access {self.access} cannot run a {self.profile.kind} profile")
+
+    @property
+    def refused(self) -> bool:
+        return self.access == REFUSED
+
+    @cached_property
+    def credentials(self):
+        """A true statement of what this turn gets, by name and kind, never a value. Read when asked:
+        `credentials/for_turn.py` asks functions that themselves ask this rule."""
+        from .credentials import for_turn as for_turn_mod  # noqa: PLC0415 — it reads harness modules that read this one
+
+        return for_turn_mod.statement(self, self._agent, self._turn, runner=self._runner)
+
+
+# --- stages 1 and 2: the answer, as it is worked out ---------------------------------------------
+
+@dataclass(frozen=True)
+class _Reach:
+    relationship: str
+    access: str = REFUSED
+    name: str | None = None
+    basis: str = REFUSED_BASIS
+    may_request_auto: bool = False
+    may_pin_runner: bool = False
+    manual_only: bool = False
+    agent_role: str | None = None
+    source: str = ""
+    via: str = ""
+    permissions: frozenset = frozenset()
+    code: str = ""
+    why: str = ""
+
+
+def _list_refusal(agent, *, verified_contact: bool = False) -> str:
+    owner = agent.owner.email if agent.owner_id and agent.owner else "its owner"
+    why = (f"{agent.slug} does not list you on its access list; ask {owner} or an admin of "
+           f"{agent.slug} to add you (read_only can ask it questions, read_write can use all of "
+           "it, an editor can also change it)")
+    if verified_contact:
+        # A verified sender nobody listed is, far more often than a stranger, an automated
+        # one someone subscribed on purpose — CloudWatch alarms went unanswered for nine days
+        # this way (canopy-web#1253). Say what fixes it.
+        why += ("; if this is an automated sender (alarms, CI, a monitor), an admin of the agent "
+                "can bind its address to an inbound-mail trigger on the agent's Triggers tab")
+    return why
+
+
+#: Why a sensitive conversation with no entry that handles sensitive data is refused.
+SENSITIVE_REFUSAL = ("this conversation holds a host's sensitive data, so it runs only in a "
+                     "capability its author declared handles sensitive data (`data: sensitive`), "
+                     "and {slug} has none for it{you}")
+
+
+def _who_can_fix(agent) -> str:
+    owner = agent.owner.email if agent.owner_id and agent.owner else "its owner"
+    return f"{owner} or an admin of {agent.slug}"
+
+
+def _no_list_stage(agent, asker: Asker, session_ctx, turn, trace: list) -> _Reach:
+    """Stage 1, the part that needs no list: the owner, the admins, canopy itself and a writer in an
+    admin's own session have the whole agent. Everyone else goes on to the access list."""
+    st = asker.standing
+    user = None
+    if turn is not None:
+        rel = cc.relationship(turn, agent)
+        user = turn.initiator_user if turn.initiator_kind == initiator_mod.USER else None
+    elif asker.user is not None:
+        user = asker.user
+        st = st or standing_of(user, agent)
+        rel = cc.relationship_for_user(user, agent, role=st.role, granted=st.granted)
+    else:
+        rel = CONTACT
+
+    if user is not None and st is None:
+        st = standing_of(user, agent)
+    is_admin = user is not None and agent.is_admin(user, role=st.role, granted=st.granted)
+
+    if rel in (OWNER, ADMIN, SYSTEM):
+        role = {OWNER: roles.OWNER, ADMIN: roles.ADMIN, SYSTEM: roles.SYSTEM}[rel]
+        trace.append(TraceEntry("trusted_without_a_list", rel))
+        return _Reach(relationship=rel, access=FULL, basis=rel, agent_role=role, source=rel,
+                      may_request_auto=bool(is_admin and asker.verified),
+                      may_pin_runner=is_admin or rel in (OWNER, ADMIN))
+    trace.append(TraceEntry("trusted_without_a_list", "no", f"relationship {rel}"))
+    if user is not None:
+        grant = next((g for g in session_ctx.session_grants if g.user_id == user.pk), None)
+        if grant is not None:
+            trace.append(TraceEntry("session_grants", grant.kind, grant.source))
+            # A session writer drives this conversation; nothing gives them the agent itself, so
+            # their permissions (what the envelope and the own-repo rail read) stop at `write`.
+            return _Reach(relationship=rel, access=FULL, basis=f"session:{grant.role}", agent_role=roles.EDITOR,
+                          source="session", permissions=roles.ROLES.close({roles.WRITE}))
+        trace.append(TraceEntry("session_grants", "none"))
+    return _Reach(relationship=rel, code=NOT_ON_ACCESS_LIST,
+                  why=_list_refusal(agent, verified_contact=rel == CONTACT and bool(asker.verified)))
+
+
+def _list_asker(asker: Asker, turn) -> grants.Asker:
+    """The asker as the access list sees them: a canopy user, or a contact known by address."""
+    user, contact, verified = asker.user, asker.contact, asker.verified
+    if turn is not None:
+        user = turn.initiator_user if turn.initiator_kind == initiator_mod.USER else None
+        contact = turn.initiator_contact if turn.initiator_kind == initiator_mod.CONTACT else None
+        verified = is_verified(turn)
+    email = (getattr(user, "email", "") or getattr(contact, "email", "") or "").strip().lower()
+    return grants.Asker(user=user, email=email, verified=bool(verified), contact=contact is not None,
+                        workspace_roles=getattr(asker.standing, "roles", None),
+                        descendants=getattr(asker.standing, "descendants", None))
+
+
+def _selected_entry(iface: dict, opens, session_ctx) -> str | None:
+    """The entry this conversation's page or site selects, among those this asker can open. One they
+    cannot open is skipped, not fatal: read mode may still admit them."""
+    return (iface_mod.page_entry(session_ctx.page, iface, opens)
+            or iface_mod.site_entry(session_ctx.site, iface, opens))
+
+
+def _entry_for(iface: dict, permissions, requested, session_ctx, trace: list) -> str | None:
+    """The entry someone without `write` is held to: the one named, else the page's or the site's,
+    else read mode, among those their permissions open. Read mode exists on every agent; any other
+    name must be published, and an unknown or retired one is refused, never widened."""
+    def opens(name, _cap):
+        return iface_mod.opens(permissions, name)
+
+    if requested == iface_mod.SESSION_REVIEW:
+        # Canopy's own, for a turn in a review chat only: `read` opens it.
+        allowed = session_ctx.is_review and roles.holds(permissions, roles.READ)
+        trace.append(TraceEntry("entry", requested if allowed else "not open", "review chat"))
+        return requested if allowed else None
+    name, how = requested, "named"
+    if name is None:
+        name, how = _selected_entry(iface, opens, session_ctx), "page or site"
+    if name is None:
+        name, how = iface_mod.ASK, "read mode"
+    published, cap = iface_mod.published_capability(iface, name)
+    if published is None and iface_mod.is_read_mode(name):
+        published, cap = iface_mod.READ_MODE, {}   # {}: canopy's default, built when it is read
+    allowed = cap is not None and opens(published, cap)
+    trace.append(TraceEntry("entry", published if allowed else "not open", f"{how}: {name}"))
+    return published if allowed else None
+
+
+def _base_stage(agent, reach: _Reach, asker: Asker, requested, session_ctx, turn, trace: list) -> _Reach:
+    """Stage 1's access list, then stage 2's base."""
+    if reach.access == FULL:
+        return reach
+    got = grants.resolve(agent, _list_asker(asker, turn),
+                         asker.lines if asker.lines is not None else getattr(asker.standing, "lines", None))
+    if not got.permissions:
+        trace.append(TraceEntry("access_list", "holds nothing"))
+        return reach
+    iface = getattr(agent, "interface", None) or {}
+    if roles.holds(got.permissions, roles.WRITE):
+        # `write` is driving the whole agent, whatever the role is called. What makes someone an agent
+        # ADMIN is still `Agent.is_admin`, never a list line, so a line never raises `may_request_auto`.
+        line = got.line_for(roles.WRITE)
+        trace.append(TraceEntry("access_list", "write", got.basis))
+        return replace(reach, access=FULL, manual_only=got.manual_only, basis=got.basis, agent_role=got.role,
+                       source=f"list:{line.subject_key}", via=grants.describe(line), permissions=got.permissions,
+                       code="", why="")
+    trace.append(TraceEntry("access_list", ",".join(sorted(got.permissions)), got.basis))
+    name = _entry_for(iface, got.permissions, requested, session_ctx, trace)
+    if name is None:
+        return replace(reach, code=PROFILE_NOT_OPEN)
+    # The review entry is opened by `read`; `line_opening` knows only named entries and read mode.
+    line = got.line_for(roles.READ) if name == iface_mod.SESSION_REVIEW else got.line_opening(name)
+    return replace(reach, access=CONFINED, name=name, basis=f"capability:{name}", agent_role=got.role,
+                   source=f"list:{line.subject_key}", via=grants.describe(line), permissions=got.permissions,
+                   code="", why="")
+
+
+def _review_rule(reach: _Reach, trace: list) -> _Reach:
+    """A turn in a one-session review's chat runs in its own profile, for everyone with any access at
+    all: owner, admin, editor and canopy too. It only narrows. That chat holds a transcript someone may
+    have written to steer whoever reads it, so no later message there picks up the agent's whole
+    profile, nor a login, a token or a send."""
+    if reach.access == REFUSED:
+        trace.append(TraceEntry("review_chat", "already refused"))
+        return reach
+    trace.append(TraceEntry("review_chat", iface_mod.SESSION_REVIEW))
+    return replace(reach, access=CONFINED, name=iface_mod.SESSION_REVIEW, may_request_auto=False,
+                   may_pin_runner=False, basis=f"capability:{iface_mod.SESSION_REVIEW}")
+
+
+def _sensitive_entry(iface: dict, requested, session_ctx) -> str | None:
+    """The `data: sensitive` entry this ask is in: the one it names, else the one its conversation's
+    site or page selects. Who is asking is not checked here."""
+    if requested:
+        # `read` and `ask` are one thing: naming either finds the agent's published read-mode
+        # profile, and if that handles sensitive data, naming `read` must not dodge the rule.
+        published, cap = iface_mod.published_capability(iface, requested)
+        return published if (cap or {}).get("data") == sensitive_data.SENSITIVE else None
+    for name, cap in (iface.get("capabilities") or {}).items():
+        if cap.get("data") != sensitive_data.SENSITIVE:
+            continue
+        if session_ctx.site and session_ctx.site in (cap.get("sites") or []):
+            return name
+        if session_ctx.page and any(fnmatchcase(session_ctx.page, p) for p in cap.get("pages") or []):
+            return name
+    return None
+
+
+def _sensitive_rule(agent, reach: _Reach, requested, session_ctx, trace: list) -> _Reach:
+    """Sensitive data is confined for everyone: in a `data: sensitive` entry, whoever would have had
+    the whole agent runs that entry instead, with the same role, mode and pin rights. A confined caller
+    keeps what the base gave them. A turn in a sensitive conversation that ends up anywhere but its
+    sensitive entry is refused, never run whole or in another one."""
+    iface = getattr(agent, "interface", None) or {}
+    entry = _sensitive_entry(iface, requested, session_ctx)
+    if entry is None and not session_ctx.sensitive:
+        trace.append(TraceEntry("sensitive", "not sensitive"))
+        return reach
+    if entry is not None and reach.access == FULL:
+        trace.append(TraceEntry("sensitive", entry, "the whole agent is confined to its sensitive entry"))
+        return replace(reach, access=CONFINED, name=entry, basis=f"sensitive:{entry}")
+    if reach.access == REFUSED or not session_ctx.sensitive:
+        trace.append(TraceEntry("sensitive", "no change"))
+        return reach
+    if entry is not None and reach.access == CONFINED and reach.name == entry:
+        trace.append(TraceEntry("sensitive", entry, "already in its sensitive entry"))
+        return reach
+    trace.append(TraceEntry("sensitive", REFUSED, "not in a sensitive entry"))
+    you = "" if entry is None else f" that is open to you ('{entry}' does not list you)"
+    return replace(reach, access=REFUSED, name=None, may_request_auto=False, may_pin_runner=False,
+                   manual_only=False, basis=REFUSED_BASIS, agent_role=None, source="",
+                   permissions=frozenset(), code=SENSITIVE_NOT_OPEN,
+                   why=SENSITIVE_REFUSAL.format(slug=agent.slug, you=you))
+
+
+def _rules(agent, asker: Asker, session_ctx, requested, turn, trace: list) -> _Reach:
+    """Stages 1 and 2, in the order they have always run."""
+    if session_ctx.is_review:
+        requested = iface_mod.SESSION_REVIEW
+    reach = _no_list_stage(agent, asker, session_ctx, turn, trace)
+    reach = _base_stage(agent, reach, asker, requested, session_ctx, turn, trace)
+    if session_ctx.is_review:
+        reach = _review_rule(reach, trace)
+    return _sensitive_rule(agent, reach, requested, session_ctx, trace)
+
+
+# --- the result ------------------------------------------------------------------------------------
+
+def _kind_of(name: str) -> str:
+    if name == iface_mod.SESSION_REVIEW:
+        return SESSION_REVIEW
+    return READ_MODE if iface_mod.is_read_mode(name) else CONNECTED_SITE
+
+
+def _site_of(agent, name: str, session_ctx) -> str | None:
+    caps = (getattr(agent, "interface", None) or {}).get("capabilities") or {}
+    sites = (caps.get(name) or {}).get("sites") or []
+    if session_ctx.site in sites:
+        return session_ctx.site
+    return sites[0] if sites else None
+
+
+def _profile_of(agent, name: str, session_ctx) -> Profile:
+    kind = _kind_of(name)
+    return Profile(kind=kind, name=name, _agent=agent,
+                   site=_site_of(agent, name, session_ctx) if kind == CONNECTED_SITE else None)
+
+
+def stamped_profile(agent, stamp: str, session_ctx) -> Profile:
+    """The profile a turn stamped `stamp` runs in, whatever the rules say now. A stamp that no longer
+    resolves is `deny_all`, never the whole agent, and so is a sensitive turn stamped with read mode
+    that has since gone: canopy's default read profile is not what it was admitted to."""
+    if stamp == iface_mod.FULL:
+        return Profile(kind=WHOLE_AGENT, _agent=agent)
+    if stamp == iface_mod.SESSION_REVIEW:
+        return _profile_of(agent, stamp, session_ctx)
+    published, _cap = iface_mod.published_capability(getattr(agent, "interface", None), stamp)
+    if published is None and (not iface_mod.is_read_mode(stamp) or session_ctx.sensitive):
+        return Profile(kind=DENY_ALL, name=stamp, _agent=agent)
+    # Stamped under its own name: an agent that later publishes the other read-mode name keeps the key.
+    return _profile_of(agent, stamp, session_ctx)
+
+
+def _review_of(reach: _Reach, turn, runner) -> Review:
+    """Turn mode's rules are not here. A turn already claimed reads its stamp; the claim asks them
+    afresh, because they need what only it knows; anything else is `PENDING`."""
+    mode, basis = PENDING, ""
+    if turn is not None and turn.turn_mode:
+        mode, basis = turn.turn_mode, turn.turn_mode_basis or ""
+    elif turn is not None and runner is not None:
+        from apps.harness import turn_mode  # noqa: PLC0415 — turn_mode asks this rule
+
+        resolved = turn_mode.for_turn(turn, fresh=True)
+        if resolved is not None:
+            mode, basis = resolved.mode, resolved.basis
+    return Review(mode=mode, basis=basis, manual_only=reach.manual_only, may_request_auto=reach.may_request_auto,
+                  may_pin_runner=reach.may_pin_runner)
+
+
+def _finish(agent, reach: _Reach, session_ctx, turn, runner, trace: list) -> TurnContext:
+    standing = Standing(relationship=reach.relationship, permissions=reach.permissions,
+                        agent_role=reach.agent_role, source=reach.source, via=reach.via)
+    if reach.access == REFUSED:
+        profile, stamped, suffix = None, None, ""
+        refusal = Refusal(code=reach.code, why=reach.why, who_can_fix=_who_can_fix(agent))
+    elif reach.access == FULL:
+        profile, stamped, suffix, refusal = Profile(kind=WHOLE_AGENT, _agent=agent), iface_mod.FULL, "", None
+    else:
+        profile, stamped, suffix, refusal = (_profile_of(agent, reach.name, session_ctx), reach.name,
+                                             f"#{reach.name}", None)
+    return TurnContext(standing=standing, access=reach.access, profile=profile, basis=reach.basis,
+                       session_key_suffix=suffix, review=_review_of(reach, turn, runner), stamped=stamped,
+                       refusal=refusal, trace=tuple(trace), _session_ctx=session_ctx, _agent=agent,
+                       _turn=turn, _runner=runner)
+
+
+def _send_refusal(session_ctx, asker: Asker, turn, trace: list) -> Refusal | None:
+    """Stage 0. A real turn is past its door: asking here would refuse turns no door refuses today
+    (an email, a schedule, a turn someone else's rule let in), and this project changes no one's access."""
+    if turn is not None or session_ctx.session_id is None:
+        return None
+    block = next((b for b in session_ctx.send_blocks if b.applies(asker)), None)
+    trace.append(TraceEntry("send_blocks", block.code if block is not None else "none",
+                            block.why if block is not None else ""))
+    return Refusal(code=block.code, why=block.why) if block is not None else None
+
+
+def _no_agent(asker: Asker, session_ctx, turn, trace: list) -> TurnContext:
+    """A person's own repo or project session. Its enforcement and credentials are what they are today,
+    and this only names them: there is no agent to hold a standing on."""
+    rel = cc.relationship(turn, None) if turn is not None else CONTACT
+    trace.append(TraceEntry("no_agent", rel))
+    review = Review(mode=None) if turn is None else _review_without_agent(turn)
+    return TurnContext(standing=Standing(relationship=rel), access=FULL, profile=Profile(kind=NO_AGENT),
+                       basis=NO_INTERFACE, session_key_suffix="", review=review, stamped=iface_mod.FULL, refusal=None,
+                       trace=tuple(trace), _session_ctx=session_ctx, _turn=turn)
+
+
+def _review_without_agent(turn) -> Review:
+    return Review(mode=turn.turn_mode or None, basis=turn.turn_mode_basis or "")
+
+
+def resolve_turn_context(session_ctx, asker: Asker, agent, *, requested: str | None = None, turn=None,
+                         stamp: str | None = None, runner=None) -> TurnContext:
+    """THE rule. See the module docstring. It writes nothing.
+
+    `requested` is the profile the asker named. `turn`, when given, supplies what only a turn knows: its
+    initiator and the conversation it continues.
+
+    **Two moments, and the stamp wins.** Without `stamp` this is the enqueue's question, and a preview's.
+    `stamp` is `Turn.capability` when completing a turn at claim: the stored profile stands, so a turn
+    queued under one access level runs as it was admitted. `runner` is what only the claim knows.
+    """
+    trace: list[TraceEntry] = []
+    blocked = _send_refusal(session_ctx, asker, turn, trace)
+    if agent is None:
+        return _no_agent(asker, session_ctx, turn, trace) if blocked is None else _blocked_without_agent(
+            asker, session_ctx, blocked, trace)
+    if stamp is not None:
+        return _at_claim(agent, asker, session_ctx, stamp, turn, runner, trace)
+    reach = _rules(agent, asker, session_ctx, requested, turn, trace)
+    if blocked is not None:
+        # Who they are is still true: only this message cannot be taken.
+        reach = replace(reach, access=REFUSED, name=None, basis=REFUSED_BASIS, code=blocked.code, why=blocked.why,
+                        may_request_auto=False, may_pin_runner=False, manual_only=False)
+    return _finish(agent, reach, session_ctx, turn, runner, trace)
+
+
+def _blocked_without_agent(asker: Asker, session_ctx, refusal: Refusal, trace: list) -> TurnContext:
+    return TurnContext(standing=Standing(relationship=CONTACT), access=REFUSED, profile=None, basis=REFUSED_BASIS,
+                       session_key_suffix="", review=Review(mode=None), stamped=None, refusal=refusal,
+                       trace=tuple(trace), _session_ctx=session_ctx)
+
+
+def _at_claim(agent, asker: Asker, session_ctx, stamp: str, turn, runner, trace: list) -> TurnContext:
+    """The stamp decides the profile. The asker's standing is still read live, as the envelope reads it:
+    under the stamp, and when that no longer admits them, as they stand now."""
+    reach = _rules(agent, asker, session_ctx, stamp or None, turn, trace)
+    if reach.access == REFUSED and stamp:
+        trace.append(TraceEntry("stamp", "no longer admits them", stamp))
+        reach = _rules(agent, asker, session_ctx, None, turn, trace)
+    profile = stamped_profile(agent, stamp, session_ctx)
+    trace.append(TraceEntry("stamp", profile.kind, stamp))
+    access = FULL if profile.kind == WHOLE_AGENT else CONFINED
+    # As the envelope words it: a stamp may differ from the free-form entry the rule fell back to.
+    basis = f"capability:{stamp or reach.name}" if reach.access == CONFINED else reach.basis
+    standing = Standing(relationship=reach.relationship, permissions=reach.permissions,
+                        agent_role=reach.agent_role, source=reach.source, via=reach.via)
+    return TurnContext(standing=standing, access=access, profile=profile, basis=basis,
+                       session_key_suffix=f"#{stamp}" if stamp else "", review=_review_of(reach, turn, runner),
+                       stamped=stamp, refusal=None, trace=tuple(trace), _session_ctx=session_ctx,
+                       _agent=agent, _turn=turn, _runner=runner)
+
+
+# --- how entry points ask --------------------------------------------------------------------------
+
+def for_turn(turn, agent, requested: str | None = None) -> TurnContext:
+    """The rule for a turn already written or in memory, from its own initiator."""
+    return resolve_turn_context(sc.build(None, turn, agent=agent), Asker.of_turn(turn), agent,
+                                requested=requested, turn=turn)
+
+
+def for_asker(agent, who=None, *, verified: bool, requested: str | None = None, turn=None, standing=None,
+              lines=None, channel: str = "") -> TurnContext:
+    """The rule for a question with no turn (`channel` says where it would arrive, for the record: the
+    rule does not vary by it), or about a turn in hand when the caller knows better than the turn how
+    far this message is proven. `standing` and `lines` as on `Asker`."""
+    session_ctx = sc.build(None, turn, agent=agent) if turn is not None else sc.empty(channel=channel)
+    return resolve_turn_context(session_ctx, Asker(who=who, verified=verified, standing=standing, lines=lines),
+                                agent, requested=requested, turn=turn)

@@ -375,14 +375,21 @@ def _pages(value, cap: str) -> list[str]:
 
 def _declared_resource(turn) -> str:
     """What the page attached to this turn's conversation says it is showing."""
-    session = getattr(turn, "chat_session", None)
+    return session_resource(getattr(turn, "chat_session", None))
+
+
+def session_resource(session) -> str:
     state = getattr(session, "page_state", None) or {} if session is not None else {}
     resource = state.get("resource")
     return resource if isinstance(resource, str) else ""
 
 
 def _page_capability(turn, iface: dict, opens) -> str | None:
-    """The capability whose `pages` match what this turn's page declared.
+    return page_entry(_declared_resource(turn), iface, opens)
+
+
+def page_entry(resource: str, iface: dict, opens) -> str | None:
+    """The capability whose `pages` match what this conversation's page declared.
 
     Checked before falling back to `ask`, so a conversation held on a page the
     agent has declared a capability for gets THAT capability, and every other channel is
@@ -397,7 +404,6 @@ def _page_capability(turn, iface: dict, opens) -> str | None:
     """
     from fnmatch import fnmatchcase
 
-    resource = _declared_resource(turn)
     if not resource:
         return None
     for name, cap in (iface.get("capabilities") or {}).items():
@@ -413,20 +419,26 @@ def _conversation_site(turn) -> str:
     """The Connected site this turn's conversation is held on — the session's
     server-owned `embed_app`, stamped from the token that created it, never from
     anything the page or the caller sent."""
-    session = getattr(turn, "chat_session", None)
+    return session_site(getattr(turn, "chat_session", None))
+
+
+def session_site(session) -> str:
     meta = (getattr(session, "metadata", None) or {}) if session is not None else {}
     site = meta.get("embed_app")
     return site.strip() if isinstance(site, str) else ""
 
 
 def _site_capability(turn, iface: dict, opens) -> str | None:
+    return site_entry(_conversation_site(turn), iface, opens)
+
+
+def site_entry(site: str, iface: dict, opens) -> str | None:
     """The capability whose `sites` include the site this conversation is on.
 
-    Tried after `_page_capability` (a page-specific capability is the narrower one)
+    Tried after `page_entry` (a page-specific capability is the narrower one)
     and before falling back to `ask`. A capability the caller's class is not
     listed for is skipped, exactly as for pages.
     """
-    site = _conversation_site(turn)
     if not site:
         return None
     for name, cap in (iface.get("capabilities") or {}).items():
@@ -543,6 +555,20 @@ def session_writer(turn, agent) -> str | None:
     role = (SessionParticipant.objects.filter(session=session, user=user)
             .values_list("role", flat=True).first())
     return role if role in (SessionParticipant.OWNER, SessionParticipant.EDITOR) else None
+
+
+def session_writers(session, agent) -> list[tuple[int, str]]:
+    """Everyone `session_writer` is true of in `session`: `(user_id, role)`. The same two halves: the
+    agent's owner or an admin started it, and an explicit owner/editor row lets them in."""
+    creator = session.created_by
+    if creator is None:
+        return []
+    if creator.pk != agent.owner_id and not agent.is_admin(creator):
+        return []
+    rows = (SessionParticipant.objects.filter(
+        session=session, role__in=(SessionParticipant.OWNER, SessionParticipant.EDITOR))
+        .order_by("user_id").values_list("user_id", "role"))
+    return list(rows)
 
 
 def grant_facts(turn, agent) -> dict:
