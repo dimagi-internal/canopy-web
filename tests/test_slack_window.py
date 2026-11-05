@@ -245,9 +245,9 @@ def test_the_header_names_the_window_in_the_askers_terms():
     ("--HISTORY --MSG 2 go", 2, "go"),
 ])
 def test_a_message_count_is_recognised(text, last, ask):
-    """The count is the newest messages, reaching back no further than the
-    workspace's limit — so the window carries that limit as its minutes."""
-    assert window.parse(text, max_minutes=120) == (window.Window(120, last=last), ask)
+    """The count is the newest messages however old they are, so it carries no
+    minutes: the workspace's limit is on how far back a TIME window may reach."""
+    assert window.parse(text, max_minutes=120) == (window.Window(0, last=last), ask)
 
 
 @pytest.mark.parametrize("text, minutes, ask", [
@@ -299,8 +299,104 @@ def test_the_last_n_messages_are_the_newest_posted_wherever_they_were_posted():
 
 
 def test_the_header_names_a_message_count():
-    text = window.render("xoxb", [], channel_id="C1", win=window.Window(120, last=5))
+    text = window.render("xoxb", [], channel_id="C1", win=window.Window(0, last=5))
     assert "the last 5 message(s)" in text and 'last="5"' in text
+    assert "minutes=" not in text                     # a count has no time limit to report
+    assert "in this window" not in text               # an empty read is an empty channel
+
+
+def _old_channel(slack, history, replies=None):
+    """A Slack answering for `history` (newest first), every message of it old."""
+    import unittest.mock as mock
+
+    def answer(url, headers=None, json=None, data=None, timeout=None):
+        method = url.rsplit("/", 1)[-1]
+        payload = dict(data or {})
+        if method == "conversations.history":
+            slack.calls.append((method, payload))
+            oldest = float(payload.get("oldest") or 0)
+            return _resp({"ok": True, "has_more": False,
+                          "messages": [m for m in history if float(m["ts"]) >= oldest]})
+        if method == "conversations.replies":
+            slack.calls.append((method, payload))
+            oldest = float(payload.get("oldest") or 0)
+            msgs = [m for m in (replies or {}).get(payload["ts"], [])
+                    if m["ts"] == payload["ts"] or float(m["ts"]) >= oldest]
+            return _resp({"ok": True, "has_more": False, "messages": msgs})
+        return slack(url, headers=headers, json=json, data=data, timeout=timeout)
+
+    return mock.patch("apps.slack.client.requests.post", side_effect=answer)
+
+
+DAY = 24 * 60
+
+
+def test_a_message_count_reaches_past_the_workspace_limit(channel, linked, hal):
+    """The ask that started this: `--history --msgs 2` in a channel whose last two
+    messages are hours old handed the agent nothing, and looked like a quiet channel."""
+    history = [{"ts": _ts(3 * DAY), "user": BOB, "text": "NEWEST, three days old"},
+               {"ts": _ts(4 * DAY), "user": ALICE, "text": "NEXT, four days old"},
+               {"ts": _ts(5 * DAY), "user": BOB, "text": "OLDER"}]
+    with _old_channel(channel, history):
+        assert mention("<@UBOT> hal --history --msgs 2 pick this up", ts=_ts(0)).status_code == 200
+    prompt = _turn().prompt
+    assert "NEWEST, three days old" in prompt and "NEXT, four days old" in prompt
+    assert "OLDER" not in prompt and 'messages="2"' in prompt
+
+
+def test_a_count_reads_past_the_thread_lookback(channel, settings):
+    settings.SLACK_HISTORY_THREAD_LOOKBACK_HOURS = 1
+    history = [{"ts": _ts(30 * DAY), "user": BOB, "text": "a month old"}]
+    with _old_channel(channel, history):
+        lines = window.fetch("xoxb-test", channel_id="C1", last=1)
+    assert [ln.text for ln in lines] == ["a month old"]
+    assert not channel.calls[0][1].get("oldest")      # the scan names no start
+
+
+def test_a_count_finds_a_recent_reply_in_an_old_thread(channel):
+    history = [{"ts": _ts(2 * DAY), "user": BOB, "text": "newest parent"},
+               {"ts": _ts(9 * DAY), "user": ALICE, "text": "old parent", "reply_count": 2,
+                "latest_reply": _ts(DAY)}]
+    replies = {_ts(9 * DAY): [{"ts": _ts(9 * DAY), "user": ALICE, "text": "old parent"},
+                              {"ts": _ts(8 * DAY), "user": BOB, "text": "old reply"},
+                              {"ts": _ts(DAY), "user": BOB, "text": "new reply"}]}
+    with _old_channel(channel, history, replies):
+        lines = window.fetch("xoxb-test", channel_id="C1", last=2)
+    assert [ln.text for ln in lines] == ["newest parent", "new reply"]
+
+
+def test_a_count_does_not_spend_itself_on_the_ask(channel):
+    """The mention is a message in the channel, and the agent gets it as its prompt."""
+    history = [{"ts": _ts(0), "user": ALICE, "text": "the ask"},
+               {"ts": _ts(DAY), "user": BOB, "text": "said before it"},
+               {"ts": _ts(2 * DAY), "user": BOB, "text": "OLDER"}]
+    with _old_channel(channel, history):
+        lines = window.fetch("xoxb-test", channel_id="C1", last=1, skip_ts=_ts(0))
+    assert [ln.text for ln in lines] == ["said before it"]
+
+
+def test_a_count_asks_slack_only_for_threads_it_could_keep(channel):
+    history = [{"ts": _ts(DAY), "user": BOB, "text": "newest"},
+               {"ts": _ts(9 * DAY), "user": ALICE, "text": "stale thread", "reply_count": 1,
+                "latest_reply": _ts(8 * DAY)}]
+    with _old_channel(channel, history):
+        window.fetch("xoxb-test", channel_id="C1", last=1)
+    assert [c for c in channel.calls if c[0] == "conversations.replies"] == []
+
+
+def test_a_count_returns_what_a_short_channel_has(channel):
+    history = [{"ts": _ts(40 * DAY), "user": BOB, "text": "all there is"}]
+    with _old_channel(channel, history):
+        lines = window.fetch("xoxb-test", channel_id="C1", last=5)
+    assert [ln.text for ln in lines] == ["all there is"]
+
+
+def test_a_time_window_still_stops_at_its_minutes(channel):
+    """Only a count ignores the time limit."""
+    lines = window.fetch("xoxb-test", channel_id="C1", minutes=10)
+    assert "OLD" not in " ".join(ln.text for ln in lines)
+    with pytest.raises(window.HistoryFlagError):
+        window.parse("--history --min 121 go", max_minutes=120)
 
 
 def test_read_back_by_message_count(channel, linked, hal):

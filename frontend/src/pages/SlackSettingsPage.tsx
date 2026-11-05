@@ -207,8 +207,9 @@ export function SlackSettingsPage(): JSX.Element {
             Lets someone start an agent on a conversation that already happened:{' '}
             <code>@canopy &lt;agent&gt; --history --min 30 &lt;ask&gt;</code> hands the agent the last 30 minutes of
             the channel it was asked in (only that channel, and only when asked); <code>--history --msgs 5</code> hands
-            over its last 5 messages, and <code>--history 9am</code> reads back to 9:00 on the asker&apos;s own clock
-            (their Slack timezone). Every way, the limit below applies. Workspace owners set this.
+            over its last 5 messages however old they are, and <code>--history 9am</code> reads back to 9:00 on the
+            asker&apos;s own clock (their Slack timezone). The limit below applies to minutes and clock times, not to a
+            message count; turning history off stops all three. Workspace owners set this.
           </p>
           <form
             className="rounded-lg border border-border bg-card p-4 text-[13px]"
