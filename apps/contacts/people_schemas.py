@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import uuid
 from typing import Any
 
 from pydantic import Field
@@ -471,6 +472,26 @@ class CoachOfferOut(StrictModel):
     workspace: str = Field(description="The workspace the coach is in.")
     member: bool = Field(description="Whether you are in that workspace yet (you can turn it on only then).")
     on: bool = Field(description="Whether it may review your sessions now.")
+
+
+class SessionReviewAskLiveOut(StrictModel):
+    expires_at: dt.datetime = Field(description="When the coach stops being able to read this session.")
+    conversation: uuid.UUID = Field(description="The chat where it replies.")
+    workspace: str = Field(description="The workspace that chat is in.")
+
+
+class SessionReviewOfferOut(StrictModel):
+    agent: str = Field(description="The coach's slug.")
+    name: str
+    available: bool = Field(description="Whether you can ask it now.")
+    reason: str = Field(description="Why you cannot, in plain words. Empty when you can.")
+    note: str = Field(description="What to know first, such as canopy holding only part of the session.")
+    ask: SessionReviewAskLiveOut | None = Field(None, description="Your live ask about this session, if any.")
+
+
+class SessionReviewStateOut(StrictModel):
+    offer: SessionReviewOfferOut | None = Field(
+        None, description="Null when this is not your own session or no coach is within your reach.")
 
 
 class SessionReviewersOut(StrictModel):

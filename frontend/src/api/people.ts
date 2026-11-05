@@ -425,6 +425,31 @@ export async function removeMySessionReviewer(agent: string): Promise<SessionRev
   return data as SessionReviewers
 }
 
+export type SessionReviewState = components['schemas']['SessionReviewStateOut']
+export type SessionReviewOffer = components['schemas']['SessionReviewOfferOut']
+
+/** Asking a coach to review ONE session (apps/contacts/session_review_asks.py). */
+export async function getMySessionReview(sessionId: string): Promise<SessionReviewState> {
+  const res = await apiV2.GET('/api/people/me/session-reviewers/sessions/{session_id}/', {
+    params: { path: { session_id: sessionId } },
+  })
+  return unwrap(res, 'Failed to check whether this session can be reviewed') as SessionReviewState
+}
+
+export async function askMySessionReview(sessionId: string): Promise<SessionReviewState> {
+  const res = await apiV2.POST('/api/people/me/session-reviewers/sessions/{session_id}/', {
+    params: { path: { session_id: sessionId } },
+  })
+  return unwrap(res, 'Failed to ask for a review of this session') as SessionReviewState
+}
+
+export async function withdrawMySessionReview(sessionId: string): Promise<SessionReviewState> {
+  const res = await apiV2.DELETE('/api/people/me/session-reviewers/sessions/{session_id}/', {
+    params: { path: { session_id: sessionId } },
+  })
+  return unwrap(res, 'Failed to withdraw that review') as SessionReviewState
+}
+
 // --- someone's page, as they let this agent see it (apps/contacts/viewers.py) -----
 
 export type MemoryPage = components['schemas']['MemoryPageOut']

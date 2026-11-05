@@ -402,6 +402,9 @@ Every browser-facing address canopy-web serves. The SPA route table is
   per-person drafts, presence, streamed reply). A send enqueues a session
   `Turn` that a session-capable runner drives in the agent's emdash session.
   `docs/superpowers/specs/2026-07-22-reusable-chat-kit-design.md`.
+  The ⋯ menu offers the session's own person "Ask <coach> to review this" (`SessionReview.tsx`):
+  what it does and the press, or plainly why not, or once asked, the chat where it replies and
+  Withdraw (access-sessions-and-people.md § Asking a coach to review one session).
   A PRIVATE (sensitive) conversation opens behind an interstitial
   (`PrivateConversationGate`, also /ide's pane): one of its people presses
   "Open it" (remembered for the tab); anyone else who can see it may only ask

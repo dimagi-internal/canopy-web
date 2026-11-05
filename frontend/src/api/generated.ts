@@ -18294,6 +18294,38 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/people/me/session-reviewers/sessions/{session_id}/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Whether a coach can be asked to review this session
+         * @description The coach you could ask to review this one session, why you cannot if you
+         *     cannot, and your live ask if you made one. Only you see this.
+         */
+        readonly get: operations["get_my_session_review"];
+        readonly put?: never;
+        /**
+         * Ask a coach to review this one session
+         * @description Your act: for 7 days the coach may read this session, and only inside the chat
+         *     this opens, where it replies to you. It enrols you in nothing and reads nothing else
+         *     of yours, and it can change, send or share nothing. Never a sensitive conversation.
+         *     On your audit. Asking again renews it.
+         */
+        readonly post: operations["ask_my_session_review"];
+        /**
+         * Withdraw your ask for a review of this session
+         * @description At once: the coach's next read of this session is "not found". Only you can do this.
+         */
+        readonly delete: operations["withdraw_my_session_review"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/people/session-reviewers/granted-to-me/": {
         readonly parameters: {
             readonly query?: never;
@@ -47671,6 +47703,58 @@ export interface components {
              */
             readonly agent: string;
         };
+        /** SessionReviewAskLiveOut */
+        readonly SessionReviewAskLiveOut: {
+            /**
+             * Expires At
+             * Format: date-time
+             * @description When the coach stops being able to read this session.
+             */
+            readonly expires_at: string;
+            /**
+             * Conversation
+             * Format: uuid
+             * @description The chat where it replies.
+             */
+            readonly conversation: string;
+            /**
+             * Workspace
+             * @description The workspace that chat is in.
+             */
+            readonly workspace: string;
+        };
+        /** SessionReviewOfferOut */
+        readonly SessionReviewOfferOut: {
+            /**
+             * Agent
+             * @description The coach's slug.
+             */
+            readonly agent: string;
+            /** Name */
+            readonly name: string;
+            /**
+             * Available
+             * @description Whether you can ask it now.
+             */
+            readonly available: boolean;
+            /**
+             * Reason
+             * @description Why you cannot, in plain words. Empty when you can.
+             */
+            readonly reason: string;
+            /**
+             * Note
+             * @description What to know first, such as canopy holding only part of the session.
+             */
+            readonly note: string;
+            /** @description Your live ask about this session, if any. */
+            readonly ask?: components["schemas"]["SessionReviewAskLiveOut"] | null;
+        };
+        /** SessionReviewStateOut */
+        readonly SessionReviewStateOut: {
+            /** @description Null when this is not your own session or no coach is within your reach. */
+            readonly offer?: components["schemas"]["SessionReviewOfferOut"] | null;
+        };
         /** SessionGranterOut */
         readonly SessionGranterOut: {
             /**
@@ -71333,6 +71417,72 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SessionReviewersOut"];
+                };
+            };
+        };
+    };
+    readonly get_my_session_review: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SessionReviewStateOut"];
+                };
+            };
+        };
+    };
+    readonly ask_my_session_review: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SessionReviewStateOut"];
+                };
+            };
+        };
+    };
+    readonly withdraw_my_session_review: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SessionReviewStateOut"];
                 };
             };
         };

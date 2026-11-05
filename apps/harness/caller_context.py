@@ -29,10 +29,12 @@ from __future__ import annotations
 import re
 import uuid
 
+from django.utils import timezone
+
 from apps.agents import rolecatalog, roles
 from apps.agents.credentials import authority
 from apps.agents.models import UNREAD, SenderTrust
-from apps.canopy_sessions.models import SessionParticipant
+from apps.canopy_sessions.models import SessionParticipant, SessionReviewAsk
 from apps.contacts.models import Contact
 
 from . import initiator as who
@@ -407,6 +409,9 @@ def build(turn, *, reader_user=None) -> dict:
         # it (both push and poll run the runner's `in:inbox is:unread` query). ace@
         # thread 1a0d0a1632cfde4f: 14 `ask` sessions on SES receipts, each guessing.
         "trigger": _trigger(turn, ref),
+        # The one session this conversation's asker asked this agent to review from its
+        # page, while that ask is live (`access._review_ask_q`). Null otherwise. Additive.
+        "session_review": _session_review(turn, agent),
         "thread_history": _thread_history(turn, ref),
         # WHAT THE PERSON IS LOOKING AT, when the conversation is embedded in a
         # page that declared its state: the SELECTION (ids + filters, already
@@ -556,6 +561,16 @@ def _trigger(turn, ref: dict) -> dict:
         # on `who.trigger`.
         "agent_trigger": who.describe(turn).get("trigger"),
     }
+
+
+def _session_review(turn, agent) -> dict | None:
+    if agent is None or not turn.chat_session_id or not turn.initiator_user_id:
+        return None
+    ask = (SessionReviewAsk.objects
+           .filter(review_session_id=turn.chat_session_id, agent=agent, user_id=turn.initiator_user_id,
+                   revoked_at__isnull=True, expires_at__gt=timezone.now())
+           .first())
+    return {"session_id": str(ask.session_id), "expires_at": ask.expires_at.isoformat()} if ask else None
 
 
 def _matched_classes(turn) -> list[str]:

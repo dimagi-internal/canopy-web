@@ -852,6 +852,7 @@ class PersonAuditEvent(models.Model):
         # An agent the person let review their sessions (`SessionReviewGrant`,
         # `session_reviewers.py`): let in, and let go.
         "sessionReviewer.granted", "sessionReviewer.revoked",
+        "sessionReviewAsk.asked", "sessionReviewAsk.withdrawn",
     )
     USER, AGENT, SYSTEM = "user", "agent", "system"
 
