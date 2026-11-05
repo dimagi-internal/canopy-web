@@ -17,7 +17,7 @@ from django.db import connection
 from django.test import Client
 from django.test.utils import CaptureQueriesContext
 
-from apps.agents import access, answering, interface, roles, sensitive_data
+from apps.agents import answering, interface, roles, sensitive_data, turn_context
 from apps.agents.answering_snapshot import probe_turn
 from apps.agents.models import Agent, AgentAdmin, AgentGrant
 from apps.api.api import api
@@ -92,7 +92,7 @@ def test_read_mode_starts_on_the_default_and_customising_starts_from_it(w):
     assert list(w["agent"].interface["capabilities"]) == ["ask"]
     # A read-mode ask now stamps the override, as a published `ask` always has.
     reader = AgentGrant.objects.create(agent=w["agent"], kind=AgentGrant.PERSON, user=w["member"], role=roles.READ_ONLY)
-    assert access.decide(w["agent"], reader.user, verified=True).stamp == "ask"
+    assert turn_context.for_asker(w["agent"], reader.user, verified=True).stamped == "ask"
 
 
 def test_going_back_to_the_default_takes_both_names(w):

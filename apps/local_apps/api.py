@@ -18,6 +18,7 @@ from ninja import Router, Status
 from ninja.errors import HttpError
 
 from apps.agents import access as agent_access
+from apps.agents import turn_context
 from apps.agents.models import Agent
 from apps.api.auth import session_auth
 from apps.api.route_gates import gate
@@ -74,7 +75,7 @@ def _usable_agents(user) -> list[dict[str, str]]:
     return [
         {"slug": a.slug, "name": a.name or a.slug, "workspace": a.workspace_id}
         for a in rows
-        if agent_access.decide(a, user, verified=False, standing=standings.of(user, a)).access != "none"
+        if not turn_context.for_asker(a, user, verified=False, standing=standings.of(user, a)).refused
     ]
 
 

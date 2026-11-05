@@ -8,7 +8,7 @@ AS THE VIEWER — but only for an `{agent, name}` pair the view declares here.
 The declaration is checked when the view is written, not on every draw: each
 agent must be one of the view's workspace's agents, and the person saving it must
 be someone who may dispatch to that agent themselves (the editor role in its
-workspace, and THE rule, `access.decide`, not refusing them). So a view cannot
+workspace, and THE rule, `turn_context.resolve_turn_context`, not refusing them). So a view cannot
 name an agent its author could not ask.
 
 At run time the server's own gate on `POST /api/agent-tasks/` decides for the
@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import re
 
-from apps.agents import access
+from apps.agents import turn_context
 from apps.agents.models import Agent
 from apps.workspaces import permissions as perms
 
@@ -39,9 +39,9 @@ def may_dispatch(user, agent: Agent) -> str | None:
     if not perms.can(user, agent.workspace_id, perms.AGENT_WORK):
         return (f"declaring a task for {agent.slug} needs the editor role in its workspace: "
                 "the author must be able to give it a task themselves")
-    d = access.decide(agent, user, verified=True, origin="api")
-    if d.access == access.NONE:
-        return d.reason or f"{agent.slug} does not take work from you"
+    d = turn_context.for_asker(agent, user, verified=True, channel="api")
+    if d.refused:
+        return d.refusal.why
     return None
 
 

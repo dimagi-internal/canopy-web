@@ -86,7 +86,7 @@ verified asker is them.
 **The door.** Every turn in that chat runs confined in canopy's built-in `session_review`
 capability (`interface.SESSION_REVIEW`, `access._review_rule`), whoever asks: owner, admin and
 canopy too, as a sensitive conversation does, and a fork or a Slack branch of it stays in it or is
-refused. `access.decide` decides this; nothing is started as canopy. The transcript is text someone
+refused. `turn_context.resolve_turn_context` decides this; nothing is started as canopy. The transcript is text someone
 may have written to steer whoever reads it, so the turn holds:
 
 * no agent login (`turn_agent_tokens.refusal`), no GitHub identity (`github_token_for_turn`), and on
@@ -125,7 +125,7 @@ scope is a separate table (`tests/test_session_review_asks.py`).
 
 **Who is offered it** (`session_review_asks.state`): only the agent `COACHING_AGENT_SLUG` names, and
 only someone in its workspace, since the reply is in a chat there. It says plainly why not when the
-session is sensitive, canopy holds none of the session's messages, or `access.decide` gives them nothing
+session is sensitive, canopy holds none of the session's messages, or `turn_context.resolve_turn_context` gives them nothing
 on the agent. Any access opens it, `read_only` too, because the door is narrower than read mode. The
 coach needs no membership of the session's workspace: it reads as the person.
 
@@ -162,7 +162,7 @@ Slack behaviours live here (`apps/slack/`, pinned in `tests/test_slack.py`).
 
 * **A confined reply in someone else's thread gets a thread of its own**
   (`services._fork_confined`). When a message in an existing thread would run
-  confined — asked of a probe turn through `access.decide_for_turn`, so it cannot
+  confined — asked of a probe turn through `turn_context.for_turn`, so it cannot
   disagree with the real stamp — and the thread's session is not the sender's,
   canopy posts a new top-level message, opens a session keyed to THAT thread
   (owned by the sender, `metadata.slack_forked_from` / `slack_forked_session`,

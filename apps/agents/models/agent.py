@@ -499,9 +499,9 @@ class AgentGrant(models.Model):
 class AgentLicense(models.Model):
     """A person's license to use an agent DIRECTLY — "Aathithya uses ACE directly, since …".
 
-    The agent's caller list (`access.decide`) still decides who MAY hold one; this row
+    The agent's caller list (`turn_context.resolve_turn_context`) still decides who MAY hold one; this row
     is who DOES (`apps/agents/credentials/licenses.py`). Requested on first local
-    use and issued at once when `decide` gives the person the whole agent; an admin
+    use and issued at once when the rule gives the person the whole agent; an admin
     revokes it per person without touching the rule, and a revoked license is not
     re-issued automatically — only an admin's approve brings it back. Direct turns and
     credential reads point at it, so "who uses this agent outside canopy, and what did
@@ -515,7 +515,7 @@ class AgentLicense(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
                              related_name="agent_licenses")
     status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=REQUESTED)
-    #: Why it was issued, in `access.decide`'s words: `admin`, `grant:<access-list line>`, or
+    #: Why it was issued, in `turn_context.resolve_turn_context`'s words: `admin`, `grant:<access-list line>`, or
     #: `approved by <email>`.
     basis = models.CharField(max_length=200, blank=True, default="")
     requested_at = models.DateTimeField(auto_now_add=True)

@@ -18,7 +18,7 @@ from django.utils import timezone
 from fastmcp.exceptions import ToolError
 from mcp.server.auth.middleware.auth_context import AuthenticatedUser, auth_context_var
 
-from apps.agents import access as agent_access
+from apps.agents import turn_context
 from apps.agents import interface
 from apps.agents.credentials import delegations
 from apps.agents.models import Agent, AgentGrant
@@ -166,7 +166,7 @@ def test_the_door_is_for_everyone_who_has_any_access_and_nobody_else(w):
     def stamp(user, **kw):
         t = Turn(chat_session=conv, origin=Turn.ORIGIN_CANOPY_WEB_CHAT,
                  **{"initiator_kind": initiator.USER, "initiator_assurance": "session", "initiator_user": user, **kw})
-        return agent_access.decide_for_turn(t, w["trellis"]).stamp
+        return turn_context.for_turn(t, w["trellis"]).stamped
 
     assert stamp(w["owner"]) == interface.SESSION_REVIEW                       # its owner, narrowed
     assert stamp(w["bo"]) == interface.SESSION_REVIEW                          # an editor
@@ -207,8 +207,8 @@ def test_naming_the_door_elsewhere_opens_nothing(w):
     AgentGrant.objects.create(agent=w["trellis"], kind=G.PERSON, user=w["bo"], role="read_only")
     Agent.objects.filter(pk=w["trellis"].pk).update(inherit_workspace_defaults=False)
     w["trellis"].refresh_from_db()
-    d = agent_access.decide(w["trellis"], w["bo"], verified=True, capability=interface.SESSION_REVIEW)
-    assert d.access == agent_access.NONE
+    d = turn_context.for_asker(w["trellis"], w["bo"], verified=True, requested=interface.SESSION_REVIEW)
+    assert d.access == turn_context.REFUSED
 
 
 def test_a_fork_of_that_chat_is_refused(w):

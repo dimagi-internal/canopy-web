@@ -750,7 +750,7 @@ def revoke_agent_license(request: HttpRequest, slug: str, user_id: int,
 
 @router.post("/{slug}/licenses/{user_id}/approve", response=AgentLicenseOut,
              summary="Issue or reinstate a person's license to use this agent directly")
-@gate("agent-admin", setting=True)  # + access.decide must give them the whole agent (409)
+@gate("agent-admin", setting=True)  # + turn_context.resolve_turn_context must give them the whole agent (409)
 def approve_agent_license(request: HttpRequest, slug: str, user_id: int):
     """Re-asks the access list: refused (409) unless it gives them the whole agent —
     put them on it as an editor first."""

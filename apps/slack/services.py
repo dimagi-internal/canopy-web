@@ -31,7 +31,7 @@ from django.contrib.auth.models import AnonymousUser
 from django.core import signing
 from django.db import transaction
 
-from apps.agents import access
+from apps.agents import turn_context
 from apps.agents.models import Agent
 from apps.canopy_sessions import control as session_control
 from apps.canopy_sessions import doors
@@ -679,7 +679,7 @@ def _owns(session: Session, principal: Principal) -> bool:
 def _confined_elsewhere(session: Session, agent: Agent, principal: Principal, inbound: Inbound) -> bool:
     """Would this message run confined in SOMEONE ELSE'S thread session?
 
-    Asked of an unsaved probe turn through THE rule (`access.decide_for_turn`),
+    Asked of an unsaved probe turn through THE rule (`turn_context.for_turn`),
     so it cannot disagree with the capability the real turn would be stamped.
     A confined turn in the owner's conversation reaches nothing of it — it runs
     apart on the runner — yet it shared the owner's chat session, so it queued
@@ -688,16 +688,16 @@ def _confined_elsewhere(session: Session, agent: Agent, principal: Principal, in
     """
     if inbound.is_dm or not inbound.thread_ts or _owns(session, principal):
         return False
-    return _access_in(session, agent, principal, inbound.team_id) == access.CONFINED
+    return _access_in(session, agent, principal, inbound.team_id) == turn_context.CONFINED
 
 
 def _access_in(session: Session, agent: Agent, principal: Principal, team_id: str) -> str:
-    """What a Slack message from `principal` into `session` would reach (`access.FULL`,
-    `CONFINED` or `NONE`), asked of an unsaved probe turn through THE rule
-    (`access.decide_for_turn`), so it cannot disagree with the real turn's stamp."""
+    """What a Slack message from `principal` into `session` would reach (`turn_context.FULL`,
+    `CONFINED` or `REFUSED`), asked of an unsaved probe turn through THE rule
+    (`turn_context.for_turn`), so it cannot disagree with the real turn's stamp."""
     probe = Turn(chat_session=session, origin=Turn.ORIGIN_SLACK, origin_ref={},
                  **principal.initiator(team_id).fields())
-    return access.decide_for_turn(probe, agent).access
+    return turn_context.for_turn(probe, agent).access
 
 
 def _principal_name(principal: Principal, slack_user_id: str) -> str:
@@ -903,13 +903,13 @@ def restart_from_click(installation: SlackInstallation, *, slack_user_id: str, c
     inbound = Inbound(team_id=installation.team_id, channel_id=channel_id, slack_user_id=slack_user_id,
                       text=prompt, ts=str(ask.get("ts") or message_ts), thread_ts=thread_ts, is_dm=is_dm)
     reach = _access_in(closed, agent, principal, installation.team_id)
-    if reach == access.NONE:
+    if reach == turn_context.REFUSED:
         return Outcome(REFUSED, (
             f"`{agent.slug}` didn't start a new session: it only takes requests from the people its "
             f"owner has opened it to, and that doesn't include you here. If you think you should "
             f"have access, ask `{agent.slug}`'s owner."), session=closed, agent=agent,
             workspace_id=agent.workspace_id)
-    if reach == access.CONFINED and thread_ts and not is_dm and not _owns(closed, principal):
+    if reach == turn_context.CONFINED and thread_ts and not is_dm and not _owns(closed, principal):
         # The same as a confined reply into someone else's conversation: answered
         # in a separate thread of the clicker's own; the button stays for others.
         return _fork_confined(installation, closed, agent, principal, inbound, prompt, named=True)
@@ -1185,7 +1185,7 @@ def choice_refusal(session: Session, principal: Principal) -> Outcome | None:
     if not agent.slack_enabled:
         return Outcome(NO_AGENT, f"`{agent.slug}` isn't turned on for Slack. Your click did nothing.",
                        session=session, agent=agent)
-    if not _owns(session, principal) and _access_in(session, agent, principal, session_team(session)) != access.FULL:
+    if not _owns(session, principal) and _access_in(session, agent, principal, session_team(session)) != turn_context.FULL:
         return Outcome(MEMBERS_ONLY, f"You aren't a member of this conversation in canopy, so `{agent.slug}` "
                        "can't take this choice from you. Your click did nothing.", session=session, agent=agent)
     return None

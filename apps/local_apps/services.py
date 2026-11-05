@@ -17,7 +17,7 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from apps.agents import access as agent_access
+from apps.agents import turn_context
 from apps.agents.models import Agent
 from apps.approvals import services as approvals
 from apps.approvals.models import ApprovalRequest
@@ -267,7 +267,7 @@ def _usable_agent(slug: str, user) -> Agent:
     if (
         agent is None
         or not perms.can(user, agent.workspace, perms.READ)
-        or agent_access.decide(agent, user, verified=False).access == "none"
+        or turn_context.for_asker(agent, user, verified=False).refused
     ):
         raise Refused(f"you can't use the agent '{slug}'", 403)
     return agent

@@ -19,7 +19,6 @@
 "apps/agent_runs/documents.py" = ["PLC0415"]  # 6
 "apps/agent_runs/resolver.py" = ["PLC0415"]  # 2
 "apps/agent_runs/stores.py" = ["PLC0415"]  # 15
-"apps/agents/access.py" = ["PLC0415"]  # 3
 "apps/agents/api.py" = ["PLC0415"]  # 6
 "apps/agents/api_board.py" = ["PLC0415"]  # 1
 "apps/agents/api_fleet.py" = ["PLC0415"]  # 3

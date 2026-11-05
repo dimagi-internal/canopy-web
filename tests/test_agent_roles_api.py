@@ -10,7 +10,7 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.test import Client
 
-from apps.agents import access, interface
+from apps.agents import access, interface, roles, turn_context
 from apps.agents.models import Agent, AgentGrant, AgentRole
 from apps.events.models import SettingChange
 from apps.passkeys.testing import grant_step_up
@@ -139,11 +139,11 @@ def test_a_role_defined_on_the_child_is_listed_there_and_not_above(w):
 def test_editing_a_role_changes_what_its_holders_get_and_closes_the_set(w):
     row = make_role(w["root"], "connector", {"read", "use:connect"})
     AgentGrant.objects.create(agent=w["agent"], kind=G.PERSON, user=w["ed"], role="connector")
-    assert access.decide(w["agent"], w["ed"], verified=True).access != access.FULL
+    assert turn_context.for_asker(w["agent"], w["ed"], verified=True).access != access.FULL
     r = _json(_c(w["boss"]), "patch", f"{BASE}/connector", {"permissions": ["agent_edit"], "label": "Pilot"})
     assert r.status_code == 200, r.content
     assert set(r.json()["permissions"]) == {"read", "write", "agent_edit"} and r.json()["in_use"]["lines"] == 1
-    assert access.decide(w["agent"], w["ed"], verified=True).access == access.FULL
+    assert turn_context.for_asker(w["agent"], w["ed"], verified=True).access == access.FULL
     change = SettingChange.objects.latest("pk")
     assert "1 access-list line(s)" in change.summary and "1 agent(s)" in change.summary
     assert change.changes[0]["before"]["permissions"] == ["read", "use:connect"]
@@ -295,9 +295,12 @@ def test_adding_agent_edit_to_a_write_role_is_refused_while_an_address_line_hold
 
 def test_a_session_writers_envelope_stops_at_write():
     """They drive this conversation, not the agent: the own-repo rail reads `agent_edit` from this list."""
-    d = access.Decision(relationship="member", access=access.FULL, capability=None, may_request_auto=False,
-                        may_pin_runner=False, manual_only=False, basis="session:writer")
-    held = interface._held_permissions(access._stamp(d), None)
+    d = turn_context.TurnContext(
+        standing=turn_context.Standing(relationship="member", agent_role=roles.EDITOR, source="session",
+                                       permissions=roles.ROLES.close({roles.WRITE})),
+        access=turn_context.FULL, profile=turn_context.Profile(kind=turn_context.WHOLE_AGENT), basis="session:editor",
+        session_key_suffix="", review=turn_context.Review(), stamped="", refusal=None, trace=())
+    held = interface._held_permissions(d, None)
     assert "write" in held and "agent_edit" not in held
 
 

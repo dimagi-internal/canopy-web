@@ -1,4 +1,4 @@
-"""What the database says about people and agents — the facts `access.decide` reads.
+"""What the database says about people and agents — the facts `turn_context.resolve_turn_context` reads.
 
 A leaf under `access`: it reads roles (`wsvc`), access lists (`grants`) and `AgentAdmin`
 and decides nothing, so `apps/harness` can ask it without importing the rule.
@@ -16,7 +16,7 @@ from .models import AgentAdmin
 
 @dataclass(frozen=True)
 class Standing:
-    """What the database says about one person and one agent — all `decide` reads
+    """What the database says about one person and one agent — all the rule reads
     about them: their role in the agent's workspace (`wsvc.member_role`, None =
     not a member) and whether they hold an explicit `AgentAdmin` grant (None =
     not read; `Agent.is_admin` reads it if it needs it)."""
@@ -41,7 +41,7 @@ class Standings:
     every person (`wsvc.member_roles_of`) and every agent's grants, in a fixed
     number of queries however many pairs are then asked. For a view that judges
     many (person, agent) pairs — the agent topology, the roster — so it asks
-    `decide` per pair without a membership read per pair.
+    the rule per pair without a membership read per pair.
 
     Read per request and dropped with it: not a cache, nothing to invalidate.
     Asking about a person it was not given raises, rather than reading them as

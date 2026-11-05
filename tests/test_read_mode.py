@@ -14,7 +14,7 @@ from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.core.management.base import CommandError  # noqa: F401
 
-from apps.agents import access, agent_card, interface, read_mode_gate, roles, topology
+from apps.agents import access, agent_card, interface, read_mode_gate, roles, topology, turn_context
 from apps.agents.interface import parse
 from apps.agents.models import Agent, AgentSkill
 from apps.contacts.models import Contact
@@ -42,29 +42,29 @@ def w():
 
 def test_read_resolves_with_no_published_capability(w):
     allow(w["agent"], role=roles.READ_ONLY)
-    d = access.decide(w["agent"], w["vw"], verified=True)
-    assert (d.access, d.capability, d.basis) == (access.CONFINED, "read", "capability:read")
+    d = turn_context.for_asker(w["agent"], w["vw"], verified=True)
+    assert (d.access, d.stamped, d.basis) == (access.CONFINED, "read", "capability:read")
     assert interface.profile(w["agent"], "read")["write_paths"] == ["{cwd}/.hal-read/*", "{cwd}/.hal-ask/*"]
 
 
 def test_a_use_ask_or_use_read_line_is_a_read_mode_line(w):
     for cap in ("ask", "read"):
         line = allow(w["agent"], capability=cap)
-        d = access.decide(w["agent"], w["vw"], verified=True)
-        assert (d.access, d.capability) == (access.CONFINED, "read"), cap
+        d = turn_context.for_asker(w["agent"], w["vw"], verified=True)
+        assert (d.access, d.stamped) == (access.CONFINED, "read"), cap
         line.delete()
 
 
 def test_no_line_means_no_read_mode(w):
-    assert access.decide(w["agent"], w["vw"], verified=True).access == access.NONE
+    assert turn_context.for_asker(w["agent"], w["vw"], verified=True).access == turn_context.REFUSED
 
 
 def test_a_published_ask_overrides_the_default_whole(w):
     allow(w["agent"], role=roles.READ_ONLY)
     w["agent"].interface = parse({"capabilities": {"ask": {"tools": ["Read"], "bash": ["ls"]}}})
     w["agent"].save(update_fields=["interface"])
-    d = access.decide(w["agent"], w["vw"], verified=True)
-    assert (d.access, d.capability) == (access.CONFINED, "ask")
+    d = turn_context.for_asker(w["agent"], w["vw"], verified=True)
+    assert (d.access, d.stamped) == (access.CONFINED, "ask")
     prof = interface.profile(w["agent"], "ask")
     assert prof["tools"] == ["Read"] and prof["bash"] == ["ls"] and "default_profile_version" not in prof
 
@@ -80,16 +80,16 @@ def test_the_default_entry_follows_the_catalog_at_claim_time(w):
 def test_other_names_still_have_to_be_published(w):
     allow(w["agent"], role=roles.READ_ONLY)
     allow(w["agent"], capability="canopy")
-    d = access.decide(w["agent"], w["vw"], verified=True, capability="canopy")
-    assert d.access == access.NONE                      # `canopy` is a door; nobody published it
+    d = turn_context.for_asker(w["agent"], w["vw"], verified=True, requested="canopy")
+    assert d.access == turn_context.REFUSED                      # `canopy` is a door; nobody published it
     gone = interface.profile(w["agent"], "retired-door")
     assert gone["tools"] == [] and gone["bash"] == [] and gone["write_paths"] == []
 
 
 def test_write_is_still_the_whole_agent(w):
     allow(w["agent"], role=roles.READ_WRITE)
-    d = access.decide(w["agent"], w["ed"], verified=True)
-    assert d.access == access.FULL and d.stamp == interface.FULL
+    d = turn_context.for_asker(w["agent"], w["ed"], verified=True)
+    assert d.access == access.FULL and d.stamped == interface.FULL
 
 
 def test_a_sensitive_conversation_never_gets_the_email_reply_read_mode(w, monkeypatch):
@@ -98,10 +98,10 @@ def test_a_sensitive_conversation_never_gets_the_email_reply_read_mode(w, monkey
     allow(w["agent"], role=roles.READ_ONLY)
     turn = Turn.objects.create(agent=w["agent"], origin=Turn.ORIGIN_API, idempotency_key=uuid.uuid4().hex)
     monkeypatch.setattr(sensitivity, "is_sensitive", lambda t: True)
-    d = access.decide(w["agent"], w["vw"], verified=True, turn=turn)
-    assert d.access == access.NONE and d.capability is None
+    d = turn_context.for_asker(w["agent"], w["vw"], verified=True, turn=turn)
+    assert d.access == turn_context.REFUSED and d.stamped is None
     # ...and for the owner a sensitive conversation is refused, not run in read mode either.
-    assert access.decide(w["agent"], w["owner"], verified=True, turn=turn).access == access.NONE
+    assert turn_context.for_asker(w["agent"], w["owner"], verified=True, turn=turn).access == turn_context.REFUSED
 
 
 def test_roster_and_topology_and_extended_card_offer_read_mode(w):

@@ -3,7 +3,7 @@
 Its vocabulary — `relationship` (owner | admin | member | contact | system),
 `profile` (full | confined), `granted_by`, `turn_mode`, `ship_grant` — is defined
 in `docs/architecture/access.md`; the decision behind `profile` and `granted_by`
-is `apps/agents/access.decide`.
+is `apps/agents/turn_context.resolve_turn_context`.
 
 Phase 1b of `docs/superpowers/specs/2026-09-18-who-is-asking-initiator-identity-
 and-access-design.md` (§5). Phase 1a RECORDED the initiator on every turn; this

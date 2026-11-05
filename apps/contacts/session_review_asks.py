@@ -7,7 +7,7 @@ whose asker is that person; the coach replies there. Nothing that reads a
 session, and appears on no roster (`tests/test_session_review_asks.py` pins each).
 
 The turn runs confined in canopy's `interface.SESSION_REVIEW` door, whoever asks
-(`access.decide`), because the transcript is text someone may have aimed at whoever reads it:
+(`turn_context.resolve_turn_context`), because the transcript is text someone may have aimed at whoever reads it:
 no agent login, no GitHub, no Bash, no canopy tool but `read_asked_session`, which reads the
 session as the person through the session ACL (`access.turn_reach`). Anyone with any access to
 the agent may ask, since this adds nothing to what they could already make it do.
@@ -23,7 +23,7 @@ import uuid
 from django.db import transaction
 from django.utils import timezone
 
-from apps.agents import access as agent_access
+from apps.agents import turn_context
 from apps.agents import interface as agent_iface
 from apps.api.errors import TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
 from apps.canopy_sessions import access, control, doors, lifecycle, services
@@ -63,9 +63,9 @@ def _reason(agent, user, session) -> str:
     if not wsvc.is_member(user, agent.workspace_id):
         return (f"{name} is in the {agent.workspace_id} workspace, which you are not in, "
                 "so you could not read its reply.")
-    decision = agent_access.decide(agent, user, verified=True, origin=Turn.ORIGIN_CANOPY_WEB_CHAT)
-    if decision.access == agent_access.NONE:
-        return decision.reason or f"{name} does not take work from you."
+    decision = turn_context.for_asker(agent, user, verified=True, channel=Turn.ORIGIN_CANOPY_WEB_CHAT)
+    if decision.refused:
+        return decision.refusal.why
     if not session.messages.exists():
         return (f"canopy does not hold this session's messages, so {name} would have nothing to read. "
                 "Load its full history on this page first.")
@@ -140,7 +140,7 @@ def ask(request, person: Person, session) -> SessionReviewAsk:
         chat_surface=sensitivity.request_is_chat_surface(request),
         initiator=who.for_request(request, via=VIA))
     if turn is not None and (turn.status == Turn.CANCELLED or turn.capability != agent_iface.SESSION_REVIEW):
-        # `decide` changed its mind between the check and the stamp: nothing may read.
+        # the rule changed its mind between the check and the stamp: nothing may read.
         withdraw(person, session, user=user)
         raise ProblemError(422, turn.result_note or f"{_name(agent)} could not take this", type_=TYPE_VALIDATION)
     return row

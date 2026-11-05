@@ -12,7 +12,7 @@ from django.contrib.auth import get_user_model
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
 
-from apps.agents import access, grants, roles
+from apps.agents import access, grants, roles, turn_context
 from apps.agents.interface import _held_permissions
 from apps.agents.models import Agent, AgentGrant
 from apps.workspaces.models import Workspace
@@ -47,34 +47,34 @@ def _line(agent, user, role):
 def test_a_door_role_opens_that_door_and_nothing_else(w):
     make_role(w["root"], "connector", {roles.READ, roles.use("connect")})
     _line(w["agent"], w["door"], "connector")
-    d = access.decide(w["agent"], w["door"], verified=True, capability="connect")
-    assert d.access == access.CONFINED and roles.can_use(d.permissions, "connect")
-    assert not roles.can_use(d.permissions, "report") and not roles.holds(d.permissions, roles.WRITE)
-    assert d.agent_role == "connector"
+    d = turn_context.for_asker(w["agent"], w["door"], verified=True, requested="connect")
+    assert d.access == access.CONFINED and roles.can_use(d.standing.permissions, "connect")
+    assert not roles.can_use(d.standing.permissions, "report") and not roles.holds(d.standing.permissions, roles.WRITE)
+    assert d.standing.agent_role == "connector"
 
 
 def test_a_role_holding_write_drives_the_agent_and_carries_read_and_every_door(w):
     make_role(w["root"], "pilot", {roles.WRITE})
     _line(w["agent"], w["writer"], "pilot")
-    d = access.decide(w["agent"], w["writer"], verified=True)
-    assert d.access == access.FULL and roles.holds(d.permissions, roles.READ)
-    assert roles.can_use(d.permissions, "anything")
+    d = turn_context.for_asker(w["agent"], w["writer"], verified=True)
+    assert d.access == access.FULL and roles.holds(d.standing.permissions, roles.READ)
+    assert roles.can_use(d.standing.permissions, "anything")
 
 
 def test_editing_a_role_changes_its_holders_from_the_next_read(w):
     row = make_role(w["root"], "pilot", {roles.READ})
     _line(w["agent"], w["writer"], "pilot")
-    assert access.decide(w["agent"], w["writer"], verified=True).access != access.FULL
+    assert turn_context.for_asker(w["agent"], w["writer"], verified=True).access != access.FULL
     row.permissions = sorted(roles.validate_permissions({roles.WRITE}))
     row.save()
-    assert access.decide(w["agent"], w["writer"], verified=True).access == access.FULL
+    assert turn_context.for_asker(w["agent"], w["writer"], verified=True).access == access.FULL
 
 
 def test_the_envelope_role_is_the_key_and_permissions_are_the_contract(w):
     make_role(w["root"], "connector", {roles.use("connect")})
     _line(w["agent"], w["door"], "connector")
-    d = access.decide(w["agent"], w["door"], verified=True, capability="connect")
-    assert d.agent_role == "connector"
+    d = turn_context.for_asker(w["agent"], w["door"], verified=True, requested="connect")
+    assert d.standing.agent_role == "connector"
     assert "use:connect" in _held_permissions(d, "connect")
 
 
@@ -113,8 +113,8 @@ def test_standings_agree_with_decide_for_custom_roles(w):
     standings = access.Standings(users, [w["agent"]])
     for u in users:
         for cap in (None, "connect", "report"):
-            assert (access.decide(w["agent"], u, verified=True, capability=cap, standing=standings.of(u, w["agent"]))
-                    == access.decide(w["agent"], u, verified=True, capability=cap)), (u.email, cap)
+            assert (turn_context.for_asker(w["agent"], u, verified=True, requested=cap, standing=standings.of(u, w["agent"]))
+                    == turn_context.for_asker(w["agent"], u, verified=True, requested=cap)), (u.email, cap)
 
 
 def test_reading_lines_costs_the_same_with_one_custom_role_or_twenty(w):

@@ -20,7 +20,7 @@ the few readers every gate goes through honour it:
   the cap (never raised: a cap above what you hold changes nothing);
 * `Agent.is_admin` — never an agent admin under any cap;
 * `caller_context.relationship_for_user` — never the agent's OWNER under a cap, so
-  `access.decide` places the person in the tier the cap names;
+  `turn_context.resolve_turn_context` places the person in the tier the cap names;
 * `agents.services.caller_runs_agent` — a capped caller is not "a box that runs the
   agent"; its credential reads go through its license like anyone else's.
 

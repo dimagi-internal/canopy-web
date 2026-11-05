@@ -49,7 +49,7 @@ def _apply_capability(turn: Turn, requested: str | None = None) -> None:
     """Decide which profile a new turn runs in, inside the transaction that
     creates it — so no runner can claim it before the decision is recorded.
 
-    THE rule, `apps.agents.access.decide` (docs/architecture/access.md): FULL
+    THE rule, `apps.agents.turn_context.resolve_turn_context` (docs/architecture/access.md): FULL
     for its owner, admins, canopy's own turns and an editor on its access list (whose
     turn runs manual if their line says so — `turn_mode.editor_cap`); a user or a viewer
     gets the capability their role may use. Anyone
@@ -59,19 +59,19 @@ def _apply_capability(turn: Turn, requested: str | None = None) -> None:
     in the turn log). Every door that makes an agent work — the harness API, a
     chat send, Slack, email — comes through here.
     """
-    from apps.agents import access
+    from apps.agents import turn_context
 
     agent = turn.acting_agent
     if agent is None:
         return
-    decision = access.decide_for_turn(turn, agent, requested)
-    cap = decision.stamp
+    resolved = turn_context.for_turn(turn, agent, requested)
+    cap = resolved.stamped
     if cap == "":
         return
     if cap is None:
         turn.status = Turn.CANCELLED
         turn.finished_at = timezone.now()
-        turn.result_note = f"not run: {decision.reason or agent.slug + ' does not take work from you'}"
+        turn.result_note = f"not run: {resolved.refusal.why}"
         fields = ["status", "finished_at", "result_note"]
         if sensitivity.is_sensitive(turn):
             # Ended before it began, so `turn_close.close_turn` — where a sensitive

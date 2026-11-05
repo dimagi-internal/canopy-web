@@ -6,7 +6,7 @@ it and how to authenticate. canopy already holds every one of those facts —
 the skills are the agent's declared capabilities (`apps/agents/interface.py`),
 the auth is canopy's own — so the card is a RENDERING of that state, never a
 second place policy lives. Nothing here decides who may do anything:
-`access.decide` does that at enqueue, on every turn, whatever a
+`turn_context.resolve_turn_context` does that at enqueue, on every turn, whatever a
 card said. A stale or hand-copied card can therefore mislead a client, but it
 cannot let one in.
 

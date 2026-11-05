@@ -4,7 +4,7 @@
 
 Taken before and after each step of replacing the interface's YAML with plain settings
 (`docs/superpowers/specs/2026-11-04-agent-settings-replace-the-interface-design.md`), so that a step
-that changes an answer shows up as a diff. It holds, per agent: `profile()` per stamp, the `decide()`
+that changes an answer shows up as a diff. It holds, per agent: `profile()` per stamp, the the rule's
 matrix, the access list and roster, `facts_for` when the agent is sensitive, and its A2A cards; per
 registered site, what the site-agents API would sign; per workspace tree, the topology edges; and
 `shape`, the stored facts that design counts on, checked rather than assumed.
@@ -14,7 +14,6 @@ never from a row it writes.
 """
 from __future__ import annotations
 
-import dataclasses
 import datetime as dt
 import hashlib
 import json
@@ -36,7 +35,7 @@ from apps.tokens.models import AppCredential
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
-from . import access, agent_card, answering, roles, sensitive_data, topology
+from . import access, agent_card, answering, roles, sensitive_data, topology, turn_context
 from . import interface as iface_mod
 from .models import Agent, AgentGrant, AgentRole
 from .setup import runner_takers
@@ -200,7 +199,7 @@ def _lines(lines) -> list[dict]:
 
 def probe_turn(*, user=None, contact=None, site: str = "", sensitive: bool = False, stamp: str = "",
                runner=None) -> Turn:
-    """A turn in memory, never saved: what `decide` and `facts_for` would be handed for a conversation
+    """A turn in memory, never saved: what the rule and `facts_for` would be handed for a conversation
     on `site`, sensitive or not, started by `user` or `contact`."""
     metadata = {}
     if site:
@@ -272,15 +271,31 @@ def _matrix(agent, caps, sites, members, roster, standings) -> dict:
                 turn = probe_turn(user=who if is_user else None, contact=None if is_user else who,
                                   site=site, sensitive=sensitive)
             by_context[context] = {
-                ask or "(free-form)": _decision(access.decide(
-                    agent, who, verified=isinstance(who, get_user_model()), capability=ask, turn=turn,
+                ask or "(free-form)": answer_of(turn_context.for_asker(
+                    agent, who, verified=isinstance(who, get_user_model()), requested=ask, turn=turn,
                     standing=standing, lines=lines))
                 for ask in asks}
     return out
 
 
-def _decision(d) -> dict:
-    return {**dataclasses.asdict(d), "permissions": sorted(d.permissions), "stamp": d.stamp}
+def answer_of(ctx) -> dict:
+    """A Turn Context as this document has always printed an answer, so that its hash keeps meaning the
+    same thing: `access` says `none` for a refusal, and a refusal's reason is `reason`."""
+    return {
+        "relationship": ctx.standing.relationship,
+        "access": "none" if ctx.refused else ctx.access,
+        "capability": ctx.stamped or None,
+        "may_request_auto": ctx.review.may_request_auto,
+        "may_pin_runner": ctx.review.may_pin_runner,
+        "manual_only": ctx.review.manual_only,
+        "basis": ctx.basis,
+        "reason": ctx.refusal.why if ctx.refused else "",
+        "agent_role": ctx.standing.agent_role,
+        "source": ctx.standing.source,
+        "via": ctx.standing.via,
+        "permissions": sorted(ctx.standing.permissions),
+        "stamp": ctx.stamped,
+    }
 
 
 def _statements(agent, stamps) -> dict:

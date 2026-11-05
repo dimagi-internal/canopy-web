@@ -18,7 +18,7 @@ from types import SimpleNamespace
 import pytest
 from django.contrib.auth import get_user_model
 
-from apps.agents import access, interface, roles
+from apps.agents import access, interface, roles, turn_context
 from apps.agents.interface import parse
 from apps.agents.interface_default import default_read_profile
 from apps.agents.models import Agent
@@ -198,8 +198,8 @@ def test_naming_read_cannot_dodge_a_sensitive_ask(w):
     is confined in it for everyone who names either: the owner naming `read` must not run FULL."""
     _sensitive_ask(w["agent"])
     for name in ("ask", "read"):
-        d = access.decide(w["agent"], w["owner"], verified=True, capability=name)
-        assert (d.access, d.capability, d.basis) == (access.CONFINED, "ask", "sensitive:ask"), name
+        d = turn_context.for_asker(w["agent"], w["owner"], verified=True, requested=name)
+        assert (d.access, d.stamped, d.basis) == (access.CONFINED, "ask", "sensitive:ask"), name
 
 
 @pytest.mark.django_db
