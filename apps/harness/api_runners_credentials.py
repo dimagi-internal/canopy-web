@@ -295,8 +295,8 @@ def turn_github_token(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.
     """The GitHub token and git identity for ONE turn this runner is executing:
     the turn's agent owner's token for that agent. canopy decides whose — the
     runner only names the turn. Refused (409, with the reason) when the owner
-    has lent none or it has expired, and always for a caller's turn (one confined
-    to a capability); there is no shared fallback."""
+    has lent none or it has expired, and always for a confined turn (read mode or a
+    connected site); there is no shared fallback."""
     from apps.agents.credentials import delegations
 
     runner = runner_or_404(request, runner_id)

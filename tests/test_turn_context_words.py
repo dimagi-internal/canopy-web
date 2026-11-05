@@ -63,9 +63,10 @@ MACHINE_CAPABILITY_MODULES = (
     "apps/agents/health.py",   # an agent's leased machine capabilities
 )
 
-#: OpenAPI paths of the machine-capability routes above (their text is about leased machines).
-MACHINE_PATHS = re.compile(r"/capabilit|/system/|/storyboards|/narratives|/runners|/workspace-apps|"
-                           r"/workspaces/[^/]+/apps|/app/")
+#: OpenAPI paths of the machine-capability routes above (their text is about leased machines, a runner's own
+#: capabilities, the plugin catalog, a share link's or an app action's capability).
+MACHINE_PATHS = re.compile(r"/capabilit|/system/|/storyboards|/narratives|/workspace-apps|"
+                           r"/workspaces/[^/]+/apps|/app/|/harness/runners/\{runner_id\}$")
 
 #: API field names with these words that existed before this guard. None may be added: a new field
 #: says `connected_site`, `read_mode` or `profile`. (Machine capabilities and stored names keep theirs.)

@@ -221,11 +221,20 @@ def _differences(left, right, path="") -> list[str]:
     return [] if left == right else [f"{path}: real {left!r} != frozen {right!r}"]
 
 
+#: Words, not outcomes. A refusal's `reason` is `apps/agents/refusals.py`'s (Turn Context Stage 4). A profile's
+#: `description`, and the version that marks the default read profile's text, were reworded by Stage 5 (read mode
+#: is never called "Ask"); every field that says what a profile may DO (tools, bash, paths, entry, data) is still
+#: compared whole, so a widened profile still fails here.
+_WORDS = {"reason": bool, "description": lambda _v: "<words>", "default_profile_version": lambda _v: "<version>"}
+
+
 def _outcomes(doc):
-    """A refusal's outcome, not its wording: whether it has a reason, never what the reason says. Its words are
-    `apps/agents/refusals.py`'s, rewritten on purpose by Turn Context Stage 4; who gets what is compared whole."""
+    """Who gets what, not how it is worded: whether a refusal has a reason, never what it says; a profile's
+    description and text version, never their words."""
     if isinstance(doc, dict):
-        return {k: (bool(v) if k == "reason" else _outcomes(v)) for k, v in doc.items()}
+        return {k: (_WORDS[k](v) if k in _WORDS else _outcomes(v)) for k, v in doc.items()}
+    if isinstance(doc, list):
+        return [_outcomes(v) for v in doc]
     return doc
 
 

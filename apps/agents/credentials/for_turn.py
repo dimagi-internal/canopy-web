@@ -99,7 +99,7 @@ def _withheld_on_page(stamped, agent) -> list[CredentialLine]:
 
 def _without_a_turn(context) -> tuple[CredentialLine, ...]:
     """A preview. A confined answer is known already; the whole agent's waits for the turn."""
-    gets, why = (NO, "a caller's turn is never given them") if context.stamped else (PENDING, "")
+    gets, why = (NO, "a confined turn is never given them") if context.stamped else (PENDING, "")
     if context.profile.kind == NO_AGENT_KIND:
         gets, why = NO, "this turn runs as no agent"
     return (CredentialLine("canopy_login", authority.AGENT_ONLY, gets, why),
