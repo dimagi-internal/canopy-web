@@ -12,7 +12,7 @@ The rules that keep composition safe:
 
 * The workspace ADDS in its own namespace (`x_` fields, collections, actions,
   roles; `x-` pages), so a later template addition can never collide with it.
-* It may change a template element only through a narrow door: relabel, help
+* It may change a template element only through a narrow opening: relabel, help
   text, hide, require (never un-require), add options to a list the template
   marked extensible (between its fixed first and last), switch an action off,
   add its own fields to an action's input, fill a slot the page declares, set a

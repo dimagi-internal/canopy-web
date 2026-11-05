@@ -57,12 +57,12 @@ def _real_decide(agent, who, *, verified, capability, turn):
     return _as_decision(turn_context.for_asker(agent, who, verified=verified, requested=capability, turn=turn))
 
 
-def _envelope_profile(agent, capability, turn):
+def _envelope_profile(agent, stamp, turn):
     """What the envelope hands the runner for a stamp: the Turn Context's profile."""
-    if agent is None or not capability:
+    if agent is None or not stamp:
         return None
     facts = session_context.build(None, turn, agent=agent)
-    return turn_context.stamped_profile(agent, capability, facts).as_envelope()
+    return turn_context.stamped_profile(agent, stamp, facts).as_envelope()
 
 
 REAL = SimpleNamespace(
@@ -70,8 +70,8 @@ REAL = SimpleNamespace(
     page_sites=interface.page_sites, site_ceiling=interface.site_ceiling, own_login_of=interface.own_login_of,
     page_turn=interface.page_turn, page_site_of=interface.page_site_of,
     handles_sensitive=sensitive_data.handles_sensitive, as_claim=sensitive_data.as_claim,
-    sensitive_capabilities=sensitive_data.sensitive_capabilities, facts_for=execution.facts_for,
-    site_capabilities=site_agents.site_capabilities, agent_entry=site_agents.agent_entry, decide=_real_decide,
+    sensitive_capabilities=sensitive_data.sensitive_profiles, facts_for=execution.facts_for,
+    site_capabilities=site_agents.site_profiles, agent_entry=site_agents.agent_entry, decide=_real_decide,
 )
 
 
@@ -121,7 +121,7 @@ def world():
     ordinary = _box(owner, "ordinary")
     sensitive = _box(owner, "sensitive", sensitive=True)
     for agent, _row in agents:
-        box = sensitive if sensitive_data.sensitive_capabilities(agent.interface) else ordinary
+        box = sensitive if sensitive_data.sensitive_profiles(agent.interface) else ordinary
         RunnerAssignment.objects.create(agent=agent, runner=box, rank=1, enabled=True)
     return SimpleNamespace(agents=agents, apps=apps, owner=owner, admin=admin, editor=editor, reader=reader,
                            member=member, data=data)
@@ -180,7 +180,7 @@ def answers(impl, world, agent, row) -> dict:
     """Everything `impl` says about one agent, as plain data."""
     keys = _keys(agent)
     stamps = ["", legacy_interface.READ, legacy_interface.ASK, *keys, RETIRED]
-    asks = [None, legacy_interface.READ, legacy_interface.ASK, *keys, RETIRED]
+    requests = [None, legacy_interface.READ, legacy_interface.ASK, *keys, RETIRED]
     contexts = _contexts(agent, row)
     site_turns = {c["name"]: _turn(world.owner, c) for c in contexts if "turn" in c}
     permission_sets = [{roles.READ}, {roles.WRITE}, {roles.use("ask")}, {roles.use("read")},
@@ -206,9 +206,9 @@ def answers(impl, world, agent, row) -> dict:
         "decide": {
             label: {
                 c["name"]: {
-                    str(ask): _decision(impl.decide(agent, who, verified=isinstance(who, get_user_model()),
-                                                    capability=ask, turn=_turn(who, c)), world)
-                    for ask in asks}
+                    str(requested): _decision(impl.decide(agent, who, verified=isinstance(who, get_user_model()),
+                                                    capability=requested, turn=_turn(who, c)), world)
+                    for requested in requests}
                 for c in contexts}
             for label, who in _people(world, agent)},
     }
@@ -221,11 +221,20 @@ def _differences(left, right, path="") -> list[str]:
     return [] if left == right else [f"{path}: real {left!r} != frozen {right!r}"]
 
 
+#: Words, not outcomes. A refusal's `reason` is `apps/agents/refusals.py`'s (Turn Context Stage 4). A profile's
+#: `description`, and the version that marks the default read profile's text, were reworded by Stage 5 (read mode
+#: is never called "Ask"); every field that says what a profile may DO (tools, bash, paths, entry, data) is still
+#: compared whole, so a widened profile still fails here.
+_WORDS = {"reason": bool, "description": lambda _v: "<words>", "default_profile_version": lambda _v: "<version>"}
+
+
 def _outcomes(doc):
-    """A refusal's outcome, not its wording: whether it has a reason, never what the reason says. Its words are
-    `apps/agents/refusals.py`'s, rewritten on purpose by Turn Context Stage 4; who gets what is compared whole."""
+    """Who gets what, not how it is worded: whether a refusal has a reason, never what it says; a profile's
+    description and text version, never their words."""
     if isinstance(doc, dict):
-        return {k: (bool(v) if k == "reason" else _outcomes(v)) for k, v in doc.items()}
+        return {k: (_WORDS[k](v) if k in _WORDS else _outcomes(v)) for k, v in doc.items()}
+    if isinstance(doc, list):
+        return [_outcomes(v) for v in doc]
     return doc
 
 

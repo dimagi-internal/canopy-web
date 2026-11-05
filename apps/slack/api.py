@@ -2,7 +2,7 @@
 
 Deliberately NOT under /api/slack/: that prefix is allowlisted in the login
 middleware for Slack's own signed webhooks, and nothing an owner configures
-should share a door with an anonymous caller. Reads are member, writes owner,
+should share a route with an anonymous caller. Reads are member, writes owner,
 the same split `apps/inbound` uses for its config.
 """
 from __future__ import annotations

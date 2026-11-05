@@ -73,7 +73,7 @@ def test_a_verified_email_contact_carries_their_profile(ctx):
 
 
 def test_a_confined_caller_is_told_what_would_change_it(ctx):
-    """A confined `ask` caller learned only `profile: confined` and a Slack line that said
+    """A caller confined to read mode learned only `profile: confined` and a Slack line that said
     "add them to the workspace" without a role (Hal sessions b6eebedc, 5cbcd525)."""
     owner, _ws, agent = ctx
     turn = _email(agent, headers=HDRS)
@@ -1023,11 +1023,11 @@ def test_a_read_only_line_holds_read_and_is_confined(ctx):
     u = _line_user(ctx, "ro", role=roles.READ_ONLY)
     env = caller_context.build(_user_turn(ctx[2], u, "p-ro"))
     assert env["profile"] == "confined"
-    assert env["permissions"] == ["read"]          # read mode is `read`, not a door named `ask`
-    assert env["capability"]["name"] == "ask"        # the stamp: the capability actually run
+    assert env["permissions"] == ["read"]          # read mode is `read`, not a permission named after its stamp
+    assert env["capability"]["name"] == "ask"        # the stamp: the profile actually run
 
 
-def test_a_capability_only_line_holds_just_that_capability(ctx):
+def test_a_line_naming_one_profile_holds_just_that_profile(ctx):
     u = _line_user(ctx, "cap", capability="ask")
     env = caller_context.build(_user_turn(ctx[2], u, "p-cap"))
     assert env["profile"] == "confined"
@@ -1047,12 +1047,12 @@ def test_read_mode_on_an_agent_with_no_ask_is_stamped_read_and_holds_only_read(c
     assert env["profile"] == "confined" and env["permissions"] == ["read"]
     assert env["capability"]["name"] == "read"
     assert env["capability"]["write_paths"] == [f"{{cwd}}/.{agent.slug}-read/*", f"{{cwd}}/.{agent.slug}-ask/*"]
-    assert env["capability"]["default_profile_version"] == 3
+    assert env["capability"]["default_profile_version"] == 4
     assert env["granted_by"] == "capability:read"
 
 
-def test_a_published_ask_overrides_the_default_whole_and_is_stamped_ask(ctx):
-    u = _line_user(ctx, "ovr", role=roles.READ_ONLY)             # publishes `ask` (tools: Read)
+def test_the_owners_own_read_mode_overrides_the_default_whole_and_is_stamped_read_mode(ctx):
+    u = _line_user(ctx, "ovr", role=roles.READ_ONLY)             # publishes its own read mode (tools: Read)
     turn = _user_turn(ctx[2], u, "p-override")
     assert turn.capability == "ask"
     env = caller_context.build(turn)

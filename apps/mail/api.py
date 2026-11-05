@@ -1,5 +1,5 @@
 # apps/mail/api.py
-"""Django Ninja router for /api/mail — domains, routes, agent mail, and the SNS doors.
+"""Django Ninja router for /api/mail — domains, routes, agent mail, and the SNS webhooks.
 
 The workspace is in the path, the `apps/inbound` idiom. Domain and route writes
 are workspace settings (INTEGRATIONS: admin or owner), declared `setting=True` and so audited.

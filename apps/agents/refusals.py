@@ -10,8 +10,8 @@ session but the Turn Context would not let them take a turn, canopy says why and
 * `who_can_fix` names the real people or roles who can do it.
 
 Each code has exactly one builder in `_WORDS` (a test holds the two sets equal), so the words a refusal is given at
-enqueue, in a preview, on a turn's note, in a Slack reply and in a door's 403 are the same words. None of them says
-`door`, `ask` or `capability`, and none carries a prompt, a fact about a person or a secret: a builder is handed only
+enqueue, in a preview, on a turn's note, in a Slack reply and in a route's 403 are the same words. None of them names
+read mode or a connected site by an old name, and none carries a prompt, a fact about a person or a secret: a builder is handed only
 the agent, the session and the small facts below, never the turn's words.
 
 A refusal is about "you" unless it is made `about` someone else: the notice that tells whoever added a person to a
@@ -36,9 +36,9 @@ class Code(StrEnum):
     PROFILE_NOT_OPEN = "profile_not_open"
     #: The rule: a sensitive conversation runs only in its sensitive entry, and that is not open to them.
     SENSITIVE_NOT_OPEN = "sensitive_not_open"
-    #: The mail door, before the rule: the sender is blocked.
+    #: The mail channel, before the rule: the sender is blocked.
     SENDER_BLOCKED = "sender_blocked"
-    #: Stage 0 (a preview, and the send doors): the session's content was deleted.
+    #: Stage 0 (a preview, and the send paths): the session's content was deleted.
     CONTENT_DELETED = "content_deleted"
     #: Stage 0: they may read the session but not write in it.
     CANNOT_WRITE = "cannot_write"
@@ -69,7 +69,7 @@ class Refusal:
 
     @property
     def message(self) -> str:
-        """The refusal as one or two sentences: what a door's 403 says, and what a reader sees beside a turn."""
+        """The refusal as one or two sentences: what a route's 403 says, and what a reader sees beside a turn."""
         why = f"{self.why[:1].upper()}{self.why[1:]}"
         return f"{why}. {self.how_to_fix}" if self.how_to_fix else f"{why}."
 
@@ -219,7 +219,7 @@ def _sender_blocked(i: _In):
 
 
 def _content_deleted(i: _In):
-    # Said exactly as the send doors have always said it (`canopy_sessions.access.CONTENT_DELETED_REFUSAL`).
+    # Said exactly as the send paths have always said it (`canopy_sessions.access.CONTENT_DELETED_REFUSAL`).
     return ("this session's content was permanently deleted, so it takes nothing more",
             "Start a new session to carry on.", i.say.you)
 
@@ -267,5 +267,5 @@ def make(code: str, *, agent=None, session=None, subject: str = "", **facts) -> 
 
 
 def cannot_write_message(session) -> str:
-    """What every send door says to someone who may read `session` but not write in it."""
+    """What every send path says to someone who may read `session` but not write in it."""
     return make(Code.CANNOT_WRITE, agent=getattr(session, "agent", None), session=session).message

@@ -1,8 +1,8 @@
 """Read mode resolves on its own (spec 2026-11-03-agent-read-mode-and-doors-design.md, Phase 1 change 3).
 
 A person whose lines give `read` and not `write` is answered in read mode on EVERY agent: the agent's
-own published `ask` when it has one (an override, the whole of it, stamp `ask`), else canopy's default
-profile (stamp `read`). Any other name is a door and still has to be published.
+own published read mode when it has one (an override, the whole of it, stamped `READ_MODE_STAMP`), else canopy's default
+profile (stamp `read`). Any other name is a connected site and still has to be published.
 """
 from __future__ import annotations
 
@@ -40,14 +40,14 @@ def w():
     return {"ws": ws, "agent": agent, "owner": owner, "vw": vw, "ed": ed}
 
 
-def test_read_resolves_with_no_published_capability(w):
+def test_read_resolves_with_no_published_profile(w):
     allow(w["agent"], role=roles.READ_ONLY)
     d = turn_context.for_asker(w["agent"], w["vw"], verified=True)
     assert (d.access, d.stamped, d.basis) == (access.CONFINED, "read", "capability:read")
     assert interface.profile(w["agent"], "read")["write_paths"] == ["{cwd}/.hal-read/*", "{cwd}/.hal-ask/*"]
 
 
-def test_a_use_ask_or_use_read_line_is_a_read_mode_line(w):
+def test_a_stamped_or_use_read_line_is_a_read_mode_line(w):
     for cap in ("ask", "read"):
         line = allow(w["agent"], capability=cap)
         d = turn_context.for_asker(w["agent"], w["vw"], verified=True)
@@ -59,7 +59,7 @@ def test_no_line_means_no_read_mode(w):
     assert turn_context.for_asker(w["agent"], w["vw"], verified=True).access == turn_context.REFUSED
 
 
-def test_a_published_ask_overrides_the_default_whole(w):
+def test_a_published_read_mode_overrides_the_default_whole(w):
     allow(w["agent"], role=roles.READ_ONLY)
     w["agent"].interface = parse({"capabilities": {"ask": {"tools": ["Read"], "bash": ["ls"]}}})
     w["agent"].save(update_fields=["interface"])
@@ -81,8 +81,8 @@ def test_other_names_still_have_to_be_published(w):
     allow(w["agent"], role=roles.READ_ONLY)
     allow(w["agent"], capability="canopy")
     d = turn_context.for_asker(w["agent"], w["vw"], verified=True, requested="canopy")
-    assert d.access == turn_context.REFUSED                      # `canopy` is a door; nobody published it
-    gone = interface.profile(w["agent"], "retired-door")
+    assert d.access == turn_context.REFUSED                      # `canopy` is a connected site; nobody published it
+    gone = interface.profile(w["agent"], "retired-site")
     assert gone["tools"] == [] and gone["bash"] == [] and gone["write_paths"] == []
 
 
@@ -114,11 +114,11 @@ def test_roster_and_topology_and_extended_card_offer_read_mode(w):
 
 
 def test_the_public_card_does_not_list_read_mode(w):
-    # A contact `read_only` line on an agent with no published `ask` offers outsiders nothing.
+    # A contact `read_only` line on an agent with no published read mode offers outsiders nothing.
     allow(w["agent"], role=roles.READ_ONLY, contact=True, domain="dimagi.com", verified=True)
     Contact.objects.create(workspace=w["ws"], email="x@dimagi.com")
     assert agent_card.public_card(w["agent"]) is None
-    assert agent_card.public_capabilities(w["agent"]) == []
+    assert agent_card.public_profiles(w["agent"]) == []
 
 
 def test_topology_edge_names_read_mode(w):
@@ -128,7 +128,7 @@ def test_topology_edge_names_read_mode(w):
     assert interface.reachable(frozenset({"use:canopy"}), w["agent"].interface) == []
 
 
-def test_reachable_lists_the_published_ask_not_a_second_read(w):
+def test_reachable_lists_the_published_read_mode_not_a_second_read(w):
     w["agent"].interface = parse({"capabilities": {"ask": {"tools": ["Read"]}, "canopy": {"tools": ["Read"]}}})
     assert interface.reachable(frozenset({roles.READ}), w["agent"].interface) == ["ask"]
     assert interface.reachable(frozenset({"use:canopy"}), w["agent"].interface) == ["canopy"]
@@ -137,17 +137,17 @@ def test_reachable_lists_the_published_ask_not_a_second_read(w):
 # --- the gate ---------------------------------------------------------------------------------
 
 
-def test_the_gate_lists_a_read_line_with_no_published_ask(w):
+def test_the_gate_lists_a_read_line_with_no_published_read_mode(w):
     assert read_mode_gate.exposures() == []
     allow(w["agent"], role=roles.READ_ONLY)
     hits = read_mode_gate.exposures()
     assert [h["agent"] for h in hits] == ["hal"] and "read_only" in hits[0]["lines"][0]
     w["agent"].interface = parse({"capabilities": {"ask": {"tools": ["Read"]}}})
     w["agent"].save(update_fields=["interface"])
-    assert read_mode_gate.exposures() == []             # a published ask: nothing newly widened
+    assert read_mode_gate.exposures() == []             # a published read mode: nothing newly widened
 
 
-def test_the_gate_counts_a_use_ask_line_and_a_workspace_default_but_not_a_writer(w):
+def test_the_gate_counts_a_stamped_read_mode_line_and_a_workspace_default_but_not_a_writer(w):
     allow(w["agent"], capability="ask")
     assert [h["agent"] for h in read_mode_gate.exposures()] == ["hal"]
     w["agent"].grants.all().delete()
@@ -182,7 +182,7 @@ def test_the_read_mode_route_says_which_read_mode_the_agent_has(w):
     assert got["source"] == "custom" and got["profile"]["tools"] == ["Read"]
 
 
-def test_the_access_list_names_the_doors_a_line_may_open(w):
+def test_the_access_list_names_the_connected_sites_a_line_may_open(w):
     from django.test import Client
 
     w["agent"].interface = parse({"capabilities": {"ask": {"tools": ["Read"]}, "canopy": {"tools": ["Read"]}}})
@@ -190,5 +190,5 @@ def test_the_access_list_names_the_doors_a_line_may_open(w):
     c = Client()
     c.force_login(w["owner"])
     got = c.get("/api/agents/hal/access-list").json()
-    assert got["doors"] == ["canopy"]
+    assert [s["name"] for s in got["connected_sites"]] == ["canopy"]
     assert "read mode" in got["roles"][-1]["can"][0]

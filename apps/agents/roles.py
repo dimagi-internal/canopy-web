@@ -26,16 +26,16 @@ SYSTEM = "system"
 
 #: Be answered by the agent in read mode: confined, on every agent from the start (`interface.is_read_mode`).
 READ = "read"
-#: Drive the whole agent, in its own authority: every skill it has, every capability.
+#: Drive the whole agent, in its own authority: every skill it has, read mode and every connected site.
 WRITE = "write"
 #: Change the agent itself: its skills, its persona and the code in its own repo (never where the
 #: repo points, the machine capabilities it leases or its keys: those are `admin`).
 AGENT_EDIT = "agent_edit"
-#: Configure the agent in canopy-web: access list, capabilities, credentials, routing.
+#: Configure the agent in canopy-web: access list, read mode and connected sites, credentials, routing.
 ADMINISTER = "admin"
 #: Transfer or delete the agent, and name its admins. `Agent.owner`, never a line.
 OWN = "own"
-#: The scope of a named-capability permission: `use:<capability>` opens that one capability.
+#: The scope of a named-site permission: `use:<site>` opens that one connected site.
 USE = "use"
 
 _PLAIN = (READ, WRITE, AGENT_EDIT, ADMINISTER, OWN)
@@ -57,7 +57,7 @@ class Seed(NamedTuple):
 SEED = (
     Seed(READ_ONLY, "Read only", "Can ask the agent questions in read mode.", frozenset({READ})),
     Seed(READ_WRITE, "Read and write", "Can drive the whole agent.", frozenset({WRITE})),
-    Seed(EDITOR, "Editor", "Can drive the whole agent and change its skills and capabilities.",
+    Seed(EDITOR, "Editor", "Can drive the whole agent and change its skills and settings.",
          frozenset({AGENT_EDIT})),
 )
 SEED_KEYS = tuple(s.key for s in SEED)
@@ -79,7 +79,7 @@ RESERVED_KEYS = frozenset({OWNER, ADMIN, SYSTEM, "viewer", "user", "member", "co
 _TABLE = {**{s.key: set(s.permissions) for s in SEED}, **_FIXED}
 
 #: The dependency rule: agent_edit implies write implies read; admin implies all but own; driving
-#: the whole agent opens every capability.
+#: the whole agent opens every connected site.
 _IMPLIES = {
     AGENT_EDIT: {WRITE},
     WRITE: {READ, f"{USE}:*"},
@@ -95,7 +95,7 @@ LADDER = tuple(reversed(ROLES.order))
 #: neither is a line.
 GRANTABLE = (EDITOR, READ_WRITE, READ_ONLY)
 PERMISSIONS = frozenset(_PLAIN)
-_DOOR = re.compile(r"^[a-z][a-z0-9_]{0,40}$")
+_SITE = re.compile(r"^[a-z][a-z0-9_]{0,40}$")
 
 
 def permissions_of(role: str | None) -> frozenset[str]:
@@ -112,9 +112,9 @@ def validate_permissions(permissions) -> frozenset[str]:
     """The CLOSED permission set for a role being saved, or InvalidRole.
 
     A role is built from the fixed vocabulary at the read / write / agent_edit level: `read`,
-    `write`, `agent_edit` and `use:<door>`. `admin` and `own` are `Agent.is_admin` and
+    `write`, `agent_edit` and `use:<site>`. `admin` and `own` are `Agent.is_admin` and
     `Agent.owner`, never a line, so no role can hold them; `use:*` is what `write` is. The set is
-    closed (write carries read and every door, agent_edit carries write) and stored closed."""
+    closed (write carries read and every connected site, agent_edit carries write) and stored closed."""
     wanted = {str(p) for p in permissions or ()}
     if not wanted:
         raise InvalidRole("a role must allow something")
@@ -122,13 +122,13 @@ def validate_permissions(permissions) -> frozenset[str]:
         if p in (ADMINISTER, OWN):
             raise InvalidRole(f"a role cannot allow {p!r}: that comes from who the agent belongs to "
                               "(its owner and its admins), never from an access line")
-        scope, sep, door = p.partition(":")
+        scope, sep, site = p.partition(":")
         if p in ROLE_PERMISSIONS:
             continue
-        if sep and scope == USE and door and door != "*" and _DOOR.match(door):
+        if sep and scope == USE and site and site != "*" and _SITE.match(site):
             continue
         raise InvalidRole(f"{p!r} is not something a role can allow: use read, write, agent_edit "
-                          "or use:<door>")
+                          "or use:<site>")
     return ROLES.close(wanted)
 
 
@@ -158,19 +158,19 @@ def highest(roles) -> str | None:
     return ROLES.strongest(roles)
 
 
-def use(capability: str) -> str:
-    """The scoped permission that opens one named capability."""
-    return f"{USE}:{capability}"
+def use(name: str) -> str:
+    """The scoped permission that opens one named connected site."""
+    return f"{USE}:{name}"
 
 
-def can_use(permissions, capability: str) -> bool:
-    """May someone holding `permissions` use the capability `capability`? `write` opens all of
-    them; `read` opens read mode; `use:<name>` opens `<name>`. Read mode is `read` and `ask`
-    alike (`is_read_mode`): a line naming either opens both."""
-    if is_read_mode(capability):
+def can_use(permissions, name: str) -> bool:
+    """May someone holding `permissions` use the profile `name`? `write` opens all of
+    them; `read` opens read mode; `use:<name>` opens `<name>`. Read mode is `read` and
+    `READ_MODE_STAMP` alike (`is_read_mode`): a line naming either opens both."""
+    if is_read_mode(name):
         return ROLES.holds(permissions, READ) or any(ROLES.holds(permissions, use(n))
                                                       for n in READ_MODE_NAMES)
-    return ROLES.holds(permissions, use(capability))
+    return ROLES.holds(permissions, use(name))
 
 
 def lowest_role_with(permission: str) -> str | None:

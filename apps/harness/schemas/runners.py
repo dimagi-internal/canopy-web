@@ -731,7 +731,7 @@ class HeartbeatIn(Schema):
     # for why an ORDER is needed on top of the identity a sha gives.
     code_committed_at: int = 0
     # The profile-enforcement version this runner can honour — whether it may be
-    # given a CALLER's turn, confined to a capability (services.profile_q).
+    # given a CALLER's confined turn (services.profile_q).
     # Absent (an older runner) means 0: never.
     profiles: int = 0
     # The caller-envelope version the runner's code reads: 2 = it understands

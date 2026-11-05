@@ -64,7 +64,7 @@ def normalize_origin(value: str) -> str:
 
 def chat_send_origin(value: str | None) -> str | None:
     """`normalize_origin`, then refuse a source a chat send may not name
-    (`Turn.CHAT_SEND_ORIGINS`) — shared by every chat door's input schema."""
+    (`Turn.CHAT_SEND_ORIGINS`) — shared by every chat send path's input schema."""
     if not value:
         return value
     value = normalize_origin(value)

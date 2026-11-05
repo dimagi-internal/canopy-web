@@ -495,7 +495,7 @@ def _turn_of_agent_thread(agent, thread_key: str, runner: Runner):
 def _mail_turn_on_thread(agent, thread_key: str, runner: Runner):
     """The mail turn this runner is executing on the Gmail thread `thread_key` names:
     the laptop runner sends no `turn_id`, and a confined turn's key carries
-    `#<capability>`. Else None."""
+    `#<Turn.capability>`. Else None."""
     thread_id = (thread_key or "").split("#", 1)[0]
     if agent is None or not thread_id:
         return None

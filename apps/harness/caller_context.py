@@ -67,7 +67,7 @@ _VERIFIED_USER = frozenset({who.SESSION, who.PAT, who.PRIVATE_RUNNER_KEY, who.DE
 #: `contact` is anyone who is not a member of the agent's workspace (an emailer,
 #: a widget visitor, a canopy user from another tenant, someone unidentified).
 OWNER, ADMIN, MEMBER, CONTACT, SYSTEM = "owner", "admin", "member", "contact", "system"
-#: `profile` values: the agent's whole profile, or one capability of its interface.
+#: `profile` values: the agent's whole profile, or one confined profile (read mode or a connected site).
 FULL_PROFILE, CONFINED_PROFILE = "full", "confined"
 
 #: Envelope values from VERSION 1, and what they are called now.
@@ -428,7 +428,7 @@ def build(turn, *, reader_user=None) -> dict:
         # what already ran on the thread. Without it a confined session can't tell a
         # new message from a re-fire, or say whether a Gmail filter would have stopped
         # it (both push and poll run the runner's `in:inbox is:unread` query). ace@
-        # thread 1a0d0a1632cfde4f: 14 `ask` sessions on SES receipts, each guessing.
+        # thread 1a0d0a1632cfde4f: 14 read-mode sessions on SES receipts, each guessing.
         "trigger": _trigger(turn, ref),
         # The one session this conversation's asker asked this agent to review from its
         # page, while that ask is live (`read_asked_session`). Null otherwise. Additive.
@@ -605,7 +605,7 @@ def _session_review(turn, agent) -> dict | None:
 
 
 def _matched_classes(turn) -> list[str]:
-    """Deprecated: the caller classes that earned this turn its capability. The classes are
+    """Deprecated: the caller classes that earned this turn its profile. The classes are
     gone (who may use an agent is its access list; the envelope's `role` and `source` say
     which line); the key stays, empty, for agents whose skills still read it."""
     return []

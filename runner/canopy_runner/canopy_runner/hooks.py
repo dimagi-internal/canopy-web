@@ -106,7 +106,7 @@ def ensure_hook_config(settings_path=None) -> bool:
     ephemeral port and re-points the account's hooks at itself. When that
     instance exits, every hook on the account curls a port nothing is listening
     on — the live-events-off failure the fallback exists to prevent, arriving by
-    a different door. Observed 2026-07-30: runner on :8788, config on :49366,
+    a different port. Observed 2026-07-30: runner on :8788, config on :49366,
     nothing bound there.
 
     So the config is treated as observed state that converges, not as a fact

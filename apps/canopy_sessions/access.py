@@ -123,7 +123,7 @@ NO_REACH = Reach(Q(pk__in=[]))
 
 def is_review_conversation(session) -> bool:
     """A chat opened by asking an agent to review one session. Everything in it runs in the
-    `interface.SESSION_REVIEW` door, because what it read stays in its context."""
+    `interface.SESSION_REVIEW` profile, because what it read stays in its context."""
     return session is not None and REVIEW_METADATA_KEY in (session.metadata or {})
 
 

@@ -1,4 +1,4 @@
-"""Slack as a front door to canopy agents.
+"""Slack as a way in to canopy agents.
 
 Framework tier: a transport, agent-agnostic, like ``inbound``. A Slack thread
 becomes a ``canopy_sessions.Session`` exactly as an email thread does; see
@@ -301,7 +301,7 @@ class SlackAudienceMember(models.Model):
     A Slack-bound session's people are the linked canopy members in the Slack
     conversation it lives in, kept in step with it: this row records that the
     channel — not the session's owner — made someone a participant, so the same
-    door may take them out again when they leave the channel. A participant the
+    channel may take them out again when they leave the channel. A participant the
     owner shared the session with has no row here and is never removed by Slack.
     """
 

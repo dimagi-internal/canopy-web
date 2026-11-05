@@ -9,11 +9,11 @@ from apps.common.schemas import StrictModel
 
 
 class AccessLineIn(StrictModel):
-    """One line to add: who, and what they get: ONE role, or (rarely) ONE named capability."""
+    """One line to add: who, and what they get: ONE role, or (rarely) ONE connected site."""
 
     kind: Literal["person", "workspace", "domain", "contact"]
     role: str | None = None             # a role key from `GET .../agent-roles`; validated against the roles available here
-    capability: str = ""                # instead of a role: open just this capability
+    connected_site: str = ""            # instead of a role: open just this connected site (its name, from `connected_sites`)
     user_id: int | None = None
     email: str | None = None            # a person, by the address on their canopy account
     workspace: str = ""                 # kind=workspace: everyone in this workspace
@@ -38,10 +38,10 @@ class AccessLineOut(StrictModel):
     scope_workspace: str | None = None
     kind: str
     who: str
-    #: The named role the line grants ("" on a line that opens one capability instead).
+    #: The named role the line grants ("" on a line that opens one connected site instead).
     role: str
-    #: The one capability the line opens ("" on a role line).
-    capability: str = ""
+    #: The one connected site the line opens, by name ("" on a role line).
+    connected_site: str = ""
     user_id: int | None = None
     subject_workspace: str | None = None
     at_least: str = ""
@@ -70,7 +70,7 @@ class AccessRoleOut(StrictModel):
     #: The role's key (what a line stores and the envelope carries).
     role: str
     can: list[str]
-    #: The permissions the role is made of (`read`, `write`, `agent_edit`, `use:<door>`; `admin`, `own` on the fixed roles).
+    #: The permissions the role is made of (`read`, `write`, `agent_edit`, `use:<site>`; `admin`, `own` on the fixed roles).
     permissions: list[str] = Field(default_factory=list)
     #: The name a person sees; the key when the role is fixed in code.
     label: str = ""
@@ -84,6 +84,15 @@ class AccessRoleOut(StrictModel):
     fixed: bool = False
 
 
+class ConnectedSiteChoiceOut(StrictModel):
+    """One of the agent's connected sites, as an access-list line names it."""
+
+    #: What a line stores (`connected_site`).
+    name: str
+    #: The site it is connected to, which is what a person picks ("" when it names none).
+    site: str = ""
+
+
 class AccessListOut(StrictModel):
     inherit_workspace_defaults: bool
     lines: list[AccessLineOut]
@@ -91,11 +100,8 @@ class AccessListOut(StrictModel):
     roles: list[AccessRoleOut]
     #: Can the caller change this agent's list (an agent admin)?
     can_edit: bool = False
-    #: The doors this agent has published (capabilities other than read mode), which a line may
-    #: name; the form picks from these.
-    doors: list[str] = Field(default_factory=list)
-    #: The site each of `doors` is connected to, so the form can show a site and not an internal name.
-    door_sites: dict[str, str] = Field(default_factory=dict)
+    #: The agent's connected sites, which a line may name; the form picks from these.
+    connected_sites: list[ConnectedSiteChoiceOut] = Field(default_factory=list)
 
 
 class AccessInheritIn(StrictModel):

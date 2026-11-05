@@ -1,5 +1,5 @@
 """A caller's turn runs confined: its own `cx-` session, its profile written first,
-started with its capability's entry — or not at all."""
+started with its profile's entry — or not at all."""
 import json
 
 import pytest
@@ -128,9 +128,9 @@ def test_a_full_turn_is_untouched(monkeypatch, _isolated):
     assert not (_isolated / "profiles").exists()
 
 
-def test_a_restricted_envelope_without_a_capability_is_deny_all():
+def test_a_restricted_envelope_without_a_profile_is_deny_all():
     t = _restricted(caller_context={"profile": "restricted", "capability": None})
-    cap = caller.capability(t)
+    cap = caller.confined_profile(t)
     assert cap["tools"] == [] and cap["bash"] == []
 
 
@@ -181,10 +181,10 @@ def test_both_envelope_words_confine(word):
     # the agent's FULL profile.
     t = _restricted(caller_context={"profile": word, "capability": CAP,
                                     "conversation": {"thread_id": "18c9abc"}})
-    assert caller.capability(t) == CAP
+    assert caller.confined_profile(t) == CAP
     assert session_naming.is_restricted(t)
     assert execute._thread_key(t) == "18c9abc#ask"
-    assert caller.capability({**t, "caller_context": {"profile": "full"}}) is None
+    assert caller.confined_profile({**t, "caller_context": {"profile": "full"}}) is None
 
 
 def test_the_runner_reports_the_envelope_version_it_reads():

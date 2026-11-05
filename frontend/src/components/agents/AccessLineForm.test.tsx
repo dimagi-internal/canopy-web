@@ -12,7 +12,7 @@ const role = (key: string, label: string, contains_write: boolean, description =
 const ROLES: AccessRoleOut[] = [
   { ...role('owner', 'Owner', true), fixed: true, defined_on: '' },
   role('pilot', 'Pilot', true, 'flies the agent'),
-  role('connector', 'Connect door', false, 'only Connect'),
+  role('connector', 'Connect site', false, 'only Connect'),
   role('read_only', 'Read only', false),
 ]
 
@@ -22,8 +22,8 @@ describe('AccessLineForm with roles from the server', () => {
   it('offers the custom role with its description, weakest first, and not the fixed ones', () => {
     render(<AccessLineForm roles={ROLES} workspaces={[['dimagi', 'Dimagi']]} onAdd={vi.fn()} />)
     const names = screen.getAllByRole('radio').map((r) => (r as HTMLInputElement).value)
-    expect(names).toEqual(['read_only', 'connector', 'pilot', 'capability'])
-    expect(screen.getByRole('radio', { name: /Connect door/ })).toBeTruthy()
+    expect(names).toEqual(['read_only', 'connector', 'pilot', 'connected_site'])
+    expect(screen.getByRole('radio', { name: /Connect site/ })).toBeTruthy()
     expect(screen.getByText(/only Connect/)).toBeTruthy()
   })
 
@@ -31,14 +31,14 @@ describe('AccessLineForm with roles from the server', () => {
     render(<AccessLineForm roles={ROLES} workspaces={[['dimagi', 'Dimagi']]} onAdd={vi.fn()} />)
     fireEvent.change(screen.getByLabelText('Who'), { target: { value: 'domain' } })
     expect((screen.getByRole('radio', { name: /Pilot/ }) as HTMLInputElement).disabled).toBe(true)
-    expect((screen.getByRole('radio', { name: /Connect door/ }) as HTMLInputElement).disabled).toBe(false)
+    expect((screen.getByRole('radio', { name: /Connect site/ }) as HTMLInputElement).disabled).toBe(false)
   })
 
   it('sends the chosen key', async () => {
     const onAdd = vi.fn().mockResolvedValue(undefined)
     render(<AccessLineForm roles={ROLES} workspaces={[['dimagi', 'Dimagi']]} onAdd={onAdd} />)
     fireEvent.change(screen.getByLabelText('Their email'), { target: { value: 'a@dimagi.com' } })
-    fireEvent.click(screen.getByRole('radio', { name: /Connect door/ }))
+    fireEvent.click(screen.getByRole('radio', { name: /Connect site/ }))
     fireEvent.click(screen.getByRole('button', { name: 'Add' }))
     await waitFor(() => expect(onAdd).toHaveBeenCalledWith(expect.objectContaining({ kind: 'person', role: 'connector' })))
   })

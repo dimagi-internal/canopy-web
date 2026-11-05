@@ -14,7 +14,7 @@ admins, canopy itself, and a writer in an admin's own session) and its **access 
 (`apps/agents/grants.py`), which gives everyone else a role. A role is a named bundle of permissions
 (`roles.py`), and a line may instead open one named connected site (`use:<name>`). The resolver runs:
 
-* **Stage 0, can this session take a message from them.** A preview only: a real turn is past its door.
+* **Stage 0, can this session take a message from them.** A preview only: a real turn is already through its send path.
 * **Stage 1, standing**, first match: canopy itself, the agent's own login or an approved dispatch
   (`system`); its owner and admins; a session grant; the access list; otherwise nothing.
 * **Stage 2, profile.** A base, then two rules that only narrow. Owner, admin, system, a session grant
@@ -69,12 +69,12 @@ PROFILE_KINDS = frozenset({WHOLE_AGENT, READ_MODE, CONNECTED_SITE, SESSION_REVIE
 PENDING = "pending"
 
 #: `Refusal.code`, a closed set defined once, with its words, in `refusals.Code`: the refusals the rule makes, the
-#: mail door's, then stage 0's.
+#: mail channel's, then stage 0's.
 NOT_ON_ACCESS_LIST = refusals.Code.NOT_ON_ACCESS_LIST
 SENDER_NOT_PROVEN = refusals.Code.SENDER_NOT_PROVEN
 PROFILE_NOT_OPEN = refusals.Code.PROFILE_NOT_OPEN
 SENSITIVE_NOT_OPEN = refusals.Code.SENSITIVE_NOT_OPEN
-#: Refused at the mail door, before the rule: the sender is blocked (`blocked_sender`).
+#: Refused by the mail channel, before the rule: the sender is blocked (`blocked_sender`).
 SENDER_BLOCKED = refusals.Code.SENDER_BLOCKED
 REFUSAL_CODES = frozenset(refusals.Code)
 
@@ -238,7 +238,7 @@ class TurnContext:
     def held_permissions(self) -> list[str]:
         """What the asker holds on this agent for THIS turn (the envelope's `permissions`). A full turn holds
         everything their role or lines give (closed under the dependency rule, so `write` is in it exactly when
-        the turn is full). A confined turn holds `read` and its capability's `use:<name>` only, even for an owner
+        the turn is full). A confined turn holds `read` and its connected site's `use:<name>` only, even for an owner
         a sensitive conversation confined. Someone the rule no longer admits holds nothing, whatever the stamp."""
         reach = self._reach
         if reach is None or reach.access == REFUSED:
@@ -250,7 +250,8 @@ class TurnContext:
             return sorted(held)
         name = self.stamped or reach.name or ""
         if iface_mod.is_read_mode(name):
-            # Read mode is `read`, not a door: nothing is named after it (no `use:read`, no `use:ask`).
+            # Read mode is `read`, not a connected site: nothing is named after it (no `use:read`, no
+            # `use:<READ_MODE_STAMP>`).
             return [roles.READ]
         kept = {p for p in held if p == roles.READ or (p.startswith(f"{roles.USE}:") and p != f"{roles.USE}:*")}
         if name:
@@ -353,8 +354,8 @@ def _entry_for(iface: dict, permissions, requested, session_ctx, trace: list) ->
     if name is None:
         name, how = _selected_entry(iface, opens, session_ctx), "page or site"
     if name is None:
-        name, how = iface_mod.ASK, "read mode"
-    published, cap = iface_mod.published_capability(iface, name)
+        name, how = iface_mod.READ_MODE_STAMP, "read mode"
+    published, cap = iface_mod.published_profile(iface, name)
     if published is None and iface_mod.is_read_mode(name):
         published, cap = iface_mod.READ_MODE, {}   # {}: canopy's default, built when it is read
     allowed = cap is not None and opens(published, cap)
@@ -387,7 +388,7 @@ def _base_stage(agent, reach: _Reach, asker: Asker, requested, session_ctx, turn
     trace.append(TraceEntry("access_list", ",".join(sorted(got.permissions)), got.basis))
     name = _entry_for(iface, got.permissions, requested, session_ctx, trace)
     if name is None:
-        published = bool(requested) and (iface_mod.published_capability(iface, requested)[0] is not None
+        published = bool(requested) and (iface_mod.published_profile(iface, requested)[0] is not None
                                          or iface_mod.is_read_mode(requested) or requested == iface_mod.SESSION_REVIEW)
         return replace(reach, code=PROFILE_NOT_OPEN, facts=(("name", requested), ("published", published)))
     # The review entry is opened by `read`; `line_opening` knows only named entries and read mode.
@@ -411,12 +412,12 @@ def _review_rule(reach: _Reach, trace: list) -> _Reach:
 
 
 def _sensitive_entry(iface: dict, requested, session_ctx) -> str | None:
-    """The `data: sensitive` entry this ask is in: the one it names, else the one its conversation's
+    """The `data: sensitive` entry this request is in: the one it names, else the one its conversation's
     site or page selects. Who is asking is not checked here."""
     if requested:
-        # `read` and `ask` are one thing: naming either finds the agent's published read-mode
+        # `read` and `READ_MODE_STAMP` are one thing: naming either finds the agent's published read-mode
         # profile, and if that handles sensitive data, naming `read` must not dodge the rule.
-        published, cap = iface_mod.published_capability(iface, requested)
+        published, cap = iface_mod.published_profile(iface, requested)
         return published if (cap or {}).get("data") == sensitive_data.SENSITIVE else None
     for name, cap in (iface.get("capabilities") or {}).items():
         if cap.get("data") != sensitive_data.SENSITIVE:
@@ -494,7 +495,7 @@ def stamped_profile(agent, stamp: str, session_ctx) -> Profile:
         return Profile(kind=WHOLE_AGENT, _agent=agent)
     if stamp == iface_mod.SESSION_REVIEW:
         return _profile_of(agent, stamp, session_ctx)
-    published, _cap = iface_mod.published_capability(getattr(agent, "interface", None), stamp)
+    published, _cap = iface_mod.published_profile(getattr(agent, "interface", None), stamp)
     if published is None and (not iface_mod.is_read_mode(stamp) or session_ctx.sensitive):
         return Profile(kind=DENY_ALL, name=stamp, _agent=agent)
     # Stamped under its own name: an agent that later publishes the other read-mode name keeps the key.
@@ -535,8 +536,9 @@ def _finish(agent, reach: _Reach, session_ctx, turn, runner, trace: list) -> Tur
 
 
 def _send_refusal(session_ctx, asker: Asker, turn, trace: list) -> Refusal | None:
-    """Stage 0. A real turn is past its door: asking here would refuse turns no door refuses today
-    (an email, a schedule, a turn someone else's rule let in), and this project changes no one's access."""
+    """Stage 0. A real turn is already through its send path: asking here would refuse turns no send path
+    refuses today (an email, a schedule, a turn someone else's rule let in), and this project changes no
+    one's access."""
     if turn is not None or session_ctx.session_id is None:
         return None
     block = next((b for b in session_ctx.send_blocks if b.applies(asker)), None)
@@ -675,7 +677,7 @@ REFUSED_NOTE_PREFIX = refusals.REFUSED_NOTE_PREFIX
 
 
 def blocked_sender(turn, agent) -> TurnContext:
-    """A blocked sender's mail, refused at the door before the rule is asked. Never carries why they were
+    """A blocked sender's mail, refused on the way in, before the rule is asked. Never carries why they were
     blocked: that is an admin's note about a person, and it stays on the contact."""
     refusal = refusals.make(SENDER_BLOCKED, agent=agent)
     return TurnContext(standing=Standing(relationship=CONTACT), access=REFUSED, profile=None, basis=REFUSED_BASIS,

@@ -72,7 +72,7 @@ def _row(name: str, entry: dict, site: str) -> dict:
 
 
 def connected_sites_of(agent) -> list[dict]:
-    """One row per site, by site. Read mode is never a row, even if a stored `ask` names a site."""
+    """One row per site, by site. Read mode is never a row, even if a stored `READ_MODE_STAMP` entry names a site."""
     rows = [_row(name, entry or {}, site) for name, entry in _entries(agent).items()
             if not iface_mod.is_read_mode(name) for site in (entry or {}).get("sites") or []]
     return sorted(rows, key=lambda r: (r["site"], r["key"]))
@@ -134,9 +134,8 @@ def _validated(name: str, entry: dict) -> dict:
     try:
         return iface_mod.parse({"capabilities": {name: entry}})["capabilities"][name]
     except iface_mod.InterfaceError as exc:
-        # The parser speaks in the stored document's words; a person at the form reads the form's.
-        words = str(exc).replace("a `data: sensitive` capability", "a site that handles sensitive data")
-        raise SettingsError(re.sub(r" \(`\w+:` must be empty\)", "", words)) from exc
+        # The parser names the stored document's keys; a person at the form reads the form's words.
+        raise SettingsError(re.sub(r" \(`\w+:` must be empty\)", "", str(exc))) from exc
 
 
 def _edit(agent, change, *, by, dry_run: bool) -> tuple[Agent, dict, dict]:
@@ -167,7 +166,7 @@ def set_read_mode(agent, fields: dict, *, by, dry_run: bool = False):
     as it stands for this agent, and saves it as the agent's own."""
     def change(doc):
         caps = doc["capabilities"]
-        name = iface_mod.read_mode_override(doc) or iface_mod.ASK
+        name = iface_mod.read_mode_override(doc) or iface_mod.READ_MODE_STAMP
         start = caps.get(name) or _profile_of(iface_mod.default_read_profile(agent))
         caps[name] = _validated(name, {**_profile_of(start), **fields})
     return _edit(agent, change, by=by, dry_run=dry_run)
@@ -205,7 +204,7 @@ def set_site(agent, site: str, fields: dict, *, by, dry_run: bool = False):
 
 def remove_site(agent, site: str, *, by, dry_run: bool = False):
     """Take `site`'s row away. A turn already stamped with it gets the deny-all profile, as for any
-    capability that is gone, and an access line naming it opens nothing."""
+    profile that is gone, and an access line naming it opens nothing."""
     def change(doc):
         name = _name_for_site(doc["capabilities"], site)
         if name is None:

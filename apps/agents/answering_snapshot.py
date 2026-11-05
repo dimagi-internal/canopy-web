@@ -184,7 +184,7 @@ def _agent(agent, members, standings, workspace_sites: set[str]) -> dict:
                                         "via", "manual_only", "may_request_auto")} for row in roster],
         "a2a": _cards(agent, members, roster),
     }
-    if sensitive_data.sensitive_capabilities(agent.interface):
+    if sensitive_data.sensitive_profiles(agent.interface):
         out["facts_for"] = _statements(agent, stamps)
     return out
 
@@ -224,10 +224,10 @@ def _probe_person(role: str) -> tuple:
     return user, Standing(None, False, {}, [line], {}), [line]
 
 
-def _probe_contact(capability: str) -> tuple:
+def _probe_contact(site: str) -> tuple:
     contact = Contact(email=f"contact@{_PROBE_DOMAIN}")
-    line = AgentGrant(kind=AgentGrant.CONTACT, domain=_PROBE_DOMAIN, capability=capability, verified=False,
-                      subject_key=f"probe:use:{capability}")
+    line = AgentGrant(kind=AgentGrant.CONTACT, domain=_PROBE_DOMAIN, capability=site, verified=False,
+                      subject_key=f"probe:use:{site}")
     return contact, None, [line]
 
 

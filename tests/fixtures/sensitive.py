@@ -1,6 +1,6 @@
 """A sensitive conversation and an ordinary one in the same workspace (`world`), and
 the turn, transcript and socket helpers the sensitive-data suites share
-(`tests/test_sensitive_storage.py`, `tests/test_sensitive_read_doors.py`).
+(`tests/test_sensitive_storage.py`, `tests/test_sensitive_read_routes.py`).
 """
 from __future__ import annotations
 

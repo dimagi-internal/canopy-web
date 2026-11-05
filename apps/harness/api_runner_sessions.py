@@ -5,7 +5,7 @@ The box proves itself with an APPROVED `RunnerDeviceKey` and gets a
 is involved, so nothing on the box outlives the hour and nothing a person
 revokes in Settings → Tokens can strand a runner (2026-10-17, cloud-ec2-2).
 
-Anonymous at the door (`auth=None`, and `/api/runner-sessions/` is public in
+Anonymous at the way in (`auth=None`, and `/api/runner-sessions/` is public in
 `apps/common/middleware.py`): the proof IS the authority, and it is checked
 here exactly as `/credentials/resolve` checks it —
 
@@ -64,7 +64,7 @@ def _proven_key(request: HttpRequest) -> RunnerDeviceKey:
 
 @router.post("/", response={201: RunnerSessionOut}, auth=None,
              summary="Exchange a runner's device-key proof for its API token")
-# anonymous door; an ACTIVE key's proof is the authority
+# anonymous route; an ACTIVE key's proof is the authority
 # a box trading its approved device key's proof for an hour-long runner token
 @gate("device-proof", kind="ephemeral-credential", step_up="runner protocol")
 def create_runner_session(request: HttpRequest, payload: RunnerSessionIn):

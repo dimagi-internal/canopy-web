@@ -1,5 +1,5 @@
 """Workspace apps over REST (and so MCP): the store, installing, the draft → test →
-publish life cycle, using an app, and the public door.
+publish life cycle, using an app, and the public pages.
 
 * Managing an app (install, on/off, public, remove) is `integrations` (admin).
 * Maintaining it (drafts, changes, checks, publish, rollback) is `access.may_maintain`:
@@ -7,7 +7,7 @@ publish life cycle, using an app, and the public door.
 * Using it is by the app's own roles (`access.roles_for`). `?draft=<id>` points a
   read or action at that draft's TEST COPY — sample records, nothing sent — and
   needs maintainer rights.
-* The public door (`/api/public-apps/`) serves only an app that is enabled AND
+* The public pages (`/api/public-apps/`) serves only an app that is enabled AND
   public: its public pages, public projections and create-only, rate-limited
   public actions. Anything else is the same 404, so it reveals nothing.
 
@@ -89,7 +89,7 @@ def _installation(request: HttpRequest, workspace: str, key: str, *, enabled: bo
 
 def connection_surface(request: HttpRequest, ref: dict) -> declarations.Surface:
     """The app page a Salesforce call comes from: an enabled app, and a person with its `member`
-    door. Not `_installation`, which lets a manager reach a switched-off app to switch it back on.
+    surface. Not `_installation`, which lets a manager reach a switched-off app to switch it back on.
     What it may ask is the live manifest's `connections`; a draft's calls nothing."""
     inst = AppInstallation.objects.filter(workspace_id=ref["workspace"], key=ref["key"], enabled=True).first()
     if inst is None or "member" not in access.roles_for(request.user, inst):
@@ -569,7 +569,7 @@ def act_workspace_app(request: HttpRequest, workspace: str, key: str, action: st
         m = services.manifest_for(inst, space)
         roles = {"public"} if as_public else _roles(request, inst, space, m)
         if as_public and space == LIVE:
-            raise HttpError(422, "as_public is for previewing a draft; use the public door for the live app")
+            raise HttpError(422, "as_public is for previewing a draft; use the public page for the live app")
         return services.act(inst, roles=roles, action=action, record_id=payload.record, input=payload.input,
                             user=request.user, client_ip=client_ip(request), space=space, manifest=m,
                             public=as_public, params=payload.params)
@@ -762,10 +762,10 @@ def export_workspace_app_subject(request: HttpRequest, workspace: str, key: str,
         raise HttpError(422, str(exc)) from exc
 
 
-# --- the public door -----------------------------------------------------------------------
+# --- the public pages ----------------------------------------------------------------------
 # `auth=None`, and `/api/public-apps/` is allowlisted in apps/common/middleware.py.
 # Every route answers 404 alike for "no such workspace", "no such app", "switched
-# off" and "not public", so the door reveals nothing a visitor was not shown.
+# off" and "not public", so the public pages reveal nothing a visitor was not shown.
 
 
 def _public(workspace: str, key: str) -> AppInstallation:
@@ -880,7 +880,7 @@ def feed_xml_public_app(request: HttpRequest, workspace: str, key: str, collecti
         raise _refusal(exc) from exc
 
 
-# --- the link door ---------------------------------------------------------------------------
+# --- the private link ------------------------------------------------------------------------
 # A private link names ONE record (services.mint_link). Its holder needs no
 # account: the signed token is the credential. It works while the app is
 # switched on, public pages or not — a candidate answers an offer whether or not

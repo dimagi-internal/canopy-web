@@ -20,15 +20,15 @@ What each agent entry says, and where it comes from:
 * listed: the site's tenant allows it (`AppCredentialAgent`) — allowed but
   with no row for the site is listed `ready: false`,
   with a problem saying so;
-* `capabilities`: those that name the site; `handles_sensitive` is `data:
+* `capabilities` (the wire key): the profiles that name the site; `handles_sensitive` is `data:
   sensitive`, and who/when is who last published the interface holding it — exactly
   what `Canopy-Execution`'s `declaration` states (`sensitive_data.as_claim`), so this API and
   the per-call statement cannot disagree;
 * `runners`: the boxes that would take its turns (`setup.runner_takers`, the
   checklist's own definition); `flags_available` is what any of them carries in
   force, `ready_with[flag]` whether one carrying it can take work now;
-* `ready`: a capability for the site AND a runner ready now. A GitHub token is
-  NOT a condition: a site visitor's turn is confined to a capability and is
+* `ready`: a profile for the site AND a runner ready now. A GitHub token is
+  NOT a condition: a site visitor's turn is confined to the site's profile and is
   never lent one (`delegations.github_token_for_turn`).
 """
 from __future__ import annotations
@@ -139,8 +139,8 @@ def _person(user) -> str:
     return (user.get_full_name() or "").strip() or user.email or ""
 
 
-def site_capabilities(agent: Agent, site: str) -> list[dict]:
-    """The agent's published capabilities that name `site` in `sites:`, as listed."""
+def site_profiles(agent: Agent, site: str) -> list[dict]:
+    """The agent's published profiles that name `site` in `sites:`, as listed."""
     out = []
     caps = ((agent.interface or {}).get("capabilities") or {})
     for name in sorted(caps):
@@ -172,7 +172,7 @@ def _runners(agent: Agent) -> tuple[list[Runner], list[Runner]]:
 
 
 def agent_entry(app, agent: Agent) -> dict:
-    capabilities = site_capabilities(agent, app.name)
+    profiles = site_profiles(agent, app.name)
     takers, ready_runners = _runners(agent)
     available = sorted(set().union(*(in_force(r) for r in takers))) if takers else []
     ready_with = {f: any(f in in_force(r) for r in ready_runners) for f in sorted(contract.RUNNER_FLAGS)}
@@ -182,7 +182,7 @@ def agent_entry(app, agent: Agent) -> dict:
     # `(sentence, where it is fixed)`. The sentence keeps naming the place too:
     # `problems` is what a host that predates `problem_links` shows.
     found: list[tuple[str, str]] = []
-    if not capabilities:
+    if not profiles:
         found.append((f"{agent.name} is not connected to {app.name} — connect it under Channels on its settings: canopy › {reach}", reach))
     if not takers:
         found.append((f"no runner takes {agent.name}'s turns: canopy › {running}", running))
@@ -190,7 +190,7 @@ def agent_entry(app, agent: Agent) -> dict:
         names = ", ".join(sorted(r.name for r in takers))
         found.append((f"no runner that takes {agent.name}'s turns is ready now ({names}): "
                       f"canopy › {running}", running))
-    if any(c["handles_sensitive"] for c in capabilities) and not ready_with.get(SENSITIVE_DATA):
+    if any(c["handles_sensitive"] for c in profiles) and not ready_with.get(SENSITIVE_DATA):
         found.append((f"no ready runner with {SENSITIVE_DATA} for {agent.name}: "
                       f"canopy › {running}", running))
     return {
@@ -200,9 +200,9 @@ def agent_entry(app, agent: Agent) -> dict:
         "workspace": agent.workspace_id,
         "owner": _person(agent.owner),
         "url": scoped_url(agent.workspace_id, f"/agents/{agent.slug}"),
-        "capabilities": capabilities,
+        "capabilities": profiles,
         "runners": {"flags_available": available, "ready_with": ready_with},
-        "ready": bool(capabilities) and bool(ready_runners),
+        "ready": bool(profiles) and bool(ready_runners),
         "problems": [text for text, _url in found],
         "problem_links": [{"text": text, "url": url} for text, url in found],
     }

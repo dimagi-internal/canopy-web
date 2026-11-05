@@ -193,7 +193,7 @@ def page_host_grant_id(session: Session, *, user=None, contact=None):
 def host_filters(rows, *, source: str = "", origin_key: str = "", opp_slug: str = "",
                  opp_run_id: str = "", resource: str = "", page_path: str = ""):
     """Narrow a session queryset by the filters a host lists with. Applied AFTER
-    each door's own ACL query, so a filter only ever narrows what that door
+    each route's own ACL query, so a filter only ever narrows what that route
     already allows. Empty string = no filter.
 
     `source` / `origin_key` / `opp_*` match the host's own `metadata` (opaque to
@@ -227,7 +227,7 @@ def add_runner_requirements(session: Session, reqs, *, refuse_keyless: bool = Fa
     conversation that held a host's data keeps the host's floor, whatever token
     touches it next (spec 2026-09-30-zdr-runners).
 
-    `refuse_keyless` (a person's send, `doors.send_from`): when this would make the
+    `refuse_keyless` (a person's send, `send_paths.send_from`): when this would make the
     conversation sensitive and it can get no key — its starter has no vault key, or it
     is a contact's — raise `conversation_keys.CannotHold` and change nothing. All or
     nothing: the switch, the sealing of its history and the refusal never land apart,
@@ -261,7 +261,7 @@ def add_runner_requirements(session: Session, reqs, *, refuse_keyless: bool = Fa
                                  change={"field": "sensitive", "before": False, "after": True})
                 # Its words are sealed from now on, to a key made for its people
                 # (`conversation_keys.ensure_key`; a starter with no vault key gets
-                # none, and the send door refuses them).
+                # none, and the send path refuses them).
                 key = conversation_keys.ensure_key(s)
                 if key is None and refuse_keyless:
                     # Rolls the whole switch back (this atomic block).

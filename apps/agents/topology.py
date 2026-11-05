@@ -9,7 +9,7 @@ member gets what B's published interface lets members reach, someone outside
 B's workspace gets nothing. So "can Ada send Hal work?" is "what does Hal give
 ada@dimagi-ai.com?", which was answerable only by reading Hal's interface,
 Hal's admin list and the workspace's members side by side — and the answer
-for Ada was "the `ask` capability", which needs an email thread, so every
+for Ada was "read mode", which then needed an email thread, so every
 direct Ada→Hal dispatch failed for a week while each screen looked fine.
 
 Every cell is decided by THE rule a real turn is (`turn_context.resolve_turn_context`, see
@@ -37,8 +37,9 @@ from .tree import agents_in_tree
 
 #: Why an edge has the access it has. `editor`: full through a line that gives `write`
 #: (manual when that line is `manual_only`). `no-interface`: refused, and the target
-#: published no capability either.
-OWNER, WS_OWNER, ADMIN, EDITOR, NO_INTERFACE, CAPABILITIES, NOTHING, NOT_MEMBER, NO_LOGIN = (
+#: published no profile either. `PROFILES`: confined to the listed profiles (its wire value is
+#: `capabilities`).
+OWNER, WS_OWNER, ADMIN, EDITOR, NO_INTERFACE, PROFILES, NOTHING, NOT_MEMBER, NO_LOGIN = (
     "owner", "workspace-owner", "admin", "editor", "no-interface", "capabilities",
     "nothing-offered", "not-member", "no-login",
 )
@@ -73,7 +74,7 @@ def _edge(src: Agent, dst: Agent, standings: access.Standings, may_manage: bool)
             out.update(access="full", basis=EDITOR)
         elif d.access == turn_context.CONFINED:
             caps = iface_mod.reachable(d.standing.permissions, iface)
-            out.update(access="confined", basis=CAPABILITIES, capabilities=caps)
+            out.update(access="confined", basis=PROFILES, capabilities=caps)
         else:
             out["basis"] = NOTHING if iface_mod.published(iface) else NO_INTERFACE
         out["can_grant"] = may_manage

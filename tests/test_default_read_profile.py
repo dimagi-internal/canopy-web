@@ -7,7 +7,7 @@ thing out: a diff to it needs a person's review, and `READ_PROFILE_VERSION` must
 from types import SimpleNamespace
 
 from apps.agents import interface
-from apps.agents.interface_default import READ_PROFILE_VERSION, default_read_profile
+from apps.agents.interface_default import READ_MODE_STAMP, READ_PROFILE_VERSION, default_read_profile
 
 
 def _agent(**kw):
@@ -17,8 +17,8 @@ def _agent(**kw):
 
 def test_bare_agent_exact():
     assert default_read_profile(_agent(), skills=[]) == {
-        "description": "Ask ada a question. It answers from its own repo and docs; "
-                       "it cannot change anything but draft its reply.",
+        "description": "Read mode: ada answers questions from its own repo and docs, "
+                       "and cannot change anything but draft its reply.",
         "entry": None,
         "tools": ["Read", "Write", "ToolSearch", "mcp__*canopy-web__who_is_asking"],
         "bash": [],
@@ -84,12 +84,12 @@ def test_entry_only_when_the_catalog_has_answer_caller():
         assert default_read_profile(_agent(), skills=other)["entry"] is None
 
 
-def test_it_is_a_valid_capability_and_pinned_version():
+def test_it_is_a_valid_profile_and_pinned_version():
     got = default_read_profile(_agent(email="a@b.c", repo_url="https://github.com/o/r"), skills=["answer-caller"])
-    parsed = interface.parse({"capabilities": {"ask": got}})["capabilities"]["ask"]
+    parsed = interface.parse({"capabilities": {READ_MODE_STAMP: got}})["capabilities"][READ_MODE_STAMP]
     assert parsed["tools"] == got["tools"] and parsed["bash"] == got["bash"]
     assert parsed["write_paths"] == got["write_paths"]
-    assert READ_PROFILE_VERSION == 3
+    assert READ_PROFILE_VERSION == 4
 
 
 def test_a_fresh_dict_each_call():

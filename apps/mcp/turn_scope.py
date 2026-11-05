@@ -2,7 +2,7 @@
 
 Who-is-asking §7. A caller token (harness.caller_tokens) already makes the tools
 run as the CALLER — their own ACL, or none for an outside contact. This
-middleware adds the agent half: only the canopy tools the caller's capability
+middleware adds the agent half: only the canopy tools the caller's profile
 lists exist for that session. Listing and calling are both filtered, and
 `who_is_asking` answers only about the session's own conversation.
 
@@ -70,7 +70,7 @@ def read_only(tool) -> bool:
 def _allowed(name: str, claims: dict, tool=None) -> bool:
     if claims.get("sensitive"):
         # A sensitive turn's session: the canopy tools a `data: sensitive`
-        # capability may hold (and its page's own actions), never more, whatever
+        # connected site may hold (and its page's own actions), never more, whatever
         # else the claims say (`caller_tokens._sensitive_grant` already narrowed
         # them; this is the second line).
         if not sensitive_tool(name):

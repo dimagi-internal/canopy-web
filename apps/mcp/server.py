@@ -49,7 +49,7 @@ def _verifier() -> CanopyPATVerifier:
 mcp = FastMCP("canopy-web", auth=_verifier())
 mcp.middleware.insert(0, _thread_context.mcp_middleware())  # outermost: apps/common/thread_context.py
 
-# A confined session's caller token sees only its capability's canopy tools.
+# A confined session's caller token sees only its profile's canopy tools.
 from .turn_scope import TurnScopeMiddleware  # noqa: E402
 
 mcp.add_middleware(TurnScopeMiddleware())

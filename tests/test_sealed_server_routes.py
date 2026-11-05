@@ -1,10 +1,10 @@
-"""The server's doors to a sensitive (private) conversation, each driven through its
+"""The server's routes into a sensitive (private) conversation, each driven through its
 real entry point: who may open its socket, send into it, fork it, read its page,
 ship its rows, join it, and what its info, push and key read say.
 
-docs/architecture/tenancy.md § Sensitive conversations. One test (or two) per door
-an adversarial audit found open; `tests/test_sensitive_read_doors.py` holds the
-read doors that were already shut.
+docs/architecture/tenancy.md § Sensitive conversations. One test (or two) per route
+an adversarial audit found open; `tests/test_sensitive_read_routes.py` holds the
+read routes that were already shut.
 """
 from __future__ import annotations
 
@@ -117,7 +117,7 @@ def test_a_minted_session_cookie_cannot_open_a_sensitive_chat_socket():
     cookie = minted(w["user"]).cookies[settings.SESSION_COOKIE_NAME].value
     ok, frames = _connect(path, cookie)
     assert not ok and frames == []
-    # The person, in their own browser, still does: the door is shut to the token only.
+    # The person, in their own browser, still does: the route is shut to the token only.
     ok, frames = _connect(path, w["c"].cookies[settings.SESSION_COOKIE_NAME].value)
     assert ok and frames and "cc1:" in str(frames)
     # An ordinary conversation still opens to the minted cookie: it is not a person,
@@ -182,7 +182,7 @@ def test_even_its_owner_cannot_send_into_it_from_slack_or_branch_it(private_thre
     assert Turn.objects.count() == turns and Session.objects.count() == sessions
 
 
-def test_no_door_adds_a_participant_to_a_sensitive_conversation_implicitly(w):
+def test_no_route_adds_a_participant_to_a_sensitive_conversation_implicitly(w):
     from apps.canopy_sessions.participants import ensure_participant
 
     bob = _member(w, "bob")
@@ -207,7 +207,7 @@ def test_rows_from_before_it_became_sensitive_are_sealed_when_it_does(w):
     RunnerBinding.objects.create(session=cold, runner=w["runner"], session_key="k", tail=[{"text": REPLY}],
                                  summary=f"Amina: {REPLY}",
                                  pending_question={"question": "Show Amina's record?", "options": []})
-    # What makes a conversation sensitive from every door: its requirements grow.
+    # What makes a conversation sensitive from every route: its requirements grow.
     services.add_runner_requirements(cold, {"sensitive_data"})
 
     stored = str(list(Message.objects.filter(session=cold).values("plaintext", "content")))
@@ -488,7 +488,7 @@ def test_session_info_shows_no_bookkeeping_metadata_and_no_box_session(w):
     assert "cli-secret-1" not in str(body) and "Amina" not in str(body)
 
 
-# --- 9. the unbound stream door takes only the turn's own transcript --------------------
+# --- 9. the unbound stream route takes only the turn's own transcript --------------------
 
 
 def _ship(client, runner, session, transcript_id, text=REPLY):
@@ -498,7 +498,7 @@ def _ship(client, runner, session, transcript_id, text=REPLY):
         content_type="application/json")
 
 
-def test_the_unbound_stream_door_takes_only_the_running_turns_own_transcript(w):
+def test_the_unbound_stream_route_takes_only_the_running_turns_own_transcript(w):
     turn = _turn(w["hot"], capability="data", claimed_by=w["runner"], status=Turn.RUNNING)
     assert _ship(w["c"], w["runner"], w["hot"], "").status_code == 404
     assert _ship(w["c"], w["runner"], w["hot"], "cli-1").status_code == 200
@@ -508,7 +508,7 @@ def test_the_unbound_stream_door_takes_only_the_running_turns_own_transcript(w):
     assert _ship(w["c"], w["runner"], w["hot"], "cli-other", "planted").status_code == 404
 
 
-def test_the_unbound_stream_door_asks_whether_the_box_may_still_hold_the_agent(w):
+def test_the_unbound_stream_route_asks_whether_the_box_may_still_hold_the_agent(w):
     from apps.harness.models import Runner
 
     stranger = User.objects.create_user("eve", "eve@dimagi.com", "pw")

@@ -8,7 +8,7 @@ tools the agent discovers and calls like any other. The host never learns MCP,
 and any MCP-speaking agent gets the tools — not only canopy's own.
 
 **Why a Provider rather than `@mcp.tool`.** canopy's other tools are static
-Python functions, correct for capabilities canopy itself owns. These are
+Python functions, correct for tools canopy itself owns. These are
 declared by a host at RUNTIME, differ per user, and vanish when a tab closes,
 so the tool list has to be computed per caller. FastMCP 3's `Provider` is
 exactly that seam — `add_provider` is documented as "a provider for dynamic

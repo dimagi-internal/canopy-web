@@ -112,7 +112,7 @@ def _bearer_raw(scope) -> str:
 
 def _principal_from_bearer_sync(scope, *, stamp: bool = True):
     """The user principal the `Authorization: Bearer` header names, through the
-    one resolver every door uses (`apps/tokens/principal.py`) — or None.
+    one resolver every entry point uses (`apps/tokens/principal.py`) — or None.
 
     A socket takes a PAT, a delegated token, or a runner's own key; a runner key
     opens only its own runner's control channel (apps/harness/runner_auth.py),
@@ -157,7 +157,7 @@ def _user_from_bearer(scope):
 
 async def still_signed_in(scope) -> bool:
     """Does the credential that opened this socket still sign it in, as the same
-    user? Re-resolved through the same door `RealtimeAuthMiddleware` used.
+    user? Re-resolved through the same path `RealtimeAuthMiddleware` used.
 
     A socket is authenticated once, at the handshake, and then lives for hours.
     Revoking the PAT behind it closed nothing: a runner whose token was revoked
@@ -295,7 +295,7 @@ class RealtimeAuthMiddleware:
 
     async def __call__(self, scope, receive, send):
         scope = await _redeem_ticket(scope)
-        # WHICH door authenticated this socket, alongside who — the "how sure are
+        # WHICH entry point authenticated this socket, alongside who — the "how sure are
         # we" grade a turn's initiator carries (apps/harness/initiator.py). A PAT
         # and an app-delegated token resolve to the same user and are not the
         # same claim.

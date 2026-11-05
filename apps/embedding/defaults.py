@@ -1,6 +1,6 @@
 """Which agent an embedded panel opens on, for this visitor.
 
-One ranking, decided here so every door answers the same way:
+One ranking, decided here so every route answers the same way:
 
 1. **The page chose** — a token bound to one agent (`panel_context(agent=...)`,
    key-mode `PAGE_AGENTS`, the signed `canopy_agent` claim). The site offers that

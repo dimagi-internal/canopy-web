@@ -86,7 +86,7 @@ const REFUSED = {
 }
 const FACTS = {
   session_id: 's1', agent: 'agent', workspace: 'connect', channel: 'canopy_web_chat', runner_requested: null,
-  runner_bound: null, site: '', page: '', sensitive: false, sensitive_requirement: '', is_review: false, review_ask: null,
+  runner_bound: null, site: '', page: '', sensitive: false, sensitive_requirement: '', is_review: false, review_of: null,
   audience: { creator: [1], participants: [], agent_admins: [2], coaches: {}, project_teams: {} },
   participants: [], session_grants: [],
   send_blocks: [{ code: 'cannot_write', why: 'you can read this session but not act in it', scope: 'some_people' }],

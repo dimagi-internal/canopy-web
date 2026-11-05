@@ -16,7 +16,7 @@ from apps.harness import initiator as who
 from apps.harness import sensitivity
 from apps.realtime.groups import chat_user_group, session_group
 
-from . import access, agui, attach, conversation_keys, doors, drafts, presence, serializers, services, stream_map
+from . import access, agui, attach, conversation_keys, drafts, presence, send_paths, serializers, services, stream_map
 from . import control as chat_control
 from . import send as chat_send
 from . import session_state
@@ -387,10 +387,10 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
             user_message_id = await database_sync_to_async(self._commit_and_send)(text, client_id)
         except conversation_keys.CannotHold as exc:
             # A sensitive conversation is sealed to its people's vault keys: say so,
-            # in the sentence the REST door gives as a 422.
+            # in the sentence the REST route gives as a 422.
             await self._error("cannot_hold", str(exc), detail={"client_id": client_id})
             return
-        except doors.NotInIt as exc:
+        except send_paths.NotInIt as exc:
             await self._error("forbidden", str(exc), detail={"client_id": client_id})
             return
         draft = await database_sync_to_async(drafts.draft_for)(self.session, self.user)
@@ -460,7 +460,7 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         # and name a widget's host the way the REST send does (`who.channel`). The
         # page's grant travels with the send, as on REST.
         services.note_host_grant(self.session, self.scope.get("host_grant_id"), user=self.user)
-        msg, _turn = doors.send_from(
+        msg, _turn = send_paths.send_from(
             "socket", session=self.session, text=text, user=self.user, client_id=client_id,
             runner_requirements=self.scope.get("runner_requirements", ()),
             chat_surface=sensitivity.scope_is_chat_surface(self.scope),
@@ -867,7 +867,7 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
 
 def _socket_context(scope) -> dict:
     """A WebSocket's provenance context: client=websocket, its user agent and
-    address, and the door that authenticated it (`channels_auth`)."""
+    address, and the way in that authenticated it (`channels_auth`)."""
     from apps.common import request_context as rc
     from apps.common.client_ip import from_scope
 

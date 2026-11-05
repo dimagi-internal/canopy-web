@@ -5,7 +5,7 @@ true, so a turn at a repo the box HAS but nobody listed sat QUEUED forever (labs
 2026-07-28, repo `canopy`). The answer was in emdash's own `projects` table the
 whole time; this read is what lets the runner report it instead.
 
-Same fail-soft contract as the two session reads next door, for the same reason
+Same fail-soft contract as the two neighbouring session reads, for the same reason
 one notch worse: a MISSING db is a legitimate "no emdash here" and returns [],
 but a real READ failure must RAISE, because the caller has to be able to omit
 the field rather than assert "I can drive nothing" — an empty report would blank

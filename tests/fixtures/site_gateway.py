@@ -44,10 +44,10 @@ IFACE = {"capabilities": {
 }}
 
 
-def let_visitors_in(agent, capabilities=("connect", "ask")):
-    """Members and contacts may use each named capability (`ask` is what a `read_only` line
-    opens), and workspace editors run the agent, manually: IFACE's access list."""
-    for name in capabilities:
+def let_visitors_in(agent, profiles=("connect", "ask")):
+    """Members and contacts may use each named profile (read mode, stamped `ask` here, is what a
+    `read_only` line opens), and workspace editors run the agent, manually: IFACE's access list."""
+    for name in profiles:
         for contact in (True, False):
             if name == "ask":
                 allow(agent, role=roles.READ_ONLY, contact=contact)

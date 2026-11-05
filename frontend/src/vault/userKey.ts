@@ -92,7 +92,7 @@ export async function openScalar(ks: VaultKeysetOut, prompt: UnlockPrompt): Prom
   const asked = [ask.passkey && 'passkey', ask.passphrase && 'passphrase'].filter(Boolean) as string[]
   const secret_key_remembered = !ask.needsSecretKey
   const choice: UnlockChoice = ask.passkey && !ask.passphrase ? { method: 'passkey' } : await prompt(ask)
-  // The server log gets what only the browser sees: which door was offered and tried, and how it failed.
+  // The server log gets what only the browser sees: which method was offered and tried, and how it failed.
   const fail = (method: 'passkey' | 'passphrase', error: string, outcome: 'failed' | 'unsupported' = 'failed') =>
     reportVaultClient({ stage: 'unlock', method, outcome, error, asked, secret_key_remembered })
   if (choice.method === 'passkey') {

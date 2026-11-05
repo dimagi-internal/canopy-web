@@ -31,7 +31,7 @@ def _hash(raw: str) -> str:
 def mint(turn: Turn, *, scoped: bool = False) -> str:
     """A token for this turn's conversation. Returned once, never stored raw.
 
-    `scoped` is the full-profile variant (`is_caller_scoped`): no capability to
+    `scoped` is the full-profile variant (`is_caller_scoped`): no confined profile to
     confine it to, so it lists every tool but still runs each as the asker."""
     raw = PREFIX + secrets.token_urlsafe(32)
     CallerToken.objects.create(token_hash=_hash(raw), turn=turn, chat_session_id=turn.chat_session_id,
@@ -118,11 +118,11 @@ class Grant:
         return any(fnmatch.fnmatchcase(name, g) for g in self.tool_globs)
 
 
-def canopy_tool_globs(capability: dict | None) -> list[str]:
-    """The canopy MCP tools a capability lists, as globs over canopy's own tool
+def canopy_tool_globs(entry: dict | None) -> list[str]:
+    """The canopy MCP tools a profile lists, as globs over canopy's own tool
     names: `mcp__*canopy-web__who_is_asking` → `who_is_asking`."""
     out = []
-    for pattern in (capability or {}).get("tools") or []:
+    for pattern in (entry or {}).get("tools") or []:
         if _SERVER in pattern:
             out.append(pattern.split(_SERVER, 1)[1])
     return out
@@ -183,9 +183,9 @@ def resolve(raw: str) -> Grant | None:
 
 def _sensitive_grant(current: Turn, agent, globs: list[str], **kw) -> Grant | None:
     """A sensitive turn's grant: at most the canopy tools a `data: sensitive`
-    capability may hold (`sensitive_data.SENSITIVE_CANOPY_TOOLS`, and its page's own
+    profile may hold (`sensitive_data.SENSITIVE_CANOPY_TOOLS`, and its page's own
     actions), and only while
-    its capability still says `data: sensitive`. Asked on every call, so an
+    its profile still says `data: sensitive`. Asked on every call, so an
     interface edited mid-turn — the switch turned off, a tool added — narrows the
     token at once rather than widening it: a sensitive turn never reaches a tool
     that would write its data somewhere else, whatever the interface says now."""
@@ -193,7 +193,7 @@ def _sensitive_grant(current: Turn, agent, globs: list[str], **kw) -> Grant | No
         return None
     allowed = sorted(name for name in sensitive_data.SENSITIVE_CANOPY_TOOLS
                      if any(fnmatch.fnmatchcase(name, g) for g in globs))
-    # The page's own actions, when the capability lists them (a site capability always
+    # The page's own actions, when the profile lists them (a connected site always
     # does: `interface.PAGE_TOOLS`) — never a wider glob than `page_*`, whatever it says.
     if any(fnmatch.fnmatchcase(sensitive_data.PAGE_TOOL_GLOB, g) for g in globs):
         allowed.append(sensitive_data.PAGE_TOOL_GLOB)

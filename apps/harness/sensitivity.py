@@ -36,12 +36,12 @@ from apps.tokens import kinds
 from . import runner_requirements as rr
 
 SENSITIVE_DATA = rr.SENSITIVE_DATA
-#: The refusal every re-exposure door gives, so a person reads one sentence.
+#: The refusal every re-exposure route gives, so a person reads one sentence.
 REFUSAL = ("this conversation holds a host's sensitive data, so canopy does not share, export "
            "or copy it")
 #: Why a sensitive conversation cannot be named: a title is shown everywhere its words are not.
 NO_TITLE = ("this conversation holds a host's sensitive data, so canopy keeps no title for it")
-#: Why a door that would hand the words on refuses someone not in the conversation.
+#: Why a route that would hand the words on refuses someone not in the conversation.
 NOT_IN_IT = ("this conversation holds a host's sensitive data: only the people in it can "
              "bring someone in or copy it")
 #: Why a fork of one is refused to anyone but its owner.
@@ -50,7 +50,7 @@ NOT_OWNER_FORK = ("this conversation holds a host's sensitive data: only its own
 NOT_IN_IT_SEND = ("this conversation holds a host's sensitive data: only the people in it can "
                   "send into it, from canopy's chat or the site's panel")
 #: Why its page (what it shows, what it can do) is refused to someone not in it, or
-#: through a door that is not its chat surface (MCP, a PAT, a minted session).
+#: through a route that is not its chat surface (MCP, a PAT, a minted session).
 NOT_IN_IT_PAGE = ("this conversation holds a host's sensitive data: only the people in it can "
                   "see or act on its page, from canopy's chat or the site's panel")
 #: Result-bearing keys a tool result may carry, from every runner and the gateway:
@@ -455,7 +455,7 @@ def withheld_note(note: str) -> str:
 # participant joining — so its Messages keep the words in `Message.sealed`, beside
 # metadata-only columns. `sealed` is sealed to the conversation's own public key
 # (`canopy_sessions.conversation_keys`, spec 2026-10-23 §2): canopy-web can write it
-# and holds no key that reads it back. `readable` is the one door that hands the
+# and holds no key that reads it back. `readable` is the one function that hands the
 # ciphertext out, and only to a reader `reads_content` admits — the conversation's
 # own people, whose browsers hold the key.
 
@@ -543,7 +543,7 @@ def people_in(sessions, user) -> set:
 def request_is_chat_surface(request) -> bool:
     """A chat surface: the person at a browser, or the widget / SDK (a contact's or
     a connected site's token). Never an MCP tool call, a PAT, OAuth or a session
-    minted from a token — the doors through which an AI reads sessions."""
+    minted from a token — the routes through which an AI reads sessions."""
     if getattr(request, "via_mcp", False):
         return False
     if getattr(request, "contact", None) is not None or getattr(request, "delegated_app", None):
@@ -555,7 +555,7 @@ def request_is_chat_surface(request) -> bool:
 
 def scope_is_chat_surface(scope) -> bool:
     """The socket's form of `request_is_chat_surface`: a contact's or a site's widget,
-    or a person's own browser session. `RealtimeAuthMiddleware` says which door
+    or a person's own browser session. `RealtimeAuthMiddleware` says which way in
     signed the socket in (`auth_method`): "session" only for a cookie a person
     signed in with — a session minted from a token is "minted"
     (`channels_auth.MINTED`), a bearer is its token's kind, and none is a person."""

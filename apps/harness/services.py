@@ -1,7 +1,7 @@
 """Harness domain services — the only write path for Runner/Turn/TurnEvent.
 
 What lives here is a turn's lifecycle around the claim: enqueue (with the
-capability gate on the way in; an email turn's sender and thread are resolved
+profile decision on the way in; an email turn's sender and thread are resolved
 by `channels.email`), pause, heartbeat (liveness only), mark running, finish,
 cancel. All functions are synchronous and transaction-safe.
 
@@ -52,11 +52,11 @@ def _apply_capability(turn: Turn, requested: str | None = None) -> None:
     THE rule, `apps.agents.turn_context.resolve_turn_context` (docs/architecture/access.md): FULL
     for its owner, admins, canopy's own turns and an editor on its access list (whose
     turn runs manual if their line says so — `turn_mode.editor_cap`); a user or a viewer
-    gets the capability their role may use. Anyone
+    gets the confined profile their role may use (read mode or a connected site). Anyone
     offered nothing is refused: the turn is written already CANCELLED with the
     reason and what they CAN do, for the same reasons a blocked sender's is (the
     idempotency key holds, an old runner sees a 201, and the refusal is visible
-    in the turn log). Every door that makes an agent work — the harness API, a
+    in the turn log). Every route that makes an agent work — the harness API, a
     chat send, Slack, email — comes through here.
     """
     from apps.agents import turn_context
@@ -221,7 +221,7 @@ def enqueue_turn(
     mail_trigger = None
     if origin == Turn.ORIGIN_EMAIL and agent is not None:
         # Mail names its own asker and conversation (apps/harness/channels/email.py):
-        # who wrote in, refused at the door when blocked, bound to its thread's session.
+        # who wrote in, refused on the way in when blocked, bound to its thread's session.
         arrival = email_channel.arrive(
             agent, origin_ref, initiator=initiator, session=session, authserv_id=authserv_id,
             origin=origin, idempotency_key=idempotency_key, prompt=prompt, routing=routing)
@@ -243,7 +243,7 @@ def enqueue_turn(
         if not (job and job_repo) or agent is None or session is not None or project:
             raise ValueError("a job turn names its job and repo and targets an agent")
         routing, prompt = Turn.CLOUD_ONLY, ""
-    # A conversation whose words its person deleted takes no more, from any door.
+    # A conversation whose words its person deleted takes no more, from any route.
     if session is not None and session.content_deleted_at is not None:
         raise ValueError("this session's content was deleted")
     # Looked up inside the target's workspace: another workspace holding the
@@ -261,8 +261,8 @@ def enqueue_turn(
         from . import initiator as who
         initiator = who.unknown(via=origin)
     # An agent's turn login working for a person (turn_asker): every turn it starts
-    # carries them, whichever door it came through — a dispatch, a send into another
-    # session, a new session. The server's record only; a client's is dropped at the door.
+    # carries them, whichever route it came through — a dispatch, a send into another
+    # session, a new session. The server's record only; a client's is dropped on the way in.
     from . import turn_asker  # noqa: PLC0415 — cycle: turn_asker -> turn_agent_tokens -> services
 
     on_behalf = turn_asker.of(getattr(initiator, "user", None))
@@ -360,7 +360,7 @@ def enqueue_turn(
     if origin == Turn.ORIGIN_EMAIL:
         email_channel.log_unproven_member(turn)
         if session is not None and turn.status in Turn.TERMINAL:
-            # Refused at the door (offered nothing, an admission rule): written
+            # Refused on the way in (offered nothing, an admission rule): written
             # terminal without passing `close_turn`, so its anchor is checked here.
             from . import mail_anchor  # noqa: PLC0415 — cycle: mail_anchor -> session_sync -> harness services
 
@@ -538,7 +538,7 @@ def heartbeat(
     `profiles` is the profile-enforcement version the runner REPORTS it can
     honour (see `profile_q`). Written on every beat, and 0 from a runner that
     does not send it — so a downgrade takes effect on the next beat, and nothing
-    but the runner itself can claim the capability for it.
+    but the runner itself can claim that version for it.
 
     `projects` is the runner REPORTING which repos it can drive (spec
     2026-07-28) — the answer emdash already had, replacing a list a human typed

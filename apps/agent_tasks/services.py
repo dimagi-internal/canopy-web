@@ -263,7 +263,7 @@ def _session_lives_on(turn) -> bool:
 
 def _nudge(task: AgentTask, ended) -> None:
     """A fresh turn for the same agent and task. Not a send into the ended turn's
-    session: that path is a person's chat door (its ACL, sealing, authorship), and a
+    session: that path is a person's chat route (its ACL, sealing, authorship), and a
     nudge has no person behind it — so it is canopy's own turn, accountable to the
     task's creator, carrying the task's instructions again."""
     n = task.nudges + 1

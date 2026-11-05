@@ -104,7 +104,7 @@ class Turn(models.Model):
     )
     # The repo case. The session you want to revise from the phone is working on
     # canopy-web — a repo, not an agent (of 22 emdash projects, ~5 are agents).
-    # This is a data-model gap, not a capability one: cdp_control.create_task is
+    # This is a data-model gap, not a missing feature: cdp_control.create_task is
     # already project-generic and has no concept of an agent.
     #
     # A pseudo-agent per repo was rejected: it would serialize repo work behind
@@ -112,7 +112,7 @@ class Turn(models.Model):
     # to parallelize) and give every repo KPIs, a needs-you
     # inbox, and a skills catalog it has no meaning for.
     project = models.CharField(max_length=100, blank=True, default="")
-    # The chat case: a session turn (the interactive front-door). Its tenancy
+    # The chat case: a session turn (the interactive way in). Its tenancy
     # derives from chat_session.workspace, and it serializes per SESSION (not per
     # agent) so two conversations with the same agent don't block each other.
     # Named chat_session (not session) — Turn already has a session_id CharField
@@ -209,7 +209,7 @@ class Turn(models.Model):
     # CALLER of the enqueue: for an email that is the runner that posted it, not
     # the person who wrote in. Record-only today; the access phases read these.
     # WHICH PROFILE this turn runs in: "" is the agent's full profile; anything
-    # else names a capability from its declared interface, and the runner and
+    # else names its confined profile (read mode or a connected site), and the runner and
     # the agent's guard confine the session to it. Decided once, at enqueue,
     # from the initiator — see `apps/agents/access.py::decide`.
     capability = models.CharField(max_length=48, blank=True, default="")
@@ -522,7 +522,7 @@ class CallerToken(models.Model):
     headers helper sends it in place of the PAT. canopy resolves it to the
     conversation's CURRENT turn: that turn's asker is who the tools run as (their
     own ACL, or no canopy user at all for an outside contact), and its
-    capability decides which tools exist.
+    profile decides which tools exist.
 
     Bound to the conversation when there is one, because a long confined session
     outlives any single turn and its MCP connection is not re-made per turn.
@@ -535,7 +535,7 @@ class CallerToken(models.Model):
     turn = models.ForeignKey("Turn", on_delete=models.CASCADE, related_name="caller_tokens")
     #: Minted for a FULL-profile turn asked by someone who is not the agent's
     #: owner, an admin or canopy (an editor): the session is not
-    #: confined to a capability, but its canopy reads must still be the ASKER's
+    #: confined, but its canopy reads must still be the ASKER's
     #: (who-is-asking phase 5). Such a token lists every tool and runs each as
     #: the conversation's current asker; a confined token never does.
     scoped = models.BooleanField(default=False)

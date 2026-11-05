@@ -1,6 +1,6 @@
 """Every kind of credential a request can arrive with, and what each may do — one table.
 
-A request is authenticated by exactly one credential, and every door records which
+A request is authenticated by exactly one credential, and every entry point records which
 (`request.auth_credential["type"]`, from `BearerTokenAuthMiddleware`, the MCP server
 and the WebSocket handshake; a browser session records none and reads as `session`).
 The questions asked of it — may it mint another credential, may it say it acts on
@@ -8,11 +8,11 @@ someone's behalf, is it a turn speaking for the person who asked — used to be 
 comparisons written where each was needed, so a kind added later was whatever each
 of those comparisons happened to make of it. They read this table now, and
 `tests/test_token_kinds.py` fails a comparison against a kind's name written
-anywhere else, and a kind a door can record that is not here.
+anywhere else, and a kind an entry point can record that is not here.
 
 What a kind may REACH (a runner key the runner protocol, an HCP token
 `/api/hcp/v1/`, a delegated token `site ∩ user`, a caller token the MCP tool routes)
-is enforced at the door, before any view; `reaches` here says where.
+is enforced on the way in, before any view; `reaches` here says where.
 """
 from __future__ import annotations
 

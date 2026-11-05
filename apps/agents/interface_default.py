@@ -7,51 +7,55 @@ changes it. See `apps/agents/interface.py` and `docs/architecture/access.md`.
 from __future__ import annotations
 
 def default_interface() -> dict:
-    """No door and no read-mode override. A fresh dict every call."""
+    """No connected site and no read-mode override. A fresh dict every call."""
     return {"capabilities": {}}
 
 
 # --- the default read profile ---------------------------------------------------------------
 #
-# What a person who holds `read` (and not `write`) gets from an agent that published no `ask` of
+# What a person who holds `read` (and not `write`) gets from an agent that published no read mode of
 # its own: one confined "read mode", built here from the agent and pinned exactly by
 # `tests/test_default_read_profile.py` so a code change that widens every agent at once cannot
 # pass unnoticed. Spec: `docs/superpowers/specs/2026-11-03-agent-read-mode-and-doors-design.md`.
 
-#: The two names of read mode: `read` (the default, canopy's own profile) and `ask` (an agent's
-#: own published override, and every turn stamped before read mode existed).
+#: The two stored names of read mode: `read` (the default, canopy's own profile) and
+#: `READ_MODE_STAMP` (an agent's own published override, and every turn stamped before read mode
+#: existed). `READ_MODE_STAMP` is the ONE place that older name lives: it is a stored and wire value
+#: (`Turn.capability`, an `AgentGrant`/`AdmissionRule` naming it, the published document's key, the
+#: envelope's `capability`), never a word a person reads. New read-mode entries are still written under
+#: it, because renaming it would split live conversations (`session_naming.restricted_key`).
 READ_MODE = "read"
-ASK_MODE = "ask"
-READ_MODE_NAMES = (ASK_MODE, READ_MODE)
+READ_MODE_STAMP = "ask"
+READ_MODE_NAMES = (READ_MODE_STAMP, READ_MODE)
 
 
 def is_read_mode(name: str | None) -> bool:
-    """THE one place that says `read` and `ask` are the same thing. The decision, `opens`,
+    """THE one place that says `read` and `READ_MODE_STAMP` are the same thing. The decision, `opens`,
     `profile`, the envelope and admission matching all ask this; the enforcement layers never
-    read a capability's name, so it is a decision-time alias only. Stored names are never
+    read a profile's name, so it is a decision-time alias only. Stored names are never
     rewritten."""
     return name in READ_MODE_NAMES
 
 
 #: Bump on ANY change to what `default_read_profile` returns; the envelope records it.
-READ_PROFILE_VERSION = 3
+READ_PROFILE_VERSION = 4
 
 #: The skill whose presence in the agent's published catalog gives the default its entry.
 ANSWER_CALLER_SKILL = "answer-caller"
 
 #: The scratch folders a read-mode turn may write its draft into. `-read` is the name canopy gives it;
-#: `-ask` is the legacy fleet name: the fleet template's `answer-caller` skill (ace, echo, eva, hal,
-#: trellis) already drafts under `.<slug>-ask/`, so listing both lets those skills work unchanged.
-#: Nothing else is writable.
-SCRATCH_SUFFIXES = ("read", "ask")
+#: the other is the fleet's stored folder name: the fleet template's `answer-caller` skill (ace, echo,
+#: eva, hal, trellis) drafts under it, and published read modes list it in `write_paths`, so listing
+#: both lets those skills work unchanged. Nothing else is writable.
+SCRATCH_SUFFIXES = (READ_MODE, READ_MODE_STAMP)
 
 
 def default_read_profile(agent, *, skills=None) -> dict:
-    """The confined profile read mode runs in when the agent publishes no `ask` override.
+    """The confined profile read mode runs in when the agent publishes no read-mode override.
 
     A pure function of the agent: its slug (the scratch folders and its mail script), whether it has
     a mailbox (`email`) and whether its published skill catalog has `answer-caller` (`skills`: the bare skill names; read from `agent.skills` when not
-    given). Same fields as a published capability, so the runner, the guard and the caller token
+    given). Same fields as a published profile, so the runner, the guard and the caller token
     read it unchanged.
     """
     slug = agent.slug
@@ -64,8 +68,8 @@ def default_read_profile(agent, *, skills=None) -> dict:
         bash += [f"bin/{slug}-email --reply-all --thread-id {{thread_id}} --subject-file {d} --body-file {d}"
                  for d in scratch]
     return {
-        "description": f"Ask {slug} a question. It answers from its own repo and docs; "
-                       "it cannot change anything but draft its reply.",
+        "description": f"Read mode: {slug} answers questions from its own repo and docs, "
+                       "and cannot change anything but draft its reply.",
         "entry": (f"/{slug}:{ANSWER_CALLER_SKILL} --thread {{thread_id}}"
                   if ANSWER_CALLER_SKILL in names else None),
         # No Grep or Glob: the cloud runner's Claude Code build has neither ("No such tool

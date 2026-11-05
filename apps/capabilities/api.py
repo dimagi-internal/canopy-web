@@ -4,7 +4,7 @@
 publish), and `/api/capabilities/…` — the workspace admin's grants and the
 leases. Every route is also an MCP tool.
 
-Who may call (the same doors as the rest of /api/agents, never a second rule):
+Who may call (the same routes as the rest of /api/agents, never a second rule):
 
 - the agent's OWN canopy login (`Agent.user`) — what an agent's PAT is; or
 - a member of the agent's workspace (non-members get the same 404 as a missing
@@ -17,7 +17,7 @@ Who may call (the same doors as the rest of /api/agents, never a second rule):
   (`integrations`) or the agent itself, and read MASKED by any member.
 
 A pool slot's SECRET data is sealed to the agent's readers (canopy-web cannot
-open it) and leaves canopy-web through exactly one door, still sealed: the lease
+open it) and leaves canopy-web through exactly one way out, still sealed: the lease
 read (acquire response, GET /leases/{id}) of the user who acquired a ready lease
 on that slot (`slot_data.deliver`).
 

@@ -113,7 +113,7 @@ export default function WorkspaceAppPage() {
           page={page}
           roles={page.audience === 'public' ? ['public'] : [...app.my_roles]}
           params={params}
-          door={page.audience === 'public' ? 'preview' : 'member'}
+          surface={page.audience === 'public' ? 'preview' : 'member'}
           draft={draft}
           dataModel={app.data_model as Record<string, unknown>}
           settings={app.settings as Record<string, unknown>}

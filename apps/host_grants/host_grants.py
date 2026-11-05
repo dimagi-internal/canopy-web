@@ -168,7 +168,7 @@ def _token_request(endpoint: str, form: dict):
     """One POST, retried ONCE if the host demands a DPoP nonce (RFC 9449 §8).
 
     `outbound.post_form` is looked up per call (not bound at import) so the
-    transport stays the one guarded door out — and replaceable in tests.
+    transport stays the one guarded way out — and replaceable in tests.
     """
     audience = form["_aud"]
     body = {k: v for k, v in form.items() if k != "_aud"}

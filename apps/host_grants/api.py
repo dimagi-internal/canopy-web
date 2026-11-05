@@ -1,4 +1,4 @@
-"""The site agents API's doors: `GET /api/sites/agents` (a connected site asks,
+"""The site agents API's routes: `GET /api/sites/agents` (a connected site asks,
 signed), `POST /api/sites/resources-updated` (a connected site says its resources
 changed, signed), `GET /api/workspaces/{slug}/connected-apps/{id}/needs` (the Connected
 sites page reads what the site asks back, and who meets it) and
@@ -133,7 +133,7 @@ class SitePageOut(Schema):
 
 
 class SensitiveDataRequiresOut(Schema):
-    #: The site asks for a capability that handles sensitive data (`data: sensitive`).
+    #: The site asks for a connected site that handles sensitive data (`data: sensitive`).
     handles_sensitive: bool = False
     #: The runner flag the site asks for ("" for none).
     runner_flag: str = ""

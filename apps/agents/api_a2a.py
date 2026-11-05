@@ -21,7 +21,7 @@ from .schemas import A2AAgentCardOut
 router = Router(tags=["a2a"])
 
 # Cards change when an owner republishes an interface, which is rare; five
-# minutes bounds how long a card can advertise a capability after it is
+# minutes bounds how long a card can advertise a profile after it is
 # withdrawn (and advertising grants nothing — every turn is authorized when it
 # is enqueued). The extended card is per-person, so `private` + `Vary`.
 PUBLIC_CACHE = "public, max-age=300"
@@ -57,12 +57,12 @@ def _respond(request: HttpRequest, response: HttpResponse, card: A2AAgentCardOut
             response={200: A2AAgentCardOut, 304: None},
             auth=None, by_alias=True, exclude_none=True,
             summary="An agent's public A2A Agent Card")
-@gate("anonymous")  # only for agents with an outsider capability
+@gate("anonymous")  # only for agents an outsider may use
 def public_agent_card(request: HttpRequest, slug: str, response: HttpResponse):
     """The agent's public Agent Card (A2A v1.0): what it offers people outside its workspace.
 
-    Served only for an agent that has published a capability for contacts or
-    unknown callers; any other slug is a 404. Supports `If-None-Match`.
+    Served only for an agent whose access list lets contacts or unknown callers
+    use read mode or a connected site; any other slug is a 404. Supports `If-None-Match`.
     """
     card = agent_card.public_card(_agent_or_404(slug))
     if card is None:
@@ -78,8 +78,8 @@ def public_agent_card(request: HttpRequest, slug: str, response: HttpResponse):
 def extended_agent_card(request: HttpRequest, slug: str, response: HttpResponse):
     """The Agent Card as the signed-in caller sees it (A2A `GetExtendedAgentCard`).
 
-    The public card's skills plus every capability the caller may invoke
-    themselves. A 404 when that is nothing. Supports `If-None-Match`.
+    The public card's skills plus read mode and every connected site the caller
+    may use themselves. A 404 when that is nothing. Supports `If-None-Match`.
     """
     card = agent_card.extended_card(_agent_or_404(slug), request.user)
     if card is None:

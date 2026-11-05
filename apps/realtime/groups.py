@@ -72,7 +72,7 @@ def turn_workspace_slug(turn: Turn) -> str | None:
 
 def user_can_read_turn(user, turn: Turn) -> bool:
     """The same answer `GET /api/harness/turns/{id}` gives: the tenant, and for a
-    session turn the chat's own ACL too. There is no superuser leg — a door that
+    session turn the chat's own ACL too. There is no superuser leg — a route that
     answers differently from its REST twin is how the session-turn leak happened.
     """
     if not getattr(user, "is_authenticated", False):

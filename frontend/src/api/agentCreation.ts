@@ -55,7 +55,7 @@ export async function scaffoldAgent(body: NewAgent): Promise<AgentScaffoldOut> {
   return res.data
 }
 
-/** Register it — the ordinary upsert, so the web and `/canopy:create-agent` share one door. */
+/** Register it — the ordinary upsert, so the web and `/canopy:create-agent` share one way in. */
 export async function registerAgent(agent: NewAgent, pushed: AgentScaffoldOut): Promise<void> {
   const res = await apiV2.POST('/api/agents/', {
     body: {

@@ -310,7 +310,7 @@ def test_a_sensitive_conversation_resumes_its_own_session(load_cloud_runner, mon
     assert [f["status"] for f in _finish(calls)] == ["done", "done"]
 
 
-def test_another_capability_starts_fresh_and_forgets_the_old_session(
+def test_another_profile_starts_fresh_and_forgets_the_old_session(
         load_cloud_runner, monkeypatch, tmp_path):
     mod, calls, project, _claude = _keeping(load_cloud_runner, monkeypatch, tmp_path)
     mod._run_turn("r-1", _conv_turn())

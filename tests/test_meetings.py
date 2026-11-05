@@ -345,7 +345,7 @@ def test_a_refused_follow_up_changes_nothing(world, monkeypatch):
     m = saved(world["ana"])
     def refuse(*a, **k):
         raise ValueError("no")
-    monkeypatch.setattr(services.doors, "send_from", refuse)
+    monkeypatch.setattr(services.send_paths, "send_from", refuse)
     r = post(client(world["ana"]), f"/api/meetings/{m['id']}/follow-up", agent="bot")
     assert r.status_code == 422
     assert Meeting.objects.get(pk=m["id"]).agent is None

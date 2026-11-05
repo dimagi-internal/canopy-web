@@ -1,4 +1,4 @@
-"""What each workspace role may DO — the one table, and the only door to it.
+"""What each workspace role may DO — the one table, and the only way to it.
 
 The roles and permissions are defined, beside the agent roles they are often
 confused with, in `docs/architecture/access.md`.

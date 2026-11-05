@@ -32,7 +32,7 @@ def tenancy(world):
     outsider = a_member(outsider_ws, email="out@example.com", role=M.OWNER)
     # The agent's own login, a member as `create_agent_login` makes it — but a
     # viewer, so a route that lets it act still proves the own-login stand-in
-    # for the editor role (a capped turn), not a side door past membership.
+    # for the editor role (a capped turn), not a side way past membership.
     bot = a_member(ws, email="ace@dimagi-ai.com", role=M.VIEWER)
     agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=owner, user=bot)
     return {"ws": ws, "owner": owner, "editor": editor, "viewer": viewer, "outsider": outsider,

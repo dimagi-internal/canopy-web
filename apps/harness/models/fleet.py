@@ -58,7 +58,7 @@ class FleetHold(models.Model):
 
 #: How long a pairing invitation stays open: long enough for `up.sh` to bring a
 #: box up and the operator to touch their passkey, short enough that a forgotten
-#: one is no standing door.
+#: one is no standing way in.
 INVITATION_TTL = dt.timedelta(hours=1)
 
 

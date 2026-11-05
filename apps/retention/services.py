@@ -1,7 +1,7 @@
 """The purge: find content past its rule's `keep_days` and drop it.
 
 `sweep(apply=False)` is a dry run that only counts. `sweep(apply=True)`
-deletes. `maybe_sweep()` is the off-request clock's door, and does nothing unless
+deletes. `maybe_sweep()` is the off-request clock's entry point, and does nothing unless
 `CANOPY_RETENTION_ENFORCE` is on. What each kind drops, and what it keeps, is
 in the spec (docs/superpowers/specs/2026-10-05-content-retention-design.md);
 the short version:
@@ -133,7 +133,7 @@ def _run(tally: Tally, *, apply: bool, now, limits, workspace: str | None = None
 
 
 def maybe_sweep(now: dt.datetime | None = None) -> RetentionSweep | None:
-    """The off-request clock's door. At most one run per `SWEEP_INTERVAL` across the
+    """The off-request clock's entry point. At most one run per `SWEEP_INTERVAL` across the
     fleet (the cache is Redis in labs). With `CANOPY_RETENTION_ENFORCE` off it
     still purges SENSITIVE conversations past `CANOPY_SENSITIVE_KEEP_DAYS` — that
     rule is not the workspace's to switch off. Never raises: a purge must not

@@ -31,7 +31,7 @@ from apps.agents import turn_context
 from apps.agents.models import Agent, AgentProject
 from apps.agents.services import projects as project_services
 from apps.canopy_sessions import access as session_access
-from apps.canopy_sessions import doors
+from apps.canopy_sessions import send_paths
 from apps.canopy_sessions import services as session_services
 from apps.canopy_sessions.models import Session
 from apps.harness.models import Turn
@@ -459,7 +459,7 @@ def start_follow_up(meeting: Meeting, *, user, agent: Agent, initiator, ask: str
         meeting.agent = agent
         meeting.save(update_fields=["agent", "updated_at"])
     try:
-        _message, turn = doors.send_from(
+        _message, turn = send_paths.send_from(
             "rest",
             session=session,
             text=follow_up_prompt(meeting, user=user, ask=ask),

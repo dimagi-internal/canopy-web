@@ -27,7 +27,7 @@ import { SidePanel } from '@/pages/topology/panels/SidePanel'
 //
 // It is also where runners are CONFIGURED: the panel mounts the supervisor's own
 // runner detail (login, admins, flags, drills, pause, retire) and the agent's own
-// routing table, so there is one implementation of each and two doors onto it;
+// routing table, so there is one implementation of each and two ways onto it;
 // every control gates on what the server says the viewer may do (can_manage /
 // can_administer, the routing PUT's own check). An owner lane's "Add a runner"
 // gives the pairing command, since pairing is something you run on the box.
@@ -214,7 +214,7 @@ function Legend(): JSX.Element {
   return (
     <span className="inline-flex flex-wrap items-center gap-3">
       <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-5 bg-success" />whole agent</span>
-      <span className="inline-flex items-center gap-1.5"><span className="inline-block w-5 border-t-2 border-dashed border-warning" />some capabilities</span>
+      <span className="inline-flex items-center gap-1.5"><span className="inline-block w-5 border-t-2 border-dashed border-warning" />read mode or connected sites</span>
     </span>
   )
 }

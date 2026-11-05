@@ -77,7 +77,7 @@ export interface CallContext {
   surface: Surface | null
   /** The screen's `connections`. Undefined: not known here (an app's), and the server decides. */
   declared: readonly DeclaredConnection[] | undefined
-  /** False on every door but a signed-in member's. */
+  /** False on every surface but a signed-in member's. */
   canConnect: boolean
   /** An app draft's test copy: never calls. */
   draft?: boolean
@@ -260,7 +260,7 @@ export class ConnectionCalls {
     }
   }
 
-  /** Whether this door may call at all: the same answer for a call and for `begin`. */
+  /** Whether this surface may call at all: the same answer for a call and for `begin`. */
   private usableSurface(): Surface {
     const ctx = this.context()
     if (ctx.draft) throw new Error("A draft can't use connections. Publish it first.")

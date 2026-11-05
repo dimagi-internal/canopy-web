@@ -836,7 +836,7 @@ class SessionContextOut(Schema):
     sensitive: bool = False
     sensitive_requirement: str = ""
     is_review: bool = False
-    review_ask: str | None = None
+    review_of: str | None = None      # the session a review chat reviews
     audience: dict = {}
     participants: list[dict] = []
     session_grants: list[dict] = []
@@ -1110,7 +1110,7 @@ class PageActionSpec(Schema):
     # Two spellings in, one out, rather than two fields that can disagree.
     # canopy publishes these declarations as MCP tools, so a host author
     # reading the MCP spec writes `inputSchema`; while only `parameters` was
-    # accepted, such a declaration was dropped HERE, at the door — the action
+    # accepted, such a declaration was dropped HERE, at the way in — the action
     # still published, with no schema, and a missing required argument then
     # waited out the full 20s timeout and came back as "the page is probably
     # closed", which is neither true nor actionable.
@@ -1125,7 +1125,7 @@ class PageActionSpec(Schema):
 class PageActionsDeclareIn(Schema):
     """What the page can do, replacing any previous declaration.
 
-    Wholesale, never merged: a page has one current set of capabilities, and an
+    Wholesale, never merged: a page has one current set of actions, and an
     action left over from a page the user navigated away from is one the agent
     would call into nothing.
     """

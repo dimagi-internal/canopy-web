@@ -564,7 +564,7 @@ def test_losing_access_to_the_agent_stops_the_next_start(world, monkeypatch):
 
 
 def test_a_real_runner_token_reaches_its_routes(world):
-    """Through `runner_auth`, not a person's login. No new door was needed."""
+    """Through `runner_auth`, not a person's login. No new route was needed."""
     from apps.harness.runner_auth import reaches
 
     rid = world["laptop"].pk
@@ -601,7 +601,7 @@ def test_a_refused_turn_isnt_reported_as_sent(world, monkeypatch):
         pk = uuid.uuid4()
         status = Turn.CANCELLED
 
-    monkeypatch.setattr(services.doors, "send_from", lambda *a, **k: (None, Cancelled))
+    monkeypatch.setattr(services.send_paths, "send_from", lambda *a, **k: (None, Cancelled))
     assert call(world, run, "sessions.send", {"session_id": session, "text": "hi", "client_id": "a"})["status"] == 403
 
 

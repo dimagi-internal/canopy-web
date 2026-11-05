@@ -44,7 +44,7 @@ def summary(rule: AdmissionRule) -> str:
     elif rule.access:
         extra.append(rule.access)
     if rule.capability:
-        extra.append("read mode" if is_read_mode(rule.capability) else f"capability {rule.capability}")
+        extra.append("read mode" if is_read_mode(rule.capability) else f"connected site {rule.capability}")
     if rule.turn_mode:
         extra.append(rule.turn_mode)
     if rule.runner_kind:

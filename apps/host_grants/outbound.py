@@ -1,4 +1,4 @@
-"""Outbound requests to a URL an operator typed — the host grant flow's only door out.
+"""Outbound requests to a URL an operator typed — the host grant flow's only way out.
 
 Every fetch the host grant flow makes (RFC 8414 metadata, the token endpoint,
 the host's MCP server) goes to a URL that came from a Connected site's config

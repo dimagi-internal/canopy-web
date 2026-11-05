@@ -49,7 +49,7 @@ export interface AppContext {
   page: string
   params: Record<string, string>
   roles: string[]
-  /** Drawn on the public door, for an anonymous visitor (or previewed as one). */
+  /** Drawn on the public page, for an anonymous visitor (or previewed as one). */
   public: boolean
   /** The app's collections and fields (labels, types, options) and its actions'
    * inputs — how a page draws a field the workspace added after it was written. */

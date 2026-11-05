@@ -1,7 +1,7 @@
-"""The doors around `sensitivity.reads_content`: every way a sensitive conversation's
+"""The routes around `sensitivity.reads_content`: every way a sensitive conversation's
 words could reach a reader the gate would refuse — an MCP tool, a session minted
 from a token, an owner who signs as someone else, a push, a renamed tab — is
-closed, one test per door.
+closed, one test per route.
 
 docs/architecture/tenancy.md § Sensitive conversations.
 """

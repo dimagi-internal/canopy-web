@@ -686,8 +686,8 @@ class AgentAccessRowOut(StrictModel):
     # Why they hold `agent_role`, in words: "Owns the workspace", "Made admin by …".
     basis: str
     granted_at: dt.datetime | None = None
-    # What they reach signed in: the whole agent, only the listed capabilities,
-    # or nothing (the published interface lists no capability for them).
+    # What they reach signed in: the whole agent, only the listed profiles (read mode or connected
+    # sites; the field's wire name is `capabilities`), or nothing.
     access: Literal["full", "confined", "none"]
     capabilities: list[str] = []
     # An editor line that says `manual_only` (docs/architecture/access.md): they reach the whole
@@ -696,7 +696,7 @@ class AgentAccessRowOut(StrictModel):
     # May ask for turn_mode=auto on a dispatch: the agent's owner and admins.
     may_request_auto: bool = False
     # WHERE they stand on the agent's role table (owner | admin | editor | read_write | read_only;
-    # null when the agent lets them in nowhere, or only through a named capability) and what put them there (see
+    # null when the agent lets them in nowhere, or only through a named connected site) and what put them there (see
     # `AccessListOut`). `agent_role` above is the older three-word view and stays for
     # readers that have not moved.
     # `system` is the agent's own login: not a person, and not on the ladder.

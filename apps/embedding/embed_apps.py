@@ -2,7 +2,7 @@
 
 **Why this exists.** Every fact the widget needs — which app, which URLs may
 frame it, which agents it may offer — was reachable only through the Django
-admin. That is the wrong door twice over. Operationally it is staff-only and
+admin. That is the wrong way in twice over. Operationally it is staff-only and
 looks nothing like the rest of canopy, so the person who wants to embed an
 agent cannot do it; and conceptually "connect my site to canopy" is a thing a
 user does, not a database row an administrator edits.
@@ -203,7 +203,7 @@ def _clean_origins(origins) -> list[str]:
 def _clean_keys(keys) -> list[str]:
     """Accept only PEM PUBLIC keys, and say so when something else is pasted.
 
-    Two mistakes are worth catching at the door rather than at the next
+    Two mistakes are worth catching on the way in rather than at the next
     assertion. Pasting a PRIVATE key is the dangerous one — it would work, and
     the site's signing key would then be sitting in canopy's database, undoing
     the entire reason for using signatures. Pasting something unparseable is

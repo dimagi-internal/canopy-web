@@ -1173,7 +1173,7 @@ def maybe_execute(cfg, client, runner_id: str, turn: dict, thread_key: str) -> s
     """Take this turn into the desktop runtime and return an action string, or
     return None to leave it to the emdash backend (see the module docstring for
     which turns are which)."""
-    if caller.capability(turn) is not None:
+    if caller.confined_profile(turn) is not None:
         return None
     if _current == EMDASH and not _index(cfg):
         return None  # an emdash-only box: no extra round trip, no behaviour change

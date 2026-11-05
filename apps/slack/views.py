@@ -1,4 +1,4 @@
-"""Slack's two webhook doors: the Events API and the ``/canopy`` slash command.
+"""Slack's two webhooks: the Events API and the ``/canopy`` slash command.
 
 Bare Django views, not Ninja: the body must be read RAW to check its signature,
 and Slack's request/response shapes are its own. Allowlisted as ``/api/slack/``
@@ -335,7 +335,7 @@ def interactions(request: HttpRequest) -> HttpResponse:
     post, a status line's Run-on-cloud, a closed conversation's Start-a-new-session,
     a reply button on a post in a bound thread.
 
-    Signed exactly like the other two doors. Only OUR buttons are acted on: a
+    Signed exactly like the other two webhooks. Only OUR buttons are acted on: a
     checkbox or radio toggle also arrives here, one payload per click, and is
     just a change of selection that the eventual Submit carries in `state`.
     """

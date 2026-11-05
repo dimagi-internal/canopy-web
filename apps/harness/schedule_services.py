@@ -285,7 +285,7 @@ def _resolve_agent(
     is NOT NULL as of agents/0013 so no such row can exist, but the fail-open
     SHAPE is the bug that kept recurring, so it goes too.
 
-    `require` is the capability (`apps/workspaces/permissions.py`), and it lives HERE rather than in the Ninja
+    `require` is the permission (`apps/workspaces/permissions.py`), and it lives HERE rather than in the Ninja
     handlers on purpose. A schedule is arbitrary prompt text that the runner
     later executes AS the agent, with the agent's resolved credentials — and
     `run-now` means "immediately". So schedule CRUD is the same reshaping tier

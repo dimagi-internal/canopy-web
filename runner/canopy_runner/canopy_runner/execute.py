@@ -103,7 +103,7 @@ def _confine(client, turn: dict, task: str) -> bool:
     a caller's turn must never run in the full profile because a file or a name
     was not what it should be. A full-profile turn is untouched (True).
     """
-    if caller.capability(turn) is None:
+    if caller.confined_profile(turn) is None:
         # Not confined — but a colleague's full-profile turn still reads canopy as
         # THEM (scoped_token), and a reused task must not keep the last one's.
         try:
@@ -137,7 +137,7 @@ def _native_confine(cfg, client, turn: dict, task: str) -> bool:
     defence, not the turn. Loud when it happens — a missing second layer should be
     visible, not discovered. Returns whether it was written.
     """
-    cap = caller.capability(turn)
+    cap = caller.confined_profile(turn)
     if cap is None or not task:
         return False
     target = _target(turn)
@@ -1072,7 +1072,7 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
     target = agent_slug or project  # the emdash project to drive
     thread_key = _thread_key(turn)
     prompt = turn.get("prompt") or ""
-    if caller.capability(turn) is not None:
+    if caller.confined_profile(turn) is not None:
         # A caller's words never reach Claude Code with a live file mention: it
         # would read the file into the prompt with no tool call to confine.
         prompt = caller.neutralise_mentions(prompt)
@@ -1318,13 +1318,13 @@ def execute_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> 
         turn_id=turn_id,
     )
     client.start(turn_id)
-    # A caller's session starts with its capability's entry, not the admin's turn.
+    # A caller's session starts with its profile's entry, not the admin's turn.
     try:
         work_prompt = caller.entry_prompt(turn, work_prompt)
     except caller.ProfileError as exc:
         client.fail_turn(turn_id, f"a caller's turn was not run: {exc}")
         return f"failed:{turn_id}"
-    if caller.capability(turn) is not None:
+    if caller.confined_profile(turn) is not None:
         # Whatever of the caller's reaches the prompt, with no live file mention.
         work_prompt = caller.neutralise_mentions(work_prompt)
     # Who asked, as data beside the turn — never in the prompt body (see caller.py).

@@ -74,9 +74,9 @@ interface Props {
     load: () => Promise<Record<string, unknown>>
     call: (op: AppOp) => Promise<unknown>
     go: (page: string, params: Record<string, string>) => void
-    /** May the page use canopy.read (the dynamic-view catalog)? Never on the public door. */
+    /** May the page use canopy.read (the dynamic-view catalog)? Never on the public page. */
     canopyReads: boolean
-    /** May the page use connections? Only a signed-in member's door. */
+    /** May the page use connections? Only a signed-in member's page. */
     canConnect?: boolean
     /** The app's declared connections, if known here; the server decides when not. */
     connections?: readonly DeclaredConnection[]

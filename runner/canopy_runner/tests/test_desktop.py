@@ -101,7 +101,7 @@ def test_a_desktop_thread_stays_in_desktop_after_flipping_back(cfg, monkeypatch)
 
 def test_a_callers_confined_turn_never_goes_to_desktop(cfg, monkeypatch):
     monkeypatch.setattr(desktop, "_current", desktop.CLAUDE_DESKTOP)
-    monkeypatch.setattr(desktop.caller, "capability", lambda turn: {"name": "ask"})
+    monkeypatch.setattr(desktop.caller, "confined_profile", lambda turn: {"name": "ask"})
     assert desktop.maybe_execute(cfg, FakeClient(), "r", _turn(), "th") is None
 
 

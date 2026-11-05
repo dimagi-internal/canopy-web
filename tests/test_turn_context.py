@@ -91,7 +91,7 @@ def test_the_resolver_writes_nothing_whoever_is_asking_and_however_it_is_asked(w
     gone.save(update_fields=["content_deleted_at"])
     repo = Session.objects.create(workspace=w.ws, created_by=w.owner, project="repo")
     SessionParticipant.objects.create(session=plain, user=w.member, role=SessionParticipant.EDITOR)
-    people = (w.owner, w.admin, w.editor, w.reader, w.door, w.stranger, w.member)
+    people = (w.owner, w.admin, w.editor, w.reader, w.site_user, w.stranger, w.member)
     turns = [_turn(w, user, session) for user in people for session in (plain, sensitive, site, review)]
     turns += [_turn(w, user) for user in people]
     repo_turn = _turn(w, w.owner, repo)
@@ -99,8 +99,8 @@ def test_the_resolver_writes_nothing_whoever_is_asking_and_however_it_is_asked(w
     with connection.execute_wrapper(answering_snapshot._refuse_writes):
         for turn in turns:
             agent = turn.acting_agent
-            for ask in (None, "ask", "connect", "data", "retired"):
-                _every_fact(turn_context.for_turn(turn, agent, ask))
+            for requested in (None, "ask", "connect", "data", "retired"):
+                _every_fact(turn_context.for_turn(turn, agent, requested))
                 asked += 1
             for stamp in ("", "ask", "connect", "retired"):
                 ctx = turn_context.resolve_turn_context(session_context.build(None, turn, agent=agent),
@@ -125,11 +125,11 @@ def test_the_only_way_to_the_whole_agent_is_an_explicit_kind(w):
     chat = _chat(w)
     sensitive = _chat(w, **{rr.METADATA_KEY: [rr.SENSITIVE_DATA]})
     seen = set()
-    for user in (w.owner, w.editor, w.reader, w.door, w.stranger):
+    for user in (w.owner, w.editor, w.reader, w.site_user, w.stranger):
         for session in (chat, sensitive):
             turn = _turn(w, user, session)
-            for ask in (None, "ask", "connect", "data", "retired"):
-                ctx = turn_context.for_turn(turn, w.agent, ask)
+            for requested in (None, "ask", "connect", "data", "retired"):
+                ctx = turn_context.for_turn(turn, w.agent, requested)
                 seen.add((ctx.access, ctx.profile.kind if ctx.profile else None))
                 if ctx.access == turn_context.FULL:
                     assert ctx.profile.kind == turn_context.WHOLE_AGENT and ctx.stamped == ""
@@ -205,9 +205,9 @@ def test_a_whole_agent_turn_stays_whole_at_claim_though_its_asker_has_since_lost
 def test_only_an_explicit_kind_has_no_lists_and_an_absent_list_elsewhere_denies(w):
     whole = turn_context.for_asker(w.agent, w.owner, verified=True).profile
     assert whole.kind == turn_context.WHOLE_AGENT and whole.tools is None and whole.as_envelope() is None
-    door = turn_context.for_asker(w.agent, w.door, verified=True, requested="connect").profile
-    assert door.kind == turn_context.CONNECTED_SITE and door.site == "connect-labs" and door.bash in (None, [])
-    assert "mcp__*canopy-web__site_call" in door.tools
+    site = turn_context.for_asker(w.agent, w.site_user, verified=True, requested="connect").profile
+    assert site.kind == turn_context.CONNECTED_SITE and site.site == "connect-labs" and site.bash in (None, [])
+    assert "mcp__*canopy-web__site_call" in site.tools
 
 
 # --- each kind and each stage ---------------------------------------------------------------------
@@ -216,7 +216,7 @@ def test_each_profile_kind(w):
     review = _chat(w, **{REVIEW_METADATA_KEY: "x"})
     kind = lambda ctx: ctx.profile.kind  # noqa: E731
     assert kind(turn_context.for_asker(w.agent, w.reader, verified=True)) == turn_context.READ_MODE
-    assert kind(turn_context.for_asker(w.agent, w.door, verified=True, requested="connect")) == turn_context.CONNECTED_SITE
+    assert kind(turn_context.for_asker(w.agent, w.site_user, verified=True, requested="connect")) == turn_context.CONNECTED_SITE
     assert kind(turn_context.for_turn(_turn(w, w.owner, review), w.agent)) == turn_context.SESSION_REVIEW
     assert kind(turn_context.for_asker(w.agent, w.owner, verified=True)) == turn_context.WHOLE_AGENT
     AgentGrant.objects.create(agent=w.agent, kind=AgentGrant.PERSON, user=w.member, capability="bare")
@@ -248,7 +248,7 @@ def test_a_read_mode_profile_says_which_default_it_ran_under(w):
 def test_a_review_chat_refuses_what_it_would_refuse_and_narrows_the_rest(w):
     review = _chat(w, **{REVIEW_METADATA_KEY: "x"})
     assert turn_context.for_turn(_turn(w, w.stranger, review), w.agent).refused
-    assert turn_context.for_turn(_turn(w, w.door, review), w.agent).refused    # `read` opens it; a door line does not
+    assert turn_context.for_turn(_turn(w, w.site_user, review), w.agent).refused    # `read` opens it; a connected-site line does not
     ctx = turn_context.for_turn(_turn(w, w.owner, review), w.agent)
     assert ctx.review.may_request_auto is False and ctx.review.may_pin_runner is False
 
@@ -355,7 +355,7 @@ def test_the_session_context_holds_the_facts_and_nothing_about_the_asker(w):
     assert sc.channel == turn.origin and sc.sensitive and sc.sensitive_requirement == rr.SENSITIVE_DATA
     assert (w.reader.pk, SessionParticipant.VIEWER) in sc.participants
     assert sc.audience["creator"] == {w.owner.pk}
-    assert not sc.is_review and sc.review_ask is None
+    assert not sc.is_review and sc.review_of is None
 
 
 def test_a_turn_with_no_session_has_its_own_channel_and_sensitivity(w):
@@ -368,7 +368,7 @@ def test_a_turn_with_no_session_has_its_own_channel_and_sensitivity(w):
 
 def test_a_review_chat_says_which_session_it_is_about(w):
     sc = session_context.build(_chat(w, **{REVIEW_METADATA_KEY: "the-session"}))
-    assert sc.is_review and sc.review_ask == "the-session"
+    assert sc.is_review and sc.review_of == "the-session"
 
 
 def test_an_empty_session_context_is_one_shape_with_nothing_in_it(w):
@@ -427,7 +427,7 @@ def test_a_cli_the_agent_no_longer_runs_refuses_as_the_send_route_does(w):
     assert response.status_code == 422 and response.json()["detail"] == ctx.refusal.message
 
 
-def test_a_sensitive_conversation_refuses_a_door_that_is_not_its_chat_surface_as_the_send_route_does(w):
+def test_a_sensitive_conversation_refuses_a_route_that_is_not_its_chat_surface_as_the_send_route_does(w):
     session = _chat(w, embed_app="data-site", **{rr.METADATA_KEY: [rr.SENSITIVE_DATA]})
     assert not _preview(w, w.owner, session).refused      # its own person, at its own chat surface
     ctx = turn_context.resolve_turn_context(session_context.build(session),
@@ -439,7 +439,7 @@ def test_a_sensitive_conversation_refuses_a_door_that_is_not_its_chat_surface_as
     assert response.status_code == 403 and response.json()["detail"] == ctx.refusal.message
 
 
-def test_a_real_turn_is_past_its_door_so_stage_0_never_refuses_it(w):
+def test_a_real_turn_is_past_its_entry_point_so_stage_0_never_refuses_it(w):
     # An email or a schedule reaches a session these routes would refuse. They run today, and still do.
     session = _chat(w)
     turn = _turn(w, w.owner, session)
@@ -460,8 +460,8 @@ def test_a_preview_asks_the_rule_of_the_session_it_is_about(w):
     SessionParticipant.objects.create(session=site, user=w.reader, role=SessionParticipant.EDITOR)
     assert _preview(w, w.reader, site).basis == "session:editor"
     other = _chat(w, creator=w.member, embed_app="connect-labs")
-    SessionParticipant.objects.create(session=other, user=w.door, role=SessionParticipant.EDITOR)
-    ctx = _preview(w, w.door, other)
+    SessionParticipant.objects.create(session=other, user=w.site_user, role=SessionParticipant.EDITOR)
+    ctx = _preview(w, w.site_user, other)
     assert ctx.stamped == "connect" and ctx.profile.site == "connect-labs"
 
 

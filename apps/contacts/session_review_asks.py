@@ -6,7 +6,7 @@ whose asker is that person; the coach replies there. Nothing that reads a
 `SessionReviewGrant` reads this table: it enrols nobody in the weekly pass, uploads no other
 session, and appears on no roster (`tests/test_session_review_asks.py` pins each).
 
-The turn runs confined in canopy's `interface.SESSION_REVIEW` door, whoever asks
+The turn runs confined in canopy's `interface.SESSION_REVIEW` profile, whoever asks
 (`turn_context.resolve_turn_context`), because the transcript is text someone may have aimed at whoever reads it:
 no agent login, no GitHub, no Bash, no canopy tool but `read_asked_session`, which reads the
 session as the person through the session ACL (`access.turn_reach`). Anyone with any access to
@@ -26,7 +26,7 @@ from django.utils import timezone
 from apps.agents import turn_context
 from apps.agents import interface as agent_iface
 from apps.api.errors import TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
-from apps.canopy_sessions import access, control, doors, lifecycle, services
+from apps.canopy_sessions import access, control, lifecycle, send_paths, services
 from apps.canopy_sessions.models import REVIEW_METADATA_KEY, SessionReviewAsk
 from apps.harness import initiator as who
 from apps.harness import sensitivity
@@ -133,7 +133,7 @@ def ask(request, person: Person, session) -> SessionReviewAsk:
         _changed(session, user, agent, after=True, before=was_live)
         hcp.audit(person, "sessionReviewAsk.asked", actor=hcp.user_actor(user),
                   purpose=f"asked {_name(agent)} to review one session, read-only")
-    _message, turn = doors.send_from(
+    _message, turn = send_paths.send_from(
         "rest", session=conversation, text=prompt(session), user=user,
         client_id=f"{VIA}-{uuid.uuid4().hex}",
         runner_requirements=getattr(request, "runner_requirements", ()),

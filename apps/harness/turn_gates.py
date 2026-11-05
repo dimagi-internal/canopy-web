@@ -260,7 +260,7 @@ def check_access(request, payload: TurnIn, agent, initiator) -> None:
 
     The editor gate above already ran, so a person reaching this is a workspace
     editor or above and is refused only by a future tightening; it is asked here
-    anyway so this door can never disagree with the others."""
+    anyway so this route can never disagree with the others."""
     user = request.user if getattr(request.user, "is_authenticated", False) else None
     d = turn_context.for_asker(agent, user, verified=initiator.kind == who.USER
                                and initiator.assurance in TURN_MODE_VERIFIED, channel=payload.origin)

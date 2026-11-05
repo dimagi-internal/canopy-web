@@ -20,7 +20,7 @@ Who may answer (`may_answer`), the "secret writer" gate:
 
 A contact's chat (`Session.contact`) never carries a request: a contact is
 anonymous to Django and can't answer one, so the agent is refused there
-(409 `contact_chat`) and told to ask its owner instead. The contact door
+(409 `contact_chat`) and told to ask its owner instead. The contact route
 doesn't annotate `secret_request` on rows either (`contacts/contact_api.py`).
 """
 from __future__ import annotations

@@ -251,7 +251,7 @@ def embed_self_token(request: HttpRequest, page: str = "") -> EmbedSelfTokenOut:
     # header (canopy-widget `mintToken`), so a header means it is not the panel.
     # Nor is a session cookie minted from a token (`is_machine`): the token it
     # returns is a chat surface (`sensitivity.request_is_chat_surface`), so minting
-    # one from a PAT would read a sensitive conversation through an AI's door.
+    # one from a PAT would read a sensitive conversation through an AI's route.
     from apps.common.views_debug import is_machine  # noqa: PLC0415 — loads the session store
 
     if (request.META.get("HTTP_AUTHORIZATION") or getattr(request, "delegated_app", None)

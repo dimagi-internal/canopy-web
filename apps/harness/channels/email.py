@@ -1,5 +1,5 @@
-"""Email as a door to a turn: who wrote in, whether they are refused at the
-door, and which conversation (session) the mail belongs to.
+"""Email as a way in to a turn: who wrote in, whether they are refused at the
+way in, and which conversation (session) the mail belongs to.
 
 `services.enqueue_turn` asks `arrive` for every email turn with an agent, before
 any generic work, and `log_unproven_member` once the turn exists. An inbound
@@ -68,7 +68,7 @@ def arrive(agent, origin_ref, *, initiator=None, session=None, authserv_id=None,
         email_contact = None
         logger.exception("could not record the sender of an email turn")
     if email_contact is not None and email_contact.is_blocked:
-        # Refused at the door, and SAID so: the turn is written already
+        # Refused on the way in, and SAID so: the turn is written already
         # CANCELLED rather than not written. Three reasons. It keeps the
         # idempotency key, so the runner's next poll of the same unread
         # thread is a no-op instead of a fresh refusal. It needs no protocol
@@ -84,7 +84,7 @@ def arrive(agent, origin_ref, *, initiator=None, session=None, authserv_id=None,
         ))
     trigger = None
     if initiator is None:
-        # The one door whose asker canopy can know on its own. NOT
+        # The one channel whose asker canopy can know on its own. NOT
         # `enqueued_by`: on an email turn that is the runner's account, and
         # recording it as the initiator is exactly the confusion this field
         # exists to end. No recordable sender -> unknown, honestly.
@@ -169,7 +169,7 @@ def admit_mail_people_to_work(session, turn) -> list:
     ran in. The anchor holds nothing to read; this is where the thread's answer is.
 
     Only this message's people, not the anchor's: a thread can hold both an admin's
-    full session and a confined caller's (`#<capability>`), and a caller's Cc must not
+    full session and a confined caller's (`#<Turn.capability>`), and a caller's Cc must not
     open the admin's. VIEWER, because a work session is a live agent: typing into it
     stays with the agent's admins, who have that through `access.role_for` anyway. A
     row someone already has keeps its role. Only a person's or a contact's mail with

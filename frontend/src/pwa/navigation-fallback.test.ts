@@ -12,7 +12,7 @@ describe('navigate-fallback ownership', () => {
     const spaPaths = [
       '/',
       '/app',
-      '/apps', // the menu bar's door into the Personal apps tab
+      '/apps', // the menu bar's way into the Personal apps tab
       '/w/connect/apps/personal/meeting-assistant',
       '/w/connect/meetings',
       '/supervisor',

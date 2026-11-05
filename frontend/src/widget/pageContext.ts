@@ -90,7 +90,7 @@ export const pageContextRules: PageContextRule[] = [
   { pattern: /^\/activity/, build: () => ({ surface: 'the fleet activity log' }) },
   { pattern: /^\/schedules/, build: () => ({ surface: 'the personal schedule calendar' }) },
   { pattern: /^\/sessions/, build: () => ({ surface: 'my shared sessions' }) },
-  { pattern: /^\/system/, build: () => ({ surface: 'the capability catalog' }) },
+  { pattern: /^\/system/, build: () => ({ surface: 'the plugin catalog' }) },
   { pattern: /^\/settings/, build: () => ({ surface: 'the settings page' }) },
 ]
 

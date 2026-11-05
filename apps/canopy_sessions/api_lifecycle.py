@@ -21,10 +21,10 @@ from . import (
     content_deletion,
     control,
     conversation_keys,
-    doors,
     filing,
     maintenance,
     placement,
+    send_paths,
     services,
 )
 from . import send as cs_send
@@ -135,7 +135,7 @@ def create_session(request: HttpRequest, payload: SessionCreateIn):
     if payload.runner_id:
         # The stash is consumed on the first send WITHOUT asking who may choose
         # (placement._resolve_placement), so the choice is decided here, by the one
-        # placement rule every door asks (`placement.may_place`): for a chat with
+        # placement rule every route asks (`placement.may_place`): for a chat with
         # an agent its admins may pin any box, anyone else only a box they
         # administer; for a project chat, only someone who administers the box.
         # An id that names no runner is left as before — the first send ignores
@@ -348,7 +348,7 @@ def send(request: HttpRequest, session_id: uuid.UUID, payload: SendIn):
         raise HttpError(422, "message text is required")
     # The page this was sent from: the agent reaches its site through that page's grant.
     services.note_request_grant(session, request)
-    message, turn = doors.send_from(
+    message, turn = send_paths.send_from(
         "rest", session=session, text=payload.text, user=request.user,
         client_id=payload.client_id,
         runner_requirements=getattr(request, "runner_requirements", ()),

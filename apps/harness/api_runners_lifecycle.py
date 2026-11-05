@@ -102,7 +102,7 @@ def unretire_runner(request: HttpRequest, runner_id: uuid.UUID):
     """Bring a retired runner back, keeping its identity — and therefore every
     RunnerBinding, assignment and session that points at it.
 
-    Retirement used to be a ONE-WAY DOOR, which made it a trap rather than a
+    Retirement used to be impossible to undo, which made it a trap rather than a
     decision. `_runner_or_404` 404s a retired runner, so its daemon's heartbeat,
     claim and session-report calls all fail forever once retired; and `pair_runner`
     unconditionally CREATES a row, so the only recovery — re-pairing — minted a new

@@ -160,8 +160,8 @@ def open_local_turn(request: HttpRequest, payload: LocalTurnIn):
     """A session on your private runner is using `agent`: record it as a turn.
 
     Allowed when `turn_context.resolve_turn_context` gives you the WHOLE agent (its owner or an admin,
-    or an editor line on its access list); a user or viewer gets 403 with what to ask for — they use the agent through canopy, on
-    its confined `ask` path. The turn runs `manual` unless you are an agent admin
+    or an editor line on its access list); anyone else gets 403 with what to ask for — they use the agent through canopy, in
+    read mode. The turn runs `manual` unless you are an agent admin
     and ask for `auto`. Idempotent per Claude session: a resumed session re-opens
     its live turn. The response carries the caller envelope."""
     from apps.agents.services import get_agent

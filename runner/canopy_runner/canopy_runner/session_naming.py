@@ -44,7 +44,7 @@ import re
 
 # The marker. Mirrored in canopy's orchestrator.agent_client — see module docstring.
 CANOPY_PREFIX = "c-"
-#: A CALLER's session — confined to a capability by canopy's `profile_guard`,
+#: A CALLER's session — confined (read mode or a connected site) by canopy's `profile_guard`,
 #: which recognises it by exactly this prefix. Never shared with an admin's work.
 RESTRICTED_PREFIX = "cx-"
 
@@ -119,19 +119,19 @@ def _thread_key(turn: dict, target: str) -> str:
     return restricted_key(turn, explicit or f"{target}:{turn.get('id') or ''}")
 
 
-#: `profile` values that mean "confined to a capability" — the current word
+#: `profile` values that mean "a confined turn" — the current word
 #: (canopy-web envelope VERSION 2) and the one an older canopy-web still sends.
 CONFINED_PROFILES = frozenset({"confined", "restricted"})
 
 
 def is_confined(env) -> bool:
-    """Whether a caller envelope confines its turn to a capability."""
+    """Whether a caller envelope confines its turn (read mode or a connected site)."""
     return isinstance(env, dict) and env.get("profile") in CONFINED_PROFILES
 
 
 def restricted_key(turn: dict, key: str) -> str:
     """A caller's turn continues a DIFFERENT session from an admin's on the same
-    thread: `<key>#<capability>`. Shared by both `_thread_key`s so they agree."""
+    thread: `<key>#<profile name>`. Shared by both `_thread_key`s so they agree."""
     env = turn.get("caller_context") or {}
     if not is_confined(env):
         return key

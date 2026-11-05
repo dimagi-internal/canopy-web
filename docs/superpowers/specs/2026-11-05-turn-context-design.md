@@ -384,3 +384,19 @@ Every refusal now says why, how to fix it and who can, from one closed set of co
 | 7 | Whoever adds someone sees the notice | The same refusal said `about` them, on each participant row, only to someone who may add people (`turn_refusal`), and `access_list_agent` only when the fix is a line and they may add one. An editor added to a session the agent's owner or an admin started is a session writer and is never flagged; a viewer is told "can read but not act", whose fix is their role |
 | 8 | The equivalence test compares `reason` | It compares outcomes: a reason exactly when refused, never its words. `test_answering_settings_equivalence` against `legacy_interface` likewise |
 | 3.3 | Turn gates that depend on who is asking move to `refusal` | `check_access` says the rule's refusal. The harness route's other gates (`agent_for_work`, email poster, pin, `reads_for`, `turn_mode=auto`) refuse a request before a turn exists, not a turn in a session someone reached; they keep their messages. Listed in the Stage 4 PR |
+
+### What building Stage 5 corrected
+
+The words went, and these are what removing them found.
+
+| Section | The spec said | What it is |
+|---|---|---|
+| 9 | Agent `ask` skills are renamed | Canopy starts an agent's read mode by the entry stored on the agent, and production stores `/ace:ask`, `/hal:ask`, `/eva:ask` and `/echo:ask`. A migration (`agents/0131`) moves an entry to `/<slug>:answer-caller`, only for an agent whose catalog has that skill. The agent repos delete `commands/ask.md` only after it deploys: draft PRs until then |
+| 9 | What stays: the stamp, the stored fields, `use:<name>`, `data: sensitive` | Also stored: the read-mode scratch folder `.<slug>-ask/` (production `write_paths` and `bash`), the document's `capabilities` key, and `interface_source`. Also on the wire: the A2A card's `capabilities` (the protocol's), a skill's `id` (`ask`), and two deployed fields agents read through MCP, the roster's and the topology's `capabilities` (and the topology `basis` value `capabilities`). Renaming those two is a separate change |
+| 9 | One named constant per stored value | `interface.ASK` and `interface_default.ASK_MODE` were two constants for one value. Now `READ_MODE_STAMP`, only |
+| 9 | `ask` goes | Only as read mode's name. "An ask" meaning a request (a task's, a review's, an investigation's, act-as) is a different noun, with deployed fields (`ask_kind`, `ask`), and stays |
+| 9 | `capability` goes, except leased machine capabilities | Also not the agent sense: a runner's capabilities, a storyboard link's, a workspace app action's, and the plugin catalog at `/system` (whose screen now says "plugin catalog") |
+| 3.1 | `review_ask` | `review_of`: the session a review chat reviews |
+| 3.3 | `canopy_sessions/doors.py` | `canopy_sessions/send_paths.py` (`SEND_PATHS`) |
+| 8 | Wording outside refusals leaves the snapshot hash alone | The default read profile's description is in the snapshot, and so are its version and the A2A card's label for read mode. Rewording them changes 137 leaves, none of them an access, profile, reason, basis or stamp |
+| 9 | Guard: no banned word in UI strings | Two guards: `tests/test_turn_context_words.py` (every server string that is prose, the OpenAPI text, and no new field name) and `frontend/src/turnContextWords.test.ts` (JSX text, attributes and prose literals). The verb "ask" passes; read mode's name does not |

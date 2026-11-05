@@ -1,4 +1,4 @@
-// Paste the notes, drop a file, or paste a link: the one door for "here's a meeting, help me
+// Paste the notes, drop a file, or paste a link: the one way in for "here's a meeting, help me
 // with it". Text that is only a link is left for the agent to read.
 import { useEffect, useState, type ChangeEvent, type FormEvent, type JSX } from 'react'
 import { useNavigate } from 'react-router-dom'

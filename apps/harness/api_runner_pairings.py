@@ -75,7 +75,7 @@ _REFUSED = "no pairing for this device key can be completed with this request"
 
 
 def _refuse(why: str) -> ProblemError:
-    # One answer for every refusal on the anonymous doors — a bad proof, another
+    # One answer for every refusal on the anonymous routes — a bad proof, another
     # key, declined, expired, used, a wrong secret: a caller learns nothing about
     # which pairings, keys or runners exist. The reason goes to the log.
     logger.info("runner pairing refused: %s", why)
@@ -128,7 +128,7 @@ def _paired_out(status: str, key: RunnerDeviceKey) -> RunnerPairedOut:
 
 @router.post("/", response={200: RunnerPairedOut, 201: RunnerPairingCreatedOut}, auth=None,
              summary="A new laptop box asks to be paired by browser (no token)")
-# anonymous door: a proof of the box's key; makes only the pairing (or answers
+# anonymous route: a proof of the box's key; makes only the pairing (or answers
 # `reattached` for a key that is already an ACTIVE runner's). Uniform 401.
 # a laptop box asking to be paired, a person saying yes or no (passkey-gated;
 # recorded as runner.pairing.approved), and the box claiming what was approved
@@ -191,7 +191,7 @@ def create_runner_pairing(request: HttpRequest, payload: RunnerPairingIn):
 
 @router.post("/{pairing_id}/claim", response={201: RunnerPairedOut, 202: RunnerPairedOut}, auth=None,
              summary="The box claims its approved pairing (no token)")
-# anonymous door: the pairing's key + the approval's one-time secret; the
+# anonymous route: the pairing's key + the approval's one-time secret; the
 # runner is the approver's, and only while they still hold agent.work there
 @gate("paired-key", kind="runner-protocol", step_up="runner protocol")
 def claim_runner_pairing(request: HttpRequest, pairing_id: uuid.UUID, payload: RunnerPairingClaimIn):

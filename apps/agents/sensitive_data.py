@@ -1,11 +1,11 @@
-"""Whether a capability of an agent HANDLES SENSITIVE DATA — may serve a host's
+"""Whether a connected site of an agent HANDLES SENSITIVE DATA — may serve a host's
 sensitive data — an interface setting, `data: sensitive` (spec
 2026-10-22-sensitive-data-agents §5).
 
-A capability says `data: sensitive` on the published interface. That is accepted only
+A connected site says `data: sensitive` on the published interface. That is accepted only
 
 * **when it is structurally true** (`structural_refusals`, asked by
-  `interface.parse`): the capability reaches its host through canopy's gateway
+  `interface.parse`): the connected site reaches its host through canopy's gateway
   (`sites:` is required), and its tools may be only the gateway's site tools
   (`site_tools`, `site_call`, `site_read`), `current_page`, `who_is_asking`, the
   page's own actions (`page_*`) and read-only local tools — no shell, no
@@ -18,11 +18,11 @@ A capability says `data: sensitive` on the published interface. That is accepted
 
 What it buys, and what reads it:
 
-* **confinement for everyone** — a turn in such a capability, or any turn in a
-  sensitive conversation, runs the capability's confined profile whoever asked
+* **confinement for everyone** — a turn in such a connected site, or any turn in a
+  sensitive conversation, runs the site's confined profile whoever asked
   (`turn_context.resolve_turn_context`);
 * **a sensitive conversation's host data** — the gateway calls a host for a
-  sensitive conversation only from such a capability (`host_gateway`);
+  sensitive conversation only from such a connected site (`host_gateway`);
 * **canopy vouches for it to the host** — the gateway's `Canopy-Execution`
   statement carries the setting (`as_claim`), and the host decides whether to
   accept it.
@@ -35,9 +35,9 @@ import re
 SENSITIVE = "sensitive"
 DATA_VALUES = frozenset({SENSITIVE})
 
-#: Local tools a capability that handles sensitive data may hold: they read the agent's own checkout.
+#: Local tools a connected site that handles sensitive data may hold: they read the agent's own checkout.
 READ_ONLY_LOCAL = frozenset({"Read", "Grep", "Glob", "Skill", "ToolSearch", "TodoWrite"})
-#: canopy's own tools such a capability may hold — and the ONLY canopy tools a
+#: canopy's own tools such a connected site may hold — and the ONLY canopy tools a
 #: sensitive turn's caller token reaches, whatever its interface says now
 #: (`harness.caller_tokens.resolve`, `mcp.turn_scope`).
 SENSITIVE_CANOPY_TOOLS = frozenset({"current_page", "who_is_asking", "site_tools", "site_call",
@@ -66,43 +66,43 @@ def structural_refusals(name: str, cap: dict) -> list[str]:
     Empty: it can."""
     out = []
     if not cap.get("sites"):
-        out.append(f"{name}: a `data: sensitive` capability must name `sites:` — a host's data "
+        out.append(f"{name}: a site that handles sensitive data must name `sites:` — a host's data "
                    "reaches it only through canopy's gateway")
     bad = [t for t in cap.get("tools") or []
            if t not in READ_ONLY_LOCAL and not _CANOPY_TOOL.match(t)]
     if bad:
-        out.append(f"{name}: a `data: sensitive` capability may hold only the gateway's site tools, "
+        out.append(f"{name}: a site that handles sensitive data may hold only the gateway's site tools, "
                    f"current_page, who_is_asking, the page's own actions (page_*) and "
                    f"{', '.join(sorted(READ_ONLY_LOCAL))}; "
                    f"refused: {', '.join(bad)}")
     if cap.get("bash"):
-        out.append(f"{name}: a `data: sensitive` capability may run no shell (`bash:` must be empty)")
+        out.append(f"{name}: a site that handles sensitive data may run no shell (`bash:` must be empty)")
     if cap.get("write_paths"):
-        out.append(f"{name}: a `data: sensitive` capability may write nothing (`write_paths:` must "
+        out.append(f"{name}: a site that handles sensitive data may write nothing (`write_paths:` must "
                    "be empty)")
     return out
 
 
-def sensitive_capabilities(iface: dict | None) -> list[str]:
+def sensitive_profiles(iface: dict | None) -> list[str]:
     return sorted(n for n, c in ((iface or {}).get("capabilities") or {}).items()
                   if (c or {}).get("data") == SENSITIVE)
 
 
-def handles_sensitive(agent, capability: str | None) -> bool:
-    if not capability:
+def handles_sensitive(agent, name: str | None) -> bool:
+    if not name:
         return False
-    cap = ((getattr(agent, "interface", None) or {}).get("capabilities") or {}).get(capability)
+    cap = ((getattr(agent, "interface", None) or {}).get("capabilities") or {}).get(name)
     return bool(cap) and cap.get("data") == SENSITIVE
 
 
-def as_claim(agent, capability: str | None) -> dict | None:
-    """The setting as canopy states it to a host (`Canopy-Execution`): who last
-    published the interface that holds it, and when. None when the capability
+def as_claim(agent, name: str | None) -> dict | None:
+    """The setting as canopy states it to a host (`Canopy-Execution`, whose `capability` key is wire):
+    who last published the interface that holds it, and when. None when the connected site `name`
     is not `data: sensitive`."""
-    if not handles_sensitive(agent, capability):
+    if not handles_sensitive(agent, name):
         return None
     by = agent.interface_published_by
     at = agent.interface_published_at
-    return {"data": SENSITIVE, "capability": capability,
+    return {"data": SENSITIVE, "capability": name,
             "declared_by": getattr(by, "email", "") if by is not None else "",
             "declared_at": at.isoformat() if at else ""}

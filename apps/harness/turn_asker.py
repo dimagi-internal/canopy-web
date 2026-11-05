@@ -15,8 +15,8 @@ agent acting for itself, exactly as before:
 * the request authenticated with a login canopy-web issued for one turn — never a stored
   PAT, which anything holding it could use to name any turn;
 * the turn that login serves NOW — its own turn, or for a session login the session's
-  newest turn (each message is its own turn) — is still executing, is not confined to a
-  caller capability, and runs for this agent;
+  newest turn (each message is its own turn) — is still executing, is not a confined
+  turn (read mode or a connected site), and runs for this agent;
 * that turn was started by a verified, active human (not canopy, not an agent), or was
   itself started on such a person's behalf (the chain carries them), and the request did
   not put itself in a lower role (`acts_as` only lowers).
@@ -26,7 +26,7 @@ The person's own turn cap (their `acts_as`) applies to them here as on their tur
 same person, or the request is refused (403, saying why). It adds nothing a request
 without it does not get.
 
-What it decides: where the person's work runs (`access.may_pin_runner` — every door that
+What it decides: where the person's work runs (`access.may_pin_runner` — every route that
 picks a runner) and whether a dispatch may run `auto` (`turn_gates`). Reads are unchanged:
 a turn already reads as its asker wherever that matters (scoped caller tokens). Every
 decision made on someone's behalf is recorded: an event, and the turn's
@@ -190,7 +190,7 @@ def _serving(user, credential: dict | None, *, session_login_live: bool = False)
     if not live:
         raise Refused("the turn this login serves is no longer running, so it acts for no one")
     if current.capability:
-        raise Refused("a turn confined to a caller capability acts for no one but itself")
+        raise Refused("a confined turn acts for no one but itself")
     acting = turn_agent(current)
     if acting is None or acting.pk != agent.pk:
         raise Refused("the turn this login serves now runs for another agent")
@@ -278,7 +278,7 @@ def note(ob: OnBehalf, decision: str) -> None:
 
 # --- who a turn's login is answering to, for the reads that ask (`Standing`) -----------
 #: On the request's user: the credential the request authenticated with, stashed by the
-#: door (`remember`) so `standing` can be worked out lazily, only by a read that asks.
+#: middleware (`remember`) so `standing` can be worked out lazily, only by a read that asks.
 CREDENTIAL_ATTR = "_canopy_turn_credential"
 STANDING_ATTR = "_canopy_turn_standing"
 #: On a turn's `origin_ref`: set by the server when an agent turn nobody asked for starts it.
@@ -308,7 +308,7 @@ class Standing:
 
 
 def remember(user, credential: dict | None) -> None:
-    """The door's one call: note which credential `user`'s request carried."""
+    """The route's one call: note which credential `user`'s request carried."""
     if user is not None and credential:
         setattr(user, CREDENTIAL_ATTR, dict(credential))
 
@@ -367,7 +367,7 @@ def _standing_of(turn: Turn, agent: Agent) -> Standing | None:
 
 def reads_for_of(turn) -> int | None:
     """The one grantor `turn` is scoped to (`READS_FOR`), or None. Malformed reads as none on
-    the turn's own record, and every door that asks treats a scope it cannot read as absent."""
+    the turn's own record, and every route that asks treats a scope it cannot read as absent."""
     ref = turn.origin_ref if isinstance(turn.origin_ref, dict) else {}
     stamp = ref.get(READS_FOR)
     who_id = stamp.get("user_id") if isinstance(stamp, dict) else None

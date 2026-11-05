@@ -6,7 +6,7 @@ from apps.common.schemas import StrictModel
 
 
 class AgentRoleIn(StrictModel):
-    """A role to define: a name and what it allows, chosen from read, write, agent_edit and use:<door>."""
+    """A role to define: a name and what it allows, chosen from read, write, agent_edit and use:<site>."""
 
     key: str = Field(max_length=40)
     label: str = Field(max_length=80)
@@ -30,7 +30,7 @@ class AgentRoleOut(StrictModel):
     key: str
     label: str
     description: str = ""
-    #: The closed set the role allows (`read`, `write`, `agent_edit`, `use:<door>`).
+    #: The closed set the role allows (`read`, `write`, `agent_edit`, `use:<site>`).
     permissions: list[str]
     #: What it lets someone do, in words.
     can: list[str]

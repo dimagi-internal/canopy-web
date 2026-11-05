@@ -1,4 +1,4 @@
-"""Sessions to post reply buttons from, and pressing them through the real signed door.
+"""Sessions to post reply buttons from, and pressing them through the real signed webhook.
 Shared by `tests/test_slack_choices.py` and its PostgreSQL sibling."""
 from __future__ import annotations
 

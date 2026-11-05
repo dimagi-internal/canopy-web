@@ -8,7 +8,7 @@ enroll, and so never puts an approve link in front of anyone. On 2026-10-17 a to
 cleanup revoked every PAT the haldimagi and jj laptop runners had, before either had
 a key.
 
-This door lets such a box ask, and only ask: it creates a PENDING key — which nothing
+This route lets such a box ask, and only ask: it creates a PENDING key — which nothing
 accepts until a person approves it in a browser behind a passkey — and tells the
 owner. The box proves two things:
 

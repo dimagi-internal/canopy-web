@@ -261,11 +261,11 @@ function Health({ health, failed }: { health: WorkspaceHealthOut; failed: Readon
 }
 
 /** "Who can use it" in words: its admins, plus whoever its access list names, and how many
- *  capabilities it publishes for the roles that cannot run the whole agent. */
+ *  profiles (read mode, connected sites) it publishes for the roles that cannot run the whole agent. */
 export function whoCanUse(a: Pick<AgentHealthOut, 'capabilities' | 'access_lines'>): string {
   const parts = []
   if (a.access_lines.length) parts.push(`${a.access_lines.length} on its access list`)
-  if (a.capabilities) parts.push(`${a.capabilities} capabilit${a.capabilities === 1 ? 'y' : 'ies'}`)
+  if (a.capabilities) parts.push(`${a.capabilities} profile${a.capabilities === 1 ? '' : 's'}`)
   return parts.length ? `Admins + ${parts.join(' · ')}` : 'Admins only'
 }
 

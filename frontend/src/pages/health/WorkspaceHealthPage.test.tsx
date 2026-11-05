@@ -209,9 +209,9 @@ describe('runners on Health', () => {
 })
 
 describe('whoCanUse', () => {
-  it('names who is on the access list and what is published, never "0 capabilities"', () => {
+  it('names who is on the access list and what is published, never "0 profiles"', () => {
     expect(whoCanUse({ capabilities: 0, access_lines: [] })).toBe('Admins only')
     expect(whoCanUse({ capabilities: 0, access_lines: ['Everyone in connect: editor'] })).toBe('Admins + 1 on its access list')
-    expect(whoCanUse({ capabilities: 3, access_lines: ['a: user', 'b: viewer'] })).toBe('Admins + 2 on its access list · 3 capabilities')
+    expect(whoCanUse({ capabilities: 3, access_lines: ['a: user', 'b: viewer'] })).toBe('Admins + 2 on its access list · 3 profiles')
   })
 })

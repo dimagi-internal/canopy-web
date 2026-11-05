@@ -1,7 +1,7 @@
 """The workspace authorizer — the ONE place that decides who is in a workspace
 and at what role (`member_role` / `is_member` / `membership`, the read scopes,
 `creation_workspace`), plus the member mutations guarded against stranding a
-workspace without an owner, and the only doors that create a membership
+workspace without an owner, and the only paths that create a membership
 (`ensure_member`, `_grant`). `tests/test_workspace_authorizer_is_sole_gate.py`
 pins the read side here.
 
@@ -1039,7 +1039,7 @@ def add_tree_member(*, workspace: Workspace, user_id, role: str, visible: set[st
     `MemberError('invalid_role')` for a role `ROLE_RANK` does not know.
 
     The authority check (who may grant `role`) is the caller's, made before
-    this is called; the row itself is created by `_grant`, the shared door."""
+    this is called; the row itself is created by `_grant`, the shared path."""
     if role not in WorkspaceMembership.ROLE_RANK:
         raise MemberError("invalid_role")
     user = get_user_model().objects.filter(pk=user_id).first()
@@ -1055,7 +1055,7 @@ def add_tree_member(*, workspace: Workspace, user_id, role: str, visible: set[st
     return _grant(workspace, user, role, invited_by=by)
 
 
-# ---- the membership-creating door shared by invites and access requests ----
+# ---- the membership-creating path shared by invites and access requests ----
 
 
 def _grant(ws: Workspace, user, role: str, invited_by=None) -> WorkspaceMembership:

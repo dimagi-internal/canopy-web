@@ -3,7 +3,7 @@
 This project changes no one's access (`docs/superpowers/specs/2026-11-05-turn-context-design.md`), so
 this file is the proof. It first ran green against the real `decide`, in the commit before that was
 deleted; `tests/legacy_decide.py` is that code, unchanged. It walks every combination `tests/test_access_matrix.py` and
-`tests/fixtures/answering_interfaces.json` name: relationship, role, verified, named capability, site,
+`tests/fixtures/answering_interfaces.json` name: relationship, role, verified, named connected site, site,
 page, sensitive, review chat, stamped turns, retired names, agentless. Same access, same stamp, same
 permissions, same role, source and basis, and a reason exactly when there is a refusal. The reason's words are
 compared by nobody: they are `apps/agents/refusals.py`'s, and Stage 4 rewrote them on purpose.
@@ -42,7 +42,7 @@ RETIRED = "retired_probe"
 WALK = 48189
 M = WorkspaceMembership
 HAL = {"ask": {"description": "Ask", "tools": ["Read"]}}
-TWO_DOORS = {"ask": {"description": "Ask", "tools": ["Read"]}, "status": {"description": "Status", "tools": ["Read"]}}
+TWO_PROFILES = {"ask": {"description": "Ask", "tools": ["Read"]}, "status": {"description": "Status", "tools": ["Read"]}}
 SITE = "connect-labs"
 #: One agent with a page entry, a site entry and a sensitive entry, so narrowing has something to find.
 EVERYTHING = {
@@ -122,11 +122,11 @@ def _matrix_agents(p) -> list:
             editors_run(agent)
         out.append(agent)
     lines = {"read-only": {"role": roles.READ_ONLY}, "read-write": {"role": roles.READ_WRITE},
-             "editor": {"role": roles.EDITOR}, "use-ask": {"capability": "ask"}, "use-status": {"capability": "status"},
+             "editor": {"role": roles.EDITOR}, "use-read-mode": {"capability": "ask"}, "use-status": {"capability": "status"},
              "manual": {"role": roles.READ_WRITE, "manual_only": True}}
     for name, line in lines.items():
         agent = _agent(f"l-{name}", ws, p)
-        declare(agent, TWO_DOORS)
+        declare(agent, TWO_PROFILES)
         AgentGrant.objects.create(agent=agent, kind=AgentGrant.PERSON, user=p.viewer, **line)
         out.append(agent)
     # Written as stored, not through `parse`: a sensitive page entry can no longer be published, and
@@ -166,8 +166,8 @@ def _keys(agent) -> list[str]:
     return list((agent.interface or {}).get("capabilities") or {})
 
 
-def _asks(agent) -> list:
-    return [None, interface.READ_MODE, interface.ASK, *_keys(agent), RETIRED, interface.SESSION_REVIEW]
+def _requested(agent) -> list:
+    return [None, interface.READ_MODE, interface.READ_MODE_STAMP, *_keys(agent), RETIRED, interface.SESSION_REVIEW]
 
 
 def _askers(agent, p) -> list[SimpleNamespace]:
@@ -230,11 +230,11 @@ def _probe(asker, conv) -> Turn | None:
 
 
 def _cases(agent, p):
-    """`(asker, conversation, ask, turn-free?)` for one agent."""
+    """`(asker, conversation, requested, turn-free?)` for one agent."""
     for asker in _askers(agent, p):
         for conv in _conversations(agent):
-            for ask in _asks(agent):
-                yield asker, conv, ask
+            for requested in _requested(agent):
+                yield asker, conv, requested
 
 
 def _name(asker) -> str:
@@ -250,7 +250,7 @@ def _compare(agent, p) -> tuple[int, list[str]]:
     lines = grants.lines_for(agent)
     users = [a.who for a in _askers(agent, p) if isinstance(a.who, get_user_model())]
     standings = Standings({u.pk: u for u in users}.values(), [agent])
-    for asker, conv, ask in _cases(agent, p):
+    for asker, conv, requested in _cases(agent, p):
         turn = _probe(asker, conv)
         # With no turn, three ways: reading for itself, handed the access list, handed everything in bulk.
         ways = [{}]
@@ -259,25 +259,25 @@ def _compare(agent, p) -> tuple[int, list[str]]:
             if isinstance(asker.who, get_user_model()):
                 ways.append({"standing": standings.of(asker.who, agent), "lines": lines})
         for way in ways:
-            old = _old_answer(reference.decide(agent, asker.who, verified=asker.verified, capability=ask, turn=turn, **way))
-            new = _new_answer(turn_context.for_asker(agent, asker.who, verified=asker.verified, requested=ask,
+            old = _old_answer(reference.decide(agent, asker.who, verified=asker.verified, capability=requested, turn=turn, **way))
+            new = _new_answer(turn_context.for_asker(agent, asker.who, verified=asker.verified, requested=requested,
                                                      turn=turn, **way))
             count += 1
             if old != new:
-                wrong.append(f"{agent.slug} {_name(asker)} {conv} ask={ask} {sorted(way)}: {_differs(old, new)}")
+                wrong.append(f"{agent.slug} {_name(asker)} {conv} requested={requested} {sorted(way)}: {_differs(old, new)}")
         if turn is not None:
-            old = _old_answer(reference.decide_for_turn(turn, agent, ask))
-            new = _new_answer(turn_context.for_turn(turn, agent, ask))
+            old = _old_answer(reference.decide_for_turn(turn, agent, requested))
+            new = _new_answer(turn_context.for_turn(turn, agent, requested))
             count += 1
             if old != new:
-                wrong.append(f"for_turn {agent.slug} {_name(asker)} {conv} ask={ask}: {_differs(old, new)}")
+                wrong.append(f"for_turn {agent.slug} {_name(asker)} {conv} requested={requested}: {_differs(old, new)}")
     return count, wrong
 
 
 # --- one test per agent, so the walk spreads over CI's workers ------------------------------------
 
 MATRIX_SLUGS = ["m-none", "m-editors", "m-eva", "m-hal", "m-eva-confined", "m-hal-confined", "l-read-only",
-                "l-read-write", "l-editor", "l-use-ask", "l-use-status", "l-manual", "all-kinds"]
+                "l-read-write", "l-editor", "l-use-read-mode", "l-use-status", "l-manual", "all-kinds"]
 FIXTURE_SLUGS = [row["slug"] for row in FIXTURE_ROWS]
 
 
@@ -332,11 +332,11 @@ def _same(turn, agent, requested=None):
 def test_every_kind_of_session_writer(people, creator, role, sensitive):
     agent = _matrix_agents(people)[-1]
     session = _chat(agent, getattr(people, creator, None), role=role, user=people.outsider, sensitive=sensitive)
-    for ask in (None, "connect", "data"):
-        new = _same(_turn_in(session, people.outsider, f"sw-{ask}"), agent, ask)
-        _same(_turn_in(session, people.viewer, f"sw-someone-else-{ask}"), agent, ask)   # a grant is for its own person
+    for requested in (None, "connect", "data"):
+        new = _same(_turn_in(session, people.outsider, f"sw-{requested}"), agent, requested)
+        _same(_turn_in(session, people.viewer, f"sw-someone-else-{requested}"), agent, requested)   # a grant is for its own person
     if creator in ("owner", "admin") and role in (SessionParticipant.OWNER, SessionParticipant.EDITOR) and not sensitive:
-        assert new["basis"] == "sensitive:data"     # the last ask: a writer is confined to it, like the owner
+        assert new["basis"] == "sensitive:data"     # the last one asked for: a writer is confined to it, like the owner
         assert _same(_turn_in(session, people.outsider, "sw-plain"), agent)["basis"] == f"session:{role}"
 
 
@@ -397,7 +397,7 @@ def test_a_stamped_turn_keeps_its_stamp_and_reports_what_the_envelope_reports(pe
         for conv in _conversations(agent):
             if conv.get("no_turn"):
                 continue
-            for stamp in ["", interface.READ_MODE, interface.ASK, *_keys(agent), RETIRED, interface.SESSION_REVIEW]:
+            for stamp in ["", interface.READ_MODE, interface.READ_MODE_STAMP, *_keys(agent), RETIRED, interface.SESSION_REVIEW]:
                 turn = _probe(asker, conv)
                 turn.capability = stamp
                 session_ctx = session_context.build(None, turn, agent=agent)

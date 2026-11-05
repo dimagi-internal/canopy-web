@@ -30,10 +30,10 @@ type Draft = {
   read: boolean
   write: boolean
   agentEdit: boolean
-  doors: string
+  sites: string
 }
 
-const BLANK: Draft = { editing: null, key: '', label: '', description: '', read: false, write: false, agentEdit: false, doors: '' }
+const BLANK: Draft = { editing: null, key: '', label: '', description: '', read: false, write: false, agentEdit: false, sites: '' }
 
 /** A name as a key: lowercase letters, digits and underscores, starting with a letter. */
 function slugOf(name: string): string {
@@ -51,13 +51,13 @@ function draftFrom(role: AgentRoleOut, copy: boolean): Draft {
     read: held.has('read'),
     write: held.has('write'),
     agentEdit: held.has('agent_edit'),
-    doors: role.permissions.filter((p) => p.startsWith('use:') && p !== 'use:*').map((p) => p.slice(4)).join(', '),
+    sites: role.permissions.filter((p) => p.startsWith('use:') && p !== 'use:*').map((p) => p.slice(4)).join(', '),
   }
 }
 
 function permissionsOf(d: Draft): string[] {
-  const doors = d.doors.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean).map((x) => `use:${x}`)
-  return [...(d.read ? ['read'] : []), ...(d.write ? ['write'] : []), ...(d.agentEdit ? ['agent_edit'] : []), ...doors]
+  const sites = d.sites.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean).map((x) => `use:${x}`)
+  return [...(d.read ? ['read'] : []), ...(d.write ? ['write'] : []), ...(d.agentEdit ? ['agent_edit'] : []), ...sites]
 }
 
 export function WorkspaceAgentRolesPage(): JSX.Element {
@@ -270,20 +270,20 @@ export function WorkspaceAgentRolesPage(): JSX.Element {
                 onChange={(e) => setWrite(e.target.checked)} />
               <span>Drive the whole agent</span>
               <span className="text-muted-foreground">
-                {writeBlocked ? '(only a workspace owner can define a role that does)' : 'includes read mode and every door'}
+                {writeBlocked ? '(only a workspace owner can define a role that does)' : 'includes read mode and every connected site'}
               </span>
             </label>
             <label className={`flex items-baseline gap-2 text-[12px] ${writeBlocked ? 'text-muted-foreground' : 'text-foreground'}`}>
               <input type="checkbox" checked={draft.agentEdit} disabled={writeBlocked}
                 onChange={(e) => setAgentEdit(e.target.checked)} />
-              <span>Change its skills and capabilities</span>
+              <span>Change its skills and settings</span>
               <span className="text-muted-foreground">includes driving the agent</span>
             </label>
             <label className="flex items-baseline gap-2 text-[12px] text-foreground">
               <span>Use only from these connected sites</span>
-              <input value={draft.doors} aria-label="Connected sites" placeholder="connect, report" className={`${FIELD} w-56`}
-                onChange={(e) => setDraft((d) => d && { ...d, doors: e.target.value })} />
-              <span className="text-muted-foreground">names of capabilities an agent published</span>
+              <input value={draft.sites} aria-label="Connected sites" placeholder="connect, report" className={`${FIELD} w-56`}
+                onChange={(e) => setDraft((d) => d && { ...d, sites: e.target.value })} />
+              <span className="text-muted-foreground">the names of an agent's connected sites</span>
             </label>
           </fieldset>
           <p className="m-0 text-[11px] text-muted-foreground">

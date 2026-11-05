@@ -23,7 +23,7 @@ does not inherit the rest of the job.
 
 Who is checked: a member's session. The app itself (then-steps, scenarios,
 retention), a public visitor and a private-link holder are not scoped here —
-their doors carry their own rules.
+their routes carry their own rules.
 """
 from __future__ import annotations
 

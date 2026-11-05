@@ -372,13 +372,13 @@ def test_without_a_sensitive_runner_the_sensitive_data_agent_falls_short_and_say
          "url": row["url"] + "/settings#running"}]
 
 
-def test_an_agent_allowed_sensitive_data_without_a_sensitive_capability_says_why(w, monkeypatch):
+def test_an_agent_allowed_sensitive_data_without_a_sensitive_profile_says_why(w, monkeypatch):
     needs = {**NEEDS, "uses": {**NEEDS["uses"], "sensitive_data_agents": ["labsdata", "ace"]}}
     _publish(w, monkeypatch, needs=needs)
     _runner(w, w["labsdata"], w["ace"], sensitive=True)
     row = next(r for r in _needs(w)["agents"] if r["slug"] == "ace")
     assert row["sensitive_data"] and row["can_handle_sensitive_data"] is False
-    assert row["why_not"][0] == {"text": "no capability of ACE for this site says `data: sensitive`",
+    assert row["why_not"][0] == {"text": "ACE has no connected site for this site that handles sensitive data",
                                  "url": row["url"] + "/settings#reach"}
     assert all(why["url"] and "canopy ›" not in why["text"] for why in row["why_not"])
 

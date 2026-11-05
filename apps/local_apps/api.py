@@ -6,7 +6,7 @@ what a runner asks for a run. Design: docs/architecture/local-apps.md.
   which workspace its sessions land in.
 * Releasing goes through the `local_app.release` approval; revoking is a superuser.
 * A runner reaches only its owner's installations on itself, under the runner
-  protocol's own path, so `runner_auth` needed no new door.
+  protocol's own path, so `runner_auth` needed no new route.
 """
 
 from __future__ import annotations

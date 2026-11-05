@@ -244,20 +244,20 @@ async function callLink(workspace: string, key: string, token: string, op: AppOp
 }
 
 /**
- * Answer an app page's call. `door`:
+ * Answer an app page's call. `surface`:
  * - `member`: as the viewer, on the live app or (with `draft`) a draft's test copy;
  * - `preview`: a public page previewed by a maintainer on a draft's test copy,
  *   with the visitor's rules (`as_public`);
- * - `public`: an anonymous visitor on the live public door.
+ * - `public`: an anonymous visitor on the live public page.
  * - `link`: the holder of a private link, running that link's actions on its one record.
  */
 export async function callApp(workspace: string, key: string, op: AppOp,
-                              door: "member" | "preview" | "public" | "link", draft?: number | null,
+                              surface: "member" | "preview" | "public" | "link", draft?: number | null,
                               token?: string): Promise<unknown> {
-  if (door === "link") return callLink(workspace, key, token ?? "", op);
+  if (surface === "link") return callLink(workspace, key, token ?? "", op);
   const path = P(workspace, key);
-  const isPublic = door === "public";
-  const asPublic = door === "preview" ? true : undefined;
+  const isPublic = surface === "public";
+  const asPublic = surface === "preview" ? true : undefined;
   const d = draft ?? undefined;
   const base = isPublic ? `/api/public-apps/${encodeURIComponent(workspace)}/${encodeURIComponent(key)}`
     : `/api/workspace-apps/${encodeURIComponent(workspace)}/${encodeURIComponent(key)}`;
@@ -279,7 +279,7 @@ export async function callApp(workspace: string, key: string, op: AppOp,
   }
   const q = d ? `?draft=${d}` : "";
   if (op.op === "upload") return postFile(`${base}/files${isPublic ? "" : q}`, op);
-  if (isPublic || door === "preview") throw new Error("not available on a public page");
+  if (isPublic || surface === "preview") throw new Error("not available on a public page");
   if (op.op === "bulk") {
     const res = await apiV2.POST("/api/workspace-apps/{workspace}/{key}/actions/{action}/bulk", {
       params: { path: { ...path, action: op.action }, query: { draft: d } },

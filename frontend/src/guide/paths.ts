@@ -11,7 +11,7 @@
  * (`WorkspaceMembership.ROLE_RANK` is `{viewer: 0, editor: 1, admin: 2, owner: 3}`,
  * and `apps/workspaces/permissions.py` says what each may do), and
  * a reader asking "what can I do here?" is asking about their role, not about
- * which door they came through.
+ * which way they came in.
  *
  * One of those five was NOT a role and was lost in the reframe: "you want
  * canopy's skills in your own Claude Code sessions" — mint a token, install
@@ -72,7 +72,7 @@ export const USER_ROLES: UserRole[] = [
       'Chat, answer a question an agent is blocked on, approve or decline a task, read the board. ' +
       'Then choose where it runs: a cloud runner needs nothing from you, or pair your own ' +
       'laptop so you can jump into the terminal mid-turn. Or skip agents entirely — mint a ' +
-      'token in Settings and install the canopy plugin to use the capability library in ' +
+      'token in Settings and install the canopy plugin to use the plugin catalog in ' +
       'your own Claude Code sessions, with no fleet to run.',
   },
   {

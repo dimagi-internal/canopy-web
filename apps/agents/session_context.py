@@ -7,7 +7,7 @@ table, no write, nothing about the asker.
 The turn is an input because some facts only a turn holds: a sessionless turn dispatched from a
 sensitive parent is sensitive through its ancestors, and its conversation can be `canopy_session`
 rather than `chat_session`. Each fact below asks the function that already answers it, the same way
-every door asks it today.
+every entry point asks it today.
 
 The facts the rule always reads are read at build. The ones it reads only sometimes, or only a
 screen wants, are read when first asked (`cached_property`), so asking the rule about a turn costs
@@ -84,7 +84,7 @@ class SessionContext:
     sensitive: bool = False
     #: The session a review chat is about, when this is one. `is_review` is the rule's question.
     is_review: bool = False
-    review_ask: object | None = None
+    review_of: object | None = None
     # What the read-when-asked facts below are read from. Not facts themselves.
     _session: object = field(default=None, compare=False, repr=False)
     _turn: object = field(default=None, compare=False, repr=False)
@@ -166,7 +166,7 @@ def build(session, turn=None, *, agent=None) -> SessionContext:
         site=iface_mod.session_site(session), page=iface_mod.session_resource(session),
         sensitive=sensitivity.any_sensitive(session),
         is_review=session_access.is_review_conversation(session),
-        review_ask=_reviewed_session(session),
+        review_of=_reviewed_session(session),
         _session=session, _agent=agent)
 
 
@@ -180,7 +180,7 @@ def _of_turn(session, turn, agent) -> SessionContext:
         channel=turn.origin, runner_requested=turn.pinned_runner_id,
         site=iface_mod._conversation_site(turn), page=iface_mod._declared_resource(turn),
         sensitive=sensitivity.is_sensitive(turn), is_review=is_review,
-        review_ask=_reviewed_session(session) if is_review else None,
+        review_of=_reviewed_session(session) if is_review else None,
         _session=session, _turn=turn, _agent=agent)
 
 
@@ -218,7 +218,7 @@ def _send_blocks(session) -> tuple[SendBlock, ...]:
     if session_access.is_content_deleted(session):
         blocks.append(SendBlock(refusal_of(CONTENT_DELETED, agent=agent, session=session), ANYONE,
                                 lambda asker: True))
-    # Only a signed-in person: a contact's send goes through its own door, with its own ACL.
+    # Only a signed-in person: a contact's send goes through its own route, with its own ACL.
     blocks.append(SendBlock(refusal_of(CANNOT_WRITE, agent=agent, session=session), SOME_PEOPLE,
                             lambda asker: asker.user is not None
                             and not session_access.can_write(asker.user, session)))

@@ -311,7 +311,7 @@ def frame(kind: bytes, data: bytes) -> bytes:
     return kind + struct.pack(">I", len(data)) + data
 
 
-# ── the box's doors: each stubbed in tests ──────────────────────────────────
+# ── the box's entry points: each stubbed in tests ────────────────────────────────
 
 def run_unit(argv, input=None):
     """A helper's `systemd-run`, to its end."""

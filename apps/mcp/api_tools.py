@@ -188,9 +188,9 @@ EXCLUDED: dict[str, str] = {
     "app_view_subscribe": _BROWSER,
     "app_view_unsubscribe": _BROWSER,
     # A connected site telling canopy its resources changed: signed by the site's own
-    # key, a host's door, never a person's or an agent's.
+    # key, a host's route, never a person's or an agent's.
     "resources_updated": _HOST,
-    # The same door for the rest of the site's calls, and two cloud services' webhooks. The
+    # The same for the rest of the site's calls, and two cloud services' webhooks. The
     # signature IS the credential, so as a tool each could only be refused, and that refusal
     # reads as the agent's own login failing: 2026-11-04, ACE's Slack turn 9f55abcc on
     # cloud-ec2-live called get_site_agents, got 401 no_assertion, and credential_guard
@@ -310,7 +310,7 @@ def is_tool_route(method: str, path: str) -> bool:
     """Whether `method path` is a REST operation this server serves as a tool.
 
     A conversation's caller token reaches REST through exactly these
-    (`BearerTokenAuthMiddleware`, canopy-web#1782), so the two doors cannot
+    (`BearerTokenAuthMiddleware`, canopy-web#1782), so the two routes cannot
     drift: what is left out above — minting a PAT, the person's own memory
     switches and grants, the runner protocol — is as unreachable for that
     session over REST as it is over MCP. A path that is not an API operation at

@@ -27,11 +27,11 @@ A request held to a reach (`access.reach_of`) reads only turns inside it, whiche
 would otherwise pass (`access.turn_in_reach`), and a turn naming its chat only in `origin_ref` is
 that chat's for it. For everyone else such a turn is still judged by the legs above.
 
-A SENSITIVE turn's content is nobody's through these doors (`harness.sensitivity`):
+A SENSITIVE turn's content is nobody's through these routes (`harness.sensitivity`):
 its words belong to its conversation, which its own people read on the chat page,
-and every door here is a log a review or another AI could read.
+and every route here is a log a review or another AI could read.
 
-Every door asks `can_read_turn_content`: the REST detail routes, the list
+Every route asks `can_read_turn_content`: the REST detail routes, the list
 redaction, the unclaimable report, and the live turn socket.
 """
 from __future__ import annotations

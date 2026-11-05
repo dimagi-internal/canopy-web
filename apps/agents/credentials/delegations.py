@@ -444,13 +444,14 @@ def github_refusal(turn) -> str:
     """Why this turn gets no git identity, or "" when it gets one. Reads only: the statement of what a
     turn gets (`for_turn.py`) and `github_token_for_turn` ask this one question."""
     if turn.capability:
-        # A CALLER's turn (confined to a capability of the agent's interface) is
-        # never lent the owner's GitHub identity: no published capability needs it,
+        # A CALLER's turn (confined to read mode or a connected site) is
+        # never lent the owner's GitHub identity: no published profile needs it,
         # and in a session a stranger steers it is the most valuable thing on the
         # box. The runner does not ask for one either; this is the server's half,
         # so a runner that did would still get nothing.
-        return (f"this turn is confined to the caller capability '{turn.capability}', and a "
-                f"caller's turn is never given its agent owner's GitHub identity")
+        from apps.agents import interface  # noqa: PLC0415 — interface imports harness, which imports this
+        return (f"this turn is confined to {interface.stamp_words(turn.capability)}, and a "
+                f"confined turn is never given its agent owner's GitHub identity")
     from apps.harness import turn_asker  # noqa: PLC0415 — harness imports this package
 
     if turn_asker.READS_FOR in (turn.origin_ref if isinstance(turn.origin_ref, dict) else {}):

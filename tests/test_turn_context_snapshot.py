@@ -141,7 +141,7 @@ def _default_read_mode(w):
 
 
 def _connected_site(w):
-    return _chat(w, creator=w.door, embed_app="connect-labs"), w.door, w.box, "connected_site"
+    return _chat(w, creator=w.site_user, embed_app="connect-labs"), w.site_user, w.box, "connected_site"
 
 
 def _session_review(w):
@@ -185,8 +185,8 @@ def test_a_claim_records_what_it_ran_as_and_nothing_seeded(world, make, grants_o
 
 
 def test_a_stamp_that_no_longer_resolves_is_recorded_as_deny_all_with_nothing_seeded(world):
-    session = _chat(world, creator=world.door, embed_app="connect-labs")
-    turn = _enqueue(world.door, session, box=world.box)
+    session = _chat(world, creator=world.site_user, embed_app="connect-labs")
+    turn = _enqueue(world.site_user, session, box=world.box)
     assert turn.capability == "connect"
     world.agent.interface = {"capabilities": {"ask": world.agent.interface["capabilities"]["ask"]}}
     world.agent.save(update_fields=["interface"])
@@ -225,7 +225,7 @@ def test_a_blocked_senders_mail_stores_that_and_never_why_they_were_blocked(worl
 
 
 def test_a_refusals_note_and_every_channels_delivery_hold_no_prompt_person_fact_or_secret(world):
-    """Stage 4: `result_note`, the Slack reply, a send door's 403 and the people panel's notice say the refusal, and
+    """Stage 4: `result_note`, the Slack reply, a send path's 403 and the people panel's notice say the refusal, and
     nothing a person wrote, nothing canopy knows about them and no value."""
     from apps.slack import services as slack_services
 
@@ -238,12 +238,12 @@ def test_a_refusals_note_and_every_channels_delivery_hold_no_prompt_person_fact_
         slack = slack_services.refusal_message(world.agent, Turn.objects.get(pk=turn.pk), named=False, installation=None)
     assert "you are not on agent's access list" in slack and "add you to its access list" in slack
     SessionParticipant.objects.create(session=session, user=world.member, role=SessionParticipant.VIEWER)
-    door = _browser(world.member).post(f"/api/canopy-sessions/{session.pk}/send", data={"text": PROMPT},
+    refused = _browser(world.member).post(f"/api/canopy-sessions/{session.pk}/send", data={"text": PROMPT},
                                          content_type="application/json")
-    assert door.status_code == 403 and "read this session but not act in it" in door.json()["detail"]
+    assert refused.status_code == 403 and "read this session but not act in it" in refused.json()["detail"]
     panel = _browser(world.reader).get(f"/api/canopy-sessions/{session.pk}/participants").json()
     assert any(row["turn_refusal"] for row in panel)
-    for delivered in (Turn.objects.get(pk=turn.pk).result_note, slack, door.json(), panel):
+    for delivered in (Turn.objects.get(pk=turn.pk).result_note, slack, refused.json(), panel):
         _assert_clean({"delivered": delivered}, VAULT_VALUE)
     # Controls: the prompt, the fact and the note are really there to leak, so their absence above is real.
     assert Turn.objects.get(pk=turn.pk).prompt == PROMPT
@@ -327,7 +327,7 @@ def test_its_own_people_get_both_with_no_words(world):
 
 
 def test_its_own_person_through_a_token_gets_no_turn_of_it(world):
-    # A token is the door an AI reads through, whoever it reads as.
+    # A token is the way an AI reads, whoever it reads as.
     session, turn = _sensitive_world(world)
     raw, _token = PersonalToken.create_for_user(user=world.owner, label="t")
     c = Client(headers={"Authorization": f"Bearer {raw}"})

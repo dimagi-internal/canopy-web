@@ -126,7 +126,7 @@ def test_no_adapter_means_new_threads_stay_on_emdash(cfg, runs, monkeypatch):
 
 
 def test_a_callers_confined_turn_never_runs_direct(cfg, runs, monkeypatch):
-    monkeypatch.setattr(desktop.caller, "capability", lambda turn: {"name": "ask"})
+    monkeypatch.setattr(desktop.caller, "confined_profile", lambda turn: {"name": "ask"})
     assert desktop.maybe_execute(cfg, FakeClient(), "rid", _turn(), "th") is None
 
 

@@ -141,7 +141,7 @@ class PersonalToken(models.Model):
         A deactivated user's tokens are dead too. Deactivating is how an account
         is switched off, and every other credential path (delegated tokens, the
         MCP principal, the socket session) already refuses an inactive user — a
-        PAT that kept working would be the one door left open.
+        PAT that kept working would be the one way in left open.
         """
         if not raw:
             return None
@@ -160,7 +160,7 @@ def client_label(user_agent: str, canopy_client: str = "") -> str:
 
 
 def note_used(token: PersonalToken, client: str) -> None:
-    """Stamp a token's last use — every door that authenticates with one."""
+    """Stamp a token's last use — every entry point that authenticates with one."""
     PersonalToken.objects.filter(pk=token.pk).update(
         last_used_at=timezone.now(), last_used_client=client)
 
@@ -224,7 +224,7 @@ class AppCredential(models.Model):
     #: registration with a rotate button — but it authenticated nothing after
     #: `/api/auth/token-exchange` went (2026-09-22): a site proves itself by
     #: SIGNING, against keys it publishes, so canopy holds nothing that could
-    #: impersonate it. A secret that opens no door still reads as a credential
+    #: impersonate it. A secret that opens nothing still reads as a credential
     #: to protect and rotate, so it was removed rather than left idle
     #: (2026-09-24).
     #: The ONE tenant this registration belongs to. Every fact on the row —

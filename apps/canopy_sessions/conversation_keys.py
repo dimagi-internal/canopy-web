@@ -53,7 +53,7 @@ NEEDS_VAULT_KEY = ("a sensitive conversation needs a canopy account with a vault
 
 class CannotHold(ValueError):
     """This principal cannot start or hold a sensitive conversation. A ValueError, so a
-    send door already turns it into a 422 carrying the sentence."""
+    send path already turns it into a 422 carrying the sentence."""
 
     def __init__(self):
         super().__init__(NEEDS_VAULT_KEY.format(url=links.public_url("/settings#vault-key")))
@@ -108,7 +108,7 @@ def key_of(session: Session) -> SessionKey | None:
 
 def ensure_key(session: Session, *, starter=None, offered: dict | None = None) -> SessionKey | None:
     """The conversation's key, made now if it has none. Idempotent; never raises for a
-    missing vault key (the send door refuses, `require_key`).
+    missing vault key (the send path refuses, `require_key`).
 
     * already keyed → that key;
     * it carries on a conversation that has one (`parent_session`: a fork, a successor,

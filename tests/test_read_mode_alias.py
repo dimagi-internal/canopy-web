@@ -1,7 +1,7 @@
-"""`read` and `ask` are one read mode, and `interface.is_read_mode` is the only place that says so.
+"""`read` and `READ_MODE_STAMP` are one read mode, and `interface.is_read_mode` is the only place that says so.
 
 Spec 2026-11-03-agent-read-mode-and-doors-design.md, Phase 1 step 2: an alias only. Read mode still
-resolves only through a published capability here; stored data (stamps, rules, lines) behaves as before.
+resolves only through a published profile here; stored data (stamps, rules, lines) behaves as before.
 """
 from __future__ import annotations
 
@@ -35,11 +35,11 @@ def test_the_one_function():
     ({roles.READ}, "canopy", False),
     ({roles.WRITE, "use:*", roles.READ}, "canopy", True),
 ])
-def test_opens_treats_read_and_ask_alike(held, name, ok):
+def test_opens_treats_read_and_the_stamp_alike(held, name, ok):
     assert interface.opens(frozenset(held), name) is ok
 
 
-def test_profile_of_either_name_is_the_published_ask():
+def test_profile_of_either_name_is_the_published_read_mode():
     class A:
         interface = parse(IFACE)
 
@@ -52,7 +52,7 @@ def test_an_unpublished_name_still_fails_closed():
     class A:
         interface = parse(IFACE)
 
-    gone = interface.profile(A, "retired-door")
+    gone = interface.profile(A, "retired-site")
     assert gone["tools"] == [] and gone["bash"] == [] and gone["write_paths"] == []
 
     # (a bare agent's `read` now builds the default read profile: tests/test_read_mode.py)
@@ -73,11 +73,11 @@ def test_admission_matches_read_mode_by_either_name(want, have, expected):
 def test_admission_summary_says_read_mode_for_either_name():
     for name in ("ask", "read"):
         assert "read mode" in admission_rules.summary(_rule(capability=name))
-    assert "capability canopy" in admission_rules.summary(_rule(capability="canopy"))
+    assert "connected site canopy" in admission_rules.summary(_rule(capability="canopy"))
 
 
 @pytest.mark.django_db
-def test_a_use_ask_or_use_read_line_reaches_the_published_ask():
+def test_a_stamped_or_use_read_line_reaches_the_published_read_mode():
     mk = get_user_model().objects.create_user
     owner, vw = mk("o", "o@dimagi.com", "pw"), mk("v", "v@dimagi.com", "pw")
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=owner)
@@ -89,7 +89,7 @@ def test_a_use_ask_or_use_read_line_reaches_the_published_ask():
         d = turn_context.for_asker(agent, vw, verified=True)
         assert (d.access, d.stamped) == (access.CONFINED, "ask"), cap     # stamped with what runs
         line.delete()
-    # Asking by the other name reaches the same published capability.
+    # Asking by the other name reaches the same published read mode.
     allow(agent, role=roles.READ_ONLY)
     assert turn_context.for_asker(agent, vw, verified=True, requested="read").stamped == "ask"
     assert turn_context.for_asker(agent, vw, verified=True, requested="canopy").access == turn_context.REFUSED

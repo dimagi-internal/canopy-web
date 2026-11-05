@@ -87,7 +87,7 @@ class Viewer:
     contact: object | None = None
     #: Whether the request came through a chat surface
     #: (`sensitivity.request_is_chat_surface`). False unless the route says so, so a
-    #: sensitive conversation's call arguments reach no token-held door.
+    #: sensitive conversation's call arguments reach no token-held route.
     chat_surface: bool = False
     #: Whether the principal behind the request is a person acting as themselves
     #: (`harness.acting_person`) — never an agent's turn, caller token or login. Only
@@ -363,7 +363,7 @@ def _blocks(body) -> list[dict]:
 
 def _ceiling(session, row: ViewRow) -> list[str]:
     """The owner's ceiling for this site, if the conversation has one. The
-    capability of the turn that made the call; none known → none (the host's
+    connected site of the turn that made the call; none known → none (the host's
     grant decides, as it does for every call)."""
     from apps.canopy_sessions.models import Message
 

@@ -3,7 +3,7 @@
 canopy's `profile_guard` PreToolUse hook is the exact layer: argv token for token,
 `{thread_id}`-pinned, paths realpath'd, fail closed. It is also the ONLY layer, and
 it is a hook — the same mechanism a plugin update, a malformed hooks.json or a
-`disableAllHooks` can take out. This module writes the capability again in the one
+`disableAllHooks` can take out. This module writes the profile again in the one
 language Claude Code enforces itself: permission rules, in the session worktree's
 `.claude/settings.json`.
 
@@ -21,9 +21,9 @@ against emdash's own launcher):
   mode, including `bypassPermissions`"), need no workspace trust ("`deny` and `ask`
   rules aren't affected, since they only restrict"), and beat any allow rule or hook
   "allow". So the DENY list is the layer that takes effect today. It can only remove
-  what the capability does not grant at all — an allow cannot carve an exception out
+  what the profile does not grant at all — an allow cannot carve an exception out
   of a deny — so it removes whole tools, whole MCP servers, high-risk programs the
-  capability's Bash patterns never start with, and credential directories.
+  profile's Bash patterns never start with, and credential directories.
 * **`defaultMode: dontAsk` + allow rules** are written too. Under bypass they do
   nothing; they are what makes the session a strict allowlist the day a cx- session
   starts WITHOUT bypass (a resumed conversation, an emdash that honours a per-task
@@ -41,16 +41,16 @@ against emdash's own launcher):
   by file permission checks — only Edit(path) rules are" at startup and enforces
   nothing (#1058; measured on 2.1.287: a `Write(path)` deny let the Write tool write
   there, an `Edit(path)` deny stopped it). A BARE tool name is different: `Edit` in
-  `deny` removes only the tool called Edit, so a capability granting Write but not
+  `deny` removes only the tool called Edit, so a profile granting Write but not
   Edit keeps Write, scoped by the `Edit(path)` allows. Writes are scoped by
   `write_paths`, as `profile_guard` scopes them: none → no file writes at all.
 * **MCP rules name REAL servers.** An allow rule whose server segment holds a glob
   (`mcp__*canopy-web__who_is_asking`, the form interfaces are written in) is skipped
   by Claude Code, so patterns are normalised against the servers configured on this
   box (`plugin_canopy_canopy-web`, …). A claude.ai connector cannot be enumerated
-  offline and is left to the hook unless the capability grants no MCP at all, in
+  offline and is left to the hook unless the profile grants no MCP at all, in
   which case `mcp__*` (a glob deny is legal) removes every server.
-* **A server the capability never reaches is not STARTED.** An `mcp__<server>` deny
+* **A server the profile never reaches is not STARTED.** An `mcp__<server>` deny
   removes its tools but Claude Code still spawns and connects it (measured on
   2.1.287: every denied plugin server started, ~3s of stdio launches before the first
   request on a laptop, plus a connect timeout for any that hang). `deniedMcpServers`
@@ -74,17 +74,17 @@ import shlex
 
 logger = logging.getLogger(__name__)
 
-#: Built-in tools a capability either grants or does not. `Read` is deliberately
+#: Built-in tools a profile either grants or does not. `Read` is deliberately
 #: absent: the session is TOLD to read its own envelope (`--caller <path>`) even when
-#: its capability lists no Read, and a deny cannot make that one exception. `Skill`
+#: its profile lists no Read, and a deny cannot make that one exception. `Skill`
 #: is absent too: a caller's session STARTS with a skill's slash command (the
-#: capability's `entry`, e.g. `/ace:ask`), and a native deny that removed the skill
+#: profile's `entry`, e.g. `/ace:answer-caller`), and a native deny that removed the skill
 #: machinery would be a session that cannot begin. It only loads instructions; every
 #: action a skill then takes is a tool call, gated here and by the hook.
 GATED_TOOLS = ("Bash", "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch",
                "Agent", "Glob", "Grep")
 
-#: Programs denied outright unless one of the capability's own Bash patterns starts
+#: Programs denied outright unless one of the profile's own Bash patterns starts
 #: with them. A deny rule "isn't a security boundary around the program" (another
 #: spelling of the same call slips past it) — profile_guard's argv match is the
 #: boundary; this removes the common spellings of the dangerous ones a second time.
@@ -541,7 +541,7 @@ def settings_for(cap: dict, *, worktree: str, caller_path: str | None = None,
 
 
 def servers_to_stop(cap: dict, names: dict[str, str]) -> list[str]:
-    """CONFIG names of the servers this capability never reaches — the ones
+    """CONFIG names of the servers this profile never reaches — the ones
     `settings_for` denies as `mcp__<server>` — for `deniedMcpServers`. Pure."""
     tools = [str(t) for t in (cap or {}).get("tools") or []]
     mcp_pats = [t for t in tools if t.startswith("mcp") or t == "*"]
@@ -557,7 +557,7 @@ def _denied_servers_doc(stop: list[str]) -> list[dict]:
 MARKER_KEY = "canopyConfined"
 
 
-def write_worktree_settings(worktree: str, permissions: dict, *, capability: str = "",
+def write_worktree_settings(worktree: str, permissions: dict, *, profile: str = "",
                             stop_servers: list[str] = ()) -> pathlib.Path:
     """Merge `permissions` (and `stop_servers`, as `deniedMcpServers`) into
     `<worktree>/.claude/settings.json`. Raises OSError.
@@ -584,7 +584,7 @@ def write_worktree_settings(worktree: str, permissions: dict, *, capability: str
     repo_stopped = [d for d in existing.get("deniedMcpServers") or []
                     if not (isinstance(d, dict) and d.get("serverName") in ours_stopped)]
     doc = {**existing, "permissions": merged,
-           MARKER_KEY: {"capability": capability, "deny": list(permissions["deny"]),
+           MARKER_KEY: {"capability": profile, "deny": list(permissions["deny"]),
                         "stopped": list(stop_servers)}}
     stopped = repo_stopped + _denied_servers_doc(list(stop_servers))
     if stopped:
@@ -606,7 +606,7 @@ def confine_worktree(cap: dict, worktree: str, *, caller_path: str | None = None
     names = mcp_server_names(home=home, worktree=worktree)
     perms = settings_for(cap, worktree=worktree, caller_path=caller_path, thread_id=thread_id,
                          servers=set(names))
-    return write_worktree_settings(worktree, perms, capability=str((cap or {}).get("name") or ""),
+    return write_worktree_settings(worktree, perms, profile=str((cap or {}).get("name") or ""),
                                    stop_servers=servers_to_stop(cap, names))
 
 

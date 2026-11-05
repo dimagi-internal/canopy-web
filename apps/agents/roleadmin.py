@@ -5,7 +5,7 @@ all by permission and never by a role's name:
 
 * A key is a slug, unique along a workspace chain (an ancestor's role is visible below and cannot be
   redefined), never one the platform reserves.
-* The permissions are the fixed vocabulary at the read / write / agent_edit level plus `use:<door>`,
+* The permissions are the fixed vocabulary at the read / write / agent_edit level plus `use:<site>`,
   stored closed (`roles.validate_permissions`). Never `admin` or `own`.
 * An edit that makes a role drive or change the agent (`write`, which `agent_edit` carries) is refused
   while an address-only line (`domain`, `contact`) holds it: that line would silently begin to drive every

@@ -3,7 +3,7 @@
 The DM carries everything needed to decide — what approving will do (rendered by the server from
 the typed params), the requester's own words kept apart — so the click needs nothing else open. The
 decision is taken only from the DM canopy sent to that person for that request, by the person Slack
-signs the click as; it goes through `approvals.services.decide`, the same door as the web page, and
+signs the click as; it goes through `approvals.services.decide`, the same path as the web page, and
 `settle` then rewrites the message to say who decided what.
 """
 from __future__ import annotations
