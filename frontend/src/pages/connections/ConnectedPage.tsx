@@ -219,7 +219,7 @@ export function ConnectedPage(): JSX.Element | null {
         {copy?.action === 'agent' && (where === 'plain' || where === 'stored') && done}
         {copy?.action === 'agent' && where === 'click' && state && (
           <>
-            <Button onClick={() => void store(state, false)}>{`Store for ${agent}`}</Button>
+            <Button onClick={() => void store(state, false)}>{`Give ${agent} access`}</Button>
             <Link to={returnTo} className={quietLink}>Later</Link>
           </>
         )}

@@ -142,12 +142,12 @@ describe('AgentConnectionsPanel', () => {
     expect(link.getAttribute('href')).toBe('/w/dimagi/settings/connections')
   })
 
-  it('an agent connection not stored yet offers Store for that agent, never a picker', async () => {
+  it('an agent connection not stored yet offers Give that agent access, never a picker', async () => {
     m.listAgentConnections.mockResolvedValue({ providers: [PROVIDER], connections: [conn({ state: 'unshared' })] })
     show()
-    expect(await screen.findByText(/Not stored for eva yet, so eva can't use it\./)).toBeTruthy()
-    expect(screen.getByText('Not stored yet')).toBeTruthy()
-    const a = screen.getByRole('link', { name: 'Store for eva' }) as HTMLAnchorElement
+    expect(await screen.findByText(/Signed in, but eva can't use it yet\./)).toBeTruthy()
+    expect(screen.getByText('Not ready')).toBeTruthy()
+    const a = screen.getByRole('link', { name: 'Give eva access' }) as HTMLAnchorElement
     expect(a.getAttribute('href')).toBe('/w/w/connections/3/connected?return_to=%2Fagents%2Feva%2Fsettings%2Faccounts')
     expect(screen.queryByRole('link', { name: 'Share' })).toBeNull()
   })
