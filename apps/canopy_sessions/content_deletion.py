@@ -227,8 +227,13 @@ def _drop_words(session, *, binding, turn_ids, now) -> dict:
 def delete_content(session, *, by) -> dict:
     """Delete `session`'s stored words and leave the tombstone, in one transaction, under
     the binding and session locks every transcript write takes. `by` is the person (None for
-    `absorb`). Returns counts. The caller has asked `access` and `blocker`; a turn that
-    started since is refused here by the same `blocker`, as ValueError."""
+    `absorb`). Returns counts. The caller has asked `access`.
+
+    `blocker` is asked twice, and a refusal is a ValueError. First before any bytes go, because
+    they cannot come back: a busy session must keep its files. Again under the locks, so the
+    session's words are not deleted out from under a turn that started while the bytes went."""
+    if (why := blocker(session)) is not None:
+        raise ValueError(why)
     attachments_gone = _delete_bytes(session)
     with transaction.atomic():
         binding = RunnerBinding.objects.select_for_update().filter(session=session).first()

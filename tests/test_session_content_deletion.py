@@ -275,6 +275,83 @@ def test_a_file_that_will_not_delete_stops_it_and_a_retry_finishes_the_rest(w, m
     assert not Attachment.objects.filter(session=s).exists()
 
 
+def _files_watched(w, session, monkeypatch):
+    """`session` holding a stored file, and the list of objects the store is asked to delete."""
+    Attachment.objects.create(session=session, filename="a.png", content_type="image/png", size_bytes=1,
+                              storage_key="the-file")
+    gone = []
+    monkeypatch.setattr(attachment_storage, "is_configured", lambda: True)
+    monkeypatch.setattr(attachment_storage, "delete", gone.append)
+    return gone
+
+
+def _busy(w, session):
+    return Turn.objects.create(chat_session=session, origin=Turn.ORIGIN_CANOPY_WEB_CHAT, prompt="p",
+                               status=Turn.RUNNING, idempotency_key=uuid.uuid4().hex,
+                               initiator_user=w["lili"])
+
+
+def test_a_busy_session_keeps_its_files_through_delete_content(w, monkeypatch):
+    s = _lili_chat(w)
+    gone = _files_watched(w, s, monkeypatch)
+    _busy(w, s)
+    with pytest.raises(ValueError, match=content_deletion.RUNNING):
+        content_deletion.delete_content(s, by=w["lili"])
+    assert gone == []
+    assert Attachment.objects.filter(session=s).exists()
+    assert Message.objects.filter(session=s).exists()
+    assert Session.objects.get(pk=s.pk).content_deleted_at is None
+
+
+def test_a_busy_session_keeps_its_files_through_absorb(w, monkeypatch):
+    """No rows of its own, so `absorb` would empty it, but a turn is running in it."""
+    s = Session.objects.create(workspace=w["ws"], created_by=w["lili"], origin=Session.ORIGIN_WEB, title="busy")
+    gone = _files_watched(w, s, monkeypatch)
+    _busy(w, s)
+    content_deletion.absorb(s)
+    assert gone == []
+    assert Attachment.objects.filter(session=s).exists()
+    s.refresh_from_db()
+    assert s.content_deleted_at is None and s.title == "busy"
+
+
+def test_a_deleted_transcript_shipped_into_a_busy_session_leaves_its_files(w, monkeypatch):
+    """The same `absorb`, reached the way it really is: a ship of a tombstoned transcript."""
+    DeletedTranscript.objects.create(transcript_id="deleted-file", session_id=uuid.uuid4())
+    s = _laptop_session(w, key="busy-task")
+    RunnerBinding.objects.filter(session=s).update(transcript_id="")
+    gone = _files_watched(w, s, monkeypatch)
+    _busy(w, s)
+    assert _ship(w, s, transcript_id="deleted-file").status_code == 200
+    assert gone == [] and Attachment.objects.filter(session=s).exists()
+    assert not Message.objects.filter(session=s).exists()
+    assert Session.objects.get(pk=s.pk).content_deleted_at is None
+
+
+def test_a_turn_starting_after_the_routes_check_keeps_the_files(w, monkeypatch):
+    s = _lili_chat(w)
+    gone = _files_watched(w, s, monkeypatch)
+    answers = iter([None, content_deletion.RUNNING])  # the route's check, then delete_content's
+    monkeypatch.setattr(content_deletion, "blocker", lambda session: next(answers))
+    r = _delete(w["lili"], s)
+    assert r.status_code == 409 and "still working" in r.json()["detail"]
+    assert gone == [] and Attachment.objects.filter(session=s).exists()
+
+
+def test_a_turn_starting_after_the_bytes_went_keeps_the_words(w, monkeypatch):
+    """The check under the locks. It protects what has not gone yet: the file asked for
+    before this turn appeared is already removed, and the row stays for a retry."""
+    s = _lili_chat(w)
+    _files_watched(w, s, monkeypatch)
+    answers = iter([None, content_deletion.RUNNING])  # before the bytes, then under the locks
+    monkeypatch.setattr(content_deletion, "blocker", lambda session: next(answers))
+    with pytest.raises(ValueError, match=content_deletion.RUNNING):
+        content_deletion.delete_content(s, by=w["lili"])
+    assert Message.objects.filter(session=s).count() == 3
+    assert Attachment.objects.filter(session=s).exists()
+    assert Session.objects.get(pk=s.pk).content_deleted_at is None
+
+
 # ---------------------------------------------------------------- the runner must not re-upload it
 
 def test_a_reupload_is_dropped_on_every_path(w):
