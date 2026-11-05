@@ -401,6 +401,12 @@ def build(turn, *, reader_user=None) -> dict:
         # (an older canopy-web) says neither, and the hook must not read it as "".
         # Additive: no VERSION bump.
         "agent_repo": _agent_repo(agent),
+        # WHETHER THIS IS THE PERSON'S OWN WORK ON THEIR OWN BOX, with no agent in it: the
+        # one fact `relationship` cannot say. A repo chat's `owner` is also a teammate who
+        # owns a session on someone else's box. The own-repo rail allows the first in an
+        # agent's clone, as it does a person by hand. See `_own_box_turn`. Additive: no
+        # VERSION bump.
+        "own_box_turn": _own_box_turn(turn, agent),
         # The owner-approved REPO-INTERNAL SHIP GRANT (Jonathan, 2026-10-03): when
         # another agent's login that holds this agent's keys (an explicit admin, or
         # the owner) dispatches work AT this agent, the session may push, open PRs
@@ -625,6 +631,19 @@ def _agent_repo(agent) -> str | None:
     from apps.agents.credentials.delegations import agent_repo
 
     return agent_repo(agent)
+
+
+def _own_box_turn(turn, agent) -> bool:
+    """True only for a verified person's unconfined no-agent turn on a box they own themselves.
+
+    An agent's own login never counts, though it is `system` on its owner's box: a person with no
+    edit on an agent could otherwise have that agent dispatch a repo turn into its own clone."""
+    if agent is not None or turn.capability or turn.initiator_kind != who.USER or not is_verified(turn):
+        return False
+    user, runner = turn.initiator_user, getattr(turn, "claimed_by", None)
+    if user is None or runner is None or runner.owner_id != user.pk:
+        return False
+    return getattr(user, "agent_identity", None) is None and not acting_cap(turn)
 
 
 #: What a ship grant covers, by name, and what it pointedly does not. Both travel in

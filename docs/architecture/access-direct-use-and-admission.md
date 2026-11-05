@@ -278,6 +278,10 @@ profile), `turn_mode` (`{mode, basis}`), and:
   `""` means the agent has no repo set, and a turn whose asker lacks `agent_edit` then cannot make
   repo writes from a session where the hook finds none either. `null` means the turn has no agent. An
   envelope without the field (an older canopy-web) means neither.
+* **`own_box_turn`** — true only for a verified person's unconfined turn with no agent, on a box
+  that person owns. `relationship: owner` cannot say this, since a teammate who owns a session on
+  someone else's box is `owner` too. The own-repo rail allows such a turn in an agent's clone, as it
+  does a person by hand. An agent's own login, on its owner's box or not, is never one.
 * **`ship_grant`** — when ANOTHER agent's verified login that is this agent's
   owner or an agent admin dispatched the turn at it, push / PR / merge in this agent's OWN
   repo are pre-approved even in `manual`. Nothing else is.
