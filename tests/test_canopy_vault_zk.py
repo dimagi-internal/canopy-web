@@ -1757,3 +1757,95 @@ def test_someone_outside_the_vault_vouches_for_nothing(fleet):
     res = c.post(f"{ZK}/endorsements", content_type="application/json",
                  data={"endorsements": [_endorse_device(fleet, key, ecdh, priv, ed)]})
     assert res.status_code == 403, res.content
+
+
+# ---- a member's machine nobody confirmed for a workspace vault (ada brief 2026-11-05) -------
+# DIM-SA-W175: its person holds a copy of the Shared vault, its agents' own vaults are
+# settled, and the Shared vault waits on it forever — no keeper grants an unendorsed
+# machine. Every surface must say WHY and WHO fixes it: its own person, Confirm access.
+
+def _unendorsed_member_machine(fleet, name):
+    from apps.agents.models import Vault
+
+    assert _enable(fleet).status_code == 200
+    vid, binding, vk = _ws_enabled(fleet, {"gog-oauth-client-web": "x"})
+    ed, priv, key, ecdh, c = _members_own_laptop(fleet, name)
+    assert c.post(f"/api/runner-device-keys/{key.pk}/approve").status_code == 200
+    key.refresh_from_db()
+    # Its person HOLDS a copy of the Shared vault (as Ismaila did): only the machine waits.
+    wrap = ref.wrap_ecdh_es(vk, priv.public_key(), ref.member_info(binding, 1, str(ed.pk)),
+                            ec.generate_private_key(ec.SECP256R1()), os.urandom(12))
+    res = fleet.client.post(f"/api/vaults/{vid}/zk/wraps", content_type="application/json",
+                            data={"kv": 1, "wraps": [{"kind": "member", "target": str(ed.pk), "wrap": wrap}]})
+    assert res.status_code == 200, res.content
+    # The agent's own vault is settled by its admin's grant: only the Shared vault waits.
+    res = fleet.client.post(f"{ZK}/wraps", content_type="application/json",
+                            data={"kv": 1, "wraps": [device_wrap(fleet, key=key, ecdh=ecdh)]})
+    assert res.status_code == 200, res.content
+    return Vault.objects.get(pk=vid), ed, priv, key, ecdh, c
+
+
+def test_an_unendorsed_machine_is_its_own_persons_to_confirm(fleet):
+    from apps.agents.credentials import machine_waits
+
+    vault, ed, priv, key, ecdh, c = _unendorsed_member_machine(fleet, "isma")
+    why = machine_waits.why_waiting(vault, key)
+    assert why["reason"] == "unendorsed" and why["person_email"] == "isma@dimagi.com"
+    assert why["fix"] == ("isma-laptop is waiting for isma@dimagi.com to confirm it: canopy-web Settings → "
+                          "Device keys → isma-laptop → Confirm access (passkey). Running "
+                          "`canopy vault zk keep` elsewhere will not help.")
+    assert why["link"] == f"/settings?device_key={key.pk}#your-runners"
+
+    # Confirm access is offered for it — before, nothing was, since eva no longer waits.
+    [row] = [k for k in c.get(f"/api/runner-device-keys/?runner={key.runner_id}").json()
+             if k["id"] == str(key.pk)]
+    assert row["zk_vouch_agents"] == [{"slug": "eva", "agent_id": _aid(fleet)}]
+
+    # Signing under that agent is what a keeper of the Shared vault accepts.
+    res = c.post(f"{ZK}/endorsements", content_type="application/json",
+                 data={"endorsements": [_endorse_device(fleet, key, ecdh, priv, ed)]})
+    assert res.status_code == 200, res.content
+    assert machine_waits.why_waiting(vault, key)["reason"] == "waiting_for_keeper"
+    work = fleet.client.get(_keeper_url(fleet)).json()["agents"]
+    row = next(w for w in work if w.get("vault_id") == str(vault.pk))
+    assert [e for e in row["endorsements"] if e["target"] == key.ecdh_jkt]
+
+
+def test_the_resolve_layer_says_why_a_machine_has_no_copy(fleet):
+    from apps.agents.credentials import workspace_vaults
+    from apps.agents.schemas.credentials import ResolveVaultLayerOut
+
+    vault, ed, priv, key, ecdh, c = _unendorsed_member_machine(fleet, "isma2")
+    [layer] = [lay for lay in workspace_vaults.layers_payload(fleet.agent, key, None)
+               if lay["vault_id"] == str(vault.pk)]
+    assert layer["wrap"] is None and layer["waiting"]["reason"] == "unendorsed"
+    assert "Confirm access" in layer["waiting"]["fix"]
+    assert ResolveVaultLayerOut(**layer).waiting.reason == "unendorsed"
+    # A machine that holds its copy is told nothing extra.
+    [mine] = [lay for lay in workspace_vaults.layers_payload(fleet.agent, fleet.device, None)
+              if lay["vault_id"] == str(vault.pk)]
+    assert mine["wrap"] is not None and "waiting" not in mine
+
+
+def test_an_unendorsed_machine_is_mailed_to_its_own_person_not_the_admins(fleet, mailoutbox):
+    from apps.agents.credentials import zk_notify
+    from apps.agents.models import ZkGrantNotice
+
+    vault, ed, priv, key, ecdh, c = _unendorsed_member_machine(fleet, "isma3")
+    t0 = timezone.now()
+    zk_notify.sweep(t0)
+    mailoutbox.clear()
+    zk_notify.sweep(t0 + zk_notify.GRACE)
+    [msg] = [m for m in mailoutbox if "isma3-laptop" in m.subject]
+    assert msg.to == ["isma3@dimagi.com"]
+    assert msg.subject == "Canopy vault · confirm your machine isma3-laptop so it can read the Shared vault"
+    assert "Settings → Device keys → isma3-laptop → Confirm access" in msg.body
+    assert "`canopy vault zk keep` will not help" in msg.body
+    assert f"/settings?device_key={key.pk}#your-runners" in msg.body
+    assert not [m for m in mailoutbox if "jj@dimagi.com" in m.to and "isma3-laptop" in m.subject]
+    notice = ZkGrantNotice.objects.get(vault=vault, kind="device", target=str(key.pk))
+    assert notice.notified["to"] == "machine_person" and notice.notified["why"] == "unendorsed"
+    # Once per machine: the next sweep sends nothing more.
+    mailoutbox.clear()
+    zk_notify.sweep(t0 + 2 * zk_notify.GRACE)
+    assert not [m for m in mailoutbox if "isma3-laptop" in m.subject]

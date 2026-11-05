@@ -6697,8 +6697,9 @@ def _delegated_value(slug: str, name: str) -> str:
     value = _AGENT_DELEGATED.get(slug, {}).get(name, "")
     if not value:
         _log(f"{slug}: cannot open the delegated credential {name} on this box — it is sealed to the "
-             "machines that run the agent; one that holds it re-seals it for this one "
-             "(`canopy vault zk keep`)")
+             "machines that run the agent, and one that holds it re-seals it for this one once this "
+             "machine's person has confirmed it (canopy-web Settings → Device keys → Confirm access); "
+             "running `canopy vault zk keep` elsewhere does not help")
     return value
 
 
@@ -9465,12 +9466,17 @@ def _vault_values(runner_id: str, stamp: tuple, now: float | None = None) -> dic
         _log(f"warn: could not open this runner's vault ({exc})")
         return _VAULT_VALUES["values"]
     values = {str(k): str(v) for k, v in doc["values"].items()}
-    shut = [str(layer.get("vault")) for layer in doc.get("vault_layers") or []
+    shut = [layer for layer in doc.get("vault_layers") or []
             if isinstance(layer, dict) and not layer.get("opened")]
     _VAULT_VALUES.update(stamp=stamp, at=now, values=values, shut=bool(shut))
     if shut:
+        # The CLI says why each vault is shut and who can fix it (canopy-web's
+        # `waiting`): an unendorsed box is its own person's to confirm, and no
+        # keeper — nor `canopy vault zk keep` — will ever grant it.
+        why = "; ".join(f"{layer.get('vault')}: {layer.get('why') or 'no copy of its key'}" for layer in shut)
         _set_check("claude.vault", "warn", f"{len(values)} credential(s) opened from the vault; this box "
-                   f"holds no copy of the key to {', '.join(shut)} — grant it on the vault's page")
+                   f"holds no copy of the key to {', '.join(str(layer.get('vault')) for layer in shut)} — "
+                   f"{why}")
     else:
         _set_check("claude.vault", "ok", f"{len(values)} credential(s) opened from the vault")
     return values
