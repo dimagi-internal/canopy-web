@@ -232,7 +232,7 @@ failure again.
 
 One module decides who may see and act on a chat session: `apps/canopy_sessions/access.py`.
 
-- **Tenant first** (member of `Session.workspace`), then one of eight legs: creator ·
+- **Tenant first** (member of `Session.workspace`), then one of seven legs: creator ·
   explicit participant (`SessionParticipant`) · a runner-discovered session on a box you
   OWN (`Runner.owner`; never the whole tenant — a laptop session is single-player until
   its owner adds someone) · the own thread of an agent you administer (`Agent.is_admin`:
@@ -243,8 +243,7 @@ One module decides who may see and act on a chat session: `apps/canopy_sessions/
   `owner_user` or a `ProjectParticipant`; never an agent's own login, never a sensitive
   session; editor, may pull). Per person × project, opt-in, revocable, each change an
   audited setting (`ProjectSessionShare`, `canopy_sessions/sharing.py`,
-  `/api/me/session-sharing/`, the Settings → Opted-in repos panel) · a **one-session
-  review ask** (`SessionReviewAsk`; read-only, only in the chat the ask opened). Who sees what per
+  `/api/me/session-sharing/`, the Settings → Opted-in repos panel) . Who sees what per
   channel: `access-sessions-and-people.md` § Who can see a session.
 - **Pulling from a machine is `access.may_pull`.** Asking a runner to stream a session
   (`POST /{id}/attach`, and the chat socket's connect) or to ship its history
@@ -252,7 +251,7 @@ One module decides who may see and act on a chat session: `apps/canopy_sessions/
   Everyone else who can read it — a coach, a runner admin, a viewer, an agent login not
   explicitly added — reads the stored rows: their attach is a no-op and their backfill a 403.
 - **A session review grant lets one agent's own login read one person's sessions** — a
-  coach (`SessionReviewGrant`; leg 5, `access._review_grant_q`; one session asked from its page is leg 8, `SessionReviewAsk`, `access-sessions-and-people.md`). Only the person makes
+  coach (`SessionReviewGrant`; leg 5, `access._review_grant_q`; one session asked from its page is no leg: `SessionReviewAsk`, `access-sessions-and-people.md`). Only the person makes
   or ends it, for an agent of a workspace they are in (`/api/people/me/session-reviewers/`,
   `apps/contacts/session_reviewers.py`), each act on their memory audit
   (`sessionReviewer.granted` / `.revoked`); revoking drops the agent's next read. "Their

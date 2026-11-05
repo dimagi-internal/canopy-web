@@ -16870,6 +16870,29 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/canopy-sessions/asked-review/messages": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Read the one session this conversation was asked to review
+         * @description For a turn in a chat opened by asking an agent to review one session: that session's
+         *     messages, one backward page at a time, newest first (`before`: a `turn_index`). It takes no
+         *     session id. Not found when the ask was withdrawn or ran out, the session is sensitive, or
+         *     the request is anything else.
+         */
+        readonly get: operations["read_asked_session"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/canopy-sessions/search": {
         readonly parameters: {
             readonly query?: never;
@@ -45682,6 +45705,21 @@ export interface components {
             readonly cli?: ("claude-code" | "codex") | null;
         };
         /**
+         * AskedSessionPageOut
+         * @description One backward page of the one session a review chat was asked about.
+         */
+        readonly AskedSessionPageOut: {
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            readonly session_id: string;
+            /** Messages */
+            readonly messages: readonly components["schemas"]["MessageOut"][];
+            /** Has More Before */
+            readonly has_more_before: boolean;
+        };
+        /**
          * SessionSearchPageOut
          * @description One page of a newest-activity-first walk over every visible session.
          */
@@ -69761,6 +69799,29 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["HandoffOut"];
+                };
+            };
+        };
+    };
+    readonly read_asked_session: {
+        readonly parameters: {
+            readonly query?: {
+                readonly before?: number | null;
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AskedSessionPageOut"];
                 };
             };
         };

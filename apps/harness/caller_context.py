@@ -410,7 +410,7 @@ def build(turn, *, reader_user=None) -> dict:
         # thread 1a0d0a1632cfde4f: 14 `ask` sessions on SES receipts, each guessing.
         "trigger": _trigger(turn, ref),
         # The one session this conversation's asker asked this agent to review from its
-        # page, while that ask is live (`access._review_ask_q`). Null otherwise. Additive.
+        # page, while that ask is live (`read_asked_session`). Null otherwise. Additive.
         "session_review": _session_review(turn, agent),
         "thread_history": _thread_history(turn, ref),
         # WHAT THE PERSON IS LOOKING AT, when the conversation is embedded in a

@@ -19,7 +19,7 @@ import logging
 from dataclasses import replace
 
 from apps.canopy_sessions import access as session_access
-from apps.canopy_sessions.models import Session
+from apps.canopy_sessions.models import REVIEW_METADATA_KEY, Session
 from apps.canopy_sessions.services import add_runner_requirements
 from apps.harness import runner_requirements as rr
 
@@ -102,6 +102,9 @@ def handle(installation, inbound: Inbound, ask: str) -> Outcome:
     branch.parent_session = parent
     branch.parent_claude_session = (getattr(binding, "transcript_id", "") or "")[:100]
     branch.metadata = {**(branch.metadata or {}), BRANCHED_FROM_KEY: key}
+    # A branch of a review chat carries what was read, so it stays in the review's door.
+    if REVIEW_METADATA_KEY in (parent.metadata or {}):
+        branch.metadata[REVIEW_METADATA_KEY] = parent.metadata[REVIEW_METADATA_KEY]
     branch.save(update_fields=["parent_session", "parent_claude_session", "metadata", "updated_at"])
     # The branch carries the parent's words on (its seed), so it is held to what the
     # parent requires — sensitive before its first message, never only by a link.

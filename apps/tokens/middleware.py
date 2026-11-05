@@ -261,6 +261,19 @@ class BearerTokenAuthMiddleware:
         request._dont_enforce_csrf_checks = True
 
 
+def _limit_caller_reach(user, cred: dict) -> None:
+    """A caller token's MCP call reads as far as its turn reaches (`access.turn_reach`), as on
+    REST. A credential naming no turn it can find reads no session at all: this only narrows."""
+    from django.db.models import Q  # noqa: PLC0415 — only a caller-token call pays for it
+
+    from apps.canopy_sessions import access as session_access  # noqa: PLC0415 — only a caller-token call pays for it
+    from apps.harness.models import Turn  # noqa: PLC0415 — only a caller-token call pays for it
+
+    turn = (Turn.objects.select_related("agent", "chat_session__agent")
+            .filter(pk=cred.get("turn_id")).first() if cred.get("turn_id") else None)
+    session_access.limit_reach(user, session_access.turn_reach(turn) if turn is not None else Q(pk__in=[]))
+
+
 def _authenticate_mcp_call(request: HttpRequest) -> bool | HttpResponse | None:
     """An MCP tool call dispatched in-process (`apps/mcp/api_tools.py`).
 
@@ -305,6 +318,8 @@ def _authenticate_mcp_call(request: HttpRequest) -> bool | HttpResponse | None:
     # `X-Canopy-Acts-As` / `X-Canopy-Turn-Id` (forwarded by the MCP server), and a
     # caller token's own turn — so a capped turn cannot shed its cap through MCP.
     _apply_acting_cap(request)
+    if user is not None and cred and kinds.kind_of(cred) is kinds.KINDS[kinds.CALLER_TOKEN]:
+        _limit_caller_reach(user, cred)
     if cred and cred.get("turn_id") and getattr(request, "user", None) is not None:
         try:
             from apps.workspaces import role_cap
@@ -428,6 +443,10 @@ def _authenticate_caller_token(request: HttpRequest, raw: str) -> HttpResponse |
                                "label": f"turn:{turn_id}", "turn_id": turn_id}
     request._dont_enforce_csrf_checks = True
     _apply_acting_cap(request)
+    # How far this token reads, as the asker (the same call on MCP, below).
+    from apps.canopy_sessions import access as session_access  # noqa: PLC0415 — only a caller-token request pays for it, like the file's other door-specific imports
+
+    session_access.limit_reach(request.user, session_access.turn_reach(grant.turn))
     try:
         from apps.workspaces import role_cap  # noqa: PLC0415 — only a caller-token request pays for it, like the file's other door-specific imports
 

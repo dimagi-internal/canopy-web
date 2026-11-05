@@ -313,17 +313,21 @@ class SessionReviewGrant(models.Model):
                                                name="session_review_grant_one_live")]
 
 
+#: On a `Session.metadata`: this chat was opened by a `SessionReviewAsk` for that session id.
+REVIEW_METADATA_KEY = "reviews_session"
+
+
 class SessionReviewAsk(models.Model):
     """A person asking ONE agent to review ONE of their sessions, from that session's
     page. Deliberately not a `SessionReviewGrant`: nothing that reads grants as "this
     person is coached" reads this table, so a row enrols nobody, uploads nothing more
-    and appears on no roster. Its one reader is `access._review_ask_q` (leg 8), plus
-    `audience` and the envelope, which only say what that leg allows.
+    and appears on no roster. No agent's login reads under it: the turn runs confined in
+    `interface.SESSION_REVIEW` with no login at all, and reads `session` as the person,
+    with a caller token pinned to it (`access.turn_reach`, `read_asked_session`).
 
     One row per (session, agent, person). Live until `expires_at` or `revoked_at`;
-    asking again renews it. `review_session` is the conversation the ask opened, the
-    only place the agent's login may read `session` under it. Only the person makes or
-    ends it (`apps/contacts/session_review_asks.py`)."""
+    asking again renews it. `review_session` is the conversation the ask opened. Only
+    the person makes or ends it (`apps/contacts/session_review_asks.py`)."""
 
     session = models.ForeignKey(Session, on_delete=models.CASCADE, related_name="review_asks")
     agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE, related_name="session_review_asks")

@@ -20,8 +20,8 @@ export function useSessionReviewOffer(sessionId: string, enabled: boolean) {
 }
 
 /** "Ask <coach> to review this": what it does, then the press; or, once asked, where the reply
- *  is and how to take it back. Each sentence is a claim about `access._review_ask_q` and
- *  `apps/contacts/session_review_asks.py`. */
+ *  is and how to take it back. Each sentence is a claim about `access.turn_reach`,
+ *  `interface.SESSION_REVIEW` and `apps/contacts/session_review_asks.py`. */
 export function SessionReviewPanel({
   sessionId,
   offer,
@@ -60,6 +60,10 @@ export function SessionReviewPanel({
             the chat where it replies to you
           </a>.
         </p>
+        <p data-testid="session-review-withdraw-says">
+          Withdrawing stops {name} reading this session and stops it if it is working now. It can&apos;t make{' '}
+          {name} forget what it has already read, and anything it has already said stays in that chat.
+        </p>
         <button
           type="button"
           disabled={busy}
@@ -82,7 +86,8 @@ export function SessionReviewPanel({
     <div className="space-y-2 text-[12px] text-foreground-secondary" data-testid="session-review-ask">
       <p>
         This opens a chat with {name}, which reads this one session, read-only, and replies to you there. You
-        can withdraw it, and it ends by itself after 7 days.
+        can withdraw it, and its access ends by itself after 7 days. Withdrawing can&apos;t undo what it has
+        already read.
       </p>
       <p>
         It does not turn coaching on, reads no other session of yours, and sends no email. The chat and {name}'s
