@@ -577,7 +577,7 @@ def _relationship_without_agent(asker: Asker, session_ctx, turn) -> str:
     return cc.session_relationship(asker.user, session) if asker.user is not None and session is not None else CONTACT
 
 
-def _no_agent(asker: Asker, session_ctx, turn, runner, stamp, trace: list) -> TurnContext:
+def _no_agent(asker: Asker, session_ctx, turn, stamp, trace: list) -> TurnContext:
     """A person's own repo or project session. Its enforcement and credentials are what they are today,
     and this only names them: there is no agent to hold a standing on.
 
@@ -591,10 +591,10 @@ def _no_agent(asker: Asker, session_ctx, turn, runner, stamp, trace: list) -> Tu
         trace.append(TraceEntry("stamp", DENY_ALL, stamp))
         return TurnContext(standing=Standing(relationship=rel), access=CONFINED, profile=Profile(kind=DENY_ALL, name=stamp),
                            basis=NO_INTERFACE, session_key_suffix=f"#{stamp}", review=review, stamped=stamp, refusal=None,
-                           trace=tuple(trace), _session_ctx=session_ctx, _turn=turn, _runner=runner)
+                           trace=tuple(trace), _session_ctx=session_ctx, _turn=turn)
     return TurnContext(standing=Standing(relationship=rel), access=FULL, profile=Profile(kind=NO_AGENT),
                        basis=NO_INTERFACE, session_key_suffix="", review=review, stamped=iface_mod.FULL, refusal=None,
-                       trace=tuple(trace), _session_ctx=session_ctx, _turn=turn, _runner=runner)
+                       trace=tuple(trace), _session_ctx=session_ctx, _turn=turn)
 
 
 def _review_without_agent(turn) -> Review:
@@ -615,7 +615,7 @@ def resolve_turn_context(session_ctx, asker: Asker, agent, *, requested: str | N
     trace: list[TraceEntry] = []
     blocked = _send_refusal(session_ctx, asker, turn, trace)
     if agent is None:
-        return _no_agent(asker, session_ctx, turn, runner, stamp, trace) if blocked is None else _blocked_without_agent(
+        return _no_agent(asker, session_ctx, turn, stamp, trace) if blocked is None else _blocked_without_agent(
             asker, session_ctx, blocked, turn, trace)
     if stamp is not None:
         return _at_claim(agent, asker, session_ctx, stamp, turn, runner, trace)

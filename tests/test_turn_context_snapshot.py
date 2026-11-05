@@ -543,16 +543,20 @@ def test_a_refusal_stands_when_its_record_cannot_be_built(world):
     assert row.resolved_context["error"] and caller_context.build(row)["access"] == "refused"
 
 
-def test_a_failure_inside_the_record_does_not_poison_the_transaction_around_it(world):
+def test_a_failure_inside_the_record_is_rolled_back_to_its_own_savepoint(world):
+    # What keeps it from poisoning a transaction around it on PostgreSQL. SQLite does not poison, so what this
+    # watches is the savepoint itself: what the failed attempt wrote is undone, and what the caller wrote stands.
     turn = _enqueue(world.owner, _chat(world))
+    Turn.objects.filter(pk=turn.pk).update(result_note="the caller's")
 
     def broken(*_a, **_k):
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT * FROM no_such_table")
+        Turn.objects.filter(pk=turn.pk).update(result_note="half a record")
+        raise RuntimeError("boom")
 
     with mock.patch.object(context_views, "snapshot", side_effect=broken):
         turn_snapshot.record(turn, turn_snapshot.CLAIM, runner=world.box)
-    assert Turn.objects.get(pk=turn.pk).resolved_context["error"]
+    row = Turn.objects.get(pk=turn.pk)
+    assert row.result_note == "the caller's" and row.resolved_context["error"]
 
 
 def test_recording_costs_a_bounded_number_of_queries_on_the_claims_hot_path(world, django_assert_max_num_queries):
@@ -580,7 +584,7 @@ def _written_tables(queries) -> set:
 
 @pytest.mark.parametrize("make", [_whole_agent, _read_mode, _connected_site, _session_review, _no_agent],
                          ids=lambda f: f.__name__.strip("_"))
-def test_a_preview_and_a_snapshot_read_write_nothing(world, make):
+def test_a_preview_and_a_snapshot_read_write_nothing(world, make, grants_on_turn):
     session, user, box, _kind = make(world)
     _seed_fact(world, user)
     turn = _enqueue(user, session, box=box)
@@ -592,6 +596,16 @@ def test_a_preview_and_a_snapshot_read_write_nothing(world, make):
         assert _ran_as(user, session, turn, c).status_code == 200
     assert not _written_tables(seen.captured_queries)
     assert Turn.objects.filter(pk=turn.pk).values().get() == before
+
+
+def test_building_the_envelope_does_write_so_the_detector_would_see_a_route_that_did(world, grants_on_turn):
+    # The control for the test above: the one known writer among these neighbours, on the same seeded world.
+    session, user, box, _kind = _whole_agent(world)
+    _seed_fact(world, user)
+    turn = _enqueue(user, session, box=box)
+    with CaptureQueriesContext(connection) as seen:
+        caller_context.build(Turn.objects.get(pk=turn.pk))
+    assert _written_tables(seen.captured_queries)
 
 
 def test_the_write_detector_sees_a_write(world):
