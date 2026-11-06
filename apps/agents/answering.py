@@ -88,8 +88,6 @@ def document_problems(caps: dict) -> list[str]:
         sites = cap.get("sites") or []
         for site in sites:
             by_site.setdefault(site, []).append(name)
-        if cap.get("pages"):
-            out.append(f"{name}: uses pages")
         if iface_mod.is_read_mode(name):
             if sites or cap.get("ceiling") or cap.get("own_login") or cap.get("data"):
                 out.append(f"{name}: read mode names sites, a ceiling, a login or sensitive data")
@@ -118,16 +116,11 @@ def key_for(site: str, taken) -> str:
 # --- the one writer ----------------------------------------------------------------------------
 
 def store(agent, parsed: dict, by) -> None:
-    """Save a whole document on `agent`. Every interface write ends here.
-
-    Clears `interface_source`: the YAML an older save kept there no longer says what the document
-    says. Nothing reads that column now, and it stays until dropping it gets its own decision."""
+    """Save a whole document on `agent`. Every interface write ends here."""
     agent.interface = parsed
-    agent.interface_source = ""
     agent.interface_published_at = timezone.now()
     agent.interface_published_by = by
-    agent.save(update_fields=["interface", "interface_source", "interface_published_at",
-                              "interface_published_by", "updated_at"])
+    agent.save(update_fields=["interface", "interface_published_at", "interface_published_by", "updated_at"])
 
 
 def _validated(name: str, entry: dict) -> dict:

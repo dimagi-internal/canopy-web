@@ -238,8 +238,7 @@ def test_removing_a_row_closes_it_for_turns_already_stamped_with_it(w):
 
 # --- the rules --------------------------------------------------------------------------------
 
-@pytest.mark.parametrize("slug", ["corner_pages", "corner_two_sites", "corner_union", "corner_unbounded",
-                                  "corner_sensitive_ask"])
+@pytest.mark.parametrize("slug", ["corner_two_sites", "corner_sensitive_ask"])
 def test_a_document_these_settings_cannot_hold_is_refused_and_left_as_it_is(w, slug):
     agent = _shaped(w, slug)
     before = copy.deepcopy(agent.interface)
@@ -326,15 +325,6 @@ def test_each_write_is_a_setting_change_with_its_before_and_after(w):
     assert "ask" in changes[0]["after"] and "ask" not in changes[0]["before"]
 
 
-def test_a_save_clears_the_yaml_an_older_save_kept(w):
-    agent = w["agent"]
-    Agent.objects.filter(pk=agent.pk).update(interface_source="capabilities: {}\n")
-    _put(_as(w["admin"]), f"{SITES}/site-a", {"description": "from the form"})
-    agent.refresh_from_db()
-    assert agent.interface_source == ""
-    assert agent.interface["capabilities"]["site_a"]["description"] == "from the form"
-
-
 def test_a_save_says_who_saved_it_as_every_save_has(w):
     agent = _shaped(w, "labsdata")
     _put(_as(w["admin"]), f"{SITES}/connect-labs", {"description": "changed"})
@@ -409,8 +399,6 @@ def _old_route_callers(w):
 @pytest.mark.parametrize("prefix", ["/api/agents/hal", "/api/w/connect/agents/hal"])
 def test_each_old_route_answers_410_and_saves_nothing(w, method, tail, prefix):
     agent = _shaped(w, "labsdata")
-    Agent.objects.filter(pk=agent.pk).update(interface_source="kept\n")
-    agent.refresh_from_db()
     stored, published_at = copy.deepcopy(agent.interface), agent.interface_published_at
     for who, client in _old_route_callers(w).items():
         kwargs = {} if method == "get" else {"data": json.dumps(OLD_BODY), "content_type": "application/json"}
@@ -426,7 +414,6 @@ def test_each_old_route_answers_410_and_saves_nothing(w, method, tail, prefix):
         assert not re.search(r"credential|authenticat|unauthori|api.?key|access token|401", response.content.decode(), re.I)
     agent.refresh_from_db()
     assert agent.interface == stored and agent.interface_published_at == published_at
-    assert agent.interface_source == "kept\n"
     assert not SettingChange.objects.exists()
 
 

@@ -44,9 +44,6 @@ class Agent(models.Model):
     #: Never empty: an agent is created with the default interface (owner, admins and
     #: editors only). See `apps/agents/interface.py`.
     interface = models.JSONField(default=default_interface, blank=True)
-    #: The interface as its editor wrote it (YAML, comments and all). `interface`
-    #: is its parsed, validated form — the one everything enforces.
-    interface_source = models.TextField(blank=True, default="")
     interface_published_at = models.DateTimeField(null=True, blank=True)
     #: Does this agent also take the access-list lines set on its workspace (and the
     #: workspaces above it)? On by default: that is how a workspace-wide or Dimagi-wide

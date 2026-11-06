@@ -14,7 +14,7 @@ vi.mock('@/api/chat', () => ({
 }))
 
 const { SessionInfoPanel } = await import('./SessionInfoPanel')
-const { decidingStep, shortLabel, basisText, outcomeText } = await import('./turnContextWords')
+const { decidingStep, shortLabel, basisText, outcomeText, detailText } = await import('./turnContextWords')
 
 const TURN = {
   id: 't-1', origin: 'canopy_web_chat', status: 'done', prompt: 'hello', result_note: '', content_hidden: false,
@@ -320,5 +320,13 @@ describe('turnContextWords', () => {
     // A claim words an owner's confined turn as capability:<name>; that is not the access list.
     expect(basisText('capability:data', 'owner')).toBe('it was let in as "data"')
     expect(outcomeText({ rule: 'access_list', outcome: 'read,use:connect', detail: '' })).toBe('holds read, use "connect"')
+  })
+})
+
+describe('an entry step', () => {
+  it('says the site chose it, in what a turn says now and what a stored one said', () => {
+    for (const detail of ['site: connect', 'page or site: connect']) {
+      expect(detailText({ rule: 'entry', outcome: 'connect', detail })).toBe('chosen by the site: "connect"')
+    }
   })
 })

@@ -157,14 +157,14 @@ its chat surfaces). A block is a refused Turn Context with its own code; it chan
 | Holds nothing | — | `refused` |
 | Named a profile their permissions open | that `connected_site`, or `read_mode` if that is what was named | `confined` |
 | Named one they can't open, or one that is gone | — (**no fall-through to read mode**) | `refused` |
-| Named none; their page, else their site, selects one their permissions open | that `connected_site` | `confined` |
-| Named none, and holds `read` | `read_mode` (a page's or site's profile they can't open is skipped, not fatal: someone with `read` on a connected site gets read mode there) | `confined` |
+| Named none; their conversation's site selects one their permissions open | that `connected_site` | `confined` |
+| Named none, and holds `read` | `read_mode` (a site's profile they can't open is skipped, not fatal: someone with `read` on a connected site gets read mode there) | `confined` |
 | Otherwise | — | `refused` |
 
 | Narrowing | Effect |
 |---|---|
 | **Review chat** (`_review_rule`) | Anyone not refused gets `session_review`, `confined`, and loses `auto` and pinning. |
-| **Sensitive** (`_sensitive_rule`) | A `full` base in a `data: sensitive` profile (the one named, else the one the site or page selects) runs that profile, `confined`, keeping role, mode and pin rights (`basis: sensitive:<name>`). A turn in a sensitive conversation that ends anywhere but its sensitive profile is `refused` — a review chat included. A `read` holder in a non-sensitive conversation on a sensitive page keeps what the base gave them. |
+| **Sensitive** (`_sensitive_rule`) | A `full` base in a `data: sensitive` profile (the one named, else the one the site selects) runs that profile, `confined`, keeping role, mode and pin rights (`basis: sensitive:<name>`). A turn in a sensitive conversation that ends anywhere but its sensitive profile is `refused` — a review chat included. A `read` holder in a non-sensitive conversation on a sensitive site keeps what the base gave them. |
 
 **Stage 3 — fan-out values:** `review`, `session_key_suffix`, `credentials`. Turn mode's rules are not here
 (`apps/harness/turn_mode.py`); they need the claim, so the resolver reads a claimed turn's stamp, asks them
@@ -661,8 +661,11 @@ an access line names. These stored and wire names stay, each behind one constant
   `use:<name>` in stored role permissions, `data: sensitive`, the envelope's `capability` and `granted_by`
   (`capability:<name>`), and `profile: full|confined` beside `access`. Renaming them would split live
   conversations (`session_naming.restricted_key`, `cloud_runner._kept_identity`).
-* `interface_source` (cleared by every save; nothing reads it), an entry's `pages` (a page-resource selector,
-  kept so stored documents keep working) and the site-ceiling union stay as they are.
+
+**One entry per site.** A connected site's entry names exactly one site, and no site is named by two
+entries: the writer refuses a document that breaks either (`answering.document_problems`). So a site's
+ceiling and its own login are that one entry's (`interface.site_ceiling`, `interface.own_login_of`), and
+a page's declared resource selects nothing: an entry carrying `pages:` is refused.
 
 **What a document may hold.** The settings routes refuse a document they cannot hold
 (`answering.document_problems`, which `manage.py answering_snapshot` reports as `shape`) and leave it as

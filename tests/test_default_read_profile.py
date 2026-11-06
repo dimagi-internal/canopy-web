@@ -24,7 +24,6 @@ def test_bare_agent_exact():
         "bash": [],
         "read_paths": ["{cwd}/**"],
         "write_paths": ["{cwd}/.ada-read/*", "{cwd}/.ada-ask/*"],
-        "pages": [],
         "sites": [],
         "ceiling": [],
     }
