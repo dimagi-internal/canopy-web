@@ -205,7 +205,7 @@ def test_the_roster_shows_what_the_list_gives(w):
     _line(w, roles.READ_ONLY, kind=G.PERSON, user=w["vw"])
     _line(w, "", kind=G.PERSON, user=w["vw"], capability="canopy")
     row = next(r for r in access.roster(w["agent"]) if r["user_id"] == w["vw"].pk)
-    assert row["access"] == access.CONFINED and row["capabilities"] == ["ask", "canopy"]
+    assert row["access"] == access.CONFINED and row["profiles"] == ["ask", "canopy"]
     assert (row["role"], row["source"]) == (roles.READ_ONLY, f"list:person:{w['vw'].pk}")
     assert row["via"] == "vw@dimagi.com"
     rows = {r["user_id"]: r for r in access.roster(w["agent"])}

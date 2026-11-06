@@ -687,9 +687,9 @@ class AgentAccessRowOut(StrictModel):
     basis: str
     granted_at: dt.datetime | None = None
     # What they reach signed in: the whole agent, only the listed profiles (read mode or connected
-    # sites; the field's wire name is `capabilities`), or nothing.
+    # sites, by name), or nothing.
     access: Literal["full", "confined", "none"]
-    capabilities: list[str] = []
+    profiles: list[str] = []
     # An editor line that says `manual_only` (docs/architecture/access.md): they reach the whole
     # agent, but every turn they start runs manual — outbound needs an admin.
     manual_only: bool = False

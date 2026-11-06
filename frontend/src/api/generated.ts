@@ -28744,10 +28744,10 @@ export interface components {
              */
             readonly access: "full" | "confined" | "none";
             /**
-             * Capabilities
+             * Profiles
              * @default []
              */
-            readonly capabilities: readonly string[];
+            readonly profiles: readonly string[];
             /**
              * Manual Only
              * @default false
@@ -38436,9 +38436,9 @@ export interface components {
         /**
          * AgentEdgeOut
          * @description What `source` gets when it sends `target` work with its own login.
-         *     `access`: full | confined (to read mode or the connected sites named in `capabilities`) | none.
+         *     `access`: full | confined (to read mode or the connected sites named in `profiles`) | none.
          *     `basis`: owner | workspace-owner | admin | editor (full; manual only when its line says so) |
-         *     no-interface (refused: nothing published) | `capabilities` (confined) | nothing-offered |
+         *     no-interface (refused: nothing published) | profiles (confined) | nothing-offered |
          *     not-member | no-login. Terms: docs/architecture/access.md. `can_grant` / `can_revoke`: whether
          *     THIS caller may make (or unmake) the source's login an admin of the target.
          */
@@ -38454,8 +38454,8 @@ export interface components {
             readonly access: "full" | "confined" | "none";
             /** Basis */
             readonly basis: string;
-            /** Capabilities */
-            readonly capabilities: readonly string[];
+            /** Profiles */
+            readonly profiles: readonly string[];
             /** Explicit Admin */
             readonly explicit_admin: boolean;
             /** Can Grant */

@@ -57,14 +57,14 @@ def test_an_editor_login_reaches_a_confining_agent_whole_but_manual(fleet):
     # what lets it ask for auto.
     body = _get(fleet["jj"]).json()
     e = _edges(body)[("ada", "hal")]
-    assert (e["access"], e["basis"], e["capabilities"]) == ("full", "editor", [])
+    assert (e["access"], e["basis"], e["profiles"]) == ("full", "editor", [])
     assert e["can_grant"] and not e["can_revoke"]
 
 
 def test_a_viewer_login_is_confined_by_interface_which_broke_ada_to_hal(fleet):
     M.objects.filter(workspace_id="connect", user=fleet["ada_login"]).update(role=M.VIEWER)
     e = _edges(_get(fleet["jj"]).json())[("ada", "hal")]
-    assert (e["access"], e["basis"], e["capabilities"]) == ("confined", "capabilities", ["ask"])
+    assert (e["access"], e["basis"], e["profiles"]) == ("confined", "profiles", ["ask"])
     assert e["can_grant"] and not e["can_revoke"]
 
 
