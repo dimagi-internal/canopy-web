@@ -131,16 +131,44 @@ export async function importPrivateScalar(scalar: Uint8Array, pub: { x?: string;
 }
 
 /** The public half that `scalar` really has — computed here, never taken from the
- *  server: a PKCS#8 P-256 key with no public point, which WebCrypto completes. */
-export async function publicJwkOfScalar(scalar: Uint8Array): Promise<PublicJwk> {
+ *  server: a PKCS#8 P-256 key with no public point, which WebCrypto completes where it
+ *  can. Chromium refuses one (DataError), so there `claimed` (the public half the key
+ *  came with) is PROVEN to be `scalar`'s instead (`provenPublic`); without a claim it throws. */
+export async function publicJwkOfScalar(scalar: Uint8Array, claimed?: { x?: string; y?: string }): Promise<PublicJwk> {
   if (scalar.length !== 32) throw new Error('a P-256 scalar is 32 bytes')
   const prefix = hexToBytes('308141020100301306072a8648ce3d020106082a8648ce3d030107042730250201010420')
   const der = new Uint8Array(prefix.length + 32)
   der.set(prefix)
   der.set(scalar, prefix.length)
-  const k = await subtle().importKey('pkcs8', der, ECDH, true, ['deriveBits'])
-  der.fill(0)
+  let k: CryptoKey
+  try {
+    k = await subtle().importKey('pkcs8', der, ECDH, true, ['deriveBits'])
+  } catch (e) {
+    if (!claimed) throw e
+    return provenPublic(scalar, claimed)
+  } finally {
+    der.fill(0)
+  }
   return publicJwk(await subtle().exportKey('jwk', k))
+}
+
+/** `claimed`, once an ECDH round trip shows it is `scalar`'s public half: a fresh key agrees
+ *  with (scalar, claimed) only when claimed = scalar·G. Not left to how a browser checks an
+ *  imported pair. */
+async function provenPublic(scalar: Uint8Array, claimed: { x?: string; y?: string }): Promise<PublicJwk> {
+  const mismatch = () => new Error('This vault key’s public half is not its private half’s.')
+  let mine: CryptoKey, theirs: CryptoKey
+  try {
+    mine = await importPrivateScalar(scalar, claimed)
+    theirs = await importPublic(claimed)
+  } catch {
+    throw mismatch()
+  }
+  const probe = (await subtle().generateKey(ECDH, false, ['deriveBits'])) as CryptoKeyPair
+  const a = new Uint8Array(await subtle().deriveBits({ name: 'ECDH', public: probe.publicKey }, mine, 256))
+  const b = new Uint8Array(await subtle().deriveBits({ name: 'ECDH', public: theirs }, probe.privateKey, 256))
+  if (a.length !== b.length || a.some((x, i) => x !== b[i])) throw mismatch()
+  return publicJwk(claimed)
 }
 
 /** A fresh key pair whose scalar can be sealed (the person's keyset). */

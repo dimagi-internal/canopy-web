@@ -47,6 +47,7 @@ rm -f e2e.sqlite3 frontend/e2e/.auth/session.txt frontend/e2e/.auth/session2.txt
 uv run python manage.py migrate --noinput >"${TMPDIR:-/tmp}/e2e-migrate-$(id -un).log" 2>&1
 uv run python manage.py shell -c "exec(open('frontend/e2e/seed.py').read())"
 uv run python manage.py shell -c "exec(open('frontend/e2e/seed_runner.py').read())"
+uv run python manage.py shell -c "exec(open('frontend/e2e/seed_connect.py').read())"
 # The fake runner starts once the API answers, and dies with this script.
 (
   until curl -sf "http://127.0.0.1:$E2E_API_PORT/health/" >/dev/null; do sleep 0.5; done
@@ -54,7 +55,8 @@ uv run python manage.py shell -c "exec(open('frontend/e2e/seed_runner.py').read(
     exec uv run python frontend/e2e/fake_runner.py
 ) >"${TMPDIR:-/tmp}/e2e-fake-runner-$(id -un).log" 2>&1 &
 RUNNER_PID=$!
-uv run uvicorn config.asgi:application --host 127.0.0.1 --port "$E2E_API_PORT" &
+# canopy-web's own app, with Salesforce's OAuth answered in-process (agent-connect.spec.ts).
+uv run uvicorn fake_salesforce:application --app-dir frontend/e2e --host 127.0.0.1 --port "$E2E_API_PORT" &
 API_PID=$!
 trap 'kill $RUNNER_PID $API_PID 2>/dev/null; pkill -f "frontend/e2e/fake_runner.py" 2>/dev/null; docker rm -f "canopy-e2e-pg-$(id -un)" >/dev/null 2>&1' EXIT INT TERM
 wait $API_PID

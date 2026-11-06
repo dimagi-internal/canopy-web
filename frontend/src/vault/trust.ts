@@ -205,7 +205,7 @@ export function pinPerson(userId: number | string, thumb: string, email: string)
  *  is recomputed from the private scalar when the flow opened it, so the pin is the key
  *  you hold, whatever the server said it was. */
 export async function rememberSelf(userId: string, publicJwk: Jwk, scalar?: Uint8Array): Promise<SelfMismatch | null> {
-  const thumb = await jkt(scalar ? await publicJwkOfScalar(scalar) : publicJwk)
+  const thumb = await jkt(scalar ? await publicJwkOfScalar(scalar, publicJwk) : publicJwk)
   const was = loadPins()[userId]
   // A key taken on first use, now checked against the key actually held: the chats
   // started meanwhile were wrapped to a key that is NOT yours — what a substituted key

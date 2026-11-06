@@ -443,7 +443,12 @@ async function readAccess(state: ShareStateOut, stored: Statement | null, owner:
 
 /** The owner's key as the scalar in hand has it; the server's copy is only compared. */
 async function ownerOf(state: ShareStateOut, me: Unlocked): Promise<OwnerKey> {
-  const pub = me.scalar ? await publicJwkOfScalar(me.scalar) : publicJwk(me.publicJwk)
+  let pub: PublicJwk
+  try {
+    pub = me.scalar ? await publicJwkOfScalar(me.scalar, me.publicJwk) : publicJwk(me.publicJwk)
+  } catch {
+    throw new ShareRefused('bad-owner-key', 'Your vault key’s public half does not match it.')
+  }
   const thumb = await jkt(pub)
   if (state.owner.user_id !== me.userId || (await jkt(state.owner.public_jwk as Jwk)) !== thumb) {
     throw new ShareRefused('bad-owner-key', 'canopy-web names another key as this connection’s owner.')

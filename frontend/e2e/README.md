@@ -9,7 +9,7 @@ cd frontend && npm run test:e2e
 ```
 
 Playwright boots two servers itself (`webServer` in `playwright.config.ts`):
-- **API** on :8000 via `e2e/backend.sh` — a throwaway **Postgres** (a `pgvector/pgvector:pg16`
+- **API** on :8000 via `e2e/backend.sh` (`fake_salesforce.py`, see below) — a throwaway **Postgres** (a `pgvector/pgvector:pg16`
   container when Docker is up; `E2E_DATABASE_URL` overrides; SQLite as the last resort), `REQUIRE_AUTH=False`,
   migrated + seeded (`e2e/seed.py`), which also **mints a Django session** and writes the key
   to `e2e/.auth/session.txt`. No Google OAuth needed.
@@ -63,6 +63,24 @@ old key genuinely cannot be opened, and also cannot be used to test carrying con
 over. Registering a passkey counts as a step-up for that session, so each person has a second
 session (`<name>-later`) for coming back without one. `backend.sh` pins `PASSKEY_RP_ID` and
 `PASSKEY_ORIGINS` because the dev proxy rewrites Host.
+
+CI runs it in the merge queue in the same `Browser suite (chat)` job.
+
+## Connecting an agent to Salesforce (`agent-connect.spec.ts`)
+
+An admin connects an agent from its External accounts tab: the Connect tap opens their vault
+key with a PRF passkey (virtual authenticator), the real start and callback views run, and the
+Connected page stores the sign-in for the agent's machine. Salesforce is the only stand-in:
+`fake_salesforce.py` is the e2e API's entry point (`backend.sh`), canopy-web's own app with only
+`SalesforceProvider._call` (its outbound HTTP) answered in-process; the test catches the start's
+redirect to Salesforce's sign-in page and sends the browser to the callback with `code=e2e-<agent>`,
+which signs in `<agent>@dimagi-ai.com`.
+
+`seed_connect.py` gives each scenario its own admin and agent (Eva, Iris, Bea), each agent with one
+cloud machine. Eva's and Iris's admins start with a vault key sealed by a passphrase and Secret Key
+(`.auth/<name>-secret-key.txt`) whose private half the seed knows, so it can sign the vouch for
+the machine; the test adds the passkey to that key under Settings. Bea's admin starts with a key
+nobody can open, replaces it with one a passkey alone holds, then the passkey stops giving PRF.
 
 CI runs it in the merge queue in the same `Browser suite (chat)` job.
 
