@@ -11896,6 +11896,27 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/vaults/{vault_id}/log": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * A workspace vault's log: what changed and who read what (never a value)
+         * @description Newest first: each change (who, through what) and each read (by an agent's turn or
+         *     a machine), merged from the records that already hold them. Its owners and admins.
+         */
+        readonly get: operations["workspace_vault_log"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/vaults/{vault_id}/zk": {
         readonly parameters: {
             readonly query?: never;
@@ -40523,6 +40544,33 @@ export interface components {
             /** Runner */
             readonly runner?: string | null;
         };
+        /**
+         * VaultLogEntryOut
+         * @description One line of a workspace vault's log (`credentials/vault_log.py`). Never a value.
+         */
+        readonly VaultLogEntryOut: {
+            /**
+             * At
+             * Format: date-time
+             */
+            readonly at: string;
+            /** Kind */
+            readonly kind: string;
+            /** Who */
+            readonly who: string;
+            /** What */
+            readonly what: string;
+            /**
+             * Where
+             * @default
+             */
+            readonly where: string;
+            /**
+             * Turn Id
+             * @default
+             */
+            readonly turn_id: string;
+        };
         /** VaultKeeperAgentOut */
         readonly VaultKeeperAgentOut: {
             /** Agent */
@@ -65597,6 +65645,30 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["WorkspaceVaultOut"];
+                };
+            };
+        };
+    };
+    readonly workspace_vault_log: {
+        readonly parameters: {
+            readonly query?: {
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly vault_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["VaultLogEntryOut"][];
                 };
             };
         };

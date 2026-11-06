@@ -87,8 +87,10 @@ Every browser-facing address canopy-web serves. The SPA route table is
   Agents, Projects and Workspaces (what it is given to, each picked from a real list,
   with a confirm naming the secrets it gives) and Machines (keepers holding a copy,
   and runners whose own credentials live here) — and **Encryption key** (one sentence
-  saying what it is, then its version, copies for whoever waits, and changing it).
-  The old tab addresses open the section that tab became.
+  saying what it is, then its version, copies for whoever waits, and changing it),
+  then, for its owners and admins, **Log** (`GET /api/vaults/{id}/log`: each change from
+  the audit rows its write routes leave, and each read by an agent's turn or a machine,
+  newest first). The old tab addresses open the section that tab became (`/log` too).
   Settings → Secrets lists the workspace's vaults and links here.
 
 - **The header** (`frontend/src/components/AppLayout/nav.ts`): **Home** and

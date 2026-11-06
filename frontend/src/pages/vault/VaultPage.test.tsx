@@ -3,10 +3,10 @@
 // A workspace vault's page (VaultPage.tsx) on the shared VaultView: the same summary line and
 // sections an agent's vault has, and the old tab addresses open the section they became.
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 
-const api = vi.hoisted(() => ({ getWorkspaceVault: vi.fn(), getWorkspaceVaultZk: vi.fn() }))
+const api = vi.hoisted(() => ({ getWorkspaceVault: vi.fn(), getWorkspaceVaultZk: vi.fn(), getWorkspaceVaultLog: vi.fn() }))
 vi.mock('@/api/vault', () => api)
 vi.mock('@/vault/operations', () => ({}))
 vi.mock('@/vault/useVaultUnlock', () => ({ useVaultUnlock: () => ({ unlock: vi.fn(), element: null }) }))
@@ -29,6 +29,10 @@ const VAULT = {
 function show(at = '/w/dimagi/vaults/v1', vault: object = VAULT) {
   api.getWorkspaceVault.mockResolvedValue(vault)
   api.getWorkspaceVaultZk.mockResolvedValue({ pending: [] })
+  api.getWorkspaceVaultLog.mockResolvedValue([
+    { at: '2026-11-06T15:00:00Z', kind: 'change', who: 'jj@dimagi.com', what: 'Attached otto', where: 'browser', turn_id: '' },
+    { at: '2026-11-06T14:00:00Z', kind: 'read', who: 'eva', what: 'read salesforce', where: 'cloud-ec2-live', turn_id: 'abcdef123' },
+  ])
   return render(
     <MemoryRouter initialEntries={[at]}>
       <Routes>
@@ -47,6 +51,23 @@ afterEach(() => {
 })
 
 describe('workspace vault page', () => {
+  it('shows its managers a Log of changes and reads, and nobody else', async () => {
+    show('/w/dimagi/vaults/v1/log')
+    const rows = await screen.findAllByTestId('vault-log-row')
+    expect(rows.map((r) => r.textContent)).toEqual([
+      expect.stringContaining('jj@dimagi.comAttached ottobrowser'),
+      expect.stringContaining('evaread salesforcecloud-ec2-live · turn abcdef12'),
+    ])
+    expect(open('vault-log')).toBe(true)
+    fireEvent.click(screen.getByTestId('vault-log-only-read'))
+    expect(screen.getAllByTestId('vault-log-row')).toHaveLength(1)
+    cleanup()
+    show('/w/dimagi/vaults/v1', { ...VAULT, you: 'member' })
+    await screen.findByTestId('vault-summary')
+    expect(screen.queryByTestId('vault-section-vault-log')).toBeNull()
+    expect(api.getWorkspaceVaultLog).toHaveBeenCalledTimes(1)
+  })
+
   it('has Secrets, Access (a tab per kind), Encryption key — the same sections an agent\u2019s vault has', async () => {
     show()
     await screen.findByTestId('vault-summary')

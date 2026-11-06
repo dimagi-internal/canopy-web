@@ -1,19 +1,20 @@
 import { useCallback, useEffect, useState, type JSX } from 'react'
 import { Link, Navigate, useParams } from 'react-router-dom'
-import { getWorkspaceVault, type WorkspaceVaultOut } from '@/api/vault'
+import { getWorkspaceVault, getWorkspaceVaultLog, type WorkspaceVaultOut } from '@/api/vault'
 import { ObjectPage } from '@/components/objectPage/ObjectPage'
+import { VaultLog } from '@/components/vault/VaultLog'
 import { VaultView } from '@/components/vault/VaultView'
 import { scopedPath } from '@/lib/scopedLinks'
 import type { Unlocked } from '@/vault/operations'
 import { useVaultUnlock } from '@/vault/useVaultUnlock'
 import {
-  machineCount, servedOf, VaultKeyTab, VaultMachinesTab, VaultMakeKey, VaultPeopleTab, VaultSecretsTab, VaultServedTab,
+  machineCount, managesVault, servedOf, VaultKeyTab, VaultMachinesTab, VaultMakeKey, VaultPeopleTab, VaultSecretsTab, VaultServedTab,
 } from './VaultTabs'
 
 // A WORKSPACE VAULT'S ONE PAGE, `/w/:workspace/vaults/:vaultId`, drawn by the same
 // `VaultView` an agent's vault uses (components/vault/VaultView.tsx): a summary
-// line, then Secrets, Access (People, Agents, Projects, Workspaces, Machines) and
-// Encryption key as collapsible sections
+// line, then Secrets, Access (People, Agents, Projects, Workspaces, Machines),
+// Encryption key and (for its managers) Log as collapsible sections
 // (docs/architecture/pages.md, "One editor per object"). Settings → Secrets lists a
 // workspace's vaults and links here; a runner's credentials link to the vault that
 // holds them. This file is the workspace vault's ADAPTER: it reads the vault and
@@ -129,6 +130,11 @@ export function VaultPage(): JSX.Element {
           anchors: ['key'],
           body: <VaultKeyTab {...ctx} />,
         }}
+        log={managesVault(vault) ? {
+          summary: 'changes and reads',
+          defaultOpen: tab === 'log',
+          body: <VaultLog load={() => getWorkspaceVaultLog(vault.vault_id)} />,
+        } : undefined}
       />
       {unlocker.element}
     </ObjectPage>

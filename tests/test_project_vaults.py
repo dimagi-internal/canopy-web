@@ -436,3 +436,35 @@ def test_the_project_page_lists_its_vaults_by_name_to_those_who_belong_to_the_va
     _member(w.team, reader, WorkspaceMembership.EDITOR)
     r = _client(reader).get("/api/workspace-projects/connect/connect-work/")
     assert r.status_code == 200 and r.json()["vaults"] == []
+
+
+# ---- the vault's log -------------------------------------------------------------------------
+
+def test_a_vaults_log_shows_who_changed_it_and_who_read_what_never_a_value(w):
+    """The vault page's Log: changes from the audit rows its write routes already leave, reads
+    by machines and by agents' turns, newest first. Its managers only."""
+    from apps.agents.models import AgentCredentialRead
+    from apps.harness.models import RunnerCredentialRead
+
+    c = _client(w.jj)
+    r = c.post(f"/api/vaults/{w.vault.pk}/attachments", {"agent": "hal"}, content_type=J)
+    assert r.status_code == 200, r.content
+    box = Runner.objects.create(name="cloud-ec2-live", owner=w.jj, workspace=w.dimagi)
+    AgentCredentialRead.objects.create(agent=w.hal, name="Shared/salesforce", user=w.jj, runner=box,
+                                       via="runner", turn_id="t-1")
+    AgentCredentialRead.objects.create(agent=w.hal, name="Other/salesforce", user=w.jj, via="runner")
+    RunnerCredentialRead.objects.create(runner=box, vault=w.vault, name="claude-oauth")
+
+    log = c.get(f"/api/vaults/{w.vault.pk}/log").json()
+    kinds = [(e["kind"], e["who"], e["what"]) for e in log]
+    assert ("read", "hal", "read salesforce") in kinds              # its own name, not Other's
+    assert ("read", "cloud-ec2-live", "read claude-oauth") in kinds
+    assert sum(1 for k in kinds if k[0] == "read") == 2
+    [change] = [e for e in log if e["kind"] == "change"]
+    assert change["who"] == "jj@dimagi.com" and change["where"] == "browser"
+    assert [e["at"] for e in log] == sorted((e["at"] for e in log), reverse=True)
+    assert next(e for e in log if e["who"] == "hal")["turn_id"] == "t-1"
+
+    member = _user("member")
+    _member(w.connect, member, WorkspaceMembership.EDITOR)
+    assert _client(member).get(f"/api/vaults/{w.vault.pk}/log").status_code == 403

@@ -28,7 +28,7 @@ from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
 from . import services
-from .credentials import vault_keeper, vault_members, workspace_vaults
+from .credentials import vault_keeper, vault_log, vault_members, workspace_vaults
 from .credentials.zk import ZkError
 from .gates import project_ws_or_404
 from .models import Agent, Vault, VaultAttachment, VaultSecret
@@ -38,6 +38,7 @@ from .schemas import (
     VaultCreateIn,
     VaultKeeperPinsIn,
     VaultKeeperPinsOut,
+    VaultLogEntryOut,
     VaultMemberIn,
     WorkspaceVaultOut,
     ZkEnableIn,
@@ -272,6 +273,18 @@ def detach_workspace_vault(request: HttpRequest, vault_id: uuid.UUID, attachment
     v = _vault(request, vault_id, manage=True)
     workspace_vaults.detach(v, attachment_id)
     return _out(v, request.user)
+
+
+@router.get("/vaults/{vault_id}/log", response=list[VaultLogEntryOut],
+            summary="A workspace vault's log: what changed and who read what (never a value)")
+@gate("vault-admin", step_up="a log of names, people and times, never a value")
+def workspace_vault_log(request: HttpRequest, vault_id: uuid.UUID, limit: int = 200) -> list[VaultLogEntryOut]:
+    """Newest first: each change (who, through what) and each read (by an agent's turn or
+    a machine), merged from the records that already hold them. Its owners and admins."""
+    v = _vault(request, vault_id)
+    if not vault_members.is_admin(vault_members.role_of(v, request.user)):
+        raise HttpError(403, "this action requires someone who manages this vault")
+    return [VaultLogEntryOut(**e) for e in vault_log.entries(v, limit=limit)]
 
 
 # ---- one vault: zero-knowledge (the agent vault's shapes) ----------------------------------

@@ -163,6 +163,14 @@ export async function getWorkspaceVault(vaultId: string): Promise<WorkspaceVault
     'Could not load the vault')
 }
 
+export type VaultLogEntryOut = Schemas['VaultLogEntryOut']
+
+/** A workspace vault's log, newest first: each change and each read. Never a value. Its managers only. */
+export async function getWorkspaceVaultLog(vaultId: string): Promise<VaultLogEntryOut[]> {
+  return need<VaultLogEntryOut[]>(await apiV2.GET('/api/vaults/{vault_id}/log', {
+    params: { path: { vault_id: vaultId } } }), 'Could not load the vault’s log')
+}
+
 export async function deleteWorkspaceVaultSecret(vaultId: string, name: string): Promise<WorkspaceVaultOut> {
   return need<WorkspaceVaultOut>(await apiV2.DELETE('/api/vaults/{vault_id}/secrets/{name}', {
     params: { path: { vault_id: vaultId, name } } }), 'Could not delete the secret')
