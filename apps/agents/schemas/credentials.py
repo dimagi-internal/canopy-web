@@ -240,6 +240,23 @@ class AgentCredentialAccessOut(StrictModel):
     delegated_withheld: list[DelegatedWithheldOut] = Field(default_factory=list)
 
 
+class AgentSharedVaultOut(StrictModel):
+    """A workspace vault this agent's turns read, layered under its own: the agent's page
+    lists these so its secrets are never only half the story. Names only, never a value."""
+
+    vault_id: str
+    name: str
+    workspace: str
+    #: Names only.
+    secrets: list[str] = Field(default_factory=list)
+    #: Why the agent gets it: "agent" (given to it by name), "project" (it is a member of a
+    #: project the vault is given to) or "workspace" (its workspace, or one above, has it).
+    via: str
+    #: The project's address or the workspace's slug for `via` project/workspace; "" for agent,
+    #: and "" for a project the caller may not read (it is not named to them).
+    via_name: str = ""
+
+
 class ResolveVaultLayerOut(StrictModel):
     vault_id: str
     name: str

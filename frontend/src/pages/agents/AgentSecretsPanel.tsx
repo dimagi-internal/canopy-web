@@ -13,10 +13,10 @@ import type { RunnerDeviceKeyOut } from '@/api/deviceKeys'
 import type { VaultMembersOut, ZkStateOut } from '@/api/vault'
 import { EncryptedBadge, VaultEditor, type VaultEntry } from '@/components/vault/VaultEditor'
 import { LoadFailed } from '@/components/vault/LoadFailed'
-import { VaultSection } from '@/components/vault/VaultSection'
 import { VaultView } from '@/components/vault/VaultView'
 import { AgentCredentialAlertsSection, groupAlerts, isExpected } from '@/pages/agents/AgentCredentialAlertsSection'
 import { AgentDeviceKeysSection } from '@/pages/agents/AgentDeviceKeysSection'
+import { AgentSharedVaults } from '@/pages/agents/AgentSharedVaults'
 import { AgentVaultMembersSection } from '@/pages/agents/AgentVaultMembersSection'
 import { AgentZkSection } from '@/pages/agents/AgentZkSection'
 import { CredentialReadHistory } from '@/pages/agents/CredentialReadHistory'
@@ -30,7 +30,8 @@ import { ApiError } from '@/api/problem'
 
 // The agent's vault, drawn by the shared `VaultView` (the same frame a workspace's
 // vault uses): a summary line, then Secrets (one table you change in place,
-// `VaultEditor`), Who can open them (people and machines) and Storage & key. This
+// `VaultEditor`, then the shared vaults its turns also read), Access (People, Agents,
+// Machines), Encryption key and Log. This
 // file is the agent's ADAPTER: it reads the agent's rows, key state, members and
 // machines and hands the frame each section's body and one-line summary.
 //
@@ -153,6 +154,7 @@ export function AgentSecretsPanel({
   const rotate = Boolean(zk?.rotation_recommended)
   const secretsAttention = sec.orphans.length > 0 || missing > 0
   const activeMachines = machines?.filter((k) => k.status === 'active').length
+  const waitingMachines = machines?.filter((k) => k.status === 'pending').length ?? 0
   const alertGroups = groupAlerts(alerts ?? [])
   const unexpectedAlerts = alertGroups.filter((g) => !isExpected(g.kind)).length
   const attention = [
@@ -208,6 +210,7 @@ export function AgentSecretsPanel({
                   return row?.set && canEdit ? <CredentialReadHistory slug={agent.slug} row={row} alerts={alerts} /> : null
                 }}
               />}
+              {canEdit && <AgentSharedVaults slug={agent.slug} />}
               {error && (
                 <p className="mt-3 text-[13px] text-destructive" data-testid="agent-credentials-error">
                   {error}
@@ -227,25 +230,29 @@ export function AgentSecretsPanel({
                activeMachines !== undefined && `${activeMachines} ${activeMachines === 1 ? 'machine' : 'machines'}`]
                 .filter(Boolean).join(' · ') || undefined
             : 'admins only',
-          anchors: ['cred-vault-members', 'cred-device-keys'],
-          body: (
-            <>
-              <AgentVaultMembersSection slug={agent.slug} onLoaded={setMembers} canEdit={canEdit} />
-              <AgentDeviceKeysSection
-                slug={agent.slug}
-                canEdit={canEdit}
-                onLoaded={setMachines}
-              />
-              {!canEdit && (
-                <p className="text-[12px] text-muted-foreground">
-                  Only {agent.name ?? agent.slug}&rsquo;s admins can see who and what can open its secrets.
-                </p>
-              )}
-            </>
+          tone: canEdit && waitingMachines > 0 ? 'attention' : 'quiet',
+          anchors: ['cred-vault-members'],
+          intro: canEdit ? <>Who can open {agent.name ?? agent.slug}&rsquo;s own vault. Its secrets go to this agent
+            only; to give a secret to other agents too, put it in a shared vault.</> : undefined,
+          footer: !canEdit && (
+            <p className="text-[12px] text-muted-foreground">
+              Only {agent.name ?? agent.slug}&rsquo;s admins can see who and what can open its secrets.
+            </p>
           ),
+          tabs: canEdit ? [
+            { kind: 'people', count: members?.members.length,
+              body: <AgentVaultMembersSection slug={agent.slug} onLoaded={setMembers} canEdit={canEdit} /> },
+            { kind: 'agents', count: 1, body: (
+              <p className="text-[12px] text-foreground" data-testid="agent-vault-agents">
+                Only {agent.name ?? agent.slug}. An agent&rsquo;s own vault serves no other agent.
+              </p>
+            ) },
+            { kind: 'machines', count: activeMachines, attention: waitingMachines > 0, anchors: ['cred-device-keys'],
+              body: <AgentDeviceKeysSection slug={agent.slug} canEdit={canEdit} onLoaded={setMachines} /> },
+          ] : [],
         }}
-        storage={{
-          summary: zk && zk.kv > 0 ? 'key and recovery' : 'key not made yet',
+        encryptionKey={{
+          summary: zk && zk.kv > 0 ? `version ${zk.kv}` : 'key not made yet',
           tone: canEdit && (waiting > 0 || rotate) ? 'attention' : 'quiet',
           anchors: ['cred-zk', 'cred-vault', 'secrets-home'],
           defaultOpen: false,
@@ -255,17 +262,26 @@ export function AgentSecretsPanel({
             </>
           ),
         }}
-      >
-        {canEdit && alerts && alerts.length > 0 && (
-          <VaultSection id="read-alerts" title="Read alerts" tone={unexpectedAlerts > 0 ? 'attention' : 'quiet'}
-            anchors={['cred-alerts']}
-            summary={unexpectedAlerts > 0
-              ? `${unexpectedAlerts} to look at${alertGroups.length > unexpectedAlerts ? `, ${alertGroups.length - unexpectedAlerts} expected` : ''}`
-              : `${alertGroups.length} asked-for secret${alertGroups.length === 1 ? '' : 's'} no skill lists`}>
-            <AgentCredentialAlertsSection alerts={alerts} />
-          </VaultSection>
-        )}
-      </VaultView>
+        log={canEdit ? {
+          tone: unexpectedAlerts > 0 ? 'attention' : 'quiet',
+          anchors: ['read-alerts', 'cred-alerts'],
+          summary: alertGroups.length === 0 ? 'no unusual reads'
+            : unexpectedAlerts > 0
+              ? `${unexpectedAlerts} unusual read${unexpectedAlerts === 1 ? '' : 's'} to look at`
+              : `${alertGroups.length} asked-for secret${alertGroups.length === 1 ? '' : 's'} no skill lists`,
+          body: (
+            <>
+              <p className="mb-3 text-[12px] text-muted-foreground" data-testid="agent-vault-log-note">
+                Each secret&rsquo;s own read history (who read it, from which machine and turn) opens from its row
+                under Secrets. Below: reads that looked wrong.
+              </p>
+              {alerts && alerts.length > 0
+                ? <AgentCredentialAlertsSection alerts={alerts} />
+                : <p className="text-[12px] text-muted-foreground">Nothing unusual.</p>}
+            </>
+          ),
+        } : undefined}
+      />
       {unlocker.element}
     </div>
   )

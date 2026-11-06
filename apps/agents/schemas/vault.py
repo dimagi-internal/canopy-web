@@ -150,6 +150,22 @@ class VaultAttachmentOut(StrictModel):
     key_place: str = ""
 
 
+class VaultLogEntryOut(StrictModel):
+    """One line of a workspace vault's log (`credentials/vault_log.py`). Never a value."""
+
+    at: datetime
+    #: "change" (someone changed the vault) or "read" (an agent or machine read a secret).
+    kind: str
+    #: The person's email, the agent's slug or the machine's name.
+    who: str
+    #: In words: the change's summary, or "read <secret>".
+    what: str
+    #: How or from where: "browser", "MCP tool", "canopy CLI"; the machine an agent read on.
+    where: str = ""
+    #: The turn an agent's read was for, when it said.
+    turn_id: str = ""
+
+
 class WorkspaceVaultOut(StrictModel):
     vault_id: str
     workspace: str

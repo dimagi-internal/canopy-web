@@ -6529,6 +6529,27 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/credentials/shared-vaults": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The workspace vaults this agent's turns also read, and why (names only)
+         * @description Each workspace vault layered under the agent's own, in layering order, with the
+         *     names it holds and why the agent gets it. Never a value.
+         */
+        readonly get: operations["agent_shared_vaults"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/credentials/access": {
         readonly parameters: {
             readonly query?: never;
@@ -11869,6 +11890,27 @@ export interface paths {
         readonly post?: never;
         /** Stop serving an agent or a workspace from a vault */
         readonly delete: operations["detach_workspace_vault"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/vaults/{vault_id}/log": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * A workspace vault's log: what changed and who read what (never a value)
+         * @description Newest first: each change (who, through what) and each read (by an agent's turn or
+         *     a machine), merged from the records that already hold them. Its owners and admins.
+         */
+        readonly get: operations["workspace_vault_log"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -31670,6 +31712,28 @@ export interface components {
             };
         };
         /**
+         * AgentSharedVaultOut
+         * @description A workspace vault this agent's turns read, layered under its own: the agent's page
+         *     lists these so its secrets are never only half the story. Names only, never a value.
+         */
+        readonly AgentSharedVaultOut: {
+            /** Vault Id */
+            readonly vault_id: string;
+            /** Name */
+            readonly name: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Secrets */
+            readonly secrets?: readonly string[];
+            /** Via */
+            readonly via: string;
+            /**
+             * Via Name
+             * @default
+             */
+            readonly via_name: string;
+        };
+        /**
          * AgentCredentialAccessOut
          * @description Whether the CALLER may resolve this agent's secrets — never the values.
          *
@@ -40478,6 +40542,33 @@ export interface components {
             readonly project?: string | null;
             /** Runner */
             readonly runner?: string | null;
+        };
+        /**
+         * VaultLogEntryOut
+         * @description One line of a workspace vault's log (`credentials/vault_log.py`). Never a value.
+         */
+        readonly VaultLogEntryOut: {
+            /**
+             * At
+             * Format: date-time
+             */
+            readonly at: string;
+            /** Kind */
+            readonly kind: string;
+            /** Who */
+            readonly who: string;
+            /** What */
+            readonly what: string;
+            /**
+             * Where
+             * @default
+             */
+            readonly where: string;
+            /**
+             * Turn Id
+             * @default
+             */
+            readonly turn_id: string;
         };
         /** VaultKeeperAgentOut */
         readonly VaultKeeperAgentOut: {
@@ -58774,6 +58865,28 @@ export interface operations {
             };
         };
     };
+    readonly agent_shared_vaults: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AgentSharedVaultOut"][];
+                };
+            };
+        };
+    };
     readonly agent_credential_access: {
         readonly parameters: {
             readonly query?: never;
@@ -65531,6 +65644,30 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["WorkspaceVaultOut"];
+                };
+            };
+        };
+    };
+    readonly workspace_vault_log: {
+        readonly parameters: {
+            readonly query?: {
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly vault_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["VaultLogEntryOut"][];
                 };
             };
         };

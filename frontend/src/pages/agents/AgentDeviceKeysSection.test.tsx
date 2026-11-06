@@ -21,7 +21,7 @@ describe('AgentDeviceKeysSection', () => {
     getAgentDeviceKeys.mockResolvedValue([{ id: 'k1', status: 'active' }])
     render(<AgentDeviceKeysSection slug="echo" canEdit />)
     expect(await screen.findByTestId('keys-table')).toBeTruthy()
-    expect(screen.getByText('Machines that can read these secrets')).toBeTruthy()
+    expect(screen.getByText(/A machine you approve can read/)).toBeTruthy()
     expect(screen.queryByRole('checkbox')).toBeNull()
     expect(screen.queryByTestId('no-active-device-key')).toBeNull()
   })

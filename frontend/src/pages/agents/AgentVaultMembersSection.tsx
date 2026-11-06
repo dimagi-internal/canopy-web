@@ -73,7 +73,6 @@ export function AgentVaultMembersSection({
 
   return (
     <section id="cred-vault-members" className="mb-6" data-testid="vault-members">
-      <h4 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">People</h4>
       <VaultMembers
         label="this vault"
         members={state.members}

@@ -501,6 +501,16 @@ export async function getAgentCredentialStatus(slug: string): Promise<AgentCrede
   return Array.from(unwrap(res, 'getAgentCredentialStatus'))
 }
 
+export type AgentSharedVaultOut = Schemas['AgentSharedVaultOut']
+
+/** The workspace vaults this agent's turns also read, in layering order, and why. Names only. */
+export async function getAgentSharedVaults(slug: string): Promise<AgentSharedVaultOut[]> {
+  const res = await apiV2.GET('/api/agents/{slug}/credentials/shared-vaults', {
+    params: { path: { slug } },
+  })
+  return Array.from(unwrap(res, 'getAgentSharedVaults')) as AgentSharedVaultOut[]
+}
+
 /** Upsert named secrets. NON-CLOBBERING — omitted refs are untouched, so a
  *  single-field edit cannot wipe the rest. Returns the masked status; there is
  *  deliberately no route that reads a value back into a browser. */

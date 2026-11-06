@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/api/agents', async (orig) => ({
   ...(await orig<typeof import('@/api/agents')>()),
+  getAgentSharedVaults: vi.fn(async () => []),
   getAgentCredentialStatus: vi.fn(async () => [
     { name: 'CANOPY_PAT', set: true, declared: true, source: 'canopy', updated_at: null, updated_by_email: '' },
   ]),
@@ -114,7 +115,7 @@ describe('AgentSettingsSection', () => {
     at(`${BASE}/security`)
     expect(await within(region('Vault')).findByTestId('vault-row-CANOPY_PAT')).toBeTruthy()
     expect(within(region('Vault')).getByTestId('vault-summary').textContent).toContain('1 secret')
-    expect(within(region('Vault')).getByTestId('vault-section-access-to-secrets')).toBeTruthy()
+    expect(within(region('Vault')).getByTestId('vault-section-access')).toBeTruthy()
     expect(region('Canopy login')).toBeTruthy()
   })
 

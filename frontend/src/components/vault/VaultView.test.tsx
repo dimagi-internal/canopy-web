@@ -14,7 +14,7 @@ const part = (name: string, over: Record<string, unknown> = {}) => ({ summary: `
 function view(facts = FACTS, over: Partial<Parameters<typeof VaultView>[0]> = {}, at = '/') {
   return render(
     <MemoryRouter initialEntries={[at]}>
-      <VaultView facts={facts} secrets={part('secrets')} access={part('access')} storage={part('storage')} {...over} />
+      <VaultView facts={facts} secrets={part('secrets')} access={{ ...part('access'), tabs: [{ kind: 'people', body: <p>access body</p> }] }} encryptionKey={part('key')} {...over} />
     </MemoryRouter>,
   )
 }
@@ -36,7 +36,7 @@ describe('VaultView', () => {
 
   it('starts every section closed, with a one-line summary of what is inside', () => {
     view()
-    for (const id of ['secrets', 'access-to-secrets', 'vault-storage']) {
+    for (const id of ['secrets', 'access', 'encryption-key']) {
       expect(screen.getByTestId(`vault-section-${id}`).getAttribute('aria-expanded')).toBe('false')
     }
     expect(screen.getByTestId('vault-section-secrets-summary').textContent).toBe('secrets summary')
@@ -45,26 +45,26 @@ describe('VaultView', () => {
 
   it('opens and closes a section from its heading', () => {
     view()
-    fireEvent.click(screen.getByTestId('vault-section-access-to-secrets'))
+    fireEvent.click(screen.getByTestId('vault-section-access'))
     expect(screen.getByText('access body').closest('[hidden]')).toBeNull()
-    fireEvent.click(screen.getByTestId('vault-section-access-to-secrets'))
+    fireEvent.click(screen.getByTestId('vault-section-access'))
     expect(screen.getByText('access body').closest('[hidden]')).toBeTruthy()
   })
 
   it('opens a section that needs the reader, until they close it', () => {
-    view(FACTS, { storage: part('storage', { tone: 'attention' }) })
-    const button = screen.getByTestId('vault-section-vault-storage')
+    view(FACTS, { encryptionKey: part('key', { tone: 'attention' }) })
+    const button = screen.getByTestId('vault-section-encryption-key')
     expect(button.getAttribute('aria-expanded')).toBe('true')
     fireEvent.click(button)
     expect(button.getAttribute('aria-expanded')).toBe('false')
   })
 
   it('opens the section an old address points at, by its id or an alias', () => {
-    view(FACTS, { storage: part('storage', { anchors: ['cred-zk'] }) }, '/settings/security#cred-zk')
-    expect(screen.getByTestId('vault-section-vault-storage').getAttribute('aria-expanded')).toBe('true')
+    view(FACTS, { encryptionKey: part('key', { anchors: ['cred-zk'] }) }, '/settings/security#cred-zk')
+    expect(screen.getByTestId('vault-section-encryption-key').getAttribute('aria-expanded')).toBe('true')
     expect(screen.getByTestId('vault-section-secrets').getAttribute('aria-expanded')).toBe('false')
     cleanup()
     view(FACTS, {}, '/x#access-to-secrets')
-    expect(screen.getByTestId('vault-section-access-to-secrets').getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByTestId('vault-section-access').getAttribute('aria-expanded')).toBe('true')
   })
 })

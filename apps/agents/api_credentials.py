@@ -28,6 +28,7 @@ from .credentials import (
     accounts,
     credential_resolve,
     vault_alerts,
+    workspace_vaults,
 )
 from .credentials.zk import ZkError
 from .gates import (
@@ -42,6 +43,7 @@ from .schemas import (
     AgentCredentialsIn,
     AgentCredentialsResolveOut,
     AgentCredentialStatusOut,
+    AgentSharedVaultOut,
     DeviceProofRequiredOut,
     ZkWrapMissingOut,
 )
@@ -90,6 +92,16 @@ def agent_credential_status(request: HttpRequest, slug: str):
     which today requires SSH-ing to a box and reading a keyring."""
     agent = agent_for_read(request, slug)
     return services.agent_credential_status(agent)
+
+
+@router.get("/{slug}/credentials/shared-vaults", response=list[AgentSharedVaultOut],
+            summary="The workspace vaults this agent's turns also read, and why (names only)")
+@gate("agent-admin")  # who gets what is the vault's admins' business, as its members are
+def agent_shared_vaults(request: HttpRequest, slug: str):
+    """Each workspace vault layered under the agent's own, in layering order, with the
+    names it holds and why the agent gets it. Never a value."""
+    agent = agent_for_admin(request, slug)
+    return workspace_vaults.shared_vaults_for(agent, request.user)
 
 
 @router.get("/{slug}/credentials/access", response=AgentCredentialAccessOut,

@@ -24,8 +24,8 @@ import { ProjectPicker, WorkspacePicker } from '@/components/work/bits'
 import { AgentPicker } from '@/components/work/projectBits'
 import { Td, Th, Tr } from '@/components/DataTable'
 
-// A workspace vault's three bodies — Storage & key, Who can open them, Secrets —
-// drawn by VaultPage inside the shared VaultView as its sections (the old tab addresses still open them). Who may change what is the server's rule
+// A workspace vault's bodies — Secrets, each Access tab (People, Agents, Projects, Workspaces,
+// Machines) and Encryption key — drawn by VaultPage inside the shared VaultView. Who may change what is the server's rule
 // for each route; a control is offered only to someone who manages the vault.
 
 const inputClass =
@@ -102,8 +102,8 @@ export function VaultMakeKey({ vault: v, onChange, reload, unlock }: VaultOutlet
   )
 }
 
-/** Its key (made in this browser, copies to whoever waits) and what it serves. */
-export function VaultOverviewTab({ vault: v, onChange, reload, unlock }: VaultOutletContext): JSX.Element {
+/** Encryption key: its version, giving people who wait a copy, and changing it. */
+export function VaultKeyTab({ vault: v, onChange, reload, unlock }: VaultOutletContext): JSX.Element {
   const { busy, run, errorLine } = useRun(onChange)
   const manages = managesVault(v)
   const [pending, setPending] = useState<readonly ZkTargetOut[]>([])
@@ -117,7 +117,7 @@ export function VaultOverviewTab({ vault: v, onChange, reload, unlock }: VaultOu
     }
     return () => { live = false }
   }, [manages, v.vault_id, v.kv])
-  // People waiting are granted from the key line; each runner from its row under Who can open them.
+  // People waiting are granted here; each runner from its row on the Machines tab.
   const peopleWaiting = pending.filter((p) => p.kind !== 'device')
   const grant = (only: (t: ZkTargetOut) => boolean) => run(async () => {
     await grantWorkspaceVaultPending(v.vault_id, await unlock(), only)
@@ -126,45 +126,43 @@ export function VaultOverviewTab({ vault: v, onChange, reload, unlock }: VaultOu
   })
 
   return (
-    <div>
-      <Sub id="key" title="Its key">
-        {v.kv === 0 ? (
-          <p className="text-[12px] text-muted-foreground" data-testid="vault-no-key-here">
-            No key yet: make it at the top of this page.
-          </p>
-        ) : (
-          <div className="flex flex-wrap items-center gap-2 text-[12px]" data-testid="vault-key">
-            <span className="text-success">●</span>
-            <span className="text-foreground">Key version {v.kv}</span>
-            {peopleWaiting.length > 0 && (
-              <Button type="button" size="sm" variant="outline" disabled={busy} data-testid="vault-grant"
-                onClick={() => void grant((p) => p.kind !== 'device')}>
-                Give {peopleWaiting.length === 1 ? 'the person waiting' : `the ${peopleWaiting.length} people waiting`} access
-              </Button>
-            )}
-            {manages && (
-              <Button type="button" size="sm" variant="outline" disabled={busy} data-testid="vault-rotate"
-                title="A fresh key: everyone and every machine that still belongs gets a copy, and a copy kept by anyone removed opens nothing written after"
-                onClick={() => void run(async () => { await rotateWorkspaceVaultKey(v.vault_id, await unlock()); reload() })}>
-                Change the key
-              </Button>
-            )}
-          </div>
-        )}
-      </Sub>
-
-      <Sub id="serves" title="Access">
-        <VaultAccess vault={v} manages={manages} busy={busy}
-          attach={(to) => run(() => attachWorkspaceVault(v.vault_id, to))}
-          detach={(id) => void run(() => detachWorkspaceVault(v.vault_id, id))} />
-      </Sub>
+    <Sub id="key">
+      {v.kv === 0 ? (
+        <p className="text-[12px] text-muted-foreground" data-testid="vault-no-key-here">
+          No key yet: make it at the top of this page.
+        </p>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2 text-[12px]" data-testid="vault-key">
+          <span className="text-success">●</span>
+          <span className="text-foreground">Key version {v.kv}</span>
+          <span className="text-muted-foreground">
+            · held by {plural(v.members.filter((m) => m.has_copy).length, 'person', 'people')}
+            {v.holders.keepers.length > 0 && ` and ${plural(v.holders.keepers.length, 'machine')}`}
+          </span>
+          {peopleWaiting.length > 0 && (
+            <Button type="button" size="sm" variant="outline" disabled={busy} data-testid="vault-grant"
+              onClick={() => void grant((p) => p.kind !== 'device')}>
+              Give {peopleWaiting.length === 1 ? 'the person waiting' : `the ${peopleWaiting.length} people waiting`} a copy
+            </Button>
+          )}
+          {manages && (
+            <Button type="button" size="sm" variant="outline" disabled={busy} data-testid="vault-rotate"
+              title="A fresh key: everyone and every machine that still belongs gets a copy, and a copy kept by anyone removed opens nothing written after"
+              onClick={() => void run(async () => { await rotateWorkspaceVaultKey(v.vault_id, await unlock()); reload() })}>
+              Change the key
+            </Button>
+          )}
+        </div>
+      )}
       {errorLine}
-    </div>
+    </Sub>
   )
 }
 
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
+
 /** What a project attachment serves right now: its member agents in the vault's tree, and those it cannot. */
-function projectServing(a: WorkspaceVaultOut['attachments'][number]): string {
+function projectServing(a: Attachment): string {
   const served = a.served ?? []
   const notServed = a.not_served ?? []
   const first = served.length ? `serves ${served.join(', ')}` : 'serves no agent now'
@@ -174,19 +172,16 @@ function projectServing(a: WorkspaceVaultOut['attachments'][number]): string {
   return first + rest
 }
 
-/** Who can open it: the people, and why each is one; the runners, and where each one's key lives. */
-export function VaultMembersTab({ vault: v, onChange, reload, unlock }: VaultOutletContext): JSX.Element {
+/** People tab: who may open it, and why each one may. */
+export function VaultPeopleTab({ vault: v, onChange }: VaultOutletContext): JSX.Element {
   const { busy, run, errorLine } = useRun(onChange)
-  const manages = managesVault(v)
-  const runners = v.attachments.filter((a) => a.runner)
   return (
-    <>
-    <Sub id="members" title="People">
+    <Sub id="members">
       <VaultMembers
         label={v.name}
         members={v.members}
         holders={v.holders}
-        manages={manages}
+        manages={managesVault(v)}
         busy={busy}
         self={undefined}
         ids={{
@@ -195,15 +190,39 @@ export function VaultMembersTab({ vault: v, onChange, reload, unlock }: VaultOut
           form: 'ws-vault-add-member',
           waiting: `ws-vault-waiting-${v.vault_id}`,
         }}
+        note={<>Someone is a member when added here by name, or because they can use an agent this vault serves.</>}
         onAdd={(email) => run(() => addWorkspaceVaultMember(v.vault_id, email, 'member'))}
         onRemove={(userId) => void run(() => removeWorkspaceVaultMember(v.vault_id, userId))}
       />
       {errorLine}
     </Sub>
-    {runners.length > 0 && (
-      <Sub id="runners" title="Machines (runners)">
+  )
+}
+
+/** Machines tab: runners whose own Claude credentials live here, and the machines holding a
+ *  copy of the key that pass it on to whoever is waiting. */
+export function VaultMachinesTab({ vault: v, onChange, reload, unlock }: VaultOutletContext): JSX.Element {
+  const { busy, run, errorLine } = useRun(onChange)
+  const manages = managesVault(v)
+  const runners = v.attachments.filter((a) => a.runner)
+  return (
+    <Sub id="runners">
+      {v.holders.keepers.length > 0 && (
+        <p className="mb-3 text-[12px] text-foreground" data-testid="ws-vault-keepers">
+          Holding a copy of the key: {v.holders.keepers.join(', ')}.{' '}
+          <span className="text-muted-foreground">
+            Each runs an agent this vault serves for one of its owners or admins, and passes the key on to people and
+            machines waiting for it.
+          </span>
+        </p>
+      )}
+      {runners.length === 0 && v.holders.keepers.length === 0 && (
+        <p className="text-[12px] text-muted-foreground">No machine holds a copy yet.</p>
+      )}
+      {runners.length > 0 && (
+        <>
         <p className="mb-2 text-[12px] text-muted-foreground">
-          Each reads its Claude credentials from this vault with its own copy of the vault&rsquo;s key, locked to a
+          Runners whose own Claude credentials live here. Each reads them with its own copy of the key, locked to a
           key that never leaves its hardware.
         </p>
         <table className="w-full text-[12px]" data-testid="ws-vault-runners">
@@ -254,10 +273,16 @@ export function VaultMembersTab({ vault: v, onChange, reload, unlock }: VaultOut
             ))}
           </tbody>
         </table>
-      </Sub>
-    )}
-    </>
+        </>
+      )}
+      {errorLine}
+    </Sub>
   )
+}
+
+/** The machines that can open it: runners attached, and keepers. One name counted once. */
+export function machineCount(v: WorkspaceVaultOut): number {
+  return new Set([...v.attachments.filter((a) => a.runner).map((a) => a.runner_name ?? a.runner), ...v.holders.keepers]).size
 }
 
 /** The names it holds (never a value); add or replace one, sealed in this browser. */
@@ -316,9 +341,8 @@ export function VaultSecretsTab({ vault: v, onChange, reload, unlock }: VaultOut
   )
 }
 
-
 type Attachment = WorkspaceVaultOut['attachments'][number]
-type AttachTo = { agent: string } | { project: string } | { workspace: string }
+type ServedKind = 'agents' | 'projects' | 'workspaces'
 
 /** The vault's workspace and every workspace below it that the viewer can see: the only places
  *  an attachment can reach. `parent` links each workspace to the one above it. */
@@ -341,89 +365,96 @@ function useVaultTree(root: string): WorkspaceOut[] {
   return all.filter(inTree)
 }
 
-/** What a vault serves, by KIND: agents, projects (their member agents), whole workspaces. People
- *  are members, not attachments (Who can open them). Adding picks from real lists, never a typed
- *  string — the same agent and project pickers the work board uses. */
-function VaultAccess({ vault: v, manages, busy, attach, detach }: {
-  vault: WorkspaceVaultOut
-  manages: boolean
-  busy: boolean
-  attach: (to: AttachTo) => Promise<boolean>
-  detach: (id: number) => void
-}): JSX.Element {
+/** The attachments of one kind (never runners: those are machines). */
+export function servedOf(v: WorkspaceVaultOut, kind: ServedKind): Attachment[] {
+  const served = v.attachments.filter((a) => !a.runner)
+  if (kind === 'agents') return served.filter((a) => a.agent)
+  if (kind === 'projects') return served.filter((a) => a.project)
+  return served.filter((a) => !a.agent && !a.project && a.workspace)
+}
+
+const SERVED_TEXT: Record<ServedKind, { empty: string; add: string; pickLabel: (vault: string) => string }> = {
+  agents: { empty: 'No agent gets this vault on its own.', add: 'Add an agent…', pickLabel: (n) => `Give an agent ${n}` },
+  projects: { empty: 'No project gets this vault.', add: 'Add a project…', pickLabel: (n) => `Give a project ${n}` },
+  workspaces: { empty: 'No whole workspace gets this vault.', add: 'Add a workspace…', pickLabel: (n) => `Give a whole workspace ${n}` },
+}
+
+/** One Access tab for agents, projects or whole workspaces: who gets the vault's secrets, and a
+ *  picker of real ones to add (the work board's agent and project pickers, never a typed string).
+ *  Adding says first exactly what it gives. */
+export function VaultServedTab({ vault: v, onChange, kind }: VaultOutletContext & { kind: ServedKind }): JSX.Element {
+  const { busy, run, errorLine } = useRun(onChange)
+  const manages = managesVault(v)
   const directory = useDirectory(v.workspace)
   const tree = useVaultTree(v.workspace)
   const treeSlugs = new Set([v.workspace, ...tree.map((w) => w.slug)])
-  const served = v.attachments.filter((a) => !a.runner)
-  const agents = served.filter((a) => a.agent)
-  const projects = served.filter((a) => a.project)
-  const workspaces = served.filter((a) => !a.agent && !a.project && a.workspace)
-  const has = (pick: (a: Attachment) => string | null | undefined) => new Set(served.map(pick).filter(Boolean))
-  const agentChoices = directory.agents.filter((a) => treeSlugs.has(a.workspace ?? '') && !has((x) => x.agent).has(a.slug))
-  const projectChoices = directory.projects.filter((p) => treeSlugs.has(p.workspace) && !has((x) => x.project).has(p.address))
-  const workspaceChoices = (tree.length ? tree : [{ slug: v.workspace, display_name: v.workspace }])
-    .filter((w) => !has((x) => x.workspace).has(w.slug))
+  const rows = servedOf(v, kind)
+  const taken = new Set(rows.map((a) => a.agent ?? a.project ?? a.workspace))
   const agentName = (slug: string) => directory.agents.find((a) => a.slug === slug)?.name || slug
   const projectName = (address: string) => directory.projects.find((p) => p.address === address)?.name || address
   const workspaceName = (slug: string) => tree.find((w) => w.slug === slug)?.display_name || slug
-
-  const group = (title: string, testid: string, rows: Attachment[], name: (a: Attachment) => string,
-    detail: (a: Attachment) => string, empty: string) => (
-    <div className="mb-3" data-testid={testid}>
-      <p className="mb-1 text-[12px] font-medium text-foreground">{title}</p>
-      {rows.length === 0 ? <p className="text-[12px] text-muted-foreground">{empty}</p> : (
-        <table className="w-full text-[12px]">
-          <tbody className="divide-y divide-border">
-            {rows.map((a) => (
-              <tr key={a.id}>
-                <Td density="cozy" tone="foreground">{name(a)}</Td>
-                <Td density="cozy" tone="muted" data-testid={a.project ? `ws-vault-project-${a.id}` : undefined}>{detail(a)}</Td>
-                <Td density="cozy" align="right">
-                  {manages && (
-                    <button type="button" disabled={busy} data-testid={`ws-vault-detach-${a.id}`} className={quietClass}
-                      onClick={() => detach(a.id)}>
-                      Stop serving
-                    </button>
-                  )}
-                </Td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </div>
-  )
-  const add = (text: string) => <span className={buttonClass + ' inline-block'}>{text}</span>
+  const name = (a: Attachment) =>
+    kind === 'agents' ? agentName(a.agent!) : kind === 'projects' ? projectName(a.project!) : `${workspaceName(a.workspace!)} and below`
+  const detail = (a: Attachment) =>
+    kind === 'agents' ? 'layered under the agent’s own secrets'
+      : kind === 'projects' ? projectServing(a) : 'every agent in it, layered under its own secrets'
+  const secrets = v.secrets.length ? v.secrets.join(', ') : 'nothing yet'
+  const attach = (to: { agent: string } | { project: string } | { workspace: string }, label: string) => {
+    const ok = window.confirm(
+      `Give ${label} ${v.name}?\n\nIt gets: ${secrets}.\nAnyone who can use it becomes a member of this vault.`)
+    if (ok) void run(() => attachWorkspaceVault(v.vault_id, to))
+  }
+  const text = SERVED_TEXT[kind]
+  const add = <span className={buttonClass + ' inline-block'}>{text.add}</span>
 
   return (
-    <div>
-      <p className="mb-3 text-[12px] text-muted-foreground">
-        Who this vault&rsquo;s secrets are added to. People and machines that can open it are under Who can open them.
-      </p>
-      <div data-testid="ws-vault-serves">
-        {group('Agents', 'ws-vault-serves-agents', agents, (a) => agentName(a.agent!),
-          () => 'layered under the agent’s own secrets', 'No agent on its own.')}
-        {group('Projects', 'ws-vault-serves-projects', projects, (a) => projectName(a.project!),
-          projectServing, 'No project.')}
-        {group('Whole workspaces', 'ws-vault-serves-workspaces', workspaces,
-          (a) => `${workspaceName(a.workspace!)} and below`, () => 'every agent in it, layered under its own secrets',
-          'No whole workspace.')}
+    <Sub id={`serves-${kind}`}>
+      <div data-testid={`ws-vault-serves-${kind}`}>
+        {rows.length === 0 ? <p className="text-[12px] text-muted-foreground">{text.empty}</p> : (
+          <table className="w-full text-[12px]">
+            <tbody className="divide-y divide-border">
+              {rows.map((a) => (
+                <tr key={a.id}>
+                  <Td density="cozy" tone="foreground">{name(a)}</Td>
+                  <Td density="cozy" tone="muted" data-testid={a.project ? `ws-vault-project-${a.id}` : undefined}>{detail(a)}</Td>
+                  <Td density="cozy" align="right">
+                    {manages && (
+                      <button type="button" disabled={busy} data-testid={`ws-vault-detach-${a.id}`} className={quietClass}
+                        onClick={() => void run(() => detachWorkspaceVault(v.vault_id, a.id))}>
+                        Remove
+                      </button>
+                    )}
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
       {manages && (
-        <div className="mt-2 flex flex-wrap items-center gap-2" data-testid="ws-vault-attach">
-          <AgentPicker slug="" directory={{ agents: agentChoices }} none={null} disabled={busy}
-            label={`Serve an agent from ${v.name}`} trigger={add('Serve an agent…')}
-            onChange={(slug) => void attach({ agent: slug })} />
-          <ProjectPicker project="" directory={{ projects: projectChoices }} none={null} disabled={busy}
-            label={`Serve a project from ${v.name}`} onChange={(address) => void attach({ project: address })}>
-            {add('Serve a project…')}
-          </ProjectPicker>
-          <WorkspacePicker workspaces={workspaceChoices} disabled={busy}
-            label={`Serve a whole workspace from ${v.name}`} onChange={(slug) => void attach({ workspace: slug })}>
-            {add('Serve a whole workspace…')}
-          </WorkspacePicker>
+        <div className="mt-2" data-testid={`ws-vault-attach-${kind}`}>
+          {kind === 'agents' && (
+            <AgentPicker slug="" none={null} disabled={busy} label={text.pickLabel(v.name)} trigger={add}
+              directory={{ agents: directory.agents.filter((a) => treeSlugs.has(a.workspace ?? '') && !taken.has(a.slug)) }}
+              onChange={(slug) => attach({ agent: slug }, agentName(slug))} />
+          )}
+          {kind === 'projects' && (
+            <ProjectPicker project="" none={null} disabled={busy} label={text.pickLabel(v.name)}
+              directory={{ projects: directory.projects.filter((p) => treeSlugs.has(p.workspace) && !taken.has(p.address)) }}
+              onChange={(address) => attach({ project: address }, projectName(address))}>
+              {add}
+            </ProjectPicker>
+          )}
+          {kind === 'workspaces' && (
+            <WorkspacePicker disabled={busy} label={text.pickLabel(v.name)}
+              workspaces={(tree.length ? tree : [{ slug: v.workspace, display_name: v.workspace }]).filter((w) => !taken.has(w.slug))}
+              onChange={(slug) => attach({ workspace: slug }, `${workspaceName(slug)} and every workspace below it`)}>
+              {add}
+            </WorkspacePicker>
+          )}
         </div>
       )}
-    </div>
+      {errorLine}
+    </Sub>
   )
 }

@@ -464,15 +464,15 @@ export const SURFACES: SurfaceDescriptor[] = [
     home: '/w/:workspace/settings/secrets',
     title: 'Vault',
     audience: "The vault's members (its owners and admins change it)",
-    what: "One workspace vault's page, in the same shape as an agent's vault: a summary line (where it lives, how many secrets, people and machines, what needs you), then collapsible sections — Secrets (the names it holds), Who can open them (people, and the runners that read it) and Storage & key (its key, and the agents or workspaces it serves). Settings → Secrets lists the workspace's vaults and links here; a runner's credentials link to the vault that holds them.",
-    actions: ['Make its key', 'Give a waiting member or machine its copy', 'Serve an agent, a workspace or a runner', 'Add or remove a person', 'Seal a secret in'],
+    what: "One workspace vault's page, in the same shape as an agent's vault: a summary line (where it lives, how many secrets, people and machines, what needs you), then collapsible sections — Secrets (the names it holds), Access (a tab each for People, Agents, Projects, Workspaces and Machines: who and what gets it) and Encryption key (the one key everything is locked with, who holds a copy, and changing it). Settings → Secrets lists the workspace's vaults and links here; a runner's credentials link to the vault that holds them.",
+    actions: ['Make its key', 'Give a waiting member or machine its copy', 'Give an agent, a project or a workspace its secrets', 'Add or remove a person', 'Seal a secret in'],
   },
   {
     path: '/w/:workspace/vaults/:vaultId/:tab',
     home: '/w/:workspace/settings/secrets',
     title: 'Vault tab',
     audience: "The vault's members (its owners and admins change it)",
-    what: "The old tab addresses, kept so links still land: `overview` opens Storage & key (its key, made in the browser with a passkey touch, copies for whoever waits, and what it serves), `members` opens Who can open them and `secrets` opens Secrets (a value is sealed in the browser, never shown).",
+    what: "The old tab addresses, kept so links still land: `overview` opens Encryption key (its key, made in the browser with a passkey touch, and copies for whoever waits), `members` opens Access and `secrets` opens Secrets (a value is sealed in the browser, never shown).",
     actions: ['Make its key', 'Seal a secret in', 'Delete a secret'],
   },
   {

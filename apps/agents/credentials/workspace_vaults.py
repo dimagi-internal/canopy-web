@@ -223,6 +223,38 @@ def layers_for(agent: Agent) -> list[Vault]:
     return out
 
 
+def shared_vaults_for(agent: Agent, user) -> list[dict]:
+    """`layers_for(agent)` as the agent's page shows it to `user`: each vault, the names it
+    holds, and WHY the agent gets it (the first reason in layering order: workspace, project,
+    agent). A project `user` may not read is not named (`via_name` ""), as the vault's own page
+    leaves it out: a personal project reaches nobody but its lead and its agents."""
+    from .. import services  # noqa: PLC0415 - services imports this module
+    vaults = layers_for(agent)
+    if not vaults:
+        return []
+    chain = {agent.workspace_id, *agent.workspace.ancestor_slugs()}
+    why: dict = {}
+    for a in (VaultAttachment.objects.filter(vault__in=vaults).select_related("project")
+              .order_by("created_at", "pk")):
+        if a.workspace_id and a.workspace_id in chain and a.agent_id is None and a.project_id is None:
+            reason = ("workspace", a.workspace_id)
+        elif a.project_id and a.project.member_agents.filter(pk=agent.pk).exists():
+            reason = ("project", a.project.address if services.may_read_project(user, a.project) else "")
+        elif a.agent_id == agent.pk:
+            reason = ("agent", "")
+        else:
+            continue
+        rank = {"workspace": 0, "project": 1, "agent": 2}
+        if a.vault_id not in why or rank[reason[0]] < rank[why[a.vault_id][0]]:
+            why[a.vault_id] = reason
+    names: dict = {}
+    for vault_id, name in VaultSecret.objects.filter(vault__in=vaults).order_by("name").values_list("vault_id", "name"):
+        names.setdefault(vault_id, []).append(name)
+    return [{"vault_id": str(v.pk), "name": v.name, "workspace": v.workspace_id,
+             "secrets": names.get(v.pk, []), "via": why.get(v.pk, ("agent", ""))[0],
+             "via_name": why.get(v.pk, ("agent", ""))[1]} for v in vaults]
+
+
 def project_vaults(project, user) -> list[dict]:
     """The workspace vaults attached to `project` that `user` may know exist (they belong
     to the vault's workspace), as `ProjectVaultOut` rows: names only, never a value."""
