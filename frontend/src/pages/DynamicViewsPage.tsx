@@ -91,7 +91,7 @@ export default function DynamicViewsPage() {
               .map((v) => (
                 <Tr rule="bottom-last" key={v.id}>
                   <Td density="tight">
-                    <Link className="font-medium hover:underline" to={scoped(`/views/${v.id}`)}>{v.title}</Link>
+                    <Link className="font-medium hover:underline" to={scoped(`/views/${v.slug}`)}>{v.title}</Link>
                     {v.description && <div className="text-xs text-muted-foreground">{v.description}</div>}
                   </Td>
                   <Td density="tight">
@@ -136,7 +136,7 @@ function NewViewForm({ workspace, project, onCancel }: { workspace: string; proj
         code: guide.example,
         sources: guide.example_sources as DynamicViewSource[],
       })
-      navigate(scoped(`/views/${view.id}?edit=1`))
+      navigate(scoped(`/views/${view.slug}?edit=1`))
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
       setBusy(false)

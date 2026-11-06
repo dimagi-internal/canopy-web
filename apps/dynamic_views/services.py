@@ -33,12 +33,18 @@ def validate_slug(slug: str) -> str:
     slug = (slug or "").strip().lower()
     if not re.fullmatch(DynamicView.SLUG_RE, slug):
         raise ValueError("slug must be 2-60 characters: lowercase letters, digits and hyphens")
+    if slug.isdecimal():
+        # `/views/<n>` is an id link (every link before slugs, and ones still kept), so a
+        # slug of digits alone would open some other view.
+        raise ValueError("slug must have a letter in it: all digits reads as a view's number")
     return slug
 
 
 def slugify(title: str) -> str:
     base = re.sub(r"[^a-z0-9]+", "-", (title or "").lower()).strip("-")[:60].strip("-")
-    return base if len(base) >= 2 else "view"
+    if len(base) < 2:
+        return "view"
+    return f"view-{base}"[:60] if base.isdecimal() else base
 
 
 def unique_slug(workspace_id: str, wanted: str, *, exclude_pk: int | None = None) -> str:

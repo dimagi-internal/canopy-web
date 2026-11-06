@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   deleteDynamicView,
   getDynamicView,
+  getDynamicViewBySlug,
   listDynamicViewRevisions,
   rollbackDynamicView,
   updateDynamicView,
@@ -44,13 +45,21 @@ export default function DynamicViewPage() {
 
   useEffect(() => {
     let cancelled = false
-    getDynamicView(Number(id))
-      .then((v) => !cancelled && setView(v))
+    // `/views/<slug>` is the address; `/views/<number>` is an older link (or a kept
+    // one), which still opens and then moves to the slug. A slug always has a letter.
+    const byId = /^\d+$/.test(id)
+    ;(byId ? getDynamicView(Number(id)) : getDynamicViewBySlug(workspace, id))
+      .then((v) => {
+        if (cancelled) return
+        setView(v)
+        if (byId && v.slug) navigate({ pathname: scoped(`/views/${v.slug}`), search: window.location.search }, { replace: true })
+      })
       .catch((e: unknown) => !cancelled && setError(e instanceof Error ? e.message : String(e)))
     return () => {
       cancelled = true
     }
-  }, [id])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, workspace])
 
   const [draft, setDraft] = useState<Draft | null>(null)
   useEffect(() => {

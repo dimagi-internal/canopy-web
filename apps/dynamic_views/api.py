@@ -44,7 +44,9 @@ def _summary_fields(view: DynamicView) -> dict:
         project=view.project.handle if view.project_id else None,
         project_name=view.project.name if view.project_id else None,
         slug=view.slug, title=view.title, description=view.description, version=view.version,
-        url=scoped_path_or_none(view.workspace_id, f"/views/{view.pk}"),
+        # By slug: a name a person can read (`/views/gmail-clean-up`), where the id
+        # (`/views/2`) said nothing. The page still opens an id link, and moves to this.
+        url=scoped_path_or_none(view.workspace_id, f"/views/{view.slug}"),
         updated_by_email=view.updated_by.email if view.updated_by_id else None,
         updated_at=view.updated_at,
     )
@@ -59,9 +61,13 @@ def _out(view: DynamicView) -> DynamicViewOut:
 
 def _view_or_404(request: HttpRequest, view_id: int) -> DynamicView:
     view = DynamicView.objects.select_related("project", "created_by", "updated_by").filter(pk=view_id).first()
+    return _readable_or_404(request, view, f"view {view_id}")
+
+
+def _readable_or_404(request: HttpRequest, view: DynamicView | None, name: str) -> DynamicView:
     if (view is None or view.workspace_id not in visible_agent_workspaces(request)
             or (view.project_id and not agent_services.may_read_project(request.user, view.project))):
-        raise HttpError(404, f"view {view_id} not found")
+        raise HttpError(404, f"{name} not found")
     return view
 
 
@@ -164,6 +170,17 @@ def create_dynamic_view(request: HttpRequest, payload: DynamicViewIn) -> Status:
     except ValueError as exc:
         raise HttpError(422, str(exc)) from exc
     return Status(201, _out(view))
+
+
+@router.get("/by-slug/{workspace}/{slug}", response=DynamicViewOut,
+            summary="One dynamic view by its workspace and slug, with its code and sources")
+@gate("member")
+def get_dynamic_view_by_slug(request: HttpRequest, workspace: str, slug: str) -> DynamicViewOut:
+    """What the page at `/w/<workspace>/views/<slug>` draws: the same view, and the same
+    read rule, as `GET /{view_id}`."""
+    view = (DynamicView.objects.select_related("project", "created_by", "updated_by")
+            .filter(workspace_id=workspace, slug=slug).first())
+    return _out(_readable_or_404(request, view, f"view '{slug}'"))
 
 
 @router.get("/{view_id}", response=DynamicViewOut, summary="One dynamic view, with its code and sources")
