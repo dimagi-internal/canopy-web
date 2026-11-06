@@ -676,3 +676,27 @@ def test_the_prompt_carries_a_failed_reuse_sends_cdp_error(ada, ws, runner):
                              last_seen=timezone.now()), turn)
     assert "status=reuse_send_failed detail=COMPOSER_NOT_VISIBLE" in prompt
     assert "runner_crashed" not in prompt
+
+
+def test_the_prompt_carries_the_runners_lifecycle_events_but_not_paths_or_stderr(ada, ws, runner):
+    """Investigations 35 and 36 (turns 918a10da and 30df9c8e on cloud-ec2-live,
+    2026-11-06 21:37Z): two turns ended "cancelled (the adapter's own)" a second
+    apart. Whether a new daemon had ADOPTED them across a handoff was on their
+    ledgers, behind the chat ACL, and not in the prompt."""
+    ace = _agent(ws, "ace")
+    turn = Turn.objects.create(agent=ace, origin="canopy_web_chat", idempotency_key="lifecycle",
+                               status=Turn.RUNNING, claimed_by=runner, session_key="s-11")
+    for seq, payload in enumerate([
+        {"event": "started", "pid": 41, "agent": "ace", "executor": "acp",
+         "cwd": "/home/x/private-path"},
+        {"event": "adopted", "pid": 41, "executor": "acp", "attempt": "a1", "exited": False},
+        {"event": "exited", "ok": False, "executor": "acp", "stop_reason": "cancelled",
+         "detail": "adapter stderr quoting a person"},
+    ], start=1):
+        TurnEvent.objects.create(turn=turn, seq=seq, kind="lifecycle", payload=payload)
+    prompt = auto_debug.render_prompt(
+        FailureInvestigation(pk=9, occurrences=1, first_seen=timezone.now(),
+                             last_seen=timezone.now()), turn)
+    assert "event=adopted executor=acp pid=41 attempt=a1 exited=False" in prompt
+    assert "event=exited executor=acp ok=False stop_reason=cancelled" in prompt
+    assert "private-path" not in prompt and "quoting a person" not in prompt
