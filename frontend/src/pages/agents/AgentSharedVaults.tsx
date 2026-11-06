@@ -12,7 +12,7 @@ import { vaultHref } from '@/lib/scopedLinks'
 
 const WHY: Record<string, (name: string) => string> = {
   agent: () => 'given to this agent',
-  project: (n) => `through project ${n}`,
+  project: (n) => (n ? `through project ${n}` : 'through a project you can’t see'),
   workspace: (n) => `through workspace ${n}`,
 }
 

@@ -101,7 +101,7 @@ def agent_shared_vaults(request: HttpRequest, slug: str):
     """Each workspace vault layered under the agent's own, in layering order, with the
     names it holds and why the agent gets it. Never a value."""
     agent = agent_for_admin(request, slug)
-    return workspace_vaults.shared_vaults_for(agent)
+    return workspace_vaults.shared_vaults_for(agent, request.user)
 
 
 @router.get("/{slug}/credentials/access", response=AgentCredentialAccessOut,

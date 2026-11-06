@@ -252,7 +252,8 @@ class AgentSharedVaultOut(StrictModel):
     #: Why the agent gets it: "agent" (given to it by name), "project" (it is a member of a
     #: project the vault is given to) or "workspace" (its workspace, or one above, has it).
     via: str
-    #: The project's address or the workspace's slug for `via` project/workspace; "" for agent.
+    #: The project's address or the workspace's slug for `via` project/workspace; "" for agent,
+    #: and "" for a project the caller may not read (it is not named to them).
     via_name: str = ""
 
 

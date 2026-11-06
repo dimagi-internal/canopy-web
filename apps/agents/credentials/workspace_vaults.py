@@ -223,9 +223,12 @@ def layers_for(agent: Agent) -> list[Vault]:
     return out
 
 
-def shared_vaults_for(agent: Agent) -> list[dict]:
-    """`layers_for(agent)` as the agent's page shows it: each vault, the names it holds, and
-    WHY the agent gets it (the first reason in layering order: workspace, project, agent)."""
+def shared_vaults_for(agent: Agent, user) -> list[dict]:
+    """`layers_for(agent)` as the agent's page shows it to `user`: each vault, the names it
+    holds, and WHY the agent gets it (the first reason in layering order: workspace, project,
+    agent). A project `user` may not read is not named (`via_name` ""), as the vault's own page
+    leaves it out: a personal project reaches nobody but its lead and its agents."""
+    from .. import services  # noqa: PLC0415 - services imports this module
     vaults = layers_for(agent)
     if not vaults:
         return []
@@ -236,7 +239,7 @@ def shared_vaults_for(agent: Agent) -> list[dict]:
         if a.workspace_id and a.workspace_id in chain and a.agent_id is None and a.project_id is None:
             reason = ("workspace", a.workspace_id)
         elif a.project_id and a.project.member_agents.filter(pk=agent.pk).exists():
-            reason = ("project", a.project.address)
+            reason = ("project", a.project.address if services.may_read_project(user, a.project) else "")
         elif a.agent_id == agent.pk:
             reason = ("agent", "")
         else:
