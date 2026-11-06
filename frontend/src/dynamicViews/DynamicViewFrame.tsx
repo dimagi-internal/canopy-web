@@ -22,6 +22,8 @@ import { ConnectionCalls, pageClickedFrame, refusalMembers, type DeclaredConnect
 import { checkConnect, connectOutcome, disconnectLent, lendStartPath, type LendRequest } from './connections'
 import { checkAsk, endGoogleAccess, GoogleAccessDialog, type GoogleAccessAsk, type GoogleAccessRequest } from './googleAccess'
 import { resolveNavigation, resolveRead, type CatalogModel, type ReadContext } from './bridge'
+import { ViewPagePanel } from './pagePanel'
+import { currentAssistant } from '@/widget/assistant'
 import {
   CHANNEL,
   isMessage,
@@ -63,6 +65,9 @@ interface Props {
   scope: ViewScope
   /** Called with the frame's compile or runtime error, or null once it draws again. */
   onError?: (message: string | null) => void
+  /** The view is the page (its own `/views/<slug>`): it may describe itself to canopy's
+   *  panel and offer the agent actions (`pagePanel.ts`). Not on a page drawing several. */
+  pagePanel?: boolean
   /**
    * A workspace app's page (apps/workspace_apps). `load` replaces the catalog
    * reads of `view.sources` (an app reads its own collections, through its own
@@ -118,7 +123,7 @@ function theme(): 'light' | 'dark' {
   return document.documentElement.classList.contains('dark') ? 'dark' : 'light'
 }
 
-export function DynamicViewFrame({ view, scope, onError, app }: Props) {
+export function DynamicViewFrame({ view, scope, onError, app, pagePanel = false }: Props) {
   const frame = useRef<HTMLIFrameElement>(null)
   const loads = useRef(0)
   const [height, setHeight] = useState(240)
@@ -167,10 +172,19 @@ export function DynamicViewFrame({ view, scope, onError, app }: Props) {
       }
     }, { isActive: () => pageClickedFrame(frame.current) })
   }
+  // canopy's panel, on a view's own page: what it shows and what it offers the agent.
+  const panel = useRef<ViewPagePanel | null>(null)
+  if (panel.current === null && pagePanel && !app) {
+    panel.current = new ViewPagePanel(
+      (id, name, args) => frame.current?.contentWindow?.postMessage({ channel: CHANNEL, type: 'page-action', id, name, args } satisfies HostMessage, '*'),
+      () => ({ slug: screen.current.scope.view.slug, title: screen.current.scope.view.title, workspace: screen.current.scope.workspace.slug }),
+    )
+  }
   // Leaving the page (or the frame) cancels whatever the view is still waiting on.
   useEffect(() => () => {
     tasks.current?.cancelAll()
     connectionCalls.current?.closeAll()
+    panel.current?.dispose()
   }, [])
 
   const post = useCallback((msg: HostMessage) => {
@@ -323,6 +337,28 @@ export function DynamicViewFrame({ view, scope, onError, app }: Props) {
           }
           return
         }
+        case 'page-state': {
+          const refused = panel.current ? panel.current.setState(msg.state) : 'only a view on its own page talks to canopy\'s panel'
+          if (refused) onError?.(`canopy.page.setState: ${refused}`)
+          return
+        }
+        case 'page-action-register': {
+          const refused = panel.current ? panel.current.register(msg.spec) : 'only a view on its own page talks to canopy\'s panel'
+          if (refused) onError?.(`canopy.page.registerAction: ${refused}`)
+          return
+        }
+        case 'page-action-unregister':
+          panel.current?.unregister(msg.name)
+          return
+        case 'page-action-result':
+          panel.current?.answer(Number(msg.id), msg.ok === true, msg.data, String(msg.error ?? ''))
+          return
+        case 'page-ask': {
+          // Opens the panel with a question as the viewer: only for a click on this view.
+          const text = typeof msg.text === 'string' ? msg.text.trim() : ''
+          if (panel.current && text && pageClickedFrame(frame.current)) currentAssistant()?.ask?.(text.slice(0, 2000))
+          return
+        }
         case 'resize':
           if (Number.isFinite(msg.height)) setHeight(Math.min(Math.max(Math.round(msg.height), 80), 20000))
           return
@@ -383,6 +419,7 @@ export function DynamicViewFrame({ view, scope, onError, app }: Props) {
         if (loads.current > 1) {
           tasks.current?.cancelAll()
           connectionCalls.current?.closeAll()
+          panel.current?.dispose()
           setGone(true)
         }
       }}

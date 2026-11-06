@@ -239,6 +239,8 @@ class BearerTokenAuthMiddleware:
         request.delegated_app = dtok.app
         request.runner_requirements = tuple(dtok.runner_requirements or ())
         request.bound_agent_id = dtok.bound_agent_id
+        request.own_panel = dtok.own_panel
+        request.page_workspace = dtok.page_workspace
 
         # Identity stays with the session when there is one. The token was
         # minted FOR that user by `/api/embed/token`, so they agree in practice;

@@ -56,6 +56,8 @@ interface WidgetHandle {
   setTheme?(theme: { mode?: 'light' | 'dark' | 'auto' }): void
   setLauncherVisible?(visible: boolean): void
   toggle(): void
+  /** Optional for the same reason as `setTheme`: a stale cached loader must degrade. */
+  ask?(text: string): void
 }
 
 interface CanopyGlobal {
@@ -225,7 +227,7 @@ export function CanopyWidget() {
 
       handleRef.current = handle
       // A page that hides the bubble opens the same panel from its own button.
-      setAssistant({ toggle: () => handle.toggle() })
+      setAssistant({ toggle: () => handle.toggle(), ask: (text) => handle.ask?.(text) })
       // The route effect ran before the handle existed; apply its answer now,
       // or a widget first mounted on a chat page would show its launcher there.
       handle.setLauncherVisible?.(!onChatPageRef.current)

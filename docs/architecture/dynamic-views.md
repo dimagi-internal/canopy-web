@@ -21,7 +21,7 @@ page makes for it as the viewer.
 | The guide | `apps/dynamic_views/guide.py` | The render contract, the kit and a working example, served with the catalog by `GET /api/dynamic-views/guide/` (`get_dynamic_view_guide`). |
 | The frame | `apps/dynamic_views/frame.py`, `frontend/src/dynamicViews/frame/` | `GET /dynamic-views/frame/`: the document the code runs in, and its runtime (compile, kit, protocol). |
 | The bridge | `frontend/src/dynamicViews/bridge.ts`, `agentTasks.ts`, `DynamicViewFrame.tsx` | The canopy page's side: frames the sandbox, turns its requests into catalog reads, starts the agent tasks it declares, answers them. |
-| Pages | `/w/:ws/views`, `/w/:ws/views/:id`, the Views section of `/w/:ws/projects/:handle` | The list, one view (with the editor and history), a project's views drawn on its page. |
+| Pages | `/w/:ws/views`, `/w/:ws/views/:slug` (an id link moves to the slug), the Views section of `/w/:ws/projects/:handle` | The list, one view (with the editor and history), a project's views drawn on its page. |
 
 ## How a view is drawn
 
@@ -98,6 +98,27 @@ restoring or deleting one needs `agent.work` (editor) in its workspace, or edit 
 project (`agents.gates.may_edit_project`). Moving a view needs those rights where it lands as
 well, so a project lead cannot put a view on the workspace. Every save is a new version; a restore is a new
 version too, so history only grows.
+
+## The chat panel beside a view
+
+On a view's own page (`/w/:ws/views/:slug`), the view can do what any site embedding canopy's SDK
+does: `canopy.page.setState` says what is on screen, `canopy.page.registerAction` offers the agent
+an action, and `canopy.page.ask` opens the panel with a question from a click. The frame cannot
+reach the panel itself (opaque origin, no network), so it asks over the protocol and
+`frontend/src/dynamicViews/pagePanel.ts` registers on its behalf in canopy's page registries
+(`widget/pageState.ts`, `widget/pageActions.ts`), which canopy's own panel already mirrors to the
+agent. An agent's call comes back to the frame as `page-action`, runs in the view as the viewer,
+and is answered (`page-action-result`) or times out after 30 seconds. Everything is withdrawn
+when the view leaves the screen.
+
+An action can do only what the view itself can (its reads, its declared agent tasks, its connected
+account, where a write still needs a real click), so the agent gains nothing the person could not
+do on that screen. A view keeps decisions the person must make, such as sending or applying
+changes, as buttons and does not offer them as actions. Not on a project page, which draws several
+views and has one page state.
+
+canopy's own panel lists, on a page in workspace W, W's agents — the panel's site list where W is
+the site's own workspace (`DelegatedToken.own_panel` / `page_workspace`, `apps/embedding/delegation.py`).
 
 ## Declared connections (Salesforce calls)
 

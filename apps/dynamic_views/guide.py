@@ -58,7 +58,22 @@ PROPS
                                          `no_vault_key`, canopy.navigate("/settings#vault-key") sets one up)
     canopy.connections.disconnect({id, agent}) -> Promise<{outcome}>  end one the viewer lent `agent`:
                                          a machine, or canopy-web, revokes it at the provider
+    canopy.page.setState(obj)            tell canopy's chat panel what the view shows now (plain JSON, at
+                                         most 64 KB; replaces the last). The agent in the panel reads it.
+    canopy.page.registerAction(name, run, {description, parameters})  offer the panel's agent an
+                                         action: `run(args)` runs here, as the viewer (throw to refuse,
+                                         return JSON to answer). Give `parameters` (JSON-Schema) or the
+                                         agent cannot call it. At most 20; gone when the page closes.
+    canopy.page.unregisterAction(name)   withdraw one
+    canopy.page.ask(text)                from a click: open the panel with this question
 - Plain <a href="/tasks/CON-12"> links work too: the frame routes them through navigate.
+
+THE CHAT PANEL (canopy.page.*; only when the view is the page, /w/<ws>/views/<slug>, not on a
+project page drawing several). The panel offers the agents of the view's workspace. An action can
+do only what the view can do, as the viewer, while the page is open. Keep anything the person must
+decide themselves (sending, applying changes, connecting an account) as a button the person
+presses, and never offer it as an action: let the agent change what the screen proposes, not do it.
+Call setState again whenever the screen changes (after the agent's own actions too).
 
 SOURCES (declared on the view, read for it as the viewer before it draws; `example_sources` beside
 this contract are the example's)

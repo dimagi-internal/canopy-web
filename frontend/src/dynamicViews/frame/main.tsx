@@ -52,6 +52,20 @@ function toHost(msg: FrameMessage) {
 let nextId = 1
 const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>()
 const statusListeners = new Map<number, (task: AgentTaskStatus) => void>()
+/** The actions this view offers canopy's panel, by name (`canopy.page.registerAction`). */
+const pageActions = new Map<string, (args: Record<string, unknown>) => unknown>()
+
+async function runPageAction(id: number, name: string, args: Record<string, unknown>) {
+  const run = pageActions.get(name)
+  try {
+    if (!run) throw new Error(`this view offers no action "${name}"`)
+    const data = await run(args ?? {})
+    // JSON only: what goes back to the agent is data, never a function or a node.
+    toHost({ channel: CHANNEL, type: 'page-action-result', id, ok: true, data: JSON.parse(JSON.stringify(data ?? null)) })
+  } catch (e) {
+    toHost({ channel: CHANNEL, type: 'page-action-result', id, ok: false, error: e instanceof Error ? e.message : String(e) })
+  }
+}
 
 function ask(msg: (id: number) => FrameMessage): Promise<unknown> {
   const id = nextId++
@@ -115,6 +129,30 @@ const canopy = {
     /** Open this click's window first, to read and dedup before writing: {expires_at, hard_limit_at, writes}. */
     begin() {
       return ask((id) => ({ channel: CHANNEL, type: 'connection-begin', id }))
+    },
+  },
+  /** canopy's panel, beside a view on its own page (see the guide): tell the agent what is
+   * on screen, offer it actions, or ask it something from a button. */
+  page: {
+    /** What the view shows now, as plain JSON (replaces the last). The agent reads it. */
+    setState(state: Record<string, unknown>) {
+      toHost({ channel: CHANNEL, type: 'page-state', state })
+    },
+    /** Offer the agent an action. `run(args)` runs here, as the viewer; throw to refuse,
+     * return JSON to answer. Give `parameters` (JSON-Schema) or the agent cannot call it. */
+    registerAction(name: string, run: (args: Record<string, unknown>) => unknown,
+                   options: { description?: string; parameters?: Record<string, unknown> } = {}) {
+      if (typeof run !== 'function') throw new Error('registerAction(name, run, options): run must be a function')
+      pageActions.set(name, run)
+      toHost({ channel: CHANNEL, type: 'page-action-register', spec: { name, ...options } })
+    },
+    unregisterAction(name: string) {
+      pageActions.delete(name)
+      toHost({ channel: CHANNEL, type: 'page-action-unregister', name })
+    },
+    /** Open the panel with this question, from a click on the view. */
+    ask(text: string) {
+      if (typeof text === 'string' && text.trim()) toHost({ channel: CHANNEL, type: 'page-ask', text })
     },
   },
   /** Re-read a task this view started: its status, error and, once done, result. */
@@ -216,6 +254,8 @@ function App() {
         } catch (e) {
           toHost({ channel: CHANNEL, type: 'error', message: e instanceof Error ? e.message : String(e) })
         }
+      } else if (msg.type === 'page-action') {
+        void runPageAction(msg.id, msg.name, msg.args)
       } else if (msg.type === 'read-result') {
         const waiter = pending.get(msg.id)
         if (!waiter) return

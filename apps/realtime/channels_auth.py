@@ -339,6 +339,9 @@ class RealtimeAuthMiddleware:
         scope["bound_agent_id"] = (
             delegated.bound_agent_id if user is not None and delegated else None
         )
+        # canopy's own panel (`DelegatedToken.own_panel`), read the same way: its chats
+        # reach the person's workspaces' agents, as REST lets them.
+        scope["own_panel"] = bool(user is not None and delegated and delegated.own_panel)
         # The host grant redeemed on the token's arrival (its page's grant), read the
         # same way: a send on this socket stamps it (`services.note_host_grant`).
         scope["host_grant_id"] = (
