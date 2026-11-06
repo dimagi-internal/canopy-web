@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import uuid
 from types import SimpleNamespace
 
 import pytest
@@ -16,7 +17,9 @@ from canopy_sdk.jose import make_dpop_proof
 from cryptography.hazmat.primitives.asymmetric import ec
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.db import connection
 from django.test import Client
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from apps.agents import services
@@ -1871,3 +1874,66 @@ def _second_box(fleet):
                                 capabilities={})
     RunnerAssignment.objects.create(agent=fleet.agent, runner=box, rank=0)
     return box
+# ---- what one read of a workspace vault costs as the fleet grows --------------------------
+# Shared (dimagi) is attached to a whole workspace and held by dozens of machines; its page
+# took 19-45 s on labs (2026-11-06) with no new code on the path. Each machine holding a copy
+# re-read the vault's members, its runners and every agent it serves, and asked "does this box
+# serve this agent" with a fresh read of the fleet each time. These pin each read's query count
+# to the vault, not to machines x agents.
+
+def _grow_vault(fleet, vault: Vault, *, machines: int, agents: int, tag: str, wrapped: bool = True) -> None:
+    """`agents` more agents in the vault's workspace, and `machines` more boxes running
+    eva that each hold a copy of the vault's key."""
+    for i in range(agents):
+        Agent.objects.create(slug=f"a-{tag}-{i}", name=f"A{i}", workspace=fleet.ws, owner=fleet.user)
+    now = timezone.now()
+    for i in range(machines):
+        box = Runner.objects.create(name=f"box-{tag}-{i}", kind=Runner.CLOUD, owner=fleet.user,
+                                    status=Runner.ONLINE, workspace=fleet.ws, last_heartbeat_at=now, capabilities={})
+        RunnerAssignment.objects.create(agent=fleet.agent, runner=box, rank=0)
+        jwk = ref.jwk(ec.generate_private_key(ec.SECP256R1()).public_key())
+        key = RunnerDeviceKey.objects.create(
+            runner=box, jkt=uuid.uuid4().hex, kind="secure-enclave", status=RunnerDeviceKey.ACTIVE,
+            approved_by=fleet.user, approved_at=now, ecdh_jkt=ref.jwk_thumbprint(jwk) if hasattr(ref, "jwk_thumbprint")
+            else uuid.uuid4().hex, ecdh_public_jwk=jwk, ecdh_approved_at=now, ecdh_approved_by=fleet.user)
+        if wrapped:
+            VaultKeyWrap.objects.create(vault=vault, kv=vault.kv, kind="device", device_key=key, wrap={"x": 1})
+
+
+def _read_queries(fleet, path: str) -> int:
+    with CaptureQueriesContext(connection) as q:
+        res = fleet.client.get(path)
+    assert res.status_code == 200, res.content
+    return len(q.captured_queries)
+
+
+def _attached_to_connect(fleet) -> Vault:
+    vid, _, _ = _ws_enabled(fleet, {"gog-oauth-client-web": "x"})
+    assert fleet.client.post(f"/api/vaults/{vid}/attachments", data={"workspace": "connect"},
+                             content_type="application/json").status_code == 200
+    return Vault.objects.get(pk=vid)
+
+
+@pytest.mark.parametrize("path", ["/api/vaults/{vid}", "/api/workspaces/connect/vaults", "/api/vaults/{vid}/zk"])
+def test_a_vault_read_does_not_grow_with_machines_and_agents(fleet, path):
+    vault = _attached_to_connect(fleet)
+    url = path.format(vid=vault.pk)
+    _grow_vault(fleet, vault, machines=2, agents=2, tag="s")
+    small = _read_queries(fleet, url)
+    _grow_vault(fleet, vault, machines=6, agents=6, tag="l")
+    large = _read_queries(fleet, url)
+    print(f"{path}: {small} -> {large} queries")
+    assert large - small <= 6, f"{path}: {small} queries at 3 boxes/3 agents, {large} at 9/9"
+
+
+def test_a_keepers_work_does_not_grow_with_machines_and_agents(fleet):
+    # The keeper's read (`/vault-keeper`) timed out on labs: for a workspace vault it lists
+    # every served agent's endorsements, each with a fresh read of the fleet.
+    vault = _attached_to_connect(fleet)
+    url = f"/api/harness/runners/{fleet.runner.pk}/vault-keeper"
+    _grow_vault(fleet, vault, machines=2, agents=2, tag="s", wrapped=False)
+    small = _read_queries(fleet, url)
+    _grow_vault(fleet, vault, machines=6, agents=6, tag="l", wrapped=False)
+    large = _read_queries(fleet, url)
+    print(f"keeper: {small} -> {large} queries")
+    assert large - small <= 6, f"keeper work: {small} queries at 3 boxes/3 agents, {large} at 9/9"
