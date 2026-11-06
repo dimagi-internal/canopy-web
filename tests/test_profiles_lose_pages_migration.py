@@ -1,5 +1,5 @@
-"""`pages` leaves every stored profile, and the column `interface_source` leaves the code (agents 0132, 0133).
-Delete once both have deployed."""
+"""`pages` leaves every stored profile, and `interface_source` leaves the code and the table (agents 0132-0134).
+Delete once all three have deployed."""
 from __future__ import annotations
 
 import pytest
@@ -69,3 +69,12 @@ def test_a_new_agent_saves_without_naming_the_column(default_workspace):
     Agent.objects.create(slug="new", name="new", workspace_id=default_workspace.pk, owner_id=user.pk)
     assert {f.name for f in Agent._meta.get_fields()} >= {"interface", "interface_published_at"}
     assert "interface_source" not in {f.name for f in Agent._meta.get_fields()}
+
+
+def test_the_column_is_gone_at_the_top():
+    """agents 0134 (PostgreSQL) or 0133 (anything else) drops it."""
+    executor = MigrationExecutor(connection)
+    executor.migrate(executor.loader.graph.leaf_nodes())
+    with connection.cursor() as cursor:
+        columns = [c.name for c in connection.introspection.get_table_description(cursor, "agents_agent")]
+    assert "interface_source" not in columns and "interface" in columns
