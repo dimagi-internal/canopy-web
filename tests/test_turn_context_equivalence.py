@@ -3,7 +3,7 @@
 This project changes no one's access (`docs/superpowers/specs/2026-11-05-turn-context-design.md`), so
 this file is the proof. It first ran green against the real `decide`, in the commit before that was
 deleted; `tests/legacy_decide.py` is that code, unchanged. It walks every combination `tests/test_access_matrix.py` and
-`tests/fixtures/answering_interfaces.json` name: relationship, role, verified, named connected site, site,
+`tests/fixtures/answering_interfaces.json` name: relationship, role, verified, named host site, site,
 page, sensitive, review chat, stamped turns, retired names, agentless. Same access, same stamp, same
 permissions, same role, source and basis, and a reason exactly when there is a refusal. The reason's words are
 compared by nobody: they are `apps/agents/refusals.py`'s, and Stage 4 rewrote them on purpose.

@@ -53,7 +53,7 @@ def test_any_member_reads_the_list_and_sees_the_roles_that_come_with_the_agent(w
     assert r.status_code == 200
     body = r.json()
     assert body["can_edit"] is False and "uses_access_list" not in body
-    assert {(ln["scope"], ln["who"], ln["role"], ln["connected_site"]) for ln in body["lines"]} == {
+    assert {(ln["scope"], ln["who"], ln["role"], ln["host_site"]) for ln in body["lines"]} == {
         ("agent", "vw@dimagi.com", "read_write", ""), ("agent", "ed@dimagi.com", "", "connect"),
         ("workspace", "Anyone at @dimagi.com (verified)", "read_only", "")}
     assert all(ln["can_edit"] is False for ln in body["lines"])
@@ -103,10 +103,10 @@ def test_a_group_line_for_another_workspace_the_adder_is_in(w):
     ({"kind": "domain", "role": "read_only"}, "needs the domain"),
     ({"kind": "domain", "role": "read_only", "domain": "not a domain"}, "is not a domain"),
     ({"kind": "domain", "role": "read_only", "domain": "dimagi.com", "verified": False}, None),
-    ({"kind": "domain", "connected_site": "connect", "domain": "dimagi.com"}, None),
-    ({"kind": "domain", "domain": "dimagi.com"}, "either a role or one connected site"),
-    ({"kind": "domain", "role": "read_only", "connected_site": "x", "domain": "dimagi.com"},
-     "either a role or one connected site"),
+    ({"kind": "domain", "host_site": "connect", "domain": "dimagi.com"}, None),
+    ({"kind": "domain", "domain": "dimagi.com"}, "either a role or one host site"),
+    ({"kind": "domain", "role": "read_only", "host_site": "x", "domain": "dimagi.com"},
+     "either a role or one host site"),
     ({"kind": "domain", "role": "read_only", "domain": "dimagi.com", "include_below": True},
      "only applies to a line naming a workspace"),
     ({"kind": "person", "role": "read_write", "email": "nobody@nowhere.org"}, "no such person"),
@@ -133,9 +133,9 @@ def test_the_same_subject_twice_is_a_conflict_not_a_second_line(w):
     body = {"kind": "domain", "role": "read_only", "domain": "dimagi.com"}
     assert _post(w, "owner", body).status_code == 201
     assert _post(w, "owner", {**body, "role": "read_only"}).status_code == 409
-    # ...but a connected site for the same subject is its own line.
-    assert _post(w, "owner", {"kind": "domain", "connected_site": "connect", "domain": "dimagi.com"}).status_code == 201
-    assert _post(w, "owner", {"kind": "domain", "connected_site": "connect", "domain": "dimagi.com"}).status_code == 409
+    # ...but a host site for the same subject is its own line.
+    assert _post(w, "owner", {"kind": "domain", "host_site": "connect", "domain": "dimagi.com"}).status_code == 201
+    assert _post(w, "owner", {"kind": "domain", "host_site": "connect", "domain": "dimagi.com"}).status_code == 409
     assert AgentGrant.objects.filter(agent=w["agent"]).count() == 2
 
 
@@ -159,22 +159,22 @@ def test_an_address_line_cannot_be_promoted_to_a_role_that_contains_write(w, rol
     assert r.status_code == 422 and "drive the whole agent" in r.json()["detail"]
 
 
-def test_a_connected_site_line_is_not_given_a_role_by_a_patch(w):
-    line_id = _post(w, "owner", {"kind": "person", "connected_site": "connect", "email": "vw@dimagi.com"}).json()["id"]
+def test_a_host_site_line_is_not_given_a_role_by_a_patch(w):
+    line_id = _post(w, "owner", {"kind": "person", "host_site": "connect", "email": "vw@dimagi.com"}).json()["id"]
     r = _c(w["owner"]).patch(f"/api/agents/hal/access-list/{line_id}", {"role": "read_only"},
                              content_type="application/json")
-    assert r.status_code == 422 and "opens one connected site" in r.json()["detail"]
+    assert r.status_code == 422 and "opens one host site" in r.json()["detail"]
 
 
-def test_a_connected_site_the_agent_has_not_published_is_added_with_a_warning(w):
+def test_a_host_site_the_agent_has_not_published_is_added_with_a_warning(w):
     from apps.agents.interface import parse
 
     Agent.objects.filter(pk=w["agent"].pk).update(interface=parse({"capabilities": {"ask": {"tools": ["Read"]}}}))
     w["agent"].refresh_from_db()
     body = {"kind": "person", "email": "vw@dimagi.com"}
-    got = _post(w, "owner", {**body, "connected_site": "connect"}).json()
-    assert "has no connected site called 'connect'" in got["warning"]
-    got = _post(w, "owner", {"kind": "person", "email": "ed@dimagi.com", "connected_site": "ask"}).json()
+    got = _post(w, "owner", {**body, "host_site": "connect"}).json()
+    assert "has no host site called 'connect'" in got["warning"]
+    got = _post(w, "owner", {"kind": "person", "email": "ed@dimagi.com", "host_site": "ask"}).json()
     assert got["warning"] == ""
 
 
@@ -208,8 +208,8 @@ def test_workspace_defaults_belong_to_workspace_admins_and_write_defaults_to_its
     assert _post(w, "ed", ok, url).status_code in (403, 404)
     r = _post(w, "rootadmin", ok, url)
     assert r.status_code == 201 and r.json()["scope"] == "workspace"
-    # A named connected site is not a role: the workspace admin's call, like read_only.
-    assert _post(w, "rootadmin", {"kind": "workspace", "connected_site": "connect", "workspace": "dimagi"},
+    # A named host site is not a role: the workspace admin's call, like read_only.
+    assert _post(w, "rootadmin", {"kind": "workspace", "host_site": "connect", "workspace": "dimagi"},
                  url).status_code == 201
     # By PERMISSION: every role that contains `write` is the owner's call, not just `editor`.
     for role in ("read_write", "editor"):

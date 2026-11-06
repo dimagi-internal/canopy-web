@@ -209,7 +209,7 @@ class Turn(models.Model):
     # CALLER of the enqueue: for an email that is the runner that posted it, not
     # the person who wrote in. Record-only today; the access phases read these.
     # WHICH PROFILE this turn runs in: "" is the agent's full profile; anything
-    # else names its confined profile (read mode or a connected site), and the runner and
+    # else names its confined profile (read mode or a host site), and the runner and
     # the agent's guard confine the session to it. Decided once, at enqueue,
     # from the initiator — see `apps/agents/access.py::decide`.
     capability = models.CharField(max_length=48, blank=True, default="")

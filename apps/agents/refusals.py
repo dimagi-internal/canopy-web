@@ -11,7 +11,7 @@ session but the Turn Context would not let them take a turn, canopy says why and
 
 Each code has exactly one builder in `_WORDS` (a test holds the two sets equal), so the words a refusal is given at
 enqueue, in a preview, on a turn's note, in a Slack reply and in a route's 403 are the same words. None of them names
-read mode or a connected site by an old name, and none carries a prompt, a fact about a person or a secret: a builder is handed only
+read mode or a host site by an old name, and none carries a prompt, a fact about a person or a secret: a builder is handed only
 the agent, the session and the small facts below, never the turn's words.
 
 A refusal is about "you" unless it is made `about` someone else: the notice that tells whoever added a person to a
@@ -202,10 +202,10 @@ def _profile_not_open(i: _In):
         why = f"{i.say.your} place on {i.slug}'s access list does not open read mode"
         how = f"Have {i.admins} give {i.say.you} the read only role on {i.slug}'s access list."
     elif name and not i.facts.get("published"):
-        why = f"{i.slug} has no connected site called '{name}' for {i.say.your} place on its access list to open"
+        why = f"{i.slug} has no host site called '{name}' for {i.say.your} place on its access list to open"
         how = f"Send without naming '{name}', so {i.slug} uses what {i.say.your} access opens."
     elif name:
-        why = f"{i.say.your} place on {i.slug}'s access list does not open the connected site '{name}'"
+        why = f"{i.say.your} place on {i.slug}'s access list does not open the host site '{name}'"
         how = f"Have {i.admins} give {i.say.you} a line on {i.slug}'s access list that opens '{name}'."
     else:
         why = (f"{i.say.your} place on {i.slug}'s access list opens neither read mode nor anything this page or site "
@@ -217,11 +217,11 @@ def _profile_not_open(i: _In):
 def _sensitive_not_open(i: _In):
     entry = i.facts.get("entry")
     if entry is None:
-        why = (f"this conversation holds a site's sensitive data, so it runs only in a connected site that handles "
+        why = (f"this conversation holds a site's sensitive data, so it runs only in a host site that handles "
                f"sensitive data, and {i.slug} has none for it")
-        how = f"Have {i.admins} set up a connected site on {i.slug} that handles this site's sensitive data."
+        how = f"Have {i.admins} set up a host site on {i.slug} that handles this site's sensitive data."
     else:
-        why = (f"this conversation holds a site's sensitive data, which only the connected site '{entry}' handles, "
+        why = (f"this conversation holds a site's sensitive data, which only the host site '{entry}' handles, "
                f"and '{entry}' does not list {i.say.you}")
         how = f"Have {i.admins} give {i.say.you} a line on {i.slug}'s access list that opens '{entry}'."
     return why, how, i.admins

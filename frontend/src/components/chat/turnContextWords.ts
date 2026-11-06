@@ -37,7 +37,7 @@ export function shortLabel(ctx: Pick<TurnContextView, "access" | "profile">): st
       return "the whole agent";
     case "read_mode":
       return "read mode";
-    case "connected_site":
+    case "host_site":
       return p.site ? `${entryName(p.name)} on ${p.site}` : entryName(p.name);
     case "session_review":
       return "review only";
@@ -59,7 +59,7 @@ export function headline(ctx: Pick<TurnContextView, "access" | "profile">, who: 
       return who === "you" ? "You can use the whole agent." : "The whole agent.";
     case "read_mode":
       return "Read mode only: it can look things up and answer, within read mode's limits.";
-    case "connected_site":
+    case "host_site":
       return `Only what ${entryName(p.name)} allows${p.site ? `, for ${p.site}` : ""}.`;
     case "session_review":
       return "Review only: it reads the one session it was asked to review, and nothing else.";
@@ -135,7 +135,7 @@ export function roleText(role: string | null | undefined): string {
 
 const PERMISSION_ORDER = ["read", "write", "agent_edit"];
 
-/** Permissions in the order they build on each other, then the connected sites. */
+/** Permissions in the order they build on each other, then the host sites. */
 export function permissionsText(ps: readonly string[]): string {
   const rank = (p: string) => (PERMISSION_ORDER.includes(p) ? PERMISSION_ORDER.indexOf(p) : PERMISSION_ORDER.length);
   return [...ps].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b)).map(permissionText).join(", ");
@@ -146,7 +146,7 @@ export function permissionText(p: string): string {
   if (p === "read") return "read";
   if (p === "write") return "write";
   if (p === "agent_edit") return "change its settings";
-  if (p === "use:*") return "use any connected site";
+  if (p === "use:*") return "use any host site";
   if (p.startsWith("use:")) return `use ${entryName(p.slice(4))}`;
   return p;
 }
@@ -265,7 +265,7 @@ export function outcomeText(e: Trace): string {
   if (e.rule === "stamp") {
     if (o === "whole_agent") return "the whole agent";
     if (o === "read_mode") return "read mode";
-    if (o === "connected_site") return "a connected site";
+    if (o === "host_site") return "a host site";
     if (o === "session_review") return "review only";
     if (o === "deny_all") return "nothing (it no longer exists)";
   }

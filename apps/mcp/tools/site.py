@@ -2,7 +2,7 @@
 visitor, through canopy.
 
 Host grant contract v1, §3 (`docs/architecture/host-grant-contract.md`). An agent
-answering a visitor on a connected site does not call that site's MCP server
+answering a visitor on a host site does not call that site's MCP server
 directly; it calls these, and canopy-web attaches the visitor's host-issued,
 DPoP-bound token server-side (`apps/host_grants/host_gateway.py`). So:
 
@@ -170,8 +170,8 @@ async def site_call(tool: str, arguments: dict | None = None, reason: str = "") 
             f"call canopy's own tool `{page_tool}` directly (load it with ToolSearch if it is "
             "not in your list). It runs in their open tab, as them.")
     ctx = await _context("site_call", reason or f"use {host_gateway.host_tool_name(tool)}")
-    # `app=<pk>` names the Connected site unambiguously (a site NAME is unique
-    # only per tenant); the Connected sites table reads it for real-traffic health.
+    # `app=<pk>` names the host site unambiguously (a site NAME is unique
+    # only per tenant); the host sites table reads it for real-traffic health.
     summary = (f"turn={ctx.turn_id} site={ctx.site} app={ctx.app_id} "
                f"tool={host_gateway.host_tool_name(tool)}")
     if not ctx.allows(tool):

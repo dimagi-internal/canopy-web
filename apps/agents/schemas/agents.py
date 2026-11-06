@@ -597,7 +597,7 @@ class AgentDetailOut(AgentOut):
     definition: AgentDefinitionOut | None = None
     # What this agent does for someone who may only read, and the sites it can be reached from.
     read_mode: "ReadModeSettingOut | None" = None
-    connected_sites: "list[ConnectedSiteOut]" = []
+    host_sites: "list[AgentHostSiteOut]" = []
     #: A model per CLI; a CLI not named here starts on its own default.
     cli_models: dict[str, str] = {}
     # The person who operates this agent. Its GitHub-backed features (skill
@@ -686,7 +686,7 @@ class AgentAccessRowOut(StrictModel):
     # Why they hold `agent_role`, in words: "Owns the workspace", "Made admin by …".
     basis: str
     granted_at: dt.datetime | None = None
-    # What they reach signed in: the whole agent, only the listed profiles (read mode or connected
+    # What they reach signed in: the whole agent, only the listed profiles (read mode or host
     # sites, by name), or nothing.
     access: Literal["full", "confined", "none"]
     profiles: list[str] = []
@@ -696,7 +696,7 @@ class AgentAccessRowOut(StrictModel):
     # May ask for turn_mode=auto on a dispatch: the agent's owner and admins.
     may_request_auto: bool = False
     # WHERE they stand on the agent's role table (owner | admin | editor | read_write | read_only;
-    # null when the agent lets them in nowhere, or only through a named connected site) and what put them there (see
+    # null when the agent lets them in nowhere, or only through a named host site) and what put them there (see
     # `AccessListOut`). `agent_role` above is the older three-word view and stays for
     # readers that have not moved.
     # `system` is the agent's own login: not a person, and not on the ladder.
@@ -740,7 +740,7 @@ class ReadModeIn(StrictModel):
     dry_run: bool = False
 
 
-class ConnectedSiteOut(AnsweringProfile):
+class AgentHostSiteOut(AnsweringProfile):
     site: str
     # The internal name a turn is stamped with and an access line names. Never renamed.
     key: str
@@ -757,14 +757,14 @@ class NewSiteDefaults(AnsweringProfile):
     sensitive: bool = False
 
 
-class ConnectedSitesOut(StrictModel):
-    sites: list[ConnectedSiteOut]
+class AgentHostSitesOut(StrictModel):
+    sites: list[AgentHostSiteOut]
     # Every live site registered in the agent's workspace, connected to it or not.
     available: list[str]
     new_site_defaults: NewSiteDefaults
 
 
-class ConnectedSiteIn(ReadModeIn):
+class AgentHostSiteIn(ReadModeIn):
     ceiling: list[str] | None = None
     own_login: list[str] | None = None
     sensitive: bool | None = None

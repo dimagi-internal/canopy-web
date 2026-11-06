@@ -1,6 +1,6 @@
 """A person's own host grants: confirm them, see them, and stop them.
 
-A host grant (`tokens.HostGrant`, `host_grants.py`) lets an agent read a connected
+A host grant (`tokens.HostGrant`, `host_grants.py`) lets an agent read a host
 site's tools AS the person, for the page they sent from — once they confirmed it
 with their passkey. Only a canopy user holds one; a contact never does. The person
 sees and stops them in two places, reading the same rows (`host_grants.live_for`,
@@ -60,7 +60,7 @@ embed_grant_router = Router(auth=session_auth, tags=["host grants"])
 
 class HostGrantOut(Schema):
     id: int
-    #: The connected site's name — whose tools the agent reads as you.
+    #: The host site's name — whose tools the agent reads as you.
     site: str
     #: The agent the page chose ("" = any agent the site offers).
     agent: str = ""

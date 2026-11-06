@@ -96,7 +96,7 @@ class HostConfig:
     #: (e.g. ``https://labs.connect.dimagi.com/canopy``). Also where the host
     #: POSTs the arrival.
     canopy_base_url: str = ""
-    #: The host's name as registered in canopy (the Connected site): the ``iss``
+    #: The host's name as registered in canopy (the host site): the ``iss``
     #: of the visitor assertion.
     app_name: str = ""
     #: The host's OAuth issuer (RFC 8414). ``iss`` = ``aud`` of every ID-JAG.
@@ -127,7 +127,7 @@ class HostConfig:
     #: Runner flags every conversation of this host's visitors must run under
     #: (``canopy_sdk.contract.RUNNER_FLAGS``); sent in every visitor assertion.
     runner_requirements: Sequence[str] = ()
-    #: The canopy workspace (tenant) slug this host's Connected site is
+    #: The canopy workspace (tenant) slug this host's host site is
     #: registered in. Sent as ``contract.WORKSPACE_CLAIM`` in every visitor
     #: assertion and site agents request, so canopy finds the site's tenant
     #: without going through an agent. Empty = not named (canopy then needs an

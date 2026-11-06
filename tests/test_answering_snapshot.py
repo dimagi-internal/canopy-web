@@ -86,7 +86,7 @@ def test_it_holds_everything_the_spec_lists(w):
     assert set(doc) == {"agents", "sites", "topology", "shape"}
     ace, labsdata, plain = doc["agents"]["ace"], doc["agents"]["labsdata"], doc["agents"]["plain"]
 
-    # profile() per stamp: the full profile, read mode either way, each connected site, and a retired name.
+    # profile() per stamp: the full profile, read mode either way, each host site, and a retired name.
     assert ace["profile"][""] is None
     assert ace["profile"]["connect"]["tools"][-1] == "mcp__*canopy-web__page_*"
     assert ace["profile"]["read"]["name"] == "read"

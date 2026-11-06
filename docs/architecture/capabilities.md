@@ -13,7 +13,7 @@ things (a test account, a seat), with no machine and no AWS call (§6). Design r
 
 | | Meaning | Where |
 |---|---|---|
-| (a) | **Read mode or a connected site**: a confined profile an agent offers (read mode, or one site), run as an allowlist for callers on its access list; stored as an entry of `Agent.interface`'s `capabilities` and stamped on `Turn.capability` | `apps/agents/interface.py`, `docs/architecture/access.md` |
+| (a) | **Read mode or a host site**: a confined profile an agent offers (read mode, or one site), run as an allowlist for callers on its access list; stored as an entry of `Agent.interface`'s `capabilities` and stamped on `Turn.capability` | `apps/agents/interface.py`, `docs/architecture/access.md` |
 | (b) | **Workspace permission**: a named right a workspace role holds (`perms.can(user, ws, perms.X)`) | `apps/workspaces/permissions.py`, `docs/architecture/roles.md` |
 | (c) | **Cloud capability**: a leased machine or named pool slot | `apps/capabilities`, this page |
 | (d) | **`Runner.capabilities`**: the JSON a box reports about itself (what it serves, its repos) | `apps/harness/models/runner.py`, `docs/architecture/runners.md` |

@@ -2,9 +2,9 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import type { SiteNeeds } from '@/api/connectedApps'
+import type { SiteNeeds } from '@/api/hostSites'
 
-const { SiteNeedsTable } = await import('./connectedApps/SiteNeedsTable')
+const { SiteNeedsTable } = await import('./hostSites/SiteNeedsTable')
 
 afterEach(cleanup)
 
@@ -31,7 +31,7 @@ const NEEDS: SiteNeeds = {
       slug: 'scout', name: 'Scout', url: 'https://canopy.test/w/connect/agents/scout',
       offered: true, sensitive_data: true, ready: true, can_handle_sensitive_data: false,
       why_not: [{
-        text: 'Scout has no connected site for this site that handles sensitive data',
+        text: 'Scout has no host site for this site that handles sensitive data',
         url: 'https://canopy.test/w/connect/agents/scout/settings#reach',
       }],
     },
@@ -71,7 +71,7 @@ describe('SiteNeedsTable', () => {
     const { container } = render(<SiteNeedsTable needs={NEEDS} />)
     const scout = screen.getByText('Scout').closest('tr')!
     expect(scout.getAttribute('data-attention')).toBe('true')
-    expect(scout.querySelector('.text-destructive')?.textContent).toContain('Scout has no connected site')
+    expect(scout.querySelector('.text-destructive')?.textContent).toContain('Scout has no host site')
     const fix = screen.getByRole('link', { name: 'fix in settings' })
     expect(fix.getAttribute('href')).toBe('https://canopy.test/w/connect/agents/scout/settings#reach')
     expect(container.querySelectorAll('[data-attention]')).toHaveLength(1)

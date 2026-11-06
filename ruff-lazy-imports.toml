@@ -108,7 +108,7 @@
 "apps/embedding/apps.py" = ["PLC0415"]  # 2
 "apps/embedding/assertions.py" = ["PLC0415"]  # 4
 "apps/embedding/audit.py" = ["PLC0415"]  # 1
-"apps/embedding/connected_apps_api.py" = ["PLC0415"]  # 4
+"apps/embedding/host_sites_api.py" = ["PLC0415"]  # 4
 "apps/embedding/connection_test.py" = ["PLC0415"]  # 2
 "apps/embedding/cors.py" = ["PLC0415"]  # 1
 "apps/embedding/delegation.py" = ["PLC0415"]  # 1

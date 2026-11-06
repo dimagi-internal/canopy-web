@@ -292,7 +292,7 @@ export function EmbedChat({
       )}
       <div className="min-h-0 flex-1">
         <ChatPanel
-          // MCP Apps: a Connected site's View for a tool result, acting as this
+          // MCP Apps: a host site's View for a tool result, acting as this
           // visitor (their own host grant), narrow-panel sized.
           appHost={appHost}
           // A private conversation's files, sealed: opened here with the conversation key.

@@ -9,8 +9,8 @@ signed by canopy's published client key, saying:
 | claim | value |
 | --- | --- |
 | `agent` | slug |
-| `capability` | the profile the turn runs in (read mode's stored name, or a connected site's) |
-| `declaration` | `{data, capability, declared_by, declared_at}` — the connected site's `data: sensitive` setting and who last published the interface holding it — or null |
+| `capability` | the profile the turn runs in (read mode's stored name, or a host site's) |
+| `declaration` | `{data, capability, declared_by, declared_at}` — the host site's `data: sensitive` setting and who last published the interface holding it — or null |
 | `runner` | `{id, name, flags: [{flag, declared_by, declared_at}]}` — flags IN FORCE |
 | `runner_posture` | the latest heartbeat's `data_mode` and config hash |
 | `requirements` | the conversation's requirements |

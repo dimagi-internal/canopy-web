@@ -23,7 +23,7 @@ resource — its own `/api/mcp/`. The pieces are the SDK's (`canopy_sdk.host`,
   (`POST /api/embed/token`), and the page it is on is registered in
   `PAGE_SCOPES`, canopy signs an ID-JAG for that page's scopes and redeems it
   through the NORMAL consumer path (`host_grants.redeem`): the ID-JAG is checked
-  against the Connected site's registered keys, the token endpoint is
+  against the host site's registered keys, the token endpoint is
   discovered from metadata, the grant is POSTed with a real client assertion
   and DPoP proof, and the host half verifies all of it — no step skipped.
 
@@ -51,12 +51,12 @@ that same browser, so it cannot bound a page that lies — the read-only scopes 
 **Probed like any other host.** `/oauth/probe` is the SDK's `ProbeHandler` for
 canopy's own client only: a real ID-JAG for the dedicated `canopy-probe` user
 (`CANOPY_HOST_PROBE_USERNAME`; no membership, so `list_fleet_tasks` reads nothing),
-which `live_probe.py` redeems and uses exactly as it does for a connected site.
+which `live_probe.py` redeems and uses exactly as it does for a host site.
 
 **Off until configured.** Needs `CANOPY_HOST_SIGNING_KEY` (Ed25519 or P-256 PEM;
 "PLACEHOLDER" reads as unset; dev and tests generate one per process) AND
 canopy's client keys (`client_identity.configured()`), and a grant is issued only
-for the Connected site whose `host_issuer` / `host_mcp_resource` name THIS
+for the host site whose `host_issuer` / `host_mcp_resource` name THIS
 deployment and that shows its panel on canopy's own pages.
 """
 from __future__ import annotations
@@ -188,7 +188,7 @@ def probe_identity() -> ProbeIdentity | None:
 
 def jwks_url() -> str:
     """Where the HOST signing key's public half is published — what the
-    `canopy-web` Connected site's `jwks_url` names. Distinct from
+    `canopy-web` host site's `jwks_url` names. Distinct from
     `/oauth/jwks.json`, which is canopy's CLIENT key."""
     return f"{issuer()}/oauth/host/jwks.json"
 
@@ -245,7 +245,7 @@ def config(*, with_probe: bool = False) -> HostConfig:
 
 def site_document() -> str:
     """canopy-web's own signed `site.json` — the document every host publishes
-    beside its keys (`canopy_sdk.site`), so the `canopy-web` Connected site is
+    beside its keys (`canopy_sdk.site`), so the `canopy-web` host site is
     filled and refreshed the one way any site is: "Fill from the site's own
     documents". Its facts come from this deployment's own address, so a move to
     a new domain is a re-fill, not four URLs retyped. Raises `HostNotConfigured`."""
@@ -259,7 +259,7 @@ def site_document() -> str:
 
 
 def is_self_site(app) -> bool:
-    """Whether this Connected site's grant settings name THIS deployment."""
+    """Whether this host site's grant settings name THIS deployment."""
     return bool(app is not None and app.issues_host_grants()
                 and contract.normalize_url(app.host_issuer) == contract.normalize_url(issuer())
                 and contract.normalize_url(app.host_mcp_resource) == contract.normalize_url(resource()))

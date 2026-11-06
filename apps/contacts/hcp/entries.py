@@ -83,7 +83,7 @@ def subject_id(person: Person) -> str:
 
 
 def site_of(turn) -> dict:
-    """The connected site a turn's session came through — its server-owned
+    """The host site a turn's session came through — its server-owned
     `embed_app` (from the token that created it, never the page) and the page it
     was on — or {} for a conversation in canopy itself."""
     session = session_of(turn) if turn is not None else None

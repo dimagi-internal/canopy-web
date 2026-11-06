@@ -256,7 +256,7 @@ def embed_self_token(request: HttpRequest, page: str = "", workspace: str = "") 
     workspace you are in, as you can on canopy itself.
     """
     # Session-authenticated means ONLY a session. This route sits inside the
-    # delegated-token surface (`^/api/embed/`), so without this a connected
+    # delegated-token surface (`^/api/embed/`), so without this a host
     # site's token could mint itself a fresh one for canopy's OWN app: shedding
     # the site's assurance, outliving the site's revocation, and renewing itself
     # forever. canopy's panel calls it with the cookie and no Authorization
@@ -274,7 +274,7 @@ def embed_self_token(request: HttpRequest, page: str = "", workspace: str = "") 
                                   "never from another token.")
     app = _self_app()
     if app is None:
-        raise HttpError(404, "no connected site shows its panel on canopy's own pages")
+        raise HttpError(404, "no host site shows its panel on canopy's own pages")
 
     # Cheaper to abuse than exchange in one specific way: it needs only a
     # stolen session cookie rather than an app secret, and every call writes a

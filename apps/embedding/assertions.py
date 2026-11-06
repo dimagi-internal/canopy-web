@@ -1,4 +1,4 @@
-"""Verifying a signed assertion from a connected site.
+"""Verifying a signed assertion from a host site.
 
 **What this replaces and why.** A host used to prove itself with a long-lived
 shared secret and then simply *say* who its visitor was
@@ -218,7 +218,7 @@ def issuer_of(token: str, *, agent_slug: str = ""):
         # Same wording whether the app is unknown, revoked, or registered only
         # by some other tenant: an app name is not a secret, but distinguishing
         # them tells a prober which of their guesses are real somewhere.
-        raise AssertionError_("unknown_issuer", f"no connected site named {name!r}"
+        raise AssertionError_("unknown_issuer", f"no host site named {name!r}"
                               + (f" in workspace {workspace!r}" if workspace
                                  else f" for agent {agent_slug!r}" if agent_slug else ""))
     return app

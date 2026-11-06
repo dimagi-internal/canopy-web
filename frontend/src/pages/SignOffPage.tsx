@@ -11,7 +11,7 @@ const STATE_TEXT: Record<string, string> = {
 }
 
 /**
- * A connected site asking you to approve one action with your passkey
+ * A host site asking you to approve one action with your passkey
  * (`/w/:workspace/sign-offs/:signOffId`, the `approve_url` the site sends you to).
  *
  * Shows which site asks, the action in its own words, and the account it is for (for

@@ -58,7 +58,7 @@ def _visible_slugs(request: HttpRequest, *, listing: bool = False, bulk_write: b
 
 
 def _site_scoped(request: HttpRequest, qs):
-    """`site ∩ user`: when a connected site is acting, only its own agents'
+    """`site ∩ user`: when a host site is acting, only its own agents'
     sessions exist (apps/embedding/delegation.py). No-op for the person themself."""
     offered = delegation.offered_for(request)
     return qs if offered is None else qs.filter(agent_id__in=offered)

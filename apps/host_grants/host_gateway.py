@@ -9,9 +9,9 @@ what those tools do:
    (`initiator_*`, the conversation's server-owned `embed_app`), never from an
    argument the agent supplied.
 2. **Refuse** unless every one of these holds, each with a sentence the agent
-   can say to the visitor: the conversation was held on a live connected site
+   can say to the visitor: the conversation was held on a live host site
    that issues host grants; the turn's profile names that site in `sites:` (or,
-   for a full-profile turn — the owner's, an admin's, an editor's — some connected
+   for a full-profile turn — the owner's, an admin's, an editor's — some host
    site of the agent does: a chat on a page reaches that site only as the person who
    sent, owners included);
    this visitor holds a grant for it; the grant is unexpired, for the site's
@@ -36,7 +36,7 @@ tools the grant's scopes map to, under that person's own ACL. So what a turn may
 call is what the host lists for this token. canopy adds a narrowing only on the
 agent owner's word:
 
-* the owner's **site tool limit** (`ceiling:` on the connected site, the settings form's "Site tools it may use") — OPTIONAL. Absent
+* the owner's **site tool limit** (`ceiling:` on the host site, the settings form's "Site tools it may use") — OPTIONAL. Absent
   or empty, canopy adds nothing and the host's grant decides; present, it narrows
   (an owner keeping an agent off part of a site). It can never widen: the host
   still refuses anything outside the grant.
@@ -136,7 +136,7 @@ class SiteContext:
     expires_at: object
     ceiling: list[str]
     _token: str = field(repr=False, default="")
-    #: The Connected site's row, so an audit line names the site unambiguously
+    #: The host site's row, so an audit line names the site unambiguously
     #: (a site NAME is unique only per tenant).
     app_id: int | None = None
     #: What `Canopy-Execution` states for this turn (`execution.facts_for`), signed
@@ -213,7 +213,7 @@ def resolve(turn_id: str, *, reason: str = "") -> SiteContext:
     session = turn.chat_session if turn.chat_session_id else None
     agent = turn.acting_agent
     if agent is None or session is None:
-        raise GatewayRefusal("no_site", "this conversation was not held on a connected site")
+        raise GatewayRefusal("no_site", "this conversation was not held on a host site")
 
     from apps.harness import runner_requirements as rr
 
@@ -227,7 +227,7 @@ def resolve(turn_id: str, *, reason: str = "") -> SiteContext:
 
     site = str((session.metadata or {}).get("embed_app") or "").strip()
     if not site:
-        raise GatewayRefusal("no_site", "this conversation was not held on a connected site")
+        raise GatewayRefusal("no_site", "this conversation was not held on a host site")
     # The site's row in the AGENT's tenant, live. Name + tenant, never an id
     # anyone outside canopy supplied.
     app = AppCredential.objects.filter(name=site, workspace_id=agent.workspace_id,
@@ -250,7 +250,7 @@ def resolve(turn_id: str, *, reason: str = "") -> SiteContext:
         # on a site's page: it reaches the site the same way a visitor's does — as the
         # person who sent, under their act-as-you permission for the page, never with
         # the agent's own login there (withheld from the turn, `interface.own_login_of`).
-        # Only on a site the agent is set up for (some connected site lists it).
+        # Only on a site the agent is set up for (some host site lists it).
         if interface.page_site_of(turn, agent) != site:
             raise GatewayRefusal("site_not_in_capability",
                                  f"I am not set up to use {site}'s tools in this conversation")
@@ -293,12 +293,12 @@ def resolve(turn_id: str, *, reason: str = "") -> SiteContext:
         raise GatewayRefusal(
             "runner_requirements",
             f"this conversation must run on a {rr.describe(effective)} runner, and this one is not")
-    # A sensitive conversation's data reaches only a connected site its interface says
+    # A sensitive conversation's data reaches only a host site its interface says
     # handles sensitive data (`data: sensitive`; spec 2026-10-22-sensitive-data-agents §6).
     if rr.SENSITIVE_DATA in effective and not sensitive_data.handles_sensitive(agent, turn.capability):
         raise GatewayRefusal(
             "undeclared",
-            f"{site} gives its sensitive data only to a connected site that handles sensitive data "
+            f"{site} gives its sensitive data only to a host site that handles sensitive data "
             "(`data: sensitive`), and this turn's does not; ask the agent's owner to set it")
     ctx = context_for_grant(app, grant, turn_id=str(turn.pk), agent_slug=agent.slug,
                             ceiling=ceiling,
@@ -848,7 +848,7 @@ def readable_link(ctx: SiteContext, uri: str) -> None:
 async def read_resource(ctx: SiteContext, uri: str) -> dict:
     """`resources/read` for the AGENT (`site_read`), as the visitor — the read twin of
     `call_tool`, with the same resolution behind it (`resolve`: the conversation's
-    runner requirements, a connected site naming the site, the visitor's live grant) and
+    runner requirements, a host site naming the site, the visitor's live grant) and
     this turn's `Canopy-Execution` statement on every request. Only a link a site tool
     returned in this conversation, under a scheme the site declares, from a tool inside
     the owner's site tool limit (`readable_link`); the host's own ACL then decides what the

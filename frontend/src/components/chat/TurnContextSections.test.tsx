@@ -312,7 +312,7 @@ describe('turnContextWords', () => {
   })
 
   it('short labels and reasons stay plain', () => {
-    expect(shortLabel({ access: 'confined', profile: { kind: 'connected_site', name: 'connect', site: 'connect-labs' } as never }))
+    expect(shortLabel({ access: 'confined', profile: { kind: 'host_site', name: 'connect', site: 'connect-labs' } as never }))
       .toBe('"connect" on connect-labs')
     expect(shortLabel({ access: 'refused', profile: null })).toBe('refused')
     expect(basisText('capability:ask')).toBe('read mode, from the access list')

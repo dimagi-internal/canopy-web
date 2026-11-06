@@ -56,7 +56,7 @@ class PersonalToken(models.Model):
     revoked_at = models.DateTimeField(null=True, blank=True)
     #: Set when an MCP client's OAuth login minted this token
     #: (`apps/oauth_server/mcp_oauth.py`). Such a token is short-lived, refreshed by
-    #: its grant, and listed under the grant ("connected apps") rather than
+    #: its grant, and listed under the grant ("authorized apps") rather than
     #: among the tokens a person minted by hand.
     oauth_grant = models.ForeignKey(
         "oauth_server.OAuthGrant", null=True, blank=True, on_delete=models.CASCADE,
@@ -306,7 +306,7 @@ class AppCredential(models.Model):
     #: section for it, and the name had to match a deployment setting exactly
     #: or nothing mounted and nothing said why — a fail-closed silence with no
     #: surface to notice it on. As a column it is just another thing an app
-    #: may do, and canopy becomes a connected site that happens to point at
+    #: may do, and canopy becomes a host site that happens to point at
     #: itself.
     #:
     #: NOT inferred from the origin list, though that was the obvious idea:
@@ -495,7 +495,7 @@ class DelegatedToken(models.Model):
     expires_at = models.DateTimeField(db_index=True)
     #: HOW the user was established, carried onto every turn they start
     #: (`initiator_assurance`). `delegated`: canopy minted it for a user already
-    #: signed in to canopy (its own widget). `host_signed`: a connected SITE
+    #: signed in to canopy (its own widget). `host_signed`: a host SITE
     #: signed an assertion about its visitor and canopy resolved them to an
     #: existing account (who-is-asking §2) — a weaker claim, which an agent's
     #: interface may treat as such.
@@ -895,7 +895,7 @@ def _sign_off_id() -> str:
 
 
 class SiteSignOff(models.Model):
-    """A connected site asking a person to approve ONE action with their passkey
+    """A host site asking a person to approve ONE action with their passkey
     (`apps/host_grants/sign_offs.py`; spec `2026-10-27-site-sign-offs-design`).
 
     The site signs the request; who may approve is canopy's answer

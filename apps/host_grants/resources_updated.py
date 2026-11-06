@@ -1,4 +1,4 @@
-"""A connected site tells canopy its resources changed (spec
+"""A host site tells canopy its resources changed (spec
 2026-10-23-host-held-results §3): `POST /api/sites/resources-updated`.
 
 The site signs the request with its own key — the one canopy already verifies its
@@ -54,5 +54,5 @@ def verify(token: str):
         raise SiteAgentsRefused(exc.code, exc.message,
                                 400 if exc.code in ("malformed", "bad_alg") else 401) from exc
     if claims.get("iss") != app.name:
-        raise SiteAgentsRefused("unknown_issuer", f"no connected site named {claims.get('iss')!r}")
+        raise SiteAgentsRefused("unknown_issuer", f"no host site named {claims.get('iss')!r}")
     return app, claims

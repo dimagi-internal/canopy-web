@@ -1,7 +1,7 @@
 """Set up who may use an agent in tests: its interface and its access list.
 
 Who may use an agent is its access list (`AgentGrant` lines: a role, or one named profile)
-plus the default lines of its workspace; what the agent offers is its interface (read mode and its connected sites).
+plus the default lines of its workspace; what the agent offers is its interface (read mode and its host sites).
 A test that is about something else (a turn's mode, a Slack thread, a widget) still wants
 "members may ask" or "workspace editors may drive it, manually", so these three helpers say
 that in a line each:

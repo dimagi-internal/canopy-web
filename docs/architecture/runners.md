@@ -379,6 +379,6 @@ grant on that agent. An agent's own canopy login is not a holder.
 A **sensitive-data box is dedicated**: one with a declared `sensitive_data` flag OR
 reporting a `data_mode` (`runner_requirements.is_sensitive_data_box` — either alone, unlike
 routing's `in_force`, which needs both) holds only an agent with a `data: sensitive`
-connected site, whoever owns it. So no other agent's full profile, secrets or GitHub identity
+host site, whoever owns it. So no other agent's full profile, secrets or GitHub identity
 shares a box with a sensitive conversation. Guarded by
 `tests/test_sensitive_data_box_is_dedicated.py`.

@@ -17,11 +17,11 @@ def retired_interface_route(request: HttpRequest, slug: str) -> HttpResponse:
     base = f"/api/agents/{slug}"
     return problem_response(
         410,
-        detail=("This route is retired, and nothing was read or saved. Use read-mode and connected-sites "
+        detail=("This route is retired, and nothing was read or saved. Use read-mode and host-sites "
                 "instead. To check a change without saving it, send dry_run: true on a PUT to either. "
-                "To say a site handles sensitive data, set the field sensitive on its connected site."),
+                "To say a site handles sensitive data, set the field sensitive on its host site."),
         read_mode=f"{base}/read-mode",
-        connected_sites=f"{base}/connected-sites",
+        host_sites=f"{base}/host-sites",
         check_without_saving="dry_run",
         handles_sensitive="sensitive",
     )

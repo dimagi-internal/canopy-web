@@ -81,7 +81,7 @@ def _page_answers(monkeypatch, result):
 # --- the profile and the listing -----------------------------------------------------
 
 
-def test_a_connected_site_carries_the_page_tools(w):
+def test_a_host_site_carries_the_page_tools(w):
     assert set(PAGE_TOOLS) <= set(profile(w["agent"], "connect")["tools"])
     # A profile with no site gains nothing.
     assert not set(PAGE_TOOLS) & set(profile(w["agent"], "ask")["tools"])

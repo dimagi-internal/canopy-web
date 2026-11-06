@@ -159,7 +159,7 @@ _STATUS = {
 # auth=None; site-signed assertion (+ optional ID-JAG)
 @gate("host", kind="ephemeral-credential", step_up="a contact token; no browser session")
 def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactTokenOut:
-    """A connected site vouches for one of its visitors, and gets them a session.
+    """A host site vouches for one of its visitors, and gets them a session.
 
     No `Authorization` header: the assertion is the credential, and that is the
     point. A shared secret would still have to exist, be distributed, and be

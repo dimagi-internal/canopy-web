@@ -415,7 +415,7 @@ EXCLUDED_UNDER_WRITE = [
     ("POST", "/api/harness/runners/00000000-0000-4000-8000-000000000001/mint"),
     ("POST", "/api/w/{ws}/tokens/"),  # the tenant URL is the same route
     ("GET", "/api/workspaces/{ws}/vaults"),
-    ("PATCH", "/api/workspaces/{ws}/connected-apps/1"),
+    ("PATCH", "/api/workspaces/{ws}/host-sites/1"),
 ]
 
 

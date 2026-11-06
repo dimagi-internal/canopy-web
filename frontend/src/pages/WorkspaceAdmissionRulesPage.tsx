@@ -313,7 +313,7 @@ export function WorkspaceAdmissionRulesPage(): JSX.Element {
               {c.access.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
             <input
-              aria-label="Read mode or connected site"
+              aria-label="Read mode or host site"
               placeholder="Any read mode or site"
               list="admission-profiles"
               value={draft.capability}

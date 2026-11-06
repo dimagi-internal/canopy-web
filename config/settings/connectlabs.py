@@ -43,7 +43,7 @@ CANOPY_PUBLIC_BASE_URL = env("CANOPY_PUBLIC_BASE_URL", default="https://canopy.d
 # visitor assertions for, its own issuer and MCP resource. It stayed on the old
 # address after the move until ace-web and connect-labs were re-pointed in the
 # same change (2026-10-06); they pin CANOPY_CLIENT_ID and the audience, so moving
-# it again is a coordinated change with every connected site.
+# it again is a coordinated change with every host site.
 CANOPY_IDENTITY_BASE_URL = env("CANOPY_IDENTITY_BASE_URL", default="https://canopy.dimagi.com")
 
 # Addresses canopy has left. Machine traffic there is still served
@@ -51,7 +51,7 @@ CANOPY_IDENTITY_BASE_URL = env("CANOPY_IDENTITY_BASE_URL", default="https://cano
 # commands and webhooks it registered under them and move them.
 CANOPY_FORMER_BASE_URLS = ["https://labs.connect.dimagi.com/canopy"]
 
-# canopy's live probe of its OWN host half (the `canopy-web` Connected site):
+# canopy's live probe of its OWN host half (the `canopy-web` host site):
 # the dedicated, non-admin user tokens/0026_probe_user creates. Non-secret, and
 # ON here so the probe runs once deployed (apps/host_grants/live_probe.py).
 CANOPY_HOST_PROBE_USERNAME = env("CANOPY_HOST_PROBE_USERNAME", default="canopy-probe")

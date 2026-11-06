@@ -279,7 +279,7 @@ def _default_agent_out(user) -> dict:
             summary="The agent an embedded panel opens on for you")
 @gate("self")
 def get_my_default_agent(request: HttpRequest) -> dict:
-    """The agent every embedded panel — on a connected site or on canopy's own
+    """The agent every embedded panel — on a host site or on canopy's own
     pages — opens on for you, unless the page chose its own agent. Blank when you
     have not chosen one, and the site's own default applies."""
     return _default_agent_out(request.user)

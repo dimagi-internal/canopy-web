@@ -1,8 +1,8 @@
-"""The site agents API's routes: `GET /api/sites/agents` (a connected site asks,
-signed), `POST /api/sites/resources-updated` (a connected site says its resources
-changed, signed), `GET /api/workspaces/{slug}/connected-apps/{id}/needs` (the Connected
+"""The site agents API's routes: `GET /api/sites/agents` (a host site asks,
+signed), `POST /api/sites/resources-updated` (a host site says its resources
+changed, signed), `GET /api/workspaces/{slug}/host-sites/{id}/needs` (the Host
 sites page reads what the site asks back, and who meets it) and
-`GET /api/workspaces/{slug}/connected-apps/discover` (the page reads the site's
+`GET /api/workspaces/{slug}/host-sites/discover` (the page reads the site's
 own facts from the same document, for its owner to adopt)."""
 from __future__ import annotations
 
@@ -33,8 +33,8 @@ from . import resources_updated as notices
 
 log = logging.getLogger(__name__)
 
-sites_router = Router(tags=["connected apps"])
-needs_router = Router(auth=session_auth, tags=["connected apps"])
+sites_router = Router(tags=["host sites"])
+needs_router = Router(auth=session_auth, tags=["host sites"])
 
 
 def _bearer(request: HttpRequest) -> str:
@@ -45,13 +45,13 @@ def _bearer(request: HttpRequest) -> str:
     return token.strip()
 
 
-@sites_router.get("/agents", auth=None, summary="The agents a connected site may show, signed")
+@sites_router.get("/agents", auth=None, summary="The agents a host site may show, signed")
 @gate("host")  # auth=None; a request signed by the site's own registered key IS the credential
 def get_site_agents(request: HttpRequest):
     """Which agents this site may show, and on what terms — signed by canopy.
 
     The site authenticates with `Authorization: Bearer <JWT>` signed by its own
-    key (the one at its `jwks_url`): `iss` = its Connected-site name, `aud` =
+    key (the one at its `jwks_url`): `iss` = its host-site name, `aud` =
     this URL, at most 60 s, single-use `jti`. `canopy_workspace` (the workspace
     slug) names which workspace's registration of the name is meant, or
     `canopy_agent` names one of its agents to the same end; both must agree
@@ -95,14 +95,14 @@ class ResourcesUpdatedOut(Schema):
 
 
 @sites_router.post("/resources-updated", auth=None, response=ResourcesUpdatedOut,
-                   summary="A connected site says some of its resources changed, signed")
+                   summary="A host site says some of its resources changed, signed")
 @gate("host", kind="action")  # auth=None; a request signed by the site's own registered key IS the credential
 def resources_updated(request: HttpRequest):
     """Tell the Views subscribed to some of this site's resources to re-read them.
 
     The site authenticates with `Authorization: Bearer <JWT>` signed by its own key
     (the one at its `jwks_url`): `typ` `canopy-resources-updated+jwt`, `iss` = `sub`
-    = its Connected-site name, `aud` = this URL, at most 60 s, single-use `jti`, and
+    = its host-site name, `aud` = this URL, at most 60 s, single-use `jti`, and
     `uris` — the resource URIs that changed (1-50). `canopy_workspace` /
     `canopy_agent` name the tenant as for `GET /api/sites/agents`. Build and send it
     with `canopy_sdk.resources.notify_updated`. The body is ignored. Each View
@@ -133,7 +133,7 @@ class SitePageOut(Schema):
 
 
 class SensitiveDataRequiresOut(Schema):
-    #: The site asks for a connected site that handles sensitive data (`data: sensitive`).
+    #: The site asks for a host site that handles sensitive data (`data: sensitive`).
     handles_sensitive: bool = False
     #: The runner flag the site asks for ("" for none).
     runner_flag: str = ""
@@ -167,7 +167,7 @@ class AgentFitOut(Schema):
 
 
 class SiteNeedsOut(Schema):
-    """What a connected site asks of canopy's agents (its signed `site.json`)."""
+    """What a host site asks of canopy's agents (its signed `site.json`)."""
 
     #: Where canopy reads it: beside the site's `jwks.json`. "" = nowhere to read.
     url: str
@@ -193,10 +193,10 @@ def _iso(ts: float | None) -> str | None:
     return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
 
 
-@needs_router.get("/{slug}/connected-apps/{int:app_id}/needs", response=SiteNeedsOut,
-                  summary="What a connected site asks of agents, and who meets it")
+@needs_router.get("/{slug}/host-sites/{int:app_id}/needs", response=SiteNeedsOut,
+                  summary="What a host site asks of agents, and who meets it")
 @gate("integrations")
-def connected_app_needs(request: HttpRequest, slug: str, app_id: int) -> SiteNeedsOut:
+def host_site_needs(request: HttpRequest, slug: str, app_id: int) -> SiteNeedsOut:
     """The site's signed `site.json` — which agents it offers, which of them it
     lets work with its sensitive data and what such an agent must be, and its
     pages with the scopes each grants (the site's own description; canopy never
@@ -210,7 +210,7 @@ def connected_app_needs(request: HttpRequest, slug: str, app_id: int) -> SiteNee
     except embed_apps.EmbedAppError as exc:
         raise HttpError(404 if exc.code == "not_found" else 403, f"{exc.code}: {exc.message}")
     if app is None:
-        raise HttpError(404, "no such connected app in this workspace")
+        raise HttpError(404, "no such host site in this workspace")
     needs = site_needs.needs_for(app)
     content = site_agents.site_agents_content(app)
     document = needs.document
@@ -245,7 +245,7 @@ class SiteDiscoveryOut(Schema):
     #: Where the document was read, and every place tried to find it.
     url: str
     tried: list[str]
-    #: The site's Connected-site name, as the site signs it.
+    #: The site's host-site name, as the site signs it.
     name: str
     #: What the site declares.
     site: SiteFactsOut
@@ -265,14 +265,14 @@ def _facts_out(origins, jwks_url, issuer, mcp_resource) -> SiteFactsOut:
                         mcp_resource=mcp_resource or "")
 
 
-@needs_router.get("/{slug}/connected-apps/discover", response=SiteDiscoveryOut,
+@needs_router.get("/{slug}/host-sites/discover", response=SiteDiscoveryOut,
                   summary="Read a site's own facts from its signed site.json")
 @gate("own")
 def discover_site(request: HttpRequest, slug: str, address: str = "",
                   app_id: int | None = None) -> SiteDiscoveryOut:
     """Reads the site's signed `site.json` and returns the facts it declares
     about itself — its origins, the URL of its keys, its sign-in issuer and its
-    MCP server — so an owner can fill a Connected site from them instead of
+    MCP server — so an owner can fill a host site from them instead of
     typing them. `address` is the site's address, the URL of its keys, or of the
     document itself; the document is looked for beside its keys, at
     `/.well-known/canopy-site.json` and at `canopy/site.json`. With `app_id` (a
@@ -290,7 +290,7 @@ def discover_site(request: HttpRequest, slug: str, address: str = "",
         if app_id is not None:
             app = embed_apps.apps_for(request.user, slug).filter(pk=app_id).first()
             if app is None:
-                raise HttpError(404, "no such connected app in this workspace")
+                raise HttpError(404, "no such host site in this workspace")
     except embed_apps.EmbedAppError as exc:
         raise HttpError(404 if exc.code == "not_found" else 403, f"{exc.code}: {exc.message}")
     try:

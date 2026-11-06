@@ -1,4 +1,4 @@
-// Site sign-offs: a connected site asks you to approve one action with your passkey
+// Site sign-offs: a host site asks you to approve one action with your passkey
 // (`apps/host_grants/sign_offs_api.py`). The passkey step-up is the API client's: a 403
 // `step_up_required` prompts for the passkey and retries the approve.
 import { apiV2 } from './client.v2'

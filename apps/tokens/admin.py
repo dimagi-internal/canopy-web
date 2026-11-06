@@ -36,7 +36,7 @@ class AppCredentialAgentInline(admin.TabularInline):
 
 @admin.register(AppCredential)
 class AppCredentialAdmin(admin.ModelAdmin):
-    """Read-only. Embedding apps are managed on **Connected sites**.
+    """Read-only. Embedding apps are managed on **Host sites**.
 
     They were managed here once, and that was wrong twice over. Operationally
     the admin is staff-only, so the person who wants to embed an agent could
@@ -47,8 +47,8 @@ class AppCredentialAdmin(admin.ModelAdmin):
     fail-closed and silent, so a form with no explanation beside it produces a
     widget that never appears and no way to find out why.
 
-    The surface is `/w/{workspace}/settings/connected-apps`
-    (`apps/embedding/connected_apps_api.py`), owned by workspace owners like every
+    The surface is `/w/{workspace}/settings/host-sites`
+    (`apps/embedding/host_sites_api.py`), owned by workspace owners like every
     other tenant-admin page. This stays registered because inspecting a row is
     genuinely useful when something is not working — and stays READ-ONLY so it
     cannot quietly become the management path again, which is exactly how it

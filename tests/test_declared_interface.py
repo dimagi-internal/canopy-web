@@ -2,7 +2,7 @@
 
 Phases 4-5 (canopy-web half) of the who-is-asking spec. An agent publishes
 `config/interface.yaml`; from then on a turn from anyone but its owner, admins
-or canopy itself runs in the profile their class is offered (read mode or a connected site) — or
+or canopy itself runs in the profile their class is offered (read mode or a host site) — or
 is refused.
 """
 from __future__ import annotations
@@ -263,7 +263,7 @@ def test_unpublishing_a_profile_denies_everything_to_turns_already_queued(w):
     # never the full one.
     assert env["capability"]["name"] == "ask" and env["capability"]["write_paths"] == ["{cwd}/.ace-read/*", "{cwd}/.ace-ask/*"]
     assert env["capability"]["default_profile_version"] == 4
-    # A retired connected site, though, yields the empty deny-all profile.
+    # A retired host site, though, yields the empty deny-all profile.
     t.capability = "retired-site"
     env = caller_context.build(t)
     assert env["profile"] == "confined"
@@ -480,7 +480,7 @@ def test_full_rules_are_refused_and_point_at_the_access_list():
 
 
 # --- a page's resource selects nothing ----------------------------------------------------
-# A profile is chosen by the connected site its conversation is held on, never by what a page
+# A profile is chosen by the host site its conversation is held on, never by what a page
 # says it is showing: `pages:` is gone, and a document still carrying it is refused, not ignored.
 
 def _on_page(agent, user, key, resource):

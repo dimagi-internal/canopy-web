@@ -9,7 +9,7 @@ only the token stood between it and a conversation.
 This validator decides from origins instead of hosts:
 
 * **A browser always sends Origin** on a WebSocket. It must be canopy's own
-  address (current or former) or a live connected site's declared origin — the
+  address (current or former) or a live host site's declared origin — the
   same list that may call the API cross-origin (`apps/embedding/cors.py`).
 * **No Origin** means a non-browser client — a script, the e2e checks.
   (The runners' `websocket-client` does send one: the host it connects to,

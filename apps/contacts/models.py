@@ -260,7 +260,7 @@ class Contact(models.Model):
     SOURCE_SLACK = "slack"
     SOURCE_CHOICES = [
         (SOURCE_EMAIL, "Wrote to an agent's inbox"),
-        (SOURCE_EMBED, "Used an agent embedded in a connected site"),
+        (SOURCE_EMBED, "Used an agent embedded in a host site"),
         (SOURCE_SLACK, "Messaged an agent in the connected Slack"),
     ]
 
@@ -592,7 +592,7 @@ class PersonFact(models.Model):
     #: `record.provenance.capturedBy` — the agent, and for an inference the model.
     captured_by = models.CharField(max_length=200, blank=True, default="")
     #: `record.provenance.site` (canopy's extension; never affects scope): the
-    #: connected site the agent was reached through when it recorded this —
+    #: host site the agent was reached through when it recorded this —
     #: `{"name": <site>, "page": <path>}` — or {} when it was not (canopy itself).
     provenance_site = models.JSONField(default=dict, blank=True)
     #: `claim.expirationDate`; past it the entry is not served.
@@ -782,7 +782,7 @@ class PersonGrant(models.Model):
                                    blank=True, related_name="grants")
     #: slack | email | chat | web | mcp | api | widget | sdk | … ("" = any).
     channel = models.CharField(max_length=40, blank=True, default="")
-    #: The embedding host (a connected site) when the channel is an SDK/widget.
+    #: The embedding host (a host site) when the channel is an SDK/widget.
     host = models.CharField(max_length=200, blank=True, default="")
     #: Further client dimensions, reserved — part of `client_key` when present.
     attributes = models.JSONField(default=dict, blank=True)

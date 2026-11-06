@@ -197,7 +197,7 @@ def test_configuration_routes_are_on_mcp(db):
     tools = _tools()
     for name in ("upsert_agent", "replace_agent_runners",
                  "replace_agent_runner_rules", "set_turn_mode", "set_slack_enabled",
-                 "connect_app", "set_push_config",
+                 "register_host_site", "set_push_config",
                  "set_history", "pause_runner", "update_runner_credential"):
         assert name in tools, name
 
@@ -380,7 +380,7 @@ def test_owner_actions_are_tools_too(db):
     for name in ("transfer_owner", "grant_admin", "revoke_admin", "link_canopy_user",
                  "set_runner_flags", "set_agent_credentials",
                  "get_read_mode", "put_read_mode", "reset_read_mode",
-                 "list_connected_sites", "put_connected_site", "delete_connected_site",
+                 "list_agent_host_sites", "put_agent_host_site", "delete_agent_host_site",
                  "create_invite", "set_member_role",
                  "remove_member"):
         assert name in tools, name

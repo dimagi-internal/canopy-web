@@ -52,7 +52,7 @@ def _owner():
 
 
 def _shown_app(user):
-    """The connected site canopy shows its own panel for.
+    """The host site canopy shows its own panel for.
 
     A column an owner ticks, not a name matched against a setting — see
     `AppCredential.show_on_canopy_pages`.
@@ -96,7 +96,7 @@ def test_connecting_a_site_records_the_actor_and_what_was_granted():
     _user, ws, c = _owner()
     Agent.objects.create(slug="echo", name="Echo", workspace=ws)
 
-    c.post("/api/workspaces/w1/connected-apps",
+    c.post("/api/workspaces/w1/host-sites",
            data={"name": "connect-labs", "origins": [LABS], "agents": ["echo"]},
            content_type="application/json")
 
@@ -108,11 +108,11 @@ def test_connecting_a_site_records_the_actor_and_what_was_granted():
 def test_disconnecting_is_recorded():
     """The action someone takes when they think a site's key has leaked."""
     _user, _ws, c = _owner()
-    app_id = c.post("/api/workspaces/w1/connected-apps",
+    app_id = c.post("/api/workspaces/w1/host-sites",
                     data={"name": "x", "origins": [LABS]},
                     content_type="application/json").json()["id"]
 
-    c.delete(f"/api/workspaces/w1/connected-apps/{app_id}")
+    c.delete(f"/api/workspaces/w1/host-sites/{app_id}")
 
     assert len(_rows(EmbedAuditLog.DISCONNECT)) == 1
 
@@ -121,11 +121,11 @@ def test_an_update_records_what_the_app_can_do_now():
     """Not what was asked for: a partial payload leaves the rest untouched, so
     the request body is not what the app ended up allowed to do."""
     _user, _ws, c = _owner()
-    app_id = c.post("/api/workspaces/w1/connected-apps",
+    app_id = c.post("/api/workspaces/w1/host-sites",
                     data={"name": "x", "origins": [LABS]},
                     content_type="application/json").json()["id"]
 
-    c.patch(f"/api/workspaces/w1/connected-apps/{app_id}",
+    c.patch(f"/api/workspaces/w1/host-sites/{app_id}",
             data={"origins": [LABS, "http://localhost:8000"]},
             content_type="application/json")
 
@@ -139,7 +139,7 @@ def test_deleting_the_app_does_not_erase_its_history():
     """`SET_NULL` plus a denormalised name. A trail that vanishes with its
     subject is not a trail."""
     _user, _ws, c = _owner()
-    app_id = c.post("/api/workspaces/w1/connected-apps",
+    app_id = c.post("/api/workspaces/w1/host-sites",
                     data={"name": "connect-labs", "origins": [LABS]},
                     content_type="application/json").json()["id"]
 

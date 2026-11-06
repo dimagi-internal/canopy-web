@@ -1,5 +1,5 @@
 """An agent acting AS the person who started its turn, on canopy-web itself — the second
-form of an act-as-you permission (the first is a connected site's host grant).
+form of an act-as-you permission (the first is a host site's host grant).
 
 docs/architecture/access.md § Whose authority an agent acts with. The rules, each pinned
 by `tests/test_act_as_you_on_canopy.py`:
@@ -89,13 +89,13 @@ _RUNNER = "the runner protocol and its enrolment"
 
 #: Path prefixes: every route under them, every method, every scope.
 EXCLUDED_PREFIXES: dict[str, str] = {
-    "/api/tokens/": "minting, listing or revoking the person's tokens and connected apps",
+    "/api/tokens/": "minting, listing or revoking the person's tokens and authorized apps",
     "/api/passkeys/": "the person's passkeys and passkey step-up",
     "/api/vault/": "the person's vault key",
     "/api/vaults/": "workspace vaults: their values, members and keys",
     "/api/me/act-as-requests/": "act-as-you permissions themselves",
-    "/api/me/host-grants/": "act-as-you permissions on connected sites (host grants)",
-    "/api/embed/": "a connected site's panel, where host grants are confirmed",
+    "/api/me/host-grants/": "act-as-you permissions on host sites (host grants)",
+    "/api/embed/": "a host site's panel, where host grants are confirmed",
     "/api/me/agent-login-requests/": "accepting an agent's use of the person's account",
     "/api/me/delegated-credentials/": "credentials the person delegated to agents",
     "/api/people/me/": "the person's own memory switches, collections and grants",
@@ -126,7 +126,7 @@ EXCLUDED_PATTERNS: dict[str, str] = {
     r"^/api/storyboards/[^/]+/share$": "minting a share token",
     r"^/api/slack-config/[^/]+/config-token$": "a Slack configuration token",
     r"^/api/workspaces/[^/]+/vaults(/|$)": "workspace vaults: their values, members and keys",
-    r"^/api/workspaces/[^/]+/connected-apps(/|$)": "connected sites and the keys they sign visitors with",
+    r"^/api/workspaces/[^/]+/host-sites(/|$)": "host sites and the keys they sign visitors with",
 }
 _PATTERNS = tuple((re.compile(p), why) for p, why in EXCLUDED_PATTERNS.items())
 
@@ -134,9 +134,9 @@ _PATTERNS = tuple((re.compile(p), why) for p, why in EXCLUDED_PATTERNS.items())
 #: hand-written tool it may call only if it only reads (`mcp.act_as_scope`): what the
 #: permission covers is the routes MCP serves as tools.
 EXCLUDED_TOOLS: dict[str, str] = {
-    "site_tools": "a connected site is reached only under that site's own act-as-you permission",
-    "site_call": "a connected site is reached only under that site's own act-as-you permission",
-    "site_read": "a connected site is reached only under that site's own act-as-you permission",
+    "site_tools": "a host site is reached only under that site's own act-as-you permission",
+    "site_call": "a host site is reached only under that site's own act-as-you permission",
+    "site_read": "a host site is reached only under that site's own act-as-you permission",
 }
 
 _TENANT_PATH = re.compile(r"^/api/w/[^/]+(?P<rest>/.*)$")
@@ -311,7 +311,7 @@ def attended_by(turn, person, *, live: bool) -> bool:
     All of: the turn is a message the person typed in the canopy-web chat
     (`origin=canopy_web_chat`, asker kind `user` and that very person — not a chain on their
     behalf, a schedule, an inbound email, Slack, a dispatch or another agent), it is not
-    a confined turn (read mode or a connected site), the asker is verified, and it belongs to a chat
+    a confined turn (read mode or a host site), the asker is verified, and it belongs to a chat
     session. `live` (asking) also needs the person present in that session right now
     (`presence.is_present`); approving does not, since the approval page is where they
     go — the permission still dies with the conversation (`held`)."""

@@ -151,24 +151,24 @@ def test_registering_a_site_or_changing_its_signer_needs_a_passkey(w):
 
     pub = _keypair_pub()
     body = {"name": "evil", "origins": ["https://evil.example"], "public_keys": [pub]}
-    r = w["c"].post("/api/workspaces/w1/connected-apps", data=body,
+    r = w["c"].post("/api/workspaces/w1/host-sites", data=body,
                     content_type="application/json")
     assert r.status_code == 403 and r.json()["error"] == "step_up_required", r.content
     raw, _ = PersonalToken.create_for_user(user=w["user"], label="cli")
     pat = Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
-    r = pat.post("/api/workspaces/w1/connected-apps", data=body, content_type="application/json")
+    r = pat.post("/api/workspaces/w1/host-sites", data=body, content_type="application/json")
     assert r.status_code == 403 and r.json().get("error") != "step_up_required", r.content
     assert not AppCredential.objects.filter(name="evil").exists()
 
     grant_step_up(w["c"])
-    r = w["c"].post("/api/workspaces/w1/connected-apps", data=body, content_type="application/json")
+    r = w["c"].post("/api/workspaces/w1/host-sites", data=body, content_type="application/json")
     assert r.status_code == 201, r.content
     app_id = r.json()["id"]
 
     # Anything but the signer needs no passkey; the signer always does.
     fresh = Client()
     fresh.force_login(w["user"])
-    url = f"/api/workspaces/w1/connected-apps/{app_id}"
+    url = f"/api/workspaces/w1/host-sites/{app_id}"
     same = {"public_keys": [pub], "show_on_canopy_pages": False}
     assert fresh.patch(url, data=same, content_type="application/json").status_code == 200
     for change in ({"jwks_url": "https://evil.example/other.json"},

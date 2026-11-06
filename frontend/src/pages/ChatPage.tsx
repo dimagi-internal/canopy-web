@@ -554,7 +554,7 @@ function ChatPageInner({
           // Nothing else holds it: alone in a session the body is never
           // mirrored to the server until the moment you send.
           draftPersistKey={id}
-          // MCP Apps: a Connected site's View for a tool result, acting as you.
+          // MCP Apps: a host site's View for a tool result, acting as you.
           appHost={appHost}
           // The agent asking for a secret: the zero-knowledge seal card.
           secretRequestHost={secretRequestHost}

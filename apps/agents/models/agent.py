@@ -39,7 +39,7 @@ class Agent(models.Model):
     )
     #: The DECLARED INTERFACE — what callers (anyone not the owner or an admin)
     #: may ask this agent for. LIVE STATE held here, not in the agent's repo:
-    #: edited as read mode and connected sites (`apps/agents/answering.py`, the one writer),
+    #: edited as read mode and host sites (`apps/agents/answering.py`, the one writer),
     #: validated by `apps.agents.interface.parse`.
     #: Never empty: an agent is created with the default interface (owner, admins and
     #: editors only). See `apps/agents/interface.py`.
@@ -390,7 +390,7 @@ class AgentGrant(models.Model):
     verified = models.BooleanField(default=True)
     workspace_delete_hint = "Remove the workspace's default access lines (Settings → Agent defaults) first."
 
-    #: What the line grants: ONE role (`apps/agents/roles.py`) or, instead, ONE named connected site
+    #: What the line grants: ONE role (`apps/agents/roles.py`) or, instead, ONE named host site
     #: (the scoped permission `use:<site>`, stored in `capability`). Exactly one of the two is set.
     role = models.CharField(max_length=40, blank=True, default="")
     #: The role's row: what the line grants is the ROW's permissions, so editing the role changes its
@@ -450,7 +450,7 @@ class AgentGrant(models.Model):
                 key = f"contact:{d}"
             else:
                 key = f"domain:{d}"
-        # A connected-site line is one line per site: the same subject can hold a role line and
+        # A host-site line is one line per site: the same subject can hold a role line and
         # several site lines, so the site is part of what makes a line unique.
         return f"{key}#use:{site}" if site else key
 
@@ -811,7 +811,7 @@ class EngagementEvent(models.Model):
 class PreferredAgent(models.Model):
     """The agent a person wants an embedded panel to open on.
 
-    One per person, everywhere: the same answer on every connected site and on
+    One per person, everywhere: the same answer on every host site and on
     canopy's own pages. It is a preference and grants nothing — a panel honours
     it only when the agent is one that panel may offer this person
     (`apps/embedding/defaults.py`), so a preference for an agent a site does not

@@ -21,18 +21,18 @@ class ContactOut(StrictModel):
     )
     source: str = Field(
         description='How canopy came to know this person: "email" (wrote to an '
-                    'agent\'s inbox) or "embed" (used an agent on a connected '
+                    'agent\'s inbox) or "embed" (used an agent on a host '
                     'site). It says which field is the identity.',
     )
     email: str = ""
     external_id: str = Field(
         default="",
-        description="The connected site's own id for this person, opaque to "
+        description="The host site's own id for this person, opaque to "
                     "canopy. Scoped to that site, so it cannot collide with a "
                     "canopy user or with another site's people.",
     )
     app_name: str = Field(
-        default="", description="The connected site that vouched for them, if any.",
+        default="", description="The host site that vouched for them, if any.",
     )
     display_name: str = ""
     workspace_id: str

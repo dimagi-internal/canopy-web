@@ -7,7 +7,7 @@ changes it. See `apps/agents/interface.py` and `docs/architecture/access.md`.
 from __future__ import annotations
 
 def default_interface() -> dict:
-    """No connected site and no read-mode override. A fresh dict every call."""
+    """No host site and no read-mode override. A fresh dict every call."""
     return {"capabilities": {}}
 
 

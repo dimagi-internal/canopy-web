@@ -1,7 +1,7 @@
 """An agent's PUBLISHED PROFILES: what it offers people who are not its admins.
 
 A profile is one entry of the agent's published document (stored under its `capabilities` key):
-read mode, or a connected site. Other things canopy names "capability" are different concepts:
+read mode, or a host site. Other things canopy names "capability" are different concepts:
 a workspace permission (`apps/workspaces/permissions.py`, `docs/architecture/roles.md`); a leased
 cloud machine or pool slot (`apps/capabilities`, `docs/architecture/capabilities.md`);
 `Runner.capabilities`, the JSON a box reports about itself (`apps/harness/models.py`,
@@ -15,7 +15,7 @@ it (a profile no longer carries a `role:`). THE rule that decides who gets which
 `apps/agents/turn_context.resolve_turn_context`; every term is defined in `docs/architecture/access.md`.
 
 An agent's owner and admins reach its full working session; so does anyone the access list
-gives `write`. Everyone else — a `read_only` line, a line naming one connected site — reaches only
+gives `write`. Everyone else — a `read_only` line, a line naming one host site — reaches only
 a confined profile. It is LIVE STATE
 held by canopy-web, never a file in the agent's repo, and canopy enforces it.
 
@@ -33,11 +33,11 @@ under `READ_MODE_STAMP`):
         read_paths: ["{cwd}/**"]
         write_paths: ["{cwd}/.ace-read/*"]   # where Write/Edit may land (none → no writes)
 
-**A connected site's profile** names a registered Connected site:
+**A host site's profile** names a registered host site:
 
     capabilities:
       connect:
-        sites: [connect-labs]               # a Connected site, by name
+        sites: [connect-labs]               # a host site, by name
         # ceiling: ["mcp__*connect_labs__marketplace_*"]   # OPTIONAL site tool limit ("Site tools it may use")
 
 One entry per site, and one site per entry (`answering`, the one writer, enforces both).
@@ -58,11 +58,11 @@ the default (`default_interface()`: no profile). Someone whose lines give `read`
 `write` is answered in READ MODE, a confined session that exists from the start: the agent's own
 published read mode when it has one (an override that replaces the default whole), else canopy's
 `default_read_profile`. `read` and `READ_MODE_STAMP` are the same thing (`is_read_mode`). Any OTHER
-profile is a connected site and must be published: a line can only open a site that exists, and an
+profile is a host site and must be published: a line can only open a site that exists, and an
 unknown or retired name yields the empty deny-all profile.
 
 A profile carries no `role:`, `full:`, `callers:`, `callers_default:` or `editors:`: who may use
-one is an access-list line (a role, or one that names the connected site). A published interface that
+one is an access-list line (a role, or one that names the host site). A published interface that
 still carries them is refused with a message pointing at the access list.
 """
 from __future__ import annotations
@@ -84,7 +84,7 @@ from apps.harness import invocations
 
 logger = logging.getLogger(__name__)
 
-#: canopy's gateway to a Connected site's own tools, added to every profile
+#: canopy's gateway to a host site's own tools, added to every profile
 #: that names `sites:` (apps/mcp/tools/site.py).
 GATEWAY_TOOLS = ("mcp__*canopy-web__site_tools", "mcp__*canopy-web__site_call",
                  "mcp__*canopy-web__site_read")
@@ -118,12 +118,12 @@ def read_mode_override(iface: dict | None) -> str | None:
 
 def stamp_words(stamp: str) -> str:
     """A confined stamp in the words a person reads: `read mode`, `a one-session review`, or `the
-    connected site 'x'`. The stamp itself is a stored name, never shown bare."""
+    host site 'x'`. The stamp itself is a stored name, never shown bare."""
     if is_read_mode(stamp):
         return "read mode"
     if stamp == SESSION_REVIEW:
         return "a one-session review"
-    return f"the connected site '{stamp}'"
+    return f"the host site '{stamp}'"
 
 
 def published_profile(iface: dict | None, name: str) -> tuple[str, dict] | tuple[None, None]:
@@ -185,7 +185,7 @@ def _strings(value, field: str, cap: str) -> list[str]:
 _RETIRED = {"full", "editors", "callers"}
 _RETIRED_HINT = ("{where}: `{key}:` is gone — who may use an agent is its access list now "
                  "(Settings → Roles → Access, or /api/agents/<slug>/access-list). A profile only "
-                 "says what it may do; to let someone use just this connected site, add an access-list "
+                 "says what it may do; to let someone use just this host site, add an access-list "
                  "line that names it")
 
 
@@ -224,7 +224,7 @@ def parse(doc) -> dict:
             if key in cap:
                 raise InterfaceError(_RETIRED_HINT.format(where=name, key=key), f"{name}.{key}")
         if "pages" in cap:
-            raise InterfaceError(f"{name}.pages is gone: a profile is selected by the connected site its "
+            raise InterfaceError(f"{name}.pages is gone: a profile is selected by the host site its "
                                  "conversation is held on (`sites:`), never by a page's resource", f"{name}.pages")
         if "input" in cap:
             ignored.append(f"{name}.input")
@@ -276,7 +276,7 @@ def _data(value, name: str, cap: dict) -> str:
 
 
 def _sites(cap: dict, name: str) -> dict:
-    """`sites:` (Connected site names) and `ceiling:` (tool globs), validated.
+    """`sites:` (Host site names) and `ceiling:` (tool globs), validated.
 
     A tool limit with no site is refused: it would read as a grant and apply to
     nothing. A site with no tool limit defers to the host: what the visitor's grant
@@ -285,7 +285,7 @@ def _sites(cap: dict, name: str) -> dict:
     sites = _strings(cap.get("sites"), "sites", name)
     for site in sites:
         if not _SITE.match(site):
-            raise InterfaceError(f"{name}.sites: {site!r} is not a Connected site name — "
+            raise InterfaceError(f"{name}.sites: {site!r} is not a host site name — "
                                  "letters, digits, hyphens and underscores")
     ceiling = _strings(cap.get("ceiling"), "ceiling", name)
     if ceiling and not sites:
@@ -340,7 +340,7 @@ def session_resource(session) -> str:
 
 
 def _conversation_site(turn) -> str:
-    """The Connected site this turn's conversation is held on — the session's
+    """The host site this turn's conversation is held on — the session's
     server-owned `embed_app`, stamped from the token that created it, never from
     anything the page or the caller sent."""
     return session_site(getattr(turn, "chat_session", None))
@@ -353,7 +353,7 @@ def session_site(session) -> str:
 
 
 def site_entry(site: str, iface: dict, opens) -> str | None:
-    """The connected site whose `sites` include the site this conversation is on.
+    """The host site whose `sites` include the site this conversation is on.
 
     Tried before falling back to read mode. A profile the caller cannot open is
     skipped, not fatal: read mode may still admit them.
@@ -368,7 +368,7 @@ def site_entry(site: str, iface: dict, opens) -> str | None:
 
 # --- the sites an agent serves on pages ------------------------------------------
 #
-# An agent is set up for a Connected site when some profile of its published
+# An agent is set up for a host site when some profile of its published
 # interface lists the site in `sites:`. A conversation held on that site's page
 # (`embed_app`) then reaches the site ONLY as the person who sent, under their
 # act-as-you permission for the page (their host grant, `host_grants.lookup`) —
@@ -377,14 +377,14 @@ def site_entry(site: str, iface: dict, opens) -> str | None:
 
 
 def page_sites(agent) -> set[str]:
-    """The Connected sites `agent` serves on pages: every site some profile of its
+    """The host sites `agent` serves on pages: every site some profile of its
     interface lists in `sites:`."""
     caps = ((getattr(agent, "interface", None) or {}).get("capabilities") or {}).values()
     return {site for cap in caps for site in (cap.get("sites") or [])}
 
 
 def _cap_for_site(agent, site: str) -> dict:
-    """The one connected site entry that lists `site`, or {}. One entry per site is the writer's rule
+    """The one host site entry that lists `site`, or {}. One entry per site is the writer's rule
     (`answering.document_problems`), and migration `agents/0132` refused to deploy over a document
     that broke it, so there is no second entry to combine."""
     caps = ((getattr(agent, "interface", None) or {}).get("capabilities") or {})
@@ -404,13 +404,13 @@ def page_site_of(turn, agent=None) -> str:
 
 def site_ceiling(agent, site: str) -> list[str]:
     """The owner's narrowing of `site`'s tools for a FULL-profile turn on its page: the
-    ceiling of the connected site that lists it, or none (the host's grant decides)."""
+    ceiling of the host site that lists it, or none (the host's grant decides)."""
     return list(_cap_for_site(agent, site).get("ceiling") or [])
 
 
 def own_login_of(agent, site: str) -> list[str]:
     """The names of the agent's own credentials that are its login at `site`
-    (`own_login:` of the connected site that lists it). Withheld from every turn
+    (`own_login:` of the host site that lists it). Withheld from every turn
     held on that site's page."""
     return sorted(set((_cap_for_site(agent, site).get("own_login") or {}).get(site) or []))
 
@@ -517,9 +517,9 @@ def profile(agent, name: str) -> dict | None:
     if cap.get("data"):
         out["data"] = cap["data"]
     if cap.get("sites"):
-        # A connected site's profile reaches its host ONLY through canopy's gateway, so
+        # A host site's profile reaches its host ONLY through canopy's gateway, so
         # the gateway is part of the profile by construction — an owner cannot
-        # publish a connected site and forget the one tool that opens it. The host's
+        # publish a host site and forget the one tool that opens it. The host's
         # own MCP server is not added: a visitor turn does not call it directly.
         # The page's own actions likewise: they are the page's, not the host's
         # (`site_call` refuses them by name and points here).

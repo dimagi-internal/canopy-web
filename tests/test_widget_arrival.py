@@ -1,6 +1,6 @@
 """Widget arrival (who-is-asking §2): an existing canopy account arrives as itself.
 
-A connected site signs an assertion about its visitor. canopy resolves: an
+A host site signs an assertion about its visitor. canopy resolves: an
 already-linked contact → that user; else a site-signed VERIFIED email held
 verified by exactly one existing canopy user who is a member of the site's
 workspace → link and arrive as that user; else a contact. Never a new account (D1).

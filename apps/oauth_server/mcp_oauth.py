@@ -336,7 +336,7 @@ def token_request(form) -> dict:
     raise OAuthError("unsupported_grant_type", f"grant_type {grant_type!r} is not served.")
 
 
-# --- connected apps -------------------------------------------------------------
+# --- authorized apps -------------------------------------------------------------
 
 def grants_for(user):
     return (OAuthGrant.objects.filter(user=user, revoked_at__isnull=True)

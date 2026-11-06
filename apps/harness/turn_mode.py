@@ -251,7 +251,7 @@ def _carried(started: Resolved, turn, agent, priorities: dict | None) -> Resolve
     """A session that started manual keeps this turn manual. That manual is still
     RAISABLE by an admission `auto` rule when nothing about THIS turn holds it back:
     its own rungs resolve to the agent's standing posture, the message is verified,
-    and the sender is not confined (read mode or a connected site) (Jonathan, 2026-10-14, option 3
+    and the sender is not confined (read mode or a host site) (Jonathan, 2026-10-14, option 3
     of canopy-web#1474). Otherwise a thread first handled on a laptop in manual is
     claimed by a cloud runner in manual, where nobody can approve its reply, and the
     turn ends `done` having sent nothing."""

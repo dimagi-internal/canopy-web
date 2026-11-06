@@ -112,13 +112,13 @@ def test_sender_not_proven_is_a_line_that_names_them_only_for_proven_mail(w):
 def test_profile_not_open_says_which_entry_and_what_opens_it(w):
     named = turn_context.for_asker(w.agent, w.reader, verified=True, requested="bare")
     _assert_whole(named.refusal, Code.PROFILE_NOT_OPEN)
-    assert named.refusal.why == "your place on agent's access list does not open the connected site 'bare'"
+    assert named.refusal.why == "your place on agent's access list does not open the host site 'bare'"
     assert "a line on agent's access list that opens 'bare'" in named.refusal.how_to_fix
     unknown = turn_context.for_asker(w.agent, w.reader, verified=True, requested="nope")
     _assert_whole(unknown.refusal, Code.PROFILE_NOT_OPEN)
-    assert unknown.refusal.why == "agent has no connected site called 'nope' for your place on its access list to open"
+    assert unknown.refusal.why == "agent has no host site called 'nope' for your place on its access list to open"
     assert unknown.refusal.how_to_fix.startswith("Send without naming 'nope'")
-    # Holding only one connected site, and naming nothing on no page: read mode is not theirs.
+    # Holding only one host site, and naming nothing on no page: read mode is not theirs.
     bare = turn_context.for_asker(w.agent, w.site_user, verified=True)
     _assert_whole(bare.refusal, Code.PROFILE_NOT_OPEN)
     assert "opens neither read mode" in bare.refusal.why and "read only role" in bare.refusal.how_to_fix
@@ -131,7 +131,7 @@ def test_sensitive_not_open_says_which_entry_handles_the_data(w):
     session = _chat(w, embed_app="data-site", **{rr.METADATA_KEY: [rr.SENSITIVE_DATA]})
     ctx = turn_context.for_turn(_turn(w.reader, session), w.agent)
     _assert_whole(ctx.refusal, Code.SENSITIVE_NOT_OPEN)
-    assert "only the connected site 'data' handles" in ctx.refusal.why and "'data' does not list you" in ctx.refusal.why
+    assert "only the host site 'data' handles" in ctx.refusal.why and "'data' does not list you" in ctx.refusal.why
     assert "opens 'data'" in ctx.refusal.how_to_fix
     w.agent.interface = {"capabilities": {k: v for k, v in w.agent.interface["capabilities"].items() if k != "data"}}
     w.agent.save(update_fields=["interface"])

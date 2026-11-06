@@ -434,7 +434,7 @@ class AgentTopologyAgentOut(StrictModel):
 
 class AgentEdgeOut(StrictModel):
     """What `source` gets when it sends `target` work with its own login.
-    `access`: full | confined (to read mode or the connected sites named in `profiles`) | none.
+    `access`: full | confined (to read mode or the host sites named in `profiles`) | none.
     `basis`: owner | workspace-owner | admin | editor (full; manual only when its line says so) |
     no-interface (refused: nothing published) | profiles (confined) | nothing-offered |
     not-member | no-login. Terms: docs/architecture/access.md. `can_grant` / `can_revoke`: whether
@@ -560,10 +560,10 @@ class AgentHealthOut(StrictModel):
     # manual: its turns stop for a person's approval before acting or sending;
     # auto: they run through. (A routing rule can set a turn's mode itself.)
     turn_mode: str
-    # Whether it publishes read mode or a connected site: what people other than its admins may
+    # Whether it publishes read mode or a host site: what people other than its admins may
     # ask it to do.
     has_interface: bool
-    # How many profiles it offers (read mode and connected sites: confined access).
+    # How many profiles it offers (read mode and host sites: confined access).
     capabilities: int
     # Its access list in words, one `"<who>: <role>"` per line (its own and the workspace
     # defaults it inherits): everyone else who can use it besides its admins.

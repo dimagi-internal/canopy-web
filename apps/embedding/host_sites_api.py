@@ -1,4 +1,4 @@
-"""`/api/workspaces/{slug}/connected-apps` — connecting a site to canopy.
+"""`/api/workspaces/{slug}/host-sites` — connecting a site to canopy.
 
 Mounted on the workspaces prefix rather than under `/api/tokens` because this
 is a tenant-admin surface and shares its shape with the others there (members,
@@ -25,11 +25,7 @@ from apps.tokens.models import AppCredential, EmbedAuditLog
 from . import embed_apps
 from .audit import record as audit
 
-#: Published as `tokens_connected_apps_<name>` while this module lived in apps/tokens;
-#: those operationIds are MCP tool names and `generated.ts` keys, so they stay.
-OPERATION_LABEL = "tokens_connected_apps"
-
-connected_apps_router = Router(auth=session_auth, tags=["connected apps"])
+host_sites_router = Router(auth=session_auth, tags=["host sites"])
 
 #: `bad_*` is the caller's input; `not_owner` is authorisation; a name clash is
 #: a conflict. Mapped once so a new refusal cannot pick its own status.
@@ -81,7 +77,7 @@ class TrafficHealthOut(Schema):
     refusals_24h: int
 
 
-class ConnectedAppOut(Schema):
+class HostSiteOut(Schema):
     """A site connected to canopy.
 
     A site has no secret: it proves itself by signing (`jwks_url` or
@@ -175,8 +171,8 @@ def _traffic_out(app: AppCredential) -> TrafficHealthOut:
                             refusals_24h=health.refusals_24h)
 
 
-def _out(app: AppCredential) -> ConnectedAppOut:
-    return ConnectedAppOut(
+def _out(app: AppCredential) -> HostSiteOut:
+    return HostSiteOut(
         id=app.pk,
         name=app.name,
         # The SANITISED list, matching what the browser will actually be sent.
@@ -250,14 +246,14 @@ def _app_or_404(request: HttpRequest, slug: str, app_id: int) -> AppCredential:
     except embed_apps.EmbedAppError as exc:
         raise _refuse(exc)
     if app is None:
-        raise HttpError(404, "no such connected app in this workspace")
+        raise HttpError(404, "no such host site in this workspace")
     return app
 
 
-@connected_apps_router.get("/{slug}/connected-apps", response=list[ConnectedAppOut],
+@host_sites_router.get("/{slug}/host-sites", response=list[HostSiteOut],
                            summary="Sites connected to this workspace")
 @gate("integrations")
-def list_connected_apps(request: HttpRequest, slug: str) -> list[ConnectedAppOut]:
+def list_host_sites(request: HttpRequest, slug: str) -> list[HostSiteOut]:
     """Every site this workspace has connected, with what each may do."""
     try:
         return [_out(a) for a in embed_apps.apps_for(request.user, slug)]
@@ -265,10 +261,10 @@ def list_connected_apps(request: HttpRequest, slug: str) -> list[ConnectedAppOut
         raise _refuse(exc)
 
 
-@connected_apps_router.post("/{slug}/connected-apps", response={201: ConnectedAppOut},
+@host_sites_router.post("/{slug}/host-sites", response={201: HostSiteOut},
                             summary="Connect a site")
 @gate("own", setting=True, step_up=True)
-def connect_app(request: HttpRequest, slug: str, payload: ConnectIn) -> Status:
+def register_host_site(request: HttpRequest, slug: str, payload: ConnectIn) -> Status:
     """Register a site in this workspace. Needs a person at a browser who just
     confirmed with their passkey (403 `step_up_required` otherwise); a token is
     refused."""
@@ -294,12 +290,12 @@ def connect_app(request: HttpRequest, slug: str, payload: ConnectIn) -> Status:
     return Status(201, _out(app))
 
 
-@connected_apps_router.patch("/{slug}/connected-apps/{int:app_id}", response=ConnectedAppOut,
-                             summary="Change what a connected site may do")
+@host_sites_router.patch("/{slug}/host-sites/{int:app_id}", response=HostSiteOut,
+                             summary="Change what a host site may do")
 @gate("own", setting=True, step_up=True)
-def update_connected_app(request: HttpRequest, slug: str, app_id: int,
-                         payload: UpdateIn) -> ConnectedAppOut:
-    """Change what a connected site may do. A change to what it may sign — its
+def update_host_site(request: HttpRequest, slug: str, app_id: int,
+                         payload: UpdateIn) -> HostSiteOut:
+    """Change what a host site may do. A change to what it may sign — its
     public keys, key URL or issuer — needs a person at a browser who just
     confirmed with their passkey (403 `step_up_required` otherwise); a token is
     refused it."""
@@ -373,10 +369,10 @@ class ConnectionTestOut(Schema):
     live_probe_ok: bool | None
 
 
-@connected_apps_router.post("/{slug}/connected-apps/{int:app_id}/test", response=ConnectionTestOut,
-                            summary="Test a connected site's settings")
+@host_sites_router.post("/{slug}/host-sites/{int:app_id}/test", response=ConnectionTestOut,
+                            summary="Test a host site's settings")
 @gate("integrations", kind="action")
-def test_connected_app(request: HttpRequest, slug: str, app_id: int) -> ConnectionTestOut:
+def test_host_site(request: HttpRequest, slug: str, app_id: int) -> ConnectionTestOut:
     """Try this site's settings the way canopy uses them, from canopy's server.
 
     Reads the site's published keys, and — when it lets the agent act as the
@@ -421,10 +417,10 @@ def test_connected_app(request: HttpRequest, slug: str, app_id: int) -> Connecti
     )
 
 
-@connected_apps_router.delete("/{slug}/connected-apps/{int:app_id}", response={204: None},
+@host_sites_router.delete("/{slug}/host-sites/{int:app_id}", response={204: None},
                               summary="Disconnect a site")
 @gate("own", setting=True)
-def disconnect_app(request: HttpRequest, slug: str, app_id: int) -> Status:
+def revoke_host_site(request: HttpRequest, slug: str, app_id: int) -> Status:
     """This workspace stops using the site. It stops verifying immediately.
 
     Retired rather than deleted: the row is what this workspace's visitors'

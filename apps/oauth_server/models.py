@@ -64,7 +64,7 @@ class OAuthAuthorizationCode(models.Model):
 
 
 class OAuthGrant(models.Model):
-    """One person's approval of one MCP client — a "connected app".
+    """One person's approval of one MCP client — a "authorized app".
 
     Holds the current refresh token (hashed; rotated on every use) and owns the
     short-lived access tokens minted from it, which are ordinary

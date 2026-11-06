@@ -40,9 +40,9 @@ Read the settings from the running task's environment (ECS Exec, `printenv CONNE
 - **Roll back the image, not the setting.** With the key unset, a rotated token a machine writes back no longer includes canopy-web, so canopy-web drops out of that envelope until the owner's next share. A named canopy-web entry already in an envelope is kept, not stripped, while the key is unset.
 - **Cut canopy-web off at once:** remove the task role's grant from the key's policy (redeploy the key stack without it). Every open and derive then fails; nothing in the database changes. KMS use is in CloudTrail.
 
-### Protocol identity is pinned by connected sites
+### Protocol identity is pinned by host sites
 
-canopy's protocol identity — CIMD client_id, assertion audience, own issuer, MCP resource — is `CANOPY_IDENTITY_BASE_URL` (`https://canopy.dimagi.com`). ace-web's and connect-labs' `CANOPY_CLIENT_ID` / `CANOPY_BASE_URL` pin it, so changing it is a coordinated change with every connected site. `CANOPY_FORMER_BASE_URLS` names the old address so the Slack sync can recognise and move the commands and webhooks it registered there.
+canopy's protocol identity — CIMD client_id, assertion audience, own issuer, MCP resource — is `CANOPY_IDENTITY_BASE_URL` (`https://canopy.dimagi.com`). ace-web's and connect-labs' `CANOPY_CLIENT_ID` / `CANOPY_BASE_URL` pin it, so changing it is a coordinated change with every host site. `CANOPY_FORMER_BASE_URLS` names the old address so the Slack sync can recognise and move the commands and webhooks it registered there.
 
 ## Deploying
 

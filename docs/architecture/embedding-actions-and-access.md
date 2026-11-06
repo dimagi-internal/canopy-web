@@ -66,7 +66,7 @@ page changed.
   the chosen session is named in the tool description so a wrong guess is
   visible rather than silent.
 - **A confined agent sees only its own conversation's page.** A visitor's
-  conversation runs the agent in a connected site (an entry with `sites:`), and that profile gets
+  conversation runs the agent in a host site (an entry with `sites:`), and that profile gets
   the `page_*` tools automatically — in a sensitive conversation too, since an
   action runs in that person's tab and its answer goes only to the turn. They are
   canopy's tools, not your MCP server's: an agent that sends `page_showQuery`
@@ -176,7 +176,7 @@ In three steps — every claim, lifetime, header and refusal is in
    token's scopes.
 4. **Sensitive data? Verify `Canopy-Execution`.** On an agent's turn every request also carries
    canopy's signed statement about the call: the agent, its author's declaration that the
-   connected site handles sensitive data (`data: sensitive`, made by its owner or an admin), the
+   host site handles sensitive data (`data: sensitive`, made by its owner or an admin), the
    runner and its flags in force (`sensitive_data`, declared by a person and matched by the
    box's own report), and the
    conversation's requirements. `canopy_sdk.django.execution.verify_execution(request)` checks
@@ -184,7 +184,7 @@ In three steps — every claim, lifetime, header and refusal is in
    `execution.sensitive_clearance(agents={...})` says whether to release sensitive data or keep the
    agent on synthetic data, and why. Claims and refusal codes:
    [SDK README § `Canopy-Execution`](../../sdk/python/README.md#canopy-execution--what-canopy-vouches-for-per-request).
-   canopy's gateway itself never calls you for a sensitive conversation whose connected site does
+   canopy's gateway itself never calls you for a sensitive conversation whose host site does
    not handle sensitive data.
 5. **The person's own View? Verify `Canopy-View`, never infer it.** A View's `resources/read`
    carries canopy's signed `Canopy-View` (`actor: "view"`, your id for the person as `sub`, the
@@ -200,9 +200,9 @@ In three steps — every claim, lifetime, header and refusal is in
    delegated call with **no** statement is no one you may trust. Check it live with
    `manage.py view_read_probe --session <id> --email <person>` in canopy-web's container.
 
-**What canopy adds on its side.** In your site's Connected-site row
-(`/w/<workspace>/settings/connected-apps`), set your **sign-in issuer** and **MCP
-server** URL. The agent's owner gives the connected site that serves your site
+**What canopy adds on its side.** In your site's host-site row
+(`/w/<workspace>/settings/host-sites`), set your **sign-in issuer** and **MCP
+server** URL. The agent's owner gives the host site that serves your site
 `sites: [<your site's name>]`. **What a call may reach is yours to decide**: your
 page's scopes and your ACL for that person, enforced by your MCP server (it lists
 and runs only the tools the token's scopes map to). canopy holds no list of your
@@ -232,12 +232,12 @@ A token copied from a log is useless without canopy's DPoP key, and no runner
 ever holds either.
 
 (canopy does not sign assertions about your visitor for you to trust: whoever
-held that key could sign for anyone at every connected site.)
+held that key could sign for anyone at every host site.)
 
 For **canopy's own MCP tools**: a visitor who is not the agent's owner
 or an admin talks to a CONFINED session, which reaches canopy's MCP with a
 caller token scoped to **agent ∩ visitor** — the visitor's own canopy
-permissions (none, for a contact), limited to the tools its profile (that connected
+permissions (none, for a contact), limited to the tools its profile (that host
 site, or read mode) lists. The owner's token is never used there.
 
 ## 8b. Return facts + a `resource_link` to a result you keep, using standard MCP
@@ -371,7 +371,7 @@ scheme, too), since it would make the whole `site.json` malformed.
 subscription (its gateway's MCP sessions last one request), so your host tells canopy
 when a result changes — a POST to `/api/sites/resources-updated` with a JWT signed by
 your site key (`typ` `canopy-resources-updated+jwt`, `iss` = `sub` = your
-Connected-site name, `aud` = that URL, 60 s, single-use `jti`, `uris`);
+Host-site name, `aud` = that URL, 60 s, single-use `jti`, `uris`);
 `canopy_sdk.resources.notify_updated(canopy_url, site_name, site_key, [uri],
 workspace=...)` builds and sends it. canopy sends each subscribed View
 `notifications/resources/updated` — the URI, never data — and the View re-reads it

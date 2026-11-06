@@ -2,15 +2,15 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { SiteDiscovery } from '@/api/connectedApps'
+import type { SiteDiscovery } from '@/api/hostSites'
 
 const discoverSite = vi.fn()
-vi.mock('@/api/connectedApps', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/api/connectedApps')>()),
+vi.mock('@/api/hostSites', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api/hostSites')>()),
   discoverSite: (...args: unknown[]) => discoverSite(...args),
 }))
 
-const { FillFromSite, SiteAddressFill, discoverySource } = await import('./connectedApps/SiteFactsTable')
+const { FillFromSite, SiteAddressFill, discoverySource } = await import('./hostSites/SiteFactsTable')
 
 afterEach(() => {
   cleanup()
@@ -36,7 +36,7 @@ const FOUND: SiteDiscovery = {
 }
 
 /**
- * A Connected site used to be a hand-typed copy of facts the site already
+ * A Host site used to be a hand-typed copy of facts the site already
  * publishes. The button reads them from the site's signed site.json — and
  * saves NOTHING until the owner has seen them: a site must not be able to
  * change its own trusted origins by publishing a document.

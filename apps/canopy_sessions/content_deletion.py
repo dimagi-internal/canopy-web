@@ -1,7 +1,7 @@
 """A person permanently deleting the stored words of their own session.
 
 Who may is `access.owns_words`, asked at the route with `harness.acting_person`
-(the person themselves, never an agent, a turn's token or a connected site). This
+(the person themselves, never an agent, a turn's token or a host site). This
 module says when (`blocker`) and what happens (`delete_content`).
 
 What goes: every place that holds what was said. `tests/test_session_content_deletion.py`

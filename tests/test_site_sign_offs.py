@@ -1,4 +1,4 @@
-"""Site sign-offs: a connected site asks a person to approve one action with their
+"""Site sign-offs: a host site asks a person to approve one action with their
 passkey (`apps/host_grants/sign_offs.py`, `sign_offs_api.py`).
 
 Driven over HTTP with requests signed the way the SDK signs them, and the approval is

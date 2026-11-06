@@ -79,7 +79,7 @@ What canopy does with it:
   page's scopes and swap in another agent.
 - Your mint signs it into the visitor assertion as `canopy_agent` beside
   `agent_slug`. canopy refuses the arrival unless the two are the same agent
-  (`agent_mismatch`) and that agent is on your Connected site's allow-list.
+  (`agent_mismatch`) and that agent is on your host site's allow-list.
 - The token it returns is **bound** to that agent: the widget offers only it,
   and no conversation with any other agent can be started, listed, opened or
   sent into with that token — on REST, the chat socket, the contact surface and
@@ -106,8 +106,8 @@ names one of them:
 2. **The visitor's own default** — set from the panel ("Make this my default",
    `PUT /api/embed/default-agent`) or in canopy (`PUT /api/people/me/default-agent/`).
    One per person, for every site and canopy's own pages.
-3. **The site's default** — "Opens on" on the Connected sites page
-   (`default_agent` on `PATCH /api/workspaces/{slug}/connected-apps/{id}`).
+3. **The site's default** — "Opens on" on the host sites page
+   (`default_agent` on `PATCH /api/workspaces/{slug}/host-sites/{id}`).
 4. **The agent you named** — `agent` in `canopy.init`, which the SDK fills from
    `AGENT_SLUG`.
 5. **The only agent**, else the picker.
@@ -135,13 +135,13 @@ site_agents.refresh()               # "re-read now" from your own settings page
 
 `GET /api/sites/agents`, signed with your own key, answers with a JWS signed by
 canopy's client key (the `Canopy-Execution` key): exactly the agents this
-workspace allows on your site, each with its connected sites for your site
+workspace allows on your site, each with its host sites for your site
 (`handles_sensitive` and who set it), which runner flags its runners carry and whether one
 is ready now, `ready`, `url` (the agent's page in canopy), `problems` — plain
 sentences naming where in canopy to fix each — and `problem_links`
 (`[{text, url}]`, SDK `SiteAgent.problem_links`): each problem with the URL of
 the canopy page that fixes it, to render as a link. The `site` block carries
-`settings_url` (SDK `SiteAgents.site_settings_url`): your Connected site's own
+`settings_url` (SDK `SiteAgents.site_settings_url`): your host site's own
 card in canopy, where its owner allows agents, changes keys and tests it. Never
 build a canopy URL yourself. `runner_flags` lists every flag canopy knows;
 `version` changes exactly when any of that does, so record it with each settings
@@ -157,7 +157,7 @@ to show your operator, and canopy's HTTP `status` when it answered.
 | --- | --- | --- |
 | `not_configured` | `SIGNING_KEY`, `CANOPY_BASE_URL` or `APP_NAME` is missing or unusable | your settings |
 | `unreachable` | canopy could not be reached (network, DNS, TLS) | retry; check `CANOPY_BASE_URL` |
-| `unknown_issuer` | no Connected site named `APP_NAME` in the workspace you named | register it, or fix `WORKSPACE` / `APP_NAME` |
+| `unknown_issuer` | no host site named `APP_NAME` in the workspace you named | register it, or fix `WORKSPACE` / `APP_NAME` |
 | `ambiguous_issuer` | several workspaces have a site by that name and you named none | set `WORKSPACE` |
 | `workspace_mismatch` | `WORKSPACE` and the agent you sent name different workspaces | fix one (a moved agent) |
 | `bad_signature` | the keys canopy holds for the site do not verify yours | the site's JWKS URL in canopy, or your key |
@@ -166,7 +166,7 @@ to show your operator, and canopy's HTTP `status` when it answered.
 
 Tell canopy what you need back by setting `CANOPY_HOST["SITE_NEEDS"]`: the SDK
 serves it, signed, at `canopy/site.json` beside `canopy/jwks.json`, and canopy's
-**Connected sites** page shows, per agent, whether you offer it, whether you let it
+**Host sites** page shows, per agent, whether you offer it, whether you let it
 work with your sensitive data and — only for those — whether it meets your
 `sensitive_data.requires` and why not.
 
@@ -179,7 +179,7 @@ def site_needs():
 ```
 
 `sensitive_data.requires` is what an agent must be to work with your sensitive data
-(`handles_sensitive`: a connected site for your site says `data: sensitive`;
+(`handles_sensitive`: a host site for your site says `data: sensitive`;
 `runner_flag`: its turns run on a runner with that flag), and
 `uses.sensitive_data_agents` names the agents you let near it. **The pages and
 scopes in `site.json` are informational for canopy:** it shows them to the site's

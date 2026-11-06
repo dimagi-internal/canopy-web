@@ -57,7 +57,7 @@ EVENTS_WRITE = "events.write"
 # --- admin: running the workspace -----------------------------------------------
 
 #: Read the workspace's LOGS: the event log, every turn's prompt, ledger, raw
-#: transcript and caller context, stuck turns, runner drills, connected-site
+#: transcript and caller context, stuck turns, runner drills, host-site
 #: health. Below admin you read the turns you started, and the chats you are in.
 LOGS_READ = "logs.read"
 
@@ -65,7 +65,7 @@ LOGS_READ = "logs.read"
 #: remove members — always strictly BELOW your own role (`may_manage_member`).
 MEMBERS_MANAGE = "members.manage"
 
-#: The workspace's integrations: inbound mailboxes and push config, connected
+#: The workspace's integrations: inbound mailboxes and push config, host
 #: sites (create, edit, test, read health), Slack history and sync.
 INTEGRATIONS = "integrations"
 

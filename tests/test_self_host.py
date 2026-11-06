@@ -1,7 +1,7 @@
 """canopy-web as a HOST of its own MCP, end to end, in process.
 
 `apps/host_grants/self_host.py`: agents on canopy's own pages call canopy's own
-`/api/mcp/` AS THE VISITOR, through the same host grant contract a connected
+`/api/mcp/` AS THE VISITOR, through the same host grant contract a host
 site implements. Every step runs the real code on both sides:
 
 1. **Issue.** canopy's own widget mints at `POST /api/embed/token?page=…`; for a
@@ -271,7 +271,7 @@ def test_a_configured_pem_signing_key_is_the_one_published(world):
 
 
 def test_canopy_publishes_its_own_site_document_like_any_host(world):
-    """The `canopy-web` Connected site fills from canopy's own signed site.json,
+    """The `canopy-web` host site fills from canopy's own signed site.json,
     found from its address alone, exactly as any other site's is."""
     from apps.host_grants import site_needs
 

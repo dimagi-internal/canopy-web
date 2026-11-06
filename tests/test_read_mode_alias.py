@@ -73,7 +73,7 @@ def test_admission_matches_read_mode_by_either_name(want, have, expected):
 def test_admission_summary_says_read_mode_for_either_name():
     for name in ("ask", "read"):
         assert "read mode" in admission_rules.summary(_rule(capability=name))
-    assert "connected site canopy" in admission_rules.summary(_rule(capability="canopy"))
+    assert "host site canopy" in admission_rules.summary(_rule(capability="canopy"))
 
 
 @pytest.mark.django_db

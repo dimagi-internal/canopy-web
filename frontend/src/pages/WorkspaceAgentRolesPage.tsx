@@ -270,7 +270,7 @@ export function WorkspaceAgentRolesPage(): JSX.Element {
                 onChange={(e) => setWrite(e.target.checked)} />
               <span>Drive the whole agent</span>
               <span className="text-muted-foreground">
-                {writeBlocked ? '(only a workspace owner can define a role that does)' : 'includes read mode and every connected site'}
+                {writeBlocked ? '(only a workspace owner can define a role that does)' : 'includes read mode and every host site'}
               </span>
             </label>
             <label className={`flex items-baseline gap-2 text-[12px] ${writeBlocked ? 'text-muted-foreground' : 'text-foreground'}`}>
@@ -280,10 +280,10 @@ export function WorkspaceAgentRolesPage(): JSX.Element {
               <span className="text-muted-foreground">includes driving the agent</span>
             </label>
             <label className="flex items-baseline gap-2 text-[12px] text-foreground">
-              <span>Use only from these connected sites</span>
-              <input value={draft.sites} aria-label="Connected sites" placeholder="connect, report" className={`${FIELD} w-56`}
+              <span>Use only from these host sites</span>
+              <input value={draft.sites} aria-label="Host sites" placeholder="connect, report" className={`${FIELD} w-56`}
                 onChange={(e) => setDraft((d) => d && { ...d, sites: e.target.value })} />
-              <span className="text-muted-foreground">the names of an agent's connected sites</span>
+              <span className="text-muted-foreground">the names of an agent's host sites</span>
             </label>
           </fieldset>
           <p className="m-0 text-[11px] text-muted-foreground">

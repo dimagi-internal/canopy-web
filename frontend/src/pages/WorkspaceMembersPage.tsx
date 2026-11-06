@@ -49,7 +49,7 @@ const ROLE_HELP: { role: string; text: string }[] = [
   },
   {
     role: 'Owner',
-    text: "Holds the keys: the shared vault, the Slack app, connected sites, deleting the workspace — and is every agent's admin. Gets the workspace's alert and access-request email.",
+    text: "Holds the keys: the shared vault, the Slack app, host sites, deleting the workspace — and is every agent's admin. Gets the workspace's alert and access-request email.",
   },
   {
     role: 'Superuser',

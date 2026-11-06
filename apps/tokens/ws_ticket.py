@@ -3,7 +3,7 @@
 A browser cannot put an `Authorization` header on `new WebSocket()`, so a page
 that holds a delegated or contact token used to put the token itself on the URL
 (`?token=`). URLs are written to access logs — the load balancer's and the
-container's — so every chat a connected site opened left a live token in a log
+container's — so every chat a host site opened left a live token in a log
 line. A ticket is what goes there instead: the page trades its token for one
 over REST (where the token rides a header), and opens the socket with
 `?ticket=`. A ticket lives for TICKET_TTL_SECONDS and is spent by the first
@@ -11,7 +11,7 @@ socket that presents it, so one found in a log is already worthless.
 
 The ticket names the token it was minted from and nothing else, and redeeming
 it hands the WebSocket handshake that same token — so a ticketed socket gets
-exactly the identity, connected site, runner requirements and assurance the
+exactly the identity, host site, runner requirements and assurance the
 token itself would have given it, decided by the same code
 (`apps.realtime.channels_auth`).
 

@@ -74,12 +74,12 @@ def test_a_child_sees_its_roots_roles_and_a_stranger_gets_404(w):
     assert {x["key"] for x in r.json()["roles"]} == {"editor", "read_write", "read_only"}
 
 
-def test_an_admin_defines_a_connected_site_role_and_it_is_one_audited_change(w):
+def test_an_admin_defines_a_host_site_role_and_it_is_one_audited_change(w):
     r = _json(_c(w["radmin"]), "post", BASE, SITE_ROLE)
     assert r.status_code == 201, r.content
     out = r.json()
     assert out["key"] == "connector" and out["permissions"] == ["read", "use:connect"] and not out["builtin"]
-    assert any("use it from the 'connect' connected site" in c for c in out["can"])
+    assert any("use it from the 'connect' host site" in c for c in out["can"])
     change = SettingChange.objects.get()
     assert change.changes[0]["scope"] == "agent-roles:dimagi:connector"
     assert "0 access-list line(s)" in change.summary

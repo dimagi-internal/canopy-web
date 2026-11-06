@@ -23,7 +23,7 @@ handshake that makes the redemption trustworthy:
 
 **What neither key can do is the point.** The canopy-minted on-behalf-of
 assertion this replaces had canopy sign "this is Gillian" with a key a host
-trusted — whoever held it could sign for anyone at every connected site. Here a
+trusted — whoever held it could sign for anyone at every host site. Here a
 host trusts canopy's keys only to say "this request is canopy", and a grant
 naming a user is signed by the HOST's key, which never leaves the host.
 
@@ -119,7 +119,7 @@ def thumbprint(jwk: dict) -> str:
 def public_base() -> str:
     """canopy's protocol identity: CANOPY_IDENTITY_BASE_URL, else the public base.
 
-    Not simply the address people visit — connected sites pin canopy's
+    Not simply the address people visit — host sites pin canopy's
     client_id, so it stays put when that address moves (see base.py)."""
     explicit = (getattr(settings, "CANOPY_IDENTITY_BASE_URL", "") or "").strip()
     return (explicit or getattr(settings, "CANOPY_PUBLIC_BASE_URL", "") or "").strip().rstrip("/")
@@ -236,7 +236,7 @@ def sign_sign_off(site_name: str, *, subject: str, sign_off: dict, now: float, j
 
 def credentials() -> consumer.ClientCredentials:
     """canopy's client identity as the SDK's `ClientCredentials` — for the
-    conformance checks a Connected site's "Test connection" runs. Raises
+    conformance checks a host site's "Test connection" runs. Raises
     `ClientIdentityError` when unconfigured."""
     return consumer.ClientCredentials(client_id(), _client_key(), _dpop_key())
 

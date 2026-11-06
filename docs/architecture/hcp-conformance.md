@@ -44,7 +44,7 @@ the reason), **n/a**, or **SHOULD-gap**. Evidence is a code path, or a test in
 | `record.confidence` iff model-inferred | pass | `hcp._check_confidence`; `test_confidence_is_required…` |
 | No HCP vocabulary inside Tier 2 `claim` | n/a | no Tier 2 |
 | Category change only by the person, audited | pass | `hcp.update_entry` refuses non-person; audit detail names both categories |
-| Complete provenance as stored | pass | `provenance_source`, `captured_by` on every row; redaction is response-only. Extension: `record.provenance.site` (`provenance_site`) — the connected site and page an agent was reached through when it recorded the entry; never affects scope, redacted with the 4.4.4 fields (`test_an_entry_recorded_through_a_site_carries_the_site`) |
+| Complete provenance as stored | pass | `provenance_source`, `captured_by` on every row; redaction is response-only. Extension: `record.provenance.site` (`provenance_site`) — the host site and page an agent was reached through when it recorded the entry; never affects scope, redacted with the 4.4.4 fields (`test_an_entry_recorded_through_a_site_carries_the_site`) |
 | Version history; `version` / `previousVersion` | pass | `record_fact(supersedes=…)`; `test_an_update_is_a_new_version…` |
 | Conflict detection both write orders, same category + dimension | pass | `hcp.detect_conflicts` |
 | Conflicted entries withheld from agents, visible to the person | pass | `hcp.servable`; `/people/me` and export include them |

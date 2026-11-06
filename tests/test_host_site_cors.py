@@ -1,4 +1,4 @@
-"""A connected site's page may call canopy's API cross-origin, and nothing else may.
+"""A host site's page may call canopy's API cross-origin, and nothing else may.
 
 ace-web's chat panel calls canopy from the browser with a token it minted. That
 was same-origin while canopy lived at labs.connect.dimagi.com/canopy; at
@@ -27,7 +27,7 @@ def _preflight(client, origin, path="/api/me/"):
 
 
 @pytest.mark.django_db
-def test_a_connected_sites_origin_may_call_the_api_without_cookies(client, site, settings):
+def test_a_host_sites_origin_may_call_the_api_without_cookies(client, site, settings):
     for k, v in PROD.items():
         setattr(settings, k, v)
     resp = _preflight(client, SITE)

@@ -20,7 +20,7 @@ vi.mock('@/workspace/WorkspaceProvider', () => ({
 const { WorkspaceAgentDefaults } = await import('./WorkspaceAgentDefaults')
 
 const LINE: AccessLineOut = {
-  id: 7, scope: 'workspace', scope_workspace: 'connect', kind: 'workspace', who: 'Everyone in connect', role: 'read_only', connected_site: '', include_below: false,
+  id: 7, scope: 'workspace', scope_workspace: 'connect', kind: 'workspace', who: 'Everyone in connect', role: 'read_only', host_site: '', include_below: false,
   user_id: null, subject_workspace: 'connect', at_least: '', domain: '', verified: false, manual_only: false, note: '',
   granted_by_email: null, granted_at: null, can_edit: true, warning: '',
 }

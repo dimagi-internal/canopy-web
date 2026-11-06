@@ -197,11 +197,11 @@ def test_changing_the_tenant_selector_takes_effect_at_once(world):
 
 def test_last_error_says_why_and_a_success_clears_it(host):
     canopy = Asked(host)
-    canopy.refusal = "unknown_issuer: no connected site named 'connect-labs'"
+    canopy.refusal = "unknown_issuer: no host site named 'connect-labs'"
     assert site_agents.current(now=T0, get=canopy) is None
     error = site_agents.last_error()
     assert error.code == "unknown_issuer" and error.status == 401
-    assert "no connected site" in error.message
+    assert "no host site" in error.message
     canopy.refusal = None
     assert site_agents.refresh(now=T0 + 1, get=canopy).agent("labsdata")
     assert site_agents.last_error() is None

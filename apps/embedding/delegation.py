@@ -1,6 +1,6 @@
 """A site acting for a user reaches `site ∩ user` — never the user's whole canopy.
 
-A `DelegatedToken` is what a connected site's widget (or its server) holds when
+A `DelegatedToken` is what a host site's widget (or its server) holds when
 one of its visitors turned out to be an existing canopy user
 (`contact_api.contact_token`, `assurance=host_signed`), and what canopy's own
 widget mints for itself (`/api/embed/token`). It used to authenticate EVERY

@@ -31,7 +31,7 @@ def _user():
 
 
 def _app(name="canopy-web", *, shown=True):
-    """A connected site, optionally the one canopy shows on its own pages.
+    """A host site, optionally the one canopy shows on its own pages.
 
     `shown` is a column now, not a name matched against `EMBED_SELF_APP`. The
     setting is gone: it made canopy a special case, and a name that did not

@@ -174,7 +174,7 @@ def private_runner_of(user, private_runner_id) -> PrivateRunner | None:
 def authorize(agent, user):
     """The person's ACTIVE license for `agent` (`apps/agents/credentials/licenses.py`), issued now
     when the caller list gives them the whole agent. Raises LocalRefusedError
-    otherwise: a confined turn is held to its profile by canopy (read mode or a connected site), not
+    otherwise: a confined turn is held to its profile by canopy (read mode or a host site), not
     something a session on someone's own machine can be held to."""
     from apps.agents.credentials import licenses
 

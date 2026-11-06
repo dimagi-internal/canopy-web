@@ -1,4 +1,4 @@
-"""The interface setting that a connected site handles sensitive data (`data: sensitive`), and what it changes: it is set by
+"""The interface setting that a host site handles sensitive data (`data: sensitive`), and what it changes: it is set by
 the agent's owner or an admin (browser or token), audited like any setting, refused when structurally false; and a phi
 profile, and any turn in a sensitive conversation, is confined for everyone.
 
@@ -69,7 +69,7 @@ def _client(user, stepped_up=True):
 
 
 def _put(c, slug, site=SITE, **body):
-    return c.put(f"/api/agents/{slug}/connected-sites/{site}", data=body, content_type="application/json")
+    return c.put(f"/api/agents/{slug}/host-sites/{site}", data=body, content_type="application/json")
 
 
 def _let_in(agent, who, name):
@@ -92,7 +92,7 @@ def _declare(agent, by, doc=IFACE, who_=WHO):
 # --- refused when structurally false ---------------------------------------------------
 
 
-def test_a_read_only_connected_site_may_say_sensitive():
+def test_a_read_only_host_site_may_say_sensitive():
     out = parse(IFACE)["capabilities"]["data"]
     assert out["data"] == "sensitive"
     assert "data" not in parse(IFACE)["capabilities"]["ask"]
@@ -129,7 +129,7 @@ def test_an_admin_token_can_set_sensitive_and_it_is_audited(w):
     assert r.status_code == 200, r.content
     w["agent"].refresh_from_db()
     assert sensitive_data.handles_sensitive(w["agent"], KEY)
-    [row] = SettingChange.objects.filter(operation="put_connected_site")
+    [row] = SettingChange.objects.filter(operation="put_agent_host_site")
     assert row.actor == w["admin"]
 
 
@@ -154,7 +154,7 @@ def test_a_person_sets_it_and_the_change_is_audited(w):
     w["agent"].refresh_from_db()
     assert sensitive_data.handles_sensitive(w["agent"], KEY)
     assert w["agent"].interface_published_by == w["owner"]
-    [row] = SettingChange.objects.filter(operation="put_connected_site")
+    [row] = SettingChange.objects.filter(operation="put_agent_host_site")
     assert (row.actor, row.via) == (w["owner"], "ui")
     assert row.request["body"]["sensitive"] is True
     [change] = row.changes
@@ -169,12 +169,12 @@ def test_turning_it_off_is_audited_and_takes_the_setting_out(w):
     w["agent"].refresh_from_db()
     assert not sensitive_data.handles_sensitive(w["agent"], KEY)
     assert "data" not in w["agent"].interface["capabilities"][KEY]
-    assert SettingChange.objects.filter(operation="put_connected_site").count() == 2
+    assert SettingChange.objects.filter(operation="put_agent_host_site").count() == 2
 
 
 def test_removing_the_site_turns_it_off(w):
     _declare(w["agent"], w["owner"])
-    assert _client(w["owner"]).delete(f"/api/agents/labsdata/connected-sites/{SITE}").status_code == 200
+    assert _client(w["owner"]).delete(f"/api/agents/labsdata/host-sites/{SITE}").status_code == 200
     w["agent"].refresh_from_db()
     assert not sensitive_data.handles_sensitive(w["agent"], "data")
 
@@ -187,11 +187,11 @@ def test_a_site_that_could_leak_cannot_turn_it_on_and_nothing_is_saved(w):
     assert r.status_code == 422 and "Bash" in r.json()["detail"]
     w["agent"].refresh_from_db()
     assert w["agent"].interface == stored
-    assert SettingChange.objects.filter(operation="put_connected_site").count() == 1
+    assert SettingChange.objects.filter(operation="put_agent_host_site").count() == 1
 
 
 def test_removing_a_site_the_agent_does_not_have_is_a_404(w):
-    assert _client(w["owner"]).delete("/api/agents/labsdata/connected-sites/nope").status_code == 404
+    assert _client(w["owner"]).delete("/api/agents/labsdata/host-sites/nope").status_code == 404
 
 
 # --- confined for everyone ---------------------------------------------------------------

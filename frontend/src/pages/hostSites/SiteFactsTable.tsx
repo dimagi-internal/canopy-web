@@ -1,6 +1,6 @@
 import { useState, type JSX } from 'react'
 import { Button, Input } from 'canopy-ui/ui'
-import { discoverSite, type ConnectedApp, type SiteDiscovery, type SiteFacts } from '@/api/connectedApps'
+import { discoverSite, type HostSite, type SiteDiscovery, type SiteFacts } from '@/api/hostSites'
 import { Td, Th, Tr } from '@/components/DataTable'
 
 const FACT_ROWS: { key: keyof SiteFacts; label: string }[] = [
@@ -93,7 +93,7 @@ export function FillFromSite({
   onSave,
 }: {
   slug: string
-  app: Pick<ConnectedApp, 'id'>
+  app: Pick<HostSite, 'id'>
   busy: boolean
   onSave: (facts: AdoptedFacts) => void
 }): JSX.Element {

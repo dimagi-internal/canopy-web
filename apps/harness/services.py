@@ -52,7 +52,7 @@ def _apply_capability(turn: Turn, requested: str | None = None) -> None:
     THE rule, `apps.agents.turn_context.resolve_turn_context` (docs/architecture/access.md): FULL
     for its owner, admins, canopy's own turns and an editor on its access list (whose
     turn runs manual if their line says so — `turn_mode.editor_cap`); a user or a viewer
-    gets the confined profile their role may use (read mode or a connected site). Its
+    gets the confined profile their role may use (read mode or a host site). Its
     question is kept on the turn (`turn_context.QUEUED_FOR`) and asked again when a runner
     claims it, which runs on that answer (`claim.claim_next_turn`). Anyone
     offered nothing is refused: the turn is written already CANCELLED with the

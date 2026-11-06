@@ -28,7 +28,7 @@ import { SecurityTab } from '@/pages/agents/settings/SecurityTab'
 //
 //   Overview           — what is left to set up, what it is, where it runs, delete
 //   Roles              — owner, its canopy user, access (who has which role), who runs it directly
-//   Channels           — read mode and connected sites, Slack, email, Google account
+//   Channels           — read mode and host sites, Slack, email, Google account
 //   External accounts  — GitHub, its Google mailbox
 //   Security           — its vault (secrets, who can open them, storage and key), then its canopy login
 export function AgentSettingsSection() {

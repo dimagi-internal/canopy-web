@@ -1,4 +1,4 @@
-"""What a connected site asks of canopy's agents (its signed `site.json`), and
+"""What a host site asks of canopy's agents (its signed `site.json`), and
 whether each agent canopy allows there meets it (spec connect-labs
 `2026-10-22-canopy-site-agents-api-design` §2).
 
@@ -14,7 +14,7 @@ It is verified with the site's registered keys (`assertions.keys_for_app`, the
 same that verify its visitor assertions), and `iss` must be the site's name.
 
 `fit` compares it with canopy's own site agents response for the site (`site_agents.
-site_agents_content`), so the Connected sites page and the response the site reads can
+site_agents_content`), so the host sites page and the response the site reads can
 never disagree about an agent.
 """
 from __future__ import annotations
@@ -144,7 +144,7 @@ def fit(document: wire.SiteNeeds, content: dict) -> tuple[list[dict], list[str]]
             links = agent.get("problem_links") or [{"text": p, "url": ""} for p in agent["problems"]]
             if requires.get("handles_sensitive") and not any(
                     c["handles_sensitive"] for c in agent["capabilities"]):
-                why.append({"text": f"{agent['name']} has no connected site for this site that handles "
+                why.append({"text": f"{agent['name']} has no host site for this site that handles "
                                     f"sensitive data", "url": f"{settings_url}#reach"})
             if flag and not agent["runners"]["ready_with"].get(flag):
                 # The site agents API's own link when it has one: it names where to fix it.
@@ -168,9 +168,9 @@ def fit(document: wire.SiteNeeds, content: dict) -> tuple[list[dict], list[str]]
     return rows, [s for s in named if s not in allowed_slugs]
 
 
-# --- the site's own facts: filling a Connected site from its document ----------------
+# --- the site's own facts: filling a host site from its document ----------------
 #
-# A Connected site's registration is a copy of facts the site already knows —
+# A Host site's registration is a copy of facts the site already knows —
 # its origins, where its keys are, its OAuth issuer, its MCP server — and its
 # `site.json` (SDK 0.16+) declares them in a `site` block. `discover` reads that
 # block so the owner can ADOPT the values instead of typing them. It only reads:
@@ -185,7 +185,7 @@ class Discovery:
 
     #: Where the document was read.
     url: str
-    #: The site's Connected-site name (`iss`).
+    #: The site's host-site name (`iss`).
     name: str
     facts: wire.SiteFacts
     #: `registered_keys` — verified with the keys canopy already holds for the
@@ -318,7 +318,7 @@ def discover(address: str = "", *, app=None) -> Discovery:
 
 
 def resource_schemes_for(session) -> dict[str, int | None]:
-    """The URI schemes the session's Connected site declares for its artifacts
+    """The URI schemes the session's host site declares for its artifacts
     (`site.json`'s `site.resource_schemes`), each with the exact length of its result ids
     where the site declares one (`site.resource_id_lengths`), else None: a sensitive
     conversation keeps a host's resource link only under one of these, as
@@ -338,7 +338,7 @@ def resource_schemes_for(session) -> dict[str, int | None]:
 
 def is_site_tool(session, tool: str) -> bool:
     """Whether `tool` (a tool call's name as the transcript writes it) is the session's
-    Connected site's own: canopy's `site_call`, or one of the site's tools the runner
+    Host site's own: canopy's `site_call`, or one of the site's tools the runner
     reached directly (`mcp__<server>__<tool>`) that canopy has indexed for it. Only these
     tools' resource links are kept in a sensitive conversation: a link-shaped answer from
     anything else (a shell, a file read) is the agent's own words, not the site's

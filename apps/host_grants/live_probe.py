@@ -1,4 +1,4 @@
-"""canopy's LIVE PROBE of a Connected site's grant chain — nobody tests it by hand.
+"""canopy's LIVE PROBE of a host site's grant chain — nobody tests it by hand.
 
 "Test connection" (`connection_test.py`) proves a site's documents, keys and
 that it accepts canopy as a client, and stops exactly where a visitor starts: a
@@ -34,8 +34,8 @@ the probe. Probe traffic records no `host_grant.*` Event, so real-traffic health
 that stays broken is one row with a count) and on recovery, and pushes the
 site's workspace owners on the transition — never on every failed run.
 
-**When it runs.** On demand only — Test connection on a Connected site
-(`POST …/connected-apps/{id}/test`). It ran every 30 minutes per site off the
+**When it runs.** On demand only — Test connection on a host site
+(`POST …/host-sites/{id}/test`). It ran every 30 minutes per site off the
 runner reports until 2026-09-29; Jonathan wanted it on demand, and every probe
 mints a real grant and makes real calls at a host, which is not free to do on a
 clock nobody asked for.
@@ -56,7 +56,7 @@ SITE_LOCK_SECONDS = 120
 
 EVENT_SOURCE = "tokens.live_probe"
 
-#: The steps, in order, with the words the Connected sites page shows.
+#: The steps, in order, with the words the host sites page shows.
 STEPS = {
     "probe_issued": "The site issues a probe grant",
     "live_grant_redeemed": "canopy redeems it (jwt-bearer + DPoP)",
@@ -289,7 +289,7 @@ def _event(app, **item) -> None:
 
 
 def _notify(app, *, title: str, body: str) -> int:
-    """Push the site's workspace owners — the people who can fix a Connected
+    """Push the site's workspace owners — the people who can fix a Host
     site. The same channel canopy uses for "the fleet needs you" (`apps/push`);
     a site is not an agent, so there is no agent Inbox to put an ask in."""
     try:
@@ -300,7 +300,7 @@ def _notify(app, *, title: str, body: str) -> int:
 
         # Owners of an ancestor workspace own this one too, and can fix its sites.
         owners = get_user_model().objects.filter(pk__in=wsvc.owner_user_ids(app.workspace_id))
-        url = f"/w/{app.workspace_id}/settings/connected-apps"
+        url = f"/w/{app.workspace_id}/settings/host-sites"
         return sum(push.send_to_user(u, title, body, url) for u in owners)
     except Exception:  # noqa: BLE001
         log.exception("could not notify owners about a live-probe transition")

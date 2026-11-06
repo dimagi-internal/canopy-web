@@ -1,6 +1,6 @@
 """MCP Apps (SEP-1865, `io.modelcontextprotocol/ui`) — canopy as a HOST.
 
-A Connected site's MCP server may attach a View (a `ui://` HTML resource) to a
+A Host site's MCP server may attach a View (a `ui://` HTML resource) to a
 tool. canopy renders that View sandboxed in its chat, and the View's own calls go
 back to the site AS WHOEVER IS LOOKING AT IT. Design and owner decisions:
 `docs/superpowers/specs/2026-10-08-mcp-apps-host-design.md`. The standard is
@@ -12,7 +12,7 @@ This module is the pure half — no network, no request:
   deprecated flat `_meta["ui/resourceUri"]` is deliberately NOT read: the spec
   removes it before GA, and reading it would make a host that only sets the old
   key look supported until the day it silently is not.
-* **The UI tool index.** Per Connected site, which tools carry a View and who may
+* **The UI tool index.** Per host site, which tools carry a View and who may
   call them (`AppCredential.mcp_apps_index`). Refreshed whenever canopy lists the
   host's tools as somebody (the gateway, a View call, a visitor's arrival). It is
   a CACHE for deciding which transcript rows get a View — never an authority:
@@ -246,7 +246,7 @@ def _origin(url: str) -> str | None:
 
 
 def site_origins(app) -> set[str]:
-    """The origins a Connected site has REGISTERED with canopy: the pages that may
+    """The origins a host site has REGISTERED with canopy: the pages that may
     frame its embed, its MCP server, its grant issuer. The only domains a View
     from that site may name in its CSP — anything else is dropped (and logged),
     however the resource declares it."""

@@ -1,4 +1,4 @@
-"""The site's needs: what a connected site asks of canopy's agents, signed
+"""The site's needs: what a host site asks of canopy's agents, signed
 (spec ``2026-10-22-canopy-site-agents-api-design`` §2) — the other half of the site agents API.
 
 The site publishes ``site.json`` beside its ``jwks.json`` (the Django host
@@ -13,7 +13,7 @@ shows them but never enforces them or tells an agent — an agent declares only
 ``sites:`` and ``data: sensitive``, and the site enforces its own page scopes.
 
 It is a compact JWS signed with the site's key (``kid`` in its JWKS), ``typ``
-``canopy-site+jwt``; ``iss`` is the site's Connected-site name::
+``canopy-site+jwt``; ``iss`` is the site's host-site name::
 
     {"v": 1, "iss": "connect-labs", "iat": 1792700000,
      "pages": [{"key": "labs:workflow:run", "title": "A workflow run",
@@ -28,7 +28,7 @@ It is a compact JWS signed with the site's key (``kid`` in its JWKS), ``typ``
               "resource_schemes": ["labs-result"],
               "resource_id_lengths": {"labs-result": 24}}}
 
-``site`` (optional) is the site's own facts — the values canopy's Connected
+``site`` (optional) is the site's own facts — the values canopy's Host
 sites form otherwise has someone type: the origins that frame the panel, where
 its keys are, its OAuth issuer and its MCP server. canopy never applies them on
 its own: the site's owner in canopy reads them back ("Fill from the site") and
@@ -247,7 +247,7 @@ def site_document(site_name: str, *, pages: Sequence[Mapping] = (), sensitive_da
     when empty)."""
     name = str(site_name or "").strip()
     if not name:
-        raise SiteDocumentError("not_configured", "the document needs the site's Connected-site name")
+        raise SiteDocumentError("not_configured", "the document needs the site's host-site name")
     body = _normalize({"pages": list(pages), "sensitive_data": sensitive_data or {}, "uses": uses or {},
                        "site": site})
     return {"v": SITE_DOCUMENT_VERSION, "iss": name, "iat": int(time.time() if now is None else now),

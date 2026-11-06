@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
 
-import { parseOrigins } from './connectedApps/parse'
+import { parseOrigins } from './hostSites/parse'
 
 /**
  * The URL box is the field this page exists for, and the one nobody gets right
@@ -39,7 +39,7 @@ describe('reading the URLs someone actually pastes', () => {
   })
 })
 
-import { parseKeys } from './connectedApps/parse'
+import { parseKeys } from './hostSites/parse'
 
 /**
  * Several keys at once is the normal state during a rotation — publish the new

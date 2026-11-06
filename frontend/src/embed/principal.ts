@@ -3,7 +3,7 @@
  *
  * canopy has two principals now and the frame can hold a token for either: a
  * USER (canopy's own pages, or a host whose visitors have canopy accounts) or a
- * CONTACT (someone a connected site vouched for, with no canopy account at
+ * CONTACT (someone a host site vouched for, with no canopy account at
  * all). They reach entirely different surfaces — `/api/embed/*` versus
  * `/api/contact/*` — so the frame has to know which it has before it asks
  * anything.

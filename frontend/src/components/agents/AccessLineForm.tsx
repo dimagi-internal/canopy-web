@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
 
-import type { AccessLineIn, AccessRoleOut, ConnectedSiteChoiceOut } from '@/api/agents'
+import type { AccessLineIn, AccessRoleOut, HostSiteChoiceOut } from '@/api/agents'
 import {
   ADDRESS_ONLY_KINDS,
   AT_LEAST_OPTIONS,
@@ -16,7 +16,7 @@ import {
 //
 // A line says who has what: a person, everyone in a workspace (optionally also any workspace below
 // it), anyone at an email domain, or a known visitor or sender. What they get is ONE role or,
-// rarely, ONE connected site (picked from the agent's own list). No role is
+// rarely, ONE host site (picked from the agent's own list). No role is
 // pre-selected: it is a choice, not a default. The server decides what it will take; a refusal (422) is shown here,
 // next to the form, in the server's own words. `canGiveWrite` is only a hint (a workspace's default
 // line that drives the whole agent is its owner's call; the server still refuses).
@@ -27,7 +27,7 @@ export function AccessLineForm({
   workspaces,
   canGiveWrite = true,
   submitLabel = 'Add',
-  connectedSites,
+  hostSites,
   onAdd,
 }: {
   roles: readonly AccessRoleOut[]
@@ -35,14 +35,14 @@ export function AccessLineForm({
   workspaces: readonly [string, string][]
   canGiveWrite?: boolean
   submitLabel?: string
-  /** The agent's connected sites, when this form is for one agent: one is picked from this list, by
+  /** The agent's host sites, when this form is for one agent: one is picked from this list, by
    *  its site. Left out (a workspace's defaults, which span agents) the name is typed. */
-  connectedSites?: readonly ConnectedSiteChoiceOut[]
+  hostSites?: readonly HostSiteChoiceOut[]
   /** Resolves when the line is added; rejects with the server's reason. */
   onAdd: (line: AccessLineIn) => Promise<unknown>
 }) {
   const [kind, setKind] = useState<LineKind>('person')
-  // '' = nothing chosen yet; 'connected_site' = one connected site instead of a role.
+  // '' = nothing chosen yet; 'host_site' = one host site instead of a role.
   const [choice, setChoice] = useState<string>('')
   const [site, setSite] = useState('')
   const [includeBelow, setIncludeBelow] = useState(false)
@@ -62,7 +62,7 @@ export function AccessLineForm({
     setKind(next)
     // A role that drives the whole agent is never offered for the address-only kinds: clear it
     // rather than leave a refused choice.
-    if (ADDRESS_ONLY_KINDS.includes(next) && choice !== 'connected_site' && drives(choice, roles)) {
+    if (ADDRESS_ONLY_KINDS.includes(next) && choice !== 'host_site' && drives(choice, roles)) {
       setChoice('')
     }
   }
@@ -73,10 +73,10 @@ export function AccessLineForm({
     setError(null)
     const line: AccessLineIn = {
       kind,
-      role: choice === 'connected_site' || choice === '' ? undefined : choice,
-      connected_site: choice === 'connected_site' ? site.trim() : '',
+      role: choice === 'host_site' || choice === '' ? undefined : choice,
+      host_site: choice === 'host_site' ? site.trim() : '',
       include_below: kind === 'workspace' && includeBelow,
-      manual_only: manualOnly && choice !== 'connected_site',
+      manual_only: manualOnly && choice !== 'host_site',
       verified: true,
       note: '',
       email: kind === 'person' ? email.trim() : undefined,
@@ -102,7 +102,7 @@ export function AccessLineForm({
 
   const whoReady =
     kind === 'person' ? email.trim() !== '' : kind === 'workspace' ? effectiveWorkspace !== '' : kind === 'domain' ? domain.trim() !== '' : true
-  const ready = whoReady && (choice === 'connected_site' ? site.trim() !== '' : choice !== '')
+  const ready = whoReady && (choice === 'host_site' ? site.trim() !== '' : choice !== '')
 
   return (
     <form onSubmit={(e) => void submit(e)} className="flex flex-col gap-2" data-testid="access-line-form" aria-label="Add access">
@@ -176,25 +176,25 @@ export function AccessLineForm({
           )
         })}
         <label className="flex items-baseline gap-2 text-[12px] text-foreground">
-          <input type="radio" name="access-role" value="connected_site" checked={choice === 'connected_site'} onChange={() => setChoice('connected_site')} />
-          <span>One connected site</span>
+          <input type="radio" name="access-role" value="host_site" checked={choice === 'host_site'} onChange={() => setChoice('host_site')} />
+          <span>One host site</span>
           <span className="text-muted-foreground">(rare) they may use it only from that site, and nothing else</span>
         </label>
-        {choice === 'connected_site' && connectedSites !== undefined && (
-          connectedSites.length > 0 ? (
-            <select value={site} onChange={(e) => setSite(e.target.value)} aria-label="Connected site" className={`${FIELD} ml-6 w-56`}>
+        {choice === 'host_site' && hostSites !== undefined && (
+          hostSites.length > 0 ? (
+            <select value={site} onChange={(e) => setSite(e.target.value)} aria-label="Host site" className={`${FIELD} ml-6 w-56`}>
               <option value="">Pick a site…</option>
-              {connectedSites.map((c) => (
+              {hostSites.map((c) => (
                 <option key={c.name} value={c.name}>
                   {c.site || c.name}
                 </option>
               ))}
             </select>
           ) : (
-            <p className="m-0 ml-6 text-[12px] text-muted-foreground">This agent has no connected sites yet.</p>
+            <p className="m-0 ml-6 text-[12px] text-muted-foreground">This agent has no host sites yet.</p>
           )
         )}
-        {choice === 'connected_site' && connectedSites === undefined && (
+        {choice === 'host_site' && hostSites === undefined && (
           <input
             value={site}
             onChange={(e) => setSite(e.target.value)}

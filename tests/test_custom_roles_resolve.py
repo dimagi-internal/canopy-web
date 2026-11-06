@@ -43,7 +43,7 @@ def _line(agent, user, role):
     return AgentGrant.objects.create(agent=agent, kind=AgentGrant.PERSON, user=user, role=role)
 
 
-def test_a_connected_site_role_opens_that_site_and_nothing_else(w):
+def test_a_host_site_role_opens_that_site_and_nothing_else(w):
     make_role(w["root"], "connector", {roles.READ, roles.use("connect")})
     _line(w["agent"], w["siteuser"], "connector")
     d = turn_context.for_asker(w["agent"], w["siteuser"], verified=True, requested="connect")
@@ -52,7 +52,7 @@ def test_a_connected_site_role_opens_that_site_and_nothing_else(w):
     assert d.standing.agent_role == "connector"
 
 
-def test_a_role_holding_write_drives_the_agent_and_carries_read_and_every_connected_site(w):
+def test_a_role_holding_write_drives_the_agent_and_carries_read_and_every_host_site(w):
     make_role(w["root"], "pilot", {roles.WRITE})
     _line(w["agent"], w["writer"], "pilot")
     d = turn_context.for_asker(w["agent"], w["writer"], verified=True)

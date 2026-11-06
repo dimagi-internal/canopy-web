@@ -1,7 +1,7 @@
-"""The words a person reads say read mode, connected site and profile, never door, ask or capability.
+"""The words a person reads say read mode, host site and profile, never door, ask or capability.
 
 `door` and `ask` (as the name of read mode) were a second vocabulary for the same things, and the
-agent sense of `capability` (one entry of an agent's published document) is now a connected site, read
+agent sense of `capability` (one entry of an agent's published document) is now a host site, read
 mode or a profile (`docs/superpowers/specs/2026-11-05-turn-context-design.md` § 2, § 9). The frontend's
 half is `frontend/src/turnContextWords.test.ts`.
 
@@ -69,7 +69,7 @@ MACHINE_PATHS = re.compile(r"/capabilit|/system/|/storyboards|/narratives|/works
                            r"/workspaces/[^/]+/apps|/app/|/harness/runners/\{runner_id\}$")
 
 #: API field names with these words that existed before this guard. None may be added: a new field
-#: says `connected_site`, `read_mode` or `profile`. (Machine capabilities and stored names keep theirs.)
+#: says `host_site`, `read_mode` or `profile`. (Machine capabilities and stored names keep theirs.)
 EXISTING_FIELDS = frozenset({
     # leased machine capabilities and runners
     "AgentCapabilitiesIn.capabilities", "AgentCapabilitiesOut.capabilities", "CapabilityGrantIn.capability",
@@ -94,7 +94,7 @@ EXISTING_FIELDS = frozenset({
 
 
 #: Agent-sense fields that were renamed after this guard was written: the roster's and the topology's
-#: `capabilities`, now `profiles` (read mode or connected sites, by name). Never to come back, under
+#: `capabilities`, now `profiles` (read mode or host sites, by name). Never to come back, under
 #: any schema.
 RETIRED_FIELDS = frozenset({"AgentAccessRowOut.capabilities", "AgentEdgeOut.capabilities"})
 
@@ -173,13 +173,13 @@ def field_names(doc: dict) -> set[str]:
     return out
 
 
-def test_server_text_says_read_mode_and_connected_site():
+def test_server_text_says_read_mode_and_host_site():
     hits = server_text_hits()
-    assert not hits, "say read mode, connected site or profile (spec § 2, § 9):\n" + "\n".join(hits)
+    assert not hits, "say read mode, host site or profile (spec § 2, § 9):\n" + "\n".join(hits)
 
 
 @pytest.mark.django_db
-def test_api_text_says_read_mode_and_connected_site():
+def test_api_text_says_read_mode_and_host_site():
     hits = openapi_text_hits(_openapi())
     assert not hits, ("an API description (and so an MCP tool's) says door, ask or capability:\n"
                       + "\n".join(hits))
@@ -188,7 +188,7 @@ def test_api_text_says_read_mode_and_connected_site():
 @pytest.mark.django_db
 def test_no_new_api_field_is_named_after_them():
     new = field_names(_openapi()) - EXISTING_FIELDS
-    assert not new, f"new API fields named door/ask/capability (say connected_site, read_mode, profile): {sorted(new)}"
+    assert not new, f"new API fields named door/ask/capability (say host_site, read_mode, profile): {sorted(new)}"
 
 
 @pytest.mark.django_db
@@ -228,5 +228,5 @@ def test_the_guard_catches_each_word():
     assert _hits("the document's `capabilities` key") == []
     assert _hits("a leased capability", capability=False) == []
     assert field_names({"components": {"schemas": {"X": {"properties": {
-        "doors": {}, "door_sites": {}, "capability": {}, "review_ask": {}, "connected_site": {}, "task": {}}}}}}) \
+        "doors": {}, "door_sites": {}, "capability": {}, "review_ask": {}, "host_site": {}, "task": {}}}}}}) \
         == {"X.doors", "X.door_sites", "X.capability", "X.review_ask"}

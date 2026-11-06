@@ -1,6 +1,6 @@
 """Site sign-offs' routes (`sign_offs.py`).
 
-A connected site, signed with its own key: `POST /api/sites/sign-offs` asks, and
+A host site, signed with its own key: `POST /api/sites/sign-offs` asks, and
 `GET /api/sites/sign-offs/{id}` reads one request back. The approver, in canopy's web
 app: `GET /api/sign-offs/{id}` shows it, `POST .../approve` (a browser, a person, a
 passkey step-up) and `POST .../decline` decide it.
@@ -40,9 +40,9 @@ from . import client_identity, site_agents
 from . import sign_offs as service
 from .api import _bearer
 
-sites_router = Router(tags=["connected apps"])
-router = Router(tags=["connected apps"])
-embed_router = Router(auth=session_auth, tags=["connected apps"])
+sites_router = Router(tags=["host sites"])
+router = Router(tags=["host sites"])
+embed_router = Router(auth=session_auth, tags=["host sites"])
 
 
 def _verified(request: HttpRequest, *, sign_off_id: str | None = None):
@@ -73,13 +73,13 @@ class SignOffCreatedOut(Schema):
 
 
 @sites_router.post("", auth=None, response={201: SignOffCreatedOut},
-                   summary="A connected site asks a person to approve one action, signed")
+                   summary="A host site asks a person to approve one action, signed")
 @gate("host", kind="request")  # auth=None; a request signed by the site's own registered key IS the credential
 def create_site_sign_off(request: HttpRequest):
     """Ask for a person's passkey approval of ONE action on this site.
 
     `Authorization: Bearer <JWT>` signed by the site's own key: `typ`
-    `canopy-sign-off-request+jwt`, `iss` = `sub` = its Connected-site name, `aud` = this
+    `canopy-sign-off-request+jwt`, `iss` = `sub` = its host-site name, `aud` = this
     URL, at most 60 s, single-use `jti`, `canopy_workspace` / `canopy_agent` as for
     `GET /api/sites/agents`, and `sign_off_request`: `subject` (the account's email),
     `action` (`key`, `title`, `detail`), `site_ref` (the site's id for what waits on
@@ -98,7 +98,7 @@ def create_site_sign_off(request: HttpRequest):
                  "approvers": row.approvers}
 
 
-@sites_router.get("/{sign_off_id}", auth=None, summary="A connected site reads one of its sign-off requests, signed")
+@sites_router.get("/{sign_off_id}", auth=None, summary="A host site reads one of its sign-off requests, signed")
 @gate("host")  # auth=None; a request signed by the site's own registered key IS the credential
 def get_site_sign_off(request: HttpRequest, sign_off_id: str):
     """The state of one request this site made: `{id, state, expires_at, approval}`,
@@ -173,7 +173,7 @@ def _mine(request: HttpRequest, sign_off_id: str) -> SiteSignOff:
 @router.get("/{sign_off_id}", response=SignOffOut, summary="A sign-off request you may decide")
 @gate("sign-off-approver")
 def get_sign_off(request: HttpRequest, sign_off_id: str) -> SignOffOut:
-    """What a connected site asks you to approve: the site, the action in its own
+    """What a host site asks you to approve: the site, the action in its own
     words, the account it is for, and (for an agent's request) which agent. 404 unless
     you may decide it."""
     return SignOffOut(**_out(_mine(request, sign_off_id)))

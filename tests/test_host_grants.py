@@ -392,12 +392,12 @@ def test_the_metadata_url_follows_rfc_8414_path_insertion():
 # --- site config -------------------------------------------------------------------
 
 
-def test_host_config_is_editable_on_the_connected_site_and_checked(site, monkeypatch):
+def test_host_config_is_editable_on_the_host_site_and_checked(site, monkeypatch):
     monkeypatch.setattr(outbound, "refuse_private", lambda host: None)
     c = Client()
     c.force_login(site["owner"])
     grant_step_up(c)  # connecting a site takes a passkey
-    url = f"/api/workspaces/w1/connected-apps/{site['app'].pk}"
+    url = f"/api/workspaces/w1/host-sites/{site['app'].pk}"
     r = c.patch(url, data={"host_issuer": "https://labs.test", "host_mcp_resource":
                            "https://labs.test/mcp/"}, content_type="application/json")
     assert r.status_code == 200, r.content

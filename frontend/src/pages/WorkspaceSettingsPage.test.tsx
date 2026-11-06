@@ -73,7 +73,7 @@ describe('SettingsRedirect', () => {
     ['/w/connect/slack', 'slack', '/w/connect/settings/slack'],
     ['/w/connect/members', 'members', '/w/connect/settings/members'],
     ['/w/connect/inbound', 'inbound', '/w/connect/settings/inbound'],
-    ['/w/connect/connected-apps', 'connected-apps', '/w/connect/settings/connected-apps'],
+    ['/w/connect/host-sites', 'host-sites', '/w/connect/settings/host-sites'],
   ])('sends %s to its section', (from, to, expected) => {
     render(
       <MemoryRouter initialEntries={[from]}>

@@ -765,7 +765,7 @@ export type AccessLineOut = Schemas['AccessLineOut']
 export type AccessLineIn = Schemas['AccessLineIn']
 export type AccessLinePatch = Schemas['AccessLinePatch']
 export type AccessRoleOut = Schemas['AccessRoleOut']
-export type ConnectedSiteChoiceOut = Schemas['ConnectedSiteChoiceOut']
+export type HostSiteChoiceOut = Schemas['HostSiteChoiceOut']
 
 export async function getAccessList(slug: string): Promise<AccessListOut> {
   const res = await apiV2.GET('/api/agents/{slug}/access-list', { params: { path: { slug } } })
@@ -858,10 +858,10 @@ export async function deleteAgentRole(workspace: string, key: string, reassignTo
 
 export type AnsweringProfile = Schemas['AnsweringProfile']
 export type ReadModeSettingOut = Schemas['ReadModeSettingOut']
-export type ConnectedSiteOut = Schemas['ConnectedSiteOut']
-export type ConnectedSitesOut = Schemas['ConnectedSitesOut']
+export type AgentHostSiteOut = Schemas['AgentHostSiteOut']
+export type AgentHostSitesOut = Schemas['AgentHostSitesOut']
 
-// Read mode and connected sites: live state on canopy-web, not a file in the agent's repo. A PUT
+// Read mode and host sites: live state on canopy-web, not a file in the agent's repo. A PUT
 // changes only the fields sent.
 export async function getReadMode(slug: string): Promise<ReadModeSettingOut> {
   const res = await apiV2.GET('/api/agents/{slug}/read-mode', { params: { path: { slug } } })
@@ -878,31 +878,31 @@ export async function resetReadMode(slug: string): Promise<ReadModeSettingOut> {
   return unwrap(res, 'resetReadMode') as unknown as ReadModeSettingOut
 }
 
-export async function listConnectedSites(slug: string): Promise<ConnectedSitesOut> {
-  const res = await apiV2.GET('/api/agents/{slug}/connected-sites', { params: { path: { slug } } })
-  return unwrap(res, 'listConnectedSites') as unknown as ConnectedSitesOut
+export async function listAgentHostSites(slug: string): Promise<AgentHostSitesOut> {
+  const res = await apiV2.GET('/api/agents/{slug}/host-sites', { params: { path: { slug } } })
+  return unwrap(res, 'listAgentHostSites') as unknown as AgentHostSitesOut
 }
 
-export async function putConnectedSite(slug: string, site: string, fields: object): Promise<ConnectedSitesOut> {
-  const res = await apiV2.PUT('/api/agents/{slug}/connected-sites/{site}', {
+export async function putAgentHostSite(slug: string, site: string, fields: object): Promise<AgentHostSitesOut> {
+  const res = await apiV2.PUT('/api/agents/{slug}/host-sites/{site}', {
     params: { path: { slug, site } }, body: fields as never,
   })
-  return unwrap(res, 'putConnectedSite') as unknown as ConnectedSitesOut
+  return unwrap(res, 'putAgentHostSite') as unknown as AgentHostSitesOut
 }
 
-export async function deleteConnectedSite(slug: string, site: string): Promise<ConnectedSitesOut> {
-  const res = await apiV2.DELETE('/api/agents/{slug}/connected-sites/{site}', { params: { path: { slug, site } } })
-  return unwrap(res, 'deleteConnectedSite') as unknown as ConnectedSitesOut
+export async function deleteAgentHostSite(slug: string, site: string): Promise<AgentHostSitesOut> {
+  const res = await apiV2.DELETE('/api/agents/{slug}/host-sites/{site}', { params: { path: { slug, site } } })
+  return unwrap(res, 'deleteAgentHostSite') as unknown as AgentHostSitesOut
 }
 
 export type SettingChangeOut = Schemas['SettingChangeOut']
 
-// The audited changes to this agent's read mode and connected sites, newest first, from any client.
+// The audited changes to this agent's read mode and host sites, newest first, from any client.
 // Admins see everyone's; others see their own. publish_interface, reset_interface and
 // set_capability_sensitive are retired routes: nothing writes them now, but old history rows still
 // carry those names, so they stay.
 const SETTINGS_OPERATIONS = new Set([
-  'put_read_mode', 'reset_read_mode', 'put_connected_site', 'delete_connected_site',
+  'put_read_mode', 'reset_read_mode', 'put_agent_host_site', 'delete_agent_host_site',
   'publish_interface', 'reset_interface', 'set_capability_sensitive',
 ])
 

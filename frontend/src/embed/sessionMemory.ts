@@ -13,7 +13,7 @@
  * - **canopy's own widget** (same-origin). canopy's session cookie rides the
  *   frame's requests, so the person themself is signed in and the person route
  *   answers — real toggles, same as the chat page.
- * - **a connected site** (cross-origin). The token IS the identity, the person
+ * - **a host site** (cross-origin). The token IS the identity, the person
  *   route is refused (403 `not_delegable`), and the widget falls back to the
  *   read-only embed route: the state, plus a link to change it in canopy.
  *

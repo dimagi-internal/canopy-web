@@ -34,7 +34,7 @@ def _serialize(token: PersonalToken) -> dict:
 @router.get("/", response=list[PersonalTokenOut], summary="List my tokens")
 @gate("self")
 def list_tokens(request: HttpRequest) -> list[PersonalTokenOut]:
-    # Tokens an MCP login minted are listed under their connected app instead:
+    # Tokens an MCP login minted are listed under their authorized app instead:
     # they live an hour and are replaced on every refresh.
     qs = (PersonalToken.objects.filter(user=request.user, oauth_grant__isnull=True)
           .order_by("-created_at"))

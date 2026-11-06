@@ -1,4 +1,4 @@
-"""A tenant to register a connected site in, for tests that do not care which.
+"""A tenant to register a host site in, for tests that do not care which.
 
 A site belongs to exactly one workspace (`AppCredential.workspace`), so every
 site needs one — but most tests of delegated tokens, frames or audit are about

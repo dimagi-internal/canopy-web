@@ -5,7 +5,7 @@ use it; and connecting a site is something a person does, not a row an
 administrator edits — every field here fails closed and silently, so a bare
 form produces a widget that never appears with no way to find out why.
 
-`/w/{workspace}/settings/connected-apps` is the surface (`tests/test_connected_apps.py`).
+`/w/{workspace}/settings/host-sites` is the surface (`tests/test_host_sites.py`).
 The admin stays registered because inspecting a row is useful when something
 is broken, and read-only so it cannot become the management path.
 """

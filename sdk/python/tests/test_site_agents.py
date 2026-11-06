@@ -274,7 +274,7 @@ def test_an_overlong_workspace_is_refused_before_signing(world):
 
 
 @pytest.mark.parametrize("detail,code", [
-    ("unknown_issuer: no connected site named 'connect-labs'", "unknown_issuer"),
+    ("unknown_issuer: no host site named 'connect-labs'", "unknown_issuer"),
     ("ambiguous_issuer: more than one workspace has a site named 'connect-labs'", "ambiguous_issuer"),
     ("workspace_mismatch: agent 'ace' is not an agent of workspace 'connect'", "workspace_mismatch"),
     ("", "refused"),
@@ -301,13 +301,13 @@ def test_fetch_site_agents_sends_the_workspace(world):
 
 def test_the_answer_links_the_sites_page_and_each_problems_fix(world):
     content = {**CONTENT, "site": {**CONTENT["site"],
-                                   "settings_url": "https://canopy.example/w/connect/settings/connected-apps#site-7"},
+                                   "settings_url": "https://canopy.example/w/connect/settings/host-sites#site-7"},
                "agents": [{**CONTENT["agents"][1], "problem_links": [
                    {"text": "ACE has no capability naming connect-labs",
                     "url": "https://canopy.example/w/connect/agents/ace/settings#reach"}]}]}
     token = wire.sign_site_agents(world.client.client_key, CLIENT_ID, SITE, content)
     got = wire.verify_site_agents(token, client_id=CLIENT_ID, site_name=SITE, client_keys=world.resolver)
-    assert got.site_settings_url.endswith("/settings/connected-apps#site-7")
+    assert got.site_settings_url.endswith("/settings/host-sites#site-7")
     ace = got.agent("ace")
     assert ace.problem_links == (wire.AgentProblem("ACE has no capability naming connect-labs",
                                                    "https://canopy.example/w/connect/agents/ace/settings#reach"),)

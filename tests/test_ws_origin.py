@@ -48,7 +48,7 @@ async def test_an_unknown_web_page_is_refused(prod):
     assert await _open("https://evil.test") == (False, [403])
 
 
-async def test_a_connected_sites_origin_is_allowed_until_revoked(prod, default_workspace):
+async def test_a_host_sites_origin_is_allowed_until_revoked(prod, default_workspace):
     from asgiref.sync import sync_to_async
 
     app = await sync_to_async(AppCredential.objects.create)(

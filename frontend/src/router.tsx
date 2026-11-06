@@ -20,7 +20,7 @@ import { WalkthroughViewerPage } from './pages/WalkthroughViewerPage'
 import { ReviewPage } from './pages/ReviewPage'
 import { InviteAcceptPage } from './pages/InviteAcceptPage'
 import { PairRunnerPage } from './pages/PairRunnerPage'
-import { ConnectedAppsPage } from './pages/ConnectedAppsPage'
+import { HostSitesPage } from './pages/HostSitesPage'
 import { WorkspaceSecretsPage } from './pages/WorkspaceSecretsPage'
 import { WorkspaceRetentionPage } from './pages/WorkspaceRetentionPage'
 import { WorkspaceTaskSettingsPage } from './pages/WorkspaceTaskSettingsPage'
@@ -383,7 +383,7 @@ export const routeTable: RouteObject[] = [
           { path: 'slack', element: <SlackSettingsPage /> },
           { path: 'inbound', element: <InboundPushPage /> },
           { path: 'email', element: <WorkspaceEmailPage /> },
-          { path: 'connected-apps', element: <ConnectedAppsPage /> },
+          { path: 'host-sites', element: <HostSitesPage /> },
           // The OAuth apps (Salesforce, Google) the workspace's people and agents connect with.
           { path: 'connections', element: <WorkspaceConnectionAppsSection /> },
           { path: 'secrets', element: <WorkspaceSecretsPage /> },
@@ -404,7 +404,7 @@ export const routeTable: RouteObject[] = [
       { path: '/w/:workspace/members', element: <SettingsRedirect to="members" /> },
       // One member's page, as the viewer's role lets them see it.
       { path: '/w/:workspace/members/:userId', element: <MemberPage /> },
-      { path: '/w/:workspace/connected-apps', element: <SettingsRedirect to="connected-apps" /> },
+      { path: '/w/:workspace/host-sites', element: <SettingsRedirect to="host-sites" /> },
       { path: '/w/:workspace/inbound', element: <SettingsRedirect to="inbound" /> },
       { path: '/w/:workspace/slack', element: <SettingsRedirect to="slack" /> },
       // The settings sections people name by their own word ("the marshellis
@@ -418,7 +418,7 @@ export const routeTable: RouteObject[] = [
       { path: '/w/:workspace/connections/:id/share', element: <ShareConnectionPage /> },
       // The approve link up.sh prints for a new cloud box (one passkey touch).
       { path: '/w/:workspace/runner-invitations/:invitationId', element: <RunnerInvitationApprovePage /> },
-      // A connected site asking you to approve one action with your passkey: the
+      // A host site asking you to approve one action with your passkey: the
       // `approve_url` it sends you to (apps/host_grants/sign_offs_api.py).
       { path: '/w/:workspace/sign-offs/:signOffId', element: <SignOffPage /> },
       // Is everything in this workspace tree set up right, and how is it used.

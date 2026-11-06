@@ -1,6 +1,6 @@
 import { useState, type JSX } from 'react'
 import { Button } from 'canopy-ui/ui'
-import { testConnectedApp, type ConnectedApp, type ConnectionCheck, type ConnectionTest } from '@/api/connectedApps'
+import { testHostSite, type HostSite, type ConnectionCheck, type ConnectionTest } from '@/api/hostSites'
 import { toneClasses } from 'canopy-ui/lib'
 import { Td, Th, Tr } from '@/components/DataTable'
 
@@ -90,7 +90,7 @@ export function ConnectionTestTable({ result }: { result: ConnectionTest }): JSX
 
 /** "Test connection": runs canopy's conformance checks against this site's
  *  settings, from canopy's server, and shows the table. */
-export function ConnectionTester({ slug, app }: { slug: string; app: ConnectedApp }): JSX.Element {
+export function ConnectionTester({ slug, app }: { slug: string; app: HostSite }): JSX.Element {
   const [result, setResult] = useState<ConnectionTest | null>(null)
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -99,7 +99,7 @@ export function ConnectionTester({ slug, app }: { slug: string; app: ConnectedAp
     setRunning(true)
     setError(null)
     try {
-      setResult(await testConnectedApp(slug, app.id))
+      setResult(await testHostSite(slug, app.id))
     } catch (e) {
       setResult(null)
       setError(e instanceof Error ? e.message : 'Could not test the connection.')

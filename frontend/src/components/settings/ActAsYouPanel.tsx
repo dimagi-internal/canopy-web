@@ -13,7 +13,7 @@ function time(iso: string): string {
  * Act-as-you permissions, in their two forms:
  * - on canopy itself: an agent, in a turn you started, that you let act as you
  *   (read-only or read + write) with a passkey touch, for 30 minutes while its turn runs;
- * - on a connected site: each site whose panel you sent from, letting an agent act as
+ * - on a host site: each site whose panel you sent from, letting an agent act as
  *   you (within your own access) on that page until it runs out.
  * Stop ends either at once.
  */
@@ -58,7 +58,7 @@ export function ActAsYouPanel() {
         <p className="mt-1 text-sm text-muted-foreground">
           An agent can act as you only after you confirm it with your passkey, for 30 minutes:
           on canopy, when an agent in a turn you started asks and you approve (read-only or
-          read + write, only while that turn runs); on a connected site, when you send from its
+          read + write, only while that turn runs); on a host site, when you send from its
           agent panel. Stop ends it now.
         </p>
       </div>
@@ -106,7 +106,7 @@ export function ActAsYouPanel() {
           </table>
         )}
       </div>
-      <h3 className="text-xs font-semibold text-foreground">On connected sites</h3>
+      <h3 className="text-xs font-semibold text-foreground">On host sites</h3>
       {rows === null ? (
         !error && <p className="text-sm text-muted-foreground">Loading…</p>
       ) : rows.length === 0 ? (

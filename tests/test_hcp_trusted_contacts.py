@@ -360,7 +360,7 @@ def test_only_a_superuser_trusts_a_site(world):
     c = Client()
     c.force_login(world["owner"])
     grant_step_up(c)  # connecting a site takes a passkey
-    url = f"/api/workspaces/w1/connected-apps/{world['app'].pk}"
+    url = f"/api/workspaces/w1/host-sites/{world['app'].pk}"
     r = c.patch(url, data={"asserts_verified_email": False}, content_type="application/json")
     assert r.status_code == 403
     root = User.objects.create_superuser("root", "root@dimagi.com", "pw")
@@ -377,7 +377,7 @@ def test_changing_a_trusted_sites_keys_clears_the_trust(world):
     c.force_login(world["owner"])
     grant_step_up(c)  # connecting a site takes a passkey
     _priv, pub = _keypair()
-    r = c.patch(f"/api/workspaces/w1/connected-apps/{world['app'].pk}",
+    r = c.patch(f"/api/workspaces/w1/host-sites/{world['app'].pk}",
                 data={"public_keys": [pub]}, content_type="application/json")
     assert r.status_code == 200, r.content
     assert r.json()["asserts_verified_email"] is False

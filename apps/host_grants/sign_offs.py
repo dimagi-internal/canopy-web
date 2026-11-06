@@ -1,4 +1,4 @@
-"""Site sign-offs: a connected site asks a person to approve ONE action with their
+"""Site sign-offs: a host site asks a person to approve ONE action with their
 passkey (spec `docs/superpowers/specs/2026-10-27-site-sign-offs-design.md`).
 
 The site signs its request with its own key, the one canopy already verifies its
@@ -82,7 +82,7 @@ def verify_request(token: str, *, sign_off_id: str | None = None):
         status = 422 if exc.code == wire.BAD_RETURN_URL else 400 if exc.code in ("malformed", "bad_alg") else 401
         raise SiteAgentsRefused(exc.code, exc.message, status) from exc
     if claims.get("iss") != app.name:
-        raise SiteAgentsRefused("unknown_issuer", f"no connected site named {claims.get('iss')!r}")
+        raise SiteAgentsRefused("unknown_issuer", f"no host site named {claims.get('iss')!r}")
     return app, claims
 
 

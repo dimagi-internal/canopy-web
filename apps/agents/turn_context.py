@@ -12,7 +12,7 @@ downstream reads the `TurnContext` it returns, so no two of them can disagree.
 An agent's access is decided by two things: who the agent itself trusts without a list (its owner, its
 admins and canopy itself) and its **access list**
 (`apps/agents/grants.py`), which gives everyone else a role. A role is a named bundle of permissions
-(`roles.py`), and a line may instead open one named connected site (`use:<name>`). The resolver runs:
+(`roles.py`), and a line may instead open one named host site (`use:<name>`). The resolver runs:
 
 * **Stage 0, can this session take a message from them.** A preview only: a real turn is already through its send path.
 * **Stage 1, standing**, first match: canopy itself, the agent's own login or an approved dispatch
@@ -58,11 +58,11 @@ FULL, CONFINED, REFUSED = "full", "confined", "refused"
 #: `Profile.kind`, a closed set.
 WHOLE_AGENT = "whole_agent"
 READ_MODE = "read_mode"
-CONNECTED_SITE = "connected_site"
+HOST_SITE = "host_site"
 SESSION_REVIEW = "session_review"
 DENY_ALL = "deny_all"
 NO_AGENT = "no_agent"
-PROFILE_KINDS = frozenset({WHOLE_AGENT, READ_MODE, CONNECTED_SITE, SESSION_REVIEW, DENY_ALL, NO_AGENT})
+PROFILE_KINDS = frozenset({WHOLE_AGENT, READ_MODE, HOST_SITE, SESSION_REVIEW, DENY_ALL, NO_AGENT})
 
 #: What a stage reports when the answer needs something only the claim knows.
 PENDING = "pending"
@@ -159,7 +159,7 @@ class Profile:
     kind: str
     #: What a turn in it is stamped: "" for the whole agent.
     name: str = ""
-    #: The site a `connected_site` serves, None for one with no site.
+    #: The site a `host_site` serves, None for one with no site.
     site: str | None = None
     _agent: object = field(default=None, compare=False, repr=False)
 
@@ -237,7 +237,7 @@ class TurnContext:
     def held_permissions(self) -> list[str]:
         """What the asker holds on this agent for THIS turn (the envelope's `permissions`). A full turn holds
         everything their role or lines give (closed under the dependency rule, so `write` is in it exactly when
-        the turn is full). A confined turn holds `read` and its connected site's `use:<name>` only, even for an owner
+        the turn is full). A confined turn holds `read` and its host site's `use:<name>` only, even for an owner
         a sensitive conversation confined. Someone the rule no longer admits holds nothing, whatever the stamp."""
         reach = self._reach
         if reach is None or reach.access == REFUSED:
@@ -249,7 +249,7 @@ class TurnContext:
             return sorted(held)
         name = self.stamped or reach.name or ""
         if iface_mod.is_read_mode(name):
-            # Read mode is `read`, not a connected site: nothing is named after it (no `use:read`, no
+            # Read mode is `read`, not a host site: nothing is named after it (no `use:read`, no
             # `use:<READ_MODE_STAMP>`).
             return [roles.READ]
         kept = {p for p in held if p == roles.READ or (p.startswith(f"{roles.USE}:") and p != f"{roles.USE}:*")}
@@ -469,7 +469,7 @@ def _rules(agent, asker: Asker, session_ctx, requested, turn, trace: list) -> _R
 def _kind_of(name: str) -> str:
     if name == iface_mod.SESSION_REVIEW:
         return SESSION_REVIEW
-    return READ_MODE if iface_mod.is_read_mode(name) else CONNECTED_SITE
+    return READ_MODE if iface_mod.is_read_mode(name) else HOST_SITE
 
 
 def _site_of(agent, name: str, session_ctx) -> str | None:
@@ -483,7 +483,7 @@ def _site_of(agent, name: str, session_ctx) -> str | None:
 def _profile_of(agent, name: str, session_ctx) -> Profile:
     kind = _kind_of(name)
     return Profile(kind=kind, name=name, _agent=agent,
-                   site=_site_of(agent, name, session_ctx) if kind == CONNECTED_SITE else None)
+                   site=_site_of(agent, name, session_ctx) if kind == HOST_SITE else None)
 
 
 def stamped_profile(agent, stamp: str, session_ctx) -> Profile:

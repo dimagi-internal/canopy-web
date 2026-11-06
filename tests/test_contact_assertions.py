@@ -1,4 +1,4 @@
-"""A connected site vouching for a visitor who has no canopy account.
+"""A host site vouching for a visitor who has no canopy account.
 
 Most of this file is forgeries. That is the point: a signature check is only
 worth having if it refuses, and every JWT vulnerability worth the name comes
@@ -397,7 +397,7 @@ def test_a_key_registered_THROUGH_THE_PAGE_verifies_a_real_assertion():
     admin.force_login(owner)
     grant_step_up(admin)  # connecting a site takes a passkey
     created = admin.post(
-        "/api/workspaces/w1/connected-apps",
+        "/api/workspaces/w1/host-sites",
         data={"name": "connect-labs", "origins": ["https://labs.connect.dimagi.com"],
               "agents": ["echo"], "public_keys": [pub]},
         content_type="application/json",
