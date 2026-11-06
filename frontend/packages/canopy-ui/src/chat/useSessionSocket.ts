@@ -10,6 +10,11 @@ import { newClientId, useSendReceipts } from "./useSendReceipts";
 export { newClientId };
 
 const HEARTBEAT_INTERVAL_MS = 20_000;
+
+/** A page hidden this long, or whose timers stalled this long (the machine slept,
+ *  or the browser froze a hidden tab), may hold a socket that is open in name
+ *  only: nothing more arrives on it and no close ever fires. It is replaced. */
+export const STALE_SOCKET_MS = 30_000;
 const RECONNECT_DELAYS_MS = [1_000, 2_000, 5_000, 10_000];
 /** Close codes that are canopy's ANSWER, not a dropped line: 4003 (you may not
  *  open this conversation — its ACL, the site's agents, or a private one you are
@@ -225,6 +230,8 @@ export function useSessionSocket({
   const [awaitingReply, setAwaitingReply] = useState(false);
 
   const socketRef = useRef<WebSocket | null>(null);
+  // Replaces a socket that may be dead without having closed (the effect below).
+  const recycleRef = useRef<(() => void) | null>(null);
   const stateRef = useRef<SessionState>(INITIAL_STATE);
   const reconnectAttemptRef = useRef(0);
   const heartbeatTimerRef = useRef<number | null>(null);
@@ -382,7 +389,18 @@ export function useSessionSocket({
       if (heartbeatTimerRef.current != null) {
         window.clearInterval(heartbeatTimerRef.current);
       }
+      let lastBeat = Date.now();
       heartbeatTimerRef.current = window.setInterval(() => {
+        // A beat this late means the page's timers stalled (the machine slept,
+        // or the browser froze the page): the socket may be dead without
+        // having closed. Replace it rather than beat into it.
+        const now = Date.now();
+        const stalled = now - lastBeat >= HEARTBEAT_INTERVAL_MS + STALE_SOCKET_MS;
+        lastBeat = now;
+        if (stalled && !(typeof document !== "undefined" && document.hidden)) {
+          recycleRef.current?.();
+          return;
+        }
         send({ action: "presence.heartbeat", data: {} });
       }, HEARTBEAT_INTERVAL_MS);
     };
@@ -465,6 +483,55 @@ export function useSessionSocket({
       }
     };
   }, [connect]);
+
+  // A dead socket that never closes is the one failure `onclose` cannot see: the
+  // chat then shows its last state forever — a reply still "Thinking…" long after
+  // it finished. The server does not answer heartbeats, so silence alone proves
+  // nothing on a quiet chat; but after the page was hidden or its timers stalled
+  // for STALE_SOCKET_MS, a fresh socket (whose snapshot is the server's truth)
+  // costs one round trip and settles it.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const recycle = () => {
+      const old = socketRef.current;
+      if (!old || closedByUserRef.current) return;
+      // Drop it outright: a polite close() on a half-open socket waits on the
+      // same dead line, and its late onclose must not schedule a second socket.
+      old.onopen = null;
+      old.onmessage = null;
+      old.onclose = null;
+      old.onerror = null;
+      try { old.close(); } catch { /* already gone */ }
+      socketRef.current = null;
+      snapshotSeenRef.current = false;
+      setConnected(false);
+      rescueAll();
+      if (heartbeatTimerRef.current != null) {
+        window.clearInterval(heartbeatTimerRef.current);
+        heartbeatTimerRef.current = null;
+      }
+      reconnectAttemptRef.current = 0;
+      connect();
+    };
+    recycleRef.current = recycle;
+    let hiddenAt: number | null = document.hidden ? Date.now() : null;
+    const onVisibility = () => {
+      if (document.hidden) {
+        hiddenAt = Date.now();
+        return;
+      }
+      const away = hiddenAt == null ? 0 : Date.now() - hiddenAt;
+      hiddenAt = null;
+      if (away >= STALE_SOCKET_MS) recycle();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("online", recycle);
+    return () => {
+      recycleRef.current = null;
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("online", recycle);
+    };
+  }, [connect, rescueAll]);
 
   const stopChat = useCallback(
     (messageId: string | null) => {
