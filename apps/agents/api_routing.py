@@ -9,6 +9,7 @@ from ninja import Router, Status
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.api.errors import refusals
 from apps.api.route_gates import gate
 from apps.harness import clis, routing, routing_audit, turn_asker
 from apps.harness import runners as harness_runners
@@ -297,7 +298,7 @@ def _route_summary(agent, runners, picks, strict, follows, *, person: str) -> st
     return f"Goes to {picks.runner_name}, from {why}{tail}"
 
 
-@router.put("/{slug}/runners", response=list[AgentRunnerOut],
+@router.put("/{slug}/runners", response={200: list[AgentRunnerOut], **refusals(422)},
             summary="Replace the agent's ordered runner list (index = rank)")
 @gate("agent.work", "runner-admin", setting=True)  # every ADDED runner administered + holdable
 def replace_agent_runners(request: HttpRequest, slug: str, payload: AgentRunnersIn) -> list[AgentRunnerOut]:
@@ -308,7 +309,8 @@ def replace_agent_runners(request: HttpRequest, slug: str, payload: AgentRunners
     Accepts either form (exactly one must be provided — 422 otherwise):
     `runners` (ordered rows, each carrying its own `enabled` — a disabled row
     stays in the list, rank preserved, but never routes) or the legacy
-    `runner_ids` (ordered ids, all implicitly enabled)."""
+    `runner_ids` (ordered ids, all implicitly enabled).
+    Give exactly one of `runner_ids` or `runners`, each rule on a routable source; otherwise 422."""
 
     agent = agent_for_work(request, slug)
 
@@ -569,12 +571,13 @@ def set_agent_runner_rule(
     return list_agent_runner_rules(request, slug)
 
 
-@router.delete("/{slug}/runner-rules/{source}", response={204: None},
+@router.delete("/{slug}/runner-rules/{source}", response={204: None, **refusals(422)},
                summary="Remove one routing rule")
 @gate("agent.work", setting=True)
 def delete_agent_runner_rule(request: HttpRequest, slug: str, source: str, actor: str = ""):
     """Remove the rule for `source` (and `actor`, when given). That work goes back
-    to the next rule down and the agent's default order. Idempotent."""
+    to the next rule down and the agent's default order. Idempotent.
+    A `source` that is not a routable source is a 422."""
 
     agent = agent_for_work(request, slug)
     source, actor = _rule_key_or_422(source, actor)
@@ -650,7 +653,7 @@ def list_agent_actor_routes(request: HttpRequest, slug: str) -> list[AgentActorR
     return sorted(grouped.values(), key=lambda r: (r.actor, r.sources))
 
 
-@router.put("/{slug}/actor-routes/{actor}", response=list[AgentActorRouteOut],
+@router.put("/{slug}/actor-routes/{actor}", response={200: list[AgentActorRouteOut], **refusals(422)},
             summary="Route one person's work to specific runners")
 @gate("agent.work", "runner-admin", setting=True)  # every ADDED runner administered by caller
 def set_agent_actor_route(
@@ -666,6 +669,7 @@ def set_agent_actor_route(
     You may name only runners you administer (you own it, or its owner
     granted you admin) — this decides where work runs, so it is gated on the box,
     not just the agent. Remove a route with DELETE on the same path.
+    An `actor` that is not an email address is a 422.
     """
 
     agent = agent_for_work(request, slug)

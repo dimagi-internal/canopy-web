@@ -1806,7 +1806,10 @@ export interface paths {
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
-        /** Edit a storyboard */
+        /**
+         * Edit a storyboard
+         * @description Decision rows are checked as on create; one that breaks a rule is a 422.
+         */
         readonly patch: operations["patch_storyboard"];
         readonly trace?: never;
     };
@@ -1861,6 +1864,7 @@ export interface paths {
          *     ``comment``. A read-only link can do neither. The caller cannot choose its
          *     own channel or target kind — the server fills those in, so an outsider
          *     cannot file feedback against something this board does not contain.
+         *     A note with no words, or one about something the storyboard does not hold, is a 422.
          */
         readonly post: operations["leave_feedback"];
         readonly delete?: never;
@@ -1883,6 +1887,7 @@ export interface paths {
          * @description Editors only. Pins every narrative's current version and adopts the notes
          *     left since the last round. Needs the board linked to a project in its own
          *     workspace. `ws` (or the `/api/w/<ws>/` pin) picks among same-slug boards.
+         *     A storyboard not yet linked to a board project cannot open a round (422).
          */
         readonly post: operations["open_storyboard_round"];
         readonly delete?: never;
@@ -5409,6 +5414,7 @@ export interface paths {
          * @description For the agent's own login, creating it when the agent has none. See
          *     `services.mint_agent_canopy_token` for who may, and why it never adopts an
          *     existing account.
+         *     An agent with no mailbox address, when none is passed, is a 422.
          */
         readonly post: operations["mint_agent_canopy_token"];
         readonly delete?: never;
@@ -5679,6 +5685,7 @@ export interface paths {
          *     runs as this agent, the same bar the upsert holds `DEFINITION_FIELDS` to. The
          *     cloud boxes that take its turns are asked to re-run their bootstrap, as a
          *     repo change through the upsert does.
+         *     A value that is not a github.com repository is a 422.
          */
         readonly patch: operations["set_repository"];
         readonly trace?: never;
@@ -5805,6 +5812,7 @@ export interface paths {
          *     `runners` (ordered rows, each carrying its own `enabled` — a disabled row
          *     stays in the list, rank preserved, but never routes) or the legacy
          *     `runner_ids` (ordered ids, all implicitly enabled).
+         *     Give exactly one of `runner_ids` or `runners`, each rule on a routable source; otherwise 422.
          */
         readonly put: operations["replace_agent_runners"];
         readonly post?: never;
@@ -5934,6 +5942,7 @@ export interface paths {
          * Remove one routing rule
          * @description Remove the rule for `source` (and `actor`, when given). That work goes back
          *     to the next rule down and the agent's default order. Idempotent.
+         *     A `source` that is not a routable source is a 422.
          */
         readonly delete: operations["delete_agent_runner_rule"];
         readonly options?: never;
@@ -5984,6 +5993,7 @@ export interface paths {
          *     You may name only runners you administer (you own it, or its owner
          *     granted you admin) — this decides where work runs, so it is gated on the box,
          *     not just the agent. Remove a route with DELETE on the same path.
+         *     An `actor` that is not an email address is a 422.
          */
         readonly put: operations["set_agent_actor_route"];
         readonly post?: never;
@@ -6022,6 +6032,7 @@ export interface paths {
          *     and any a workspace defined) or, rarely, one host site (`host_site`, a name from the list's
          *     `host_sites`). A line that names people only by address (domain, contact) can give a role that
          *     only reads or opens host sites, never one that drives or changes the agent.
+         *     A line gives a role or one host site, not both and not neither (422).
          */
         readonly post: operations["add_access_line"];
         readonly delete?: never;
@@ -6078,7 +6089,10 @@ export interface paths {
         };
         /** What someone who may only read gets from this agent */
         readonly get: operations["get_read_mode"];
-        /** Customise read mode: only the fields sent change. dry_run checks without saving */
+        /**
+         * Customise read mode: only the fields sent change. dry_run checks without saving
+         * @description Malformed read paths, or a pinned skill commit that is not a commit sha, are a 422.
+         */
         readonly put: operations["put_read_mode"];
         readonly post?: never;
         /** Put read mode back on canopy's default */
@@ -6350,6 +6364,7 @@ export interface paths {
          *     On the History page, read `current_page` first: it says which skill, group
          *     or commit is selected and the date being looked at. A selected commit's sha
          *     is `commit`; the page's `as_of` date is `until`.
+         *     A `sha` that is not a commit sha is a 422.
          */
         readonly get: operations["skill_history"];
         readonly put?: never;
@@ -6373,6 +6388,7 @@ export interface paths {
          *
          *     Fetched live from GitHub (not stored), truncated to 20 KB. Use it when a
          *     commit message does not say enough about what actually changed.
+         *     A `sha` that is not a commit sha is a 422.
          */
         readonly get: operations["skill_revision_diff"];
         readonly put?: never;
@@ -6835,6 +6851,7 @@ export interface paths {
          *     member wrap, or a device wrap on a runner they own — the CLI enabling as
          *     its device; the owner's member wrap can be granted later). `values` must cover every stored credential,
          *     re-encrypted under the new vault key. Errors are problem+json with an `error` code.
+         *     Wraps that do not start the vault key at kv 1, or do not cover its readers, are a 422.
          */
         readonly post: operations["enable_agent_zk"];
         readonly delete?: never;
@@ -6999,6 +7016,7 @@ export interface paths {
          *     member: its owner as `owner`, its admins as `admin`, everyone else as `role`.
          *     Unlinked, only direct members remain. Refused (409 `vault_needs_an_admin`) when
          *     it would leave the vault with no owner or admin.
+         *     A `role` other than admin or member is a 422.
          */
         readonly put: operations["set_agent_vault_link"];
         readonly post?: never;
@@ -7210,6 +7228,7 @@ export interface paths {
          *     409 `no_machine_can_open` when no machine that runs the agent has an approved device
          *     key yet. A browser needs a fresh passkey step-up (403 `step_up_required`); a token may
          *     call it.
+         *     A blank token, or one GitHub rejects, is a 422.
          */
         readonly put: operations["set_agent_github"];
         readonly post?: never;
@@ -8579,6 +8598,7 @@ export interface paths {
          *     outbound action. `output_schema` must be a valid JSON Schema (422); `input` is at
          *     most 1 MiB as JSON (413). Who may create one: whoever may enqueue a turn for
          *     the agent.
+         *     An `output_schema` that is not a JSON Schema, or a turn the agent's rules refuse, is a 422.
          */
         readonly post: operations["create_agent_task"];
         readonly delete?: never;
@@ -52414,6 +52434,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["StoryboardOut"];
                 };
             };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly storyboards_rotate_token: {
@@ -52488,6 +52517,15 @@ export interface operations {
                     };
                 };
             };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly open_storyboard_round: {
@@ -52510,6 +52548,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RoundOut"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -57775,6 +57822,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentCanopyTokenOut"];
                 };
             };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly give_agent_canopy_login: {
@@ -58111,6 +58167,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentDetailOut"];
                 };
             };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly set_agent_clis: {
@@ -58290,6 +58355,15 @@ export interface operations {
                     readonly "application/json": readonly components["schemas"]["AgentRunnerOut"][];
                 };
             };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly get_agent_default_order: {
@@ -58459,6 +58533,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly list_agent_actor_routes: {
@@ -58506,6 +58589,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["AgentActorRouteOut"][];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -58575,6 +58667,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AccessLineOut"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -58697,6 +58798,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ReadModeSettingOut"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -59236,6 +59346,15 @@ export interface operations {
                     };
                 };
             };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly skill_revision_diff: {
@@ -59261,6 +59380,15 @@ export interface operations {
                     readonly "application/json": {
                         readonly [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -59696,7 +59824,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["DeviceProofRequiredOut"] | components["schemas"]["Problem"];
+                    readonly "application/problem+json": components["schemas"]["DeviceProofRequiredOut"] | components["schemas"]["Problem"];
                 };
             };
             /** @description Conflict */
@@ -59854,6 +59982,15 @@ export interface operations {
             };
             /** @description A value the database cannot store: a NUL character inside free-form JSON. */
             readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
@@ -60078,6 +60215,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["VaultMembersOut"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -60344,6 +60490,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentGitHubOut"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -62244,6 +62399,15 @@ export interface operations {
             };
             /** @description A value the database cannot store: a NUL character inside free-form JSON. */
             readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
                 };

@@ -8,6 +8,7 @@ from ninja import Router
 
 from apps.api.auth import session_auth
 from apps.api.errors import (
+    refusals,
     TYPE_CONFLICT,
     TYPE_VALIDATION,
     ProblemError,
@@ -103,14 +104,15 @@ def remove_agent_vault_member(request: HttpRequest, slug: str, user_id: int) -> 
     return _vault_out(vault, request.user)
 
 
-@router.put("/{slug}/vault/agent-link", response=VaultMembersOut,
+@router.put("/{slug}/vault/agent-link", response={200: VaultMembersOut, **refusals(422)},
             summary="Link the agent's vault to the agent's access list, or unlink it")
 @gate("vault-admin", setting=True, step_up=True)  # browser: + step-up; token allowed
 def set_agent_vault_link(request: HttpRequest, slug: str, payload: VaultAgentLinkIn) -> VaultMembersOut:
     """`{linked, role}`. Linked, everyone with full access to the agent is a
     member: its owner as `owner`, its admins as `admin`, everyone else as `role`.
     Unlinked, only direct members remain. Refused (409 `vault_needs_an_admin`) when
-    it would leave the vault with no owner or admin."""
+    it would leave the vault with no owner or admin.
+    A `role` other than admin or member is a 422."""
 
     agent, vault = agent_vault(request, slug, manage=True)
     try:

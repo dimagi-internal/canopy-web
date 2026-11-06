@@ -92,6 +92,13 @@ def _store_for(request, slug: str, *, write: bool = False) -> tuple[object, RunS
     return agent, resolver.get_run_store(agent)
 
 
+def _run_id_or_404(slug: str, run_id: str) -> None:
+    """A run id is the run's numeric primary key; anything else names no run (404),
+    rather than reaching the database as a value it cannot compare."""
+    if not (run_id.isascii() and run_id.isdecimal() and int(run_id) < 2**63):
+        raise HttpError(404, f"run '{run_id}' not found for agent '{slug}'")
+
+
 def _run_or_404(store: RunStore, slug: str, run_id: str) -> Run:
     try:
         return store.get_run(slug, run_id)
@@ -133,6 +140,7 @@ def create_run(request: HttpRequest, slug: str, payload: RunCreateIn) -> Status:
 @gate("member")
 def get_run(request: HttpRequest, slug: str, run_id: str) -> Run:
     agent, store = _store_for(request, slug)
+    _run_id_or_404(slug, run_id)
     return _run_or_404(store, agent.slug, run_id)
 
 
@@ -140,6 +148,7 @@ def get_run(request: HttpRequest, slug: str, run_id: str) -> Run:
 @gate("member")
 def list_steps(request: HttpRequest, slug: str, run_id: str) -> list[Step]:
     agent, store = _store_for(request, slug)
+    _run_id_or_404(slug, run_id)
     _run_or_404(store, agent.slug, run_id)  # 404 if the run doesn't exist
     return store.list_steps(agent.slug, run_id)
 
@@ -150,6 +159,7 @@ def list_steps(request: HttpRequest, slug: str, run_id: str) -> list[Step]:
 def record_gate(request: HttpRequest, slug: str, run_id: str, step_key: str,
                 payload: GateDecisionIn) -> Status:
     agent, store = _store_for(request, slug, write=True)
+    _run_id_or_404(slug, run_id)
     decided_by = payload.decided_by or getattr(request.user, "email", "")
     try:
         gate = store.record_gate(
@@ -167,6 +177,7 @@ def record_gate(request: HttpRequest, slug: str, run_id: str, step_key: str,
 def record_verdict(request: HttpRequest, slug: str, run_id: str, step_key: str,
                    payload: VerdictIn) -> Status:
     agent, store = _store_for(request, slug, write=True)
+    _run_id_or_404(slug, run_id)
     try:
         verdict = store.record_verdict(
             agent.slug, run_id, step_key,
@@ -182,6 +193,7 @@ def record_verdict(request: HttpRequest, slug: str, run_id: str, step_key: str,
 @gate("agent.work", kind="content")
 def fork_run(request: HttpRequest, slug: str, run_id: str, payload: RunForkIn) -> Status:
     agent, store = _store_for(request, slug, write=True)
+    _run_id_or_404(slug, run_id)
     try:
         summary = store.fork(
             agent.slug, run_id, payload.at_step,

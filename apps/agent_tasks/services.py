@@ -14,6 +14,7 @@ import uuid
 
 import jsonschema
 from django.db import transaction
+from django.db.models import JSONNull
 from django.utils import timezone
 
 from apps.agents.models import AgentSkill
@@ -116,11 +117,14 @@ def create(*, agent, workspace, request, name: str, instructions: str, input, ou
     CANCELLED by `enqueue_turn`) fails the task with the turn's own reason."""
     now = timezone.now()
     with transaction.atomic():
+        # `input` is any JSON, `null` included: a bare None would be SQL NULL, which the column refuses.
         task = AgentTask.objects.create(
-            agent=agent, name=name, instructions=instructions, input=input, output_schema=output_schema,
+            agent=agent, name=name, instructions=instructions,
+            input=JSONNull() if input is None else input, output_schema=output_schema,
             routing=routing, timeout_s=timeout_s, deadline_at=now + dt.timedelta(seconds=timeout_s),
             created_by=request.user if getattr(request.user, "is_authenticated", False) else None,
         )
+        task.input = input
         turn, _created = harness.enqueue_turn(
             agent=agent, workspace=workspace, origin=Turn.ORIGIN_API,
             idempotency_key=f"{KEY_PREFIX}{task.pk}",

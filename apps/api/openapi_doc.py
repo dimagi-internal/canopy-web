@@ -76,7 +76,10 @@ def _problems_as_problem_json(responses: dict[Any, Any]) -> None:
             continue
         content = response.get("content") or {}
         body = content.get("application/json")
-        if body and body.get("schema", {}).get("$ref") == _PROBLEM_REF:
+        schema = (body or {}).get("schema", {})
+        # Problem itself, or a union whose members are problems (`DeviceProofRequiredOut | Problem`).
+        if body and (schema.get("$ref") == _PROBLEM_REF
+                     or _PROBLEM_REF in [m.get("$ref") for m in schema.get("anyOf", [])]):
             response["content"] = {_PROBLEM_JSON: content.pop("application/json"), **content}
 
 

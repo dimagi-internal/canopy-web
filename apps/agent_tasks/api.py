@@ -24,7 +24,7 @@ from ninja import Query, Router, Status
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
-from apps.api.errors import TYPE_CONFLICT, TYPE_PAYLOAD_TOO_LARGE, TYPE_VALIDATION, ProblemError
+from apps.api.errors import TYPE_CONFLICT, TYPE_PAYLOAD_TOO_LARGE, TYPE_VALIDATION, ProblemError, refusals
 from apps.api.route_gates import gate
 from apps.harness import clis, turn_gates
 from apps.harness.schemas import TurnIn
@@ -77,7 +77,7 @@ def _too_large(what: str, limit: int) -> ProblemError:
                         detail=f"{what} is larger than {limit} bytes as JSON")
 
 
-@router.post("/", response={201: AgentTaskCallOut}, summary="Give an agent a task and get a structured result")
+@router.post("/", response={201: AgentTaskCallOut, **refusals(422)}, summary="Give an agent a task and get a structured result")
 @gate("agent.work", kind="turn")  # the same gates as enqueue_turn
 def create_agent_task(request: HttpRequest, payload: AgentTaskCallIn):
     """Ask an agent to do one task and answer with JSON that validates against
@@ -89,7 +89,8 @@ def create_agent_task(request: HttpRequest, payload: AgentTaskCallIn):
     of its skills to use. Read-and-answer only: the agent is told to take no
     outbound action. `output_schema` must be a valid JSON Schema (422); `input` is at
     most 1 MiB as JSON (413). Who may create one: whoever may enqueue a turn for
-    the agent."""
+    the agent.
+    An `output_schema` that is not a JSON Schema, or a turn the agent's rules refuse, is a 422."""
     # A TurnIn for the gates enqueue_turn runs, so this route can never be wider.
     turn_in = TurnIn(agent_slug=payload.agent, origin="api", idempotency_key="agent-task",
                      routing=payload.routing, parent=payload.parent)

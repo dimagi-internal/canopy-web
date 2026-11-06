@@ -48,6 +48,9 @@ from .models import AgentRun, AgentRunStep, AgentRunVerdict
 router = Router(auth=session_auth, tags=["agent-runs"])
 
 RUNNING = "running"
+#: The most iterations a run's state may claim. Each is a mirrored step row, so an
+#: unbounded number was an unbounded loop of writes in one request.
+MAX_ITERATIONS = 1000
 _SLUG = r"^[a-z0-9][a-z0-9-]*$"
 
 
@@ -83,7 +86,8 @@ class RunDocStateIn(StrictModel):
     force: bool = False
     status: str | None = Field(default=None, max_length=40)
     current_step: str | None = Field(default=None, max_length=120)
-    iteration: int | None = Field(default=None, ge=0)
+    # One `iter-<n>` step is mirrored per iteration (`_mirror_iteration`), so it is bounded.
+    iteration: int | None = Field(default=None, ge=0, le=MAX_ITERATIONS)
     score: float | None = None
     summary: dict | None = None
     holder: str = Field(default="", max_length=200)
@@ -197,6 +201,12 @@ def next_ext_id(subject: str, *, min_seq: int = 1, today: dt.date | None = None)
     return f"{prefix}{max([min_seq - 1, *nums]) + 1:03d}"
 
 
+def _state_iteration(state: dict) -> int:
+    """A new run's `state.iteration` to mirror: a whole number up to `MAX_ITERATIONS`, else 0."""
+    value = (state or {}).get("iteration") or 0
+    return value if isinstance(value, int) and 0 <= value <= MAX_ITERATIONS else 0
+
+
 def _mirror_iteration(run: AgentRun, iteration: int | None, score: float | None) -> None:
     """One ``iter-<n>`` step per iteration; the current one running until the run
     ends; its judge verdict carries the iteration's score."""
@@ -307,7 +317,7 @@ def create_run_doc(request: HttpRequest, payload: RunDocCreateIn) -> Status:
                 )
                 _stamp_terminal(run)
                 run.save()
-                _mirror_iteration(run, int(payload.state.get("iteration") or 0), None)
+                _mirror_iteration(run, _state_iteration(payload.state), None)
                 run.save(update_fields=["current_step"])
         except IntegrityError:
             if payload.ext_id:
