@@ -137,3 +137,31 @@ describe('/ide closing the open session', () => {
     await waitFor(() => expect(chat.listSessions.mock.calls.length).toBeGreaterThan(reads))
   })
 })
+
+describe('/ide a session started from another', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {}, removeItem: () => {} })
+    vi.stubGlobal('confirm', () => true)
+    chat.listSessions.mockResolvedValue([
+      session('a', 1),
+      { ...session('k', 2, 'other'), parent_session_id: 'a' },
+    ])
+    chat.closeSession.mockResolvedValue({ ok: true, closing: false, reason: '' })
+    harness.listRunners.mockResolvedValue([])
+    agents.listMyAgents.mockResolvedValue({ items: [] })
+  })
+  afterEach(() => {
+    cleanup()
+    vi.unstubAllGlobals()
+  })
+
+  it('opens its own menu when right-clicked under its parent, not the browser one', async () => {
+    await open('/ide/a')
+    const link = await screen.findByTestId('ide-link-a-k')
+    const notCancelled = fireEvent.contextMenu(link)
+    expect(notCancelled).toBe(false)
+    fireEvent.click(await screen.findByTestId('ide-menu-close'))
+    await waitFor(() => expect(chat.closeSession).toHaveBeenCalledWith('k'))
+  })
+})
