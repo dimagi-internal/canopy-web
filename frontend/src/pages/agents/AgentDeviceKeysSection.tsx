@@ -39,9 +39,6 @@ export function AgentDeviceKeysSection({
   const active = (keys ?? []).filter((k) => k.status === 'active').length
   return (
     <section id="cred-device-keys" className="mb-6" data-testid="agent-device-keys">
-      <h4 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        Machines that can read these secrets
-      </h4>
       <p className="mb-2 text-[12px] text-muted-foreground">
         A machine you approve can read this agent&rsquo;s secrets; one you don&rsquo;t, can&rsquo;t.
       </p>

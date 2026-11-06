@@ -6529,6 +6529,27 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/credentials/shared-vaults": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The workspace vaults this agent's turns also read, and why (names only)
+         * @description Each workspace vault layered under the agent's own, in layering order, with the
+         *     names it holds and why the agent gets it. Never a value.
+         */
+        readonly get: operations["agent_shared_vaults"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/credentials/access": {
         readonly parameters: {
             readonly query?: never;
@@ -31669,6 +31690,28 @@ export interface components {
             readonly values?: {
                 readonly [key: string]: string;
             };
+        };
+        /**
+         * AgentSharedVaultOut
+         * @description A workspace vault this agent's turns read, layered under its own: the agent's page
+         *     lists these so its secrets are never only half the story. Names only, never a value.
+         */
+        readonly AgentSharedVaultOut: {
+            /** Vault Id */
+            readonly vault_id: string;
+            /** Name */
+            readonly name: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Secrets */
+            readonly secrets?: readonly string[];
+            /** Via */
+            readonly via: string;
+            /**
+             * Via Name
+             * @default
+             */
+            readonly via_name: string;
         };
         /**
          * AgentCredentialAccessOut
@@ -58771,6 +58814,28 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["AgentCredentialStatusOut"][];
+                };
+            };
+        };
+    };
+    readonly agent_shared_vaults: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AgentSharedVaultOut"][];
                 };
             };
         };

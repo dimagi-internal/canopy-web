@@ -8,6 +8,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { AuthContext } from '@/auth/AuthProvider'
 
 const m = vi.hoisted(() => ({
+  getAgentSharedVaults: vi.fn(async () => []),
   getAgentCredentialStatus: vi.fn(),
   getAgentGitHub: vi.fn(),
   startGoogleMint: vi.fn(),

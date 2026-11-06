@@ -83,9 +83,12 @@ Every browser-facing address canopy-web serves. The SPA route table is
   vault with no key yet, its first step above everything else: make its key (who
   gets a copy now, and who only once they set up a vault key), then
   collapsible sections — **Secrets** (names only; a value is sealed in the browser),
-  **Who can open them** (people with why each can, and the runners that read it) and
-  **Storage & key** (its key, made with a passkey touch, copies for whoever waits,
-  and what it serves). The old tab addresses open the section that tab became.
+  **Access** — one tab per kind, in a fixed order: People (each with why they can),
+  Agents, Projects and Workspaces (what it is given to, each picked from a real list,
+  with a confirm naming the secrets it gives) and Machines (keepers holding a copy,
+  and runners whose own credentials live here) — and **Encryption key** (one sentence
+  saying what it is, then its version, copies for whoever waits, and changing it).
+  The old tab addresses open the section that tab became.
   Settings → Secrets lists the workspace's vaults and links here.
 
 - **The header** (`frontend/src/components/AppLayout/nav.ts`): **Home** and
@@ -263,12 +266,14 @@ Every browser-facing address canopy-web serves. The SPA route table is
     (`components/vault/VaultEditor.tsx`, a table you Change / Add / Reveal /
     Delete in place (a value can be a file from disk, e.g. a service-account
     JSON), owner-agnostic so other vault pages reuse it; Reveal decrypts locally with the person's vault key, and Save encrypts
-    locally once the agent has one), **Who can open them** (admins: the vault's
-    people with why each can — `docs/architecture/vault.md` — and the machines
-    with approve / revoke), **Storage & key** (the Canopy vault, key copies, zero-knowledge grant / rotate / recover
+    locally once the agent has one; under it, **Also from shared vaults**: each
+    workspace vault its turns read, the names in it and why), **Access** (admins; tabs
+    People — the vault's people with why each can, `docs/architecture/vault.md` —
+    Agents — only itself — and Machines, with approve / revoke), **Encryption key**
+    (the Canopy vault, key copies, zero-knowledge grant / rotate / recover
     with code, every encryption in the browser, the one-time recovery-code
-    dialog, the stated trust caveat) and, only when there are any, **Read
-    alerts**. Sections other than Secrets start closed, open by themselves when
+    dialog, the stated trust caveat) and **Log** (admins: unusual reads; each
+    secret's read history opens from its row). Sections other than Secrets start closed, open by themselves when
     something needs the reader, and open for an old `settings#cred-…` address.
     Then **Canopy login**, what is about the agent and not the vault: its own
     sign-in to canopy (made in one click, stored in the vault; renews itself, with

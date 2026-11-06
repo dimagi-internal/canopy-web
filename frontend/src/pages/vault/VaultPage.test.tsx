@@ -11,6 +11,8 @@ vi.mock('@/api/vault', () => api)
 vi.mock('@/vault/operations', () => ({}))
 vi.mock('@/vault/useVaultUnlock', () => ({ useVaultUnlock: () => ({ unlock: vi.fn(), element: null }) }))
 vi.mock('@/vault/VaultWaiting', () => ({ memberWaiting: () => null, VaultWaitingNote: () => null }))
+vi.mock('@/components/work/useDirectory', () => ({ useDirectory: () => ({ agents: [], projects: [], people: [], labels: [] }) }))
+vi.mock('@/api/workspaces', () => ({ listWorkspaces: vi.fn().mockResolvedValue([]) }))
 
 const { VaultPage } = await import('./VaultPage')
 
@@ -45,28 +47,39 @@ afterEach(() => {
 })
 
 describe('workspace vault page', () => {
+  it('has Secrets, Access (a tab per kind), Encryption key — the same sections an agent\u2019s vault has', async () => {
+    show()
+    await screen.findByTestId('vault-summary')
+    expect(screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent?.split(/(?=[a-z0-9]+ ·|gog)/)[0]))
+      .toEqual(expect.arrayContaining([expect.stringContaining('Secrets'), expect.stringContaining('Access'),
+        expect.stringContaining('Encryption key')]))
+    expect(screen.getAllByRole('tab', { hidden: true }).map((t) => t.textContent))
+      .toEqual(['People2', 'Agents0', 'Projects0', 'Workspaces0', 'Machines1'])
+    expect(screen.getByTestId('vault-key-explainer').textContent).toContain('locked with one key')
+  })
+
   it('opens on a summary of what is in the vault and who can open it', async () => {
     show()
     expect((await screen.findByTestId('vault-summary')).textContent)
       .toBe('Canopy vault · canopy-web can’t read it · 2 secrets · 2 people · 1 machine')
-    expect(screen.getByTestId('vault-section-secrets-summary').textContent).toBe('2 stored')
-    expect(screen.getByTestId('vault-section-access-to-secrets-summary').textContent).toBe('2 people · 1 machine')
+    expect(screen.getByTestId('vault-section-secrets-summary').textContent).toBe('gog-oauth-client, nova-key')
+    expect(screen.getByTestId('vault-section-access-summary').textContent).toBe('2 people · 1 machine')
   })
 
   it('starts on its secrets, with the rest closed', async () => {
     show()
     await screen.findByTestId('vault-view')
-    expect([open('secrets'), open('access-to-secrets'), open('vault-storage')]).toEqual([true, false, false])
+    expect([open('secrets'), open('access'), open('encryption-key')]).toEqual([true, false, false])
   })
 
   it('opens the section an old tab address meant', async () => {
     show('/w/dimagi/vaults/v1/members')
     await screen.findByTestId('vault-view')
-    expect([open('secrets'), open('access-to-secrets'), open('vault-storage')]).toEqual([false, true, false])
+    expect([open('secrets'), open('access'), open('encryption-key')]).toEqual([false, true, false])
     cleanup()
     show('/w/dimagi/vaults/v1/overview')
     await screen.findByTestId('vault-view')
-    expect([open('secrets'), open('access-to-secrets'), open('vault-storage')]).toEqual([false, false, true])
+    expect([open('secrets'), open('access'), open('encryption-key')]).toEqual([false, false, true])
   })
 
   it('puts making its key first, above the sections, when it has none', async () => {
@@ -76,7 +89,7 @@ describe('workspace vault page', () => {
     expect(step.compareDocumentPosition(screen.getByTestId('vault-section-secrets-summary'))
       & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(screen.queryByTestId('vault-attention')).toBeNull()
-    expect(screen.getByTestId('vault-section-vault-storage-summary').textContent).toBe('no key yet')
+    expect(screen.getByTestId('vault-section-encryption-key-summary').textContent).toBe('no key yet')
   })
 
   it('shows no first step once it has a key', async () => {
@@ -89,6 +102,6 @@ describe('workspace vault page', () => {
     const waiting = { ...VAULT, members: [{ ...VAULT.members[0] }, { ...VAULT.members[1], has_copy: false }] }
     show('/w/dimagi/vaults/v1', waiting)
     expect((await screen.findByTestId('vault-attention')).textContent).toContain('1 person is waiting for the key')
-    expect(open('access-to-secrets')).toBe(true)
+    expect(open('access')).toBe(true)
   })
 })

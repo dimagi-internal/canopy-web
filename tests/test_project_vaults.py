@@ -156,6 +156,29 @@ def test_the_vault_layers_between_the_workspaces_and_the_agents_own_attachment(w
     assert _layers(w.hal) == ["Tree", "Shared", "Direct"]   # a later layer wins a name clash
 
 
+def test_the_agents_page_lists_each_shared_vault_it_reads_and_why(w):
+    """The agent's own page names every shared vault its turns read, the names in each and
+    the reason, so its secrets are never half the story (the Salesforce vault an agent read
+    was invisible on its page)."""
+    other = workspace_vaults.create(w.dimagi, "Tree", by=w.jj)
+    direct = workspace_vaults.create(w.connect, "Direct", by=w.jj)
+    VaultSecret.objects.create(vault=direct, name="salesforce", value_zk="zk1.x", kv=1)
+    workspace_vaults.attach(direct, agent=w.hal, by=w.jj)
+    workspace_vaults.attach(w.vault, project=w.proj, by=w.jj)
+    workspace_vaults.attach(other, workspace=w.dimagi, by=w.jj)
+    got = _client(w.jj).get("/api/agents/hal/credentials/shared-vaults").json()
+    assert [(v["name"], v["via"], v["via_name"], v["secrets"]) for v in got] == [
+        ("Tree", "workspace", "dimagi", []),
+        ("Shared", "project", "connect/connect-work", []),
+        ("Direct", "agent", "", ["salesforce"]),
+    ]
+    assert _client(w.jj).get("/api/agents/eve/credentials/shared-vaults").json() == [
+        {"vault_id": str(other.pk), "name": "Tree", "workspace": "dimagi", "secrets": [],
+         "via": "workspace", "via_name": "dimagi"}]
+    outsider = _user("out")
+    assert _client(outsider).get("/api/agents/hal/credentials/shared-vaults").status_code in (403, 404)
+
+
 def test_a_project_that_left_the_vaults_tree_serves_nobody_even_before_any_sweep(w):
     workspace_vaults.attach(w.vault, project=w.proj, by=w.jj)
     # Moved by hand, bypassing `promote_project`: the read still refuses.
