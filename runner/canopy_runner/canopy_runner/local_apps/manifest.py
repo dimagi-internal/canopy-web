@@ -19,7 +19,7 @@ MAX_MINUTES = 480
 
 REQUIRED = ("key", "name", "version", "entry", "platforms", "max_minutes")
 KNOWN = {*REQUIRED, "description", "changelog", "source", "notice",
-         "disclosure", "settings", "checks", "canopy"}
+         "disclosure", "settings", "checks", "canopy", "presentation"}
 
 
 def _text(raw: dict, name: str) -> str:
@@ -92,6 +92,19 @@ def _checks(raw: dict) -> list:
     return out
 
 
+def _presentation(raw: dict) -> dict:
+    """Copy for the menu bar. Looser than the server's: a bad one shows plain text, never fails a run."""
+    value = raw.get("presentation") or {}
+    if not isinstance(value, dict):
+        return {"uses": "", "steps": [], "states": {}}
+    states = value.get("states") if isinstance(value.get("states"), dict) else {}
+    steps = value.get("steps") if isinstance(value.get("steps"), list) else []
+    uses = value.get("uses")
+    return {"uses": uses if isinstance(uses, str) else "",
+            "steps": [s for s in steps if isinstance(s, str)][:4],
+            "states": {str(k): v for k, v in states.items() if isinstance(v, str)}}
+
+
 def validate(raw: dict) -> dict:
     """The manifest with every optional field filled in, or ValueError naming the fault."""
     if not isinstance(raw, dict):
@@ -139,4 +152,5 @@ def validate(raw: dict) -> dict:
         "settings": _settings(raw),
         "checks": _checks(raw),
         "canopy": canopy,
+        "presentation": _presentation(raw),
     }

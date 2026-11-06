@@ -73,6 +73,28 @@ describe('LocalAppDetailPage', () => {
     expect(screen.getByText('Better batches.')).toBeTruthy()
   })
 
+  it('shows what it works with and its steps, naming no agent before one is picked', async () => {
+    getApp.mockResolvedValue({
+      ...APP,
+      presentation: { uses: 'Superwhisper', steps: ['Start your meeting in Superwhisper.', '{agent} comments in a chat.'], states: {} },
+    })
+    listMine.mockResolvedValue([])
+    open()
+    const how = await screen.findByTestId('local-app-how')
+    expect(how.textContent).toContain('Works with Superwhisper')
+    expect(how.textContent).toContain('Start your meeting in Superwhisper.')
+    expect(how.textContent).toContain('Your agent comments in a chat.')
+    expect(how.textContent).not.toContain('{agent}')
+  })
+
+  it('has no steps section for an app that gives none', async () => {
+    getApp.mockResolvedValue(APP)
+    listMine.mockResolvedValue([])
+    open()
+    await screen.findByTestId('local-app-disclosure')
+    expect(screen.queryByTestId('local-app-how')).toBeNull()
+  })
+
   it('is drawn by the same layout as a store app, with its way back to the Personal tab', async () => {
     getApp.mockResolvedValue(APP)
     listMine.mockResolvedValue([])

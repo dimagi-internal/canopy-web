@@ -12,6 +12,7 @@
 
 import AppKit
 import Foundation
+import SwiftUI
 import WebKit
 
 // ── paths + config (shared with the daemon) ──────────────────────────────────────
@@ -1041,6 +1042,10 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindo
     // `list --json` can, so it only runs when the menu is about to be shown, off the main
     // thread, and the submenu draws whatever it last said.
     var experimentalMenu: NSMenu?
+    var startWindow: NSWindow?
+    var runWindow: NSWindow?
+    var runModel: AppRunModel?
+    var runPoll: Timer?
     var localApps: LocalAppList?
     var localAppsLoading = false
     var runningApps = 0
@@ -1110,6 +1115,12 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindo
         let status = NSMenuItem(title: app.statusLine, action: nil, keyEquivalent: "")
         status.isEnabled = false
         sub.addItem(status)
+        if app.running {
+            let show = NSMenuItem(title: "Show status…", action: #selector(showRunWindowFromMenu(_:)), keyEquivalent: "")
+            show.target = self
+            show.representedObject = app.key
+            sub.addItem(show)
+        }
         if let url = app.sessionURL {
             let open = NSMenuItem(title: "Open session…", action: #selector(openAppSession(_:)), keyEquivalent: "")
             open.target = self
@@ -1136,43 +1147,99 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindo
         alert.runModal()
     }
 
-    // Failed checks first, each saying how to fix it; only then the notice; only then start.
+    // The start screen: the checks run first, and a failed one shows there with its fix; then
+    // what the app works with, its steps and its notice; then Start.
     @objc func startApp(_ sender: NSMenuItem) {
-        guard let key = sender.representedObject as? String, let cli = RunnerCLI.load() else { return }
-        let app = localApps?.apps.first { $0.key == key }
+        guard let key = sender.representedObject as? String else { return }
+        openStartWindow(key: key)
+    }
+
+    func openStartWindow(key: String) {
+        guard let cli = RunnerCLI.load(), let app = localApps?.apps.first(where: { $0.key == key }) else { return }
         DispatchQueue.global(qos: .userInitiated).async {
             let answer = cli.run("app", ["check", key, "--json"])
             let failure = LocalAppList.checkFailure(answer.out, code: answer.code)
-            DispatchQueue.main.async {
-                if let failure {
-                    self.showAppAlert("\(app?.name ?? key) isn't ready", failure)
-                    return
-                }
-                self.confirmAndStart(key: key, app: app, cli: cli)
-            }
+            DispatchQueue.main.async { self.showStartWindow(app: app, failure: failure, cli: cli) }
         }
     }
 
-    func confirmAndStart(key: String, app: LocalApp?, cli: RunnerCLI) {
-        let confirm = NSAlert()
-        confirm.messageText = "Start \(app?.name ?? key)?"
-        confirm.informativeText = app?.noticeText ?? ""
-        confirm.addButton(withTitle: "Start")
-        confirm.addButton(withTitle: "Cancel")
+    func showStartWindow(app: LocalApp, failure: String?, cli: RunnerCLI) {
+        startWindow?.close()
+        let view = StartAppView(
+            app: app, failure: failure,
+            onStart: { [weak self] in
+                self?.startWindow?.close()
+                self?.launch(app: app, cli: cli)
+            },
+            onRetry: { [weak self] in
+                self?.startWindow?.close()
+                self?.openStartWindow(key: app.key)
+            },
+            onCancel: { [weak self] in self?.startWindow?.close() })
+        let win = hostWindow(view, title: "Start \(app.name)", floating: false, closable: true)
+        startWindow = win
         NSApp.activate(ignoringOtherApps: true)
-        guard confirm.runModal() == .alertFirstButtonReturn else { return }
+        win.makeKeyAndOrderFront(nil)
+    }
+
+    func launch(app: LocalApp, cli: RunnerCLI) {
         DispatchQueue.global(qos: .userInitiated).async {
-            let (code, out) = cli.run("app", ["start", key, "--accept-notice"])
+            let (code, out) = cli.run("app", ["start", app.key, "--accept-notice"])
             DispatchQueue.main.async {
                 if code != 0 {
-                    self.showAppAlert("\(app?.name ?? key) didn't start",
+                    self.showAppAlert("\(app.name) didn't start",
                                       out.isEmpty ? "The runner reported nothing (exit \(code))."
                                           : out.trimmingCharacters(in: .whitespacesAndNewlines))
+                } else {
+                    self.showRunWindow(app: app)
                 }
                 self.refreshAppStatus()
                 self.refreshLocalApps()
             }
         }
+    }
+
+    // The window that stays up while an app runs, and says how it ended. It has no close
+    // button while running: Stop is how it ends, so a person can't lose track of a live feed.
+    func showRunWindow(app: LocalApp) {
+        if let model = runModel, model.app.key == app.key, let win = runWindow {
+            model.app = app
+            win.makeKeyAndOrderFront(nil)
+            return
+        }
+        runWindow?.close()
+        let model = AppRunModel(app: app, run: AppRun.read(key: app.key) ?? AppRun(running: true, state: "starting"))
+        model.onStop = { [weak self] in self?.runStop([app.key]) }
+        model.onClose = { [weak self] in
+            self?.runWindow?.close()
+            self?.runWindow = nil
+            self?.runModel = nil
+        }
+        runModel = model
+        let win = hostWindow(RunStatusView(model: model), title: app.name, floating: true, closable: false)
+        if let screen = NSScreen.main?.visibleFrame {
+            win.setFrameTopLeftPoint(NSPoint(x: screen.maxX - win.frame.width - 16, y: screen.maxY - 16))
+        }
+        runWindow = win
+        win.orderFrontRegardless()
+        runPoll?.invalidate()
+        runPoll = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+            guard let self, let model = self.runModel else { timer.invalidate(); return }
+            if let run = AppRun.read(key: model.app.key), run != model.run {
+                model.run = run
+                // Finished: it can be closed now, and the badge should catch up.
+                if !run.running {
+                    self.runWindow?.styleMask.insert(.closable)
+                    self.refreshAppStatus()
+                }
+            }
+        }
+    }
+
+    @objc func showRunWindowFromMenu(_ sender: NSMenuItem) {
+        guard let key = sender.representedObject as? String,
+              let app = localApps?.apps.first(where: { $0.key == key }) else { return }
+        showRunWindow(app: app)
     }
 
     @objc func stopApp(_ sender: NSMenuItem) {
@@ -1227,6 +1294,11 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindo
                 if let running {
                     self.runningApps = running
                     self.applyBadge()
+                    // Started from a terminal or before this menu bar launched: still show it.
+                    if running > 0, self.runWindow == nil,
+                       let app = self.localApps?.apps.first(where: { AppRun.read(key: $0.key)?.running == true }) {
+                        self.showRunWindow(app: app)
+                    }
                 }
             }
         }
@@ -1263,6 +1335,8 @@ struct LocalApp {
     let sends: [String]
     let needsAcceptance: Bool
     let changes: [String]
+    let agent: String?
+    let presentation: AppPresentation
 
     init?(_ raw: [String: Any]) {
         guard let key = raw["key"] as? String else { return nil }
@@ -1281,6 +1355,16 @@ struct LocalApp {
         sends = disclosure["sends"] as? [String] ?? []
         needsAcceptance = raw["needs_acceptance"] as? Bool ?? false
         changes = raw["changes"] as? [String] ?? []
+        agent = (raw["agent"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        presentation = AppPresentation(raw["presentation"] as? [String: Any] ?? [:])
+    }
+
+    init(key: String, name: String, version: String, notice: String, reads: [String], sends: [String],
+         agent: String?, presentation: AppPresentation, needsAcceptance: Bool = false, changes: [String] = []) {
+        self.key = key; self.name = name; self.version = version; running = false; unpublished = false
+        refusal = nil; stopReason = nil; sessionURL = nil; self.notice = notice; fullNotice = ""
+        self.reads = reads; self.sends = sends; self.needsAcceptance = needsAcceptance; self.changes = changes
+        self.agent = agent; self.presentation = presentation
     }
 
     var menuTitle: String {
@@ -1348,6 +1432,435 @@ struct LocalAppList {
         let lines = failed.map { "\($0["label"] as? String ?? "A check failed")\nTo fix: \($0["fix"] as? String ?? "")" }
         return lines.isEmpty ? "The checks failed." : lines.joined(separator: "\n\n")
     }
+}
+
+// ── local apps: the start screen and the live status window ────────────────────────
+// A person starting an app should see, at a glance, what it works with, what they'll do,
+// and what leaves their Mac; and while it runs, one window that stays up and says what it
+// is doing right now. Every word here comes from the app's manifest (`presentation`), so
+// nothing about any one app is written into the menu bar.
+
+struct AppPresentation {
+    let uses: String
+    let steps: [String]
+    let states: [String: String]
+
+    init(_ raw: [String: Any]) {
+        uses = raw["uses"] as? String ?? ""
+        steps = (raw["steps"] as? [String] ?? []).filter { !$0.isEmpty }
+        states = raw["states"] as? [String: String] ?? [:]
+    }
+
+    init(uses: String, steps: [String], states: [String: String]) {
+        self.uses = uses; self.steps = steps; self.states = states
+    }
+
+    func fill(_ text: String, agent: String?) -> String {
+        text.replacingOccurrences(of: "{agent}", with: agent ?? "The agent")
+    }
+}
+
+// One run as this Mac knows it, read from the runner's own run.json: no process, no network.
+struct AppRun: Equatable {
+    var running = false
+    var state = ""
+    var lastEvent = ""
+    var stopReason = ""
+    var sessionURL: String?
+    var batches = 0
+    var words = 0
+    var startedAt: Date?
+
+    static func read(key: String) -> AppRun? {
+        let file = canopyDir.appendingPathComponent("apps/\(key)/run.json")
+        guard let data = try? Data(contentsOf: file),
+              let raw = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        var run = AppRun()
+        let stopped = raw["stopped_at"] is NSNumber
+        let pid = (raw["pid"] as? NSNumber)?.int32Value ?? 0
+        run.running = !stopped && pid > 0 && kill(pid, 0) == 0
+        run.state = raw["state"] as? String ?? ""
+        run.lastEvent = raw["last_event"] as? String ?? ""
+        run.stopReason = raw["stop_reason"] as? String ?? (stopped || run.running ? "" : "host_died")
+        run.sessionURL = (raw["session_url"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        let counts = raw["counts"] as? [String: Any] ?? [:]
+        run.batches = (counts["sent"] as? NSNumber)?.intValue ?? 0
+        run.words = (counts["words"] as? NSNumber)?.intValue ?? 0
+        if let t = raw["started_at"] as? NSNumber { run.startedAt = Date(timeIntervalSince1970: t.doubleValue) }
+        return run
+    }
+}
+
+enum RunPhase: Int { case starting, waiting, live, done, failed }
+
+// What the window says. The app's own sentence for its latest step when it has one, else plain words.
+struct RunDescription {
+    let phase: RunPhase
+    let title: String
+    let detail: String
+
+    // Stops that mean the person or the meeting ended it as intended.
+    static let goodEnds: Set<String> = ["meeting_ended", "no_new_speech", "stopped_by_you", "finished"]
+
+    init(run: AppRun, app: LocalApp) {
+        let states = app.presentation.states
+        func say(_ key: String) -> String? { states[key].map { app.presentation.fill($0, agent: app.agent) } }
+        // A state's first line is the headline; anything after a line break is the line under it.
+        func split(_ text: String?) -> (String?, String?) {
+            guard let text else { return (nil, nil) }
+            let parts = text.split(separator: "\n", maxSplits: 1).map(String.init)
+            return (parts.first, parts.count > 1 ? parts[1] : nil)
+        }
+        if run.running {
+            // A source's step leads until the app is live; then the app's own state does.
+            let key = run.state == "listening" ? run.state : (states[run.lastEvent] != nil ? run.lastEvent : run.state)
+            switch key {
+            case "listening": phase = .live
+            case "", "starting": phase = .starting
+            default: phase = .waiting
+            }
+            let (head, sub) = split(say(key))
+            title = head ?? (phase == .live ? "Listening" : "Starting…")
+            if phase == .live {
+                let who = app.agent ?? "the agent"
+                detail = run.words == 0 ? (sub ?? "Nothing sent yet.")
+                    : "\(run.words) words sent to \(who) in \(run.batches) \(run.batches == 1 ? "batch" : "batches")."
+            } else {
+                detail = sub ?? ""
+            }
+        } else {
+            // An app's save_* event is its last word on how a run ended, more specific than the stop.
+            let key = run.lastEvent.hasPrefix("save") && states[run.lastEvent] != nil ? run.lastEvent : run.stopReason
+            phase = RunDescription.goodEnds.contains(run.stopReason) || key.hasPrefix("saved") ? .done : .failed
+            let (head, sub) = split(say(key))
+            title = head ?? (phase == .done ? "Finished" : "Stopped (\(run.stopReason.replacingOccurrences(of: "_", with: " ")))")
+            let sent = run.words > 0 ? "\(run.words) words went to \(app.agent ?? "the agent")." : ""
+            detail = [sent, sub ?? ""].filter { !$0.isEmpty }.joined(separator: "\n")
+        }
+    }
+}
+
+final class AppRunModel: ObservableObject {
+    @Published var app: LocalApp
+    @Published var run: AppRun
+    var onStop: () -> Void = {}
+    var onClose: () -> Void = {}
+
+    init(app: LocalApp, run: AppRun) { self.app = app; self.run = run }
+}
+
+// Colors that hold in light and dark, from the system palette.
+extension RunPhase {
+    var tint: Color {
+        switch self {
+        case .starting, .waiting: return .orange
+        case .live: return .green
+        case .done: return .accentColor
+        case .failed: return .secondary
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .starting: return "hourglass"
+        case .waiting: return "waveform.badge.mic"
+        case .live: return "waveform"
+        case .done: return "checkmark.circle.fill"
+        case .failed: return "stop.circle"
+        }
+    }
+}
+
+struct Chip: View {
+    let symbol: String
+    let text: String
+    var body: some View {
+        Label(text, systemImage: symbol)
+            .font(.system(size: 11, weight: .medium))
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .background(Capsule().fill(Color.primary.opacity(0.07)))
+            .foregroundStyle(.secondary)
+    }
+}
+
+struct AppHeader: View {
+    let app: LocalApp
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(LinearGradient(colors: [Color.accentColor.opacity(0.9), Color.accentColor.opacity(0.6)],
+                                         startPoint: .topLeading, endPoint: .bottomTrailing))
+                Image(systemName: app.presentation.uses.isEmpty ? "app.badge" : "waveform.and.mic")
+                    .font(.system(size: 20, weight: .semibold)).foregroundStyle(.white)
+            }
+            .frame(width: 42, height: 42)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(app.name).font(.system(size: 17, weight: .semibold))
+                HStack(spacing: 6) {
+                    if !app.presentation.uses.isEmpty { Chip(symbol: "mic", text: "With \(app.presentation.uses)") }
+                    if let agent = app.agent { Chip(symbol: "sparkles", text: "Feedback from \(agent)") }
+                }
+            }
+            Spacer(minLength: 0)
+        }
+    }
+}
+
+// The start screen. Checks have already run; a failed one shows here, with its fix, instead of Start.
+struct StartAppView: View {
+    let app: LocalApp
+    let failure: String?
+    let onStart: () -> Void
+    let onRetry: () -> Void
+    let onCancel: () -> Void
+    @State private var showDetails = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            AppHeader(app: app)
+
+            if let failure {
+                // The runner says "<check>\nTo fix: <fix>" per failed check: the fix is what to read.
+                let lines = failure.components(separatedBy: "\n").filter { !$0.isEmpty }
+                let fixes = lines.filter { $0.hasPrefix("To fix: ") }.map { String($0.dropFirst(8)) }
+                Callout(symbol: "exclamationmark.triangle.fill", tint: .orange, title: "Not ready yet",
+                        text: fixes.isEmpty ? failure : fixes.joined(separator: "\n"))
+            } else if !app.presentation.steps.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("How it works").font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
+                    ForEach(Array(app.presentation.steps.enumerated()), id: \.offset) { i, step in
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            Text("\(i + 1)")
+                                .font(.system(size: 11, weight: .bold, design: .rounded))
+                                .frame(width: 20, height: 20)
+                                .background(Circle().fill(Color.accentColor.opacity(0.15)))
+                                .foregroundStyle(Color.accentColor)
+                            Text(app.presentation.fill(step, agent: app.agent))
+                                .font(.system(size: 13)).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+
+            if failure == nil {
+                if !app.notice.isEmpty {
+                    Callout(symbol: "person.2.wave.2.fill", tint: .orange, title: nil, text: app.notice)
+                }
+                if app.needsAcceptance && !app.changes.isEmpty {
+                    Callout(symbol: "arrow.triangle.2.circlepath", tint: .blue,
+                            title: "A newer version is waiting for you to accept it on the app's page",
+                            text: "This runs the version you accepted.")
+                }
+                if !app.reads.isEmpty || !app.sends.isEmpty {
+                    DisclosureGroup(isExpanded: $showDetails) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(app.reads, id: \.self) { Bullet(symbol: "eye", text: $0) }
+                            ForEach(app.sends, id: \.self) { Bullet(symbol: "arrow.up.right", text: $0) }
+                        }
+                        .padding(.top, 6)
+                    } label: {
+                        Text("What it reads and sends").font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel", action: onCancel).keyboardShortcut(.cancelAction)
+                if failure != nil {
+                    Button("Try again", action: onRetry).keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
+                } else {
+                    Button("Start", action: onStart).keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
+                }
+            }
+        }
+        .padding(22)
+        .frame(width: 440)
+    }
+}
+
+struct Callout: View {
+    let symbol: String
+    let tint: Color
+    let title: String?
+    let text: String
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: symbol).foregroundStyle(tint).font(.system(size: 14, weight: .semibold))
+            VStack(alignment: .leading, spacing: 3) {
+                if let title { Text(title).font(.system(size: 13, weight: .semibold)) }
+                Text(text).font(.system(size: 12.5)).foregroundStyle(title == nil ? .primary : .secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(tint.opacity(0.10)))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(tint.opacity(0.25), lineWidth: 1))
+    }
+}
+
+struct Bullet: View {
+    let symbol: String
+    let text: String
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: symbol).font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary).frame(width: 14)
+            Text(text).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+// The window that stays up while an app runs.
+struct RunStatusView: View {
+    @ObservedObject var model: AppRunModel
+    @State private var pulse = false
+
+    var body: some View {
+        let d = RunDescription(run: model.run, app: model.app)
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                Circle().fill(d.phase.tint).frame(width: 8, height: 8)
+                    .opacity(model.run.running ? (pulse ? 0.35 : 1) : 1)
+                    .animation(model.run.running ? .easeInOut(duration: 0.9).repeatForever(autoreverses: true) : .default,
+                               value: pulse)
+                Text(model.app.name).font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
+                Spacer()
+                if let started = model.run.startedAt, model.run.running {
+                    Text(started, style: .timer).font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
+                }
+            }
+
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: d.phase.symbol)
+                    .font(.system(size: 22, weight: .semibold)).foregroundStyle(d.phase.tint).frame(width: 28)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(d.title).font(.system(size: 15, weight: .semibold)).fixedSize(horizontal: false, vertical: true)
+                    if !d.detail.isEmpty {
+                        Text(d.detail).font(.system(size: 12)).foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            PhaseTrack(phase: d.phase, uses: model.app.presentation.uses)
+
+            HStack {
+                if let url = model.run.sessionURL.flatMap(URL.init(string:)) {
+                    Button { NSWorkspace.shared.open(url) } label: { Label("Open chat", systemImage: "bubble.left.and.bubble.right") }
+                }
+                Spacer()
+                if model.run.running {
+                    Button(role: .destructive, action: model.onStop) { Text("Stop") }
+                        .help("Stops listening and saves nothing")
+                } else {
+                    Button("Close", action: model.onClose).keyboardShortcut(.defaultAction)
+                }
+            }
+        }
+        .padding(18)
+        .frame(width: 380)
+        .onAppear { pulse = true }
+    }
+}
+
+struct PhaseTrack: View {
+    let phase: RunPhase
+    let uses: String
+    var body: some View {
+        let labels = ["Waiting", "Listening", phase == .failed ? "Stopped" : "Done"]
+        let reached: Int = {
+            switch phase {
+            case .starting, .waiting: return 0
+            case .live: return 1
+            case .done, .failed: return 2
+            }
+        }()
+        HStack(spacing: 6) {
+            ForEach(0..<3, id: \.self) { i in
+                VStack(alignment: .leading, spacing: 5) {
+                    Capsule().fill(i <= reached ? phase.tint : Color.primary.opacity(0.10)).frame(height: 4)
+                    Text(labels[i]).font(.system(size: 10.5, weight: i == reached ? .semibold : .regular))
+                        .foregroundStyle(i == reached ? .primary : .secondary).lineLimit(1)
+                }
+            }
+        }
+    }
+}
+
+// A window that hosts a SwiftUI view and sizes itself to it.
+func hostWindow<V: View>(_ view: V, title: String, floating: Bool, closable: Bool) -> NSWindow {
+    let host = NSHostingController(rootView: view)
+    var style: NSWindow.StyleMask = [.titled, .fullSizeContentView]
+    if closable { style.insert(.closable) }
+    let win = NSWindow(contentViewController: host)
+    win.styleMask = style
+    win.title = title
+    win.titlebarAppearsTransparent = true
+    win.titleVisibility = .hidden
+    win.isMovableByWindowBackground = true
+    win.isReleasedWhenClosed = false
+    if floating {
+        win.level = .floating
+        win.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+    }
+    win.center()
+    return win
+}
+
+// Renders each screen to PNG, for a reviewer to look at without running an app:
+// `CanopyRunner --render-app-previews <dir>`.
+@MainActor
+func renderAppPreviews(to dir: String) {
+    let presentation = AppPresentation(uses: "Superwhisper", steps: [
+        "Start your meeting in Superwhisper.",
+        "{agent} listens and comments in a chat while you talk.",
+        "End the meeting in Superwhisper and the transcript is saved to your Meetings page.",
+    ], states: [
+        "waiting_for_your_meeting": "Start your meeting in Superwhisper\nIt's picked up as soon as it's recording.",
+        "waiting_for_words": "Recording\nWaiting for the first words.",
+        "listening": "Listening\n{agent} comments in the chat when something's worth saying.",
+        "meeting_ended": "Meeting ended\nSaving the transcript to your Meetings page.",
+        "saved": "Saved to your Meetings page\nOpen it from Meetings to ask {agent} for follow-up.",
+        "no_meeting_started": "No meeting was started\nStart one in Superwhisper, then press Start again.",
+    ])
+    let app = LocalApp(key: "meeting-assistant", name: "Meeting assistant", version: "0.4.2",
+                       notice: "What's said in this meeting leaves your Mac. Tell the people in it.",
+                       reads: ["the transcript and speaker names of the Superwhisper meeting you're recording"],
+                       sends: ["transcript text to the chat it opens, and so to the agent's model provider",
+                               "the whole transcript to your private Meetings page, when the meeting ends"],
+                       agent: "Hal", presentation: presentation)
+    var waiting = AppRun(); waiting.running = true; waiting.state = "waiting_for_words"
+    waiting.lastEvent = "waiting_for_your_meeting"; waiting.startedAt = Date(timeIntervalSinceNow: -12)
+    var live = waiting; live.state = "listening"; live.batches = 3; live.words = 412
+    live.sessionURL = "https://canopy.dimagi.com/s/1"; live.startedAt = Date(timeIntervalSinceNow: -251)
+    var saved = live; saved.running = false; saved.stopReason = "meeting_ended"; saved.lastEvent = "saved"
+    var none = AppRun(); none.stopReason = "no_meeting_started"
+    let noop = {}
+    let screens: [(String, AnyView)] = [
+        ("start", AnyView(StartAppView(app: app, failure: nil, onStart: noop, onRetry: noop, onCancel: noop))),
+        ("start-not-ready", AnyView(StartAppView(app: app, failure: "Superwhisper is open\nTo fix: Open Superwhisper, then press Start again.",
+                                                 onStart: noop, onRetry: noop, onCancel: noop))),
+        ("run-waiting", AnyView(RunStatusView(model: AppRunModel(app: app, run: waiting)))),
+        ("run-listening", AnyView(RunStatusView(model: AppRunModel(app: app, run: live)))),
+        ("run-saved", AnyView(RunStatusView(model: AppRunModel(app: app, run: saved)))),
+        ("run-no-meeting", AnyView(RunStatusView(model: AppRunModel(app: app, run: none)))),
+    ]
+    for scheme in [ColorScheme.light, .dark] {
+        for (name, view) in screens {
+            let framed = view.background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, scheme)
+            let renderer = ImageRenderer(content: framed)
+            renderer.scale = 2
+            guard let image = renderer.nsImage, let tiff = image.tiffRepresentation,
+                  let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { continue }
+            try? png.write(to: URL(fileURLWithPath: dir).appendingPathComponent("\(name)-\(scheme == .dark ? "dark" : "light").png"))
+        }
+    }
+}
+
+if let i = CommandLine.arguments.firstIndex(of: "--render-app-previews"), i + 1 < CommandLine.arguments.count {
+    _ = NSApplication.shared
+    MainActor.assumeIsolated { renderAppPreviews(to: CommandLine.arguments[i + 1]) }
+    exit(0)
 }
 
 if relocateIfNeeded() { exit(0) }

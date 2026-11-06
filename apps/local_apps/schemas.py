@@ -47,6 +47,8 @@ class LocalAppDetailOut(Schema):
     agents: list[dict[str, str]] = []
     computers: list[LocalAppComputerOut] = []
     versions: list[LocalAppVersionOut] = []
+    #: What it works with, its steps and a sentence per state; empty for an app without one.
+    presentation: dict[str, Any] = {}
 
 
 class LocalAppInstallIn(Schema):
@@ -147,6 +149,8 @@ class RunnerLocalAppOut(Schema):
     #: The agent it sends to, by name, so Start can say so.
     agent: str | None = None
     checks: list[dict[str, Any]] = []
+    #: How the menu bar shows it: what it works with, its steps, a sentence per state.
+    presentation: dict[str, Any] = {}
 
 
 class RunnerLocalAppsOut(Schema):

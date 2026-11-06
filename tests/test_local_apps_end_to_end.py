@@ -70,6 +70,10 @@ def world(live_server, tmp_path, monkeypatch):
     cli = bin_dir / "superwhisper"
     cli.write_text(FAKE_CLI.format(python=sys.executable, spoken=SPOKEN))
     cli.chmod(cli.stat().st_mode | stat.S_IEXEC)
+    # "Superwhisper is open" asks pgrep; this machine has no Superwhisper running, so say it does.
+    pgrep = bin_dir / "pgrep"
+    pgrep.write_text("#!/bin/sh\nexit 0\n")
+    pgrep.chmod(pgrep.stat().st_mode | stat.S_IEXEC)
     # The fake comes first on PATH, so a test can never read a real meeting on this machine.
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
@@ -175,6 +179,7 @@ def test_what_the_server_accepts_every_runner_accepts():
     clean = server_manifest.validate(raw)
     assert runner_manifest.validate(clean)["version"] == clean["version"]
     for change in ({"version": "999999.999999.999999.999999"}, {"max_minutes": 480}, {"max_minutes": 1},
-                   {"source": []}, {"changelog": ""}):
+                   {"source": []}, {"changelog": ""},
+                   {"presentation": {"uses": "x" * 40, "steps": ["a"] * 4, "states": {"s" * 40: "t" * 200}}}):
         server_ok = server_manifest.validate({**raw, **change})
         assert runner_manifest.validate(server_ok)

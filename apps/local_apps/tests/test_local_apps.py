@@ -216,6 +216,23 @@ def test_unknown_manifest_keys_are_refused():
         pkg.read(package({**manifest(), "sneaky": True}))
 
 
+PRESENTATION = {"uses": "Superwhisper", "steps": ["Start your meeting in Superwhisper", "{agent} comments in a chat"],
+                "states": {"waiting_for_your_meeting": "Start your meeting in Superwhisper"}}
+
+
+def test_presentation_is_copy_checked_for_shape_and_left_out_of_what_people_accept():
+    m = pkg.read(package({**manifest(), "presentation": PRESENTATION})).manifest
+    assert m["presentation"] == PRESENTATION
+    assert pkg.read(package(manifest())).manifest["presentation"] == {"uses": "", "steps": [], "states": {}}
+    # Rewording a step mustn't make everyone accept again: it isn't what the app reads or sends.
+    reworded = {**PRESENTATION, "steps": ["Open Superwhisper first"]}
+    assert trust.digest(m) == trust.digest({**m, "presentation": reworded})
+    for bad in ({"colour": "red"}, {"steps": ["a", "b", "c", "d", "e"]}, {"states": {"Not A Name": "x"}},
+                {"states": {"ok": ""}}, {"uses": "x" * 41}):
+        with pytest.raises(pkg.BadPackage, match="presentation"):
+            pkg.read(package({**manifest(), "presentation": {**PRESENTATION, **bad}}))
+
+
 # --- submit, approve, release ------------------------------------------------------------
 
 

@@ -32,8 +32,11 @@ TOP_LEVEL = {
     "settings",
     "checks",
     "canopy",
+    "presentation",
 }
 MAX_MINUTES = 480
+#: A step or state name, as an app's events and statuses carry it.
+STATE_NAME = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
 
 
 def _fail(where: str, why: str):
@@ -110,6 +113,31 @@ def _checks(raw) -> list[dict]:
     return out
 
 
+def _presentation(raw) -> dict:
+    """How the menu bar and the app page show the app: copy only, so not part of the trust
+    surface. `steps` may say {agent}, filled with the agent the person chose."""
+    if raw in (None, ""):
+        return {"uses": "", "steps": [], "states": {}}
+    if not isinstance(raw, dict) or set(raw) - {"uses", "steps", "states"}:
+        _fail("presentation", "must be {uses, steps, states}")
+    states = raw.get("states") or {}
+    if not isinstance(states, dict) or len(states) > 40:
+        _fail("presentation.states", "must be an object of at most 40 states")
+    for name, text in states.items():
+        if not STATE_NAME.match(str(name)):
+            _fail(f"presentation.states.{name}", "must be a state name")
+        if not isinstance(text, str) or not text.strip() or len(text) > 200:
+            _fail(f"presentation.states.{name}", "must be non-empty text of at most 200 characters")
+    uses = raw.get("uses", "")
+    if not isinstance(uses, str) or len(uses) > 40:
+        _fail("presentation.uses", "must be text of at most 40 characters")
+    return {
+        "uses": uses.strip(),
+        "steps": _strings("presentation.steps", raw.get("steps"), limit=140, max_items=4),
+        "states": {str(k): v.strip() for k, v in states.items()},
+    }
+
+
 def validate(raw: dict) -> dict:
     """The normalized manifest, or ValueError naming what is wrong."""
     if not isinstance(raw, dict):
@@ -167,4 +195,5 @@ def validate(raw: dict) -> dict:
         "settings": settings,
         "checks": _checks(raw.get("checks")),
         "canopy": canopy,
+        "presentation": _presentation(raw.get("presentation")),
     }

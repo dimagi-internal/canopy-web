@@ -73,7 +73,7 @@ def tool_is_set_up() -> bool:
 def app_is_open() -> bool:
     """Recording needs the app itself running, not just its command-line tool."""
     try:
-        return subprocess.run(["/usr/bin/pgrep", "-x", "superwhisper"], stdin=subprocess.DEVNULL,
+        return subprocess.run([shutil.which("pgrep") or "/usr/bin/pgrep", "-x", "superwhisper"], stdin=subprocess.DEVNULL,
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                               timeout=CONTROL_TIMEOUT_SECONDS).returncode == 0
     except (OSError, subprocess.SubprocessError):

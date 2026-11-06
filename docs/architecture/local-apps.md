@@ -25,6 +25,14 @@ At each Start, the runner runs the newest good version if its **trust surface** 
 - Only a person's own laptop runner (`kind=emdash`, their `owner`). `private` isn't the test, because most laptops also serve fleet work.
 - A web page can install, configure and stop an app, never start one.
 
+## How a person sees it
+
+Start opens a **start screen** in the menu bar app (SwiftUI): what the app works with, its numbered steps, its notice, and what it reads and sends behind a disclosure. A failed check shows there with its fix and a Try again button, instead of Start. While it runs, a small **status window** floats top-right and has no close button, only Stop, so a live feed can't be lost track of. It shows the current step, how much has gone to the agent, a three-part track (waiting, listening, done) and Open chat. When the run ends it says how, and can be closed. It reads `~/.canopy/apps/<key>/run.json` every second, without a process or the network.
+
+Every word on both comes from the manifest's optional `presentation`: `uses` (what it works with, such as Superwhisper), up to four `steps` (`{agent}` is filled with the agent the person chose), and `states`, a sentence for each state, step event or stop reason ("headline\nline under it"). It's copy, so it isn't part of the trust surface: rewording it asks nobody to accept again. The app's page on the website shows the same `uses` and steps. `CanopyRunner --render-app-previews <dir>` draws every screen, in light and dark, to PNG for review.
+
+A runner only runs a manifest whose keys it knows, so a version that adds a new key is published only once runners that know the key have shipped.
+
 ## How a run acts as the person
 
 The app holds no credential. The host calls `/api/harness/runners/{runner}/local-apps/…`, under the runner protocol's existing path, so `runner_auth` gained no new route. Each call is allowed by an installation the person made while signed in. The agent comes from that row, a `sessions.send` reaches only sessions the run opened and still asks the session ACL, and only ops the manifest declares work. Each heartbeat and Canopy call re-checks the version and `turn_context.resolve_turn_context`, including that the person is still in the agent's workspace, so losing access stops a running copy. These runner routes aren't MCP tools, and an agent acting for a person can't install, configure or accept. Runs store numeric counts and ids, never anything said.
