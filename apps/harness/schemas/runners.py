@@ -57,10 +57,12 @@ class RunnerOpenSessionCloseOut(Schema):
 
 
 class RunnerIn(Schema):
-    name: str
-    kind: str  # emdash|cloud|remote|desktop
+    # Bounded to the `Runner` columns' widths.
+    name: str = Field(max_length=100)
+    # `Runner.KIND_CHOICES`.
+    kind: Literal["emdash", "cloud", "remote", "computer"]
     capabilities: dict = {}
-    host: str = ""  # macOS user@hostname — load-bearing for session reuse across accounts
+    host: str = Field(default="", max_length=200)  # macOS user@hostname — load-bearing for session reuse across accounts
     workspace: str = ""  # tenant slug; defaults to the owner's default workspace
 
 

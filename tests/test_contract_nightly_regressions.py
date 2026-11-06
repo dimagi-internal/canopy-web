@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import typing
 import uuid
 
 import jsonschema
@@ -17,9 +18,13 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, override_settings
 
 from apps.api.api import api
+from apps.api.openapi_doc import NO_NUL_PATTERN
 from apps.api.renderers import OrjsonRenderer
 from apps.common.pg_datetime import OffsetSafeDatetimeDumper
+from apps.common.schemas import TRIMMED_PATTERN
 from apps.embedding.jwks import JwksError, _refuse_private
+from apps.harness.models import Runner
+from apps.harness.schemas.runners import RunnerIn
 from apps.tokens.schemas import MAX_TTL_DAYS
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -182,3 +187,43 @@ def test_an_upload_line_that_is_json_but_not_a_record_is_skipped(client):
 def test_a_host_idna_cannot_encode_is_refused_not_a_500():
     with pytest.raises(JwksError):
         _refuse_private("\u00e9\u008f.example")
+
+
+
+# --- round 4 (#2598): what the schema now says, and refusals it declares -----------
+
+
+def test_an_upload_record_of_the_wrong_shape_is_a_422_not_a_500(client):
+    _member_of_fuzz()
+    f = SimpleUploadedFile("t.jsonl", b'{"type": "assistant", "message": 5}\n')
+    r = client.post("/api/w/fuzz/sessions/upload", {"file": f})
+    assert r.status_code == 422, r.content
+
+
+@override_settings(VAPID_PUBLIC_KEY="pub", VAPID_PRIVATE_KEY="priv")
+@pytest.mark.parametrize("endpoint", ["https://[unbalanced/x", "https://\u00e9\u008f.example/x"])
+def test_a_push_endpoint_no_url_parser_or_resolver_reads_is_a_422_not_a_500(client, endpoint):
+    body = {"endpoint": endpoint, "p256dh": "k", "auth": "a"}
+    r = client.post("/api/push/subscribe", data=json.dumps(body), content_type="application/json")
+    assert r.status_code == 422, r.content
+
+
+def test_the_runner_kinds_in_the_schema_are_the_models():
+    kinds = set(typing.get_args(RunnerIn.model_fields["kind"].annotation))
+    assert kinds == {k for k, _ in Runner.KIND_CHOICES}
+
+
+def test_request_text_is_documented_nul_free_and_refusals_as_problem_json():
+    schema = json.loads(json.dumps(api.get_openapi_schema(), default=str))
+    components = schema["components"]["schemas"]
+    # A free-text request string says it holds no NUL; one with its own rule keeps it.
+    assert components["EventIn"]["properties"]["source"]["pattern"] == NO_NUL_PATTERN
+    # A trimmed (StrictModel) required string says it is not blank or padded.
+    assert components["OriginIssueIn"]["properties"]["title"]["pattern"] == TRIMMED_PATTERN
+    # A declared refusal is documented in the media type it is sent as.
+    walkthrough = schema["paths"]["/api/walkthroughs/"]["post"]["responses"]
+    assert list(walkthrough["422"]["content"]) == ["application/problem+json"]
+    # An operation that takes free-form JSON declares the database's 400...
+    assert "400" in schema["paths"]["/api/events/"]["post"]["responses"]
+    # ...and one that takes none does not.
+    assert "400" not in schema["paths"]["/api/tokens/"]["post"]["responses"]

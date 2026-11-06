@@ -40,6 +40,7 @@ from apps.agents.gates import agent_for_read, agent_for_work
 from apps.agents.models import Agent
 from apps.agents.route_refusals import zk_problem
 from apps.api.auth import session_auth
+from apps.api.errors import refusals
 from apps.api.route_gates import gate
 from apps.events import audit
 from apps.harness.runner_queries import runner_or_404
@@ -49,6 +50,10 @@ from apps.workspaces import services as wsvc
 
 from . import services, slot_data
 from .models import AgentCapability, CapabilityGrant, CapabilityLease
+
+_ONE_STATUS = "|".join(["live", *(c for c, _ in CapabilityLease.STATUS_CHOICES)])
+#: `?status=`: one lease status, `live`, or a comma-separated list of them.
+LEASE_STATUS_LIST = rf"^\s*({_ONE_STATUS})\s*(,\s*({_ONE_STATUS})\s*)*$"
 from .schemas import (
     AgentCapabilitiesIn,
     AgentCapabilitiesOut,
@@ -203,7 +208,7 @@ def get_agent_capabilities(request: HttpRequest, slug: str) -> AgentCapabilities
     return _capabilities_out(agent_for_read(request, slug=slug))
 
 
-@agents_router.put("/{slug}/capabilities", response=AgentCapabilitiesOut,
+@agents_router.put("/{slug}/capabilities", response={200: AgentCapabilitiesOut, **refusals(422)},
                    summary="Publish an agent's declared capabilities (its whole list)")
 @gate("agent-admin", "agent-login", setting=True)  # the agent's deploy publishes
 def put_agent_capabilities(request: HttpRequest, slug: str, payload: AgentCapabilitiesIn) -> AgentCapabilitiesOut:
@@ -401,7 +406,7 @@ def delete_capability_grant(request: HttpRequest, grant_id: int):
 
 # ---- leases -------------------------------------------------------------------
 
-@router.post("/leases", response=CapabilityLeaseOut, summary="Acquire a capability lease")
+@router.post("/leases", response={200: CapabilityLeaseOut, **refusals(422)}, summary="Acquire a capability lease")
 # Leasing spends money: editor+ in the agent's workspace, or the agent itself.
 # cloud capabilities: a lease is a machine for one use, not configuration
 @gate("agent.work", "agent-login", kind="action")
@@ -429,7 +434,8 @@ def acquire_capability_lease(request: HttpRequest, payload: CapabilityLeaseIn) -
 @router.get("/leases", response=CapabilityLeaseListOut, summary="List capability leases")
 @gate("member")  # a read, scoped to the caller's workspaces
 def list_capability_leases(request: HttpRequest, agent: str | None = None, capability: str | None = None,
-                           status: str | None = None, since: dt.datetime | None = None,
+                           status: str | None = Query(None, pattern=LEASE_STATUS_LIST),
+                           since: dt.datetime | None = None,
                            limit: int = Query(100, ge=1, le=500)) -> CapabilityLeaseListOut:
     """Leases in the caller's workspaces, newest first. `status` is one status or a comma-separated list
     (`live` for queued,provisioning,ready); `since` filters on `created_at`. A
@@ -449,16 +455,21 @@ def list_capability_leases(request: HttpRequest, agent: str | None = None, capab
     return CapabilityLeaseListOut(leases=[_lease_out(r) for r in rows[:limit]], truncated=len(rows) > limit)
 
 
-@router.get("/spend", response=CapabilitySpendOut, summary="Machine time by agent and capability")
+@router.get("/spend", response={200: CapabilitySpendOut, **refusals(422)},
+            summary="Machine time by agent and capability")
 @gate("member")
 def capability_spend(request: HttpRequest, since: dt.datetime | None = None, until: dt.datetime | None = None,
                      agent: str | None = None, capability: str | None = None) -> CapabilitySpendOut:
     """Machine-seconds per agent and capability over [since, until) (default: the
     last 7 days), in the caller's workspaces. A lease counts from its launch
     (`provisioning_at`) to `ended_at`, or now while it still holds a machine,
-    clipped to the window; time spent queued costs nothing."""
+    clipped to the window; time spent queued costs nothing. A `since` not before
+    `until` is a 422."""
     until = until or timezone.now()
-    since = since or until - dt.timedelta(days=7)
+    try:
+        since = since or until - dt.timedelta(days=7)
+    except OverflowError:  # an `until` in the first week of year 1: everything before it
+        since = dt.datetime.min.replace(tzinfo=dt.UTC)
     if since >= until:
         raise HttpError(422, "since must be before until")
     rows = services.spend(wsvc.request_member_slugs(request),

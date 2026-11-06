@@ -22,7 +22,7 @@ from ninja import Router, Status
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
-from apps.api.errors import TYPE_CONFLICT, ProblemError
+from apps.api.errors import TYPE_CONFLICT, ProblemError, refusals
 from apps.api.pagination import Page, clamp_limit, paginate
 from apps.api.route_gates import gate
 from apps.workspaces import services as wsvc
@@ -134,10 +134,13 @@ def list_schedules(request: HttpRequest, slug: str, limit: int = 100) -> Page[Sc
                     map=lambda s: ScheduleOut(**ss.serialize_schedule(s)))
 
 
-@router.post("/{slug}/schedules/", response={201: ScheduleOut},
+@router.post("/{slug}/schedules/", response={201: ScheduleOut, **refusals(422)},
              summary="Create a recurring schedule",)
 @gate("agent.work", setting=True)  # enforced in schedule_services._resolve_agent
 def create_schedule(request: HttpRequest, slug: str, payload: ScheduleIn) -> Status:
+    """422 unless: `cron` is a valid cron expression and `timezone` an IANA zone;
+    exactly one of `cron` and `run_once_at`; a non-blank `name`; and a `prompt`,
+    or a `job` with its `job_repo`."""
     try:
         schedule = ss.create_schedule(request.user, slug, payload.dict(), workspace_slug=_pin(request))
     except ss.ScheduleNotFound as exc:
@@ -158,14 +161,16 @@ def create_schedule(request: HttpRequest, slug: str, payload: ScheduleIn) -> Sta
 # and Django's URL resolution is method-agnostic (POST vs PATCH/DELETE doesn't
 # disambiguate), so only declaration order keeps this route reachable. Moving
 # this block below PATCH/DELETE would silently shadow it.
-@router.post("/{slug}/schedules/preview", response=SchedulePreviewOut,
+@router.post("/{slug}/schedules/preview", response={200: SchedulePreviewOut, **refusals(422)},
              summary="Preview the next fire times for a cron expression",)
 @gate("member", kind="action", viewer_write="POST but read-only: computes next fire times, writes nothing")
 def preview_cron(
     request: HttpRequest, slug: str, payload: SchedulePreviewIn
 ) -> SchedulePreviewOut:
     """Answer 'when would this actually run?' at edit time. Computed with the same
-    next_slots() the firing path uses — the client must never re-implement cron."""
+    next_slots() the firing path uses — the client must never re-implement cron.
+    A `cron` that is not a valid cron expression, or a `timezone` that is not an
+    IANA zone, is a 422."""
     try:
         runs = ss.preview_cron(
             request.user, slug, payload.cron, payload.timezone, workspace_slug=_pin(request)
@@ -175,12 +180,13 @@ def preview_cron(
     return SchedulePreviewOut(next_runs=runs)
 
 
-@router.patch("/{slug}/schedules/{schedule_id}", response=ScheduleOut,
+@router.patch("/{slug}/schedules/{schedule_id}", response={200: ScheduleOut, **refusals(422)},
               summary="Update a recurring schedule",)
 @gate("agent.work", setting=True)
 def update_schedule(
     request: HttpRequest, slug: str, schedule_id: int, payload: SchedulePatch
 ) -> ScheduleOut:
+    """The create's rules apply to the fields sent (422)."""
     # exclude_none as well as exclude_unset: SchedulePatch's validators are
     # `validate_cron(v) if v is not None else v`, so an explicit {"cron": null}
     # slips past validation AND counts as "set" — setattr'ing None onto a
@@ -253,12 +259,15 @@ def list_triggers(request: HttpRequest, slug: str, limit: int = 100) -> Page[Tri
                     map=lambda t: TriggerOut(**ss.serialize_trigger(t)))
 
 
-@router.post("/{slug}/triggers/", response={201: TriggerOut}, summary="Create a trigger")
+@router.post("/{slug}/triggers/", response={201: TriggerOut, **refusals(422)}, summary="Create a trigger")
 @gate("agent.work", "agent-admin", setting=True)  # per kind, in schedule_services
 def create_trigger(request: HttpRequest, slug: str, payload: TriggerIn) -> Status:
     """A cron trigger needs `agent.work` (editor); an inbound_mail trigger, or any
     trigger with `turn_mode: auto`, needs an admin of the agent. You become its
-    creator: it fires with no more authority than yours on the agent."""
+    creator: it fires with no more authority than yours on the agent. The shape
+    rules (a valid `cron` and IANA `timezone`, a non-blank `name`, a cron trigger's
+    one `cron` or `run_once_at` and its prompt or job, an inbound_mail trigger's
+    `sender_address`) answer 422."""
     try:
         trigger = ss.create_schedule(request.user, slug, payload.dict(), workspace_slug=_pin(request))
     except ss.ScheduleNotFound as exc:
@@ -272,12 +281,14 @@ def create_trigger(request: HttpRequest, slug: str, payload: TriggerIn) -> Statu
     return Status(201, TriggerOut(**ss.serialize_trigger(trigger)))
 
 
-@router.patch("/{slug}/triggers/{trigger_id}", response=TriggerOut, summary="Update a trigger")
+@router.patch("/{slug}/triggers/{trigger_id}", response={200: TriggerOut, **refusals(422)},
+              summary="Update a trigger")
 @gate("agent.work", "agent-admin", setting=True)
 def update_trigger(request: HttpRequest, slug: str, trigger_id: int,
                    payload: TriggerPatch) -> TriggerOut:
     """Its kind and its creator are fixed; the rest may change, by anyone who may
-    set up the trigger both as it is and as it will be."""
+    set up the trigger both as it is and as it will be. The create's shape rules
+    apply to what changes (422)."""
     fields = payload.dict(exclude_unset=True, exclude_none=True)
     try:
         trigger = ss.update_schedule(request.user, slug, trigger_id, fields,

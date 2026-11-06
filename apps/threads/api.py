@@ -12,10 +12,11 @@ import re
 from django.db import transaction
 from django.http import HttpRequest
 from django.utils import timezone
-from ninja import Router, Status
+from ninja import Query, Router, Status
 from ninja.errors import HttpError
 
 from apps.agents.gates import agent_for_read, agent_for_work
+from apps.api.errors import refusals
 from apps.api.route_gates import gate
 from apps.harness import provenance
 from apps.harness.turn_queries import visible_turns_qs
@@ -64,7 +65,7 @@ def _parent_is_thread_message() -> bool:
     return ref.get("kind") == services.MESSAGE_KIND
 
 
-@router.post("/", response={200: ThreadOut, 201: ThreadOut}, summary="Open an agent thread")
+@router.post("/", response={200: ThreadOut, 201: ThreadOut, **refusals(422)}, summary="Open an agent thread")
 @gate("agent.work", kind="content")  # editor in the moderator agent's workspace
 def open_thread(request: HttpRequest, payload: ThreadIn):
     """Open a bounded conversation between 2–6 named agents, moderated by one of the
@@ -74,7 +75,8 @@ def open_thread(request: HttpRequest, payload: ThreadIn):
     refused at creation once the thread is closed, past `deadline_at` or out of
     `max_messages`. Re-opening — an OPEN thread with the same `parent` and the same
     set of agents — returns that thread with 200, so a moderator loop can resume.
-    422 when called from inside a thread message (threads do not nest)."""
+    422 when called from inside a thread message (threads do not nest), or when
+    the participants are not distinct agents the moderator can work with."""
     agents = [p.agent for p in payload.participants]
     if not MIN_PARTICIPANTS <= len(agents) <= MAX_PARTICIPANTS:
         raise HttpError(422, f"a thread has {MIN_PARTICIPANTS} to {MAX_PARTICIPANTS} participants")
@@ -110,7 +112,8 @@ def open_thread(request: HttpRequest, payload: ThreadIn):
 
 @router.get("/", response=list[ThreadOut], summary="List agent threads")
 @gate("member")  # threads in the caller's workspaces; no message content
-def list_threads(request: HttpRequest, parent_key: str | None = None, parent_value: str | None = None,
+def list_threads(request: HttpRequest, parent_key: str | None = Query(None, pattern=_PARENT_KEY.pattern),
+                 parent_value: str | None = None,
                  agent: str | None = None, status: str | None = None, limit: int = 50):
     """Threads the caller can see, newest first (max 50), without their messages.
     `parent_key` + `parent_value` keep threads hanging off one thing (e.g.

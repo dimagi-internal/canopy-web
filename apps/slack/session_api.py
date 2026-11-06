@@ -15,6 +15,7 @@ from ninja.errors import HttpError
 
 from apps.agents import refusals
 from apps.api.auth import session_auth
+from apps.api.errors import refusals as declared_refusals
 from apps.api.route_gates import gate
 from apps.canopy_sessions import access
 from apps.canopy_sessions import api as session_api
@@ -36,7 +37,8 @@ from .services import session_url
 router = Router(auth=session_auth, tags=["chat"])
 
 
-@router.post("/slack/share", response=SlackShareOut, summary="Post a session's summary to Slack")
+@router.post("/slack/share", response={200: SlackShareOut, **declared_refusals(422)},
+             summary="Post a session's summary to Slack")
 @gate("session-acl", "agent-login", kind="conversation")  # write; or the agent's own live turn
 def share_session_to_slack(request: HttpRequest, payload: SlackShareIn):
     """Post a summary of the current session into a Slack channel.
@@ -63,6 +65,8 @@ def share_session_to_slack(request: HttpRequest, payload: SlackShareIn):
     is in flight — post an update, or (after `detach_session_from_slack`) bind
     again, only in the conversation's own channel. To move the conversation to
     a fresh thread in one step, use `start_new_slack_thread`.
+
+    A blank `summary`, or a bind that names no session, is a 422.
 
     `actions` puts reply buttons under a post into a bound thread (`bind`, an
     update to a bound session, or `turn_id`; refused on a broadcast), so a person
@@ -108,7 +112,7 @@ def share_session_to_slack(request: HttpRequest, payload: SlackShareIn):
             "session_id": result.session.pk if result.session else None}
 
 
-@router.post("/slack/detach", response=SlackDetachOut,
+@router.post("/slack/detach", response={200: SlackDetachOut, **declared_refusals(422)},
              summary="Disconnect a session from its Slack thread")
 @gate("session-acl", "agent-login", kind="conversation")  # write; or the agent's own live turn
 def detach_session_from_slack(request: HttpRequest, payload: SlackDetachIn):
@@ -128,7 +132,7 @@ def detach_session_from_slack(request: HttpRequest, payload: SlackDetachIn):
     is having with `turn_id` instead: its own login may act on the conversation
     of a turn it is running, while that turn is in flight. Idempotent: a session
     with no thread answers `status: not_bound`. To connect it again, share it
-    with `bind`, which starts a fresh thread.
+    with `bind`, which starts a fresh thread. Naming no session is a 422.
     """
     session = _slack_session_for(request, turn_id=payload.turn_id, session_id=payload.session_id,
                                  claude_session_id=payload.claude_session_id,
@@ -171,7 +175,7 @@ def _slack_session_for(request: HttpRequest, *, turn_id: str = "", session_id: s
     return session
 
 
-@router.post("/slack/new-thread", response=SlackNewThreadOut,
+@router.post("/slack/new-thread", response={200: SlackNewThreadOut, **declared_refusals(422)},
              summary="Move a session's conversation to a new Slack thread in the same channel")
 @gate("session-acl", "agent-login", kind="conversation")  # write; or the agent's own live turn
 def start_new_slack_thread(request: HttpRequest, payload: SlackNewThreadIn):
@@ -189,7 +193,8 @@ def start_new_slack_thread(request: HttpRequest, payload: SlackNewThreadIn):
     envelope's `turn_id`): its own login may move the conversation of a turn it
     is running, while that turn is in flight, and no other. Anyone else names
     it with `session_id` or `claude_session_id` and needs owner or editor
-    access. 409 when the session holds no thread or is a direct message.
+    access. 409 when the session holds no thread or is a direct message; 422
+    when no session is named or `summary` is blank.
     """
     session = _slack_session_for(request, turn_id=payload.turn_id, session_id=payload.session_id,
                                  claude_session_id=payload.claude_session_id)

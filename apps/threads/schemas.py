@@ -11,6 +11,8 @@ from pydantic import Field
 
 from apps.common.schemas import StrictModel
 
+from .models import MAX_PARTICIPANTS, MIN_PARTICIPANTS
+
 
 class ParticipantIn(StrictModel):
     agent: str = Field(min_length=1, max_length=80)
@@ -20,7 +22,9 @@ class ParticipantIn(StrictModel):
 class ThreadIn(StrictModel):
     kind: str = Field(min_length=1, max_length=40)
     purpose: str = Field(min_length=1, max_length=300)
-    participants: list[ParticipantIn]
+    # Counted by the view, which says the rule in its own words (a 422).
+    participants: list[ParticipantIn] = Field(
+        json_schema_extra={"minItems": MIN_PARTICIPANTS, "maxItems": MAX_PARTICIPANTS})
     moderator: str = Field(min_length=1, max_length=80)
     parent: dict = {}
     context: str = Field(default="", max_length=20_000)

@@ -9,6 +9,8 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
+from typing import Literal
+
 from django.db.models import Q
 from django.http import HttpRequest
 from django.shortcuts import get_object_or_404
@@ -94,6 +96,10 @@ def _aware(value: dt.datetime | None) -> dt.datetime | None:
     if value is None or timezone.is_aware(value):
         return value
     return timezone.make_aware(value, dt.timezone.utc)
+
+
+#: `?state=` on the session lists.
+SessionState = Literal["active", "archived", "all"]
 
 
 def _filtered_sessions(

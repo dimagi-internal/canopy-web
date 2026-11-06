@@ -26,6 +26,7 @@ from apps.api.errors import (
     TYPE_PAYLOAD_TOO_LARGE,
     TYPE_VALIDATION,
     ProblemError,
+    refusals,
 )
 from apps.feedback import reactions
 from apps.harness import artifact_origin
@@ -241,7 +242,7 @@ def _get_for_write(request: HttpRequest, wid: UUID) -> Walkthrough:
 
 @router.post(
     "/",
-    response={201: WalkthroughDetailOut},
+    response={201: WalkthroughDetailOut, **refusals(422)},
     summary="Upload a walkthrough (multipart)",
 )
 @gate("content.write", kind="content")  # creation_workspace + CONTENT_WRITE
@@ -265,6 +266,9 @@ def upload_walkthrough(
     turn_id: str = Form(""),
     agent_project: str = Form(""),
 ) -> Status:
+    """A cut of a recorded narrative is a video pinned to a narrative version:
+    `cut_id` (1-100 letters, digits, `.`, `_` or `-`) needs `kind=video` and
+    `narrative_review_id`, and `cut_scene_ids` needs `cut_id`. Otherwise 422."""
     _require_enabled()
 
     max_bytes = getattr(settings, "WALKTHROUGH_MAX_UPLOAD_BYTES", 75 * 1024 * 1024)

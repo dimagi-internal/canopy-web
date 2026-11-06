@@ -9,7 +9,7 @@ from ninja import Router
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
-from apps.api.errors import TYPE_VALIDATION, ProblemError
+from apps.api.errors import TYPE_VALIDATION, ProblemError, refusals
 from apps.api.route_gates import gate
 
 from .models import NotificationPreference, PushSubscription, session_idle_minutes_for
@@ -41,13 +41,17 @@ def _refuse_unsendable(endpoint: str) -> None:
     # allowlist of those hosts: a new push service must not need a deploy.
     from apps.host_grants.outbound import OutboundError, refuse_private
 
-    parsed = urlparse((endpoint or "").strip())
     try:
-        if parsed.scheme != "https" or not parsed.hostname:
+        try:
+            parsed = urlparse((endpoint or "").strip())
+            host = parsed.hostname
+        except ValueError as exc:  # unparseable, e.g. an unbalanced `[` ("Invalid IPv6 URL")
+            raise OutboundError("a push endpoint must be an https URL") from exc
+        if parsed.scheme != "https" or not host:
             raise OutboundError("a push endpoint must be an https URL")
         if parsed.username or parsed.password:
             raise OutboundError("a push endpoint must not carry credentials")
-        refuse_private(parsed.hostname)
+        refuse_private(host)
     except OutboundError as exc:
         raise ProblemError(422, "Invalid push endpoint", type_=TYPE_VALIDATION,
                            detail=str(exc)) from exc
@@ -64,13 +68,15 @@ def vapid_public_key(request: HttpRequest) -> VapidKeyOut:
     return VapidKeyOut(public_key=settings.VAPID_PUBLIC_KEY)
 
 
-@router.post("/subscribe", response={201: None}, summary="Register this browser for push")
+@router.post("/subscribe", response={201: None, **refusals(422)}, summary="Register this browser for push")
 @gate("self", kind="person-data")
 def subscribe(request: HttpRequest, payload: PushSubscribeIn):
     """Upsert on endpoint. The browser re-sends the same endpoint on every
     subscribe() call, and its keys rotate — so update rather than insert, and
     re-point the row at the caller: the endpoint belongs to the BROWSER, not the
-    person, so on a shared device it must follow whoever is logged in now."""
+    person, so on a shared device it must follow whoever is logged in now. An
+    endpoint canopy may not post to — no host, credentials in it, a private or
+    internal address — is a 422."""
     if not _push_configured():
         raise HttpError(503, "push is not configured")
     _refuse_unsendable(payload.endpoint)

@@ -18,6 +18,7 @@ from ninja.errors import HttpError
 from pydantic import ConfigDict, model_validator
 
 from apps.api.auth import session_auth
+from apps.api.errors import refusals
 from apps.api.route_gates import gate
 from apps.events import activity
 from apps.harness import turn_asker
@@ -61,12 +62,14 @@ class CoachingFactOut(Schema):
     recorded: bool
 
 
-@router.post("/facts/", response=CoachingFactOut, summary="Record a coaching fact")
+@router.post("/facts/", response={200: CoachingFactOut, **refusals(422)}, summary="Record a coaching fact")
 @gate("agent-login", kind="telemetry")  # the per-turn login of a running, unconfined turn; not a stored token
 def record_coaching_fact(request: HttpRequest, payload: CoachingFactIn) -> dict:
     """For an agent's own login inside its running turn: a note went out, how a person
     replied, or a friction pattern was recorded. Recording the same fact again changes
-    nothing (`recorded` is false)."""
+    nothing (`recorded` is false). Each `kind` takes its own fields and no others
+    (`note_sent`: person_id + note_type; `reply`: person_id + reply; `finding_routed`:
+    finding_type) and its own `ref` shape; any other combination is a 422."""
     user = request.user
     turn = turn_asker.serving_turn(user)
     agent = turn_asker.turn_agent(turn) if turn is not None else None

@@ -182,7 +182,12 @@ export interface paths {
          */
         readonly get: operations["list_walkthroughs"];
         readonly put?: never;
-        /** Upload a walkthrough (multipart) */
+        /**
+         * Upload a walkthrough (multipart)
+         * @description A cut of a recorded narrative is a video pinned to a narrative version:
+         *     `cut_id` (1-100 letters, digits, `.`, `_` or `-`) needs `kind=video` and
+         *     `narrative_review_id`, and `cut_scene_ids` needs `cut_id`. Otherwise 422.
+         */
         readonly post: operations["upload_walkthrough"];
         readonly delete?: never;
         readonly options?: never;
@@ -1212,6 +1217,7 @@ export interface paths {
          * Which mail backend serves an address or a thread
          * @description `?address=` — the SES mailbox an address is; `?thread=` — the SES thread a turn's
          *     `thread_id` names (404 for a Gmail thread id, or one the caller may not see).
+         *     Name one of them: neither is a 422.
          */
         readonly get: operations["resolve_mail_address"];
         readonly put?: never;
@@ -1769,7 +1775,12 @@ export interface paths {
          */
         readonly get: operations["list_storyboards"];
         readonly put?: never;
-        /** Create a storyboard */
+        /**
+         * Create a storyboard
+         * @description `decisions` rows are checked as a set: ids unique and not a review gate's,
+         *     `recommended`/`override` one of the row's `options`, a deferred row with
+         *     `revisit_when`, `required-before` with `needed_by`. A row that breaks one is a 422.
+         */
         readonly post: operations["create_storyboard"];
         readonly delete?: never;
         readonly options?: never;
@@ -2259,7 +2270,8 @@ export interface paths {
          *     Open the socket with `?ticket=<ticket>` instead of `?token=`: the ticket
          *     works once, within `expires_in` seconds, and stands for the delegated token
          *     this request presented. Fetch a fresh one for every connection, reconnects
-         *     included.
+         *     included. Any other credential (a session, a PAT) has no delegated token to
+         *     trade and is a 400.
          */
         readonly post: operations["embed_ws_ticket"];
         readonly delete?: never;
@@ -4522,6 +4534,7 @@ export interface paths {
          * @description A package from `canopy-runner app pack`, base64-encoded. Nothing runs on the
          *     server. Files an approval for a superuser; nothing reaches anyone until it's
          *     approved. The same version with the same bytes returns the same submission.
+         *     A package that is not a valid one (not a zip, no manifest, a bad version) is a 422.
          */
         readonly post: operations["submit_local_app"];
         readonly delete?: never;
@@ -4590,7 +4603,7 @@ export interface paths {
          * @description For a transcript, notes or a link to them. It stays private to the person unless a
          *     project is named, which shares it with whoever can read that project. An agent on a turn saves
          *     it for the person who started that turn. If the same link or text has been saved before,
-         *     this returns that meeting.
+         *     this returns that meeting. A `workspace`, `project` or `agent` the caller cannot use there is a 422.
          */
         readonly post: operations["create_meeting"];
         readonly delete?: never;
@@ -4797,7 +4810,11 @@ export interface paths {
         };
         readonly get?: never;
         readonly put?: never;
-        /** Upload a Claude .jsonl transcript (multipart) */
+        /**
+         * Upload a Claude .jsonl transcript (multipart)
+         * @description A `file` whose records are not shaped like a Claude transcript, or a
+         *     `started_at`/`ended_at` that is not a real time, is a 422.
+         */
         readonly post: operations["upload_session"];
         readonly delete?: never;
         readonly options?: never;
@@ -4832,7 +4849,10 @@ export interface paths {
         /** List arcs */
         readonly get: operations["list_arcs"];
         readonly put?: never;
-        /** Create an arc from owned sessions (ordered) */
+        /**
+         * Create an arc from owned sessions (ordered)
+         * @description `items` are your own sessions, each at most once (a repeat is a 422).
+         */
         readonly post: operations["create_arc"];
         readonly delete?: never;
         readonly options?: never;
@@ -5212,7 +5232,11 @@ export interface paths {
         /** List agents */
         readonly get: operations["list_agents"];
         readonly put?: never;
-        /** Create or update an agent (upsert by slug) */
+        /**
+         * Create or update an agent (upsert by slug)
+         * @description A `google_account` that is not an email address, a CLI the agent cannot run,
+         *     or no single workspace to home a new agent in (pass `workspace`) is a 422.
+         */
         readonly post: operations["upsert_agent"];
         readonly delete?: never;
         readonly options?: never;
@@ -5677,7 +5701,8 @@ export interface paths {
          * @description The agent CLIs its turns may run on, preferred first ("claude-code", "codex"),
          *     and optionally the model each starts on. A turn runs on the first one its runner
          *     has signed in and can confine it on; a conversation keeps the one it started on.
-         *     The agent's owner or an admin.
+         *     The agent's owner or an admin. A CLI no runner serving the workspace has set up
+         *     yet is a 422.
          */
         readonly patch: operations["set_agent_clis"];
         readonly trace?: never;
@@ -6415,7 +6440,11 @@ export interface paths {
          */
         readonly get: operations["list_tasks"];
         readonly put?: never;
-        /** Create tasks (a list; an idempotency_key replays instead of duplicating) */
+        /**
+         * Create tasks (a list; an idempotency_key replays instead of duplicating)
+         * @description A reference that names nothing this agent can use — a person, a project, a
+         *     `raised_by` turn of this agent — is a 422.
+         */
         readonly post: operations["create_tasks"];
         readonly delete?: never;
         readonly options?: never;
@@ -7798,7 +7827,12 @@ export interface paths {
         /** List an agent's recurring schedules */
         readonly get: operations["list_schedules"];
         readonly put?: never;
-        /** Create a recurring schedule */
+        /**
+         * Create a recurring schedule
+         * @description 422 unless: `cron` is a valid cron expression and `timezone` an IANA zone;
+         *     exactly one of `cron` and `run_once_at`; a non-blank `name`; and a `prompt`,
+         *     or a `job` with its `job_repo`.
+         */
         readonly post: operations["create_schedule"];
         readonly delete?: never;
         readonly options?: never;
@@ -7819,6 +7853,8 @@ export interface paths {
          * Preview the next fire times for a cron expression
          * @description Answer 'when would this actually run?' at edit time. Computed with the same
          *     next_slots() the firing path uses — the client must never re-implement cron.
+         *     A `cron` that is not a valid cron expression, or a `timezone` that is not an
+         *     IANA zone, is a 422.
          */
         readonly post: operations["preview_cron"];
         readonly delete?: never;
@@ -7841,7 +7877,10 @@ export interface paths {
         readonly delete: operations["delete_schedule"];
         readonly options?: never;
         readonly head?: never;
-        /** Update a recurring schedule */
+        /**
+         * Update a recurring schedule
+         * @description The create's rules apply to the fields sent (422).
+         */
         readonly patch: operations["update_schedule"];
         readonly trace?: never;
     };
@@ -7881,7 +7920,10 @@ export interface paths {
          * Create a trigger
          * @description A cron trigger needs `agent.work` (editor); an inbound_mail trigger, or any
          *     trigger with `turn_mode: auto`, needs an admin of the agent. You become its
-         *     creator: it fires with no more authority than yours on the agent.
+         *     creator: it fires with no more authority than yours on the agent. The shape
+         *     rules (a valid `cron` and IANA `timezone`, a non-blank `name`, a cron trigger's
+         *     one `cron` or `run_once_at` and its prompt or job, an inbound_mail trigger's
+         *     `sender_address`) answer 422.
          */
         readonly post: operations["create_trigger"];
         readonly delete?: never;
@@ -7907,7 +7949,8 @@ export interface paths {
         /**
          * Update a trigger
          * @description Its kind and its creator are fixed; the rest may change, by anyone who may
-         *     set up the trigger both as it is and as it will be.
+         *     set up the trigger both as it is and as it will be. The create's shape rules
+         *     apply to what changes (422).
          */
         readonly patch: operations["update_trigger"];
         readonly trace?: never;
@@ -7975,7 +8018,9 @@ export interface paths {
          * Record a coaching fact
          * @description For an agent's own login inside its running turn: a note went out, how a person
          *     replied, or a friction pattern was recorded. Recording the same fact again changes
-         *     nothing (`recorded` is false).
+         *     nothing (`recorded` is false). Each `kind` takes its own fields and no others
+         *     (`note_sent`: person_id + note_type; `reply`: person_id + reply; `finding_routed`:
+         *     finding_type) and its own `ref` shape; any other combination is a 422.
          */
         readonly post: operations["record_coaching_fact"];
         readonly delete?: never;
@@ -8346,7 +8391,8 @@ export interface paths {
          * @description Machine-seconds per agent and capability over [since, until) (default: the
          *     last 7 days), in the caller's workspaces. A lease counts from its launch
          *     (`provisioning_at`) to `ended_at`, or now while it still holds a machine,
-         *     clipped to the window; time spent queued costs nothing.
+         *     clipped to the window; time spent queued costs nothing. A `since` not before
+         *     `until` is a 422.
          */
         readonly get: operations["capability_spend"];
         readonly put?: never;
@@ -8852,6 +8898,8 @@ export interface paths {
          * @description Filed by you, in `workspace` (default: its project's, else the one you
          *     are pinned to, else your only one), assigned as `assignee` says (nobody
          *     when omitted). `project` is an address (`<ws>/<handle>`) or a handle there.
+         *     A reference that names nothing there — a `project`, a person, a `raised_by`
+         *     turn — is a 422.
          */
         readonly post: operations["create_task"];
         readonly delete?: never;
@@ -9011,6 +9059,7 @@ export interface paths {
          *     with `member_agents` working on it. The handle is free from its name when
          *     omitted. `visibility: personal` makes it yours and its agents' alone, led by you
          *     unless `owner_email` names someone else; a workspace admin does not read it.
+         *     A person, agent or handle that cannot be used there is a 422.
          */
         readonly post: operations["create_workspace_project"];
         readonly delete?: never;
@@ -9453,7 +9502,8 @@ export interface paths {
          * Change a workspace's task settings
          * @description The prefix only while no task carries the current one; a status name per
          *     category (blank restores the default); how many days an active project
-         *     may go without an update before it shows "update missing".
+         *     may go without an update before it shows "update missing". A prefix that
+         *     tasks already carry, or that another workspace has, is a 422.
          */
         readonly patch: operations["set_task_settings"];
         readonly trace?: never;
@@ -11739,6 +11789,7 @@ export interface paths {
          *     `runner_id` is the runner that holds this machine's device keys: the runner app
          *     you link (`runner`), else a `computer` runner made for it — enrol a key on it
          *     (`POST /api/runner-device-keys/`) to read a zero-knowledge agent's vault here.
+         *     A `runner` that is not a live runner of yours is a 422.
          */
         readonly post: operations["register_private_runner"];
         readonly delete?: never;
@@ -14699,7 +14750,8 @@ export interface paths {
          * @description Queue a turn for a runner. Started from inside a canopy session? Pass
          *     `parent={turn, session}` (the caller-context hook prints both ids) so the
          *     session the runner makes for it records where it came from and includes that
-         *     conversation's people.
+         *     conversation's people. A turn names an `agent_slug` or a `project`, not both;
+         *     a shape the target cannot take (a CLI, a pin, an origin) is a 422.
          */
         readonly post: operations["enqueue_turn"];
         readonly delete?: never;
@@ -15090,7 +15142,8 @@ export interface paths {
          * @description Replace your choice: `everything`, or exactly `projects`, and when given,
          *     every repo's workspaces. Takes effect on every runner you own at once. Sessions
          *     already mirrored from a repo you remove stay in canopy, but nothing more of them
-         *     is sent. A chat already running on a box stays there.
+         *     is sent. A chat already running on a box stays there. A workspace you cannot
+         *     run work in is a 422.
          */
         readonly put: operations["set_project_opt_in"];
         readonly post?: never;
@@ -15732,7 +15785,7 @@ export interface paths {
         readonly put?: never;
         /**
          * Record that you opened a project or a huddle
-         * @description Name exactly one of `project` (its numeric id) or `huddle_id`. Counted once
+         * @description Name exactly one of `project` (its numeric id) or `huddle_id` (else 422). Counted once
          *     per person, per object, per UTC day — `recorded` is false for a repeat. 404
          *     for anything the caller cannot see.
          */
@@ -15860,7 +15913,8 @@ export interface paths {
          *     refused at creation once the thread is closed, past `deadline_at` or out of
          *     `max_messages`. Re-opening — an OPEN thread with the same `parent` and the same
          *     set of agents — returns that thread with 200, so a moderator loop can resume.
-         *     422 when called from inside a thread message (threads do not nest).
+         *     422 when called from inside a thread message (threads do not nest), or when
+         *     the participants are not distinct agents the moderator can work with.
          */
         readonly post: operations["open_thread"];
         readonly delete?: never;
@@ -15950,7 +16004,9 @@ export interface paths {
          * @description Upsert on endpoint. The browser re-sends the same endpoint on every
          *     subscribe() call, and its keys rotate — so update rather than insert, and
          *     re-point the row at the caller: the endpoint belongs to the BROWSER, not the
-         *     person, so on a shared device it must follow whoever is logged in now.
+         *     person, so on a shared device it must follow whoever is logged in now. An
+         *     endpoint canopy may not post to — no host, credentials in it, a private or
+         *     internal address — is a 422.
          */
         readonly post: operations["subscribe"];
         /**
@@ -16135,6 +16191,8 @@ export interface paths {
          *     again, only in the conversation's own channel. To move the conversation to
          *     a fresh thread in one step, use `start_new_slack_thread`.
          *
+         *     A blank `summary`, or a bind that names no session, is a 422.
+         *
          *     `actions` puts reply buttons under a post into a bound thread (`bind`, an
          *     update to a bound session, or `turn_id`; refused on a broadcast), so a person
          *     can answer in one tap: `[{"label": "Book all", "reply": "book all", "style":
@@ -16183,7 +16241,7 @@ export interface paths {
          *     is having with `turn_id` instead: its own login may act on the conversation
          *     of a turn it is running, while that turn is in flight. Idempotent: a session
          *     with no thread answers `status: not_bound`. To connect it again, share it
-         *     with `bind`, which starts a fresh thread.
+         *     with `bind`, which starts a fresh thread. Naming no session is a 422.
          */
         readonly post: operations["detach_session_from_slack"];
         readonly delete?: never;
@@ -16217,7 +16275,8 @@ export interface paths {
          *     envelope's `turn_id`): its own login may move the conversation of a turn it
          *     is running, while that turn is in flight, and no other. Anyone else names
          *     it with `session_id` or `claude_session_id` and needs owner or editor
-         *     access. 409 when the session holds no thread or is a direct message.
+         *     access. 409 when the session holds no thread or is a direct message; 422
+         *     when no session is named or `summary` is blank.
          */
         readonly post: operations["start_new_slack_thread"];
         readonly delete?: never;
@@ -16321,6 +16380,7 @@ export interface paths {
          *     `slack_channel` (a Slack channel id: the sessions that live in it — how an agent
          *     an admin gave that channel to lists what it may review). To reach EVERY session
          *     rather than the newest 500, walk `GET /api/canopy-sessions/search` instead.
+         *     A `pr` in none of its three forms is a 422.
          */
         readonly get: operations["canopy_sessions_list_sessions"];
         readonly put?: never;
@@ -16329,6 +16389,8 @@ export interface paths {
          * @description Create a chat session. Started from inside a canopy session? Pass
          *     `parent={turn, session}` (the caller-context hook prints both ids) so the new
          *     session records where it came from and includes that conversation's people.
+         *     An agent and a project together, a CLI the target cannot run (a chat with no
+         *     agent runs on Claude Code only), or no workspace to start it in, is a 422.
          */
         readonly post: operations["create_session"];
         readonly delete?: never;
@@ -17244,7 +17306,7 @@ export interface paths {
          *     at a time — the whole history, not just the newest 500.
          *
          *     Pass the response's `next_cursor` back as `cursor` (with the same filters)
-         *     for the next page; it is null when the walk is done. Ordered by
+         *     for the next page (any other cursor is a 422); it is null when the walk is done. Ordered by
          *     (last activity, id), descending, so the order is total and stable. `state`
          *     defaults to `all`. Filters: `q` (title or session_key contains), `repo` (the
          *     repo it ran in or worked on), `branch`, `pr` (as on the list), `since` /
@@ -18157,6 +18219,8 @@ export interface paths {
          * @description Add a labelled email or phone of yours (`kind` email | phone, `label`
          *     such as work or personal). Everyone who shares a workspace with you, and
          *     its agents, can read it. The same kind and value again relabels it.
+         *     A request it cannot act on (no workspace named, a value of the wrong form)
+         *     is a 400 naming what is wrong.
          */
         readonly post: operations["add_my_address"];
         readonly delete?: never;
@@ -18280,6 +18344,8 @@ export interface paths {
          *     (`duration=always`, until you revoke it on /people/me). Only features you
          *     made available can be granted. Granting one that is off by default also turns
          *     it on for this session. Only you can do this.
+         *     A request it cannot act on (no workspace named, a value of the wrong form)
+         *     is a 400 naming what is wrong.
          */
         readonly post: operations["grant_my_session_agent"];
         readonly delete?: never;
@@ -18305,6 +18371,8 @@ export interface paths {
          *     Counts only: no person is named. Members of the workspace see every agent;
          *     an admin of one of its agents who is not a member sees only the agents they
          *     administer.
+         *     A request it cannot act on (no workspace named, a value of the wrong form)
+         *     is a 400 naming what is wrong.
          */
         readonly get: operations["people_coverage"];
         readonly put?: never;
@@ -18329,6 +18397,8 @@ export interface paths {
          *     every family member's work email in one read. `may_edit` is true only on
          *     your own row: a person changes their own, at `POST /api/people/me/addresses/`.
          *     Members of that workspace only.
+         *     A request it cannot act on (no workspace named, a value of the wrong form)
+         *     is a 400 naming what is wrong.
          */
         readonly get: operations["list_workspace_addresses"];
         readonly put?: never;
@@ -18350,6 +18420,8 @@ export interface paths {
          * Find a person by email
          * @description The person an address names — only if a workspace you are a member of
          *     deals with them (`?workspace=` narrows to one), else 404. Creates nothing.
+         *     A request it cannot act on (no workspace named, a value of the wrong form)
+         *     is a 400 naming what is wrong.
          */
         readonly get: operations["lookup_person"];
         readonly put?: never;
@@ -18371,6 +18443,8 @@ export interface paths {
          * A person, as one workspace knows them
          * @description Live facts (corrections first) for `?workspace=`. Members
          *     of that workspace only, and the read is logged where the person can see it.
+         *     A request it cannot act on (no workspace named, a value of the wrong form)
+         *     is a 400 naming what is wrong.
          */
         readonly get: operations["get_person"];
         readonly put?: never;
@@ -18393,6 +18467,8 @@ export interface paths {
          * @description The projects of `?workspace=`'s agents this person is a participant of —
          *     most recently active first, archived included. Members of that workspace
          *     only, and the read is logged where the person can see it.
+         *     A request it cannot act on (no workspace named, a value of the wrong form)
+         *     is a 400 naming what is wrong.
          */
         readonly get: operations["list_person_projects"];
         readonly put?: never;
@@ -18416,6 +18492,8 @@ export interface paths {
          *     the address that identifies them. Anyone who shares `?workspace=` with
          *     them, an agent's login included — the person declared these, an agent did
          *     not learn them — and the read is logged where the person can see it.
+         *     A request it cannot act on (no workspace named, a value of the wrong form)
+         *     is a 400 naming what is wrong.
          */
         readonly get: operations["list_person_addresses"];
         readonly put?: never;
@@ -18441,6 +18519,8 @@ export interface paths {
          *     project, instance, preference, correction, terminology is a 400). With
          *     `supersedes_id`, that fact (same person, same workspace) stops being live.
          *     Asserted by the calling agent when you are an agent's login, else by you.
+         *     A request it cannot act on (no workspace named, a value of the wrong form)
+         *     is a 400 naming what is wrong.
          */
         readonly post: operations["add_person_fact"];
         readonly delete?: never;
@@ -18486,6 +18566,8 @@ export interface paths {
          *     recall conversations it was party to". It widens no other visibility: not
          *     another agent, not a workspace member, and an admin who is not the agent's
          *     login sees only the turns the turn ACL already lets them read.
+         *     A request it cannot act on (no workspace named, a value of the wrong form)
+         *     is a 400 naming what is wrong.
          */
         readonly get: operations["list_person_conversations"];
         readonly put?: never;
@@ -18560,6 +18642,8 @@ export interface paths {
          *     and why; what was left out and why not — with the settings at that moment.
          *     Searches from before scores were kept (`scored` false) show what came back
          *     only. Entry text is what the entry says now.
+         *     A request it cannot act on (no workspace named, a value of the wrong form)
+         *     is a 400 naming what is wrong.
          */
         readonly get: operations["list_my_memory_searches"];
         readonly put?: never;
@@ -18823,6 +18907,8 @@ export interface paths {
         /**
          * What happened to a person's memory, as they let this agent see it
          * @description Their audit log, newest first, 50 at a time — the page's "What happened".
+         *     A request it cannot act on (no workspace named, a value of the wrong form)
+         *     is a 400 naming what is wrong.
          */
         readonly get: operations["get_memory_page_audit"];
         readonly put?: never;
@@ -19512,6 +19598,35 @@ export interface components {
              * @enum {string}
              */
             readonly kind: "narrative" | "companion" | "reference";
+        };
+        /**
+         * Problem
+         * @description RFC 7807 application/problem+json body.
+         *
+         *     `type` is a stable URI identifying the error class.
+         *     `title` is human-readable, stable per `type`.
+         *     `status` mirrors the HTTP status.
+         *     `detail` is the per-occurrence message.
+         *     `instance` is the request path (optional).
+         */
+        readonly Problem: {
+            /**
+             * Type
+             * @default about:blank
+             */
+            readonly type: string;
+            /** Title */
+            readonly title: string;
+            /** Status */
+            readonly status: number;
+            /** Detail */
+            readonly detail?: string | null;
+            /** Instance */
+            readonly instance?: string | null;
+            /** Extras */
+            readonly extras?: {
+                readonly [key: string]: unknown;
+            } | null;
         };
         /** WalkthroughListItemOut */
         readonly WalkthroughListItemOut: {
@@ -26457,7 +26572,10 @@ export interface components {
         };
         /** LocalAppInstallIn */
         readonly LocalAppInstallIn: {
-            /** Runner Id */
+            /**
+             * Runner Id
+             * Format: uuid
+             */
             readonly runner_id: string;
             /**
              * Settings
@@ -31387,8 +31505,9 @@ export interface components {
             /**
              * Origin
              * @default
+             * @enum {string}
              */
-            readonly origin: string;
+            readonly origin: "" | "ace_web" | "api" | "board" | "cron" | "dispatch" | "drill" | "email" | "huddle" | "manual" | "slack" | "task-tracker";
             /** Origin Ref */
             readonly origin_ref?: {
                 readonly [key: string]: unknown;
@@ -31420,6 +31539,12 @@ export interface components {
              * @default
              */
             readonly name: string;
+        } | {
+            readonly person_id: number;
+        } | {
+            readonly email: unknown;
+        } | {
+            readonly name: unknown;
         };
         /**
          * HumanWhyIn
@@ -32046,35 +32171,6 @@ export interface components {
              * @enum {string}
              */
             readonly reason: "not_routed" | "no_valid_proof";
-        };
-        /**
-         * Problem
-         * @description RFC 7807 application/problem+json body.
-         *
-         *     `type` is a stable URI identifying the error class.
-         *     `title` is human-readable, stable per `type`.
-         *     `status` mirrors the HTTP status.
-         *     `detail` is the per-occurrence message.
-         *     `instance` is the request path (optional).
-         */
-        readonly Problem: {
-            /**
-             * Type
-             * @default about:blank
-             */
-            readonly type: string;
-            /** Title */
-            readonly title: string;
-            /** Status */
-            readonly status: number;
-            /** Detail */
-            readonly detail?: string | null;
-            /** Instance */
-            readonly instance?: string | null;
-            /** Extras */
-            readonly extras?: {
-                readonly [key: string]: unknown;
-            } | null;
         };
         /**
          * ZkWrapMissingOut
@@ -35918,8 +36014,9 @@ export interface components {
             /**
              * Origin
              * @default
+             * @enum {string}
              */
-            readonly origin: string;
+            readonly origin: "" | "ace_web" | "api" | "board" | "cron" | "dispatch" | "drill" | "email" | "huddle" | "manual" | "slack" | "task-tracker";
             /** Origin Ref */
             readonly origin_ref?: {
                 readonly [key: string]: unknown;
@@ -36716,8 +36813,9 @@ export interface components {
             /**
              * Color
              * @default muted
+             * @enum {string}
              */
-            readonly color: string;
+            readonly color: "muted" | "primary" | "success" | "warning" | "destructive" | "info";
             /**
              * Description
              * @default
@@ -36729,7 +36827,7 @@ export interface components {
             /** Name */
             readonly name?: string | null;
             /** Color */
-            readonly color?: string | null;
+            readonly color?: ("muted" | "primary" | "success" | "warning" | "destructive" | "info") | null;
             /** Description */
             readonly description?: string | null;
         };
@@ -41515,8 +41613,11 @@ export interface components {
         readonly RunnerIn: {
             /** Name */
             readonly name: string;
-            /** Kind */
-            readonly kind: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "emdash" | "cloud" | "remote" | "computer";
             /**
              * Capabilities
              * @default {}
@@ -44666,8 +44767,9 @@ export interface components {
             /**
              * Scope
              * @default either
+             * @enum {string}
              */
-            readonly scope: string;
+            readonly scope: "read" | "write" | "either";
         };
         /** ActAsRequestOut */
         readonly ActAsRequestOut: {
@@ -48350,8 +48452,9 @@ export interface components {
             /**
              * Kind
              * @description email | phone — anything else is a 400.
+             * @enum {string}
              */
-            readonly kind: string;
+            readonly kind: "email" | "phone";
             /**
              * Label
              * @description What it is for, 1–40 characters: work, personal, school …
@@ -49672,6 +49775,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["OriginIssueOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly get_issue: {
@@ -50026,6 +50138,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["WalkthroughDetailOut"];
                 };
             };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly get_walkthrough: {
@@ -50349,6 +50470,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ConnectionCallOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly open_connection_operation: {
@@ -50515,6 +50645,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ConnectionOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly set_server_use: {
@@ -50658,6 +50797,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["WriteBackOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -50809,6 +50957,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["EventRecordOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly list_mcp_calls: {
@@ -50884,6 +51041,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["PushResultOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -51340,6 +51506,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["MailResolveOut"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -52166,6 +52341,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["StoryboardOut"];
                 };
             };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly get_storyboard: {
@@ -52719,6 +52903,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["WsTicketOut"];
                 };
             };
+            /** @description Bad Request */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly embed_session_memory: {
@@ -52823,6 +53016,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["PanelGrantOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -52933,6 +53135,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["HostGrantOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -53085,6 +53296,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ContactSessionOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -53258,6 +53478,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["PageStateOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly tokens_contact_declare_page_actions: {
@@ -53282,6 +53511,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["PageActionSpec"][];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -53309,6 +53547,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["PageActionOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -53453,6 +53700,15 @@ export interface operations {
                     };
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly contact_app_view_read: {
@@ -53567,6 +53823,15 @@ export interface operations {
                     readonly "application/json": {
                         readonly [key: string]: unknown;
                     };
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -53878,6 +54143,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ReviewCreateOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly get_review: {
@@ -53972,6 +54246,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ReviewRequestOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly suggest_review: {
@@ -53996,6 +54279,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ReviewSuggestOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -54428,6 +54720,24 @@ export interface operations {
                     readonly "application/json": components["schemas"]["DynamicViewOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly get_dynamic_view_by_slug: {
@@ -54517,6 +54827,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["DynamicViewOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -54682,6 +55001,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["InstallationOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -54901,6 +55229,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["DraftOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -55165,6 +55502,15 @@ export interface operations {
                     };
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly workspace_app_record_history: {
@@ -55360,6 +55706,15 @@ export interface operations {
                     };
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly make_workspace_app_link: {
@@ -55547,6 +55902,15 @@ export interface operations {
                     };
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly upload_public_app_file: {
@@ -55687,6 +56051,15 @@ export interface operations {
                     };
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly list_local_app_store: {
@@ -55755,6 +56128,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["LocalAppInstallationOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly list_my_local_apps: {
@@ -55819,6 +56201,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["LocalAppInstallationOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -55920,6 +56311,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["LocalAppSubmissionOut"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -56027,6 +56427,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["MeetingOut"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -56257,6 +56666,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["LocalAppBeatOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly finish_runner_local_app: {
@@ -56281,6 +56699,15 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
             };
         };
     };
@@ -56307,6 +56734,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["LocalAppCanopyCallOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -56368,6 +56804,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SessionUploadOut"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -56436,6 +56881,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ArcCreateOut"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -57110,6 +57564,24 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly move_agent: {
@@ -57184,6 +57656,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentScaffoldOut"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -57640,6 +58121,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentDetailOut"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -58600,6 +59090,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentTurnOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly list_skills: {
@@ -58905,6 +59404,24 @@ export interface operations {
                     readonly "application/json": readonly components["schemas"]["AgentTaskOut"][];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly get_task: {
@@ -58953,6 +59470,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentTaskOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -59312,6 +59838,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ZkStateOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly set_agent_zk_values: {
@@ -59364,6 +59899,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ZkStateOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly put_agent_zk_pins: {
@@ -59414,6 +59958,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ZkStateOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -60244,6 +60797,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["Verdict"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly fork_run: {
@@ -60269,6 +60831,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RunSummary"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -60322,6 +60893,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["RunDocDetailOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly get_run_doc: {
@@ -60368,6 +60948,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RunDocDetailOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -60589,6 +61178,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ScheduleOut"];
                 };
             };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly preview_cron: {
@@ -60613,6 +61211,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SchedulePreviewOut"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -60661,6 +61268,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ScheduleOut"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -60736,6 +61352,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["TriggerOut"];
                 };
             };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly delete_trigger: {
@@ -60782,6 +61407,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["TriggerOut"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -60855,6 +61489,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentStateWriteOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly record_coaching_fact: {
@@ -60877,6 +61520,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["CoachingFactOut"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -61072,6 +61724,24 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentCapabilitiesOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -61309,6 +61979,24 @@ export interface operations {
                     readonly "application/json": components["schemas"]["CapabilityLeaseOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly capability_spend: {
@@ -61332,6 +62020,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["CapabilitySpendOut"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -61531,6 +62228,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentTaskCallOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly get_agent_task: {
@@ -61579,6 +62285,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentTaskCallOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -61669,6 +62384,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["PasskeyOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly delete_passkey: {
@@ -61753,6 +62477,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["StepUpStatusOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly get_vault_setup: {
@@ -61817,6 +62550,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["VaultKeysetOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly post_vault_client_report: {
@@ -61862,7 +62604,7 @@ export interface operations {
                 readonly due_after?: string | null;
                 readonly q?: string;
                 readonly snoozed?: string;
-                readonly sort?: string;
+                readonly sort?: "" | "rank" | "created" | "updated" | "priority" | "due" | "status" | "title";
                 readonly limit?: number;
             };
             readonly header?: never;
@@ -61902,6 +62644,24 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentTaskOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -62097,6 +62857,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentProjectOut"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -62394,6 +63163,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentProjectOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly get_task_by_key: {
@@ -62440,6 +63218,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentTaskOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -62490,6 +63277,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["BulkTaskResultOut"][];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -62792,6 +63588,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["TaskSettingsOut"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -63329,6 +64134,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["KbSourceOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -64497,6 +65311,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ConnectionAppOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly remove_connection_app: {
@@ -64803,6 +65626,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["SignOffOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly decline_framed_sign_off: {
@@ -65046,6 +65878,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["RunnerInvitationOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly get_runner_invitation: {
@@ -65132,6 +65973,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RunnerInvitationOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -65316,6 +66166,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["RunnerPairByRoleOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly box_egress: {
@@ -65371,6 +66230,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RunnerPairingCreatedOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -65483,7 +66351,7 @@ export interface operations {
     readonly current_runner_release: {
         readonly parameters: {
             readonly query: {
-                readonly platform: string;
+                readonly platform: "macos-arm64" | "macos-x86_64" | "windows-x86_64";
             };
             readonly header?: never;
             readonly path?: never;
@@ -65651,6 +66519,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["PrivateRunnerOut"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -65965,6 +66842,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ZkStateOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly rotate_workspace_vault_zk: {
@@ -65989,6 +66875,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ZkStateOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -66041,6 +66936,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ZkStateOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -66143,6 +67047,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["VaultKeeperGrantOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly post_vault_keeper_workspace_wraps: {
@@ -66168,6 +67081,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["VaultKeeperGrantOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -66449,6 +67371,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["WriteBackOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly connection_reconnect_required: {
@@ -66521,6 +67452,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ResealOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -66686,6 +67626,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RunnerOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -67868,6 +68817,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["RunnerOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly retire_runner: {
@@ -68162,6 +69120,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["RunnerOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly refresh_runner: {
@@ -68341,6 +69308,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["SessionReportOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly list_streams: {
@@ -68387,6 +69363,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["StreamPostOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -68530,6 +69515,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["HandoffAckOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly post_handoff_close: {
@@ -68582,6 +69576,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["HandoffAckOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -68758,6 +69761,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["SessionMenuOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly post_session_subagents: {
@@ -68782,6 +69794,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SessionMenuOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -68863,6 +69884,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["BackfillWriteOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly list_unclaimable_turns: {
@@ -68940,6 +69970,24 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["TurnOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -69054,6 +70102,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["TurnEventCountOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -69404,6 +70461,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ProjectOptInOut"];
                 };
             };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly list_failure_investigations: {
@@ -69557,6 +70623,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["RunnerDeviceKeyCreatedOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly approve_runner_device_key: {
@@ -69656,6 +70731,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RunnerDeviceKeyCreatedOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -69969,6 +71053,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ActAsRequestOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly decline_act_as_request: {
@@ -70106,6 +71199,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["EngagementViewOut"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -70259,6 +71361,24 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ThreadOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly get_thread: {
@@ -70307,6 +71427,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ThreadOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly vapid_public_key: {
@@ -70348,6 +71477,15 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
             };
         };
     };
@@ -70491,6 +71629,24 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ApprovalCardOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly get_approval: {
@@ -70585,6 +71741,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["SlackShareOut"];
                 };
             };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly detach_session_from_slack: {
@@ -70609,6 +71774,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["SlackDetachOut"];
                 };
             };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly start_new_slack_thread: {
@@ -70631,6 +71805,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SlackNewThreadOut"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -70686,7 +71869,7 @@ export interface operations {
     readonly canopy_sessions_list_sessions: {
         readonly parameters: {
             readonly query?: {
-                readonly state?: string;
+                readonly state?: "active" | "archived" | "all";
                 readonly limit?: number;
                 readonly source?: string;
                 readonly opp_slug?: string;
@@ -70722,6 +71905,15 @@ export interface operations {
                     readonly "application/json": readonly components["schemas"]["SessionOut"][];
                 };
             };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly create_session: {
@@ -70744,6 +71936,24 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SessionOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -71673,7 +72883,7 @@ export interface operations {
             readonly query?: {
                 readonly cursor?: string;
                 readonly limit?: number;
-                readonly state?: string;
+                readonly state?: "active" | "archived" | "all";
                 readonly q?: string;
                 readonly repo?: string;
                 readonly since?: string | null;
@@ -71698,6 +72908,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SessionSearchPageOut"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -72145,6 +73364,15 @@ export interface operations {
                     readonly "application/json": readonly components["schemas"]["PageActionSpec"][];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly read_page_state: {
@@ -72193,6 +73421,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["PageStateOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly declare_run_input: {
@@ -72217,6 +73454,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RunAgentInputOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -72245,6 +73491,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["PageActionOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly canopy_sessions_resolve_page_action: {
@@ -72270,6 +73525,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["PageActionOut"];
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -72414,7 +73678,7 @@ export interface operations {
     readonly list_my_sessions: {
         readonly parameters: {
             readonly query?: {
-                readonly state?: string;
+                readonly state?: "active" | "archived" | "all";
                 readonly limit?: number;
                 readonly reply?: boolean;
                 readonly q?: string;
@@ -72488,6 +73752,15 @@ export interface operations {
                     };
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly app_view_read: {
@@ -72544,6 +73817,15 @@ export interface operations {
                     readonly "application/json": {
                         readonly [key: string]: unknown;
                     };
+                };
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -72749,6 +74031,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ContactOut"];
                 };
             };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly people_me: {
@@ -72791,6 +74082,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["PersonAddressOut"];
+                };
+            };
+            /** @description Bad Request */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -72955,6 +74255,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["SessionMemoryOut"];
                 };
             };
+            /** @description Bad Request */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly people_coverage: {
@@ -72976,6 +74285,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["PeopleCoverageOut"];
+                };
+            };
+            /** @description Bad Request */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -73000,6 +74318,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["WorkspaceAddressesOut"];
                 };
             };
+            /** @description Bad Request */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly lookup_person: {
@@ -73021,6 +74348,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["PersonRefOut"];
+                };
+            };
+            /** @description Bad Request */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -73047,6 +74383,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["PersonOut"];
                 };
             };
+            /** @description Bad Request */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly list_person_projects: {
@@ -73069,6 +74414,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["PersonProjectsOut"];
+                };
+            };
+            /** @description Bad Request */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -73095,6 +74449,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["PersonAddressesOut"];
                 };
             };
+            /** @description Bad Request */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly add_person_fact: {
@@ -73119,6 +74482,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["PersonFactCreatedOut"];
+                };
+            };
+            /** @description Bad Request */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -73167,6 +74539,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["PersonConversationsOut"];
+                };
+            };
+            /** @description Bad Request */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -73258,6 +74639,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SearchHistoryOut"];
+                };
+            };
+            /** @description Bad Request */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -73616,6 +75006,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["MemoryPageAuditOut"];
                 };
             };
+            /** @description Bad Request */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly get_memory_page_searches: {
@@ -73733,6 +75132,15 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description A value the database cannot store: a NUL character inside free-form JSON. */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
             };
         };
     };

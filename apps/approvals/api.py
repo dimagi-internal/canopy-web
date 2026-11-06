@@ -13,6 +13,7 @@ from ninja.errors import HttpError
 from apps.agents.gates import visible_agent_workspaces
 from apps.agents.models import Agent
 from apps.api.auth import session_auth
+from apps.api.errors import refusals
 from apps.api.route_gates import gate
 from apps.workspaces import permissions as perms
 
@@ -67,7 +68,7 @@ def list_approvals(request: HttpRequest, status: str = "pending", scope: str = "
     return out
 
 
-@router.post("/", response={201: ApprovalCardOut, 200: ApprovalCardOut}, summary="File a request")
+@router.post("/", response={201: ApprovalCardOut, 200: ApprovalCardOut, **refusals(422)}, summary="File a request")
 # an editor of the request's workspace, or the agent's own login — the same tier that can start an agent's work
 @gate("agent.work", kind="request")
 def file_approval(request: HttpRequest, payload: ApprovalFileIn):

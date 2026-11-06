@@ -29,6 +29,7 @@ from .errors import (
     status_title,
 )
 from .renderers import OrjsonRenderer
+from .openapi_doc import correct as correct_openapi
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,11 @@ class CanopyNinjaAPI(NinjaAPI):
     two modules share is qualified by its app (``chat_sessions_send``) so it
     stays unique — and it is the SAME rule for every name, not a hand-kept map.
     """
+
+    def get_openapi_schema(self, *, path_prefix=None, path_params=None):
+        """Ninja's document with `openapi_doc`'s corrections: no NUL in request text, refusals as problem+json."""
+        schema = super().get_openapi_schema(path_prefix=path_prefix, path_params=path_params)
+        return correct_openapi(schema)
 
     def get_openapi_operation_id(self, operation) -> str:
         name = operation.view_func.__name__

@@ -119,7 +119,11 @@ export async function listLabels(workspace?: string): Promise<Label[]> {
   return typed(Array.from(unwrap(res, 'listLabels')))
 }
 
-export async function createLabel(workspace: string, name: string, color = 'muted'): Promise<Label> {
+export async function createLabel(
+  workspace: string,
+  name: string,
+  color: Schemas['LabelIn']['color'] = 'muted',
+): Promise<Label> {
   const res = await apiV2.POST('/api/labels/', { body: { workspace, name, color, description: '' } })
   return typed(unwrap(res, 'createLabel'))
 }

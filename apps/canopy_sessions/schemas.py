@@ -175,7 +175,7 @@ class TransferAllIn(Schema):
     # Given to every session's transfer turn, after what its snapshot holds.
     brief: str = ""
     # Only these sessions (ids); empty = every open session on `from_runner` you can write.
-    session_ids: list[str] = []
+    session_ids: list[uuid.UUID] = []
     # List what would move, and why anything would not, without moving it.
     dry_run: bool = False
     # Continue every session on this agent CLI (see `TransferIn.cli`).

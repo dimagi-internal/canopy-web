@@ -15,6 +15,7 @@ from ninja import Router, Status
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.api.errors import refusals
 from apps.api.pagination import clamp_limit
 from apps.api.route_gates import gate
 from apps.contacts import services as contacts
@@ -294,10 +295,12 @@ def list_tasks(request: HttpRequest, slug: str, project: str = "", status: str =
     return [AgentTaskOut.model_validate(t) for t in qs]
 
 
-@router.post("/{slug}/tasks/", response={201: list[AgentTaskOut]},
+@router.post("/{slug}/tasks/", response={201: list[AgentTaskOut], **refusals(422)},
              summary="Create tasks (a list; an idempotency_key replays instead of duplicating)",)
 @gate("agent.work", kind="content")  # or the agent's own login
 def create_tasks(request: HttpRequest, slug: str, payload: list[AgentTaskIn]) -> Status:
+    """A reference that names nothing this agent can use — a person, a project, a
+    `raised_by` turn of this agent — is a 422."""
     agent = agent_for_read(request, slug)
     # A task can carry `on_approve` — work that runs the moment a viewer approves
     # it — so WRITING one is the reshaping tier: an editor, or the agent itself

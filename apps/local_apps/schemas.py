@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 from ninja import Schema
@@ -50,7 +51,7 @@ class LocalAppDetailOut(Schema):
 
 
 class LocalAppInstallIn(Schema):
-    runner_id: str
+    runner_id: uuid.UUID
     settings: dict[str, Any] = {}
     accept_digest: str
 

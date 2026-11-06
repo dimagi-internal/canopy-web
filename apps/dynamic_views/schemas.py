@@ -42,7 +42,7 @@ class DynamicViewOut(DynamicViewSummaryOut):
 class DynamicViewIn(StrictModel):
     workspace: str = Field("", description="Defaults to the pinned workspace.")
     project: str | None = Field(None, description="A project handle in that workspace; omit for a workspace view.")
-    title: str
+    title: str = Field(min_length=1)
     slug: str = Field("", description="Defaults to one made from the title.")
     description: str = ""
     code: str = Field(description="JSX defining `function View(props)`. See GET /api/dynamic-views/guide/.")

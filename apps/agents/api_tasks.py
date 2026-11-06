@@ -15,6 +15,7 @@ from ninja import Router, Status
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.api.errors import refusals
 from apps.api.pagination import DEFAULT_LIMIT_CAP, clamp_limit
 from apps.api.route_gates import gate
 from apps.events import audit
@@ -310,6 +311,8 @@ def create_label(request: HttpRequest, payload: LabelIn) -> Status:
         raise HttpError(403, "creating a label requires the editor role")
     try:
         label = work.create_label(ws, payload.model_dump())
+    except work.LabelTaken as exc:
+        raise HttpError(409, str(exc)) from exc
     except ValueError as exc:
         raise HttpError(422, str(exc)) from exc
     return Status(201, LabelOut.model_validate(label))
@@ -323,6 +326,8 @@ def update_label(request: HttpRequest, label_id: int, payload: LabelPatch) -> La
         raise HttpError(403, "changing a label requires the editor role")
     try:
         return LabelOut.model_validate(work.update_label(label, payload.model_dump(exclude_unset=True)))
+    except work.LabelTaken as exc:
+        raise HttpError(409, str(exc)) from exc
     except ValueError as exc:
         raise HttpError(422, str(exc)) from exc
 
@@ -414,12 +419,14 @@ def get_task_settings(request: HttpRequest, workspace: str = "") -> TaskSettings
     return _settings_out(work.settings_for(ws))
 
 
-@router.patch("/task-settings/", response=TaskSettingsOut, summary="Change a workspace's task settings")
+@router.patch("/task-settings/", response={200: TaskSettingsOut, **refusals(422)},
+              summary="Change a workspace's task settings")
 @gate("agent.work", setting=True)
 def set_task_settings(request: HttpRequest, payload: TaskSettingsPatch, workspace: str = "") -> TaskSettingsOut:
     """The prefix only while no task carries the current one; a status name per
     category (blank restores the default); how many days an active project
-    may go without an update before it shows "update missing"."""
+    may go without an update before it shows "update missing". A prefix that
+    tasks already carry, or that another workspace has, is a 422."""
     ws = _ws_for_write(request, workspace)
     if not perms.can(request.user, ws, perms.AGENT_WORK):
         raise HttpError(403, "changing task settings requires the editor role")

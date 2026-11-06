@@ -8,7 +8,9 @@ from typing import Annotated, Any, Literal
 from pydantic import AliasChoices, Field, field_validator, model_validator
 
 from apps.agents.models import AgentTask
-from apps.common.schemas import StrictModel
+from apps.agents.work import DEFAULT_STATUS_NAMES, LABEL_COLORS, VIEW_FILTERS
+from apps.common.schemas import TRIMMED_PATTERN, StrictModel, strip_means_non_blank
+from apps.harness.models import Turn
 from apps.harness.schemas import TurnSpecIn, normalize_origin
 
 from .agents import AgentDetailOut
@@ -31,10 +33,22 @@ class AgentTaskLink(StrictModel):
     waiting_on: str = Field(default="", max_length=120)
 
 
+def _someone_in_schema(schema: dict, cls: type) -> None:
+    strip_means_non_blank(schema, cls)
+    # `_someone` below, said in JSON Schema.
+    schema["anyOf"] = [
+        {"required": ["person_id"], "properties": {"person_id": {"type": "integer"}}},
+        {"required": ["email"], "properties": {"email": {"pattern": TRIMMED_PATTERN}}},
+        {"required": ["name"], "properties": {"name": {"pattern": TRIMMED_PATTERN}}},
+    ]
+
+
 class HumanWho(StrictModel):
     """Who said it. Give `email` (and `name`): canopy links the Person it names
     when it knows them in this agent's workspace. `person_id` names one
     directly. At least one of the three."""
+
+    model_config = {**StrictModel.model_config, "json_schema_extra": _someone_in_schema}
 
     person_id: int | None = None
     email: str = Field(default="", max_length=254)
@@ -490,7 +504,8 @@ class AgentTaskIn(StrictModel):
     batch_key: str = Field(default="", max_length=64)
     idempotency_key: str = Field(default="", max_length=128)
     #: One of `AgentTask.POSTABLE_ORIGINS`; a retired spelling is normalized.
-    origin: str = Field(default="", max_length=32)
+    origin: str = Field(default="", max_length=32, json_schema_extra={"enum": sorted(
+        set(AgentTask.POSTABLE_ORIGINS) | set(Turn.LEGACY_ORIGIN_ALIASES))})
     origin_ref: dict = Field(default_factory=dict)
     #: The turn that raised this task, if any.
     raised_by: uuid.UUID | None = None
@@ -1080,17 +1095,22 @@ class LabelOut(StrictModel):
     task_count: int = 0
 
 
+LabelColor = Literal[LABEL_COLORS]
+#: A saved view's `filters`, keyed by the task list's filter names (`work.VIEW_FILTERS`).
+_VIEW_FILTER_KEYS = {"propertyNames": {"enum": list(VIEW_FILTERS)}}
+
+
 class LabelIn(StrictModel):
     workspace: str = Field(default="", max_length=64)
     name: str = Field(min_length=1, max_length=60)
     #: muted · primary · success · warning · destructive · info.
-    color: str = "muted"
+    color: LabelColor = "muted"
     description: str = Field(default="", max_length=200)
 
 
 class LabelPatch(StrictModel):
-    name: str | None = Field(default=None, max_length=60)
-    color: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=60)
+    color: LabelColor | None = None
     description: str | None = Field(default=None, max_length=200)
 
 
@@ -1113,16 +1133,16 @@ class SavedViewIn(StrictModel):
     workspace: str = Field(default="", max_length=64)
     name: str = Field(min_length=1, max_length=100)
     shared: bool = False
-    filters: dict[str, str] = Field(default_factory=dict)
+    filters: dict[str, str] = Field(default_factory=dict, json_schema_extra=_VIEW_FILTER_KEYS)
     group_by: str = Field(default="", max_length=20)
     sort: str = Field(default="", max_length=20)
     layout: Literal["table", "board", "calendar"] = "table"
 
 
 class SavedViewPatch(StrictModel):
-    name: str | None = Field(default=None, max_length=100)
+    name: str | None = Field(default=None, min_length=1, max_length=100)
     shared: bool | None = None
-    filters: dict[str, str] | None = None
+    filters: dict[str, str] | None = Field(default=None, json_schema_extra=_VIEW_FILTER_KEYS)
     group_by: str | None = Field(default=None, max_length=20)
     sort: str | None = Field(default=None, max_length=20)
     layout: Literal["table", "board", "calendar"] | None = None
@@ -1139,9 +1159,11 @@ class TaskSettingsOut(StrictModel):
 
 class TaskSettingsPatch(StrictModel):
     #: Only while no task of the workspace carries the current one.
-    prefix: str | None = Field(default=None, max_length=10)
+    #: `work.PREFIX_RE` once trimmed and upper-cased.
+    prefix: str | None = Field(default=None, max_length=10, pattern=r"^\s*[A-Za-z][A-Za-z0-9]{1,9}\s*$")
     #: category -> name; a blank name restores the default.
-    status_names: dict[str, str] | None = None
+    status_names: dict[str, Annotated[str, Field(max_length=30)]] | None = Field(
+        default=None, json_schema_extra={"propertyNames": {"enum": list(DEFAULT_STATUS_NAMES)}})
     update_cadence_days: int | None = Field(default=None, ge=1, le=90)
 
 

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import Literal
 
+from pydantic import Field
+
 from apps.common.schemas import StrictModel
 from apps.feedback.schemas import ArtifactSignalsOut
 from apps.walkthroughs.schemas import CutAppLinkOut
@@ -310,26 +312,27 @@ class StoryboardListOut(StrictModel):
 
 
 class EntryIn(StrictModel):
-    narrative_slug: str
-    pinned_run_id: str = ""
-    title: str = ""
+    # Bounded to the `ActEntry` columns' widths.
+    narrative_slug: str = Field(max_length=200)
+    pinned_run_id: str = Field(default="", max_length=200)
+    title: str = Field(default="", max_length=300)
     """Blank = derive the card heading from the narrative."""
     blurb: str = ""
     """Blank = derive the one-liner from the narrative's opening sentence."""
 
 
 class ActIn(StrictModel):
-    key: str = ""
+    key: str = Field(default="", max_length=120)
     """Optional stable identity. Declare it to keep act notes attached through
     a retitle; otherwise it is derived from the title."""
-    title: str
+    title: str = Field(max_length=300)
     prose: str = ""
     entries: list[EntryIn] = []
 
 
 class StoryboardIn(StrictModel):
-    slug: str
-    title: str
+    slug: str = Field(max_length=100)
+    title: str = Field(max_length=300)
     lede: str = ""
     brief: StoryboardBrief | None = None
     decisions: list[DecisionIn] | None = None
@@ -346,7 +349,7 @@ class StoryboardIn(StrictModel):
 class StoryboardPatchIn(StrictModel):
     """Everything optional — a retitle and a reorder are separate gestures."""
 
-    title: str | None = None
+    title: str | None = Field(default=None, max_length=300)
     lede: str | None = None
     brief: StoryboardBrief | None = None
     """Replaces the whole brief (send ``{}`` to clear it)."""

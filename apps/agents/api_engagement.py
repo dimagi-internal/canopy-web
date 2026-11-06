@@ -14,6 +14,7 @@ from ninja import Router
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.api.errors import refusals
 from apps.api.route_gates import gate
 from apps.harness.turn_queries import huddle_anchors, visible_turns_qs
 from apps.realtime.groups import turn_workspace_slug
@@ -39,7 +40,8 @@ def _huddle_workspace(request: HttpRequest, huddle_id: str) -> str:
     return home
 
 
-@router.post("/view", response=EngagementViewOut, summary="Record that you opened a project or a huddle")
+@router.post("/view", response={200: EngagementViewOut, **refusals(422)},
+             summary="Record that you opened a project or a huddle")
 # the project's agent workspace / the huddle's visible anchor
 # the engagement view beacon
 @gate(
@@ -50,7 +52,7 @@ def _huddle_workspace(request: HttpRequest, huddle_id: str) -> str:
     ),
 )
 def record_engagement_view(request: HttpRequest, payload: EngagementViewIn) -> dict:
-    """Name exactly one of `project` (its numeric id) or `huddle_id`. Counted once
+    """Name exactly one of `project` (its numeric id) or `huddle_id` (else 422). Counted once
     per person, per object, per UTC day — `recorded` is false for a repeat. 404
     for anything the caller cannot see."""
     if (payload.project is None) == (not payload.huddle_id):
