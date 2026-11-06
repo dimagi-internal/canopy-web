@@ -28,6 +28,12 @@ export async function getDynamicView(id: number): Promise<DynamicView> {
   return unwrap(res, "Failed to load the view") as unknown as DynamicView;
 }
 
+/** A view by the name in its URL (`/w/<workspace>/views/<slug>`). */
+export async function getDynamicViewBySlug(workspace: string, slug: string): Promise<DynamicView> {
+  const res = await apiV2.GET("/api/dynamic-views/by-slug/{workspace}/{slug}", { params: { path: { workspace, slug } } });
+  return unwrap(res, "Failed to load the view") as unknown as DynamicView;
+}
+
 let guide: Promise<DynamicViewGuide> | null = null;
 
 /** The catalog and contract; the same for every view, so read once per page load. */

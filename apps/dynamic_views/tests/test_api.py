@@ -54,7 +54,7 @@ def test_an_editor_makes_a_workspace_view_and_a_project_view(world):
     assert r.status_code == 201, r.content
     body = r.json()
     assert (body["workspace"], body["project"], body["slug"], body["version"]) == ("dimagi", None, "open-work", 1)
-    assert body["url"] == f"/w/dimagi/views/{body['id']}"
+    assert body["url"] == "/w/dimagi/views/open-work"
     assert body["sources"] == SOURCES
 
     r = _create(c, project="unga-2026", title="UNGA board")
@@ -73,6 +73,23 @@ def test_slugs_are_unique_per_workspace(world):
     assert _create(c).json()["slug"] == "open-work-2"
     r = _create(c, slug="open-work")
     assert r.status_code == 422 and "already exists" in r.content.decode()
+
+
+def test_a_view_is_read_by_its_slug_with_the_same_rule_as_by_id(world):
+    view_id = _create(_client(world["editor"]), project="unga-2026", title="UNGA board").json()["id"]
+    r = _client(world["viewer"]).get("/api/dynamic-views/by-slug/dimagi/unga-board")
+    assert r.status_code == 200, r.content
+    assert r.json()["id"] == view_id
+    # Another workspace's member gets the same 404 as by id, and a wrong workspace finds nothing.
+    assert _client(world["outsider"]).get("/api/dynamic-views/by-slug/dimagi/unga-board").status_code == 404
+    assert _client(world["viewer"]).get("/api/dynamic-views/by-slug/other/unga-board").status_code == 404
+
+
+def test_a_slug_of_digits_alone_is_refused_because_it_reads_as_an_id(world):
+    c = _client(world["editor"])
+    r = _create(c, slug="2024")
+    assert r.status_code == 422 and "letter" in r.content.decode()
+    assert _create(c, title="2024").json()["slug"] == "view-2024"
 
 
 def test_a_viewer_reads_but_cannot_write(world):

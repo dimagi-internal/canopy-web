@@ -25,7 +25,7 @@ export function ProjectViewsSection({ workspace, handle, projectName }: { worksp
   const workspaceName = useWorkspaceList().find((w) => w.slug === workspace)?.display_name ?? workspace
   const { user } = useAuth()
   const [views, setViews] = useState<DynamicView[] | null>(null)
-  const [more, setMore] = useState<{ id: number; title: string }[]>([])
+  const [more, setMore] = useState<{ id: number; slug: string; title: string }[]>([])
 
   useEffect(() => {
     let cancelled = false
@@ -35,7 +35,7 @@ export function ProjectViewsSection({ workspace, handle, projectName }: { worksp
         const drawn = await Promise.all(own.slice(0, DRAWN).map((r) => getDynamicView(r.id)))
         if (cancelled) return
         setViews(drawn)
-        setMore(own.slice(DRAWN).map((r) => ({ id: r.id, title: r.title })))
+        setMore(own.slice(DRAWN).map((r) => ({ id: r.id, slug: r.slug, title: r.title })))
       })
       .catch(() => !cancelled && setViews([]))
     return () => {
@@ -61,7 +61,7 @@ export function ProjectViewsSection({ workspace, handle, projectName }: { worksp
           {views.map((v) => (
             <div key={v.id} className="min-w-0">
               <div className="mb-1 flex items-baseline justify-between gap-2">
-                <Link className="text-[13px] font-semibold hover:underline" to={scopedPath(workspace, `/views/${v.id}`)}>
+                <Link className="text-[13px] font-semibold hover:underline" to={scopedPath(workspace, `/views/${v.slug}`)}>
                   {v.title}
                 </Link>
                 <span className="text-[11.5px] text-muted-foreground">v{v.version}</span>
@@ -82,7 +82,7 @@ export function ProjectViewsSection({ workspace, handle, projectName }: { worksp
           {(more.length > 0 || canEdit) && (
             <div className="flex flex-wrap gap-3 text-[13px]">
               {more.map((m) => (
-                <Link key={m.id} className="underline" to={scopedPath(workspace, `/views/${m.id}`)}>{m.title}</Link>
+                <Link key={m.id} className="underline" to={scopedPath(workspace, `/views/${m.slug}`)}>{m.title}</Link>
               ))}
               {canEdit && <Link className="text-muted-foreground underline" to={newHref}>New view</Link>}
             </div>
