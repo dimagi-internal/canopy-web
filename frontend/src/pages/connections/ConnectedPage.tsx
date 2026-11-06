@@ -5,7 +5,8 @@ import { ApiError } from '@/api/problem'
 import { scopedPath } from '@/lib/scopedLinks'
 import { Button } from 'canopy-ui/ui'
 import { ShareRefused } from '@/vault/connectionShare'
-import { autoChoice, openOwned, ownerAgentMachines, promptDismissed, putOwnerShare, reviewShare } from '@/vault/ownerShare'
+import { autoChoice, openOwned, ownerAgentMachines, putOwnerShare, reviewShare } from '@/vault/ownerShare'
+import { failureMessage, outcomeOf, reportConnect, type ConnectStep } from '@/vault/connectReport'
 import { useVaultUnlock } from '@/vault/useVaultUnlock'
 import { safeReturnTo } from './ShareConnectionPage'
 
@@ -106,6 +107,11 @@ export function ConnectedPage(): JSX.Element | null {
   async function store(first: ShareStateOut, auto: boolean) {
     setPhase('storing')
     setError('')
+    const trigger = auto ? 'arrival' : 'tap'
+    const agentName = first.owner_agent?.slug ?? ''
+    let step: ConnectStep = 'unlock'
+    const report = (outcome: Parameters<typeof reportConnect>[0]['outcome'], extra: { error?: unknown; machines?: string[] } = {}) =>
+      reportConnect({ key: id, agent: agentName, step, trigger, outcome, ...extra })
     try {
       let s = first
       if (!auto) {
@@ -117,13 +123,23 @@ export function ConnectedPage(): JSX.Element | null {
       let choice
       for (;;) {
         try {
+          step = 'open'
           const opened = await openOwned(s, key)
+          step = 'review'
           const picked = autoChoice(s, opened.statement)
-          if (picked.kind === 'ask') return setPhase('ask')
+          if (picked.kind === 'ask') {
+            report('needs_decision')
+            return setPhase('ask')
+          }
           choice = picked.choice
           const verdict = reviewShare(s, choice, opened.trust, opened.statement)
-          if (verdict !== 'ready') return setPhase(verdict)
+          if (verdict !== 'ready') {
+            report(verdict === 'none' ? 'no_machines' : 'needs_decision')
+            return setPhase(verdict)
+          }
+          step = 'store'
           await putOwnerShare(s, key, choice, opened.trust)
+          report('ok', { machines: ownerAgentMachines(s) })
           break
         } catch (e) {
           if (retried || !(e instanceof ApiError && (e.code === 'statement_stale' || e.code === 'zk_value_changed'))) throw e
@@ -140,9 +156,14 @@ export function ConnectedPage(): JSX.Element | null {
       }
       setPhase('stored')
     } catch (e) {
-      if (e instanceof ShareRefused) return setPhase('ask')
+      if (e instanceof ShareRefused) {
+        report('needs_decision', { error: e })
+        return setPhase('ask')
+      }
+      report(outcomeOf(e), { error: e })
       setPhase('click')
-      if (!promptDismissed(e)) setError(e instanceof Error ? e.message : 'Could not store it.')
+      // Always the browser's actual answer: a hidden one left nobody able to say what went wrong.
+      setError(failureMessage(e, trigger))
     }
   }
 

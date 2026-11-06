@@ -147,10 +147,34 @@ export async function openScalar(ks: VaultKeysetOut, prompt: UnlockPrompt): Prom
 export async function stepUpAndUnlock(ks: VaultKeysetOut): Promise<Unlocked | null> {
   const byPasskey = prfSeals(ks)
   if (!ks.exists || !ks.public_jwk || !byPasskey.length) return null
-  const touch = await assertWithPrf(ks.prf_input, { allow: byPasskey.map((s) => s.cred) })
+  // Reported like `openScalar`'s: only the browser sees why the touch did not open the key.
+  const fail = (error: string, outcome: 'failed' | 'cancelled' | 'unsupported' = 'failed') =>
+    reportVaultClient({ stage: 'unlock_passkey', method: 'passkey', outcome, error, asked: ['passkey'] })
+  let touch
+  try {
+    touch = await assertWithPrf(ks.prf_input, { allow: byPasskey.map((s) => s.cred) })
+  } catch (e) {
+    const name = e instanceof Error ? e.name : 'Error'
+    fail(`${name}: ${e instanceof Error ? e.message : String(e)}`,
+         e instanceof PrfUnsupportedError ? 'unsupported'
+           : name === 'NotAllowedError' || name === 'AbortError' ? 'cancelled' : 'failed')
+    throw e
+  }
   const seal = byPasskey.find((s) => s.cred === touch.cred)
-  if (!seal || !touch.prf) return null
-  return opened(ks, await openUserKey(seal, ks.user_id, touch.prf))
+  if (!seal) {
+    fail(`touched passkey has no seal on the keyset (cred=${String(touch.cred).slice(0, 8)})`)
+    return null
+  }
+  if (!touch.prf) {
+    fail('passkey answered without a PRF output', 'unsupported')
+    return null
+  }
+  try {
+    return opened(ks, await openUserKey(seal, ks.user_id, touch.prf))
+  } catch (e) {
+    fail(`PRF seal did not open: ${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`)
+    throw e
+  }
 }
 
 /** Open the keyset — passkey or passphrase, as the person chooses. */
