@@ -363,9 +363,10 @@ def get_storyboard(request: HttpRequest, slug: str, ws: str = "") -> dict:
     )
 
 
-@router.patch("/{slug}", response=StoryboardOut, auth=session_auth, summary="Edit a storyboard")
+@router.patch("/{slug}", response={200: StoryboardOut, **refusals(422)}, auth=session_auth, summary="Edit a storyboard")
 @gate("content.write", kind="content")
 def patch_storyboard(request: HttpRequest, slug: str, payload: StoryboardPatchIn) -> dict:
+    """Decision rows are checked as on create; one that breaks a rule is a 422."""
     board = _editable_or_404(request, slug)
     project = None
     if (payload.agent_project or "").strip():
@@ -427,7 +428,7 @@ def ensure_token(request: HttpRequest, slug: str) -> dict:
 
 @router.post(
     "/{slug}/feedback",
-    response={200: dict},
+    response={200: dict, **refusals(422)},
     auth=None,
     summary="Leave feedback on a storyboard (public via ?t=<share_token>)",
 )
@@ -448,6 +449,7 @@ def leave_feedback(request: HttpRequest, slug: str, payload: AnonFeedbackIn, ws:
     ``comment``. A read-only link can do neither. The caller cannot choose its
     own channel or target kind — the server fills those in, so an outsider
     cannot file feedback against something this board does not contain.
+    A note with no words, or one about something the storyboard does not hold, is a 422.
     """
     board = _readable_or_404(request, slug, ws)
     token = request.GET.get("t")
@@ -506,7 +508,7 @@ def leave_feedback(request: HttpRequest, slug: str, payload: AnonFeedbackIn, ws:
 
 @router.post(
     "/{slug}/rounds",
-    response=RoundOut,
+    response={200: RoundOut, **refusals(422)},
     auth=session_auth,
     summary="Open a feedback round on a storyboard",
 )
@@ -514,7 +516,8 @@ def leave_feedback(request: HttpRequest, slug: str, payload: AnonFeedbackIn, ws:
 def open_storyboard_round(request: HttpRequest, slug: str, ws: str = "") -> dict:
     """Editors only. Pins every narrative's current version and adopts the notes
     left since the last round. Needs the board linked to a project in its own
-    workspace. `ws` (or the `/api/w/<ws>/` pin) picks among same-slug boards."""
+    workspace. `ws` (or the `/api/w/<ws>/` pin) picks among same-slug boards.
+    A storyboard not yet linked to a board project cannot open a round (422)."""
     board = _editable_or_404(request, slug, ws)
     try:
         rnd = board_rounds.open_round(board, by_user=request.user)

@@ -16,7 +16,11 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, override_settings
+from ninja.errors import HttpError
+from pydantic import ValidationError
 
+from apps.agent_runs.api import _run_id_or_404
+from apps.agent_runs.documents import MAX_ITERATIONS, RunDocStateIn, _state_iteration
 from apps.api.api import api
 from apps.api.openapi_doc import NO_NUL_PATTERN
 from apps.api.renderers import OrjsonRenderer
@@ -101,7 +105,7 @@ def test_unauthenticated_resolve_matches_its_declared_401_schema(db):
 
     spec = api.get_openapi_schema()
     op = spec["paths"]["/api/agents/{slug}/credentials/resolve"]["get"]
-    declared = op["responses"][401]["content"]["application/json"]["schema"]
+    declared = op["responses"][401]["content"]["application/problem+json"]["schema"]
     # Round-trip through JSON so the schema is what /api/openapi.json serves.
     components = json.loads(json.dumps(spec["components"]))
     jsonschema.validate(r.json(), {**declared, "components": components})
@@ -227,3 +231,29 @@ def test_request_text_is_documented_nul_free_and_refusals_as_problem_json():
     assert "400" in schema["paths"]["/api/events/"]["post"]["responses"]
     # ...and one that takes none does not.
     assert "400" not in schema["paths"]["/api/tokens/"]["post"]["responses"]
+
+
+# --- round 5 (#2598): routes the fuzz reached once it could create an agent --------
+
+
+def test_a_run_state_iteration_past_the_ceiling_is_a_422_not_an_endless_loop():
+    # One step row is mirrored per iteration: 2**63 was a request that never ended.
+    with pytest.raises(ValidationError):
+        RunDocStateIn(state={}, iteration=MAX_ITERATIONS + 1)
+    assert _state_iteration({"iteration": 2**63}) == 0
+    assert _state_iteration({"iteration": "7"}) == 0
+    assert _state_iteration({"iteration": 7}) == 7
+
+
+@pytest.mark.parametrize("run_id", [">x", "", "1e3", "\u0663", str(2**63)])
+def test_a_run_id_that_is_not_a_row_id_is_a_404_not_a_500(run_id):
+    with pytest.raises(HttpError) as refused:
+        _run_id_or_404("agent", run_id)
+    assert refused.value.status_code == 404
+    _run_id_or_404("agent", "12")  # a real one passes
+
+
+def test_the_device_proof_401_is_documented_as_problem_json():
+    schema = json.loads(json.dumps(api.get_openapi_schema(), default=str))
+    resolve = schema["paths"]["/api/agents/{slug}/credentials/resolve"]["get"]["responses"]
+    assert list(resolve["401"]["content"]) == ["application/problem+json"]

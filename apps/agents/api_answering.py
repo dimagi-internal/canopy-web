@@ -9,6 +9,7 @@ from django.http import HttpRequest
 from ninja import Router
 from ninja.errors import HttpError
 
+from apps.api.errors import refusals
 from apps.api.route_gates import gate
 from apps.events import audit
 from apps.tokens.models import AppCredential
@@ -45,10 +46,11 @@ def get_read_mode(request: HttpRequest, slug: str):
     return answering.read_mode_of(agent_for_read(request, slug))
 
 
-@router.put("/{slug}/read-mode", response=ReadModeSettingOut,
+@router.put("/{slug}/read-mode", response={200: ReadModeSettingOut, **refusals(422)},
             summary="Customise read mode: only the fields sent change. dry_run checks without saving")
 @gate("agent-admin", setting=True)
 def put_read_mode(request: HttpRequest, slug: str, payload: ReadModeIn):
+    """Malformed read paths, or a pinned skill commit that is not a commit sha, are a 422."""
     agent = agent_for_admin(request, slug)
     locked, before, after = _run(answering.set_read_mode, agent, _changed(payload), by=request.user,
                                  dry_run=payload.dry_run)

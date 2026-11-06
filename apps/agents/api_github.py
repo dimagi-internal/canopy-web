@@ -7,6 +7,7 @@ from ninja import Router
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.api.errors import refusals
 from apps.api.route_gates import gate
 from apps.passkeys import stepup
 
@@ -45,7 +46,7 @@ def _github_out(request: HttpRequest, agent) -> AgentGitHubOut:
                           can_lend=agent.is_admin(request.user))
 
 
-@router.put("/{slug}/github", response=AgentGitHubOut,
+@router.put("/{slug}/github", response={200: AgentGitHubOut, **refusals(422)},
             summary="Delegate your GitHub identity to this agent (owner or admin, write-only)")
 @gate("agent-admin", setting=True, step_up=True)  # an owner or admin lends their OWN identity (delegations.set_github)
 def set_agent_github(request: HttpRequest, slug: str, payload: AgentGitHubIn) -> AgentGitHubOut:
@@ -58,7 +59,8 @@ def set_agent_github(request: HttpRequest, slug: str, payload: AgentGitHubIn) ->
     it through canopy, the caller included, and canopy-web keeps no copy it can open.
     409 `no_machine_can_open` when no machine that runs the agent has an approved device
     key yet. A browser needs a fresh passkey step-up (403 `step_up_required`); a token may
-    call it."""
+    call it.
+    A blank token, or one GitHub rejects, is a 422."""
     agent = agent_for_read(request, slug)
     if not agent.is_admin(request.user):   # before the step-up, as delegations.set_github says it
         raise HttpError(422, f"only {agent.slug}'s owner or an admin can delegate their GitHub identity to it")

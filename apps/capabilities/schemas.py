@@ -117,8 +117,8 @@ class CapabilityGrantIn(StrictModel):
     agent: str
     capability: str = Field(pattern=r"^[a-z0-9-]{3,40}$")
     #: Lower the manifest's ceilings (never raise them); null = the manifest's.
-    max_concurrent: int | None = Field(default=None, ge=1)
-    max_lease_s: int | None = Field(default=None, ge=60)
+    max_concurrent: int | None = Field(default=None, ge=1, le=2**31 - 1)  # PositiveIntegerFields
+    max_lease_s: int | None = Field(default=None, ge=60, le=2**31 - 1)
 
 
 class CapabilityLeaseIn(StrictModel):

@@ -10,6 +10,7 @@ from ninja import Router
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.api.errors import refusals
 from apps.api.route_gates import gate
 from apps.github_connect.github_app import GitHubAuthError, GitHubNotConfigured
 
@@ -80,7 +81,7 @@ def sync_skill_history(request: HttpRequest, slug: str) -> SkillHistoryOut:
     return SkillHistoryOut(**history.history_payload(agent, request.user))
 
 
-@router.get("/{slug}/skill-history/revisions", response=dict[str, Any],
+@router.get("/{slug}/skill-history/revisions", response={200: dict[str, Any], **refusals(422)},
             summary="Skill revisions, newest first, with their commit messages")
 @gate("member")
 def skill_history(
@@ -109,6 +110,7 @@ def skill_history(
     On the History page, read `current_page` first: it says which skill, group
     or commit is selected and the date being looked at. A selected commit's sha
     is `commit`; the page's `as_of` date is `until`.
+    A `sha` that is not a commit sha is a 422.
     """
     agent = agent_for_read(request, slug)
     try:
@@ -119,7 +121,7 @@ def skill_history(
         raise HttpError(422, str(e)) from e
 
 
-@router.get("/{slug}/skill-history/diff", response=dict[str, Any],
+@router.get("/{slug}/skill-history/diff", response={200: dict[str, Any], **refusals(422)},
             summary="The change one commit made to one skill, as a unified diff")
 @gate("member")
 def skill_revision_diff(request: HttpRequest, slug: str, sha: str, skill: str) -> dict:
@@ -127,6 +129,7 @@ def skill_revision_diff(request: HttpRequest, slug: str, sha: str, skill: str) -
 
     Fetched live from GitHub (not stored), truncated to 20 KB. Use it when a
     commit message does not say enough about what actually changed.
+    A `sha` that is not a commit sha is a 422.
     """
     import requests
 

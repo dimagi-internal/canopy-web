@@ -10,6 +10,7 @@ from ninja import Router
 
 from apps.api.auth import session_auth
 from apps.api.errors import (
+    refusals,
     TYPE_FORBIDDEN,
     ProblemError,
 )
@@ -77,7 +78,7 @@ def get_agent_zk_state(request: HttpRequest, slug: str, values: bool = False) ->
     return out
 
 
-@router.post("/{slug}/vault/zk/enable", response=ZkStateOut,
+@router.post("/{slug}/vault/zk/enable", response={200: ZkStateOut, **refusals(422)},
              summary="Turn on zero-knowledge: wraps + every value as ciphertext, atomically")
 @gate("agent-admin", "vault-admin", setting=True, step_up=True)  # browser: + step-up; token allowed
 def enable_agent_zk(request: HttpRequest, slug: str, payload: ZkEnableIn) -> ZkStateOut:
@@ -85,7 +86,8 @@ def enable_agent_zk(request: HttpRequest, slug: str, payload: ZkEnableIn) -> ZkS
     Needs exactly one `recovery` wrap and a wrap the caller can open (their
     member wrap, or a device wrap on a runner they own — the CLI enabling as
     its device; the owner's member wrap can be granted later). `values` must cover every stored credential,
-    re-encrypted under the new vault key. Errors are problem+json with an `error` code."""
+    re-encrypted under the new vault key. Errors are problem+json with an `error` code.
+    Wraps that do not start the vault key at kv 1, or do not cover its readers, are a 422."""
 
     agent = zk_admin(request, slug)
     try:

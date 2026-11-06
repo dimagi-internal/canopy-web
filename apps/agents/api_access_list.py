@@ -12,6 +12,7 @@ from django.http import HttpRequest
 from ninja import Router, Status
 from ninja.errors import HttpError
 
+from apps.api.errors import refusals
 from apps.api.route_gates import gate
 from apps.events import audit
 from apps.workspaces import permissions as perms
@@ -168,7 +169,7 @@ def _host_sites(agent: Agent) -> list[HostSiteChoiceOut]:
     return [HostSiteChoiceOut(name=n, site=site_of.get(n, "")) for n in names]
 
 
-@router.post("/{slug}/access-list", response={201: AccessLineOut},
+@router.post("/{slug}/access-list", response={201: AccessLineOut, **refusals(422)},
              summary="Add a line to this agent's access list (an agent admin)")
 @gate("agent-admin", setting=True)
 def add_access_line(request: HttpRequest, slug: str, payload: AccessLineIn) -> Status:
@@ -177,7 +178,8 @@ def add_access_line(request: HttpRequest, slug: str, payload: AccessLineIn) -> S
     (a key from `GET /api/workspaces/{ws}/agent-roles`: the built-ins read_only, read_write and editor,
     and any a workspace defined) or, rarely, one host site (`host_site`, a name from the list's
     `host_sites`). A line that names people only by address (domain, contact) can give a role that
-    only reads or opens host sites, never one that drives or changes the agent."""
+    only reads or opens host sites, never one that drives or changes the agent.
+    A line gives a role or one host site, not both and not neither (422)."""
     agent = agent_for_admin(request, slug)
     line = _create({"agent": agent}, _fields(payload, request.user, agent.workspace_id), request.user)
     audit.note_change(scope=f"access-list:{agent.slug}", before=None, after=_summary(line),

@@ -559,7 +559,7 @@ def link_canopy_user(request: HttpRequest, slug: str, payload: AgentCanopyUserIn
 
 # Returns a secret, once. A fleet-baseline rail keeps agents from calling the MCP twin of
 # this route, whose result would land in a transcript.
-@router.post("/{slug}/canopy-token", response={201: AgentCanopyTokenOut},
+@router.post("/{slug}/canopy-token", response={201: AgentCanopyTokenOut, **refusals(422)},
              summary="Mint the agent's own canopy-web token (shown once)")
 # + members.manage to CREATE the agent's login, own for one that has signed in
 # (services.mint_agent_canopy_token / agents/agent_login.py)
@@ -567,7 +567,8 @@ def link_canopy_user(request: HttpRequest, slug: str, payload: AgentCanopyUserIn
 def mint_agent_canopy_token(request: HttpRequest, slug: str, payload: AgentCanopyTokenIn) -> Status:
     """For the agent's own login, creating it when the agent has none. See
     `services.mint_agent_canopy_token` for who may, and why it never adopts an
-    existing account."""
+    existing account.
+    An agent with no mailbox address, when none is passed, is a 422."""
 
     agent = agent_for_admin(request, slug)
     refused = minting_refusal(request)
@@ -906,7 +907,7 @@ def release_agent_hold(request: HttpRequest, slug: str) -> AgentHoldOut:
     return _hold_out(agent)
 
 
-@router.patch("/{slug}/repository", response=AgentDetailOut,
+@router.patch("/{slug}/repository", response={200: AgentDetailOut, **refusals(422)},
               summary="Point an agent at its GitHub repository")
 @gate("agent-admin", setting=True)  # what its boxes run: a DEFINITION_FIELDS change
 def set_repository(request: HttpRequest, slug: str, payload: RepositoryIn) -> AgentDetailOut:
@@ -917,7 +918,8 @@ def set_repository(request: HttpRequest, slug: str, payload: RepositoryIn) -> Ag
     The agent's owner or an admin (`agent_for_admin`): the repo is what a box
     runs as this agent, the same bar the upsert holds `DEFINITION_FIELDS` to. The
     cloud boxes that take its turns are asked to re-run their bootstrap, as a
-    repo change through the upsert does."""
+    repo change through the upsert does.
+    A value that is not a github.com repository is a 422."""
 
     agent = agent_for_admin(request, slug)
     full = delegations.repo_full_name(payload.repo_url.strip())
