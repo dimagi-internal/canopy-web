@@ -56,7 +56,9 @@ def zk_agents_waiting_on(user, key: RunnerDeviceKey, *, assume_active: bool = Fa
 def zk_agents_to_vouch_for(user, key: RunnerDeviceKey, *, assume_active: bool = False, agents=None,
                            facts=None) -> list[DeviceKeyVouchOut]:
     """Zero-knowledge agents whose vault `user` is a member of WITHOUT managing it, that
-    this key — `user`'s own machine — waits on a copy of the vault key for.
+    this key — `user`'s own machine — waits on a copy of the vault key for; and the agents
+    a zero-knowledge WORKSPACE vault waiting on it accepts their signature under
+    (`workspace_vouch`).
 
     A member cannot wrap the key (only its managers grant), but the spec has their
     approval sign the machine (2026-10-22 vault-access-follows-canopy-access §1): a
@@ -66,7 +68,7 @@ def zk_agents_to_vouch_for(user, key: RunnerDeviceKey, *, assume_active: bool = 
     manager grants directly."""
     if not key.ecdh_jkt or key.status == RunnerDeviceKey.REVOKED or not (assume_active or key.ecdh_ready):
         return []
-    from apps.agents.credentials import vault_members, zk  # noqa: PLC0415 — cycle via apps.agents.credentials
+    from apps.agents.credentials import vault_members, workspace_vouch, zk  # noqa: PLC0415 — cycle via apps.agents.credentials
 
     # Whose machine it is: the runner's owner, else whoever approves it — the caller,
     # for a key they are about to approve.
@@ -83,6 +85,12 @@ def zk_agents_to_vouch_for(user, key: RunnerDeviceKey, *, assume_active: bool = 
             continue
         if device_keys.runner_serves_agent(key.runner, agent, facts) and zk.device_waits(agent, key):
             out.append(DeviceKeyVouchOut(slug=agent.slug, agent_id=str(agent.pk)))
+    # And for each zero-knowledge workspace vault waiting on the machine: the agents it
+    # serves that the person signs under, whatever their kv and whoever administers them
+    # (DIM-SA-W175 ran only a kv-0 agent its person owns, so nothing above named it).
+    have = {a.slug for a in out}
+    out += [DeviceKeyVouchOut(slug=a.slug, agent_id=str(a.pk))
+            for a in workspace_vouch.agents_to_sign_under(user.pk, key, facts) if a.slug not in have]
     return sorted(out, key=lambda a: a.slug)
 
 

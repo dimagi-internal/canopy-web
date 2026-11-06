@@ -104,13 +104,17 @@ export async function recoverWithCode(slug: string, code: string): Promise<ZkSta
  */
 export async function approveAndGrant(keyId: string, agents: string[], prompt: UnlockPrompt, vouch: readonly VouchAgent[] = []):
     Promise<{ key: RunnerDeviceKeyOut; granted: string[]; failed: string[]; vouched: string[] }> {
-  const ks = agents.length || vouch.length ? await getKeyset() : null
+  let ks = agents.length || vouch.length ? await getKeyset() : null
   let me: Unlocked | null = ks ? await stepUpAndUnlock(ks) : null
   const key = await approveRunnerDeviceKey(keyId)
   const granted: string[] = [], failed: string[] = []
   const todo = key.zk_pending_agents ?? agents
   const toVouch = key.zk_vouch_agents ?? vouch
-  if ((!todo.length && !toVouch.length) || !ks?.exists) return { key, granted, failed: [...todo], vouched: [] }
+  if (!todo.length && !toVouch.length) return { key, granted, failed: [], vouched: [] }
+  // The approved key's own lists are the truth: a box the listing named nothing for (a
+  // workspace vault reaching a kv-0 agent, DIM-SA-W175) still gets its person's signature.
+  ks = ks ?? (await getKeyset())
+  if (!ks?.exists) return { key, granted, failed: [...todo], vouched: [] }
   me = me ?? (await unlockVaultKey(prompt, ks))
   // My own machine, for agents whose vault I am a member of but do not manage: I
   // cannot hand the key over, but my signature is what lets a keeper do it.
