@@ -69,7 +69,7 @@ resolved gives. For a conversation on a site:
 
 | Asker | Profile | Access |
 |---|---|---|
-| owner, agent admin, `system`, a session writer, or holds `write` | `whole_agent`, but every call to the site goes through the person's own act-as-you permission, and the agent's own login there is withheld (below) | `full` |
+| owner, agent admin, `system`, or holds `write` | `whole_agent`, but every call to the site goes through the person's own act-as-you permission, and the agent's own login there is withheld (below) | `full` |
 | named an entry (`requested`) their permissions open | that entry | `confined` |
 | named an entry they cannot open | none, **no fall-through** | `refused` (`profile_not_open`) |
 | named nothing; the site's entry opens for them | that `connected_site` entry | `confined` |
