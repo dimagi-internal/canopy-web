@@ -214,6 +214,52 @@ def test_a_dropped_connection_names_how_the_adapter_went():
     assert err.value.session_id == "new-sid"
 
 
+class AliveAgent(Agent):
+    """The adapter stays up and answers the request with an error: its Claude child died."""
+
+    def exit_report(self):
+        return ""
+
+    def stderr_tail(self, lines=5):
+        return "Claude Code process exited with code 3221225477"
+
+
+def test_an_error_from_a_live_adapter_says_the_prompt_was_sent_and_logs_its_stderr():
+    # 2026-11-06, turn 735292d3 (fizzy on shayoni-win-cdp, failure investigation 33):
+    # "Internal error: The Claude Agent process exited unexpectedly." with no
+    # exit report (the adapter was alive) and no way to tell whether the prompt
+    # had reached the session, nor what the Claude process said as it died.
+    lines = []
+    err_agent = {}
+
+    def make_agent(cwd, env, on_update):
+        err_agent["a"] = AliveAgent(cwd, env, on_update, result_raises=RuntimeError(
+            "Internal error: The Claude Agent process exited unexpectedly."))
+        return err_agent["a"]
+
+    with pytest.raises(TurnError) as err:
+        drive_turn("go", make_agent=make_agent, reducer=UpdateReducer(),
+                   emit=lambda e: None, cwd="/tmp", release_wait=0, log=lines.append)
+    assert err.value.detail == ("Internal error: The Claude Agent process exited unexpectedly. "
+                                "(adapter still running; failed after the prompt was sent)")
+    assert any("3221225477" in line for line in lines)
+    assert "3221225477" not in err.value.detail  # stderr is never vetted for a note
+
+
+def test_an_error_opening_the_session_says_the_prompt_was_never_sent():
+    class NoSession(AliveAgent):
+        def new_session(self, timeout=None):
+            raise RuntimeError("Internal error: The Claude Agent process exited unexpectedly.")
+
+    log = []
+    with pytest.raises(TurnError) as err:
+        drive_turn("go", make_agent=lambda cwd, env, on_update: NoSession(cwd, env, on_update, log=log),
+                   reducer=UpdateReducer(), emit=lambda e: None, cwd="/tmp", release_wait=0)
+    assert err.value.detail.endswith("(adapter still running; failed opening the session, "
+                                     "before the prompt was sent)")
+    assert "prompt" not in log
+
+
 def test_a_silent_turn_is_cut_off_by_idle_time():
     now = {"t": 0.0}
 

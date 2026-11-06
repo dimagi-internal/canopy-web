@@ -264,7 +264,12 @@ def _result_of(agent, result, stream: _Stream, session_id: str, was_cancelled: b
                       cancelled=was_cancelled or stop == "cancelled", rate_limit=rate_limit)
 
 
-def _turn_error(exc, agent, stream: _Stream, session_id: str) -> TurnError:
+#: Where a turn was when it failed, for the note: fixed text only (never stderr).
+SENT = "after the prompt was sent"
+
+
+def _turn_error(exc, agent, stream: _Stream, session_id: str, step: str = SENT,
+                log=logger.info) -> TurnError:
     stream.flush(final=True)
     detail = exc.detail if isinstance(exc, TurnError) else str(exc)
     why = ""
@@ -272,6 +277,22 @@ def _turn_error(exc, agent, stream: _Stream, session_id: str) -> TurnError:
         why = agent.exit_report() if agent is not None else ""
     except Exception:  # noqa: BLE001 — older or fake agents have none
         pass
+    if not why and agent is not None:
+        # The adapter is still up and answered with an error: its Claude child
+        # died, or it refused. On 2026-11-06 turn 735292d3 (fizzy on
+        # shayoni-win-cdp, failure investigation 33) failed "Internal error: The
+        # Claude Agent process exited unexpectedly." and nothing recorded whether
+        # the prompt had reached the session (did the message land?) or what the
+        # Claude process said as it died. The step goes in the note; the stderr
+        # only in the runner's log, since it is not vetted for what it quotes.
+        where = step if step == SENT else f"{step}, before the prompt was sent"
+        why = f"adapter still running; failed {where}"
+        tail = ""
+        try:
+            tail = agent.stderr_tail()
+        except Exception:  # noqa: BLE001 — older or fake agents have none
+            pass
+        log(f"ACP turn failed {where}: {detail}; adapter stderr: {tail or '(none)'}")
     return TurnError(f"{detail} ({why})" if why else detail,
                      session_id or getattr(agent, "session_id", "") or "")
 
@@ -320,11 +341,13 @@ def drive_turn(prompt: str, *, make_agent, reducer, emit, cwd, env: dict | None 
                      on_flushed=on_flushed)
     agent = None
     session_id = ""
+    step = "starting the adapter"
     try:
         agent = make_agent(cwd=cwd, env=env, on_update=stream.on_update)
         init = agent.start()
         if on_start is not None:
             on_start(agent)
+        step = "opening the session"
         if resume:
             stream.replaying = True
             try:
@@ -347,6 +370,7 @@ def drive_turn(prompt: str, *, make_agent, reducer, emit, cwd, env: dict | None 
         if on_session is not None:
             on_session(session_id)
 
+        step = SENT
         pending = agent.prompt(prompt)
         was_cancelled = False
         if cancelled():
@@ -358,7 +382,7 @@ def drive_turn(prompt: str, *, make_agent, reducer, emit, cwd, env: dict | None 
             flush_seconds=flush_seconds, idle_timeout=idle_timeout, timeout=timeout, clock=clock)
         return _result_of(agent, result, stream, session_id, was_cancelled, init, log)
     except Exception as exc:  # noqa: BLE001 — named, with how the adapter went
-        raise _turn_error(exc, agent, stream, session_id) from exc
+        raise _turn_error(exc, agent, stream, session_id, step, log) from exc
     finally:
         _release(agent, on_end, session_id, release_wait, processes)
 
@@ -389,6 +413,6 @@ def adopt_turn(*, attach, reducer, emit, session_id: str, live_from, emitted_thr
             flush_seconds=flush_seconds, idle_timeout=None, timeout=None, clock=clock)
         return _result_of(agent, result, stream, session_id, was_cancelled, None, log)
     except Exception as exc:  # noqa: BLE001
-        raise _turn_error(exc, agent, stream, session_id) from exc
+        raise _turn_error(exc, agent, stream, session_id, log=log) from exc
     finally:
         _release(agent, on_end, session_id, release_wait, processes)
