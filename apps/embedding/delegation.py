@@ -77,7 +77,7 @@ def refusal(path: str) -> str:
     )
 
 
-def offered_agent_ids(app) -> set | None:
+def offered_agent_ids(app, *, user=None, own_panel: bool = False) -> set | None:
     """The agents this acting site may reach, or None when no site is acting.
 
     None is "no limit from this rule", not "nothing": a browser session or a
@@ -92,10 +92,21 @@ def offered_agent_ids(app) -> set | None:
         return None
     from apps.tokens.models import AppCredentialAgent
 
-    return set(
+    listed = set(
         AppCredentialAgent.objects.filter(app=app, agent__workspace_id=app.workspace_id)
         .values_list("agent_id", flat=True)
     )
+    if own_panel and user is not None and getattr(user, "is_authenticated", False):
+        # canopy's own panel: also every agent of a workspace the person is in. The
+        # site's list says what it offers in ITS workspace; elsewhere nothing narrower is
+        # set, so a workspace's agents are on offer (the person's own access still decides
+        # each conversation, as it does on /sessions).
+        from apps.agents.models import Agent  # noqa: PLC0415 — this module imports no models (loaded by the token middleware and socket auth); same as AppCredentialAgent above
+        from apps.workspaces import services as wsvc  # noqa: PLC0415 — as above
+
+        listed |= set(Agent.objects.filter(workspace_id__in=wsvc.user_workspace_slugs(user))
+                      .exclude(workspace_id=app.workspace_id).values_list("pk", flat=True))
+    return listed
 
 
 def acting_app(request):
@@ -106,7 +117,9 @@ def acting_app(request):
 def offered_for(request) -> set | None:
     """The agents this request's site may drive: its allow-list, narrowed to the
     one agent its token is bound to, if it is. None for no acting site."""
-    return narrowed(offered_agent_ids(acting_app(request)), getattr(request, "bound_agent_id", None))
+    return narrowed(offered_agent_ids(acting_app(request), user=getattr(request, "user", None),
+                                      own_panel=getattr(request, "own_panel", False)),
+                    getattr(request, "bound_agent_id", None))
 
 
 def narrowed(offered: set | None, bound_agent_id) -> set | None:

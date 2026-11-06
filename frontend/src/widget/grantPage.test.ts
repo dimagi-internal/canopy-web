@@ -24,8 +24,12 @@ describe('which page the widget names when it mints', () => {
     }
   })
 
-  it('adds ?page= only when there is a page to name', () => {
-    expect(tokenUrlFor('/canopy/api/embed/token', '/w/connect/agents/ace/tasks')).toBe('/canopy/api/embed/token?page=agent.tasks')
-    expect(tokenUrlFor('/canopy/api/embed/token', '/w/connect')).toBe('/canopy/api/embed/token')
+  it('adds ?page= only when there is a page to name, and ?workspace= when the page is in one', () => {
+    expect(tokenUrlFor('/canopy/api/embed/token', '/w/connect/agents/ace/tasks'))
+      .toBe('/canopy/api/embed/token?page=agent.tasks&workspace=connect')
+    expect(tokenUrlFor('/canopy/api/embed/token', '/w/marshellis/views/gmail-clean-up'))
+      .toBe('/canopy/api/embed/token?workspace=marshellis')
+    expect(tokenUrlFor('/canopy/api/embed/token', '/ide')).toBe('/canopy/api/embed/token?page=ide')
+    expect(tokenUrlFor('/canopy/api/embed/token', '/')).toBe('/canopy/api/embed/token')
   })
 })

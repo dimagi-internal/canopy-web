@@ -518,6 +518,16 @@ class DelegatedToken(models.Model):
     #: the conversation is on — not whichever of the person's pages minted last.
     host_grant = models.ForeignKey("tokens.HostGrant", on_delete=models.SET_NULL, null=True,
                                    blank=True, related_name="+")
+    #: Minted by canopy's OWN panel (`/api/embed/token`, a browser session only), never by
+    #: a site's exchange. Such a token reaches the agents of every workspace its person is
+    #: in, not only the site's list (`delegation.offered_agent_ids`): the person can already
+    #: chat with them on canopy, and canopy is the host. Set on the token rather than read
+    #: off the app, because a third-party site's app can carry the same "show on canopy's
+    #: pages" box, and its visitors' tokens must not widen with it.
+    own_panel = models.BooleanField(default=False)
+    #: The workspace of the canopy page that minted it (`/w/<slug>/…`), when the person is
+    #: in it: which agents the panel LISTS there. Display only; `own_panel` is the rule.
+    page_workspace = models.CharField(max_length=100, blank=True, default="")
 
     class Meta:
         db_table = "delegated_tokens"
@@ -525,13 +535,14 @@ class DelegatedToken(models.Model):
 
     @classmethod
     def issue(cls, *, app, user, ttl_seconds, assurance: str = "delegated",
-              runner_requirements=(), bound_agent=None, host_grant=None):
+              runner_requirements=(), bound_agent=None, host_grant=None,
+              own_panel=False, page_workspace=""):
         from django.utils import timezone
         raw = cls.PREFIX + secrets.token_urlsafe(32)
         token = cls.objects.create(
             app=app, user=user, assurance=assurance,
             runner_requirements=list(runner_requirements), bound_agent=bound_agent,
-            host_grant=host_grant,
+            host_grant=host_grant, own_panel=own_panel, page_workspace=page_workspace,
             token_hash=hash_token(raw),
             expires_at=timezone.now() + timezone.timedelta(seconds=ttl_seconds),
         )

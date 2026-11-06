@@ -81,6 +81,9 @@ export type HostMessage =
   // `code` and `connect_url` come with a refused call to a connected account (`ConnectionRefusal`).
   | { channel: typeof CHANNEL; type: 'read-result'; id: number; ok: false; error: string; code?: string; connect_url?: string }
   | { channel: typeof CHANNEL; type: 'agent-task-status'; id: number; task: AgentTaskStatus }
+  // canopy's panel calls an action the view offered (`canopy.page.registerAction`); the view
+  // answers with a `page-action-result` of the same id.
+  | { channel: typeof CHANNEL; type: 'page-action'; id: number; name: string; args: Record<string, unknown> }
 
 /** Frame → page. */
 export type FrameMessage =
@@ -103,6 +106,13 @@ export type FrameMessage =
   | { channel: typeof CHANNEL; type: 'navigate'; path: string }
   | { channel: typeof CHANNEL; type: 'app'; id: number; request: AppOp }
   | { channel: typeof CHANNEL; type: 'go'; page: string; params: Record<string, string> }
+  // canopy's panel (pagePanel.ts): what the view shows, the actions it offers the agent,
+  // its answers, and a question for the panel (only on a click on the view).
+  | { channel: typeof CHANNEL; type: 'page-state'; state: unknown }
+  | { channel: typeof CHANNEL; type: 'page-action-register'; spec: unknown }
+  | { channel: typeof CHANNEL; type: 'page-action-unregister'; name: string }
+  | { channel: typeof CHANNEL; type: 'page-action-result'; id: number; ok: boolean; data?: unknown; error?: string }
+  | { channel: typeof CHANNEL; type: 'page-ask'; text: string }
   | { channel: typeof CHANNEL; type: 'resize'; height: number }
   | { channel: typeof CHANNEL; type: 'error'; message: string }
 

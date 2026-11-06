@@ -177,7 +177,7 @@ export default function DynamicViewPage() {
           />
         )}
         <div className="min-w-0">
-          <DynamicViewFrame view={shown} scope={scope} onError={setFrameError} />
+          <DynamicViewFrame view={shown} scope={scope} onError={setFrameError} pagePanel />
         </div>
       </div>
     </div>

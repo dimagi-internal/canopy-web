@@ -28,9 +28,21 @@ export function grantPageFor(pathname: string): string {
   return ''
 }
 
-/** The widget's token URL for the page on screen now. A bare URL (no `page=`)
- *  on a page with no grant, so nothing changes there. */
+/** The workspace a canopy page belongs to (`/w/<slug>/…`), or ''. */
+export function pageWorkspaceFor(pathname: string): string {
+  return /^\/w\/([^/]+)/.exec(pathname)?.[1] ?? ''
+}
+
+/** The widget's token URL for the page on screen now: `page=` when the page has a
+ *  grant, and `workspace=` when it is in one — the panel then offers that
+ *  workspace's agents (the site's own list in the site's own workspace). The server
+ *  checks you are in it; naming one cannot widen anything. */
 export function tokenUrlFor(base: string, pathname: string): string {
   const page = grantPageFor(pathname)
-  return page ? `${base}?page=${encodeURIComponent(page)}` : base
+  const workspace = pageWorkspaceFor(pathname)
+  const query = [
+    page ? `page=${encodeURIComponent(page)}` : '',
+    workspace ? `workspace=${encodeURIComponent(workspace)}` : '',
+  ].filter(Boolean).join('&')
+  return query ? `${base}?${query}` : base
 }

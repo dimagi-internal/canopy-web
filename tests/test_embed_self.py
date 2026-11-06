@@ -131,3 +131,65 @@ def test_it_does_not_mint_for_an_email_the_caller_supplies():
     ).json()["token"]
 
     assert DelegatedToken.lookup(raw).user == user
+
+
+# --- the workspace's agents, on canopy's own panel ----------------------------------
+#
+# canopy's panel is registered as a site in ONE workspace, and a site offers only its
+# own workspace's agents. On a page of another workspace that left the panel with
+# nothing to offer (Bailey on marshellis's Gmail clean-up page). There, nothing
+# narrower is set, so the workspace's agents are on offer: ones the person can already
+# chat with on canopy. A third-party site never widens this way.
+
+
+def _workspace_with_agent(user, slug, agent_slug):
+    from apps.agents.models import Agent
+    from apps.workspaces.models import Workspace, WorkspaceMembership
+
+    ws = Workspace.objects.create(slug=slug, display_name=slug, created_by=user)
+    WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.EDITOR)
+    return Agent.objects.create(slug=agent_slug, name=agent_slug.title(), workspace=ws)
+
+
+def _agents(raw):
+    r = Client().get("/api/embed/agents", HTTP_AUTHORIZATION=f"Bearer {raw}")
+    assert r.status_code == 200, r.content
+    return [a["slug"] for a in r.json()]
+
+
+def test_on_another_workspaces_page_the_panel_lists_that_workspaces_agents():
+    from apps.agents.models import Agent
+    from apps.tokens.models import AppCredentialAgent
+
+    app = _app()
+    host_agent = Agent.objects.create(slug="ada", name="Ada", workspace=host_workspace())
+    AppCredentialAgent.objects.create(app=app, agent=host_agent)
+    user, c = _user()
+    from apps.workspaces.models import WorkspaceMembership
+    WorkspaceMembership.objects.create(user=user, workspace=host_workspace(), role=WorkspaceMembership.OWNER)
+    _workspace_with_agent(user, "family", "bailey")
+
+    family = c.post("/api/embed/token?workspace=family").json()["token"]
+    assert _agents(family) == ["bailey"]
+    # The site's own workspace keeps the site's list; no workspace (or one you are not
+    # in) is as before.
+    assert _agents(c.post("/api/embed/token?workspace=site-host").json()["token"]) == ["ada"]
+    assert _agents(c.post("/api/embed/token").json()["token"]) == ["ada"]
+    assert _agents(c.post("/api/embed/token?workspace=nowhere").json()["token"]) == ["ada"]
+
+
+def test_the_panel_may_reach_a_workspace_agent_but_a_sites_token_may_not():
+    from apps.embedding import delegation
+
+    app = _app()
+    user, c = _user()
+    bailey = _workspace_with_agent(user, "family", "bailey")
+    c.post("/api/embed/token?workspace=family")
+    own = DelegatedToken.objects.filter(user=user).latest("created_at")
+    assert own.own_panel and own.page_workspace == "family"
+    assert bailey.pk in delegation.offered_agent_ids(app, user=user, own_panel=True)
+
+    # The same app's token minted any other way (a site's exchange) does not widen.
+    _raw, site_tok = DelegatedToken.issue(app=app, user=user, ttl_seconds=600)
+    assert not site_tok.own_panel
+    assert bailey.pk not in delegation.offered_agent_ids(app, user=user, own_panel=site_tok.own_panel)

@@ -135,7 +135,8 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         from apps.embedding import delegation
 
         offered = await database_sync_to_async(delegation.offered_agent_ids)(
-            self.scope.get("delegated_app"))
+            self.scope.get("delegated_app"), user=self.scope.get("user"),
+            own_panel=bool(self.scope.get("own_panel")))
         offered = delegation.narrowed(offered, self.scope.get("bound_agent_id"))
         return offered is None or session.agent_id in offered
 

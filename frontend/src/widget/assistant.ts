@@ -4,6 +4,8 @@ import { useSyncExternalStore } from 'react'
  *  from a button of the page's, where the floating bubble is hidden. */
 export interface Assistant {
   toggle(): void
+  /** Open the panel and ask this as the person's first message of a new conversation. */
+  ask?(text: string): void
 }
 
 let current: Assistant | null = null
@@ -23,4 +25,9 @@ function subscribe(listener: () => void): () => void {
 /** The widget, or null while it is not mounted (or not enabled here). */
 export function useAssistant(): Assistant | null {
   return useSyncExternalStore(subscribe, () => current, () => null)
+}
+
+/** The panel now, outside React (a view's frame asking it a question). */
+export function currentAssistant(): Assistant | null {
+  return current
 }

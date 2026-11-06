@@ -2230,6 +2230,11 @@ export interface paths {
          *     canopy also takes a short grant to its own tools for that page, usable once you
          *     confirm it with your passkey in the panel; `host_grant` says whether it did. Any
          *     other value, or none, is simply no grant.
+         *
+         *     `workspace` names the workspace of the page (`/w/<slug>/…`). The panel then lists
+         *     that workspace's agents — the site's own list where the page is in the site's own
+         *     workspace — and, wherever it is, may open a conversation with an agent of any
+         *     workspace you are in, as you can on canopy itself.
          */
         readonly post: operations["embed_self_token"];
         readonly delete?: never;
@@ -52508,6 +52513,7 @@ export interface operations {
         readonly parameters: {
             readonly query?: {
                 readonly page?: string;
+                readonly workspace?: string;
             };
             readonly header?: never;
             readonly path?: never;

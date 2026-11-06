@@ -121,11 +121,18 @@ def _offered_rows(request: HttpRequest, app):
     """The agents this site may offer this visitor: its allowlist ∩ their
     workspaces, narrowed to the one agent a bound token names."""
     reachable = wsvc.user_workspace_slugs(request.user)
-    rows = (
-        Agent.objects.filter(embedding_apps__app=app, workspace_id__in=reachable)
-        .order_by("slug")
-        .distinct()
-    )
+    page_ws = getattr(request, "page_workspace", "") if getattr(request, "own_panel", False) else ""
+    if page_ws and page_ws in reachable and page_ws != app.workspace_id:
+        # canopy's own panel on a page of another workspace than the site's: that
+        # workspace's agents. The site's list is what it set for its OWN workspace;
+        # nothing narrower is set here, so the workspace's agents are on offer.
+        rows = Agent.objects.filter(workspace_id=page_ws).order_by("slug")
+    else:
+        rows = (
+            Agent.objects.filter(embedding_apps__app=app, workspace_id__in=reachable)
+            .order_by("slug")
+            .distinct()
+        )
     # A token the site bound to one agent (a page that chose it) offers just that.
     bound = getattr(request, "bound_agent_id", None)
     if bound:
@@ -223,7 +230,7 @@ def _asks_for_grant(request: HttpRequest) -> bool:
 @embed_router.post("/token", response=EmbedSelfTokenOut,
                    summary="Mint a delegated token for the caller, for canopy's own widget")
 @gate("self", kind="ephemeral-credential", step_up="the caller's own embed token")
-def embed_self_token(request: HttpRequest, page: str = "") -> EmbedSelfTokenOut:
+def embed_self_token(request: HttpRequest, page: str = "", workspace: str = "") -> EmbedSelfTokenOut:
     """The host-side token endpoint every embedder needs — for the host that is
     canopy itself.
 
@@ -242,6 +249,11 @@ def embed_self_token(request: HttpRequest, page: str = "") -> EmbedSelfTokenOut:
     canopy also takes a short grant to its own tools for that page, usable once you
     confirm it with your passkey in the panel; `host_grant` says whether it did. Any
     other value, or none, is simply no grant.
+
+    `workspace` names the workspace of the page (`/w/<slug>/…`). The panel then lists
+    that workspace's agents — the site's own list where the page is in the site's own
+    workspace — and, wherever it is, may open a conversation with an agent of any
+    workspace you are in, as you can on canopy itself.
     """
     # Session-authenticated means ONLY a session. This route sits inside the
     # delegated-token surface (`^/api/embed/`), so without this a connected
@@ -284,8 +296,9 @@ def embed_self_token(request: HttpRequest, page: str = "") -> EmbedSelfTokenOut:
 
     grant = self_host.grant_for_visitor(app, request.user, page) if _asks_for_grant(request) else None
     granted = grant is not None
+    page_ws = workspace if workspace and workspace in wsvc.user_workspace_slugs(request.user) else ""
     raw, token = DelegatedToken.issue(app=app, user=request.user, ttl_seconds=TOKEN_TTL_SECONDS,
-                                      host_grant=grant)
+                                      host_grant=grant, own_panel=True, page_workspace=page_ws)
     audit(event=EmbedAuditLog.MINT, request=request, app=app, subject=request.user,
           detail=f"ttl={TOKEN_TTL_SECONDS}s host_grant={granted} page={page[:40]!r}")
     return EmbedSelfTokenOut(token=raw, expires_at=token.expires_at.isoformat(), host_grant=granted)
@@ -346,7 +359,8 @@ def embed_session_memory(request: HttpRequest, session_id: str) -> EmbedSessionM
     except ValueError:
         raise HttpError(404, "Not found") from None
     session = Session.objects.filter(pk=sid, created_by=request.user).first()
-    offered = delegation.offered_agent_ids(app) or set()
+    offered = delegation.offered_agent_ids(app, user=request.user,
+                                           own_panel=getattr(request, "own_panel", False)) or set()
     if session is None or session.agent_id not in offered:
         raise HttpError(404, "Not found")
     person = contact_services.person_for(user=request.user)
