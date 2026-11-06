@@ -377,10 +377,12 @@ class App:
         return 0, {}
 
     def _report(self) -> None:
+        """What the menu bar shows: no words yet, or listening and how much has gone to the agent."""
         counts = {"sent": self.feed.sent_batches, "words": self.feed.sent_words}
-        if counts != self.reported:
-            self.reported = counts
-            self.wire.send({"type": "status", "state": "listening", "counts": counts})
+        state = "listening" if self.feed.everything or self.feed.sent_batches else "waiting_for_words"
+        if (state, counts) != self.reported:
+            self.reported = (state, counts)
+            self.wire.send({"type": "status", "state": state, "counts": counts})
 
     def _wait_for_start(self) -> dict:
         while True:
