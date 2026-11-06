@@ -460,7 +460,7 @@ def resolve_milestone(project: AgentProject | None, name_or_id) -> ProjectMilest
     if project is None:
         raise ValueError("a task outside a project has no milestones")
     ref = str(name_or_id).strip()
-    m = (project.milestones.filter(pk=int(ref)).first() if ref.isdigit() else None) \
+    m = (project.milestones.filter(pk=int(ref)).first() if ref.isdecimal() else None) \
         or project.milestones.filter(name__iexact=ref).first()
     if m is None:
         raise ValueError(f"{project.name} has no milestone {ref!r}")

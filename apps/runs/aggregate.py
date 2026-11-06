@@ -723,7 +723,7 @@ def _project_matches(project: dict | None, wanted: str) -> bool:
     if project is None:
         return False
     wanted = wanted.strip()
-    if wanted.isdigit():
+    if wanted.isdecimal():
         return project["id"] == int(wanted)
     agent, _, ext = wanted.replace(":", "/").rpartition("/")
     return project["ext_id"] == ext and (not agent or project["agent"] == agent)

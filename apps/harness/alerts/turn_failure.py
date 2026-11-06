@@ -175,7 +175,7 @@ def reconcile(now) -> list[Raise]:
 
 def _investigation_of(alert):
     kind, _, pk = alert.subject_key.partition(":")
-    if kind != "investigation" or not pk.isdigit():
+    if kind != "investigation" or not pk.isdecimal():
         return None
     return FailureInvestigation.objects.filter(pk=int(pk)).first()
 

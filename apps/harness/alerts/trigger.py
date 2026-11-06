@@ -54,7 +54,7 @@ def reconcile(now) -> list[Raise]:
 
 def _trigger_of(alert):
     parts = alert.subject_key.split(":")
-    if len(parts) != 2 or parts[0] != "trigger" or not parts[1].isdigit():
+    if len(parts) != 2 or parts[0] != "trigger" or not parts[1].isdecimal():
         return None
     return (AgentSchedule.objects.select_related("agent")
             .filter(pk=int(parts[1]), agent__workspace_id=alert.workspace_id).first())

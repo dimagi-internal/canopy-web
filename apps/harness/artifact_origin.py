@@ -42,7 +42,7 @@ def explicit_project(ref: str, *, user, turn):
     ref = (ref or "").strip()
     if not ref:
         return None
-    if ref.isdigit():
+    if ref.isdecimal():
         return AgentProject.objects.select_related("agent").filter(
             pk=int(ref), visibility=AgentProject.WORKSPACE).first()
     m = _EXPLICIT_PROJECT.match(ref)
@@ -123,7 +123,7 @@ def parse_project_filter(value: str):
     value = (value or "").strip()
     if not value:
         return None
-    if value.isdigit():
+    if value.isdecimal():
         return {"agent_project_id": int(value)}
     m = _EXPLICIT_PROJECT.match(value)
     if not m or not m.group("agent"):

@@ -513,8 +513,8 @@ def _proposed_at(task: AgentTask) -> dt.datetime | None:
 def task_runs(task: AgentTask) -> list[int]:
     """Every check-in run that proposed (or revised) this task, oldest first."""
     ref = _ref_of(task)
-    runs = [int(r) for r in (ref.get("runs") or []) if str(r).isdigit()]
-    if not runs and str(ref.get("run") or "").isdigit():
+    runs = [int(r) for r in (ref.get("runs") or []) if str(r).isdecimal()]
+    if not runs and str(ref.get("run") or "").isdecimal():
         runs = [int(ref["run"])]
     return runs
 
@@ -529,7 +529,7 @@ def _checkin_leads(task: AgentTask) -> set[int]:
     checkins = django_apps.get_model("huddles", "ProjectCheckin")
     rows = checkins.objects.filter(project_id=task.project_id, lead__isnull=False)
     cid = _ref_of(task).get("checkin")
-    named = rows.filter(pk=cid) if str(cid or "").isdigit() else rows.none()
+    named = rows.filter(pk=cid) if str(cid or "").isdecimal() else rows.none()
     return set((named if named.exists() else rows).values_list("lead_id", flat=True))
 
 
@@ -743,8 +743,8 @@ def task_card(task: AgentTask, user, *, me=None, deciders: set[str] | None = Non
         "project_name": project.name if project else "",
         "project_url": page,
         "url": page,
-        "source_url": task.source_url, "checkin": ref.get("checkin") if str(ref.get("checkin") or "").isdigit()
-        else None, "run": ref.get("run") if str(ref.get("run") or "").isdigit() else None,
+        "source_url": task.source_url, "checkin": ref.get("checkin") if str(ref.get("checkin") or "").isdecimal()
+        else None, "run": ref.get("run") if str(ref.get("run") or "").isdecimal() else None,
         "huddle_id": str(ref.get("huddle_id") or ""), "proposed_at": proposed_at,
         "expires_at": proposed_at + EXPIRES_AFTER if task.status == AgentTask.SUGGESTED else None,
         "notes": task.notes, "decision_open": task.status == AgentTask.SUGGESTED,

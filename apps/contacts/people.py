@@ -379,7 +379,7 @@ def add_address(*, person: Person, kind: str, label: str, value: str) -> PersonA
             validate_email(value)
         except ValidationError:
             raise AddressError("value is not an email address") from None
-    elif not value or set(value) - _PHONE_CHARS or sum(c.isdigit() for c in value) < 5:
+    elif not value or set(value) - _PHONE_CHARS or sum(c.isdecimal() for c in value) < 5:
         raise AddressError("value is not a phone number")
     row, _ = PersonAddress.objects.update_or_create(
         person=person, kind=kind, value=value, defaults={"label": label})

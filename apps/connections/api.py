@@ -121,7 +121,7 @@ def _statement(conn: Connection, *, lent: bool = False) -> ConnectionStatementOu
     # The statement names agents by pk (what endorsements sign); shown by slug. Which
     # computers its owner uses it on is not the business of a grantee's admins (`lent`).
     st = conn.statement or {}
-    pks = [int(a) for a in st.get("agents", []) if str(a).isdigit()]
+    pks = [int(a) for a in st.get("agents", []) if str(a).isdecimal()]
     slugs = dict(Agent.objects.filter(pk__in=pks).values_list("pk", "slug")) if pks else {}
     return ConnectionStatementOut(version=conn.statement_version, agents=sorted(slugs[p] for p in pks if p in slugs),
                                   my_computers=[] if lent else sorted(st.get("my_computers", [])),

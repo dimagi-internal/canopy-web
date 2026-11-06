@@ -433,7 +433,7 @@ def _capped_transport(inner, cap: _ByteCap):
                 await response.aclose()
                 raise _TooLarge(ENCODED)
             declared = response.headers.get("content-length", "")
-            if declared.isdigit() and int(declared) > cap.limit:
+            if declared.isdecimal() and int(declared) > cap.limit:
                 cap.tripped = True
                 await response.aclose()
                 raise _TooLarge(TOO_LARGE)

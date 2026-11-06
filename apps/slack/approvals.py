@@ -122,7 +122,7 @@ def handle_click(payload: dict, action: dict) -> HttpResponse:
 
     user, _assurance, _info = services.slack_user(installation, slack_user)
     value = str(action.get("value") or "").strip()
-    req = ApprovalRequest.objects.filter(pk=int(value)).first() if value.isdigit() else None
+    req = ApprovalRequest.objects.filter(pk=int(value)).first() if value.isdecimal() else None
     if user is None or req is None:
         tell("canopy couldn't match you to a canopy account, or that request is gone. "
              "Open it from your canopy link instead.")

@@ -192,7 +192,7 @@ def next_ext_id(subject: str, *, min_seq: int = 1, today: dt.date | None = None)
     nums = [
         int(i[len(prefix):])
         for i in AgentRun.objects.filter(ext_id__startswith=prefix).values_list("ext_id", flat=True)
-        if i and i[len(prefix):].isdigit()
+        if i and i[len(prefix):].isdecimal()
     ]
     return f"{prefix}{max([min_seq - 1, *nums]) + 1:03d}"
 

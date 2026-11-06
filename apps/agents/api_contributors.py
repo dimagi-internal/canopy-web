@@ -49,7 +49,7 @@ def _person(project, ref: str):
     with them — else 404, so a guess confirms nothing across tenants."""
 
     ref = (ref or "").strip()
-    person = (Person.objects.select_related("user").filter(pk=int(ref)).first() if ref.isdigit()
+    person = (Person.objects.select_related("user").filter(pk=int(ref)).first() if ref.isdecimal()
               else svc.person_by_email(ref))
     if person is None or not people.known_in(person, project.workspace_id):
         raise HttpError(404, "person not found")

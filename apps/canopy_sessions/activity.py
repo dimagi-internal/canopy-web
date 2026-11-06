@@ -356,7 +356,7 @@ def _merge_selector(args: str) -> dict:
             continue
         if tok.startswith("-"):
             continue
-        if tok.lstrip("#").isdigit():
+        if tok.lstrip("#").isdecimal():
             return {"number": int(tok.lstrip("#"))}
         m = _PR_URL.match(tok)
         if m:
@@ -543,6 +543,6 @@ def parse_pr(value: str) -> tuple[int, str]:
     m = re.fullmatch(rf"(?P<slug>{_SLUG})#(?P<num>\d+)", value)
     if m:
         return int(m.group("num")), m.group("slug").lower()
-    if value.lstrip("#").isdigit():
+    if value.lstrip("#").isdecimal():
         return int(value.lstrip("#")), ""
     raise ValueError(f"pr must be a number, owner/name#N, or a PR URL — not {value!r}")

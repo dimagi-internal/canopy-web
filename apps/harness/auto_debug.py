@@ -378,7 +378,7 @@ def _debugger_failed(turn: Turn) -> None:
 def _carried_ids(turn: Turn) -> list[int]:
     ref = turn.origin_ref or {}
     ids = [ref.get("auto_debug")] + list(ref.get("carries") or [])
-    return [int(i) for i in ids if str(i).isdigit()]
+    return [int(i) for i in ids if str(i).isdecimal()]
 
 
 # ---- the brakes ------------------------------------------------------------------

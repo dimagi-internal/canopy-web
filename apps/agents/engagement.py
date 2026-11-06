@@ -89,7 +89,7 @@ def resolve_checkin(workspaces, checkin: str) -> list[str]:
     check-in so called in `workspaces` (ignoring case)."""
 
     checkin = (checkin or "").strip()
-    if not checkin or checkin.isdigit():
+    if not checkin or checkin.isdecimal():
         return [checkin] if checkin else []
     # By label, not import: check-ins are `huddles`', a layer above.
     ids = django_apps.get_model("huddles", "ProjectCheckin").objects.filter(project__workspace_id__in=list(workspaces),

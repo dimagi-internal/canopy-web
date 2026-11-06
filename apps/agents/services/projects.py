@@ -102,7 +102,7 @@ def get_project(agent: Agent, ref: str):
     project = base.filter(created_by_agent=agent, ext_id__iexact=ref).first()
     if project is None:
         project = base.filter(agent_projects_q(agent), ext_id__iexact=ref).distinct().first()
-    if project is None and ref.isdigit():
+    if project is None and ref.isdecimal():
         project = base.filter(agent_projects_q(agent), pk=int(ref)).distinct().first()
     if project is None:
         ws, _, handle = ref.rpartition("/")

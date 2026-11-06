@@ -239,7 +239,7 @@ def _resolve_outputs(agent, m: CapabilityManifest, outputs: dict) -> dict:
                 f"{outputs.get('ExecAllow') or 'empty'!r}). Redeploy the stack with "
                 f"ExecAllow={','.join(m.exec.allow)}."))
     lifetime = outputs.get("MaxInstanceLifetimeSeconds")
-    if lifetime and str(lifetime).isdigit() and m.limits.max_lease_s > int(lifetime):
+    if lifetime and str(lifetime).isdecimal() and m.limits.max_lease_s > int(lifetime):
         raise CapabilityError(422, (
             f"{m.name}: limits.max_lease_s {m.limits.max_lease_s} is longer than stack "
             f"{m.aws.stack!r}'s MaxInstanceLifetimeSeconds {lifetime}: its backstop would "
