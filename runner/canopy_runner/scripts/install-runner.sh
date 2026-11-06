@@ -77,6 +77,50 @@ command -v uv >/dev/null || { echo "uv not found — https://docs.astral.sh/uv/"
 git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1 \
   || { echo "not a git checkout: $REPO (set CANOPY_WEB_REPO)" >&2; exit 1; }
 
+# --- menu-bar app (macOS) ---------------------------------------------------
+# The daemon and the menu-bar app are separate PROCESSES by design (the daemon must
+# run headless), but nothing required installing them separately — and nothing did:
+# a fresh account got a running runner and no status icon, and had to find
+# runner/menubar/build.sh by hand (2026-09-28). Install it alongside the daemon.
+#
+# Rebuilt only when its source changes: build.sh replaces the bundle and relaunches
+# the app, and --if-stale runs this every 30 minutes — an unconditional rebuild would
+# blink the icon on every auto-update. Best-effort: no swiftc (Xcode CLT) is a
+# warning, never a failed install. Opt out with CANOPY_MENUBAR=0.
+#
+# A function because the busy path below runs it too: rebuilding the app restarts
+# only the app, never the daemon, so a box with turns always in flight (the reason
+# `busy` defers the runner) must not also be held on an old app.
+MENUBAR_STAMP="$HOME/.canopy/menubar.sha"
+MENUBAR_APP="${CANOPY_RUNNER_APP:-$HOME/Applications/Canopy Runner.app}"
+build_menubar() {
+  local tree="$1" menubar="$1/runner/menubar" want have
+  [ "$(uname -s)" = "Darwin" ] && [ "${CANOPY_MENUBAR:-1}" = "1" ] && [ -f "$menubar/build.sh" ] \
+    || return 0
+  # The icons are part of the app: an icon-only change (assets/brand) must rebuild
+  # it too, or a new mark never reaches a box whose Swift source did not move.
+  want="$(cat "$menubar/Sources/main.swift" "$menubar/build.sh" \
+            "$tree/assets/brand/AppIcon.icns" "$tree/assets/brand"/menubar-mark*.png 2>/dev/null \
+          | shasum | cut -d' ' -f1)"
+  have="$(cat "$MENUBAR_STAMP" 2>/dev/null || true)"
+  # A RELEASED app in that place (it carries its runtime) is not this build, whatever
+  # the stamp says: switching an account back from the downloaded app to this install
+  # must replace it, or it re-points the jobs at itself the next time it launches.
+  if [ -f "$MENUBAR_APP/Contents/Resources/runtime/release.json" ]; then
+    echo "==> replacing the released Canopy Runner.app with the developer build"
+    have=""
+  fi
+  if [ -d "$MENUBAR_APP" ] && [ "$want" = "$have" ]; then
+    echo "==> menu-bar app unchanged"
+  elif ! command -v swiftc >/dev/null 2>&1; then
+    echo "WARNING: swiftc not found (xcode-select --install) — menu-bar app not built." >&2
+  elif bash "$menubar/build.sh"; then
+    mkdir -p "$HOME/.canopy" && printf '%s\n' "$want" > "$MENUBAR_STAMP"
+  else
+    echo "WARNING: menu-bar app build failed — the runner itself is installed and running." >&2
+  fi
+}
+
 # --- auto-update mode -------------------------------------------------------
 # Ask the INSTALLED runner whether this box should update right now, and pin the
 # install to the sha the control plane expects.
@@ -108,7 +152,24 @@ if [ "$IF_STALE" -eq 1 ]; then
       echo "$(date -u +%FT%TZ) --if-stale: behind — installing ${EXPECTED:0:12}"
       REF="$EXPECTED"
       ;;
-    current|busy|unknown)
+    busy)
+      # The runner waits for its turns to finish; the menu-bar app need not (see
+      # build_menubar). Build it from the expected sha, then leave the daemon be.
+      echo "$(date -u +%FT%TZ) --if-stale: busy — the runner waits; checking the menu-bar app."
+      if [ -n "$EXPECTED" ] && [ "$DO_LAUNCHD" -eq 1 ]; then
+        git -C "$REPO" fetch --quiet origin 2>/dev/null || true
+        if git -C "$REPO" rev-parse --verify --quiet "$EXPECTED^{commit}" >/dev/null; then
+          APP_TREE="$(mktemp -d)"
+          trap 'rm -rf "$APP_TREE"' EXIT
+          git -C "$REPO" archive "$EXPECTED" runner/menubar assets/brand | tar -x -C "$APP_TREE"
+          build_menubar "$APP_TREE"
+        else
+          echo "    ${EXPECTED:0:12} not in this clone yet; will retry."
+        fi
+      fi
+      exit 0
+      ;;
+    current|unknown)
       # All "do nothing", and all exit 0: this runs on a timer, so a non-zero
       # exit for the ordinary case would fill launchd's log with false failures
       # and train everyone to ignore it.
@@ -391,42 +452,8 @@ if [ "$DO_LAUNCHD" -eq 1 ]; then
 fi
 
 # --- menu-bar app (macOS) ---------------------------------------------------
-# The daemon and the menu-bar app are separate PROCESSES by design (the daemon must
-# run headless), but nothing required installing them separately — and nothing did:
-# a fresh account got a running runner and no status icon, and had to find
-# runner/menubar/build.sh by hand (2026-09-28). Install it alongside the daemon.
-#
-# Rebuilt only when its source changes: build.sh replaces the bundle and relaunches
-# the app, and --if-stale runs this every 30 minutes — an unconditional rebuild would
-# blink the icon on every auto-update. Best-effort: no swiftc (Xcode CLT) is a
-# warning, never a failed install. Opt out with CANOPY_MENUBAR=0.
-MENUBAR="$TMP/runner/menubar"
-MENUBAR_STAMP="$HOME/.canopy/menubar.sha"
-MENUBAR_APP="${CANOPY_RUNNER_APP:-$HOME/Applications/Canopy Runner.app}"
-if [ "$DO_LAUNCHD" -eq 1 ] && [ "$(uname -s)" = "Darwin" ] \
-   && [ "${CANOPY_MENUBAR:-1}" = "1" ] && [ -f "$MENUBAR/build.sh" ]; then
-  # The icons are part of the app: an icon-only change (assets/brand) must rebuild
-  # it too, or a new mark never reaches a box whose Swift source did not move.
-  want="$(cat "$MENUBAR/Sources/main.swift" "$MENUBAR/build.sh" \
-            "$TMP/assets/brand/AppIcon.icns" "$TMP/assets/brand"/menubar-mark*.png 2>/dev/null \
-          | shasum | cut -d' ' -f1)"
-  have="$(cat "$MENUBAR_STAMP" 2>/dev/null || true)"
-  # A RELEASED app in that place (it carries its runtime) is not this build, whatever
-  # the stamp says: switching an account back from the downloaded app to this install
-  # must replace it, or it re-points the jobs at itself the next time it launches.
-  if [ -f "$MENUBAR_APP/Contents/Resources/runtime/release.json" ]; then
-    echo "==> replacing the released Canopy Runner.app with the developer build"
-    have=""
-  fi
-  if [ -d "$MENUBAR_APP" ] && [ "$want" = "$have" ]; then
-    echo "==> menu-bar app unchanged"
-  elif ! command -v swiftc >/dev/null 2>&1; then
-    echo "WARNING: swiftc not found (xcode-select --install) — menu-bar app not built." >&2
-  elif bash "$MENUBAR/build.sh"; then
-    mkdir -p "$HOME/.canopy" && printf '%s\n' "$want" > "$MENUBAR_STAMP"
-  else
-    echo "WARNING: menu-bar app build failed — the runner itself is installed and running." >&2
-  fi
+if [ "$DO_LAUNCHD" -eq 1 ]; then
+  build_menubar "$TMP"
 fi
 
 echo
