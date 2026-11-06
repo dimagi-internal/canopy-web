@@ -101,8 +101,8 @@ def offered_agent_ids(app, *, user=None, own_panel: bool = False) -> set | None:
         # site's list says what it offers in ITS workspace; elsewhere nothing narrower is
         # set, so a workspace's agents are on offer (the person's own access still decides
         # each conversation, as it does on /sessions).
-        from apps.agents.models import Agent
-        from apps.workspaces import services as wsvc
+        from apps.agents.models import Agent  # noqa: PLC0415 — this module imports no models (loaded by the token middleware and socket auth); same as AppCredentialAgent above
+        from apps.workspaces import services as wsvc  # noqa: PLC0415 — as above
 
         listed |= set(Agent.objects.filter(workspace_id__in=wsvc.user_workspace_slugs(user))
                       .exclude(workspace_id=app.workspace_id).values_list("pk", flat=True))
