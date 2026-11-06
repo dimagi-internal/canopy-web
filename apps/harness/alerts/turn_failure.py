@@ -103,11 +103,21 @@ def title_for(inv) -> str:
 def investigation_path(inv) -> str:
     """No page shows one investigation; the failed turns live on the agent's
     Turns tab, else the workspace's activity log, opened on its failed turns
-    (of that agent, when there is one). App-relative."""
+    (of that agent, when there is one). App-relative.
+
+    The agent may live in a workspace BELOW the investigation's (otto is in
+    `connect`, the investigation in `dimagi`): link to its Turns tab in its own
+    workspace. Matching only the investigation's workspace sent investigation 31's
+    "Open in Canopy" to dimagi's activity log, which lists none of otto's turns
+    (Jonathan, 2026-11-06)."""
     ws = inv.workspace_id
     slug = (inv.agents or [None])[0]
-    if slug and Agent.objects.filter(slug=slug, workspace_id=ws).exists():
-        return f"/w/{ws}/agents/{slug}/turns"
+    if slug:
+        tree = {ws} | wsvc.descendant_slugs({ws})
+        agent_ws = (Agent.objects.filter(slug=slug, workspace_id__in=tree)
+                    .values_list("workspace_id", flat=True).first())
+        if agent_ws:
+            return f"/w/{agent_ws}/agents/{slug}/turns"
     return f"/w/{ws}/activity?status=failed" + (f"&agent={slug}" if slug else "")
 
 
