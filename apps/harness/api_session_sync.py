@@ -12,7 +12,7 @@ import datetime as dt
 import logging
 import uuid
 
-from django.db.models import Q
+from django.db.models import OuterRef, Q, Subquery
 from django.http import HttpRequest, HttpResponse
 from django.utils import timezone
 from ninja.errors import HttpError
@@ -23,7 +23,7 @@ from apps.api.route_gates import gate
 from apps.canopy_sessions import control, handoff
 from apps.canopy_sessions import services as chat_services
 from apps.canopy_sessions.coaching import full_upload_session_ids
-from apps.canopy_sessions.models import HandoffArchive, RunnerBinding, Session, SessionHandoff
+from apps.canopy_sessions.models import HandoffArchive, Message, RunnerBinding, Session, SessionHandoff
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
@@ -257,10 +257,6 @@ def list_streams(request: HttpRequest, runner_id: uuid.UUID):
     "ship only what is new" from "ship the history I am missing" — a Max alone can
     only ever append above the high-water mark and so can never fill a hole below
     it, which is how a session ended up stuck at 8.6% with no way to self-heal."""
-    from django.db.models import F
-    from django.db.models import Max as _Max
-    from django.db.models import Min as _Min
-
     runner = runner_or_404(request, runner_id)
     if is_sensitive_data_box(runner):
         # A sensitive-data box keeps its transcripts to itself: nothing to tail.
@@ -271,6 +267,10 @@ def list_streams(request: HttpRequest, runner_id: uuid.UUID):
     # before they closed. The person's machine choosing to send; canopy never
     # reaches down for them. Empty for an uncoached owner (the old behaviour).
     full = full_upload_session_ids(runner)
+    # This binding's session's messages in the current epoch (see below).
+    _epoch_messages = Message.objects.filter(
+        session_id=OuterRef("session_id"), turn_index__gte=OuterRef("index_offset")
+    )
     bindings = (
         RunnerBinding.objects.select_related("session")
         .filter(runner=runner)
@@ -301,14 +301,19 @@ def list_streams(request: HttpRequest, runner_id: uuid.UUID):
         #     here, so both directions stay inside the server.
         # Offset 0 (never transferred) makes the filter cover everything and the
         # subtraction a no-op, i.e. the previous behaviour byte for byte.
+        #
+        # Two index probes per binding, not a JOIN + GROUP BY. The aggregate form
+        # joined every message of every session and grouped by every column of the
+        # binding AND the session (JSON blobs included), which spilled ~580 temp
+        # blocks to disk per call; it was canopy-web's costliest statement on the
+        # shared RDS (29k calls, 1,654 s). Each subquery is an ordered LIMIT 1 on the
+        # (session, turn_index) unique index, and returns the same Min/Max.
         .annotate(
-            _first_index=_Min(
-                "session__messages__turn_index",
-                filter=Q(session__messages__turn_index__gte=F("index_offset")),
+            _first_index=Subquery(
+                _epoch_messages.order_by("turn_index").values("turn_index")[:1]
             ),
-            _last_index=_Max(
-                "session__messages__turn_index",
-                filter=Q(session__messages__turn_index__gte=F("index_offset")),
+            _last_index=Subquery(
+                _epoch_messages.order_by("-turn_index").values("turn_index")[:1]
             ),
         )
     )

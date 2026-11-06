@@ -138,7 +138,7 @@
 "apps/harness/api_runners_mints.py" = ["PLC0415"]  # 3
 "apps/harness/api_runners_protocol.py" = ["PLC0415"]  # 4
 "apps/harness/api_runners_settings.py" = ["PLC0415"]  # 5
-"apps/harness/api_session_sync.py" = ["PLC0415"]  # 6
+"apps/harness/api_session_sync.py" = ["PLC0415"]  # 3
 "apps/harness/api_turns.py" = ["PLC0415"]  # 8
 "apps/harness/apps.py" = ["PLC0415"]  # 3
 "apps/harness/artifact_origin.py" = ["PLC0415"]  # 2
