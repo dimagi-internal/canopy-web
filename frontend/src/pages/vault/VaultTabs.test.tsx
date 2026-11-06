@@ -91,6 +91,7 @@ describe('vault page', () => {
       { kind: 'device', target: 'k3', public_jwk: {}, runner: 'r3', runner_name: 'demo-b' },
     ]
     ops.grantWorkspaceVaultPending.mockResolvedValue({})
+    api.getWorkspaceVaultZk.mockResolvedValue({ pending: waiting })
     const c = ctx({
       attachments: [
         { id: 3, agent: null, workspace: 'dimagi' },
@@ -108,6 +109,49 @@ describe('vault page', () => {
     const only = ops.grantWorkspaceVaultPending.mock.calls[0][2]
     expect(waiting.filter(only).map((t) => t.runner)).toEqual(['r2'])
     expect(c.reload).toHaveBeenCalled()
+  })
+
+  it('lists machines that reach it through what it serves, each with its own Give access', async () => {
+    const pending = [
+      { kind: 'member', target: 'u7', public_jwk: {}, email: 'st@dimagi.com' },
+      { kind: 'device', target: 'k1', public_jwk: {}, runner: 'r1', runner_name: 'cloud-ec2-2' },
+      { kind: 'device', target: 'k8', public_jwk: {}, runner: 'r8', runner_name: 'DIM-W153', label: 'DIM-W153' },
+      { kind: 'device', target: 'k9', public_jwk: {}, runner: 'r9', runner_name: 'cloud-zdr-1' },
+    ]
+    ops.grantWorkspaceVaultPending.mockClear()
+    ops.grantWorkspaceVaultPending.mockResolvedValue({})
+    api.getWorkspaceVaultZk.mockResolvedValue({ pending })
+    const c = ctx({ attachments: [{ id: 4, runner: 'r1', runner_name: 'cloud-ec2-2', access: 'waiting', key_place: 'aws-kms' }] })
+    render(<MemoryRouter><VaultMachinesTab {...c} /></MemoryRouter>)
+    const list = await screen.findByTestId('ws-vault-waiting-machines')
+    // The attached runner keeps its own row; the person is granted on the key tab.
+    expect(list.textContent).toContain('DIM-W153')
+    expect(list.textContent).toContain('cloud-zdr-1')
+    expect(list.textContent).not.toContain('cloud-ec2-2')
+    expect(screen.queryByTestId('ws-vault-waiting-u7')).toBeNull()
+    fireEvent.click(screen.getByTestId('ws-vault-give-k8'))
+    await waitFor(() => expect(ops.grantWorkspaceVaultPending).toHaveBeenCalled())
+    const only = ops.grantWorkspaceVaultPending.mock.calls[0][2]
+    expect(pending.filter(only).map((t) => t.target)).toEqual(['k8'])
+    await waitFor(() => expect(screen.queryByTestId('ws-vault-waiting-k8')).toBeNull())
+    expect(c.reload).toHaveBeenCalled()
+  })
+
+  it('gives every waiting machine access at once, never a person', async () => {
+    const pending = [
+      { kind: 'device', target: 'k8', public_jwk: {}, runner: 'r8', runner_name: 'DIM-W153' },
+      { kind: 'device', target: 'k9', public_jwk: {}, runner: 'r9', runner_name: 'cloud-zdr-1' },
+      { kind: 'member', target: 'u7', public_jwk: {}, email: 'st@dimagi.com' },
+    ]
+    ops.grantWorkspaceVaultPending.mockClear()
+    ops.grantWorkspaceVaultPending.mockResolvedValue({})
+    api.getWorkspaceVaultZk.mockClear()
+    api.getWorkspaceVaultZk.mockResolvedValue({ pending })
+    render(<MemoryRouter><VaultMachinesTab {...ctx({ attachments: [] })} /></MemoryRouter>)
+    fireEvent.click(await screen.findByTestId('ws-vault-give-all-machines'))
+    await waitFor(() => expect(ops.grantWorkspaceVaultPending).toHaveBeenCalled())
+    const only = ops.grantWorkspaceVaultPending.mock.calls[0][2]
+    expect(pending.filter(only).map((t) => t.target)).toEqual(['k8', 'k9'])
   })
 
   it('makes its key in the browser with one unlock', async () => {
