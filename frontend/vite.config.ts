@@ -279,6 +279,9 @@ export default defineConfig({
       '/ws': { target: API_ORIGIN.replace('http', 'ws'), ws: true },
       '/health': API_ORIGIN,
       '/accounts': API_ORIGIN,
+      // The browser legs of connecting an account (and GitHub/Slack's): full-page
+      // navigations and form POSTs the server answers, never SPA routes.
+      '/auth': API_ORIGIN,
       '/admin': API_ORIGIN,
       '/static': API_ORIGIN,
     },

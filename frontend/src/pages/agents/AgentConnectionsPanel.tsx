@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import {
   connectionStartAction,
@@ -17,6 +17,8 @@ import { scopedPath } from '@/lib/scopedLinks'
 import { useAuth } from '@/auth/AuthProvider'
 import { AgentScreenShares } from './AgentScreenShares'
 import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
+import { useVaultUnlock } from '@/vault/useVaultUnlock'
+import { failureMessage, outcomeOf, reportConnect } from '@/vault/connectReport'
 
 /**
  * What an agent can act as through connections: its own, and ones lent to it by
@@ -33,6 +35,11 @@ import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
  * GET that names an agent, and asks the provider for a fresh login where it
  * supports one, so the account attached is the one the admin types in — the
  * agent's — not whichever session their browser happens to hold.
+ *
+ * Before the POST, the Connect tap opens the admin's vault key (with the tap's own
+ * gesture, so the passkey prompt shows). The Connected page needs that key again to
+ * finish the connect; a key that won't open here would leave the sign-in made and
+ * the agent unconnected, so it stops here instead, saying why, before the provider.
  *
  * An agent connects with its OWN workspace's app (its admin sets it up under
  * the workspace's Settings → Connections), so the start URL names that workspace.
@@ -130,7 +137,7 @@ export function ConnectionRows({ agent, conns, mailboxShown }: { agent: Agent; c
         const title = folded ? 'Google (other account)' : p.title
         // A connection left behind by a move does not count: connect again here.
         const own = rows.filter((c) => !c.granted_from && c.usable)
-        const start = { action: connectionStartAction(p.name, p.workspace || workspace), returnTo: pathname, agent: agent.slug }
+        const start = { action: connectionStartAction(p.name, p.workspace || workspace), returnTo: pathname, agent: agent.slug, provider: p.name }
         return (
           <Fragment key={p.name}>
             {rows.map((c) => (
@@ -138,7 +145,7 @@ export function ConnectionRows({ agent, conns, mailboxShown }: { agent: Agent; c
                 key={c.id}
                 title={title}
                 c={c}
-                start={{ ...start, action: connectionStartAction(c.provider, c.workspace ?? '') }}
+                start={{ ...start, provider: c.provider, action: connectionStartAction(c.provider, c.workspace ?? '') }}
                 busy={busy === c.id}
                 returnTo={pathname}
                 agent={agent}
@@ -180,17 +187,45 @@ interface StartForm {
   action: string
   returnTo: string
   agent: string
+  provider: string
 }
 
-/** Starts an agent's connect: a full-page form POST carrying the CSRF token. */
-function ConnectForm({ label, action, returnTo, agent, primary = false }: { label: string; primary?: boolean } & StartForm) {
+/** Starts an agent's connect: opens the vault key first (see the module comment), then a
+ *  full-page form POST carrying the CSRF token. */
+export function ConnectForm({ label, action, returnTo, agent, provider, primary = false }: { label: string; primary?: boolean } & StartForm) {
+  const vault = useVaultUnlock()
+  const [checking, setChecking] = useState(false)
+  const [error, setError] = useState('')
+  async function onSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    const form = e.currentTarget
+    setChecking(true)
+    setError('')
+    try {
+      await vault.unlock()
+    } catch (err) {
+      reportConnect({ key: provider, agent, step: 'preflight', trigger: 'tap', outcome: outcomeOf(err), error: err })
+      setError(`Not connected yet: ${failureMessage(err, 'tap')}`)
+      setChecking(false)
+      return
+    }
+    reportConnect({ key: provider, agent, step: 'preflight', trigger: 'tap', outcome: 'ok' })
+    form.submit()
+  }
+  // The passphrase dialog sits beside the form, never in it: its own submit would bubble here.
   return (
-    <form method="post" action={action} className="inline-block">
+    <>
+    <form method="post" action={action} className="inline-block" onSubmit={(e) => void onSubmit(e)}>
       <input type="hidden" name="csrfmiddlewaretoken" value={getCsrfToken()} />
       <input type="hidden" name="return_to" value={returnTo} />
       <input type="hidden" name="agent" value={agent} />
-      <Button type="submit" size="sm" variant={primary ? 'default' : 'outline'}>{label}</Button>
+      <Button type="submit" size="sm" variant={primary ? 'default' : 'outline'} disabled={checking}>
+        {checking ? 'Opening your vault key…' : label}
+      </Button>
+      {error && <p role="alert" className="mt-1 max-w-xs text-[12px] text-destructive">{error}</p>}
     </form>
+    {vault.element}
+    </>
   )
 }
 

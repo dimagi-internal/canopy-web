@@ -29,8 +29,12 @@ export function useVaultUnlock(): { unlock: (opts?: UnlockOptions) => Promise<Un
     }
     // On arrival nothing may open the passphrase dialog by itself: a refused or dismissed passkey, or a
     // key with no passkey seal, is a click away instead (a NotAllowedError, which callers read as "ask again").
-    if (passkeyOnly && (failed || !hasSeal(ks, 'prf'))) {
-      throw failed ?? new DOMException('Your vault key needs a click to open.', 'NotAllowedError')
+    // A passkey that answered without opening it (no PRF, or not the sealed one) is the same: the
+    // passphrase dialog waits for the person's tap.
+    if (passkeyOnly) {
+      throw failed ?? (hasSeal(ks, 'prf')
+        ? new Error('Your passkey did not open your vault key.')
+        : new DOMException('Your vault key needs a click to open.', 'NotAllowedError'))
     }
     // No passkey seal: the person chooses (a passphrase). A passkey tried that did not
     // open it: offer the passphrase, never the passkey a second time.

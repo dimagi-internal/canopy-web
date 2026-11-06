@@ -16,6 +16,13 @@ const m = vi.hoisted(() => ({
   approveSurfaceShare: vi.fn(),
   stopSurfaceShare: vi.fn(),
   role: { current: null as string | null },
+  unlock: vi.fn(),
+  reportConnect: vi.fn(),
+}))
+vi.mock('@/vault/useVaultUnlock', () => ({ useVaultUnlock: () => ({ unlock: m.unlock, element: null }) }))
+vi.mock('@/vault/connectReport', async (orig) => ({
+  ...(await orig<typeof import('@/vault/connectReport')>()),
+  reportConnect: (r: unknown) => m.reportConnect(r),
 }))
 vi.mock('@/api/connections', async (orig) => ({
   ...(await orig<typeof import('@/api/connections')>()),
@@ -90,6 +97,31 @@ describe('AgentConnectionsPanel', () => {
     expect(field('agent')).toBe('eva')
     expect(field('csrfmiddlewaretoken')).toBe('tok123')
     expect(screen.queryByRole('link', { name: 'Connect Salesforce' })).toBeNull()
+  })
+
+  it('the Connect tap opens the vault key first, then goes to the provider', async () => {
+    m.unlock.mockResolvedValue({ userId: '7' })
+    const submit = vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(() => undefined)
+    m.listAgentConnections.mockResolvedValue({ providers: [PROVIDER], connections: [] })
+    show()
+    fireEvent.click(await screen.findByRole('button', { name: 'Connect Salesforce' }))
+    await waitFor(() => expect(submit).toHaveBeenCalledTimes(1))
+    expect(m.unlock).toHaveBeenCalledWith()
+    expect(m.reportConnect).toHaveBeenCalledWith(expect.objectContaining({ key: 'salesforce', agent: 'eva', step: 'preflight', outcome: 'ok' }))
+    submit.mockRestore()
+  })
+
+  it('a vault key that will not open stops the connect before the provider, saying why', async () => {
+    m.unlock.mockRejectedValue(new DOMException('no', 'NotAllowedError'))
+    const submit = vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(() => undefined)
+    m.listAgentConnections.mockResolvedValue({ providers: [PROVIDER], connections: [] })
+    show()
+    fireEvent.click(await screen.findByRole('button', { name: 'Connect Salesforce' }))
+    expect((await screen.findByRole('alert')).textContent).toMatch(/^Not connected yet: The passkey prompt closed/)
+    expect(submit).not.toHaveBeenCalled()
+    expect(m.reportConnect).toHaveBeenCalledWith(expect.objectContaining({ step: 'preflight', outcome: 'cancelled' }))
+    expect(screen.getByRole('button', { name: 'Connect Salesforce' })).toBeTruthy()
+    submit.mockRestore()
   })
 
   it('shows what the grant allows, own and shared', async () => {

@@ -46,6 +46,13 @@ describe('useVaultUnlock', () => {
     expect(unlockVaultKey).not.toHaveBeenCalled()
   })
 
+  it('passkeyOnly: a passkey that answers without opening the key never opens the passphrase dialog', async () => {
+    stepUpAndUnlock.mockResolvedValue(null)
+    const { result } = renderHook(() => useVaultUnlock())
+    await expect(result.current.unlock({ passkeyOnly: true })).rejects.toThrow('Your passkey did not open your vault key.')
+    expect(unlockVaultKey).not.toHaveBeenCalled()
+  })
+
   it('passkeyOnly still opens it when the passkey works', async () => {
     stepUpAndUnlock.mockResolvedValue(ME)
     const { result } = renderHook(() => useVaultUnlock())

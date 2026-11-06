@@ -25,6 +25,12 @@ vi.mock('@/vault/connectionShare', async (orig) => ({
   buildShare: (...a: unknown[]) => buildShare(...a),
 }))
 
+const reportConnect = vi.fn()
+vi.mock('@/vault/connectReport', async (orig) => ({
+  ...(await orig<typeof import('@/vault/connectReport')>()),
+  reportConnect: (r: unknown) => reportConnect(r),
+}))
+
 import { ConnectedPage } from './ConnectedPage'
 import { ApiError } from '@/api/problem'
 
@@ -247,12 +253,35 @@ describe('ConnectedPage, an agent’s connection', () => {
     arrive()
     const button = await screen.findByRole('button', { name: 'Try again' })
     expect(screen.getByText("Connecting Eva didn't finish, so Eva can't use jj@dimagi.com.")).toBeTruthy()
-    expect(screen.queryByRole('alert')).toBeNull()
+    // The browser's actual answer, never a bare "didn't finish".
+    expect(screen.getByRole('alert').textContent).toMatch(/didn't open the passkey prompt by itself/)
     expect(href('Cancel')).toBe('/settings/connections')
     expect(putShare).not.toHaveBeenCalled()
     fireEvent.click(button)
     expect(await screen.findByText(STORED)).toBeTruthy()
     expect(unlock).toHaveBeenCalledTimes(2)
+  })
+
+  it('reports how each attempt ended, with the step it reached', async () => {
+    unlock.mockRejectedValueOnce(new DOMException('not allowed', 'NotAllowedError'))
+    arrive()
+    fireEvent.click(await screen.findByRole('button', { name: 'Try again' }))
+    await screen.findByText(STORED)
+    expect(reportConnect.mock.calls.map(([r]) => {
+      const { key, agent, step, trigger, outcome, machines } = r as Record<string, unknown>
+      return { key, agent, step, trigger, outcome, machines }
+    })).toEqual([
+      { key: 'c1', agent: 'eva', step: 'unlock', trigger: 'arrival', outcome: 'cancelled', machines: undefined },
+      { key: 'c1', agent: 'eva', step: 'store', trigger: 'tap', outcome: 'ok', machines: ['eva-cloud'] },
+    ])
+  })
+
+  it('a tapped prompt that closes says so', async () => {
+    unlock.mockRejectedValueOnce(new DOMException('no', 'NotAllowedError'))
+    unlock.mockRejectedValueOnce(new DOMException('no', 'NotAllowedError'))
+    arrive()
+    fireEvent.click(await screen.findByRole('button', { name: 'Try again' }))
+    expect(await screen.findByText(/The passkey prompt closed before it finished/)).toBeTruthy()
   })
 
   it('a failure shows its sentence and the button to try again', async () => {

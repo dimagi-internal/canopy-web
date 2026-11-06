@@ -97,10 +97,3 @@ export function ownerAgentMachines(state: ShareStateOut): string[] {
   const names = state.candidates.filter((c) => c.kind === 'device' && c.agent_id === owner).map((c) => c.runner_name)
   return [...new Set(names)].filter(Boolean).sort()
 }
-
-/** A person closing the passkey prompt (or the browser refusing it without a click) is not a
- *  failure to report: the page asks again with a button. */
-export function promptDismissed(e: unknown): boolean {
-  return (e instanceof DOMException && (e.name === 'NotAllowedError' || e.name === 'AbortError'))
-    || (e instanceof Error && /cancel/i.test(e.message))
-}
