@@ -297,6 +297,11 @@ export function IdeTree({
                           to={`/ide/${k.id}`}
                           data-testid={`ide-link-${s.id}-${k.id}`}
                           onDragStart={(e) => dragReference(e, k)}
+                          // The reference is that session, so it gets that session's menu.
+                          onContextMenu={(e) => {
+                            e.preventDefault()
+                            onRowMenu(k, e.clientX, e.clientY)
+                          }}
                           title={`${linkKind(k) === 'fork' ? 'Forked' : 'Started'} from this session · opens ${label(k)} where it lives`}
                           className={clsx(
                             'grid grid-cols-[minmax(0,1fr)_auto_2.25rem] items-center gap-2 py-0.5 pr-2 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground-secondary',
