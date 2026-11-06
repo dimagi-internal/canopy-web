@@ -158,10 +158,95 @@ def _run_source(tmp_path, bin_dir, lines):
 
 
 def test_as_a_program_it_refuses_with_a_code_and_prints_only_protocol(tmp_path):
+    # No meeting, and the app won't record (it isn't running): refuse, say why, print nothing else.
     bin_dir = _fake_cli(tmp_path, [], {})
+    path = bin_dir / "superwhisper"
+    path.write_text(path.read_text().replace("import sys\n", "import sys\nif sys.argv[1] in ('switch', 'start', 'stop'): sys.exit(1)\n", 1))
     done = _run_source(tmp_path, bin_dir, [{"type": "start", "settings": {}, "run_id": "r"}])
     assert done.returncode == 0
-    assert [json.loads(x) for x in done.stdout.splitlines()] == [{"type": "stopped", "reason": "no_meeting"}]
+    assert [json.loads(x) for x in done.stdout.splitlines()] == [
+        {"type": "stopped", "reason": "could_not_start_recording"}]
+
+
+class FakeApp:
+    """Superwhisper as the recorder sees it: commands in, and a meeting that appears once recording."""
+
+    def __init__(self, mode="local", start_works=True, shows_up=True):
+        self.mode, self.start_works, self.shows_up = mode, start_works, shows_up
+        self.commands, self.recording = [], False
+
+    def control(self, *args):
+        self.commands.append(args)
+        if args[0] == "switch":
+            self.mode = args[1]
+        elif args[0] == "start":
+            self.recording = self.start_works
+            return self.start_works
+        elif args[0] == "stop":
+            self.recording = False
+        return True
+
+    def listing(self):
+        if self.recording and self.shows_up:
+            return [{"id": "fresh", "datetime": NOW.strftime("%Y-%m-%d %H:%M:%S")}]
+        return [{"id": "old", "datetime": "2026-11-01 10:00:00"}]
+
+
+def _record(app, settings=None):
+    recorder = m.Recorder(app.control, lambda: app.mode)
+    got = m.attach(settings or {}, list_meetings=app.listing, read_meeting=lambda _id: meeting(seg("hi", 1)),
+                   now=NOW, recorder=recorder, wait=3, sleep=lambda _s: None, clock=lambda: NOW)
+    return recorder, got
+
+
+def test_with_no_live_meeting_it_records_one_in_meeting_mode_and_joins_it_from_the_start():
+    app = FakeApp()
+    recorder, (read, start_after) = _record(app)
+    assert app.commands == [("switch", m.MEETING_MODE), ("start",)]
+    assert start_after == 0.0 and read()["segments"][0]["text"] == "hi"
+    recorder.finish(still_recording=True)
+    assert app.commands[-2:] == [("stop",), ("switch", "local")] and app.mode == "local"
+
+
+def test_a_meeting_the_person_ended_is_not_stopped_again_but_the_mode_goes_back():
+    app = FakeApp()
+    recorder, _ = _record(app)
+    recorder.finish(still_recording=False)
+    assert ("stop",) not in app.commands and app.mode == "local"
+
+
+def test_a_meeting_the_person_started_is_joined_and_left_alone():
+    app = FakeApp()
+    app.listing = lambda: [{"id": "theirs", "datetime": NOW.strftime("%Y-%m-%d %H:%M:%S")}]
+    recorder, _ = _record(app)
+    recorder.finish(still_recording=True)
+    assert app.commands == []
+
+
+def test_a_recording_that_never_shows_up_is_ended_and_the_mode_put_back():
+    app = FakeApp(shows_up=False)
+    with pytest.raises(m.Refused, match="recording_not_found"):
+        _record(app)
+    assert app.commands[-2:] == [("stop",), ("switch", "local")] and not app.recording
+
+
+def test_a_recording_that_wont_start_puts_the_mode_back():
+    app = FakeApp(start_works=False)
+    with pytest.raises(m.Refused, match="could_not_start_recording"):
+        _record(app)
+    assert app.mode == "local"
+
+
+def test_already_in_meeting_mode_it_switches_nothing():
+    app = FakeApp(mode=m.MEETING_MODE)
+    recorder, _ = _record(app)
+    recorder.finish(still_recording=True)
+    assert [c[0] for c in app.commands] == ["start", "stop"]
+
+
+def test_without_a_recorder_it_still_refuses_a_missing_meeting():
+    with pytest.raises(m.Refused, match="no_meeting"):
+        m.attach({}, list_meetings=lambda: [], read_meeting=lambda _id: None, now=NOW)
 
 
 def test_as_a_program_it_streams_a_finished_read_as_segments_and_ended(tmp_path):

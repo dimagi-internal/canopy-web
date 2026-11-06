@@ -2,8 +2,8 @@
   "key": "meeting-assistant",
   "name": "Meeting assistant",
   "description": "Live feedback from an agent during a meeting.",
-  "version": "0.3.0",
-  "changelog": "Saves the transcript of a meeting that ended by itself to your private Meetings page.",
+  "version": "0.4.0",
+  "changelog": "Start begins the Superwhisper meeting recording for you (and ends it and puts your mode back after), and the chat opens in your browser as soon as anyone speaks.",
   "entry": [
     "{python}",
     "app.py"
@@ -16,10 +16,11 @@
     "macos"
   ],
   "max_minutes": 120,
-  "notice": "What's said in this meeting leaves your Mac. Tell the people in it.",
+  "notice": "Start begins a Superwhisper meeting recording if one isn't already running. What's said in this meeting leaves your Mac. Tell the people in it.",
   "disclosure": {
     "reads": [
-      "the transcript and speaker names of the Superwhisper meeting that started in the last 15 minutes"
+      "the transcript and speaker names of the Superwhisper meeting that started in the last 15 minutes, or of the one it starts",
+      "which Superwhisper mode you have selected, so it can put it back"
     ],
     "sends": [
       "transcript text to the canopy session it opens, and so to the agent's model provider",
@@ -39,6 +40,11 @@
     "from_start": {
       "type": "bool",
       "label": "Include what was said before you pressed Start"
+    },
+    "open_chat": {
+      "type": "bool",
+      "label": "Open the chat in my browser when people start talking",
+      "default": true
     }
   },
   "checks": [
@@ -50,6 +56,15 @@
         "--check"
       ],
       "fix": "Install Superwhisper's command-line tool so that ~/.local/bin/superwhisper exists, then try again."
+    },
+    {
+      "label": "Superwhisper is open",
+      "run": [
+        "{python}",
+        "source.py",
+        "--check-open"
+      ],
+      "fix": "Open Superwhisper, then press Start again."
     }
   ],
   "canopy": [

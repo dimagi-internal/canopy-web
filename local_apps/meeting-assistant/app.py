@@ -17,6 +17,8 @@ A feed that goes subtly wrong is silent, and what leaks is someone's conversatio
   * ONE ANSWER AT A TIME. Each send starts a turn. While the last one is unfinished, text
     accumulates instead of queueing turns that would answer minutes-old talk.
   * EVENTS ARE COUNTS ONLY. Logs end up in agent transcripts, so no spoken word goes in one.
+  * THE CHAT OPENS ITSELF. The first words go at once, not after an interval, and the chat they
+    land in opens in the browser, so the person can see it's working within seconds of speech.
   * ONLY A FINISHED MEETING IS KEPT. When a meeting ends by itself the whole transcript is saved,
     private to the person. Stop and a deleted meeting save nothing: both mean they said no.
 
@@ -30,6 +32,7 @@ import json
 import queue
 import re
 import secrets
+import subprocess
 import sys
 import threading
 import time
@@ -231,7 +234,7 @@ class Feed:
             return
         final = self._final_reason()
         if self.pending is None:
-            due = self.now() - self.last_send >= self.interval
+            due = self.sent_batches == 0 or self.now() - self.last_send >= self.interval
             enough = word_count(self.buffer) >= self.min_words
             if final or (due and enough and not self._busy()):
                 self._freeze()
@@ -255,8 +258,8 @@ class CanopyPoster:
     """Sessions and turns, in the terms the feed wants. The agent and workspace are the
     server's business, so a new session takes only a title."""
 
-    def __init__(self, call, log, *, title=None):
-        self.call, self.log = call, log
+    def __init__(self, call, log, *, title=None, open_url=None):
+        self.call, self.log, self.open_url = call, log, open_url
         self.title = title or f"Meeting {time.strftime('%Y-%m-%d %H:%M')}"
         self.session_id = None
 
@@ -274,6 +277,8 @@ class CanopyPoster:
             self.session_id = body["id"]
             if body.get("url"):
                 self.log("session", session_url=body["url"])
+                if self.open_url:
+                    self.open_url(body["url"])
         return self.session_id
 
     def post(self, text: str, client_id: str):
@@ -286,6 +291,17 @@ class CanopyPoster:
 
     def turn_status(self, turn_id: str):
         return self._ask("turns.status", {"turn_id": turn_id}).get("status")
+
+
+def open_in_browser(url: str) -> None:
+    """Best effort: the chat is also one click away in the menu bar."""
+    if not str(url).startswith("https://"):
+        return
+    try:
+        subprocess.run(["/usr/bin/open", url], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        pass
 
 
 class Wire:
@@ -378,7 +394,8 @@ class App:
     def run(self) -> str:
         start = self._wait_for_start()
         settings = start.get("settings") if isinstance(start.get("settings"), dict) else {}
-        poster = CanopyPoster(self.call, self.wire.event)
+        opener = open_in_browser if settings.get("open_chat", True) else None
+        poster = CanopyPoster(self.call, self.wire.event, open_url=opener)
         self.feed = self.make_feed(run_id=str(start.get("run_id") or ""), post=poster.post,
                                    turn_status=poster.turn_status, log=self.wire.event,
                                    brief=str(settings.get("brief") or ""))
