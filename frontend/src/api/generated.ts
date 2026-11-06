@@ -16157,6 +16157,78 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/canopy-sessions/slack/offline": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Take a channel thread's work offline into a private DM thread
+         * @description Move the work of a conversation in a Slack CHANNEL thread into a private
+         *     thread in one person's direct messages with canopy, so a long piece of work
+         *     stops filling the channel; its outcome comes back to the channel thread when
+         *     they say so (`report_back_to_parent`).
+         *
+         *     Use it when the person you are answering in a channel thread asks to take the
+         *     work offline ("let's build this offline and report back"). Name the thread's
+         *     conversation with your `turn_id`: the work goes offline with THAT turn's
+         *     person, never someone you name. A person names the conversation with
+         *     `session_id` and takes it offline themselves.
+         *
+         *     What happens: a new session, a child of the channel conversation (relation
+         *     `branch`), starts from that conversation so far, condensed, plus `brief`. Only
+         *     that person is in it. It lives in a new thread in their DMs with canopy and is
+         *     open in canopy too. The channel thread gets one line saying the work went
+         *     offline and is otherwise untouched: anyone may still talk to you there.
+         *
+         *     Refused (409) for a conversation not in a channel thread (a DM, the web chat),
+         *     or a person whose canopy account is not linked to Slack; 403 for a private
+         *     conversation, or someone who may not write in it.
+         */
+        readonly post: operations["take_session_offline"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/lineage/report-back": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Report a session's outcome back to the conversation it came from
+         * @description Send this session's outcome to the conversation it was started from — work
+         *     taken offline from a Slack thread (`take_session_offline`), a branch, a
+         *     dispatch. The report becomes a turn in that conversation, asked by the person
+         *     whose work this is, and its agent posts it there (in its Slack thread, its web
+         *     chat), so that conversation knows the outcome from then on.
+         *
+         *     Use it when the person you are working with says to report back. Name your
+         *     session with your `turn_id`; the report goes in that turn's person's name, and
+         *     they must be able to write in the parent conversation. A person names the
+         *     session with `session_id` and reports themselves. `final: false` sends an
+         *     interim update; the work carries on.
+         *
+         *     409 for a session that was not started from another conversation, or whose
+         *     parent is closed; 403 for someone who may not write in the parent.
+         */
+        readonly post: operations["report_back_to_parent"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/canopy-sessions/": {
         readonly parameters: {
             readonly query?: never;
@@ -45482,6 +45554,101 @@ export interface components {
              */
             readonly claude_session_id: string;
         };
+        /** SlackOfflineOut */
+        readonly SlackOfflineOut: {
+            /** Status */
+            readonly status: string;
+            /** Message */
+            readonly message: string;
+            /**
+             * From Session Id
+             * Format: uuid
+             */
+            readonly from_session_id: string;
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            readonly session_id: string;
+            /**
+             * Dm Channel
+             * @default
+             */
+            readonly dm_channel: string;
+            /**
+             * Dm Permalink
+             * @default
+             */
+            readonly dm_permalink: string;
+            /**
+             * Url
+             * @default
+             */
+            readonly url: string;
+        };
+        /**
+         * SlackOfflineIn
+         * @description Which channel-thread conversation to take offline, and what to work on there.
+         */
+        readonly SlackOfflineIn: {
+            /**
+             * Brief
+             * @default
+             */
+            readonly brief: string;
+            /**
+             * Turn Id
+             * @default
+             */
+            readonly turn_id: string;
+            /**
+             * Session Id
+             * @default
+             */
+            readonly session_id: string;
+        };
+        /** ReportBackOut */
+        readonly ReportBackOut: {
+            /** Status */
+            readonly status: string;
+            /** Message */
+            readonly message: string;
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            readonly session_id: string;
+            /**
+             * Parent Session Id
+             * Format: uuid
+             */
+            readonly parent_session_id: string;
+            /** Turn Id */
+            readonly turn_id?: string | null;
+        };
+        /**
+         * ReportBackIn
+         * @description A child session's outcome, for the conversation it was started from.
+         */
+        readonly ReportBackIn: {
+            /** Summary */
+            readonly summary: string;
+            /**
+             * Final
+             * @default true
+             */
+            readonly final: boolean;
+            /**
+             * Turn Id
+             * @default
+             */
+            readonly turn_id: string;
+            /**
+             * Session Id
+             * @default
+             */
+            readonly session_id: string;
+        };
         /** SessionOut */
         readonly SessionOut: {
             /** Content Deleted At */
@@ -70276,6 +70443,54 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SlackNewThreadOut"];
+                };
+            };
+        };
+    };
+    readonly take_session_offline: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SlackOfflineIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SlackOfflineOut"];
+                };
+            };
+        };
+    };
+    readonly report_back_to_parent: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ReportBackIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ReportBackOut"];
                 };
             };
         };

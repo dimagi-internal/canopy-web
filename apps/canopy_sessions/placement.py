@@ -16,7 +16,7 @@ from apps.harness.models import Runner, Turn
 
 from . import activity as session_activity
 from . import conversation_keys, handoff, services, staleness, transcript_read
-from . import lifecycle
+from . import lifecycle, lineage
 from . import access as session_access
 from .models import Message, RunnerBinding, Session
 
@@ -527,7 +527,7 @@ def fork_session(*, session: Session, turn_index: int, user) -> Session:
     title = (session.title or "").strip() or "session"
     with transaction.atomic():
         fork = services.create_session(
-            workspace=session.workspace, created_by=user, agent=session.agent,
+            workspace=session.workspace, created_by=user, agent=session.agent, relation=lineage.FORK,
             project=session.project, title=f"Fork of {title}"[:200],
             metadata={
                 FORK_KEY: {"session_key": binding.session_key, "records": records,
@@ -548,10 +548,12 @@ def fork_session(*, session: Session, turn_index: int, user) -> Session:
         )
         fork.parent_session = session
         fork.parent_claude_session = binding.session_key
+        fork.relation = lineage.FORK
         fork.ordinal_scheme = session.ordinal_scheme
         # The cut is of the source's own store, so the fork runs on its CLI.
         fork.cli = session.cli
-        fork.save(update_fields=["parent_session", "parent_claude_session", "ordinal_scheme", "cli"])
+        fork.save(update_fields=["parent_session", "parent_claude_session", "relation", "ordinal_scheme",
+                                 "cli"])
         Message.objects.bulk_create([
             Message(session=fork, turn_index=m.turn_index - offset, role=m.role, content=m.content,
                     plaintext=m.plaintext, author=m.author, source_turn_id=m.source_turn_id,

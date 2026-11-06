@@ -251,6 +251,31 @@ class SlackNewThreadIn(Schema):
     claude_session_id: str = ""
 
 
+class SlackOfflineIn(Schema):
+    """Which channel-thread conversation to take offline, and what to work on there."""
+    #: What the offline work is for, in the requester's words. Optional: without it the
+    #: offline thread carries the conversation on as it stands.
+    brief: str = ""
+    #: An agent's own live turn in the channel thread (the caller envelope's
+    #: `turn_id`): the work goes offline with that turn's person. Tried first.
+    turn_id: str = ""
+    session_id: str = ""
+
+
+class SlackOfflineOut(Schema):
+    #: "ok".
+    status: str
+    message: str
+    #: The channel conversation it was taken from.
+    from_session_id: uuid.UUID
+    #: The new offline session (a child of the channel's, relation "branch").
+    session_id: uuid.UUID
+    #: Where it is: the person's DM channel with canopy, its thread's link, and canopy's page.
+    dm_channel: str = ""
+    dm_permalink: str = ""
+    url: str = ""
+
+
 class SlackPlaceOut(Schema):
     channel: str
     thread_ts: str

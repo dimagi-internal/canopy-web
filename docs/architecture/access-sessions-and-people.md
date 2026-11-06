@@ -184,6 +184,30 @@ Slack behaviours live here (`apps/slack/`, pinned in `tests/test_slack.py`).
   prompt, not a Claude fork — emdash creates tasks through its UI and cannot pass
   `--fork-session`. A viewer cannot branch (they could not write into it), and a
   confined reply never branches (it forks, above).
+* **`@canopy offline <ask>` takes the work out of the channel**
+  (`apps/slack/offline.py`). The same people who may branch, in a channel thread,
+  get a new thread in THEIR direct messages with canopy, holding a child session
+  (relation `branch`, `metadata.slack_offline_from`) seeded like a branch, whose
+  only person is them — the channel's other people do not come along. The same
+  session is open in canopy (the web chat, the IDE). The channel thread gets one
+  line and stays live. The agent does the same when asked in words: `POST
+  /api/canopy-sessions/slack/offline` (`take_session_offline`) with its `turn_id`
+  takes it offline for THAT turn's person, never one it names. When they say so,
+  the child reports back (below).
+
+**Lineage: dispatch, branch, fork — and reporting back** (`apps/canopy_sessions/lineage.py`).
+Every child session records its parent the same way (`parent_session`,
+`parent_turn`, `provenance`) and says how it stands to it in `Session.relation`:
+`dispatch` (its own prompt; the default for any session born with a parent),
+`branch` (the parent's conversation, condensed, `lineage.context_prompt`) or
+`fork` (an exact transcript copy, `placement.fork_session`). Only a dispatch
+starts with the parent's people (`services._inherit_participants`); a branch or
+fork says who is in it itself. Any child may report its outcome back: `POST
+/api/canopy-sessions/lineage/report-back` (`report_back_to_parent`; an agent
+names its child by `turn_id`) sends a turn to the parent, asked by the child's
+person, who must be able to write there; the parent's agent posts it wherever the
+parent lives and its conversation keeps it. Each report is listed on the child's
+`metadata.reports_back`.
 
 ## What agents know about a person (the fleet brain)
 

@@ -221,6 +221,9 @@ def stamp(instance) -> None:
             setattr(instance, key, value)
         if record:
             instance.provenance = {**(instance.provenance or {}), "parent": record}
+    # A session born under a parent without saying how is a dispatch (lineage.py).
+    if isinstance(instance, Session) and instance.parent_session_id and not instance.relation:
+        instance.relation = "dispatch"
 
 
 def inherit_requirements(session) -> None:

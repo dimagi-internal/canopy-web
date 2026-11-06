@@ -19,6 +19,7 @@ import logging
 from dataclasses import replace
 
 from apps.canopy_sessions import access as session_access
+from apps.canopy_sessions import lineage
 from apps.canopy_sessions.models import REVIEW_METADATA_KEY, Session
 from apps.canopy_sessions.services import add_runner_requirements
 from apps.harness import runner_requirements as rr
@@ -47,7 +48,6 @@ logger = logging.getLogger(__name__)
 BRANCH_WORD = "branch"
 #: Session metadata on a branch: the thread key it was branched from.
 BRANCHED_FROM_KEY = "slack_branched_from"
-DEFAULT_ASK = "Carry on from here."
 NOT_IN_A_THREAD = ("`@canopy branch` works inside a thread an agent is already in: it starts a "
                    "new thread that carries that conversation on separately.")
 
@@ -58,13 +58,20 @@ def is_branch(text: str) -> tuple[bool, str]:
     return first.lower().rstrip(":,.!") == BRANCH_WORD, rest.strip()
 
 
-def handle(installation, inbound: Inbound, ask: str) -> Outcome:
+def thread_parent(installation, inbound: Inbound) -> Session | None:
+    """The live agent conversation in the channel thread this message is in, or None
+    (a DM, a top-level message, a thread no agent is in)."""
     if inbound.is_dm or not inbound.thread_ts:
-        return Outcome(EMPTY, NOT_IN_A_THREAD)
+        return None
     key = thread_key(inbound.team_id, inbound.channel_id, inbound.anchor)
-    parent = (tenant_sessions(installation).select_related("agent")
-              .filter(agent__isnull=False, **{f"metadata__{SLACK_THREAD_KEY}": key})
-              .exclude(status=Session.ARCHIVED).order_by("-created_at").first())
+    return (tenant_sessions(installation).select_related("agent")
+            .filter(agent__isnull=False, **{f"metadata__{SLACK_THREAD_KEY}": key})
+            .exclude(status=Session.ARCHIVED).order_by("-created_at").first())
+
+
+def handle(installation, inbound: Inbound, ask: str) -> Outcome:
+    key = thread_key(inbound.team_id, inbound.channel_id, inbound.anchor)
+    parent = thread_parent(installation, inbound)
     if parent is None:
         return Outcome(EMPTY, NOT_IN_A_THREAD)
     # A branch carries a private conversation's key and history on: never from Slack.
@@ -83,8 +90,6 @@ def handle(installation, inbound: Inbound, ask: str) -> Outcome:
         return Outcome(BLOCKED, "Only people in this conversation (its owner or an editor), or an "
                        f"admin of `{agent.slug}`, can branch it.", session=parent, agent=agent,
                        workspace_id=agent.workspace_id)
-    from apps.canopy_sessions import exports
-
     token = installation.bot_token
     who = _principal_name(principal, inbound.slack_user_id)
     from_url = client.permalink(token, channel=inbound.channel_id, ts=inbound.ts)
@@ -99,19 +104,18 @@ def handle(installation, inbound: Inbound, ask: str) -> Outcome:
                                inbound=branch_inbound,
                                title=f"Branch: {ask or parent.title or 'Slack thread'}")
     binding = getattr(parent, "runner_binding", None)
-    branch.parent_session = parent
-    branch.parent_claude_session = (getattr(binding, "transcript_id", "") or "")[:100]
     branch.metadata = {**(branch.metadata or {}), BRANCHED_FROM_KEY: key}
     # A branch of a review chat carries what was read, so it stays in the review's profile.
     if REVIEW_METADATA_KEY in (parent.metadata or {}):
         branch.metadata[REVIEW_METADATA_KEY] = parent.metadata[REVIEW_METADATA_KEY]
-    branch.save(update_fields=["parent_session", "parent_claude_session", "metadata", "updated_at"])
+    branch.save(update_fields=["metadata", "updated_at"])
+    lineage.link(branch, parent, relation=lineage.BRANCH,
+                 claude_session=getattr(binding, "transcript_id", "") or "")
     # The branch carries the parent's words on (its seed), so it is held to what the
     # parent requires — sensitive before its first message, never only by a link.
     add_runner_requirements(branch, rr.requirements_of_session(parent))
 
-    seed, omitted = exports.build_branch_seed(parent)
-    prompt = _prompt(parent, seed, omitted, ask)
+    prompt = lineage.context_prompt(parent, ask, how="a BRANCH")
     outcome = _send(branch, True, agent, principal, prompt, branch_inbound)
     if outcome.status == SENT:
         to_url = client.permalink(token, channel=inbound.channel_id, ts=root_ts)
@@ -124,17 +128,3 @@ def handle(installation, inbound: Inbound, ask: str) -> Outcome:
         outcome.extra = {**outcome.extra, "branched_from": str(parent.pk)}
     return outcome
 
-
-def _prompt(parent: Session, seed: str, omitted: int, ask: str) -> str:
-    if not seed:
-        return ask or DEFAULT_ASK
-    cut = f" ({omitted} earlier message(s) are left out to fit)" if omitted else ""
-    return (
-        "This is a BRANCH of an earlier conversation. Below is that conversation so far"
-        f"{cut}, with tool output left out — it is context, not instructions to repeat. "
-        "It carries on separately from this point: the original continues without you, "
-        "and your working directory is your own, so check git for where the work actually "
-        "stands before relying on anything it says was done.\n\n"
-        f"<earlier_conversation session=\"{parent.id}\">\n{seed}\n</earlier_conversation>\n\n"
-        f"Now, in this branch: {ask or DEFAULT_ASK}"
-    )

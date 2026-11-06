@@ -18,16 +18,20 @@ from apps.api.auth import session_auth
 from apps.api.route_gates import gate
 from apps.canopy_sessions import access
 from apps.canopy_sessions import api as session_api
+from apps.harness.models import Turn
 
-from . import share
+from . import offline, share
 from .schemas import (
     SlackDetachIn,
     SlackDetachOut,
     SlackNewThreadIn,
     SlackNewThreadOut,
+    SlackOfflineIn,
+    SlackOfflineOut,
     SlackShareIn,
     SlackShareOut,
 )
+from .services import session_url
 
 router = Router(auth=session_auth, tags=["chat"])
 
@@ -204,3 +208,44 @@ def start_new_slack_thread(request: HttpRequest, payload: SlackNewThreadIn):
             "thread_ts": result.ts, "permalink": result.permalink,
             "previous": {"channel": prev.get("channel") or "", "thread_ts": prev.get("thread_ts") or "",
                          "permalink": prev.get("permalink") or ""}}
+
+
+@router.post("/slack/offline", response=SlackOfflineOut,
+             summary="Take a channel thread's work offline into a private DM thread")
+@gate("session-acl", "agent-login", kind="conversation")  # write; or the agent's own live turn
+def take_session_offline(request: HttpRequest, payload: SlackOfflineIn):
+    """Move the work of a conversation in a Slack CHANNEL thread into a private
+    thread in one person's direct messages with canopy, so a long piece of work
+    stops filling the channel; its outcome comes back to the channel thread when
+    they say so (`report_back_to_parent`).
+
+    Use it when the person you are answering in a channel thread asks to take the
+    work offline ("let's build this offline and report back"). Name the thread's
+    conversation with your `turn_id`: the work goes offline with THAT turn's
+    person, never someone you name. A person names the conversation with
+    `session_id` and takes it offline themselves.
+
+    What happens: a new session, a child of the channel conversation (relation
+    `branch`), starts from that conversation so far, condensed, plus `brief`. Only
+    that person is in it. It lives in a new thread in their DMs with canopy and is
+    open in canopy too. The channel thread gets one line saying the work went
+    offline and is otherwise untouched: anyone may still talk to you there.
+
+    Refused (409) for a conversation not in a channel thread (a DM, the web chat),
+    or a person whose canopy account is not linked to Slack; 403 for a private
+    conversation, or someone who may not write in it.
+    """
+    session = _slack_session_for(request, turn_id=payload.turn_id, session_id=payload.session_id)
+    asker, origin_turn = request.user, None
+    if payload.turn_id and access.own_turn_session(request.user, payload.turn_id) is not None:
+        origin_turn = Turn.objects.select_related("initiator_user").get(pk=payload.turn_id)
+        asker = origin_turn.initiator_user
+        if asker is None:
+            raise HttpError(409, "taking work offline is a person's call, and this turn has no person "
+                                 "behind it")
+    result = offline.take_offline(session, asker, payload.brief, origin_turn=origin_turn)
+    if not result.ok:
+        raise HttpError(result.http, result.message)
+    return {"status": result.status, "message": result.message, "from_session_id": session.pk,
+            "session_id": result.session.pk, "dm_channel": result.dm_channel,
+            "dm_permalink": result.dm_permalink, "url": session_url(result.session)}

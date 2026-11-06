@@ -120,6 +120,12 @@ class Session(models.Model):
     )
     parent_task = models.CharField(max_length=300, blank=True, default="")
     parent_claude_session = models.CharField(max_length=100, blank=True, default="")
+    #: How this session stands to `parent_session`: `dispatch` (new work for it,
+    #: started from its own prompt), `branch` (the parent's conversation carried on
+    #: from a condensed copy) or `fork` (from an exact copy of its transcript).
+    #: "" for a session with no parent. One vocabulary for every way a child is
+    #: born: apps/canopy_sessions/lineage.py.
+    relation = models.CharField(max_length=16, blank=True, default="")
     #: What the session DID — repos, cwd, branches, PRs, edited directories and MCP
     #: tools — folded from its transcript rows as they are ingested. Shape, sources
     #: and limits: apps/canopy_sessions/activity.py. Served on SessionOut and
