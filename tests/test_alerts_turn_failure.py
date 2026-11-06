@@ -135,6 +135,24 @@ def test_title_is_capped_and_url_falls_back(fleet):
     assert r.url == "/w/dimagi/activity?status=failed"
 
 
+def test_url_opens_an_agent_in_a_child_workspace_on_its_own_turns_tab(fleet):
+    """Investigation 31: otto lives in `connect`, below the investigation's `dimagi`."""
+    child = Workspace.objects.create(slug="connect", display_name="Connect", created_by=fleet["jj"],
+                                     parent=fleet["ws"])
+    Agent.objects.create(slug="otto", name="otto", workspace=child, owner=fleet["jj"])
+    _inv(fleet, agents=["otto"])
+    (r,) = src.reconcile(timezone.now())
+    assert r.url == "/w/connect/agents/otto/turns"
+
+
+def test_url_does_not_open_an_agent_outside_the_tree(fleet):
+    other = Workspace.objects.create(slug="elsewhere", display_name="Elsewhere", created_by=fleet["jj"])
+    Agent.objects.create(slug="stray", name="stray", workspace=other, owner=fleet["jj"])
+    _inv(fleet, agents=["stray"])
+    (r,) = src.reconcile(timezone.now())
+    assert r.url == "/w/dimagi/activity?status=failed&agent=stray"
+
+
 def test_mark_resolved_resolves_investigation_and_alert(fleet):
     inv = _inv(fleet)
     alerts.tick(timezone.now())
