@@ -123,27 +123,37 @@ export function PersonPicker({
   )
 }
 
-/** A project's lead agent (it holds the Drive folder), or none (""). */
+/** One agent from the directory, or none (""). Defaults to a project's lead agent (it holds the
+ *  Drive folder); `label`, `none` (null = no "none" choice) and `trigger` let other screens reuse it. */
 export function AgentPicker({
   slug,
   directory,
   onChange,
   disabled,
+  label = 'Lead agent',
+  none = 'No lead agent',
+  trigger: triggerOverride,
 }: {
   slug: string | null | undefined
-  directory: Directory
+  directory: Pick<Directory, 'agents'>
   onChange: (slug: string) => void
   disabled?: boolean
+  label?: string
+  none?: string | null
+  trigger?: ReactNode
 }): JSX.Element {
   const current = slug ?? ''
-  const trigger: ReactNode = current ? <AgentName slug={current} /> : <span className="text-foreground-subtle">No lead agent</span>
+  const trigger: ReactNode =
+    triggerOverride ?? (current ? <AgentName slug={current} /> : <span className="text-foreground-subtle">{none ?? label}</span>)
   return (
-    <Picker label="Lead agent" disabled={disabled} trigger={trigger}>
-      <DropdownMenuItem onClick={() => current && onChange('')}>
-        <span className="text-muted-foreground">No lead agent</span>
-        <Tick on={!current} />
-      </DropdownMenuItem>
-      {directory.agents.length > 0 && <DropdownMenuSeparator />}
+    <Picker label={label} disabled={disabled} trigger={trigger}>
+      {none !== null && (
+        <DropdownMenuItem onClick={() => current && onChange('')}>
+          <span className="text-muted-foreground">{none}</span>
+          <Tick on={!current} />
+        </DropdownMenuItem>
+      )}
+      {none !== null && directory.agents.length > 0 && <DropdownMenuSeparator />}
       {directory.agents.map((a) => (
         <DropdownMenuItem key={a.slug} onClick={() => a.slug !== current && onChange(a.slug)}>
           <Bot aria-hidden="true" className="size-3.5 text-primary" />

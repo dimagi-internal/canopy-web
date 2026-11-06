@@ -15,6 +15,23 @@ const ops = vi.hoisted(() => ({
   makeWorkspaceVaultKey: vi.fn(), grantWorkspaceVaultPending: vi.fn(), sealWorkspaceVaultValue: vi.fn(),
 }))
 vi.mock('@/vault/operations', () => ops)
+const dir = vi.hoisted(() => ({
+  agents: [
+    { slug: 'ace', name: 'Ace', workspace: 'dimagi' },
+    { slug: 'otto', name: 'otto', workspace: 'connect' },
+    { slug: 'stray', name: 'Stray', workspace: 'elsewhere' },
+  ],
+  projects: [{ id: 1, workspace: 'dimagi', handle: 'canopy-support', address: 'dimagi/canopy-support', name: 'Canopy support' }],
+  people: [], labels: [],
+}))
+vi.mock('@/components/work/useDirectory', () => ({ useDirectory: () => dir }))
+vi.mock('@/api/workspaces', () => ({
+  listWorkspaces: vi.fn().mockResolvedValue([
+    { slug: 'dimagi', display_name: 'Dimagi', parent: null },
+    { slug: 'connect', display_name: 'Connect', parent: 'dimagi' },
+    { slug: 'elsewhere', display_name: 'Elsewhere', parent: null },
+  ]),
+}))
 
 const { VaultMakeKey, VaultMembersTab, VaultOverviewTab, VaultSecretsTab } = await import('./VaultTabs')
 
@@ -45,7 +62,8 @@ describe('vault page', () => {
       { id: 3, agent: null, workspace: 'dimagi' }, { id: 4, agent: null, workspace: null, runner: 'r1', runner_name: 'cloud-ec2-2' },
     ] })} /></MemoryRouter>)
     const serves = screen.getByTestId('ws-vault-serves')
-    expect(serves.textContent).toContain('every agent in dimagi and below')
+    expect(screen.getByTestId('ws-vault-serves-workspaces').textContent).toContain('dimagi and below')
+    expect(screen.getByTestId('ws-vault-serves-agents').textContent).toContain('No agent on its own.')
     expect(serves.textContent).not.toContain('cloud-ec2-2')
   })
 
@@ -57,13 +75,9 @@ describe('vault page', () => {
         project_outside_tree: false },
     ] })} /></MemoryRouter>)
     const row = screen.getByTestId('ws-vault-project-5').textContent
-    expect(screen.getByTestId('ws-vault-serves').textContent).toContain('member agents of project dimagi/canopy-support')
+    expect(screen.getByTestId('ws-vault-serves-projects').textContent).toContain('Canopy support')
     expect(row).toContain('serves ada, hal')
     expect(row).toContain("not served (outside the vault's tree): lab")
-    fireEvent.change(screen.getByLabelText('Serve an agent, workspace or project from Shared'),
-      { target: { value: 'project:dimagi/canopy-support' } })
-    fireEvent.submit(screen.getByTestId('ws-vault-attach'))
-    await waitFor(() => expect(api.attachWorkspaceVault).toHaveBeenCalledWith('v1', { project: 'dimagi/canopy-support' }))
   })
 
   it('lists its runners under Members: where each key lives, its access, and Give access for that runner only', async () => {
@@ -108,17 +122,35 @@ describe('vault page', () => {
       'amie@dimagi.com has not set up a vault key yet, so gets a copy once they do.')
   })
 
-  it('serves a whole workspace from "workspace:slug", an agent otherwise', async () => {
+  it('serves an agent, project or workspace picked from real lists in the vault\u2019s tree', async () => {
     api.getWorkspaceVaultZk.mockResolvedValue({ pending: [] })
     api.attachWorkspaceVault.mockResolvedValue(SHARED)
-    render(<MemoryRouter><VaultOverviewTab {...ctx()} /></MemoryRouter>)
-    const input = screen.getByLabelText('Serve an agent, workspace or project from Shared')
-    fireEvent.change(input, { target: { value: 'workspace:connect' } })
-    fireEvent.submit(screen.getByTestId('ws-vault-attach'))
+    render(<MemoryRouter><VaultOverviewTab {...ctx({ attachments: [] })} /></MemoryRouter>)
+    expect(screen.queryByRole('textbox')).toBeNull()
+    fireEvent.click(screen.getByLabelText('Serve an agent from Shared'))
+    expect(await screen.findByText('Ace')).toBeTruthy()
+    expect(screen.queryByText('Stray')).toBeNull()
+    fireEvent.click(await screen.findByText('otto'))
+    await waitFor(() => expect(api.attachWorkspaceVault).toHaveBeenCalledWith('v1', { agent: 'otto' }))
+    cleanup()
+    render(<MemoryRouter><VaultOverviewTab {...ctx({ attachments: [] })} /></MemoryRouter>)
+    fireEvent.click(screen.getByLabelText('Serve a project from Shared'))
+    fireEvent.click(await screen.findByText('Canopy support'))
+    await waitFor(() => expect(api.attachWorkspaceVault).toHaveBeenCalledWith('v1', { project: 'dimagi/canopy-support' }))
+    cleanup()
+    render(<MemoryRouter><VaultOverviewTab {...ctx({ attachments: [] })} /></MemoryRouter>)
+    fireEvent.click(await screen.findByLabelText('Serve a whole workspace from Shared'))
+    fireEvent.click(await screen.findByText('Connect'))
     await waitFor(() => expect(api.attachWorkspaceVault).toHaveBeenCalledWith('v1', { workspace: 'connect' }))
-    fireEvent.change(input, { target: { value: 'ace' } })
-    fireEvent.submit(screen.getByTestId('ws-vault-attach'))
-    await waitFor(() => expect(api.attachWorkspaceVault).toHaveBeenCalledWith('v1', { agent: 'ace' }))
+  })
+
+  it('does not offer what it already serves', async () => {
+    api.getWorkspaceVaultZk.mockResolvedValue({ pending: [] })
+    render(<MemoryRouter><VaultOverviewTab {...ctx({ attachments: [{ id: 7, agent: 'ace', workspace: null }] })} /></MemoryRouter>)
+    expect(screen.getByTestId('ws-vault-serves-agents').textContent).toContain('Ace')
+    fireEvent.click(screen.getByLabelText('Serve an agent from Shared'))
+    expect(await screen.findByText('otto')).toBeTruthy()
+    expect(screen.getAllByText('Ace')).toHaveLength(1)
   })
 
   it('says why each person is in it', () => {
