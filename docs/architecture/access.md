@@ -279,6 +279,7 @@ paths and names are configuration, readable to members.
 | **workspace default** | A line set once on a workspace; every agent in it, and in the workspaces below it, inherits it unless the agent opts out. | `AgentGrant.workspace`, `Agent.inherit_workspace_defaults` |
 | **read mode** | The default confined profile for someone who holds `read` and not `write`. It **exists on every agent from the start**: canopy's default (`interface.default_read_profile`), or the agent's own, which replaces the default whole. | "Read mode and connected sites" |
 | **connected site** | A confined profile tied to one registered site (ACE's `connect`): which tools and paths a conversation held on that site may use. Rare. It never says who may use it: that is the access list's job. | "Read mode and connected sites" |
+| **site tool limit** | Optional, per connected site: tool-name globs that narrow which of the host's tools an agent may call there. It never widens: the host's grant (its scopes for that page and the person's own access) decides what exists, and an empty limit adds nothing. Settings form: "Site tools it may use". Stored and sent as `ceiling`, a name that stays (below); the old word suggested a maximum grant, which it is not. A limit that matches every tool the site offers is refused as a save, since it limits nothing. | `answering.set_site`, `host_gateway.tool_allowed` |
 | **entry point** | A way work reaches an agent: the harness API, a canopy-web chat, Slack, email, a site's panel. Every one asks the rule. | "Where it is asked" |
 | **role** vs **source** | A role is what someone can do; a source is why they have it (`owner`, `admin`, `system`, `session`, `list:<line>`). Never the same word. | `Standing.agent_role`, `Standing.source` |
 | **contact** | Not a role. How canopy knows someone who is not a workspace member: an emailer, a Slack person outside the workspace, a widget visitor (who may have no address at all). A contact has an agent role only if a line names them; with no line they are refused. | `apps/contacts` |
@@ -658,8 +659,8 @@ on a PUT checks a draft with the server's own parser without saving; every save 
   `read` in `permissions`. A sensitive conversation never gets read mode (its email-reply rules are not a
   sensitive profile).
 * **A connected site** is one row per registered site: a confined profile (`description`, `entry`, `tools`,
-  `bash`, `read_paths`, `write_paths`) plus an optional `ceiling` (a narrowing of the site's tools, on the
-  owner's word), `own_login` (the agent's own credentials at that site) and **Handles sensitive data**. A
+  `bash`, `read_paths`, `write_paths`) plus an optional **site tool limit** (stored and sent as `ceiling`; the form says "Site tools it may use": tool globs
+  that narrow what the host's grant already allows, on the owner's word; empty adds nothing), `own_login` (the agent's own credentials at that site) and **Handles sensitive data**. A
   conversation held on that site selects it, and its profile gains canopy's gateway tools (`site_tools`,
   `site_call`, `site_read`) and the page's own actions (`page_*`) → [access-confinement-and-act-as.md](access-confinement-and-act-as.md).
   A new row starts from `answering.new_site_defaults`, saved explicitly so a later change widens nobody.
@@ -679,6 +680,7 @@ an access line names. These stored and wire names stay, each behind one constant
   stamped under the name `ask` — the one place that name lives is `interface_default.READ_MODE_STAMP`, and
   `interface.is_read_mode` is the one place that says the two names are read mode. New read-mode entries
   are written under it, and turns stamped with it keep resolving.
+* A connected site's **site tool limit** is stored and sent as `ceiling` (`Agent.interface`, `/connected-sites`).
 * `Turn.capability` (the stamp), `AgentGrant.capability` (a line's connected site), `AdmissionRule.capability`,
   `use:<name>` in stored role permissions, `data: sensitive`, the envelope's `capability` and `granted_by`
   (`capability:<name>`), and `profile: full|confined` beside `access`. Renaming them would split live
@@ -686,7 +688,7 @@ an access line names. These stored and wire names stay, each behind one constant
 
 **One entry per site.** A connected site's entry names exactly one site, and no site is named by two
 entries: the writer refuses a document that breaks either (`answering.document_problems`). So a site's
-ceiling and its own login are that one entry's (`interface.site_ceiling`, `interface.own_login_of`), and
+tool limit and its own login are that one entry's (`interface.site_ceiling`, `interface.own_login_of`), and
 a page's declared resource selects nothing: an entry carrying `pages:` is refused.
 
 **What a document may hold.** The settings routes refuse a document they cannot hold

@@ -7,7 +7,7 @@ directly; it calls these, and canopy-web attaches the visitor's host-issued,
 DPoP-bound token server-side (`apps/host_grants/host_gateway.py`). So:
 
 * no runner ever holds a visitor's token or canopy's DPoP key;
-* the owner's per-site ceiling is enforced HERE, server-side, not only by the
+* the owner's per-site tool limit (`ceiling:`) is enforced HERE, server-side, not only by the
   runner's `profile_guard`;
 * every call is one audit row, and none of them contains a token — or what the
   host answered: `site_call` records the tool, `site_read` the URI.

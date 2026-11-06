@@ -178,8 +178,26 @@ def _name_for_site(caps: dict, site: str) -> str | None:
                  if not iface_mod.is_read_mode(name) and site in ((entry or {}).get("sites") or [])), None)
 
 
+def _limits_nothing(globs) -> str | None:
+    """The first tool-limit glob that matches every tool the site offers, or None.
+
+    `mcp__*connect_labs__*` reads like a restriction and restricts nothing: the host's tool name is
+    all that is matched (`host_gateway.host_tool_name`), and `*` is every one of them. ACE's labs
+    row carried exactly that until 2026-11-06, which is how a no-op passed for a safety setting.
+    """
+    from apps.host_grants.host_gateway import host_tool_name  # noqa: PLC0415 — host_grants imports agents
+
+    return next((g for g in globs or [] if host_tool_name(g) == "*"), None)
+
+
 def set_site(agent, site: str, fields: dict, *, by, dry_run: bool = False):
     """Add or change `site`'s row: `fields` over what it holds now, or over `new_site_defaults`."""
+    if fields.get("ceiling") is not None and (bad := _limits_nothing(fields["ceiling"])):
+        raise SettingsError(
+            f"Site tools it may use: {bad} matches every tool the site offers, so it limits nothing. "
+            "Leave the list empty to let the site's own permission decide, or name the tools to keep the agent to."
+        )
+
     def change(doc):
         caps = doc["capabilities"]
         name = _name_for_site(caps, site)
