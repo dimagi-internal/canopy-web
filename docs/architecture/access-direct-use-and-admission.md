@@ -116,7 +116,7 @@ may read it; the transcript stays the record.
 
 Some combinations of the above can never complete, and canopy refuses them
 before any session starts instead of spending one (`apps/admission`). The worked example: an email from a **confined** caller, in
-**manual** mode, claimed by a **cloud** runner. The ask procedure drafts a reply
+**manual** mode, claimed by a **cloud** runner. The read-mode procedure (`/<slug>:answer-caller`) drafts a reply
 and waits for a human yes, and a cloud session that ends cannot receive one.
 
 * **What a rule is.** A row on a workspace (`AdmissionRule`), edited by its
@@ -261,7 +261,7 @@ profile: read mode or a connected site), `turn_mode` (`{mode, basis}`), and:
   canopy-web).** An agent whose asker lacks it does the work asked and does not push or merge to its
   own repo; the canopy plugin's runner-side rail enforces that, canopy-web only reports it here.
 * **`granted_by`** — a legacy one-word summary of the same decision, kept for older readers;
-  new readers should use `permissions` and `profile`, never match its strings: `owner` | `admin` |
+  new readers should use `permissions` and `access`, never match its strings: `owner` | `admin` |
   `system` | `session:<role>` | `grant:<line>` (a line that gives `write`) | `capability:<name>` (wire: a
   confined asker in read mode or that connected site) | `sensitive:<name>` | `refused`, and `no-interface` for a
   turn with no agent. New values may appear.

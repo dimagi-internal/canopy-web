@@ -16,7 +16,7 @@ tool; and beside every delivered prompt — the runner leaves
 
 * **Default deny.** An agent with no `read` or `write` line and no connected site is reached only by
   its owner and agent admins; every contact or unidentified caller no line names, and every
-  line that opens nothing the agent has, is refused (row 4). Read mode exists on every agent. The interface is live state on canopy-web —
+  line that opens nothing the agent has, is refused (row 4). Read mode exists on every agent. Read mode and connected sites are live state on canopy-web (stored in `Agent.interface`) —
   never a file in the agent's repo; the owner or an agent admin edits it on the agent. It
   confines callers who reach the agent through canopy (web chat, Slack, email,
   embedded sites). canopy's MCP server offers NO per-agent tools: someone who
@@ -25,7 +25,7 @@ tool; and beside every delivered prompt — the runner leaves
 * **An agent's own login is the agent.** `Agent.user` grades as `system`;
   another agent's login grades like any person, or agent A could steer all of B.
 * **Three layers, each failing closed.** (1) canopy stamps the profile's name on `Turn.capability` (the stored field) at
-  enqueue (`harness.services._apply_capability`) or refuses the turn; (2) only a
+  enqueue (`harness.services._apply_capability`) and again at its claim (`turn_context.at_claim`, which asks the rule afresh and rewrites the stamp), or refuses the turn; (2) only a
   runner reporting `profiles` (and `envelope >= 2`) may claim such a turn, and it
   runs it in its own `cx-` session with the profile written to
   `~/.canopy/profiles/<task>.json` first; (3) the plugin-wide `profile_guard`

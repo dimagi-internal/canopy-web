@@ -67,7 +67,7 @@ that agent is deleted or moved, and the host then shows no agents.
 ### The gap, stated plainly
 
 Three rows above are **typed-once production state that exists in no file**:
-the Connected site row, the signing key's value, and ACE's published interface and access list.
+the Connected site row, the signing key's value, and ACE's read mode, connected sites and access list.
 Rebuild the database and they are gone; nothing in CI would notice. This is the
 same shape as the hand-applied IAM grants in
 [`deploy.md` § AWS IAM](../architecture/deploy.md#aws-iam) — recorded here so it is at least *known*, not so it is fine.

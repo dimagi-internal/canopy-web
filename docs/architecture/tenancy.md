@@ -758,7 +758,7 @@ THE predicate; every surface below asks it, one test each in
   connected site's globs ∩ `sensitive_data.SENSITIVE_CANOPY_TOOLS` (`current_page`,
   `who_is_asking`, `site_tools`, `site_call`, `site_read`) plus its own page's actions
   (`page_*`, `sensitive_data.sensitive_tool`: each runs in its person's tab and answers
-  only the turn, so nothing leaves its people), whatever the interface lists; it resolves to
+  only the turn, so nothing leaves its people), whatever the connected site's profile lists; it resolves to
   nothing once the connected site stops saying `data: sensitive` (re-read on every call) or the
   turn is not confined (`caller_tokens._sensitive_grant`, `mcp/turn_scope.py`). So a
   sensitive turn creates no schedule, task or turn of its own.

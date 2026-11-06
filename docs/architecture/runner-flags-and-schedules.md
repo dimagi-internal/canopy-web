@@ -71,7 +71,7 @@ retries, and its live tail ticks once more as it stops.
 
 A turn whose conversation is held on a Connected site's page that its agent serves
 carries `page_site: {site, withheld}` in its claim (`interface.page_turn`; the
-names come from `own_login:` in the agent's interface). There the agent reaches the
+names come from the connected site's `own_login`). There the agent reaches the
 site only through canopy's gateway, as the person who sent (`access-confinement-and-act-as.md` § Acting as
 the person on a connected site), so:
 

@@ -237,8 +237,8 @@ held that key could sign for anyone at every connected site.)
 For **canopy's own MCP tools**: a visitor who is not the agent's owner
 or an admin talks to a CONFINED session, which reaches canopy's MCP with a
 caller token scoped to **agent ∩ visitor** — the visitor's own canopy
-permissions (none, for a contact), limited to the tools the agent's declared
-interface lists. The owner's token is never used there.
+permissions (none, for a contact), limited to the tools its profile (that connected
+site, or read mode) lists. The owner's token is never used there.
 
 ## 8b. Return facts + a `resource_link` to a result you keep, using standard MCP
 
