@@ -271,3 +271,27 @@ def test_streams_excludes_archived_sessions():
     RunnerBinding.objects.create(session=gone, runner=runner, session_key="gone-1")
     body = c.get(f"/api/harness/runners/{runner.id}/streams").json()
     assert [x["session_key"] for x in body["streams"]] == ["live-1"]
+
+
+def test_streams_bounds_are_index_probes_not_a_grouped_join():
+    """The bounds used to be Min/Max over a JOIN to every message, which forced a
+    GROUP BY over every column of the binding and the session (JSON included) and
+    spilled to disk on each call: canopy-web's costliest statement on the shared
+    RDS. They are per-binding LIMIT 1 subqueries now; the values are unchanged,
+    including the epoch filter for a transferred session."""
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    user, ws, runner, c = _ctx()
+    s = Session.objects.create(workspace=ws, origin=Session.ORIGIN_RUNNER, title="a")
+    RunnerBinding.objects.create(session=s, runner=runner, session_key="echo-1", index_offset=500)
+    for i in (10, 499, 500, 777):
+        Message.objects.create(session=s, turn_index=i, role="assistant", plaintext=str(i))
+    with CaptureQueriesContext(connection) as ctx:
+        stream = c.get(f"/api/harness/runners/{runner.id}/streams").json()["streams"][0]
+    # Only rows of this runner's epoch (>= 500), in the runner's own ordinals.
+    assert (stream["first_index"], stream["last_index"]) == (0, 277)
+    binding_reads = [q["sql"] for q in ctx.captured_queries if "canopy_sessions_runnerbinding" in q["sql"]
+                     and "turn_index" in q["sql"]]
+    assert binding_reads, "the bounds query was not captured"
+    assert not any("GROUP BY" in sql for sql in binding_reads), binding_reads
