@@ -242,8 +242,6 @@ def test_the_interface_parses_sites_and_ceiling_and_refuses_nonsense(w):
         parse({"capabilities": {"x": {"ceiling": ["*"]}}})
     with pytest.raises(InterfaceError, match="not a Connected site name"):
         parse({"capabilities": {"x": {"sites": ["a b"]}}})
-    # `pages:` still parses — ACE's live interface uses it.
-    assert parse({"capabilities": {"m": {"pages": ["labs-marketplace://*"]}}})
 
 
 def test_a_conversation_on_the_site_selects_the_connected_site(w):

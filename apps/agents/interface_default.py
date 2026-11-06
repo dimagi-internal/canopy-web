@@ -83,7 +83,6 @@ def default_read_profile(agent, *, skills=None) -> dict:
         "bash": bash,
         "read_paths": ["{cwd}/**"],
         "write_paths": scratch,
-        "pages": [],
         "sites": [],
         "ceiling": [],
     }

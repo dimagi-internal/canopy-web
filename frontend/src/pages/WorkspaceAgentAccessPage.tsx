@@ -188,7 +188,7 @@ function AgentAccess({ slug }: { slug: string }): JSX.Element {
                           <button
                             type="button"
                             onClick={() => setPicked(picked === key ? null : key)}
-                            title={`${src.name} → ${dst.name}: ${c.label}${e.capabilities.length ? ` (${e.capabilities.join(', ')})` : ''}`}
+                            title={`${src.name} → ${dst.name}: ${c.label}${e.profiles.length ? ` (${e.profiles.join(', ')})` : ''}`}
                             data-testid={`cell-${src.slug}-${dst.slug}`}
                             aria-pressed={picked === key}
                             className={clsx(
@@ -198,7 +198,7 @@ function AgentAccess({ slug }: { slug: string }): JSX.Element {
                           >
                             <span className={c.className}>{c.glyph}</span>
                             {e.access === 'confined' && (
-                              <span className="ml-1 text-[10px] text-muted-foreground">{e.capabilities.join(',')}</span>
+                              <span className="ml-1 text-[10px] text-muted-foreground">{e.profiles.join(',')}</span>
                             )}
                           </button>
                         </Td>

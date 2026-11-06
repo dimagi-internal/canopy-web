@@ -105,7 +105,7 @@ def test_the_access_list_confines_members_by_their_line(world):
     assert rows["ed@dimagi.com"]["role"] == "editor"
     # a partner-domain viewer is confined to what lists plain `member`
     assert rows["vw@partner.org"]["access"] == "confined"
-    assert rows["vw@partner.org"]["capabilities"] == ["ask"]
+    assert rows["vw@partner.org"]["profiles"] == ["ask"]
     # admins are never confined
     assert rows["adm@dimagi.com"]["access"] == "full"
 
@@ -117,7 +117,7 @@ def test_member_listed_nowhere_has_no_access(world):
     editors_run(a)
     rows = _by_email(_get(world["boss"]).json())
     assert rows["vw@partner.org"]["access"] == "none"
-    assert rows["vw@partner.org"]["capabilities"] == []
+    assert rows["vw@partner.org"]["profiles"] == []
 
 
 def test_a_grant_whose_holder_left_is_not_listed(world):
@@ -151,7 +151,7 @@ def test_roster_agrees_with_the_harness_for_a_signed_in_turn(world, published):
         elif decided is None:
             assert row["access"] == "none", user.email
         else:
-            assert row["access"] == "confined" and decided in row["capabilities"], user.email
+            assert row["access"] == "confined" and decided in row["profiles"], user.email
 
 
 def test_the_roster_lists_the_agents_own_login_as_the_system_not_a_person(tmp_path):

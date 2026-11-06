@@ -58,7 +58,7 @@ def test_editor_who_is_only_a_user_is_confined_to_ask_with_no_manual_cap(w):
     assert (d.access, d.stamped, d.basis) == (access.CONFINED, "ask", "capability:ask")
     assert d.review.manual_only is False and d.review.may_request_auto is False
     row = next(r for r in access.roster(w["agent"]) if r["user_id"] == w["editor"].pk)
-    assert (row["access"], row["capabilities"], row["manual_only"]) == ("confined", ["ask"], False)
+    assert (row["access"], row["profiles"], row["manual_only"]) == ("confined", ["ask"], False)
 
 
 def test_editor_given_an_editor_line_is_full(w):

@@ -101,7 +101,7 @@ function Summary({ workspace, map, onSelect }: {
         {confined.map((e) => (
           <button key={edgeKey(e.source, e.target)} type="button" onClick={() => onSelect({ kind: 'agent', slug: e.source })} className="flex justify-between gap-2 text-left hover:underline">
             <span>{map.agents.get(e.source)?.name} → {map.agents.get(e.target)?.name}</span>
-            <span className="text-[12px] text-warning">{e.capabilities.join(', ')} only</span>
+            <span className="text-[12px] text-warning">{e.profiles.join(', ')} only</span>
           </button>
         ))}
       </section>

@@ -19,7 +19,7 @@ admins, canopy itself, and a writer in an admin's own session) and its **access 
   (`system`); its owner and admins; a session grant; the access list; otherwise nothing.
 * **Stage 2, profile.** A base, then two rules that only narrow. Owner, admin, system, a session grant
   or `write` get `whole_agent`. Someone holding only `read` or named lines gets what they named if it
-  opens for them, else (naming nothing) the first page or site entry that opens for them, else read
+  opens for them, else (naming nothing) the site entry that opens for them, else read
   mode. Anyone else is refused. Then a review chat is `session_review` for anyone not refused, and
   sensitive data confines the whole agent to its entry and refuses anything else in a sensitive
   conversation.
@@ -35,7 +35,6 @@ and passed in on `Asker`. `harness.turn_asker.Standing` is who a turn's login an
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from fnmatch import fnmatchcase
 from functools import cached_property
 
 from django.contrib.auth import get_user_model
@@ -332,14 +331,13 @@ def _list_asker(asker: Asker, turn) -> grants.Asker:
 
 
 def _selected_entry(iface: dict, opens, session_ctx) -> str | None:
-    """The entry this conversation's page or site selects, among those this asker can open. One they
-    cannot open is skipped, not fatal: read mode may still admit them."""
-    return (iface_mod.page_entry(session_ctx.page, iface, opens)
-            or iface_mod.site_entry(session_ctx.site, iface, opens))
+    """The entry this conversation's site selects, if this asker can open it. One they cannot open is
+    skipped, not fatal: read mode may still admit them."""
+    return iface_mod.site_entry(session_ctx.site, iface, opens)
 
 
 def _entry_for(iface: dict, permissions, requested, session_ctx, trace: list) -> str | None:
-    """The entry someone without `write` is held to: the one named, else the page's or the site's,
+    """The entry someone without `write` is held to: the one named, else the site's,
     else read mode, among those their permissions open. Read mode exists on every agent; any other
     name must be published, and an unknown or retired one is refused, never widened."""
     def opens(name, _cap):
@@ -352,7 +350,7 @@ def _entry_for(iface: dict, permissions, requested, session_ctx, trace: list) ->
         return requested if allowed else None
     name, how = requested, "named"
     if name is None:
-        name, how = _selected_entry(iface, opens, session_ctx), "page or site"
+        name, how = _selected_entry(iface, opens, session_ctx), "site"
     if name is None:
         name, how = iface_mod.READ_MODE_STAMP, "read mode"
     published, cap = iface_mod.published_profile(iface, name)
@@ -413,7 +411,7 @@ def _review_rule(reach: _Reach, trace: list) -> _Reach:
 
 def _sensitive_entry(iface: dict, requested, session_ctx) -> str | None:
     """The `data: sensitive` entry this request is in: the one it names, else the one its conversation's
-    site or page selects. Who is asking is not checked here."""
+    site selects. Who is asking is not checked here."""
     if requested:
         # `read` and `READ_MODE_STAMP` are one thing: naming either finds the agent's published read-mode
         # profile, and if that handles sensitive data, naming `read` must not dodge the rule.
@@ -423,8 +421,6 @@ def _sensitive_entry(iface: dict, requested, session_ctx) -> str | None:
         if cap.get("data") != sensitive_data.SENSITIVE:
             continue
         if session_ctx.site and session_ctx.site in (cap.get("sites") or []):
-            return name
-        if session_ctx.page and any(fnmatchcase(session_ctx.page, p) for p in cap.get("pages") or []):
             return name
     return None
 

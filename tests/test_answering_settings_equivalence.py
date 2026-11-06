@@ -2,7 +2,9 @@
 
 `docs/superpowers/specs/2026-11-04-agent-settings-replace-the-interface-design.md` § 6. Both read
 `Agent.interface`, and the plain settings keep it as the storage, so this holds in every phase: it is
-what checks the new forms' writer, and the eventual deletion of `pages`, against today.
+what checks the new forms' writer, and the deletion of `pages` and of the combined ceiling of several
+entries on one site, against today. The fixture holds no document either applied to, as production
+holds none (migration `agents/0132` refuses to run otherwise), so the frozen copy still says what they did.
 
 A failure here means an agent would answer someone differently. The fix is in the code that changed,
 not in the frozen copy; `FROZEN_ANSWERS` catches the two being edited together.
@@ -43,8 +45,9 @@ BASE_URL = "https://canopy.test"
 RETIRED = "retired_probe"
 
 #: The hash of every answer the frozen copy gives over the fixture. It moves only if the frozen
-#: copy or the fixture moves, and neither should: see the module docstring.
-FROZEN_ANSWERS = "1877f8032a283484c7a5ec18e667fe5cba2eb51e24006dd9fd68b1cc7acc657f"
+#: copy or the fixture moves, and neither should: see the module docstring. (It moved once, when the
+#: fixture lost the three corner cases that existed only for `pages` and the combined site ceiling.)
+FROZEN_ANSWERS = "845cb97824b08c8f930357db0635ba133a9c3cc39d01b2ed3c66870ddbf6c5c4"
 
 def _as_decision(ctx):
     """A Turn Context in the frozen copy's shape, so the two compare field by field."""
@@ -100,7 +103,7 @@ def world():
                 WorkspaceMembership.objects.create(user=person, workspace=ws, role=WorkspaceMembership.VIEWER)
         agent = Agent.objects.create(
             slug=row["slug"], name=row["slug"], workspace=ws, owner=owner, email=row.get("email", ""),
-            interface=row["interface"], interface_source="",
+            interface=row["interface"],
             interface_published_by=publisher if row.get("published_by") else None,
             interface_published_at=dt.datetime.fromisoformat(row["published_at"]) if row.get("published_at") else None)
         AgentAdmin.objects.create(agent=agent, user=admin)
@@ -149,8 +152,6 @@ def _contexts(agent, row) -> list[dict]:
     for site in [*_sites(agent), "site_no_agent_serves"]:
         out += [{"name": f"site:{site}", "turn": {"site": site}},
                 {"name": f"sensitive_site:{site}", "turn": {"site": site, "sensitive": True}}]
-    if row.get("page_resource"):
-        out.append({"name": "page", "turn": {}, "resource": row["page_resource"]})
     return out
 
 
@@ -159,10 +160,7 @@ def _turn(who, context, stamp=""):
         return None
     user = who if isinstance(who, get_user_model()) else None
     contact = None if user is not None else who
-    turn = probe_turn(user=user, contact=contact, stamp=stamp, **context["turn"])
-    if context.get("resource"):
-        turn.chat_session.page_state = {"resource": context["resource"]}
-    return turn
+    return probe_turn(user=user, contact=contact, stamp=stamp, **context["turn"])
 
 
 def _pks_out(value, people):

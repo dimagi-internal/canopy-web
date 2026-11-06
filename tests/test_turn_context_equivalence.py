@@ -39,19 +39,19 @@ pytestmark = pytest.mark.django_db
 FIXTURE = pathlib.Path(__file__).parent / "fixtures" / "answering_interfaces.json"
 RETIRED = "retired_probe"
 #: `test_the_walk_has_not_shrunk`.
-WALK = 48189
+WALK = 49808
 M = WorkspaceMembership
 HAL = {"ask": {"description": "Ask", "tools": ["Read"]}}
 TWO_PROFILES = {"ask": {"description": "Ask", "tools": ["Read"]}, "status": {"description": "Status", "tools": ["Read"]}}
 SITE = "connect-labs"
-#: One agent with a page entry, a site entry and a sensitive entry, so narrowing has something to find.
+#: One agent with a site entry and a sensitive entry, so narrowing has something to find.
 EVERYTHING = {
     "ask": {"tools": ["Read"]},
-    "stock": {"tools": ["Read"], "pages": ["stock://*"]},
     "connect": {"tools": ["Read"], "sites": [SITE]},
     "data": {"tools": ["Read"], "sites": ["data-site"], "data": "sensitive"},
-    "ledger": {"tools": ["Read"], "pages": ["ledger://*"], "data": "sensitive"},
 }
+#: What a page says it is showing. It selects no entry: every conversation on it answers as off it.
+PAGE = "stock://item/1"
 
 
 def _outcome(answer: dict) -> dict:
@@ -129,14 +129,12 @@ def _matrix_agents(p) -> list:
         declare(agent, TWO_PROFILES)
         AgentGrant.objects.create(agent=agent, kind=AgentGrant.PERSON, user=p.viewer, **line)
         out.append(agent)
-    # Written as stored, not through `parse`: a sensitive page entry can no longer be published, and
-    # one published before that rule must still answer.
+    # Written as stored, not through `parse`.
     agent = _agent("all-kinds", ws, p, {"capabilities": EVERYTHING}, user=p.own_login)
     AgentGrant.objects.create(agent=agent, kind=AgentGrant.PERSON, user=p.viewer, role=roles.READ_ONLY)
     AgentGrant.objects.create(agent=agent, kind=AgentGrant.PERSON, user=p.editor, role=roles.EDITOR)
-    # One person with both a page's entry and a site's, and a line naming an entry that is gone.
+    # One person with a site's entry and a line naming an entry that is gone.
     AgentGrant.objects.create(agent=agent, kind=AgentGrant.PERSON, user=p.ws_admin, capability="connect")
-    AgentGrant.objects.create(agent=agent, kind=AgentGrant.PERSON, user=p.ws_admin, capability="stock")
     AgentGrant.objects.create(agent=agent, kind=AgentGrant.PERSON, user=p.ws_admin, capability=RETIRED)
     AgentGrant.objects.create(agent=agent, kind=AgentGrant.CONTACT, capability="data", domain="partner.org", verified=False)
     AgentGrant.objects.create(agent=agent, kind=AgentGrant.CONTACT, capability="connect", domain="dimagi.com", verified=True)
@@ -157,7 +155,6 @@ def _fixture_agents(p, only=None) -> list:
         for key in (row["interface"].get("capabilities") or {}):
             AgentGrant.objects.create(agent=agent, kind=AgentGrant.CONTACT, capability=key,
                                       domain=f"{key}.contacts.example", verified=False)
-        agent._page_resource = row.get("page_resource", "")
         out.append(agent)
     return out
 
@@ -201,15 +198,13 @@ def _askers(agent, p) -> list[SimpleNamespace]:
 
 def _conversations(agent) -> list[dict]:
     """No conversation, one with no site, one on each site, one on a page, and a review chat; each of
-    those ordinary and sensitive."""
+    those ordinary and sensitive. No entry selects by page, so a page's resource changes nothing."""
     sites = sorted(interface.page_sites(agent))
     out = [{"no_turn": True}, {}, {"sensitive": True}, {"review": True}, {"review": True, "sensitive": True}]
     for site in [*sites, "site_no_agent_serves"]:
         out += [{"site": site}, {"site": site, "sensitive": True}, {"site": site, "review": True}]
-    for page in {getattr(agent, "_page_resource", ""), *(p.replace("*", "1") for c in (agent.interface.get("capabilities") or {}).values()
-                                                         for p in c.get("pages") or [])} - {""}:
-        out += [{"page": page}, {"page": page, "sensitive": True}]
-        out += [{"page": page, "site": site} for site in sites]     # a page's entry comes before a site's
+    out += [{"page": PAGE}, {"page": PAGE, "sensitive": True}]
+    out += [{"page": PAGE, "site": site} for site in sites]
     return out
 
 
@@ -299,7 +294,7 @@ def test_the_walk_has_not_shrunk(people):
     """The number of cases, so that an edit that drops a dimension is seen rather than passing quietly."""
     agents = [*_matrix_agents(people), *_fixture_agents(people)]
     assert {a.slug for a in agents} == {*MATRIX_SLUGS, *FIXTURE_SLUGS}
-    assert len(FIXTURE_SLUGS) == 17   # 18 live agents and 9 corner cases: 11 of them hold the same empty interface
+    assert len(FIXTURE_SLUGS) == 14   # 18 live agents and 6 corner cases: 11 of them hold the same empty interface
     assert sum(1 for a in agents for _case in _cases(a, people)) == WALK
 
 

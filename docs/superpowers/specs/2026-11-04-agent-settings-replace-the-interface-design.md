@@ -1,8 +1,9 @@
 # Agent settings replace the interface: read mode and connected sites
 
 **Status:** P0 is deployed, and P1 and P2 are built. P3's route retirement was done early by the owner's decision,
-because the MCP call log could not see direct API calls and the docs kept generating calls; removing `pages` and the
-site-ceiling union and dropping `interface_source` still wait. Follows `2026-11-03-agent-read-mode-and-doors-design.md`, whose Phase 1 is deployed.
+because the MCP call log could not see direct API calls and the docs kept generating calls. The rest of P3, removing
+`pages` and the site-ceiling union and dropping `interface_source`, is done: see section 12 of
+`2026-11-05-turn-context-design.md`. Follows `2026-11-03-agent-read-mode-and-doors-design.md`, whose Phase 1 is deployed.
 
 Checked against production on `221d920be`, read-only: 21 agents and 3 sites, every list in `shape` empty, and
 `read_mode_gate` found nothing. The snapshot's hash is

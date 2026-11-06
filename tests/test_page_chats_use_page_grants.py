@@ -222,10 +222,8 @@ def test_own_login_parses_and_answers_per_site(w):
     assert "own_login" not in parse(plain)["capabilities"]["connect"]
 
 
-def test_a_site_any_profile_opens_unnarrowed_is_unnarrowed_for_a_full_turn():
-    agent = Agent(interface=parse({"capabilities": {
-        "a": {"sites": ["connect-labs"], "ceiling": ["x_*"]},
-        "b": {"sites": ["connect-labs"]}}}))
+def test_a_site_with_no_ceiling_is_unnarrowed_for_a_full_turn():
+    agent = Agent(interface=parse({"capabilities": {"b": {"sites": ["connect-labs"]}}}))
     assert site_ceiling(agent, "connect-labs") == []
 
 

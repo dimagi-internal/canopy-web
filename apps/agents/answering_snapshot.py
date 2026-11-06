@@ -180,7 +180,7 @@ def _agent(agent, members, standings, workspace_sites: set[str]) -> dict:
                                 "own_login": iface_mod.own_login_of(agent, site)} for site in sorted(served)},
         "lines": _lines(standings.lines_of(agent)),
         "decide": _matrix(agent, caps, sorted(served | workspace_sites), members, roster, standings),
-        "roster": [{k: row[k] for k in ("email", "agent_role", "access", "capabilities", "role", "source",
+        "roster": [{k: row[k] for k in ("email", "agent_role", "access", "profiles", "role", "source",
                                         "via", "manual_only", "may_request_auto")} for row in roster],
         "a2a": _cards(agent, members, roster),
     }
@@ -317,11 +317,11 @@ def _cards(agent, members, roster) -> dict:
     # is named by neither the key nor the card, and joining a workspace does not add a card.
     users = {m.user.pk: m.user for m in members}
     extended = {}
-    for row in sorted(roster, key=lambda r: (r["access"], r["capabilities"], r["user_id"])):
-        key = (row["access"], tuple(row["capabilities"]))
+    for row in sorted(roster, key=lambda r: (r["access"], r["profiles"], r["user_id"])):
+        key = (row["access"], tuple(row["profiles"]))
         if key not in extended:
             card = agent_card.extended_card(agent, users[row["user_id"]])
-            extended[key] = {"access": row["access"], "capabilities": row["capabilities"],
+            extended[key] = {"access": row["access"], "profiles": row["profiles"],
                              "card": agent_card.dump(card) if card is not None else None}
     public = agent_card.public_card(agent)
     return {"public": agent_card.dump(public) if public is not None else None,

@@ -316,7 +316,8 @@ one other place, and a Turn Context's own word is `refused`. Trellis's live edit
 * No change to anyone's access. Not to site narrowing: **someone with `write` on a non-sensitive site keeps the whole agent, as today** (builder call recorded for the owner; the question is open and can be changed later by moving one rule).
 * No change to `session_writer`'s behaviour (3.4).
 * No new tables. No moving `Agent.interface`'s storage.
-* No removal of `pages`, the site-ceiling union, or `interface_source` (separate, already planned).
+* No removal of `pages`, the site-ceiling union, or `interface_source` (separate, already planned). **Done
+  since, separately:** see "After the five stages" in section 12.
 * No change to turn-mode rules, admission rules or `credentials.authority` logic, only where their results are read.
 * No change to `profile_guard`, `_confine`, or the `cx-` naming.
 
@@ -402,6 +403,23 @@ The words went, and these are what removing them found.
 | 3.3 | `canopy_sessions/doors.py` | `canopy_sessions/send_paths.py` (`SEND_PATHS`) |
 | 8 | Wording outside refusals leaves the snapshot hash alone | The default read profile's description is in the snapshot, and so are its version and the A2A card's label for read mode. Rewording them changes 137 leaves, none of them an access, profile, reason, basis or stamp |
 | 9 | Guard: no banned word in UI strings | Two guards: `tests/test_turn_context_words.py` (every server string that is prose, the OpenAPI text, and no new field name) and `frontend/src/turnContextWords.test.ts` (JSX text, attributes and prose literals). The verb "ask" passes; read mode's name does not |
+| 9 | The roster's and the topology's `capabilities` are renamed separately | Renamed to `profiles` (`AgentAccessRowOut.profiles`, `AgentEdgeOut.profiles`), and the topology `basis` value `capabilities` to `profiles`. Not `connected_sites`: the list also holds read mode (`read`, or the agent's own read-mode entry), so it is the profiles a confined person reaches, section 2's word. No reader outside canopy-web parsed either field (canopy plugin and CLI, and the agent repos, read `access`, `basis` and `via` only), so the rename is one PR. The guard lists both as retired. The snapshot changes only in those key names and that `basis` value (and its own extended-card grouping key, `capabilities` → `profiles`), never a value. Two agent-sense fields remain under the old word: `AgentHealthOut.capabilities` (a count of profiles, wrongly filed with the machine capabilities in the guard) and the signed site-agents API's `capabilities` (wire format owned by `canopy_sdk.site_agents`, read by connect-labs) |
+
+### After the five stages: what section 10 left out, removed
+
+The 2026-11-04 spec's P3 left three things for later, and this spec's non-goals kept them out. They are
+gone now, and nobody's access changed.
+
+| What | What it was | What happened |
+|---|---|---|
+| `pages` | An entry selected by the resource a page declared it was showing (`interface.page_entry`, and the page branch of `_sensitive_entry`) | Removed. A profile is selected by the conversation's site alone. `parse` refuses an entry carrying `pages:`, and migration `agents/0132` strips the empty key older saves wrote, after checking that no entry uses it. A Session Context still states its `page`: it is a fact about the conversation, and it selects nothing |
+| The site-ceiling union | `site_ceiling` and `own_login_of` combined every entry naming one site (no ceiling if any had none) | Removed. One entry per site was already the writer's rule, so these read that entry. `agents/0132` refuses to run over a document with two entries on one site |
+| `interface_source` | The YAML an old save kept beside the document. Nothing read it after the interface routes were retired | `agents/0133` takes it out of the code and gives the column a database default; `agents/0134` drops the column, in a later deploy, so no task on the previous image meets a table without it |
+| `session_writer` | Kept, pending a count of its use (3.4) | Kept, unchanged, and still uncounted: the read-only count needs a shell in the production task, and the labs admin login it takes had expired, so it waits for someone holding that login |
+
+The proof is the one section 8 names: the Turn Context equivalence test and the access matrix are green,
+and the `answering_snapshot` hash over the fixture, without the three corner cases that existed only to
+exercise `pages` and the union, is unchanged across the removal.
 
 ### What Stage 6 changed: a queued turn is resolved again at its claim
 

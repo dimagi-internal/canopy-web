@@ -4,7 +4,7 @@ import type { AgentEdgeOut, AgentTopologyAgentOut } from '@/api/workspaces'
 import { explainEdge, grantable } from './agentTopology'
 
 const edge = (over: Partial<AgentEdgeOut>): AgentEdgeOut => ({
-  source: 'ada', target: 'hal', access: 'confined', basis: 'capabilities', capabilities: ['connect'],
+  source: 'ada', target: 'hal', access: 'confined', basis: 'profiles', profiles: ['connect'],
   explicit_admin: false, can_grant: true, can_revoke: false, ...over,
 })
 const agent = (slug: string, login: string | null): AgentTopologyAgentOut => ({

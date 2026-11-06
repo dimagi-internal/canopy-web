@@ -108,7 +108,7 @@ def test_roster_and_topology_and_extended_card_offer_read_mode(w):
     allow(w["agent"], role=roles.READ_ONLY)
     rows = {r["email"]: r for r in access.roster(w["agent"])}
     assert rows["vw@dimagi.com"]["access"] == access.CONFINED
-    assert rows["vw@dimagi.com"]["capabilities"] == ["read"]
+    assert rows["vw@dimagi.com"]["profiles"] == ["read"]
     card = agent_card.extended_card(w["agent"], w["vw"])
     assert card is not None and [s.id for s in card.skills] == ["read"]
 

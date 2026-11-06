@@ -123,7 +123,7 @@ def test_it_holds_everything_the_spec_lists(w):
 
     # A2A: the public card is whatever outsiders reach, and an extended card per answer.
     assert [s["id"] for s in ace["a2a"]["public"]["skills"]] == ["connect"]
-    assert {tuple(c["capabilities"]) for c in ace["a2a"]["extended"]} >= {("ask",)}
+    assert {tuple(c["profiles"]) for c in ace["a2a"]["extended"]} >= {("ask",)}
     assert plain["a2a"]["public"] is None
 
     # Topology edges, per tree.
@@ -191,10 +191,9 @@ def test_no_stored_secret_reaches_the_output(w):
     raw, _token = PersonalToken.create_for_user(user=w["owner"], label="seeded")
     w["app"].public_keys = ["-----BEGIN PUBLIC KEY-----\nseeded\n-----END PUBLIC KEY-----"]
     w["app"].save()
-    Agent.objects.filter(pk=w["ace"].pk).update(interface_source="# cpat_seeded_in_a_comment")
     AgentGrant.objects.filter(agent=w["ace"], kind=AgentGrant.PERSON).update(note="cpat_seeded_in_a_note")
     printed = _run("--json")
-    for secret in (raw, "seeded_in_a_comment", "seeded_in_a_note", "BEGIN PUBLIC KEY"):
+    for secret in (raw, "seeded_in_a_note", "BEGIN PUBLIC KEY"):
         assert secret not in printed
 
 
@@ -215,7 +214,7 @@ def test_shape_is_empty_for_agents_that_fit_the_plain_forms(w):
 def test_shape_names_each_thing_the_plain_forms_cannot_hold(w):
     both = {"sites": ["a", "b"], "tools": ["Read"]}
     w["plain"].interface = {"capabilities": {
-        "ask": {"tools": ["Read"], "sites": ["a"]}, "two": both, "paged": {"pages": ["x://*"]},
+        "ask": {"tools": ["Read"], "sites": ["a"]}, "two": both, "bare": {"tools": ["Read"]},
         "again": {"sites": ["a"]}}}
     w["plain"].save(update_fields=["interface"])
     AgentGrant.objects.create(agent=w["ace"], kind=AgentGrant.CONTACT, capability="gone", verified=False)
@@ -224,7 +223,7 @@ def test_shape_names_each_thing_the_plain_forms_cannot_hold(w):
     shape = _doc()["shape"]
     assert shape["agent_problems"]["plain"] == [
         "a: named by again, ask, two", "ask: read mode names sites, a ceiling, a login or sensitive data",
-        "paged: has no site", "paged: uses pages", "two: names 2 sites"]
+        "bare: has no site", "two: names 2 sites"]
     assert shape["lines_naming_nothing_published"] == ["ace: gone"]
     assert shape["roles_naming"] == ["use:connect"]
     assert shape["admission_rules_naming"] == ["connect"]

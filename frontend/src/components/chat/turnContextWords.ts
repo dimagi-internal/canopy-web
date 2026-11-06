@@ -277,9 +277,10 @@ export function detailText(e: Trace): string {
   const d = e.detail;
   if (!d) return "";
   if (e.rule === "stamp") return d ? `let in as ${entryName(d)}` : "let in as the whole agent";
-  const m = /^(named|page or site|read mode): (.*)$/.exec(d);
+  // "page or site" is how a turn's stored snapshot said "site" before a page's resource stopped selecting.
+  const m = /^(named|site|page or site|read mode): (.*)$/.exec(d);
   if (m) {
-    const how = m[1] === "read mode" ? "nothing named, so" : m[1] === "named" ? "named" : "chosen by the page or site:";
+    const how = m[1] === "read mode" ? "nothing named, so" : m[1] === "named" ? "named" : "chosen by the site:";
     return `${how} ${entryName(m[2])}`;
   }
   // "relationship member": the panel's "Who" row already says it.

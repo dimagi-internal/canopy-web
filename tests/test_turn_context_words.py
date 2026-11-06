@@ -82,8 +82,6 @@ EXISTING_FIELDS = frozenset({
     "StoryboardIn.capability", "StoryboardPatchIn.capability", "NarrativeReadOut.capability",
     # stored: `AdmissionRule.capability` (section 9)
     "AdmissionRuleOut.capability", "AdmissionRuleIn.capability", "AdmissionRulePatch.capability",
-    # deployed agent-sense fields agents read through MCP (left for a separate rename)
-    "AgentAccessRowOut.capabilities", "AgentEdgeOut.capabilities",
     # `ask` meaning a request (a task filter, a meeting's or an investigation's request, a review request)
     "DecisionOut.review_ask", "DecisionIn.review_ask", "MeetingIn.ask", "MeetingFollowUpIn.ask",
     "FailureInvestigationOut.ask", "HandOffInvestigationIn.ask", "SessionReviewOfferOut.ask",
@@ -93,6 +91,12 @@ EXISTING_FIELDS = frozenset({
     "TaskCreateIn.ask_kind", "TaskDetailOut.ask_body", "TaskDetailOut.ask_closed_at", "TaskDetailOut.ask_kind",
     "TaskDetailOut.ask_open", "TriageOut.ask_kind",
 })
+
+
+#: Agent-sense fields that were renamed after this guard was written: the roster's and the topology's
+#: `capabilities`, now `profiles` (read mode or connected sites, by name). Never to come back, under
+#: any schema.
+RETIRED_FIELDS = frozenset({"AgentAccessRowOut.capabilities", "AgentEdgeOut.capabilities"})
 
 
 def _hits(text: str, *, capability: bool = True) -> list[str]:
@@ -185,6 +189,27 @@ def test_api_text_says_read_mode_and_connected_site():
 def test_no_new_api_field_is_named_after_them():
     new = field_names(_openapi()) - EXISTING_FIELDS
     assert not new, f"new API fields named door/ask/capability (say connected_site, read_mode, profile): {sorted(new)}"
+
+
+@pytest.mark.django_db
+def test_the_renamed_agent_sense_fields_stay_gone():
+    doc = _openapi()
+    schemas = doc["components"]["schemas"]
+    assert not RETIRED_FIELDS & EXISTING_FIELDS
+    for field in RETIRED_FIELDS:
+        name, _old = field.split(".")
+        assert set(schemas[name]["properties"]) >= {"profiles"} and _old not in schemas[name]["properties"], field
+    # Nor does any schema bring the word back as a field, even one not checked by name here.
+    assert not {f for f in field_names(doc) if f.endswith(".capabilities")} - EXISTING_FIELDS
+
+
+def test_the_topology_basis_says_profiles():
+    from apps.agents import topology  # noqa: PLC0415
+
+    bases = (topology.OWNER, topology.WS_OWNER, topology.ADMIN, topology.EDITOR, topology.NO_INTERFACE,
+             topology.PROFILES, topology.NOTHING, topology.NOT_MEMBER, topology.NO_LOGIN)
+    assert topology.PROFILES == "profiles"
+    assert not [b for b in bases if CAPABILITY.search(b) or DOOR.search(b)], bases
 
 
 def test_the_guard_catches_each_word():

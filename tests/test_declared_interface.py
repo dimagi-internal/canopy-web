@@ -479,27 +479,9 @@ def test_full_rules_are_refused_and_point_at_the_access_list():
         parse({"full": ["contact@*.com"]})
 
 
-# --- a page can pick the connected site --------------------------------------------------
-# The gap this closes: every free-form channel collapsed to read mode, so an agent
-# embedded in a page shared one profile with its mailbox. Equipping the page meant
-# equipping an email stranger identically.
-
-PAGED = {
-    "ask": READ_MODE_PROFILE,
-    "marketplace": {
-        "description": "Ask about the organisations on this page.",
-        "pages": ["labs-marketplace://*"],
-        "tools": ["Skill", "mcp__*connect_labs__marketplace_*"],
-        "read_paths": ["{cwd}/**"],
-    },
-}
-
-
-def _paged_lines(agent):
-    _read_mode_for_verified_contacts_and_members(agent)
-    allow(agent, capability="marketplace", contact=True)
-    allow(agent, capability="marketplace")
-
+# --- a page's resource selects nothing ----------------------------------------------------
+# A profile is chosen by the connected site its conversation is held on, never by what a page
+# says it is showing: `pages:` is gone, and a document still carrying it is refused, not ignored.
 
 def _on_page(agent, user, key, resource):
     """A chat turn whose conversation has declared a page, as the widget does."""
@@ -518,79 +500,17 @@ def _on_page(agent, user, key, resource):
     return t
 
 
-def test_a_conversation_on_a_declared_page_runs_in_that_connected_site(w):
-    _publish(w["agent"], PAGED, _paged_lines)
-    t = _on_page(w["agent"], w["ed"], "p1", "labs-marketplace://orgs")
-    assert t.capability == "marketplace"
-
-
-def test_the_same_caller_elsewhere_still_gets_read_mode(w):
-    """The page selects a connected site; it does not change the agent for everyone."""
-    _publish(w["agent"], PAGED, _paged_lines)
-    assert _as_user(w["agent"], w["ed"], "p2").capability == READ_MODE_STAMP
-    assert _email(w["agent"], "p3", headers=DMARC).capability == READ_MODE_STAMP
-
-
-def test_a_page_that_declared_nothing_gets_read_mode(w):
-    _publish(w["agent"], PAGED, _paged_lines)
-    assert _on_page(w["agent"], w["ed"], "p4", "").capability == READ_MODE_STAMP
-
-
-def test_an_unmatched_resource_gets_read_mode(w):
-    _publish(w["agent"], PAGED, _paged_lines)
-    t = _on_page(w["agent"], w["ed"], "p5", "stock://on-hand")
-    assert t.capability == READ_MODE_STAMP
-
-
-def test_a_page_site_a_caller_is_not_offered_is_skipped_not_fatal(w):
-    """Read mode may still admit them, so a page's connected site they cannot open must not
-    refuse the turn outright. (Now: their lines open read mode but not the page's connected site.)"""
-    declare(w["agent"], PAGED)
-    editors_run(w["agent"])
-    allow(w["agent"], role=roles.READ_ONLY)          # read_only: read mode, not the page's site
-    t = _on_page(w["agent"], w["ed"], "p6", "labs-marketplace://orgs")
-    assert t.capability == READ_MODE_STAMP
-
-
-def test_the_owner_is_unaffected_by_a_page(w):
-    _publish(w["agent"], PAGED, _paged_lines)
-    assert _on_page(w["agent"], w["op"], "p7", "labs-marketplace://orgs").capability == FULL
-
-
-def test_the_page_cannot_widen_what_the_connected_site_grants(w):
-    """The security property. The page supplies the resource; the OWNER supplies
-    the tools. A page declaring a resource reaches exactly the profile its owner
-    wrote for that resource — never a tool nobody listed."""
-    _publish(w["agent"], PAGED, _paged_lines)
-    t = _on_page(w["agent"], w["ed"], "p8", "labs-marketplace://orgs")
-    profile = caller_context.build(t)
-    assert profile["profile"] == "confined"
-    assert profile["capability"]["tools"] == ["Skill", "mcp__*connect_labs__marketplace_*"]
-    assert profile["capability"]["bash"] == []
-
-
-def test_an_existing_interface_is_unchanged_by_the_feature(w):
-    """No `pages` anywhere means selection behaves exactly as before."""
-    _publish(w["agent"])  # the original IFACE, no pages
+def test_a_conversation_on_a_page_that_declared_a_resource_runs_in_read_mode(w):
+    _publish(w["agent"])
     t = _on_page(w["agent"], w["ed"], "p9", "labs-marketplace://orgs")
     assert t.capability == READ_MODE_STAMP
 
 
-@pytest.mark.parametrize("pattern, msg", [
-    ("*", "matches every page"),
-    ("labs-marketplace", "not a resource pattern"),
-])
-def test_a_pages_pattern_that_says_everything_is_refused(pattern, msg):
-    doc = {"capabilities": {"m": {"pages": [pattern]}}}
-    with pytest.raises(InterfaceError, match=msg):
-        parse(doc)
-
-
-def test_pages_survives_a_round_trip_through_parse(w):
-    _publish(w["agent"], PAGED, _paged_lines)
-    out = w["agent"].interface
-    assert out["capabilities"]["marketplace"]["pages"] == ["labs-marketplace://*"]
-    assert out["capabilities"]["ask"]["pages"] == []
+@pytest.mark.parametrize("pages", [["labs-marketplace://*"], []])
+def test_a_profile_that_still_names_pages_is_refused(pages):
+    with pytest.raises(InterfaceError, match="pages is gone") as raised:
+        parse({"capabilities": {"m": {"tools": ["Read"], "pages": pages}}})
+    assert raised.value.path == "m.pages"
 
 
 # --- someone let into the owner's conversation is part of it ------------------------
