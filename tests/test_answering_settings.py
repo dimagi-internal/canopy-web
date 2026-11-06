@@ -169,10 +169,13 @@ def test_clearing_a_site_tool_limit_and_naming_tools_both_save(w):
 
 
 def test_saving_another_field_does_not_trip_over_a_limit_already_stored(w):
-    """The guard is on what a save sets, so a row stored before it can still be edited."""
+    """The guard is on a limit a save changes, so a row stored before it can still be edited."""
     agent = _shaped(w)
     assert agent.interface["capabilities"]["connect"]["ceiling"] == ["mcp__*connect_labs__*"]
-    assert _put(_as(w["admin"]), f"{SITES}/connect-labs", {"sensitive": False}).status_code == 200
+    admin = _as(w["admin"])
+    assert _put(admin, f"{SITES}/connect-labs", {"sensitive": False}).status_code == 200
+    # The form sends the stored limit back unchanged; that is not a new limit.
+    assert _put(admin, f"{SITES}/connect-labs", {"ceiling": ["mcp__*connect_labs__*"]}).status_code == 200
 
 
 def test_editing_a_row_keeps_its_key_and_leaves_every_other_entry_as_saved(w):

@@ -192,16 +192,19 @@ def _limits_nothing(globs) -> str | None:
 
 def set_site(agent, site: str, fields: dict, *, by, dry_run: bool = False):
     """Add or change `site`'s row: `fields` over what it holds now, or over `new_site_defaults`."""
-    if fields.get("ceiling") is not None and (bad := _limits_nothing(fields["ceiling"])):
-        raise SettingsError(
-            f"Site tools it may use: {bad} matches every tool the site offers, so it limits nothing. "
-            "Leave the list empty to let the site's own permission decide, or name the tools to keep the agent to."
-        )
-
     def change(doc):
         caps = doc["capabilities"]
         name = _name_for_site(caps, site)
         start = _row(name, caps[name] or {}, site) if name else new_site_defaults()
+        # Only a limit this save CHANGES is checked: the form sends the stored one back with every
+        # save, and a row stored before this guard must stay editable.
+        if fields.get("ceiling") is not None and fields["ceiling"] != start["ceiling"]:
+            if bad := _limits_nothing(fields["ceiling"]):
+                raise SettingsError(
+                    f"Site tools it may use: {bad} matches every tool the site offers, so it limits nothing. "
+                    "Leave the list empty to let the site's own permission decide, "
+                    "or name the tools to keep the agent to."
+                )
         merged = {**start, **fields}
         name = name or key_for(site, caps)
         entry = {f: merged[f] for f in PROFILE_FIELDS}
