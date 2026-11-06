@@ -205,6 +205,26 @@ export function VaultMachinesTab({ vault: v, onChange, reload, unlock }: VaultOu
   const { busy, run, errorLine } = useRun(onChange)
   const manages = managesVault(v)
   const runners = v.attachments.filter((a) => a.runner)
+  const [pending, setPending] = useState<readonly ZkTargetOut[]>([])
+  useEffect(() => {
+    let live = true
+    if (manages && v.kv > 0) {
+      getWorkspaceVaultZk(v.vault_id)
+        .then((z) => { if (live) setPending(z.pending) })
+        .catch(() => { if (live) setPending([]) })
+    }
+    return () => { live = false }
+  }, [manages, v.vault_id, v.kv])
+  // Machines that reach this vault through an agent, workspace or project it serves, not as an
+  // attached runner: they have no row above, so they wait here. Read from the key state the page
+  // already loads; nothing more is asked of the server.
+  const attached = new Set(runners.map((a) => a.runner))
+  const waiting = pending.filter((p) => p.kind === 'device' && !attached.has(p.runner))
+  const grant = (only: (t: ZkTargetOut) => boolean) => run(async () => {
+    await grantWorkspaceVaultPending(v.vault_id, await unlock(), only)
+    setPending((ps) => ps.filter((p) => !only(p)))
+    reload()
+  })
   return (
     <Sub id="runners">
       {v.holders.keepers.length > 0 && (
@@ -216,7 +236,7 @@ export function VaultMachinesTab({ vault: v, onChange, reload, unlock }: VaultOu
           </span>
         </p>
       )}
-      {runners.length === 0 && v.holders.keepers.length === 0 && (
+      {runners.length === 0 && v.holders.keepers.length === 0 && waiting.length === 0 && (
         <p className="text-[12px] text-muted-foreground">No machine holds a copy yet.</p>
       )}
       {runners.length > 0 && (
@@ -274,6 +294,36 @@ export function VaultMachinesTab({ vault: v, onChange, reload, unlock }: VaultOu
           </tbody>
         </table>
         </>
+      )}
+      {waiting.length > 0 && (
+        <div className="mt-4" data-testid="ws-vault-waiting-machines">
+          <p className="mb-2 text-[12px] text-muted-foreground">
+            Waiting for access: machines running an agent this vault serves. A keeper passes the key on only to a
+            machine its own person has confirmed, so until then it waits for you to give it a copy here.
+          </p>
+          <ul className="divide-y divide-border text-[12px]">
+            {waiting.map((p) => (
+              <li key={p.target} className="flex flex-wrap items-center gap-2 py-1.5" data-testid={`ws-vault-waiting-${p.target}`}>
+                <span className="text-foreground">{p.runner_name || p.label || 'a machine'}</span>
+                {p.label && p.runner_name && p.label !== p.runner_name && (
+                  <span className="text-muted-foreground">({p.label})</span>
+                )}
+                <span className="text-warning">waiting for access</span>
+                <button type="button" disabled={busy} data-testid={`ws-vault-give-${p.target}`} className={buttonClass}
+                  title="Your passkey gives this machine access to what is stored in this vault"
+                  onClick={() => void grant((t) => t.kind === 'device' && t.target === p.target)}>
+                  Give access
+                </button>
+              </li>
+            ))}
+          </ul>
+          {waiting.length > 1 && (
+            <button type="button" disabled={busy} data-testid="ws-vault-give-all-machines" className={`${buttonClass} mt-2`}
+              onClick={() => void grant((t) => waiting.some((w) => w.target === t.target))}>
+              Give all {waiting.length} access
+            </button>
+          )}
+        </div>
       )}
       {errorLine}
     </Sub>
