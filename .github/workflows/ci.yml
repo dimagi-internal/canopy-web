@@ -330,10 +330,7 @@ jobs:
   test-backend-postgres:
     name: Backend pytest (PostgreSQL)
     if: github.event_name != 'pull_request'
-    # Pinned, not ubuntu-latest: the 26.04 image's pg_dump (18) writes `SET
-    # transaction_timeout` into the archive, which the PG16 service rejects on
-    # restore — even for a dump built on that same image. 24.04's client is 16.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
       postgres:
@@ -375,21 +372,17 @@ jobs:
       # tests/test_migrations_apply.py) and saves a dump; a queue run on the same
       # inputs restores it in seconds (a merge_group ref reads main's caches). A
       # PR that adds a migration misses the key and replays for real.
-      # The dump is also a function of the runner's pg_dump/pg_restore: `ubuntu-latest`
-      # moved from 24.04 to 26.04 on 2026-11-05, and a dump written by the old image's
-      # client failed to restore on the new one ("unrecognized configuration parameter
-      # transaction_timeout" against the PG16 server), ejecting every queue run. So the
-      # image is part of the key.
-      - name: Note the runner image
-        id: image
-        run: echo "id=$(. /etc/os-release; echo "$ID$VERSION_ID")" >> "$GITHUB_OUTPUT"
-
+      # The dump is written and read by pg_dump/pg_restore run from the SAME image as
+      # the service (see `pgc` below), not the runner's: `ubuntu-latest` moved to 26.04
+      # on 2026-11-05, whose client is PG18, and a PG18 archive carries
+      # `SET transaction_timeout`, which the PG16 server (production is RDS 16) rejects.
+      # So the client version follows the server, whatever the runner ships.
       - name: Restore the migrated test DB
         id: testdb
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /tmp/testdb.dump
-          key: pg-testdb-v1-${{ steps.image.outputs.id }}-${{ hashFiles('apps/**/migrations/*.py', 'sdk/python/src/**/migrations/*.py', 'config/settings/*.py', 'uv.lock', 'pyproject.toml') }}
+          key: pg-testdb-v2-${{ hashFiles('apps/**/migrations/*.py', 'sdk/python/src/**/migrations/*.py', 'config/settings/*.py', 'uv.lock', 'pyproject.toml') }}
 
       - name: Build the test DB (every migration) — or load the cached build
         env:
@@ -398,8 +391,9 @@ jobs:
           DJANGO_SETTINGS_MODULE: config.settings.pgtest
           HIT: ${{ steps.testdb.outputs.cache-hit }}
         run: |
+          pgc() { docker run --rm --network host -e PGPASSWORD -v /tmp:/tmp pgvector/pgvector:pg16 "$@"; }
           psql -h localhost -U postgres -c "CREATE DATABASE test_canopy_web"
-          if [ "$HIT" = "true" ] && pg_restore -h localhost -U postgres -d test_canopy_web --no-owner --exit-on-error /tmp/testdb.dump; then
+          if [ "$HIT" = "true" ] && pgc pg_restore -h localhost -U postgres -d test_canopy_web --no-owner --exit-on-error /tmp/testdb.dump; then
             echo "::notice::Restored the migrated test DB (migrations unchanged since main built it)."
           else
             # A cached dump that will not restore must not eject the queue: replay the
@@ -410,7 +404,7 @@ jobs:
               psql -h localhost -U postgres -c "CREATE DATABASE test_canopy_web"
             fi
             uv run python manage.py migrate --noinput
-            pg_dump -h localhost -U postgres -Fc -f /tmp/testdb.dump test_canopy_web
+            pgc pg_dump -h localhost -U postgres -Fc -f /tmp/testdb.dump test_canopy_web
           fi
 
       - name: Save the migrated test DB
