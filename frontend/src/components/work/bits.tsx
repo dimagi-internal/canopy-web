@@ -310,35 +310,70 @@ export function LabelPicker({
   )
 }
 
-/** `onChange` gets the project's address (`<ws>/<handle>`), or "" for none. */
+/** `onChange` gets the project's address (`<ws>/<handle>`), or "" for none.
+ *  `label` and `none` (null = no "none" choice) let other screens reuse it. */
 export function ProjectPicker({
   project,
   directory,
   onChange,
   disabled,
   children,
+  label = 'Project',
+  none = 'No project',
 }: {
   project: string | null | undefined
-  directory: Directory
+  directory: Pick<Directory, 'projects'>
   onChange: (address: string) => void
   disabled?: boolean
   children?: ReactNode
+  label?: string
+  none?: string | null
 }): JSX.Element {
   return (
     <Picker
-      label="Project"
+      label={label}
       disabled={disabled}
-      trigger={children ?? <span className="truncate text-[12px] text-foreground-secondary">{project || 'No project'}</span>}
+      trigger={children ?? <span className="truncate text-[12px] text-foreground-secondary">{project || none || label}</span>}
     >
-      <DropdownMenuItem onClick={() => project && onChange('')}>
-        <span className="text-muted-foreground">No project</span>
-        <Tick on={!project} />
-      </DropdownMenuItem>
-      <DropdownMenuSeparator />
+      {none !== null && (
+        <>
+          <DropdownMenuItem onClick={() => project && onChange('')}>
+            <span className="text-muted-foreground">{none}</span>
+            <Tick on={!project} />
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+        </>
+      )}
       {directory.projects.map((p) => (
         <DropdownMenuItem key={p.id} onClick={() => p.address !== project && onChange(p.address)}>
           <span className="truncate">{p.name}</span>
           <Tick on={p.address === project} />
+        </DropdownMenuItem>
+      ))}
+    </Picker>
+  )
+}
+
+/** One workspace from `workspaces` (slug + display name); `onChange` gets its slug. */
+export function WorkspacePicker({
+  workspaces,
+  onChange,
+  label = 'Workspace',
+  disabled,
+  children,
+}: {
+  workspaces: readonly { slug: string; display_name: string }[]
+  onChange: (slug: string) => void
+  label?: string
+  disabled?: boolean
+  children?: ReactNode
+}): JSX.Element {
+  return (
+    <Picker label={label} disabled={disabled} trigger={children ?? <span className="text-[12px]">{label}</span>}>
+      {workspaces.map((w) => (
+        <DropdownMenuItem key={w.slug} onClick={() => onChange(w.slug)}>
+          <span className="truncate">{w.display_name || w.slug}</span>
+          <span className="ml-auto pl-3 text-[11px] text-muted-foreground">{w.slug}</span>
         </DropdownMenuItem>
       ))}
     </Picker>

@@ -18,6 +18,10 @@ import {
   grantWorkspaceVaultPending, makeWorkspaceVaultKey, rotateWorkspaceVaultKey, sealWorkspaceVaultValue,
 } from '@/vault/operations'
 import type { VaultOutletContext } from './VaultPage'
+import { listWorkspaces, type WorkspaceOut } from '@/api/workspaces'
+import { useDirectory } from '@/components/work/useDirectory'
+import { ProjectPicker, WorkspacePicker } from '@/components/work/bits'
+import { AgentPicker } from '@/components/work/projectBits'
 import { Td, Th, Tr } from '@/components/DataTable'
 
 // A workspace vault's three bodies — Storage & key, Who can open them, Secrets —
@@ -103,7 +107,6 @@ export function VaultOverviewTab({ vault: v, onChange, reload, unlock }: VaultOu
   const { busy, run, errorLine } = useRun(onChange)
   const manages = managesVault(v)
   const [pending, setPending] = useState<readonly ZkTargetOut[]>([])
-  const [target, setTarget] = useState('')
 
   useEffect(() => {
     let live = true
@@ -116,7 +119,6 @@ export function VaultOverviewTab({ vault: v, onChange, reload, unlock }: VaultOu
   }, [manages, v.vault_id, v.kv])
   // People waiting are granted from the key line; each runner from its row under Who can open them.
   const peopleWaiting = pending.filter((p) => p.kind !== 'device')
-  const served = v.attachments.filter((a) => !a.runner)
   const grant = (only: (t: ZkTargetOut) => boolean) => run(async () => {
     await grantWorkspaceVaultPending(v.vault_id, await unlock(), only)
     setPending((ps) => ps.filter((p) => !only(p)))
@@ -152,52 +154,9 @@ export function VaultOverviewTab({ vault: v, onChange, reload, unlock }: VaultOu
       </Sub>
 
       <Sub id="serves" title="Access">
-        <p className="mb-2 text-[12px] text-muted-foreground">
-          The agents whose secrets this vault adds to. The runners that read it are under Who can open them.
-        </p>
-        {served.length === 0 && <p className="text-[12px] text-muted-foreground">No agent reads it yet.</p>}
-        {served.length > 0 && (
-          <table className="w-full text-[12px]" data-testid="ws-vault-serves">
-            <tbody className="divide-y divide-border">
-              {served.map((a) => (
-                <tr key={a.id}>
-                  <Td density="cozy" tone="foreground">
-                    {a.project
-                      ? `member agents of project ${a.project}`
-                      : a.agent ? `agent ${a.agent}` : `every agent in ${a.workspace} and below`}
-                  </Td>
-                  <Td density="cozy" tone="muted" data-testid={a.project ? `ws-vault-project-${a.id}` : undefined}>
-                    {a.project ? projectServing(a) : 'layered under each agent’s own secrets'}
-                  </Td>
-                  <Td density="cozy" align="right">
-                    {manages && (
-                      <button type="button" disabled={busy} data-testid={`ws-vault-detach-${a.id}`} className={quietClass}
-                        onClick={() => void run(() => detachWorkspaceVault(v.vault_id, a.id))}>
-                        Stop serving
-                      </button>
-                    )}
-                  </Td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-        {manages && (
-          <form className="mt-3 flex flex-wrap items-center gap-2" data-testid="ws-vault-attach"
-            onSubmit={(e) => {
-              e.preventDefault()
-              const t = target.trim()
-              // "workspace:<slug>" serves a workspace and below, "project:<workspace>/<handle>" a
-              // project's member agents; anything else is an agent.
-              const to = t.startsWith('workspace:') ? { workspace: t.slice(10) }
-                : t.startsWith('project:') ? { project: t.slice(8) } : { agent: t }
-              void run(() => attachWorkspaceVault(v.vault_id, to)).then((ok) => ok && setTarget(''))
-            }}>
-            <input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="agent slug, workspace:slug or project:workspace/handle"
-              aria-label={`Serve an agent, workspace or project from ${v.name}`} className={inputClass} />
-            <button type="submit" disabled={busy || !target.trim()} className={buttonClass}>Serve it</button>
-          </form>
-        )}
+        <VaultAccess vault={v} manages={manages} busy={busy}
+          attach={(to) => run(() => attachWorkspaceVault(v.vault_id, to))}
+          detach={(id) => void run(() => detachWorkspaceVault(v.vault_id, id))} />
       </Sub>
       {errorLine}
     </div>
@@ -354,5 +313,117 @@ export function VaultSecretsTab({ vault: v, onChange, reload, unlock }: VaultOut
       </p>
       {errorLine}
     </Sub>
+  )
+}
+
+
+type Attachment = WorkspaceVaultOut['attachments'][number]
+type AttachTo = { agent: string } | { project: string } | { workspace: string }
+
+/** The vault's workspace and every workspace below it that the viewer can see: the only places
+ *  an attachment can reach. `parent` links each workspace to the one above it. */
+function useVaultTree(root: string): WorkspaceOut[] {
+  const [all, setAll] = useState<WorkspaceOut[]>([])
+  useEffect(() => {
+    let live = true
+    listWorkspaces().then((ws) => { if (live) setAll(ws) }).catch(() => { if (live) setAll([]) })
+    return () => { live = false }
+  }, [])
+  const bySlug = new Map(all.map((w) => [w.slug, w]))
+  const inTree = (w: WorkspaceOut): boolean => {
+    const seen = new Set<string>()
+    for (let cur: WorkspaceOut | undefined = w; cur && !seen.has(cur.slug); cur = cur.parent ? bySlug.get(cur.parent) : undefined) {
+      if (cur.slug === root) return true
+      seen.add(cur.slug)
+    }
+    return false
+  }
+  return all.filter(inTree)
+}
+
+/** What a vault serves, by KIND: agents, projects (their member agents), whole workspaces. People
+ *  are members, not attachments (Who can open them). Adding picks from real lists, never a typed
+ *  string — the same agent and project pickers the work board uses. */
+function VaultAccess({ vault: v, manages, busy, attach, detach }: {
+  vault: WorkspaceVaultOut
+  manages: boolean
+  busy: boolean
+  attach: (to: AttachTo) => Promise<boolean>
+  detach: (id: number) => void
+}): JSX.Element {
+  const directory = useDirectory(v.workspace)
+  const tree = useVaultTree(v.workspace)
+  const treeSlugs = new Set([v.workspace, ...tree.map((w) => w.slug)])
+  const served = v.attachments.filter((a) => !a.runner)
+  const agents = served.filter((a) => a.agent)
+  const projects = served.filter((a) => a.project)
+  const workspaces = served.filter((a) => !a.agent && !a.project && a.workspace)
+  const has = (pick: (a: Attachment) => string | null | undefined) => new Set(served.map(pick).filter(Boolean))
+  const agentChoices = directory.agents.filter((a) => treeSlugs.has(a.workspace ?? '') && !has((x) => x.agent).has(a.slug))
+  const projectChoices = directory.projects.filter((p) => treeSlugs.has(p.workspace) && !has((x) => x.project).has(p.address))
+  const workspaceChoices = (tree.length ? tree : [{ slug: v.workspace, display_name: v.workspace }])
+    .filter((w) => !has((x) => x.workspace).has(w.slug))
+  const agentName = (slug: string) => directory.agents.find((a) => a.slug === slug)?.name || slug
+  const projectName = (address: string) => directory.projects.find((p) => p.address === address)?.name || address
+  const workspaceName = (slug: string) => tree.find((w) => w.slug === slug)?.display_name || slug
+
+  const group = (title: string, testid: string, rows: Attachment[], name: (a: Attachment) => string,
+    detail: (a: Attachment) => string, empty: string) => (
+    <div className="mb-3" data-testid={testid}>
+      <p className="mb-1 text-[12px] font-medium text-foreground">{title}</p>
+      {rows.length === 0 ? <p className="text-[12px] text-muted-foreground">{empty}</p> : (
+        <table className="w-full text-[12px]">
+          <tbody className="divide-y divide-border">
+            {rows.map((a) => (
+              <tr key={a.id}>
+                <Td density="cozy" tone="foreground">{name(a)}</Td>
+                <Td density="cozy" tone="muted" data-testid={a.project ? `ws-vault-project-${a.id}` : undefined}>{detail(a)}</Td>
+                <Td density="cozy" align="right">
+                  {manages && (
+                    <button type="button" disabled={busy} data-testid={`ws-vault-detach-${a.id}`} className={quietClass}
+                      onClick={() => detach(a.id)}>
+                      Stop serving
+                    </button>
+                  )}
+                </Td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  )
+  const add = (text: string) => <span className={buttonClass + ' inline-block'}>{text}</span>
+
+  return (
+    <div>
+      <p className="mb-3 text-[12px] text-muted-foreground">
+        Who this vault&rsquo;s secrets are added to. People and machines that can open it are under Who can open them.
+      </p>
+      <div data-testid="ws-vault-serves">
+        {group('Agents', 'ws-vault-serves-agents', agents, (a) => agentName(a.agent!),
+          () => 'layered under the agent’s own secrets', 'No agent on its own.')}
+        {group('Projects', 'ws-vault-serves-projects', projects, (a) => projectName(a.project!),
+          projectServing, 'No project.')}
+        {group('Whole workspaces', 'ws-vault-serves-workspaces', workspaces,
+          (a) => `${workspaceName(a.workspace!)} and below`, () => 'every agent in it, layered under its own secrets',
+          'No whole workspace.')}
+      </div>
+      {manages && (
+        <div className="mt-2 flex flex-wrap items-center gap-2" data-testid="ws-vault-attach">
+          <AgentPicker slug="" directory={{ agents: agentChoices }} none={null} disabled={busy}
+            label={`Serve an agent from ${v.name}`} trigger={add('Serve an agent…')}
+            onChange={(slug) => void attach({ agent: slug })} />
+          <ProjectPicker project="" directory={{ projects: projectChoices }} none={null} disabled={busy}
+            label={`Serve a project from ${v.name}`} onChange={(address) => void attach({ project: address })}>
+            {add('Serve a project…')}
+          </ProjectPicker>
+          <WorkspacePicker workspaces={workspaceChoices} disabled={busy}
+            label={`Serve a whole workspace from ${v.name}`} onChange={(slug) => void attach({ workspace: slug })}>
+            {add('Serve a whole workspace…')}
+          </WorkspacePicker>
+        </div>
+      )}
+    </div>
   )
 }
