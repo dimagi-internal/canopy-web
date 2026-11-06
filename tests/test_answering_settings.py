@@ -152,8 +152,12 @@ def test_a_row_says_what_the_document_says_for_ace(w):
 def test_a_site_tool_limit_that_matches_every_tool_is_refused(w, glob):
     """`mcp__*connect_labs__*` read like a restriction and restricted nothing (ACE's labs row, until 2026-11-06)."""
     agent = _shaped(w)
+    admin = _as(w["admin"])
+    # The fixture stores a catch-all already; clear it so the one sent below is a change.
+    assert _put(admin, f"{SITES}/connect-labs", {"ceiling": []}).status_code == 200
+    agent.refresh_from_db()
     before = copy.deepcopy(agent.interface)
-    res = _put(_as(w["admin"]), f"{SITES}/connect-labs", {"ceiling": [glob]})
+    res = _put(admin, f"{SITES}/connect-labs", {"ceiling": [glob]})
     assert res.status_code == 422 and "limits nothing" in res.content.decode()
     agent.refresh_from_db()
     assert agent.interface == before
