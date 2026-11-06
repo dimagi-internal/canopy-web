@@ -148,6 +148,40 @@ def test_a_row_says_what_the_document_says_for_ace(w):
     assert rows["canopy-web"]["sensitive"] is False
 
 
+@pytest.mark.parametrize("glob", ["*", "mcp__*connect_labs__*", "connect_labs__*", "mcp__*__*"])
+def test_a_site_tool_limit_that_matches_every_tool_is_refused(w, glob):
+    """`mcp__*connect_labs__*` read like a restriction and restricted nothing (ACE's labs row, until 2026-11-06)."""
+    agent = _shaped(w)
+    admin = _as(w["admin"])
+    # The fixture stores a catch-all already; clear it so the one sent below is a change.
+    assert _put(admin, f"{SITES}/connect-labs", {"ceiling": []}).status_code == 200
+    agent.refresh_from_db()
+    before = copy.deepcopy(agent.interface)
+    res = _put(admin, f"{SITES}/connect-labs", {"ceiling": [glob]})
+    assert res.status_code == 422 and "limits nothing" in res.content.decode()
+    agent.refresh_from_db()
+    assert agent.interface == before
+
+
+def test_clearing_a_site_tool_limit_and_naming_tools_both_save(w):
+    agent = _shaped(w)
+    admin = _as(w["admin"])
+    assert _put(admin, f"{SITES}/connect-labs", {"ceiling": []}).status_code == 200
+    agent.refresh_from_db()
+    assert agent.interface["capabilities"]["connect"]["ceiling"] == []
+    assert _put(admin, f"{SITES}/connect-labs", {"ceiling": ["mcp__*connect_labs__marketplace_*"]}).status_code == 200
+
+
+def test_saving_another_field_does_not_trip_over_a_limit_already_stored(w):
+    """The guard is on a limit a save changes, so a row stored before it can still be edited."""
+    agent = _shaped(w)
+    assert agent.interface["capabilities"]["connect"]["ceiling"] == ["mcp__*connect_labs__*"]
+    admin = _as(w["admin"])
+    assert _put(admin, f"{SITES}/connect-labs", {"sensitive": False}).status_code == 200
+    # The form sends the stored limit back unchanged; that is not a new limit.
+    assert _put(admin, f"{SITES}/connect-labs", {"ceiling": ["mcp__*connect_labs__*"]}).status_code == 200
+
+
 def test_editing_a_row_keeps_its_key_and_leaves_every_other_entry_as_saved(w):
     agent = _shaped(w)
     before = copy.deepcopy(agent.interface)

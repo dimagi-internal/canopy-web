@@ -206,7 +206,7 @@ server** URL. The agent's owner gives the connected site that serves your site
 `sites: [<your site's name>]`. **What a call may reach is yours to decide**: your
 page's scopes and your ACL for that person, enforced by your MCP server (it lists
 and runs only the tools the token's scopes map to). canopy holds no list of your
-tools. An owner MAY add a `ceiling:` (tool-name globs) to keep an agent off part
+tools. An owner MAY add a site tool limit, `ceiling:` (tool-name globs) to keep an agent off part
 of your site; it only ever narrows what you granted. Your page's `backing_tool`
 tells the agent where to read the rows on screen — it is a hint, not a filter,
 so a page's other tools need not be re-listed in its state.

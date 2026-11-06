@@ -38,7 +38,7 @@ under `READ_MODE_STAMP`):
     capabilities:
       connect:
         sites: [connect-labs]               # a Connected site, by name
-        # ceiling: ["mcp__*connect_labs__marketplace_*"]   # OPTIONAL narrowing
+        # ceiling: ["mcp__*connect_labs__marketplace_*"]   # OPTIONAL site tool limit ("Site tools it may use")
 
 One entry per site, and one site per entry (`answering`, the one writer, enforces both).
 A conversation held on that site (its server-owned `embed_app`) selects the
@@ -48,7 +48,7 @@ Through the gateway the agent calls the host's tools AS THE VISITOR, with a gran
 the host issued for the page they are on — so what one turn may call is what the
 HOST grants: its scopes for that page and its ACL for that person
 (`apps/host_grants/host_gateway.py`). canopy holds no list of the host's
-tools. `ceiling:` is an optional narrowing on the owner's word (keep an agent off
+tools. `ceiling:` (the settings form's "Site tools it may use"; the name is stored and sent as `ceiling`) is an optional limit on the owner's word (keep an agent off
 part of a site); absent, canopy adds none. It can never widen what the host
 granted. The page's `backing_tool` tells the agent where to read the rows on
 screen; it is not a filter.
@@ -278,8 +278,8 @@ def _data(value, name: str, cap: dict) -> str:
 def _sites(cap: dict, name: str) -> dict:
     """`sites:` (Connected site names) and `ceiling:` (tool globs), validated.
 
-    A ceiling with no site is refused: it would read as a grant and apply to
-    nothing. A site with no ceiling defers to the host: what the visitor's grant
+    A tool limit with no site is refused: it would read as a grant and apply to
+    nothing. A site with no tool limit defers to the host: what the visitor's grant
     reaches is the host's decision (`host_gateway.tool_allowed`).
     """
     sites = _strings(cap.get("sites"), "sites", name)
@@ -289,7 +289,7 @@ def _sites(cap: dict, name: str) -> dict:
                                  "letters, digits, hyphens and underscores")
     ceiling = _strings(cap.get("ceiling"), "ceiling", name)
     if ceiling and not sites:
-        raise InterfaceError(f"{name}.ceiling needs `sites:` — a ceiling bounds the tools of "
+        raise InterfaceError(f"{name}.ceiling needs `sites:` — a tool limit bounds the tools of "
                              "the sites it names")
     out = {"sites": sites, "ceiling": ceiling}
     own = _own_login(cap.get("own_login"), name, sites)

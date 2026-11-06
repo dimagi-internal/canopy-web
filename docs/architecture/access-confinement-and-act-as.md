@@ -259,7 +259,7 @@ host* (the header above is canopy-web's own decisions):
   profile: a confined visitor's (its connected site must list the site), an editor's
   (scoped token), the owner's or an agent admin's (found from the chat key the runner gave
   only that session). Every call uses the SENDER's grant for that page. A full-profile
-  turn is narrowed by the ceiling the owner set on that site's connected site
+  turn is narrowed by the site tool limit the owner set on that site's connected site
   (`interface.site_ceiling`).
 - **The agent's own login at that site is withheld from such a turn.** A connected site
   names it per site: `own_login: {connect-labs: [LABS_MCP_TOKEN]}` — credential names,

@@ -36,7 +36,7 @@ tools the grant's scopes map to, under that person's own ACL. So what a turn may
 call is what the host lists for this token. canopy adds a narrowing only on the
 agent owner's word:
 
-* the owner's per-site **ceiling** (`ceiling:` on the connected site) — OPTIONAL. Absent
+* the owner's **site tool limit** (`ceiling:` on the connected site, the settings form's "Site tools it may use") — OPTIONAL. Absent
   or empty, canopy adds nothing and the host's grant decides; present, it narrows
   (an owner keeping an agent off part of a site). It can never widen: the host
   still refuses anything outside the grant.
@@ -161,7 +161,7 @@ class SiteContext:
 def host_tool_name(name: str) -> str:
     """A tool's name AT THE HOST, from however it is written here.
 
-    Owners write ceilings in Claude Code's naming (`mcp__*connect_labs__*`), or
+    Owners write tool limits in Claude Code's naming (`mcp__*connect_labs__*`), or
     bare (`marketplace_*`). The server segment is dropped: the gateway only
     ever calls one server, the site's own, so the host's tool name is what
     matters.
@@ -176,9 +176,9 @@ def host_tool_name(name: str) -> str:
 
 
 def tool_allowed(tool: str, *, ceiling: list[str]) -> bool:
-    """Inside the owner's ceiling, if the owner set one.
+    """Inside the owner's site tool limit, if the owner set one.
 
-    An empty ceiling narrows nothing: the host's grant decides (it lists and
+    An empty limit narrows nothing: the host's grant decides (it lists and
     enforces its own tools, as the visitor). A tool with no name is never allowed.
     """
     name = host_tool_name(tool)
@@ -618,7 +618,7 @@ async def _listing(ctx: SiteContext, client) -> list:
 
 async def list_tools(ctx: SiteContext) -> list[dict]:
     """The host's tools this turn may use: what the host lists for the
-    visitor's grant, narrowed by the owner's ceiling if there is one, and never
+    visitor's grant, narrowed by the owner's site tool limit if there is one, and never
     a tool the host marked app-only (MCP Apps §Visibility: "Host MUST NOT include
     tools in the agent's tool list when their visibility does not include
     "model""). Those exist for the host's own View, as the person looking at it."""
@@ -823,7 +823,7 @@ def remember_links(ctx: SiteContext, tool: str, content: list) -> None:
 
 def readable_link(ctx: SiteContext, uri: str) -> None:
     """Refuse a `site_read` of anything but a link a site tool returned in THIS
-    conversation, under a scheme the site declares, from a tool the owner's ceiling
+    conversation, under a scheme the site declares, from a tool the owner's site tool limit
     allows. Raises GatewayRefusal."""
     from apps.canopy_sessions.models import Session  # noqa: PLC0415 — a model/core module: loads with a call, as the gateway's other model reads
     from apps.harness import sensitivity  # noqa: PLC0415 — a model/core module: loads with a call, as the gateway's other model reads
@@ -851,7 +851,7 @@ async def read_resource(ctx: SiteContext, uri: str) -> dict:
     runner requirements, a connected site naming the site, the visitor's live grant) and
     this turn's `Canopy-Execution` statement on every request. Only a link a site tool
     returned in this conversation, under a scheme the site declares, from a tool inside
-    the owner's ceiling (`readable_link`); the host's own ACL then decides what the
+    the owner's site tool limit (`readable_link`); the host's own ACL then decides what the
     visitor may read. The answer is returned, never kept or audited."""
     uri = str(uri or "").strip()
     if not uri or len(uri) > 2048 or ":" not in uri:
