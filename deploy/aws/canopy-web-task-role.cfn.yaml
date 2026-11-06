@@ -30,7 +30,8 @@ AWSTemplateFormatVersion: '2010-09-09'
 #   apps/contacts/embeddings.py        bedrock InvokeModel on embedding models
 #                                      -> memory-embeddings here
 #   apps/agents/api_aws.py             sts AssumeRole on labs-jj-observe-readonly
-#                                      -> assume-labs-observe here
+#                                      (labs-read) and labs-jj-agent-readwrite
+#                                      (labs-readwrite) -> assume-labs-observe here
 #   apps/connections/server_key.py     kms DeriveSharedSecret + GetPublicKey on
 #                                      canopy-web's connection key -> the KEY POLICY in
 #                                      canopy-web-connections-key.cfn.yaml names this role
@@ -116,9 +117,11 @@ Resources:
                 Action: [s3:PutObject, s3:GetObject, s3:DeleteObject]
                 Resource: !Sub arn:${AWS::Partition}:s3:::${AttachmentsBucketName}/*
         # AWS keys vended to agents (apps/agents/api_aws.py, settings.CANOPY_AWS_ROLES):
-        # one hour of connect-labs' read-only, non-sensitive observability role,
-        # stamped with the agent. That role's trust names this role too
-        # (connect-labs infra/labs-observe-readonly.yml, BrokerRoleName).
+        # one hour of connect-labs' read-only, non-sensitive observability role
+        # (labs-read) or its agent read-write role (labs-readwrite), stamped with
+        # the agent. Each role's trust names this role too (connect-labs
+        # infra/labs-observe-readonly.yml and infra/labs-agent-readwrite.yml,
+        # BrokerRoleName).
         - PolicyName: assume-labs-observe
           PolicyDocument:
             Version: '2012-10-17'
@@ -127,6 +130,10 @@ Resources:
                 Effect: Allow
                 Action: [sts:AssumeRole, sts:SetSourceIdentity, sts:TagSession]
                 Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/labs-jj-observe-readonly
+              - Sid: VendLabsReadWrite
+                Effect: Allow
+                Action: [sts:AssumeRole, sts:SetSourceIdentity, sts:TagSession]
+                Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/labs-jj-agent-readwrite
         # Memory search by meaning (apps/contacts/embeddings.py): embedding
         # models only, never a generating model. Inert until
         # HCP_EMBEDDINGS_MODEL is set in canopy-web.cfn.yaml.

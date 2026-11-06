@@ -7731,11 +7731,13 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /**
-         * One hour of a named read-only AWS role, as this agent
+         * One hour of a named AWS role, as this agent
          * @description Short-lived AWS keys for ONE role named in canopy-web's settings
-         *     (`labs-observe` = the read-only, non-sensitive labs observability role), with the
+         *     (`labs-read` = read-only, non-sensitive labs observability; `labs-readwrite` =
+         *     agent-named RDS copies and a psql client task, for listed agents only), with the
          *     agent stamped on the session (`SourceIdentity=canopy-agent-<slug>`). 404 for a role
-         *     name canopy-web does not vend; 403 for a browser session; 502 when AWS refused.
+         *     name canopy-web does not vend; 403 for a browser session or an agent the role is
+         *     not for; 502 when AWS refused.
          */
         readonly post: operations["agent_aws_credentials"];
         readonly delete?: never;

@@ -1,24 +1,31 @@
-"""`POST /api/agents/{slug}/aws-credentials` — one hour of a NAMED, read-only AWS role, as the agent.
+"""`POST /api/agents/{slug}/aws-credentials` — one hour of a NAMED AWS role, as the agent.
 
 Why. An agent turn that needs labs telemetry (CloudWatch metrics, alarm history, ECS
 service state) used to need the `labs` SSO profile: AdministratorAccess, renewed by a
 person approving a device code on their phone (`canopy aws login`). A turn on a laptop
 or a cloud runner can now ask canopy-web instead, for a role that can read only
-NON-SENSITIVE things — `labs-observe` is `labs-jj-observe-readonly`
-(connect-labs `infra/labs-observe-readonly.yml`): metrics, alarms and resource
-metadata, with explicit denies on log events, object bodies, secrets, task commands and
-environments, and database content.
+NON-SENSITIVE things — `labs-read` (old name `labs-observe`) is
+`labs-jj-observe-readonly` (connect-labs `infra/labs-observe-readonly.yml`): metrics,
+alarms, resource and RDS metadata, with explicit denies on log events, object bodies,
+secrets, task commands and environments, and database content. An agent that must
+CHANGE labs asks for `labs-readwrite` = `labs-jj-agent-readwrite`
+(`infra/labs-agent-readwrite.yml`): agent-named RDS copies of production and one psql
+client task, production source-only, IAM changes denied.
 
 How. canopy-web's own task role (`canopy-web-task-role`) calls `sts:AssumeRole` on the
 role, stamping the agent onto the session — `SourceIdentity=canopy-agent-<slug>` (sticky,
 so CloudTrail names the agent on every call made with these keys) and session tags
 `agent`, `caller`. The response is exactly the AWS CLI's `credential_process` shape, so
-`canopy aws credentials --role labs-observe` prints it unchanged.
+`canopy aws credentials --role labs-read` prints it unchanged.
 
 Which roles. Only the names in `settings.CANOPY_AWS_ROLES` (name -> role ARN). A name
 not there is a 404: this is not a general assume-role service, and adding a role is a
 settings change a person reviews. The role's own trust policy must also name
 canopy-web-task-role, so canopy-web cannot vend a role its owner did not agree to.
+A role in `settings.CANOPY_AWS_ROLE_AGENTS` goes only to the agents listed there
+(`labs-readwrite`): a 403 names who may have it. canopy-web is the ONLY source of a
+listed role; a cloud runner's box broker never vends one, because it cannot verify
+which agent is asking.
 
 Who. The agent's own canopy login (what a turn and a laptop agent session hold), or a
 member who may work the agent (`agent.work`), with a TOKEN: a browser session is refused,
@@ -85,15 +92,17 @@ def _sts_name(text: str) -> str:
 
 
 @router.post("/{slug}/aws-credentials", response=AwsCredentialsOut,
-             summary="One hour of a named read-only AWS role, as this agent")
+             summary="One hour of a named AWS role, as this agent")
 # the agent's own login, or agent.work — with a token; a browser session is refused
 @gate("agent.work", "agent-login", kind="ephemeral-credential",
       step_up="token callers only: a browser session is refused, the keys go to a CLI's cache")
 def agent_aws_credentials(request: HttpRequest, slug: str, payload: AwsCredentialsIn) -> AwsCredentialsOut:
     """Short-lived AWS keys for ONE role named in canopy-web's settings
-    (`labs-observe` = the read-only, non-sensitive labs observability role), with the
+    (`labs-read` = read-only, non-sensitive labs observability; `labs-readwrite` =
+    agent-named RDS copies and a psql client task, for listed agents only), with the
     agent stamped on the session (`SourceIdentity=canopy-agent-<slug>`). 404 for a role
-    name canopy-web does not vend; 403 for a browser session; 502 when AWS refused."""
+    name canopy-web does not vend; 403 for a browser session or an agent the role is
+    not for; 502 when AWS refused."""
     agent = agent_for_work(request, slug, allow_own_login=True,
                            forbidden=f"AWS credentials for {slug} need the editor role or above, "
                                      "or the agent's own login")
@@ -106,6 +115,10 @@ def agent_aws_credentials(request: HttpRequest, slug: str, payload: AwsCredentia
     if not role_arn:
         raise HttpError(404, f"canopy does not vend an AWS role named '{payload.role}'"
                              + (f" (it vends: {', '.join(sorted(roles))})" if roles else ""))
+    only = (getattr(settings, "CANOPY_AWS_ROLE_AGENTS", {}) or {}).get(payload.role)
+    if only is not None and agent.slug not in only:
+        raise ProblemError(403, "This AWS role is not for this agent",
+                           detail=f"canopy vends {payload.role} only to: {', '.join(sorted(only)) or 'nobody'}")
     caller = "agent-login" if agent.is_own_login(request.user) else f"user-{request.user.pk}"
     try:
         out = sts_client().assume_role(
@@ -136,7 +149,7 @@ def agent_aws_credentials(request: HttpRequest, slug: str, payload: AwsCredentia
             }],
             workspace=agent.workspace,
         )
-    except Exception:  # noqa: BLE001 — an audit hiccup must not deny the read-only keys
+    except Exception:  # noqa: BLE001 — an audit hiccup must not deny the keys
         pass
     return AwsCredentialsOut(AccessKeyId=creds["AccessKeyId"], SecretAccessKey=creds["SecretAccessKey"],
                              SessionToken=creds["SessionToken"], Expiration=str(expiration),

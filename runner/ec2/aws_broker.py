@@ -5,7 +5,8 @@ docs/architecture/runners.md § Several runners on one machine. The instance rol
 root's (an iptables rule closes IMDS to every runner uid), so a runner's turn cannot
 call AWS as the machine — and must not: the instance role reads the runner seed
 secrets. This root-owned daemon assumes, on a runner's behalf, ONLY the roles named in
-`ROLES` (by default `labs-observe` -> `labs-jj-observe-readonly`, connect-labs
+`ROLES` (by default `labs-read`, and its old name `labs-observe`, ->
+`labs-jj-observe-readonly`, connect-labs
 `infra/labs-observe-readonly.yml`: CloudWatch metrics, alarms and resource metadata,
 with explicit denies on log events, object bodies, secrets, task commands/env and DB
 content), and hands back one hour of that role's keys:
@@ -71,7 +72,9 @@ RUNNERS_FILE = os.environ.get("CANOPY_RUNNERS_FILE", "/etc/canopy-runner/runners
 UNIT_PATH = pathlib.Path(os.environ.get("CANOPY_SYSTEMD_DIR", "/etc/systemd/system")) / "canopy-aws-broker.service"
 #: name -> role NAME in this machine's account (or a full role ARN). The only roles
 #: this broker will ever assume. Override (JSON) with CANOPY_AWS_BROKER_ROLES.
-DEFAULT_ROLES = {"labs-observe": "labs-jj-observe-readonly"}
+#: Read-only roles only: `labs-readwrite` is canopy-web's alone (apps/agents/api_aws.py),
+#: because this broker cannot verify which agent a runner says it is.
+DEFAULT_ROLES = {"labs-read": "labs-jj-observe-readonly", "labs-observe": "labs-jj-observe-readonly"}
 SESSION_SECONDS = 3600
 REFRESH_BEFORE = 300
 MAX_CONNECTIONS = 16
