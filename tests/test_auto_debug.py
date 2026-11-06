@@ -659,6 +659,27 @@ def test_the_prompt_carries_the_delivery_evidence_but_not_the_words(ada, ws, run
     assert "landed: no" in prompt and auto_debug.landed(turn) == "no"
 
 
+def test_the_prompt_carries_the_runners_lifecycle_events(ada, ws, runner):
+    """Investigation 36 (turn 30df9c8e, ace on cloud-ec2-live, 2026-11-06): two turns
+    ended "the adapter's own: canopy sent no cancel" in one second, and whether the
+    daemon had adopted them across a handoff was only on their (chat-ACL'd) ledgers."""
+    ace = _agent(ws, "ace")
+    turn = Turn.objects.create(agent=ace, origin="canopy_web_chat", idempotency_key="lifecycle",
+                               status=Turn.RUNNING, claimed_by=runner, session_key="s-11")
+    TurnEvent.objects.create(turn=turn, seq=1, kind="lifecycle", payload={
+        "event": "adopted", "executor": "acp", "attempt": "attempt-1", "exited": False,
+        "pid": 4242, "agent": "ace"})
+    TurnEvent.objects.create(turn=turn, seq=2, kind="lifecycle", payload={
+        "event": "reported", "status": "failed", "http": 200, "adopted": True})
+    TurnEvent.objects.create(turn=turn, seq=3, kind="assistant", payload={"text": "my words"})
+    prompt = auto_debug.render_prompt(
+        FailureInvestigation(pk=9, occurrences=1, first_seen=timezone.now(),
+                             last_seen=timezone.now()), turn)
+    assert "event=adopted executor=acp attempt=attempt-1 exited=False pid=4242" in prompt
+    assert "event=reported status=failed adopted=True http=200" in prompt
+    assert "my words" not in prompt
+
+
 def test_the_prompt_carries_a_failed_reuse_sends_cdp_error(ada, ws, runner):
     """Investigation 15 (turn c3717cce, 2026-10-27): "reuse failed on existing session
     … not spawning a duplicate" names no error; the runner records which one only on

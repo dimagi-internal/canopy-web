@@ -561,6 +561,29 @@ def _delivery_evidence(turn: Turn) -> list[str]:
     return rows[-EVIDENCE_MAX_EVENTS:]
 
 
+#: The runner's `lifecycle` events (`_lifecycle` in runner/ec2/cloud_runner.py:
+#: claimed, started, adopted, handed_off, exited, reported, lost, swept), copied the
+#: same way. Investigation 36 (turn 30df9c8e, ace on cloud-ec2-live, 2026-11-06): an
+#: ACE turn and an Ada turn both ended "turn ended: cancelled (the adapter's own:
+#: canopy sent no cancel; adapter version unknown)" in the same second, and whether
+#: they were ADOPTED across a daemon handoff, or what the daemon was doing, was on
+#: their ledgers only — behind the chat ACL. Every allowed key is written by the
+#: runner itself; nothing a person types reaches a lifecycle event.
+_LIFECYCLE_KEYS = ("event", "reason", "why", "status", "executor", "attempt", "exited",
+                   "adopted", "http", "pid")
+LIFECYCLE_MAX_EVENTS = 20
+
+
+def _lifecycle_evidence(turn: Turn) -> list[str]:
+    rows = []
+    for ev in turn.events.filter(kind="lifecycle").order_by("seq"):
+        payload = ev.payload or {}
+        fields = " ".join(f"{k}={str(payload[k])[:200]}" for k in _LIFECYCLE_KEYS if k in payload)
+        if fields:
+            rows.append(f"- {_iso(ev.ts)} {fields}")
+    return rows[-LIFECYCLE_MAX_EVENTS:]
+
+
 def landed(turn: Turn) -> str:
     """The runner's last word on whether the message reached the transcript:
     "yes" | "no" | "unknown" (no delivery events say, or an older runner)."""
@@ -791,6 +814,11 @@ def render_prompt(inv: FailureInvestigation, turn: Turn, riders=(), *, alert=Non
                   "The runner's delivery events on the failed turn (diagnostic fields "
                   "only; the withheld ones are readable by the chat's participants):"]
         lines += evidence
+    lifecycle = _lifecycle_evidence(turn)
+    if lifecycle:
+        lines += ["", "What the runner did with the failed turn (its lifecycle events: "
+                      "claimed, adopted after a daemon handoff, exited, reported …):"]
+        lines += lifecycle
     if riders:
         lines += ["", "Also carried by this turn — failures canopy recorded but did not "
                       "start a turn for (held by the rate cap, or their debug turn failed):"]
