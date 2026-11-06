@@ -25,10 +25,9 @@ from apps.agents.models import AgentGrant
 def declare(agent, profiles: dict | None = None, **top_level):
     """Publish `profiles` (the document's `capabilities` key) as `agent`'s interface (none: an interface that offers nothing).
     Says only what the agent offers, never who may use it. Other top-level keys of the
-    interface document (`pages=...`) ride along."""
+    interface document ride along."""
     agent.interface = parse({**top_level, "capabilities": profiles}) if profiles else {"capabilities": {}}
-    agent.interface_source = ""
-    agent.save(update_fields=["interface", "interface_source"])
+    agent.save(update_fields=["interface"])
     return agent
 
 

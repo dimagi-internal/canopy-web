@@ -122,7 +122,6 @@
       "write_paths": [
        "{cwd}/.echo-ask/*"
       ],
-      "pages": [],
       "sites": [],
       "ceiling": []
      }
@@ -156,7 +155,6 @@
       "write_paths": [
        "{cwd}/.eva-ask/*"
       ],
-      "pages": [],
       "sites": [],
       "ceiling": []
      }
@@ -217,7 +215,6 @@
        "{cwd}/**"
       ],
       "write_paths": [],
-      "pages": [],
       "sites": [],
       "ceiling": []
      }
@@ -273,7 +270,6 @@
       "write_paths": [
        "{cwd}/.trellis-ask/*"
       ],
-      "pages": [],
       "sites": [],
       "ceiling": []
      },
@@ -297,7 +293,6 @@
        "{cwd}/**"
       ],
       "write_paths": [],
-      "pages": [],
       "sites": [
        "canopy-web"
       ],
@@ -323,7 +318,6 @@
       ],
       "entry": "/ace:ask --thread {thread_id}",
       "input": {},
-      "pages": [],
       "sites": [],
       "tools": [
        "Read",
@@ -345,7 +339,6 @@
       "bash": [],
       "entry": null,
       "input": {},
-      "pages": [],
       "sites": [
        "canopy-web"
       ],
@@ -376,7 +369,6 @@
       "bash": [],
       "entry": null,
       "input": {},
-      "pages": [],
       "sites": [
        "connect-labs"
       ],
@@ -445,7 +437,6 @@
       "ceiling": [
        "mcp__*connect_labs__*"
       ],
-      "pages": [],
       "tools": [
        "Read",
        "Skill",
@@ -478,45 +469,6 @@
  ],
  "corner_cases": [
   {
-   "slug": "corner_pages",
-   "why": "a capability a page selects (`pages`)",
-   "page_resource": "stock://item/1",
-   "interface": {
-    "capabilities": {
-     "ask": {
-      "description": "",
-      "entry": null,
-      "tools": [
-       "Read"
-      ],
-      "bash": [],
-      "read_paths": [],
-      "write_paths": [],
-      "pages": [],
-      "sites": [],
-      "ceiling": []
-     },
-     "stock": {
-      "description": "",
-      "entry": null,
-      "tools": [
-       "Read"
-      ],
-      "bash": [],
-      "read_paths": [],
-      "write_paths": [],
-      "pages": [
-       "stock://*"
-      ],
-      "sites": [],
-      "ceiling": []
-     }
-    }
-   },
-   "workspace": "connect",
-   "email": ""
-  },
-  {
    "slug": "corner_read_named",
    "why": "a read-mode override published as `read`, not `ask`",
    "interface": {
@@ -530,7 +482,6 @@
       "bash": [],
       "read_paths": [],
       "write_paths": [],
-      "pages": [],
       "sites": [],
       "ceiling": []
      }
@@ -553,7 +504,6 @@
       "bash": [],
       "read_paths": [],
       "write_paths": [],
-      "pages": [],
       "sites": [],
       "ceiling": []
      },
@@ -566,7 +516,6 @@
       "bash": [],
       "read_paths": [],
       "write_paths": [],
-      "pages": [],
       "sites": [],
       "ceiling": []
      }
@@ -589,7 +538,6 @@
       "bash": [],
       "read_paths": [],
       "write_paths": [],
-      "pages": [],
       "sites": [
        "site-a",
        "site-b"
@@ -612,102 +560,6 @@
    "email": ""
   },
   {
-   "slug": "corner_union",
-   "why": "two capabilities on one site: the ceilings union",
-   "interface": {
-    "capabilities": {
-     "one": {
-      "description": "",
-      "entry": null,
-      "tools": [
-       "Read"
-      ],
-      "bash": [],
-      "read_paths": [],
-      "write_paths": [],
-      "pages": [],
-      "sites": [
-       "site-a"
-      ],
-      "ceiling": [
-       "mcp__a__x"
-      ],
-      "own_login": {
-       "site-a": [
-        "Z_TOKEN"
-       ]
-      }
-     },
-     "two": {
-      "description": "",
-      "entry": null,
-      "tools": [
-       "Read"
-      ],
-      "bash": [],
-      "read_paths": [],
-      "write_paths": [],
-      "pages": [],
-      "sites": [
-       "site-a"
-      ],
-      "ceiling": [
-       "mcp__a__y"
-      ],
-      "own_login": {
-       "site-a": [
-        "A_TOKEN"
-       ]
-      }
-     }
-    }
-   },
-   "workspace": "connect",
-   "email": ""
-  },
-  {
-   "slug": "corner_unbounded",
-   "why": "two capabilities on one site, one with no ceiling: no ceiling",
-   "interface": {
-    "capabilities": {
-     "one": {
-      "description": "",
-      "entry": null,
-      "tools": [
-       "Read"
-      ],
-      "bash": [],
-      "read_paths": [],
-      "write_paths": [],
-      "pages": [],
-      "sites": [
-       "site-a"
-      ],
-      "ceiling": [
-       "mcp__a__x"
-      ]
-     },
-     "two": {
-      "description": "",
-      "entry": null,
-      "tools": [
-       "Read"
-      ],
-      "bash": [],
-      "read_paths": [],
-      "write_paths": [],
-      "pages": [],
-      "sites": [
-       "site-a"
-      ],
-      "ceiling": []
-     }
-    }
-   },
-   "workspace": "connect",
-   "email": ""
-  },
-  {
    "slug": "corner_mixed",
    "why": "a sensitive and an ordinary capability on one agent",
    "published_by": "ada@dimagi-ai.com",
@@ -723,7 +575,6 @@
       "bash": [],
       "read_paths": [],
       "write_paths": [],
-      "pages": [],
       "sites": [
        "site-a"
       ],
@@ -738,7 +589,6 @@
       "bash": [],
       "read_paths": [],
       "write_paths": [],
-      "pages": [],
       "sites": [
        "site-b"
       ],
@@ -766,7 +616,6 @@
       "bash": [],
       "read_paths": [],
       "write_paths": [],
-      "pages": [],
       "sites": [
        "site-a"
       ],
@@ -792,7 +641,6 @@
       "bash": [],
       "read_paths": [],
       "write_paths": [],
-      "pages": [],
       "sites": [
        "site-a"
       ],

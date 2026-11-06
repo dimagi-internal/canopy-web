@@ -33,40 +33,14 @@ under `READ_MODE_STAMP`):
         read_paths: ["{cwd}/**"]
         write_paths: ["{cwd}/.ace-read/*"]   # where Write/Edit may land (none → no writes)
 
-**A page can pick the profile.** A profile may name the resources it serves,
-and a conversation held on a page that declared one of them runs there instead
-of in read mode:
-
-    capabilities:
-      marketplace:
-        pages: ["labs-marketplace://*"]   # what the PAGE declared it is showing
-        tools: [Skill, "mcp__*canopy-web__current_page",
-                "mcp__*connect_labs__marketplace_*"]
-
-This exists because an embedded page already publishes a contract — `setPageState`
-says what it is showing and which tool resolves those rows — and until now nothing
-could answer it. Every free-form channel collapsed to read mode, so an agent embedded
-in a page had one profile shared with its email, and the only way to give the page
-what it needed was to give an email stranger the same thing. That is the wrong
-trade in both directions: the page's conversation is under-equipped and the
-mailbox is over-exposed.
-
-It cannot widen anything on the host's word: the page supplies only the
-resource it is showing; every tool in the profile was chosen by the agent's owner. A host
-that lies about its resource reaches exactly the tools that owner already decided
-to expose to that page — and it had to be an allowlisted app, framing from a
-registered origin, to open a conversation at all.
-
-**`pages:` is superseded by `sites:` + `ceiling:`** (host grant contract v1,
-2026-09-26) and kept only so interfaces already published keep working. A
-per-page tool list had to be written by hand, page by page, and every tool on it
-ran as the AGENT. A connected site's profile instead names a registered Connected site:
+**A connected site's profile** names a registered Connected site:
 
     capabilities:
       connect:
         sites: [connect-labs]               # a Connected site, by name
         # ceiling: ["mcp__*connect_labs__marketplace_*"]   # OPTIONAL narrowing
 
+One entry per site, and one site per entry (`answering`, the one writer, enforces both).
 A conversation held on that site (its server-owned `embed_app`) selects the
 profile, and its confined profile gains canopy's gateway tools (`site_tools`,
 `site_call`, `site_read`) and the page's own actions (`page_*`) automatically.
@@ -77,7 +51,7 @@ HOST grants: its scopes for that page and its ACL for that person
 tools. `ceiling:` is an optional narrowing on the owner's word (keep an agent off
 part of a site); absent, canopy adds none. It can never widen what the host
 granted. The page's `backing_tool` tells the agent where to read the rows on
-screen; it is not a filter (until 2026-09-29 it was).
+screen; it is not a filter.
 
 **Read mode is on for every agent.** Every agent HAS an interface; until its owner changes it, it is
 the default (`default_interface()`: no profile). Someone whose lines give `read` and not
@@ -85,8 +59,7 @@ the default (`default_interface()`: no profile). Someone whose lines give `read`
 published read mode when it has one (an override that replaces the default whole), else canopy's
 `default_read_profile`. `read` and `READ_MODE_STAMP` are the same thing (`is_read_mode`). Any OTHER
 profile is a connected site and must be published: a line can only open a site that exists, and an
-unknown or retired name yields the empty deny-all profile. A profile with no `pages` is never selected
-by a page.
+unknown or retired name yields the empty deny-all profile.
 
 A profile carries no `role:`, `full:`, `callers:`, `callers_default:` or `editors:`: who may use
 one is an access-list line (a role, or one that names the connected site). A published interface that
@@ -251,11 +224,13 @@ def parse(doc) -> dict:
         for key in ("callers", "role"):
             if key in cap:
                 raise InterfaceError(_RETIRED_HINT.format(where=name, key=key), f"{name}.{key}")
+        if "pages" in cap:
+            raise InterfaceError(f"{name}.pages is gone: a profile is selected by the connected site its "
+                                 "conversation is held on (`sites:`), never by a page's resource", f"{name}.pages")
         if "input" in cap:
             ignored.append(f"{name}.input")
         bad = set(cap) - {"description", "entry", "tools", "bash", "read_paths",
-                          "write_paths", "input", "pages", "sites", "ceiling", "own_login",
-                          "data"}
+                          "write_paths", "input", "sites", "ceiling", "own_login", "data"}
         if bad:
             raise InterfaceError(f"{name}: unknown key(s) {sorted(bad)}")
         entry = cap.get("entry")
@@ -275,7 +250,6 @@ def parse(doc) -> dict:
             # then run it. The guard refuses Write/Edit outside these; none → no
             # writes at all.
             "write_paths": _strings(cap.get("write_paths"), "write_paths", name),
-            "pages": _pages(cap.get("pages"), name),
             **_sites(cap, name),
         }
         if cap.get("data") is not None:
@@ -354,31 +328,9 @@ def _own_login(value, name: str, sites: list[str]) -> dict[str, list[str]]:
     return out
 
 
-def _pages(value, cap: str) -> list[str]:
-    """Resource patterns a profile serves, e.g. `labs-marketplace://*`.
-
-    An embedded page already declares what it is showing (`setPageState`), and
-    that declaration is server-stored and server-versioned. This is how an agent
-    ANSWERS it: the page says which room it is in, the owner says what is in that
-    room. A `*` is the only wildcard, matched with `fnmatch`, and a bare `*` is
-    refused — "any page at all" is what leaving `pages` off already means, and
-    spelling it as a pattern reads like a narrowing while being the opposite.
-    """
-    out = _strings(value, "pages", cap)
-    for pattern in out:
-        if pattern == "*":
-            raise InterfaceError(
-                f"{cap}.pages: '*' matches every page, which is what omitting "
-                "`pages` does — name the resources this profile is for")
-        if "://" not in pattern:
-            raise InterfaceError(
-                f"{cap}.pages: {pattern!r} is not a resource pattern — it needs a "
-                "scheme, as the page's own `resource` does (e.g. stock://*)")
-    return out
-
-
 def _declared_resource(turn) -> str:
-    """What the page attached to this turn's conversation says it is showing."""
+    """What the page attached to this turn's conversation says it is showing. A fact about the
+    conversation that its Session Context shows; it selects no profile."""
     return session_resource(getattr(turn, "chat_session", None))
 
 
@@ -386,33 +338,6 @@ def session_resource(session) -> str:
     state = getattr(session, "page_state", None) or {} if session is not None else {}
     resource = state.get("resource")
     return resource if isinstance(resource, str) else ""
-
-
-def page_entry(resource: str, iface: dict, opens) -> str | None:
-    """The profile whose `pages` match what this conversation's page declared.
-
-    Checked before falling back to read mode, so a conversation held on a page the
-    agent has declared a profile for gets THAT profile, and every other channel is
-    unaffected. Names are tried in order for determinism; a profile the
-    caller's class is not listed for is skipped rather than refusing outright,
-    because read mode may still admit them.
-
-    This cannot widen anything on the host's word: the page supplies only the
-    resource it is showing, and every tool in the profile was chosen by the
-    agent's owner. A host that lies about its resource reaches the tools that
-    owner already decided to expose to that page.
-    """
-    from fnmatch import fnmatchcase
-
-    if not resource:
-        return None
-    for name, cap in (iface.get("capabilities") or {}).items():
-        patterns = cap.get("pages") or []
-        if not patterns or not opens(name, cap):
-            continue
-        if any(fnmatchcase(resource, pattern) for pattern in patterns):
-            return name
-    return None
 
 
 def _conversation_site(turn) -> str:
@@ -431,9 +356,8 @@ def session_site(session) -> str:
 def site_entry(site: str, iface: dict, opens) -> str | None:
     """The connected site whose `sites` include the site this conversation is on.
 
-    Tried after `page_entry` (a page-specific profile is the narrower one)
-    and before falling back to read mode. A profile the caller's class is not
-    listed for is skipped, exactly as for pages.
+    Tried before falling back to read mode. A profile the caller cannot open is
+    skipped, not fatal: read mode may still admit them.
     """
     if not site:
         return None
@@ -460,9 +384,12 @@ def page_sites(agent) -> set[str]:
     return {site for cap in caps for site in (cap.get("sites") or [])}
 
 
-def _caps_for_site(agent, site: str) -> list[dict]:
+def _cap_for_site(agent, site: str) -> dict:
+    """The one connected site entry that lists `site`, or {}. One entry per site is the writer's rule
+    (`answering.document_problems`), and migration `agents/0132` refused to deploy over a document
+    that broke it, so there is no second entry to combine."""
     caps = ((getattr(agent, "interface", None) or {}).get("capabilities") or {})
-    return [caps[n] for n in sorted(caps) if site in (caps[n].get("sites") or [])]
+    return next((caps[n] for n in sorted(caps) if site in (caps[n].get("sites") or [])), {})
 
 
 def page_site_of(turn, agent=None) -> str:
@@ -478,21 +405,15 @@ def page_site_of(turn, agent=None) -> str:
 
 def site_ceiling(agent, site: str) -> list[str]:
     """The owner's narrowing of `site`'s tools for a FULL-profile turn on its page: the
-    union of the ceilings of the profiles that list it, or none (the host's grant
-    decides) when any of them sets none — a full turn gets the widest profile the owner
-    opened on that site, never more."""
-    caps = _caps_for_site(agent, site)
-    if not caps or any(not cap.get("ceiling") for cap in caps):
-        return []
-    return list(dict.fromkeys(g for cap in caps for g in cap.get("ceiling") or []))
+    ceiling of the connected site that lists it, or none (the host's grant decides)."""
+    return list(_cap_for_site(agent, site).get("ceiling") or [])
 
 
 def own_login_of(agent, site: str) -> list[str]:
     """The names of the agent's own credentials that are its login at `site`
-    (`own_login:` of every profile that lists the site). Withheld from every turn
+    (`own_login:` of the connected site that lists it). Withheld from every turn
     held on that site's page."""
-    return sorted({n for cap in _caps_for_site(agent, site)
-                   for n in (cap.get("own_login") or {}).get(site) or []})
+    return sorted(set((_cap_for_site(agent, site).get("own_login") or {}).get(site) or []))
 
 
 def page_turn(turn, agent=None) -> dict | None:
@@ -614,7 +535,7 @@ def profile(agent, name: str) -> dict | None:
         cap, default_version = default_read_profile(agent), READ_PROFILE_VERSION
     cap = cap or {"description": "", "entry": None,
                   "tools": [], "bash": [], "read_paths": [], "write_paths": [],
-                  "pages": [], "sites": [], "ceiling": []}
+                  "sites": [], "ceiling": []}
     out = {"name": name, **{k: cap.get(k) for k in
                                   ("description", "entry", "tools", "bash", "read_paths",
                                    "write_paths")}}

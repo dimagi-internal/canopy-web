@@ -32,7 +32,6 @@ ACE = {
     },
     "marketplace": {
         "description": "Browse the marketplace.",
-        "pages": ["labs-marketplace://*"],
         "tools": ["mcp__*connect_labs__marketplace_*"],
     },
     "summarise_opportunity": {

@@ -34,7 +34,7 @@ Code (`/get-started`), or by chatting with it on canopy-web. Neither is an A2A
 binding, so the card lists only the outsider entry points (contact sessions, email).
 
 **What never appears.** A profile's `tools`, `bash`, `read_paths`,
-`entry`, `pages` and `input` — the enforcement detail of its profile — and any
+`entry` and `input` — the enforcement detail of its profile — and any
 email address: an access-list line names at most a DOMAIN (`@dimagi.com`),
 which becomes a `domain:` tag. Neither card names the agent's workspace.
 

@@ -14,7 +14,6 @@ M = WorkspaceMembership
 CAPS = {
     "ask": {"tools": ["Read"], "description": "Questions about this agent, answered from its docs"},
     "connect": {"tools": ["Read"], "sites": ["connect-labs"]},
-    "stock": {"tools": ["Read"], "pages": ["stock://*"]},
     "data": {"tools": ["Read"], "sites": ["data-site"], "data": "sensitive"},
     "bare": {"tools": ["Read"]},
 }
