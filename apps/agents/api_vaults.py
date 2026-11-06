@@ -80,13 +80,15 @@ def _out(v: Vault, user) -> WorkspaceVaultOut:
     keyed = set(UserVaultKeyset.objects.filter(user_id__in=list(ms)).values_list("user_id", flat=True))
     rank = {"owner": 0, "admin": 1, "member": 2}
     rows = sorted(ms.values(), key=lambda m: (rank[m.role], (m.user.email or "").lower()))
-    held, keepers = workspace_vaults.copies(v)
+    # One read of what the vault serves for everything below (`workspace_vaults._Facts`).
+    facts = workspace_vaults.read_facts(v, members=set(ms))
+    held, keepers = workspace_vaults.copies(v, facts)
     attached = [a for a in VaultAttachment.objects.filter(vault=v).select_related("agent", "runner", "project__agent")
                 if not a.project_id or services.may_read_project(user, a.project)]
     # A runner it serves is a member at the hardware level: say where its key lives and
     # whether it holds a copy of the vault's key, is waiting for one, or cannot have one yet.
     runner_ids = [a.runner_id for a in attached if a.runner_id]
-    waiting = ({t.get("runner") for t in workspace_vaults.pending_targets(v) if t.get("kind") == "device"}
+    waiting = ({t.get("runner") for t in workspace_vaults.pending_targets(v, facts) if t.get("kind") == "device"}
                if v.kv and runner_ids else set())
     places = dict(RunnerDeviceKey.objects.filter(runner_id__in=runner_ids, status=RunnerDeviceKey.ACTIVE)
                   .exclude(ecdh_jkt="").values_list("runner_id", "ecdh_store"))

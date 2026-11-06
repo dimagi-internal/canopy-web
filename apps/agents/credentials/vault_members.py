@@ -93,8 +93,14 @@ def _linked(link: VaultLink, out: dict[int, Membership]) -> None:
         # the link's role: an agent's admins run that agent, they do not manage the workspace's
         # vault (its owners do, through their own link).
         rows = list(VaultAttachment.objects.filter(vault=link.vault).select_related("project"))
-        for agent in _agents_by_name(rows):
-            for row in access.roster(agent):
+        agents = _agents_by_name(rows)
+        # One read of each workspace's members and of everyone's standing, for every agent:
+        # a vault attached to a whole workspace serves dozens, and a roster each re-read
+        # them per agent (Shared, 2026-11-06).
+        people = {ws: wsvc.effective_memberships(ws) for ws in {a.workspace_id for a in agents}}
+        standings = access.Standings([m.user for ms in people.values() for m in ms], agents) if agents else None
+        for agent in agents:
+            for row in access.roster(agent, people[agent.workspace_id], standings):
                 if row["access"] == access.FULL:
                     _add(out, _UserRef(row["user_id"], row["email"]), link.role, f"attached:{agent.slug}")
         _project_people(link, [r.project for r in rows if r.project_id], out)

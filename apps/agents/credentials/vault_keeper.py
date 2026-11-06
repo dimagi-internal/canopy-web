@@ -41,7 +41,7 @@ from django.db import transaction
 from apps.harness import device_keys
 from apps.harness.models import RunnerDeviceKey
 
-from ..models import Agent, AgentVaultWrap, Vault, VaultKeyWrap
+from ..models import Agent, AgentVaultEndorsement, AgentVaultWrap, Vault, VaultKeyWrap
 from . import vault_members, workspace_vaults, zk, zk_endorse
 
 logger = logging.getLogger(__name__)
@@ -85,8 +85,16 @@ def work(runner) -> list[dict]:
         # A workspace vault has no endorsements of its own: a machine is vouched for by
         # the endorsement its approver made for an agent this vault serves, verified
         # against THAT agent's id (each row carries it).
-        ends = [{**e, "agent_id": str(a.pk)} for a in vault_members.attached_agents(v)
-                for e in zk_endorse.endorsements(a)]
+        # One read of the fleet for every agent it serves, not one per agent (Shared is
+        # attached to a whole workspace: dozens of them).
+        # Only the agents anyone signed under (one read): most have no endorsement at all,
+        # and each one asked costs its members and its machines.
+        served = vault_members.attached_agents(v)
+        signed = set(AgentVaultEndorsement.objects.filter(agent__in=served)
+                     .values_list("agent_id", flat=True).distinct())
+        agents = [a for a in served if a.pk in signed]
+        facts = device_keys.serving_facts(agents) if agents else None
+        ends = [{**e, "agent_id": str(a.pk)} for a in agents for e in zk_endorse.endorsements(a, facts)]
         base = f"/api/harness/runners/{runner.pk}/vault-keeper/vaults/{v.pk}"
         out.append({"agent": v.name, "agent_id": workspace_vaults.binding_id(v), "kv": v.kv,
                     "device_key": str(w.device_key_id), "wrap": w.wrap, "pending": pending,

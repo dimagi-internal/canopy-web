@@ -304,57 +304,113 @@ def eligible_members(vault: Vault) -> list:
                 .select_related("user"))
 
 
-def eligible_device_keys(vault: Vault) -> list:
+class _Facts:
+    """What one read of a workspace vault asks about it again and again, read once: its
+    members, the agents and runners it serves, and the fleet's serving facts. Without it
+    every machine holding a copy re-read all of these and asked "does this box serve this
+    agent" with a fresh read of the fleet per pair — Shared's page took 19-45 s on labs
+    (2026-11-06), thousands of queries growing with machines x agents. Built per call and
+    dropped with it: not a cache, nothing to invalidate."""
+
+    def __init__(self, vault: Vault) -> None:
+        self.vault = vault
+        self._members: set | None = None
+        self._agents: list | None = None
+        self._runners: list | None = None
+        self._serving = None
+        self._serves: dict = {}
+
+    @property
+    def members(self) -> set:
+        if self._members is None:
+            self._members = vault_members.member_ids(self.vault)
+        return self._members
+
+    @property
+    def agents(self) -> list:
+        if self._agents is None:
+            self._agents = attached_agents(self.vault)
+        return self._agents
+
+    @property
+    def runners(self) -> list:
+        if self._runners is None:
+            self._runners = serving_runners(self.vault)
+        return self._runners
+
+    @property
+    def serving(self):
+        """One read of every live runner, for every agent the vault serves."""
+        if self._serving is None:
+            self._serving = device_keys.serving_facts(self.agents)
+        return self._serving
+
+    def serves_an_agent(self, runner) -> bool:
+        if runner.pk not in self._serves:
+            self._serves[runner.pk] = any(device_keys.runner_serves_agent(runner, a, self.serving)
+                                          for a in self.agents)
+        return self._serves[runner.pk]
+
+    def may_hold(self, device_key) -> bool:
+        if vault_members.person_of_device(device_key) not in self.members:
+            return False
+        if any(r.pk == device_key.runner_id for r in self.runners):
+            return True
+        return self.serves_an_agent(device_key.runner)
+
+
+def read_facts(vault: Vault, *, members: set | None = None) -> _Facts:
+    """One read's `_Facts` for `vault`; `members`: its member ids, when already read."""
+    facts = _Facts(vault)
+    if members is not None:
+        facts._members = members
+    return facts
+
+
+def eligible_device_keys(vault: Vault, facts: _Facts | None = None) -> list:
     """Active keys with an approved ECDH key, on a runner that serves an agent this
     vault is attached to, whose person is a member of the vault."""
-    ids = vault_members.member_ids(vault)
-    served: set = set()
-    for agent in attached_agents(vault):
-        served |= set(device_keys.keys_for_agent(agent).values_list("pk", flat=True))
-    runners = serving_runners(vault)
-    if runners:
-        served |= set(RunnerDeviceKey.objects.filter(runner__in=runners).values_list("pk", flat=True))
+    facts = facts or _Facts(vault)
+    served = {r.pk for r in facts.serving.runners if facts.serves_an_agent(r)}
+    served |= {r.pk for r in facts.runners}
     return list(vault_members.devices_working_for(
-        RunnerDeviceKey.objects.filter(pk__in=served, status=RunnerDeviceKey.ACTIVE,
-                                       ecdh_approved_at__isnull=False).exclude(ecdh_jkt=""), ids)
+        RunnerDeviceKey.objects.filter(runner_id__in=served, status=RunnerDeviceKey.ACTIVE,
+                                       ecdh_approved_at__isnull=False).exclude(ecdh_jkt=""), facts.members)
                 .select_related("runner"))
 
 
-def device_may_hold(vault: Vault, device_key) -> bool:
+def device_may_hold(vault: Vault, device_key, facts: _Facts | None = None) -> bool:
     """May this ONE machine hold the vault's key now? Its person is a member and its
     runner serves an agent the vault is attached to, or is a runner the vault serves —
     `eligible_device_keys`, asked of one key instead of listing every runner."""
-    if vault_members.person_of_device(device_key) not in vault_members.member_ids(vault):
-        return False
-    if any(r.pk == device_key.runner_id for r in serving_runners(vault)):
-        return True
-    return any(device_keys.runner_serves_agent(device_key.runner, a) for a in attached_agents(vault))
+    return (facts or _Facts(vault)).may_hold(device_key)
 
 
-def copies(vault: Vault) -> tuple[set[int], list[str]]:
+def copies(vault: Vault, facts: _Facts | None = None) -> tuple[set[int], list[str]]:
     """`zk.copies`, for a workspace vault."""
     if not vault.kv:
         return set(), []
-    members = vault_members.member_ids(vault)
+    facts = facts or _Facts(vault)
     rows = list(VaultKeyWrap.objects.filter(vault=vault, kv=vault.kv, kind__in=["member", "device"])
-                .select_related("device_key__runner"))
-    people = {w.user_id for w in rows if w.kind == "member" and w.user_id in members}
+                .select_related("device_key__runner__owner", "device_key__approved_by"))
+    people = {w.user_id for w in rows if w.kind == "member" and w.user_id in facts.members}
     machines = sorted({w.device_key.runner.name for w in rows
                        if w.kind == "device" and w.device_key.status == RunnerDeviceKey.ACTIVE
-                       and device_may_hold(vault, w.device_key)})
+                       and facts.may_hold(w.device_key)})
     return people, machines
 
 
-def pending_targets(vault: Vault) -> list[dict]:
-    return engine.pending_targets(_store(vault), has_key=bool(vault.kv))
+def pending_targets(vault: Vault, facts: _Facts | None = None) -> list[dict]:
+    return engine.pending_targets(_store(vault, facts), has_key=bool(vault.kv))
 
 
 def state(vault: Vault, *, include_values: bool = False) -> dict:
     """The agent-vault `ZkStateOut` shape, so the browser and the CLI drive either:
     `agent` is the vault's name and `agent_id` its binding id."""
-    wraps = engine.wrap_rows(_store(vault))
+    store = _store(vault)
+    wraps = engine.wrap_rows(store)
     out = {"agent": vault.name, "agent_id": binding_id(vault), "enabled": vault.kv > 0, "kv": vault.kv,
-           "wraps": wraps, "pending": pending_targets(vault),
+           "wraps": wraps, "pending": engine.pending_targets(store, has_key=bool(vault.kv)),
            "rotation_recommended": engine.rotation_recommended(wraps),
            "values": None, "sealed": []}
     if include_values:
@@ -368,8 +424,22 @@ def _locked(vault: Vault) -> Vault:
     return Vault.objects.select_for_update().get(pk=vault.pk)
 
 
-def _store(vault: Vault) -> "engine.Store":
-    """A workspace vault, for the rules in `vault_engine`: its rows live on the vault."""
+def _store(vault: Vault, facts: _Facts | None = None) -> "engine.Store":
+    """A workspace vault, for the rules in `vault_engine`: its rows live on the vault.
+    Who is eligible is read once per store (one operation), however often it is asked."""
+    facts = facts or _Facts(vault)
+    eligible: dict = {}
+
+    def devices() -> list:
+        if "devices" not in eligible:
+            eligible["devices"] = eligible_device_keys(vault, facts)
+        return eligible["devices"]
+
+    def members() -> list:
+        if "members" not in eligible:
+            eligible["members"] = list(UserVaultKeyset.objects.filter(user_id__in=facts.members)
+                                       .select_related("user"))
+        return eligible["members"]
 
     def save_kv(kv: int) -> None:
         vault.kv = kv
@@ -378,8 +448,8 @@ def _store(vault: Vault) -> "engine.Store":
     return engine.Store(
         label=vault.name, kv=vault.kv,
         wrap_model=VaultKeyWrap, secret_model=VaultSecret, owner_kw={"vault": vault},
-        eligible_devices=lambda: eligible_device_keys(vault),
-        eligible_members=lambda: eligible_members(vault),
+        eligible_devices=devices,
+        eligible_members=members,
         lock=lambda: _store(_locked(vault)), save_kv=save_kv,
         device_scope=f"on a runner serving an agent {vault.name} is attached to, working for a member",
         member_scope=vault.name,
