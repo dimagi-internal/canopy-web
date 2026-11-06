@@ -1,9 +1,11 @@
-# Runbook: PostgreSQL major upgrade of `labs-jj-postgres` (16 → 18)
+# Runbook: PostgreSQL major upgrade of `labs-jj-postgres`
 
-How to take the shared labs RDS instance from PostgreSQL 16.13 to 18.6, with
-downtime. Every timing below was **measured on a full copy** (restored from a
-production automated snapshot, same class, storage, subnet group and security
-group), not estimated. The copy has since been deleted.
+How to take the shared labs RDS instance to a new PostgreSQL major, with
+downtime. It was rehearsed on a full copy (restored from a production automated
+snapshot, same class, storage, subnet group and security group) and then run on
+production, 16.13 → 18.6; `labs-jj-postgres` is on 18.6 now. Every timing below
+is measured, not estimated. For the next major, re-check §2's target list and
+§1's extensions, then follow §4.
 
 Region `us-east-1`, account `858923557655`, profile `labs` (admin SSO;
 `canopy aws login --profile labs --reason "..."` if expired).
@@ -64,6 +66,23 @@ Considered and not rehearsed:
 | `ANALYZE` — ace_web_labs / canopy_web / commcare_connect / umami | 9.9 s / 2 m 01 s / **12 m 13 s** / 18.0 s |
 | Rename an instance (`--new-db-instance-identifier`) → `available` + DNS | 79 s |
 
+**On production** the numbers held except one:
+
+| Step | Production |
+|---|---|
+| Scale five services to 0 (`services-stable`) | 22 s |
+| **Manual snapshot, 12 h after the last automated backup** | **26 m 38 s** |
+| Pre-check / database down (shutdown → accepting connections) | 2 s / 3 m 15 s |
+| Extension updates | < 5 s |
+| Scale back up → `services-stable` | 2 m 39 s |
+| `ANALYZE`, all four databases, online | ≈ 54 s (commcare_connect 47 s) |
+
+The rehearsal copy had been backed up minutes before its upgrade, so its
+snapshots were incremental and fast; production's carried twelve hours of
+changes. Step 2 below now takes that snapshot **before** the outage. `ANALYZE`
+was 15× faster on production than on the copy, because a freshly restored
+instance loads its blocks lazily from S3.
+
 **PostgreSQL 18 keeps planner statistics through pg_upgrade** (`pg_stats` was
 populated in every database before any `ANALYZE`), so the 12-minute `ANALYZE` of
 `commcare_connect` runs *after* the apps are back, not inside the outage.
@@ -81,7 +100,7 @@ Order of operations, each command as run. Set up once:
 export AWS_PROFILE=labs AWS_REGION=us-east-1
 DB=labs-jj-postgres; C=labs-jj-cluster
 SERVICES="labs-jj-web labs-jj-worker labs-jj-ace-web labs-jj-canopy-web labs-jj-umami"
-SNAP=labs-jj-postgres-pre-pg18-$(date -u +%Y%m%d-%H%M)
+SNAP=labs-jj-postgres-pre-upgrade-$(date -u +%Y%m%d-%H%M)
 ```
 
 **0. Pre-flight** (before announcing downtime):
@@ -110,17 +129,29 @@ aws ecs wait services-stable --cluster $C --services $SERVICES
 definitions (see `docs/architecture/deploy.md`); don't register task
 definitions by hand.
 
-**2. A named manual snapshot** (the rollback point; ~2.5–3 min, measured on the copy):
+**2. A named manual snapshot, taken twice: once online, once in the outage.**
+Snapshots are incremental, and the cost is the change since the last one: 26 m
+38 s on production when the last backup was 12 h old, against ~2.5–3 min right
+after a backup. So take one **before step 1, with the apps still up**, then the
+real one after step 1, which only has to copy the minutes in between:
 
 ```bash
+aws rds create-db-snapshot --db-instance-identifier $DB --db-snapshot-identifier $SNAP-warm
+aws rds wait db-snapshot-available --db-snapshot-identifier $SNAP-warm      # apps still up
+# ... step 1 (scale to 0) ...
 aws rds create-db-snapshot --db-instance-identifier $DB --db-snapshot-identifier $SNAP \
-  --tags Key=purpose,Value=pre-pg18-upgrade
-aws rds wait db-snapshot-available --db-snapshot-identifier $SNAP
+  --tags Key=purpose,Value=pre-major-upgrade
+aws rds wait db-snapshot-available --db-snapshot-identifier $SNAP           # the rollback point
 ```
 
-RDS also takes its own `rds:preupgrade-labs-jj-postgres-16-13-to-18-6-…`
-snapshot in step 3. Keep the named one anyway: you control its name and it
-doesn't expire with the automated-backup window.
+The instance is `backing-up` while a snapshot runs and the upgrade can't start
+until it ends. RDS also takes its own `rds:preupgrade-…` snapshot in step 3.
+Keep the named one anyway: you control its name and it doesn't expire with the
+automated-backup window. Delete `$SNAP-warm` afterwards.
+
+A manual deploy of any of the five apps during the window recreates its service
+at its CloudFormation count (a canopy-web deploy did, mid-snapshot). Re-check the
+counts right before step 3 and scale back to 0 if anything came up.
 
 **3. Upgrade** (database down ~3.5 min, measured):
 
@@ -237,12 +268,13 @@ Each app's **current production image** was run against the upgraded copy
 parameter group for 18 adds `client_connection_check_interval=60000`,
 `io_method=sync` and `allow_alter_system=0`; `rds.force_ssl=1` is unchanged.
 
-**After the cutover**, so local and CI match production again:
+**After the cutover**, so local and CI match production again (canopy-web's are
+done):
 
 - **canopy-web**:
   - `pgvector/pgvector:pg16` → `pgvector/pgvector:pg18` in `.github/workflows/ci.yml` (the service image, the `pgc` pg_dump/pg_restore image, and the second service at the end), `.github/workflows/pg-nightly.yml`, `.github/workflows/contract-nightly.yml` and `docker-compose.yml`.
   - Bump the migrated-test-DB cache key `pg-testdb-v2-` → `pg-testdb-v3-` in `ci.yml`, because a pg16 dump must not be restored by the pg18 client path or the other way round. `pg-nightly.yml`'s key already includes the image id.
   - Update the comment above the cache step and the "PostgreSQL 16.13, pgvector 0.8.1" line in `docs/architecture/deploy.md`.
-- **connect-labs**: CI runs `postgis/postgis:17-3.5` (mirrored by `mirror-ci-images.yml`), so it is already off production's 16; move it to the 18 / PostGIS 3.6 tag and mirror it.
+- **connect-labs**: CI runs `postgis/postgis:17-3.5` (mirrored by `mirror-ci-images.yml`); production is 18 with PostGIS 3.6.3, so move it to the 18 / PostGIS 3.6 tag and mirror it.
 - **ace-web**: `docker-compose.yml` `postgres:16` → `postgres:18` (local only).
 - **umami**: nothing.

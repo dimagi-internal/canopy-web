@@ -29,7 +29,7 @@ jobs:
     services:
       postgres:
         # pgvector: migration agents/0064 creates the `vector` extension.
-        image: pgvector/pgvector:pg16
+        image: pgvector/pgvector:pg18
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: canopy_web
