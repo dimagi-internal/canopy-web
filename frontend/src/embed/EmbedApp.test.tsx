@@ -1294,7 +1294,7 @@ describe('the act-as-you permission', () => {
     agentAsks()
     // Pushed, not polled: the prompt opens on the socket's frame, with the agent's reason.
     const prompt = await screen.findByTestId('page-grant-confirm')
-    expect(prompt.textContent).toMatch(/Hal wants to act as you on connect-labs/)
+    expect(prompt.textContent).toMatch(/Hal needs your permission to interact with this page and data on Connect Labs/)
     expect(screen.getByTestId('page-grant-reason').textContent).toBe('To close the 3 sessions you picked')
     expect(prompt.textContent).toMatch(/For 30 minutes/)
     expect(screen.queryByTestId('page-grant-line')).toBeNull()
@@ -1303,7 +1303,7 @@ describe('the act-as-you permission', () => {
     await waitFor(() => expect(get).toHaveBeenCalledTimes(1))
 
     const line = await screen.findByTestId('page-grant-line')
-    expect(line.textContent).toMatch(/^Hal can act as you until .*·Stop$/)
+    expect(line.textContent).toMatch(/^Hal has your permission until .*·Stop$/)
     expect(screen.queryByTestId('page-grant-confirm')).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Stop' }))

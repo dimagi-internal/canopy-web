@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { type PageGrant } from './pageGrant'
+import { siteLabel } from './siteLabel'
 import { openInBrowser, PASSKEY_IN_BROWSER, passkeysWorkHere, useWhileAway } from '@/auth/passkeyHere'
 
 /** A confirmed act-as-you permission while it is live, else null. */
@@ -36,6 +37,7 @@ export function PageGrantConfirm({ pageGrant, agentName }: { pageGrant: PageGran
   // Only once something needs it (the turn or a card): a send alone never asks.
   if (!grant || !asking) return null
   const who = grant.agent_name || agentName
+  const site = siteLabel(grant.site)
   const here = passkeysWorkHere()
   const confirmInBrowser = () => {
     openInBrowser(`/confirm/page-permission/${grant.id}`)
@@ -59,12 +61,12 @@ export function PageGrantConfirm({ pageGrant, agentName }: { pageGrant: PageGran
   // shared-dialog-exception: an act-as-you consent that only its own buttons answer. Escape and a
   // click on the scrim must not stop the permission, which the shared Dialog would do by default.
   return (
-    <div role="dialog" aria-modal="true" aria-label="Confirm act as you"
+    <div role="dialog" aria-modal="true" aria-label="Confirm permission"
          className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4"
          data-testid="page-grant-confirm">
       <div className="w-full max-w-sm space-y-3 rounded-lg border border-border bg-card p-4">
         <p className="text-sm font-medium text-foreground">
-          {who} wants to act as you on {grant.site}
+          {who} needs your permission to interact with this page and data on {site}
         </p>
         {grant.requested_reason && (
           <p className="rounded bg-muted px-2 py-1.5 text-sm text-foreground" data-testid="page-grant-reason">
@@ -72,9 +74,9 @@ export function PageGrantConfirm({ pageGrant, agentName }: { pageGrant: PageGran
           </p>
         )}
         <p className="text-[12px] text-muted-foreground">
-          For 30 minutes, it can do what you can do on {grant.site} for this page
-          ({grant.scope || 'this page'}), and nothing more. Confirm with your passkey;
-          you can stop it at any time.
+          For 30 minutes it can see and do on {site} only what you can yourself, and only what this
+          page allows ({grant.scope || 'this page'}). Anything it changes is done as you. Confirm
+          with your passkey; you can stop it at any time.
         </p>
         {inBrowser ? (
           <p className="text-[12px] text-foreground" data-testid="page-grant-in-browser">

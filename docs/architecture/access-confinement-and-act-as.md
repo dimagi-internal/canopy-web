@@ -238,9 +238,10 @@ host* (the header above is canopy-web's own decisions):
 - **Given by acting, never by loading, and only with the person's passkey.** The
   panel asks the site for one only when the person sends from it (or opens a
   conversation whose live card needs it); nothing can use it until they confirm it
-  with their passkey in the panel ("Let <agent> act as you on this page for 30
-  minutes?"), and the send waits for that. It then shows "<agent> can act as you on
-  this page until <time> · Stop". 30 minutes from the passkey: the panel's token
+  with their passkey in the panel ("<agent> needs your permission to interact with this
+  page and data on <Site>", with the agent's reason and the 30 minutes), which is asked only when
+  the agent's turn first calls the site, never at the send. It then shows "<agent> has your
+  permission until <time> · Stop". 30 minutes from the passkey: the panel's token
   renewals carry the same end, never extend it.
 - **Never a contact's.** Only a canopy user has a passkey, so a contact is never
   given one, and an agent that serves the site on pages is not offered to a contact

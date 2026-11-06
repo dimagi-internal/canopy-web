@@ -35,7 +35,7 @@ describe('PagePermissionConfirmPage', () => {
     api.getMyHostGrant.mockResolvedValue(GRANT)
     api.confirmMyHostGrant.mockResolvedValue({ ...GRANT, confirmed: true })
     open()
-    expect(await screen.findByText('Let Ada act as you on canopy-web for 30 minutes?')).toBeTruthy()
+    expect(await screen.findByText('Let Ada interact with this page and data on Canopy Web for 30 minutes?')).toBeTruthy()
     fireEvent.click(screen.getByTestId('page-permission-confirm'))
     expect(await screen.findByTestId('page-permission-confirmed')).toBeTruthy()
     expect(api.confirmMyHostGrant).toHaveBeenCalledWith(7)
