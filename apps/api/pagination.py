@@ -5,6 +5,7 @@ the OpenAPI schema knows the item type.
 """
 from __future__ import annotations
 
+import datetime as dt
 from collections.abc import Callable, Sequence
 from typing import Any, Generic, TypeVar
 
@@ -44,6 +45,17 @@ def clamp_limit(limit: int, *, cap: int = DEFAULT_LIMIT_CAP) -> int:
     helper with an overridable ``cap`` rather than N copies of ``max(1, min(...))``.
     """
     return max(1, min(limit, cap))
+
+
+#: Longest ``?since_minutes=`` look-back honoured: a century, which is every row.
+#: Past it ``now - timedelta(...)`` falls before year 1 and Python overflows.
+MAX_SINCE_MINUTES = 100 * 366 * 24 * 60
+
+
+def minutes_ago(since_minutes: int) -> dt.datetime:
+    """The start of a ``?since_minutes=`` window: at least one minute, at most a century."""
+    minutes = max(1, min(since_minutes, MAX_SINCE_MINUTES))
+    return dt.datetime.now(dt.UTC) - dt.timedelta(minutes=minutes)
 
 
 def clamp_offset(offset: int) -> int:

@@ -62,6 +62,11 @@ def parse_lines(lines: Iterable[str], *, max_turns: int | None = None) -> Parsed
         except json.JSONDecodeError:
             logger.warning("Skipping invalid JSON line: %r", line[:200])
             continue
+        if not isinstance(payload, dict):
+            # Valid JSON but not a transcript record (`1`, `"x"`, `[]`): skip it
+            # like an unreadable line rather than fail the whole upload.
+            logger.warning("Skipping non-object JSON line: %r", line[:200])
+            continue
 
         kind = payload.get("type")
 
