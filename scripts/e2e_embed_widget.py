@@ -32,7 +32,7 @@ costs whatever a real agent costs.
     uv run python scripts/e2e_embed_widget.py --send "what is stale here?"
 
 Auth comes from a canopy PAT: `--token`, else `$CANOPY_WEB_PAT`, else
-`~/.claude/canopy/workbench-token`. Connected sites is owner-only, so a fleet
+`~/.claude/canopy/workbench-token`. Host sites is owner-only, so a fleet
 AGENT's PAT will not do — those are editors.
 """
 
@@ -146,8 +146,8 @@ def main() -> int:
     report("panel is switched on", bool(offered),
            json.dumps(self_) if isinstance(self_, dict) else str(self_)[:60])
     if not offered:
-        print("\n  Nothing else can be checked until a connected site is shown on "
-              "canopy's own pages.\n  Tick it on /w/<workspace>/settings/connected-apps "
+        print("\n  Nothing else can be checked until a host site is shown on "
+              "canopy's own pages.\n  Tick it on /w/<workspace>/settings/host-sites "
               "(owner only).\n")
         return 1
     app_name = self_["app"]

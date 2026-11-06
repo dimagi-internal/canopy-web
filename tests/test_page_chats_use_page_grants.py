@@ -2,7 +2,7 @@
 included (access-confinement-and-act-as.md → "A chat on a page reaches its site only as the person").
 
 The agent's owner (or an admin) chatting with it on a connect-labs page used to run in
-the agent's full profile with no connected site, so the gateway refused it ("site tools
+the agent's full profile with no host site, so the gateway refused it ("site tools
 exist only in a visitor's session") and the agent fell back to its OWN labs login —
 reading whatever that account could, not what the person on the page may see. Now:
 
@@ -138,7 +138,7 @@ def test_the_owners_ceiling_still_narrows_a_full_turn(w, host):
 def test_a_chat_not_held_on_a_page_has_no_site(w, host):
     _owner_grant(w)
     Session.objects.filter(pk=w["chat"].pk).update(metadata={})
-    _refused(w, host, "not held on a connected site")
+    _refused(w, host, "not held on a host site")
 
 
 def test_a_pat_with_no_chat_key_is_refused(w, host):

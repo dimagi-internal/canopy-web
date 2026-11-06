@@ -137,7 +137,7 @@ def test_a_disconnected_name_can_be_registered_again():
     owner, c = _tenant("alpha", "a@dimagi.com")
     _priv, pub = _keypair()
     app = _register(owner, "alpha", pub)
-    assert c.delete(f"/api/workspaces/alpha/connected-apps/{app.pk}").status_code == 204
+    assert c.delete(f"/api/workspaces/alpha/host-sites/{app.pk}").status_code == 204
 
     again = _register(owner, "alpha", pub)
 
@@ -149,7 +149,7 @@ def test_there_is_no_endpoint_for_granting_another_tenants_site():
     second way in. A tenant that wants the system registers it."""
     _p, _pb, _a, (_ob, c_b, _app_b) = _world()
 
-    r = c_b.post("/api/workspaces/beta/connected-apps/grants",
+    r = c_b.post("/api/workspaces/beta/host-sites/grants",
                  data={"name": "connect-labs"}, content_type="application/json")
 
     assert r.status_code in (404, 405)
@@ -236,7 +236,7 @@ def test_naming_no_agent_is_refused_rather_than_guessed_once_the_name_is_shared(
 def test_editing_keys_and_origins_touches_only_this_tenants_row():
     _p, _pb, (_oa, _ca, app_a), (_ob, c_b, app_b) = _world()
 
-    r = c_b.patch(f"/api/workspaces/beta/connected-apps/{app_b.pk}",
+    r = c_b.patch(f"/api/workspaces/beta/host-sites/{app_b.pk}",
                   data={"origins": ["https://elsewhere.example.com"], "public_keys": []},
                   content_type="application/json")
 
@@ -249,22 +249,22 @@ def test_editing_keys_and_origins_touches_only_this_tenants_row():
 def test_a_tenant_cannot_address_another_tenants_row_at_all():
     _p, _pb, (_oa, _ca, app_a), (_ob, c_b, _app_b) = _world()
 
-    assert c_b.patch(f"/api/workspaces/beta/connected-apps/{app_a.pk}",
+    assert c_b.patch(f"/api/workspaces/beta/host-sites/{app_a.pk}",
                      data={"origins": []}, content_type="application/json").status_code == 404
-    assert c_b.delete(f"/api/workspaces/beta/connected-apps/{app_a.pk}").status_code == 404
+    assert c_b.delete(f"/api/workspaces/beta/host-sites/{app_a.pk}").status_code == 404
 
 
 def test_each_tenant_lists_only_its_own_registration():
     _p, _pb, (_oa, c_a, app_a), (_ob, c_b, app_b) = _world()
 
-    assert [r["id"] for r in c_a.get("/api/workspaces/alpha/connected-apps").json()] == [app_a.pk]
-    assert [r["id"] for r in c_b.get("/api/workspaces/beta/connected-apps").json()] == [app_b.pk]
+    assert [r["id"] for r in c_a.get("/api/workspaces/alpha/host-sites").json()] == [app_a.pk]
+    assert [r["id"] for r in c_b.get("/api/workspaces/beta/host-sites").json()] == [app_b.pk]
 
 
 def test_disconnecting_ends_only_this_tenants_integration():
     priv, _pb, (_oa, c_a, app_a), _b = _world()
 
-    assert c_a.delete(f"/api/workspaces/alpha/connected-apps/{app_a.pk}").status_code == 204
+    assert c_a.delete(f"/api/workspaces/alpha/host-sites/{app_a.pk}").status_code == 204
 
     assert _mint(priv, agent_slug="alpha-agent").status_code == 401
     assert _mint(priv, agent_slug="beta-agent").status_code == 200

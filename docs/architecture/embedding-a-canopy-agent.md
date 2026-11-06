@@ -52,9 +52,9 @@ You do not need it to do this.
 Steps 1–2 are one-off per environment. Steps 3–5 are the only code you write.
 
 **On canopy's side, step 1 needs a second record:** the agent's own owner or admin adds your site under the
-agent's Read mode and connected sites (what a visitor there may do). Without it the site-agents API answers
+agent's Read mode and host sites (what a visitor there may do). Without it the site-agents API answers
 `ready: false` ("is not connected to <site>"). The two records, and how they combine, are
-[connected-sites.md](connected-sites.md).
+[host-sites.md](host-sites.md).
 
 ---
 
@@ -65,8 +65,8 @@ which agents it may offer. **All three fail closed** — which is why "nothing
 happens" almost always means one of them is missing rather than something being
 broken.
 
-Go to **Connected sites** in your workspace —
-**`/w/<workspace>/settings/connected-apps`** — as a workspace owner.
+Go to **Host sites** in your workspace —
+**`/w/<workspace>/settings/host-sites`** — as a workspace owner.
 
 **Type your site's address and click "Fill from the site".** A site on
 `dimagi-canopy` ≥ 0.16 publishes its own facts — the origins that frame the
@@ -77,7 +77,7 @@ block of its signed `site.json`. canopy looks for it beside the address you type
 keys the document names, and fills the form; the name comes from the document
 too. You check the values and click **Connect**. Nothing is saved until you do —
 a site must never be able to set its own trusted origins. On an already
-connected site, **Fill from the site's own documents** shows what the site says
+host site, **Fill from the site's own documents** shows what the site says
 beside what canopy holds, marks what would change, and saves only on **Save these
 values**, through the same audited update as a hand edit.
 
@@ -88,7 +88,7 @@ The fields, whether filled or typed:
 | **Name** | The `app` value you pass to `canopy.init`, e.g. `connect-labs` | Mismatch ⇒ the widget's frame 404s |
 | **Site URLs** | The origins allowed to frame the widget. **Include every environment** — production, staging, and your local dev origin | Empty ⇒ the frame 404s by design; an exempt page with no `frame-ancestors` would be frameable by any site |
 | **Agents it may offer** | Which of this workspace's agents this site may offer | None ⇒ the picker offers nothing |
-| **Opens on** | The site's default agent, one of those it offers (`default_agent` on `PATCH …/connected-apps/{id}`). See [§5c](embedding-advanced.md#5c-a-page-that-chooses-its-own-agent) for what outranks it | None ⇒ your `AGENT_SLUG`, then the only agent, then the picker |
+| **Opens on** | The site's default agent, one of those it offers (`default_agent` on `PATCH …/host-sites/{id}`). See [§5c](embedding-advanced.md#5c-a-page-that-chooses-its-own-agent) for what outranks it | None ⇒ your `AGENT_SLUG`, then the only agent, then the picker |
 | **Signing key** | The PUBLIC half of a key pair your server signs visitor statements with ([§3](#3-add-one-backend-endpoint)). Several may be pasted during a rotation | Missing ⇒ your site can vouch for nobody, so the widget never gets a token |
 
 There is **no secret** to copy. A site proves itself by signing ([§3](#3-add-one-backend-endpoint)), so canopy
@@ -113,11 +113,11 @@ what you get from an address bar.
 > canopy's own pages, where the whole thing is one button.
 
 **Alternatively, by API or MCP**: the page is two routes,
-`POST /api/workspaces/<ws>/connected-apps` (MCP `connect_app`) and
-`PATCH /api/workspaces/<ws>/connected-apps/<id>` (MCP `update_connected_app`), which take
+`POST /api/workspaces/<ws>/host-sites` (MCP `register_host_site`) and
+`PATCH /api/workspaces/<ws>/host-sites/<id>` (MCP `update_host_site`), which take
 the same fields — `origins`, `agents`, `public_keys` or `jwks_url` — with the
-same validation; `GET /api/workspaces/<ws>/connected-apps/discover?address=…`
-(MCP `discover_site`, add `app_id` for a connected site) reads the site's
+same validation; `GET /api/workspaces/<ws>/host-sites/discover?address=…`
+(MCP `discover_site`, add `app_id` for a host site) reads the site's
 declared facts for you to pass to them, and record each change in the settings audit
 (`settings-audit.md`). Registering a site, and changing what it may sign (its
 `public_keys`, `jwks_url` or `host_issuer`), need a person at a browser who just
@@ -128,7 +128,7 @@ sign in and use the page.
 
 ### Serving more than one canopy workspace
 
-**Each workspace registers your site itself**, on its own Connected sites page:
+**Each workspace registers your site itself**, on its own host sites page:
 its own name for it, your JWKS URL, the URLs that may frame it, and which of
 *its* agents it may offer. There is no shared registration and no workspace
 that "owns" your site for the others.
@@ -261,7 +261,7 @@ def vouch_for(user) -> dict:
             "jti": str(uuid.uuid4()),              # single use
             # Optional. `name` is descriptive. `email` + `email_verified` let a
             # visitor who ALREADY has a canopy account arrive as that account —
-            # only at a domain your site's owner allowed it to resolve (Connected
+            # only at a domain your site's owner allowed it to resolve (Host
             # sites → "Visitors with a canopy account arrive as themselves"), and
             # only when YOU verified the address. Never creates an account.
             "name": user.get_full_name(),
@@ -331,7 +331,7 @@ seconds out; and each `jti` works exactly once.
 **If your visitors already have canopy accounts** — Dimagi staff on a Dimagi
 product, say — they can arrive as *themselves*, with their own canopy
 permissions, instead of as contacts. It is one grant, made by a workspace owner
-on **Connected sites → "Visitors with a canopy account arrive as themselves"**,
+on **Host sites → "Visitors with a canopy account arrive as themselves"**,
 and it is bounded twice: only a domain that owner is in, and only one canopy
 admits at login. Your assertion then has to carry `email` and
 `email_verified: true` for that visitor, and the person must ALREADY have a

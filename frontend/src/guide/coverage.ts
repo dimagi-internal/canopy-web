@@ -56,7 +56,7 @@ export const NOT_PAGES: Record<string, string> = {
   '/w/:workspace/projects/:agent/:ref/people/:person': "redirect: a contributor page lives in its agent's console",
   // The four pages that became sections of /w/:workspace/settings.
   '/w/:workspace/members': 'redirect: → settings/members',
-  '/w/:workspace/connected-apps': 'redirect: → settings/connected-apps',
+  '/w/:workspace/host-sites': 'redirect: → settings/host-sites',
   '/w/:workspace/inbound': 'redirect: → settings/inbound',
   '/w/:workspace/slack': 'redirect: → settings/slack',
   // Short forms of settings sections.

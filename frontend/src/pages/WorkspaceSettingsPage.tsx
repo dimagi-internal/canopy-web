@@ -7,10 +7,10 @@ import { roleAllows, type Capability } from '@/lib/workspaceRoles'
 /**
  * One settings surface per workspace.
  *
- * Members, Slack, inbound email and connected sites were four sibling
+ * Members, Slack, inbound email and host sites were four sibling
  * top-level routes with no home tying them together — so "where do I change
  * something about this workspace" had four answers, three of them in the nav
- * and one (connected sites) in no menu at all. They are one thing: how this
+ * and one (host sites) in no menu at all. They are one thing: how this
  * workspace is configured.
  *
  * They are SECTIONS BEHIND TABS rather than stacked onto one scrolling page,
@@ -40,7 +40,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { segment: 'slack', label: 'Slack' },
   { segment: 'inbound', label: 'Inbound email' },
   { segment: 'email', label: 'Email' },
-  { segment: 'connected-apps', label: 'Connected sites' },
+  { segment: 'host-sites', label: 'Host sites' },
   { segment: 'connections', label: 'Connections', capability: 'integrations' },
   { segment: 'secrets', label: 'Secrets' },
   { segment: 'tasks', label: 'Tasks' },

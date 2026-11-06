@@ -2,25 +2,25 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { ConnectedApp, ConnectionTest } from '@/api/connectedApps'
+import type { HostSite, ConnectionTest } from '@/api/hostSites'
 
-const testConnectedApp = vi.fn()
-vi.mock('@/api/connectedApps', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/api/connectedApps')>()),
-  testConnectedApp: (...args: unknown[]) => testConnectedApp(...args),
+const testHostSite = vi.fn()
+vi.mock('@/api/hostSites', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api/hostSites')>()),
+  testHostSite: (...args: unknown[]) => testHostSite(...args),
 }))
 
-const { ConnectionTester, ConnectionTestTable, liveProbeSummary } = await import('./connectedApps/ConnectionTester')
-const { SiteHealthTable } = await import('./connectedApps/SiteHealthTable')
-const { RunnerRequirements } = await import('./connectedApps/HostGrantEditor')
+const { ConnectionTester, ConnectionTestTable, liveProbeSummary } = await import('./hostSites/ConnectionTester')
+const { SiteHealthTable } = await import('./hostSites/SiteHealthTable')
+const { RunnerRequirements } = await import('./hostSites/HostGrantEditor')
 
 
 afterEach(() => {
   cleanup()
-  testConnectedApp.mockReset()
+  testHostSite.mockReset()
 })
 
-const APP = { id: 7, name: 'connect-labs' } as ConnectedApp
+const APP = { id: 7, name: 'connect-labs' } as HostSite
 
 const RESULT: ConnectionTest = {
   ok: false,
@@ -48,7 +48,7 @@ const PROBE_FAILED: ConnectionTest = {
 }
 
 /**
- * "Test connection" exists because every Connected-site setting fails closed and
+ * "Test connection" exists because every host-site setting fails closed and
  * silently. The table is the whole point: one row per check, the verdict, and
  * the reason — a failure with no reason is the silence it replaces.
  */
@@ -76,15 +76,15 @@ describe('the connection test table', () => {
 
 describe('the Test connection button', () => {
   it('runs the test for THIS site and renders the result', async () => {
-    testConnectedApp.mockResolvedValue(RESULT)
+    testHostSite.mockResolvedValue(RESULT)
     render(<ConnectionTester slug="connect" app={APP} />)
     fireEvent.click(screen.getByRole('button', { name: 'Test connection' }))
     await waitFor(() => expect(screen.getByText('1 of 3 checks failed.')).toBeTruthy())
-    expect(testConnectedApp).toHaveBeenCalledWith('connect', 7)
+    expect(testHostSite).toHaveBeenCalledWith('connect', 7)
   })
 
   it('shows the error instead of a table when the test could not run', async () => {
-    testConnectedApp.mockRejectedValue(new Error('Only a workspace owner can do that.'))
+    testHostSite.mockRejectedValue(new Error('Only a workspace owner can do that.'))
     render(<ConnectionTester slug="connect" app={APP} />)
     fireEvent.click(screen.getByRole('button', { name: 'Test connection' }))
     await waitFor(() => expect(screen.getByText('Only a workspace owner can do that.')).toBeTruthy())
@@ -120,7 +120,7 @@ describe('the live probe section', () => {
 
 describe('the site health table', () => {
   const now = new Date('2026-09-28T12:00:00Z')
-  const site = (over: Partial<ConnectedApp>): ConnectedApp =>
+  const site = (over: Partial<HostSite>): HostSite =>
     ({
       id: 1,
       name: 'connect-labs',
@@ -129,7 +129,7 @@ describe('the site health table', () => {
       live_probe: { at: '2026-09-28T11:50:00Z', ok: true, step: '', step_label: '', reason: '' },
       traffic: { last_redeemed_at: '2026-09-28T09:00:00Z', last_site_call_at: null, refusals_24h: 0 },
       ...over,
-    }) as ConnectedApp
+    }) as HostSite
 
   it('lists only sites that let an agent act as a visitor, with probe and traffic side by side', () => {
     render(

@@ -1,6 +1,6 @@
-"""A Connected site's "Test connection": the SDK's conformance checks, run from canopy.
+"""A Host site's "Test connection": the SDK's conformance checks, run from canopy.
 
-Every setting on a Connected site fails CLOSED and silently — a JWKS URL that
+Every setting on a host site fails CLOSED and silently — a JWKS URL that
 answers HTML, an issuer whose metadata names a different issuer, a host that
 never allowlisted canopy's client id — and the only symptom is an agent that
 cannot act for anybody. This runs, from canopy-web's own server, what canopy

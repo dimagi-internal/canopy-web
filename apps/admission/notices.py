@@ -183,7 +183,7 @@ def fix_links(turn, rule, agent) -> list[dict]:
          "url": wslinks.scoped_url(ws, f"/settings/admission-rules?rule={rule.pk}")},
         {"label": f"{agent.name}'s turn mode and runners",
          "url": wslinks.scoped_url(ws, f"/agents/{agent.slug}/settings#running")},
-        {"label": f"Who can reach {agent.name} (channels and connected sites)",
+        {"label": f"Who can reach {agent.name} (channels and host sites)",
          "url": wslinks.scoped_url(ws, f"/agents/{agent.slug}/settings#reach")},
         {"label": f"The rejected turn ({turn.pk})",
          "url": wslinks.scoped_url(ws, f"/agents/{agent.slug}/turns")},

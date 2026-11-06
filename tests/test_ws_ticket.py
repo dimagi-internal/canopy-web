@@ -1,7 +1,7 @@
 """A token never has to ride a socket URL: trade it for a one-time ticket.
 
 URLs are written to access logs, and a browser cannot put a header on
-`new WebSocket()` — so a connected site's chat put its delegated token, and the
+`new WebSocket()` — so a host site's chat put its delegated token, and the
 widget its contact token, on `?token=`, leaving live tokens in log lines. A
 ticket (apps/tokens/ws_ticket.py) goes there instead: minted over REST where
 the token rides a header, good for one socket, for 30 seconds.

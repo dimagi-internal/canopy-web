@@ -26,7 +26,7 @@ import { normalizeTheme, type WidgetTheme } from './theme'
 export interface SignOffOptions extends MintOptions {
   /** Where canopy lives, browser-facing (as for `init`). */
   baseUrl: string
-  /** The registered Connected-site name: selects the framing policy canopy serves. */
+  /** The registered host-site name: selects the framing policy canopy serves. */
   app: string
   /** An agent of the site's workspace, when the site name needs telling apart. */
   agent?: string

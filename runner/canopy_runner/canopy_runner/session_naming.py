@@ -44,7 +44,7 @@ import re
 
 # The marker. Mirrored in canopy's orchestrator.agent_client — see module docstring.
 CANOPY_PREFIX = "c-"
-#: A CALLER's session — confined (read mode or a connected site) by canopy's `profile_guard`,
+#: A CALLER's session — confined (read mode or a host site) by canopy's `profile_guard`,
 #: which recognises it by exactly this prefix. Never shared with an admin's work.
 RESTRICTED_PREFIX = "cx-"
 
@@ -125,7 +125,7 @@ CONFINED_PROFILES = frozenset({"confined", "restricted"})
 
 
 def is_confined(env) -> bool:
-    """Whether a caller envelope confines its turn (read mode or a connected site)."""
+    """Whether a caller envelope confines its turn (read mode or a host site)."""
     return isinstance(env, dict) and env.get("profile") in CONFINED_PROFILES
 
 

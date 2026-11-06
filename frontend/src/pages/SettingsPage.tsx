@@ -12,7 +12,7 @@ import { SecurityCard } from '@/components/settings/SecurityCard'
 import { ContactDetailsPanel } from '@/components/settings/ContactDetailsPanel'
 import { ConnectionsPanel } from '@/components/settings/ConnectionsPanel'
 import { GitHubPanel } from '@/components/settings/GitHubPanel'
-import { ConnectedAppsPanel } from '@/components/settings/ConnectedAppsPanel'
+import { AuthorizedAppsPanel } from '@/components/settings/AuthorizedAppsPanel'
 import { ActAsYouPanel } from '@/components/settings/ActAsYouPanel'
 import { DelegatedCredentialsPanel } from '@/components/settings/DelegatedCredentialsPanel'
 import { SessionWorkspacePanel } from '@/components/settings/SessionWorkspacePanel'
@@ -122,7 +122,7 @@ export function SettingsPage() {
           <>
             <GitHubPanel />
             <ConnectionsPanel />
-            <ConnectedAppsPanel />
+            <AuthorizedAppsPanel />
             <TokensPanel />
           </>
         )}

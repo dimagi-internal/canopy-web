@@ -94,7 +94,7 @@ def resolve_session(user, *, session_id: str = "", claude_session_id: str = "",
     so no identifier can reach a session the caller could not open anyway.
     Raises `Ambiguous` when the identifiers match more than one. `visible`
     narrows the candidates further (a REST caller's pinned workspace, a
-    connected site's own agents); it is never wider than the read rule.
+    host site's own agents); it is never wider than the read rule.
     """
     visible = (visible if visible is not None else readable_sessions(user)).select_related("agent")
     if session_id:

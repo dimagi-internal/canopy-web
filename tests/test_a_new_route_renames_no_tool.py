@@ -22,8 +22,8 @@ pytestmark = pytest.mark.guard
 #: View names already shared between modules, each published under its qualified
 #: operationId. Only ever shrinks: removing a collision is fine, adding one is not.
 SHARED_TODAY = frozenset({
-    "declare_page_actions", "declare_page_state", "disconnect_app", "get_run", "get_session",
-    "list_connected_apps", "list_sessions", "list_turns", "resolve_page_action", "rotate_token", "send",
+    "declare_page_actions", "declare_page_state", "get_run", "get_session",
+    "list_sessions", "list_turns", "resolve_page_action", "rotate_token", "send",
 })
 
 

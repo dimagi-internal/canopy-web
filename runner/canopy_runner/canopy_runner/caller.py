@@ -185,10 +185,10 @@ def clear_pending(task: str, *, root: pathlib.Path | None = None) -> None:
         pass
 
 
-# --- restricted execution: a caller's turn, confined to read mode or a connected site ---
+# --- restricted execution: a caller's turn, confined to read mode or a host site ---
 #
 # canopy-web decides per turn whether the asker gets the agent's FULL profile (its
-# owner, an admin, canopy itself) or is a CALLER confined to a profile (read mode or a connected site) from the
+# owner, an admin, canopy itself) or is a CALLER confined to a profile (read mode or a host site) from the
 # agent's declared interface. For a caller's turn this runner:
 #   * opens it in its OWN emdash session — a distinct thread key and a `cx-` task
 #     name — so it never shares a session with an admin's work;

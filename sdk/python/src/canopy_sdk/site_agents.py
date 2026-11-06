@@ -1,4 +1,4 @@
-"""The site agents API: canopy tells a connected site, signed, which agents it
+"""The site agents API: canopy tells a host site, signed, which agents it
 may show and on what terms (spec ``2026-10-22-canopy-site-agents-api-design`` §1).
 
 A site used to keep hand-typed copies of canopy's facts — agent slugs, which
@@ -85,7 +85,7 @@ VERSIONED_KEYS: tuple[str, ...] = ("site", "runner_flags", "agents")
 #: * ``not_configured`` — this host lacks a setting (name, key, canopy URL);
 #: * ``unreachable`` — canopy could not be reached at all;
 #: * ``refused`` — canopy answered with a refusal that named no code;
-#: * canopy's own refusal codes, passed through: ``unknown_issuer`` (no Connected
+#: * canopy's own refusal codes, passed through: ``unknown_issuer`` (no host
 #:   site by this name in the tenant named), ``ambiguous_issuer`` (several
 #:   tenants have one; name ``workspace``), ``workspace_mismatch`` (the agent
 #:   named is not in the workspace named), ``bad_signature`` (canopy's registered
@@ -140,7 +140,7 @@ def request_assertion(site_name: str, site_key, audience: str, *, agent: str = "
                       workspace: str = "", now: float | None = None) -> str:
     """The site's signed request for its agents.
 
-    ``iss`` = ``sub`` = the site's Connected-site name, ``aud`` = the endpoint URL
+    ``iss`` = ``sub`` = the site's host-site name, ``aud`` = the endpoint URL
     (``endpoint_url``), 60 seconds, single-use ``jti``. ``workspace`` (the tenant's
     slug, ``contract.WORKSPACE_CLAIM``) tells canopy WHICH tenant's registration of
     ``site_name`` is meant; ``agent`` (one of the site's agents) does too, through
@@ -150,7 +150,7 @@ def request_assertion(site_name: str, site_key, audience: str, *, agent: str = "
     workspace and refuses (``workspace_mismatch``) if the agent is not in it."""
     name = str(site_name or "").strip()
     if not name:
-        raise ValueError("the request needs the site's Connected-site name")
+        raise ValueError("the request needs the site's host-site name")
     key = load_private_key(site_key, what="the site signing key")
     issued = int(time.time() if now is None else now)
     claims = {"iss": name, "sub": name, "aud": audience, "iat": issued,
@@ -364,7 +364,7 @@ class SiteAgents:
     claims: dict = field(repr=False, default_factory=dict)
     stale: bool = False
     age: float = 0.0
-    #: This Connected site's page in canopy's UI — where its owner allows agents,
+    #: This host site's page in canopy's UI — where its owner allows agents,
     #: changes its keys and URLs, and tests it. "" from a canopy that predates it.
     site_settings_url: str = ""
 

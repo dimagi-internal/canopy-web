@@ -14,18 +14,18 @@ vi.hoisted(() => {
 const getReadMode = vi.fn()
 const putReadMode = vi.fn()
 const resetReadMode = vi.fn()
-const listConnectedSites = vi.fn()
-const putConnectedSite = vi.fn()
-const deleteConnectedSite = vi.fn()
+const listAgentHostSites = vi.fn()
+const putAgentHostSite = vi.fn()
+const deleteAgentHostSite = vi.fn()
 const getAgentSettingsHistory = vi.fn()
 vi.mock('@/api/agents', async (orig) => ({
   ...(await orig<typeof import('@/api/agents')>()),
   getReadMode: (...a: unknown[]) => getReadMode(...a),
   putReadMode: (...a: unknown[]) => putReadMode(...a),
   resetReadMode: (...a: unknown[]) => resetReadMode(...a),
-  listConnectedSites: (...a: unknown[]) => listConnectedSites(...a),
-  putConnectedSite: (...a: unknown[]) => putConnectedSite(...a),
-  deleteConnectedSite: (...a: unknown[]) => deleteConnectedSite(...a),
+  listAgentHostSites: (...a: unknown[]) => listAgentHostSites(...a),
+  putAgentHostSite: (...a: unknown[]) => putAgentHostSite(...a),
+  deleteAgentHostSite: (...a: unknown[]) => deleteAgentHostSite(...a),
   getAgentSettingsHistory: (...a: unknown[]) => getAgentSettingsHistory(...a),
 }))
 
@@ -50,7 +50,7 @@ function show(canEdit = true) {
 beforeEach(() => {
   vi.clearAllMocks()
   getReadMode.mockResolvedValue({ source: 'default', profile: PROFILE })
-  listConnectedSites.mockResolvedValue(SITES())
+  listAgentHostSites.mockResolvedValue(SITES())
   getAgentSettingsHistory.mockResolvedValue([])
 })
 afterEach(cleanup)
@@ -96,20 +96,20 @@ describe('read mode', () => {
 
   it('offers nothing to change to someone who cannot', async () => {
     getReadMode.mockResolvedValue({ source: 'custom', profile: PROFILE })
-    listConnectedSites.mockResolvedValue(SITES([ROW()], ['other']))
+    listAgentHostSites.mockResolvedValue(SITES([ROW()], ['other']))
     show(false)
-    await screen.findByTestId('connected-site')
+    await screen.findByTestId('host-site')
     expect(screen.queryByRole('button', { name: 'Change' })).toBeNull()
     expect(screen.queryByRole('switch')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Add site' })).toBeNull()
   })
 })
 
-describe('connected sites', () => {
+describe('host sites', () => {
   it('shows a row with its tools, its login and its internal name', async () => {
-    listConnectedSites.mockResolvedValue(SITES([ROW()]))
+    listAgentHostSites.mockResolvedValue(SITES([ROW()]))
     show()
-    const row = await screen.findByTestId('connected-site')
+    const row = await screen.findByTestId('host-site')
     expect(row.textContent).toContain('connect-labs')
     expect(row.textContent).toContain('internal name: connect')
     expect(row.textContent).toContain('mcp__*connect_labs__*')
@@ -117,66 +117,66 @@ describe('connected sites', () => {
   })
 
   it('names the canopy app in words, and says what no limit means', async () => {
-    listConnectedSites.mockResolvedValue(SITES([ROW({ site: 'canopy-web', key: 'canopy', ceiling: [], own_login: [] })]))
+    listAgentHostSites.mockResolvedValue(SITES([ROW({ site: 'canopy-web', key: 'canopy', ceiling: [], own_login: [] })]))
     show()
-    const row = await screen.findByTestId('connected-site')
+    const row = await screen.findByTestId('host-site')
     expect(row.textContent).toContain('canopy (this app)')
     expect(row.textContent).toContain('whatever the site allows')
   })
 
   it('adds only a site the workspace has and the agent does not, with no fields', async () => {
-    listConnectedSites.mockResolvedValue(SITES([ROW()], ['connect-labs', 'other-site']))
-    putConnectedSite.mockResolvedValue(SITES([ROW(), ROW({ site: 'other-site', key: 'other_site' })], ['connect-labs', 'other-site']))
+    listAgentHostSites.mockResolvedValue(SITES([ROW()], ['connect-labs', 'other-site']))
+    putAgentHostSite.mockResolvedValue(SITES([ROW(), ROW({ site: 'other-site', key: 'other_site' })], ['connect-labs', 'other-site']))
     show()
     const picker = await screen.findByLabelText('Site to add')
     expect(within(picker).queryByRole('option', { name: 'connect-labs' })).toBeNull()
     fireEvent.change(picker, { target: { value: 'other-site' } })
     fireEvent.click(screen.getByRole('button', { name: 'Add site' }))
-    await waitFor(() => expect(screen.getAllByTestId('connected-site')).toHaveLength(2))
-    expect(putConnectedSite).toHaveBeenCalledWith('hal', 'other-site', {})
+    await waitFor(() => expect(screen.getAllByTestId('host-site')).toHaveLength(2))
+    expect(putAgentHostSite).toHaveBeenCalledWith('hal', 'other-site', {})
   })
 
   it('flips sensitive data, sending only that', async () => {
-    listConnectedSites.mockResolvedValue(SITES([ROW()]))
-    putConnectedSite.mockResolvedValue(SITES([ROW({ sensitive: true })]))
+    listAgentHostSites.mockResolvedValue(SITES([ROW()]))
+    putAgentHostSite.mockResolvedValue(SITES([ROW({ sensitive: true })]))
     show()
     fireEvent.click(await screen.findByRole('switch', { name: 'Handles sensitive data on connect-labs' }))
     await screen.findByTestId('handles-sensitive')
-    expect(putConnectedSite).toHaveBeenCalledWith('hal', 'connect-labs', { sensitive: true })
+    expect(putAgentHostSite).toHaveBeenCalledWith('hal', 'connect-labs', { sensitive: true })
   })
 
   it('shows the structural refusal when a row cannot be sensitive', async () => {
-    listConnectedSites.mockResolvedValue(SITES([ROW()]))
-    putConnectedSite.mockRejectedValue(new Error('may run no shell'))
+    listAgentHostSites.mockResolvedValue(SITES([ROW()]))
+    putAgentHostSite.mockRejectedValue(new Error('may run no shell'))
     show()
     fireEvent.click(await screen.findByRole('switch'))
     expect((await screen.findByRole('alert')).textContent).toContain('may run no shell')
   })
 
   it('edits a row, including its tools and login', async () => {
-    listConnectedSites.mockResolvedValue(SITES([ROW()]))
-    putConnectedSite.mockResolvedValue(SITES([ROW({ ceiling: [] })]))
+    listAgentHostSites.mockResolvedValue(SITES([ROW()]))
+    putAgentHostSite.mockResolvedValue(SITES([ROW({ ceiling: [] })]))
     show()
     fireEvent.click(await screen.findByRole('button', { name: 'Change connect-labs' }))
     fireEvent.change(screen.getByLabelText(/Site tools it may use/), { target: { value: '' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Save' })).toBeNull())
-    expect(putConnectedSite).toHaveBeenCalledWith('hal', 'connect-labs', expect.objectContaining({ ceiling: [], own_login: ['LABS_MCP_TOKEN'] }))
+    expect(putAgentHostSite).toHaveBeenCalledWith('hal', 'connect-labs', expect.objectContaining({ ceiling: [], own_login: ['LABS_MCP_TOKEN'] }))
   })
 
   it('removes a row', async () => {
-    listConnectedSites.mockResolvedValue(SITES([ROW()]))
-    deleteConnectedSite.mockResolvedValue(SITES())
+    listAgentHostSites.mockResolvedValue(SITES([ROW()]))
+    deleteAgentHostSite.mockResolvedValue(SITES())
     show()
     fireEvent.click(await screen.findByRole('button', { name: 'Remove connect-labs' }))
     await screen.findByText('Hal cannot be reached from any site.')
   })
 
   it('re-reads the history after a save', async () => {
-    listConnectedSites.mockResolvedValue(SITES([ROW()]))
-    putConnectedSite.mockResolvedValue(SITES([ROW({ sensitive: true })]))
+    listAgentHostSites.mockResolvedValue(SITES([ROW()]))
+    putAgentHostSite.mockResolvedValue(SITES([ROW({ sensitive: true })]))
     getAgentSettingsHistory.mockResolvedValueOnce([]).mockResolvedValue([
-      { id: 1, created_at: '2026-11-05T00:00:00Z', actor_email: 'jo@dimagi.com', via: 'browser', operation: 'put_connected_site', target: 'hal / connect-labs' },
+      { id: 1, created_at: '2026-11-05T00:00:00Z', actor_email: 'jo@dimagi.com', via: 'browser', operation: 'put_agent_host_site', target: 'hal / connect-labs' },
     ])
     show()
     fireEvent.click(await screen.findByRole('switch'))

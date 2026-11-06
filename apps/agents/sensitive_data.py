@@ -1,28 +1,28 @@
-"""Whether a connected site of an agent HANDLES SENSITIVE DATA — may serve a host's
+"""Whether a host site of an agent HANDLES SENSITIVE DATA — may serve a host's
 sensitive data — an interface setting, `data: sensitive` (spec
 2026-10-22-sensitive-data-agents §5).
 
-A connected site says `data: sensitive` on the published interface. That is accepted only
+A host site says `data: sensitive` on the published interface. That is accepted only
 
 * **when it is structurally true** (`structural_refusals`, asked by
-  `interface.parse`): the connected site reaches its host through canopy's gateway
+  `interface.parse`): the host site reaches its host through canopy's gateway
   (`sites:` is required), and its tools may be only the gateway's site tools
   (`site_tools`, `site_call`, `site_read`), `current_page`, `who_is_asking`, the
   page's own actions (`page_*`) and read-only local tools — no shell, no
   writes, nothing that leaves the box (Drive, email, memory, Slack, the web).
   Anything else is a 422 naming it;
 * **from the agent's owner or an admin**, from the browser or a token, like any other
-  change to an agent's settings: the `sensitive` field of its connected site
+  change to an agent's settings: the `sensitive` field of its host site
   (`answering.set_site`). Every such save is a setting change, audited with its before
   and after (`apps/events/audit.py`).
 
 What it buys, and what reads it:
 
-* **confinement for everyone** — a turn in such a connected site, or any turn in a
+* **confinement for everyone** — a turn in such a host site, or any turn in a
   sensitive conversation, runs the site's confined profile whoever asked
   (`turn_context.resolve_turn_context`);
 * **a sensitive conversation's host data** — the gateway calls a host for a
-  sensitive conversation only from such a connected site (`host_gateway`);
+  sensitive conversation only from such a host site (`host_gateway`);
 * **canopy vouches for it to the host** — the gateway's `Canopy-Execution`
   statement carries the setting (`as_claim`), and the host decides whether to
   accept it.
@@ -35,9 +35,9 @@ import re
 SENSITIVE = "sensitive"
 DATA_VALUES = frozenset({SENSITIVE})
 
-#: Local tools a connected site that handles sensitive data may hold: they read the agent's own checkout.
+#: Local tools a host site that handles sensitive data may hold: they read the agent's own checkout.
 READ_ONLY_LOCAL = frozenset({"Read", "Grep", "Glob", "Skill", "ToolSearch", "TodoWrite"})
-#: canopy's own tools such a connected site may hold — and the ONLY canopy tools a
+#: canopy's own tools such a host site may hold — and the ONLY canopy tools a
 #: sensitive turn's caller token reaches, whatever its interface says now
 #: (`harness.caller_tokens.resolve`, `mcp.turn_scope`).
 SENSITIVE_CANOPY_TOOLS = frozenset({"current_page", "who_is_asking", "site_tools", "site_call",
@@ -97,7 +97,7 @@ def handles_sensitive(agent, name: str | None) -> bool:
 
 def as_claim(agent, name: str | None) -> dict | None:
     """The setting as canopy states it to a host (`Canopy-Execution`, whose `capability` key is wire):
-    who last published the interface that holds it, and when. None when the connected site `name`
+    who last published the interface that holds it, and when. None when the host site `name`
     is not `data: sensitive`."""
     if not handles_sensitive(agent, name):
         return None

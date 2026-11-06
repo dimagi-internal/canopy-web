@@ -381,7 +381,7 @@ def finish_turn(request: HttpRequest, turn_id: uuid.UUID, payload: TurnFinishIn)
 def _abortable_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     """A turn the caller may abort: its own agent's login (the agent stopping
     itself), an editor of that agent, or whoever may report on it (the box that
-    claimed it). Uniform 404 otherwise. Never a connected site acting for a visitor."""
+    claimed it). Uniform 404 otherwise. Never a host site acting for a visitor."""
     if delegation.offered_for(request) is None:
         turn = (Turn.objects.select_related("agent", "chat_session__agent", "claimed_by")
                 .filter(pk=turn_id).first())

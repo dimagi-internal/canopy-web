@@ -6,7 +6,7 @@
         # The arrival (visitor assertion). Required for the panel.
         "SIGNING_KEY": env("CANOPY_SIGNING_KEY"),        # Ed25519 / P-256 PEM
         "CANOPY_BASE_URL": "https://labs.connect.dimagi.com/canopy",
-        "APP_NAME": "connect-labs",                       # your Connected-site name
+        "APP_NAME": "connect-labs",                       # your host-site name
         "WORKSPACE": "connect",     # the canopy workspace (tenant) the site is registered in
         "AGENT_SLUG": "ace",        # the default agent; also names the tenant when WORKSPACE is unset
         # The grant. All four present turns it on; any missing turns it off.

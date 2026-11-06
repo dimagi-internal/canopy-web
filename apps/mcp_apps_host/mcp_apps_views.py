@@ -5,7 +5,7 @@ that serve a rendered View (`canopy_sessions/app_views_api.py` for canopy users,
 `contacts/contact_api.py` for contacts) are thin; this module is the whole rule.
 
 **Which rows (§3).** A `tool_result` gets a View when (a) the session was held on
-a Connected site (`metadata.embed_app`) and (b) that site's UI tool index has a
+a host site (`metadata.embed_app`) and (b) that site's UI tool index has a
 `resourceUri` for the host tool the call named — either path:
 
 * **G** — the agent called `site_call`; the host tool is `input.tool`;
@@ -131,7 +131,7 @@ class Viewer:
 
 
 def site_app(session):
-    """The session's live Connected site, in the AGENT's tenant, or None."""
+    """The session's live host site, in the AGENT's tenant, or None."""
     from apps.tokens.models import AppCredential
 
     site = str((session.metadata or {}).get("embed_app") or "").strip()
@@ -181,7 +181,7 @@ def annotate(session, messages) -> None:
     """Set `.app` on every tool_result row of `messages` whose call has a View.
 
     In memory only. Cheap when there is nothing to do (no site, no indexed View),
-    which is every session not held on a Connected site.
+    which is every session not held on a host site.
     """
     from apps.canopy_sessions.models import Message
 
@@ -363,7 +363,7 @@ def _blocks(body) -> list[dict]:
 
 def _ceiling(session, row: ViewRow) -> list[str]:
     """The owner's ceiling for this site, if the conversation has one. The
-    connected site of the turn that made the call; none known → none (the host's
+    host site of the turn that made the call; none known → none (the host's
     grant decides, as it does for every call)."""
     from apps.canopy_sessions.models import Message
 

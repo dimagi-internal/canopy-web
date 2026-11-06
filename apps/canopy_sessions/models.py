@@ -67,7 +67,7 @@ class Session(models.Model):
         return self.project or (self.agent.slug if self.agent_id else "")
     title = models.CharField(max_length=200, blank=True, default="")
     #: The contact this session belongs to, when it was started by somebody
-    #: with no canopy account (a visitor to a connected site).
+    #: with no canopy account (a visitor to a host site).
     #:
     #: Exclusive with `created_by` in practice, and not enforced by a
     #: constraint on purpose: a contact who later becomes a user
@@ -1211,7 +1211,7 @@ class AppViewSubscription(models.Model):
     """
 
     session = models.ForeignKey(Session, on_delete=models.CASCADE, related_name="app_subscriptions")
-    #: The Connected site whose resource it is: only that site's notification reaches it.
+    #: The host site whose resource it is: only that site's notification reaches it.
     app = models.ForeignKey("tokens.AppCredential", on_delete=models.CASCADE, related_name="+")
     tool_call_id = models.CharField(max_length=255)
     uri = models.CharField(max_length=2048)

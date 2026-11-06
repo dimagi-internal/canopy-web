@@ -71,7 +71,7 @@ tick **"Show this panel on canopy's own pages"**. canopy publishes its own signe
 site** fills the registration, and after a move to a new address **Fill from the
 site's own documents** refreshes it — no URL is typed by hand. There is no separate flow, no
 reserved name and no deployment setting: canopy's own panel is whichever
-connected site an owner ticked that box on, and usually that site is canopy
+host site an owner ticked that box on, and usually that site is canopy
 itself. Only one app may have it at a time, and the refusal names the one that
 already does.
 
@@ -94,7 +94,7 @@ any host uses (`frontend/src/widget/CanopyWidget.tsx`: `mode` at init,
 
 [§8a](embedding-actions-and-access.md#8a-who-the-agent-acts-as) applies to canopy too: on canopy's own pages the agent can call **canopy's
 own MCP (`/api/mcp/`) as the visitor**, through the same host grant contract a
-connected site implements — not a shortcut around it. canopy-web plays the host
+host site implements — not a shortcut around it. canopy-web plays the host
 with the SDK's own pieces (`apps/host_grants/self_host.py`: `HostConfig`,
 `GrantHandler`, `ResourceVerifier`, `DPoPGate`, the `canopy_sdk.django` stores):
 
@@ -150,17 +150,17 @@ page picks among read-only views of its own data.
    canopy's client keys (`CANOPY_OAUTH_CLIENT_KEY` / `CANOPY_OAUTH_DPOP_KEY`),
    since the only client canopy grants to is itself. Dev and tests generate all
    three per process.
-2. On the `canopy-web` Connected site (the one showing its panel on canopy's
-   pages), in **Settings → Connected sites**: JWKS URL
+2. On the `canopy-web` host site (the one showing its panel on canopy's
+   pages), in **Settings → Host sites**: JWKS URL
    `{CANOPY_PUBLIC_BASE_URL}/oauth/host/jwks.json`, sign-in issuer
    `{CANOPY_PUBLIC_BASE_URL}`, MCP server `{CANOPY_PUBLIC_BASE_URL}/api/mcp/`.
    On labs (canopy.dimagi.com): `https://canopy.dimagi.com/oauth/host/jwks.json`,
    `https://canopy.dimagi.com`,
    `https://canopy.dimagi.com/api/mcp/`.
-3. On each agent, a connected site naming the site, e.g.
+3. On each agent, a host site naming the site, e.g.
    `sites: [canopy-web]` (a `ceiling:` is optional and only
    narrows), and an access-list line giving the people who should use it that one
-   connected site (or a role that opens it), such as a workspace-wide default line for everyone in the workspace. `site_tools`/`site_call` are added to it automatically.
+   host site (or a role that opens it), such as a workspace-wide default line for everyone in the workspace. `site_tools`/`site_call` are added to it automatically.
    (A full-profile turn — the agent's owner, a workspace owner, an admin — has
    no caller token and so no gateway; it already runs with its own canopy login.)
 4. **Test connection** on that site should come back all green.

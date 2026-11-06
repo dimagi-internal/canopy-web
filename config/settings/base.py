@@ -628,15 +628,15 @@ CANOPY_OAUTH_CLIENT_RETIRED_PUBLIC_KEYS = env("CANOPY_OAUTH_CLIENT_RETIRED_PUBLI
 CANOPY_OAUTH_EPHEMERAL_KEYS = env.bool("CANOPY_OAUTH_EPHEMERAL_KEYS", default=DEBUG)
 # canopy-web as a HOST of its own MCP (apps/host_grants/self_host.py): agents on
 # canopy's own pages call canopy's own /api/mcp/ AS THE VISITOR, through the same
-# host grant contract a connected site implements. This key signs the ID-JAGs
+# host grant contract a host site implements. This key signs the ID-JAGs
 # canopy issues for its own pages; its public half is served at
 # {CANOPY_PUBLIC_BASE_URL}/oauth/host/jwks.json, which is what the `canopy-web`
-# Connected site's JWKS URL names. Ed25519 or P-256 PEM. "PLACEHOLDER" / empty =
+# Host site's JWKS URL names. Ed25519 or P-256 PEM. "PLACEHOLDER" / empty =
 # off (every host endpoint answers 503 and no grant is issued); with
 # CANOPY_OAUTH_EPHEMERAL_KEYS (dev, tests) one is generated per process.
 CANOPY_HOST_SIGNING_KEY = env("CANOPY_HOST_SIGNING_KEY", default="").replace("\\n", "\n")
 # The dedicated user canopy's LIVE PROBE acts as at canopy's own MCP (the probe
-# of the `canopy-web` Connected site; apps/host_grants/live_probe.py). Non-secret. Empty
+# of the `canopy-web` host site; apps/host_grants/live_probe.py). Non-secret. Empty
 # = the probe endpoint 404s. The user is created by tokens/0026_probe_user: a
 # non-admin with no password, no email and no membership, so the probe's
 # `list_fleet_tasks` runs as a real account and reads nothing.
@@ -688,23 +688,23 @@ CANOPY_PUBLIC_BASE_URL = env("CANOPY_PUBLIC_BASE_URL", default="http://localhost
 # canopy's identity in the OAuth/assertion protocols — its CIMD client_id
 # ({base}/oauth/client.json), the issuer of its own host half and MCP login, and
 # the default audience a site's visitor assertion must name. Empty = the public
-# base. Separate because connected sites PIN these (ace-web's CANOPY_CLIENT_ID,
+# base. Separate because host sites PIN these (ace-web's CANOPY_CLIENT_ID,
 # its assertion audience), so they cannot move when the address people visit
-# does: moving it is a coordinated change with each connected site.
+# does: moving it is a coordinated change with each host site.
 CANOPY_IDENTITY_BASE_URL = env("CANOPY_IDENTITY_BASE_URL", default="")
 # Base URLs this deployment was served at before (connectlabs.py). Read by the
 # Slack sync to recognise what it registered there.
 CANOPY_FORMER_BASE_URLS: list[str] = []
 
 # MCP Apps (SEP-1865; apps/mcp_apps_host/mcp_apps.py, spec 2026-10-08): where canopy's
-# chat frames the SANDBOX PROXY that hosts a Connected site's View. A canopy
+# chat frames the SANDBOX PROXY that hosts a host site's View. A canopy
 # sub-path by default (owner decision 1: no new DNS) — isolated by framing it
 # `sandbox="allow-scripts"` with no `allow-same-origin`, so its origin is opaque.
 # A setting so a dedicated origin later is config only: set an absolute URL and
 # MCP_APPS_HOST_ORIGINS to the canopy origins that frame it.
 MCP_APPS_SANDBOX_URL = env("MCP_APPS_SANDBOX_URL", default="/mcp-apps/sandbox/")
 # The canopy page origins the proxy accepts messages from (and that may frame it,
-# with every live Connected site's frame origins for the embed panel). Empty =
+# with every live host site's frame origins for the embed panel). Empty =
 # derived: CANOPY_PUBLIC_BASE_URL, CANOPY_FORMER_BASE_URLS and the request's own.
 MCP_APPS_HOST_ORIGINS = env.list("MCP_APPS_HOST_ORIGINS", default=[])
 # Refresh a site's UI tool index in the background when a visitor arrives.
@@ -883,8 +883,8 @@ MANAGERS: list = []
 if DEBUG:
     CORS_ALLOW_ALL_ORIGINS = True
 else:
-    # Only the API, and only for a live connected site's declared origins
-    # (apps/embedding/cors.py), with no cookies: a connected site's page calls
+    # Only the API, and only for a live host site's declared origins
+    # (apps/embedding/cors.py), with no cookies: a host site's page calls
     # canopy with a Bearer token it holds, and that token is all it carries.
     CORS_URLS_REGEX = r"^/api/.*$"
 

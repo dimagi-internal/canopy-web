@@ -47,7 +47,7 @@ def w():
 # --- the interface wires the gateway in ---------------------------------------------
 
 
-def test_a_connected_site_carries_the_gateway_tools_and_its_session_sees_them(w):
+def test_a_host_site_carries_the_gateway_tools_and_its_session_sees_them(w):
     tools = profile(w["agent"], "connect")["tools"]
     assert set(GATEWAY_TOOLS) <= set(tools)
     with _visitor(w):
@@ -204,7 +204,7 @@ def test_a_rotated_dpop_key_invalidates_stored_grants(w, host):
     _refused(w, host, "back on the page")
 
 
-def test_a_disconnected_site_is_refused(w, host):
+def test_a_dishost_site_is_refused(w, host):
     _grant(w)
     AppCredential.objects.filter(pk=w["app"].pk).update(revoked_at=timezone.now())
     _refused(w, host, "does not let me act for you")
@@ -220,7 +220,7 @@ def test_a_pat_session_cannot_use_the_gateway(w, host):
     assert host.calls == []
 
 
-def test_a_confined_session_without_the_connected_site_cannot_even_see_it(w, host):
+def test_a_confined_session_without_the_host_site_cannot_even_see_it(w, host):
     Turn.objects.filter(pk=w["turn"].pk).update(capability="ask")
     with _visitor(w):
         names = {t.name for t in async_to_sync(mcp.list_tools)()}
@@ -240,11 +240,11 @@ def test_the_interface_parses_sites_and_ceiling_and_refuses_nonsense(w):
     assert out["sites"] == ["connect-labs"] and out["ceiling"] == ["mcp__*connect_labs__marketplace_*"]
     with pytest.raises(InterfaceError, match="needs `sites:`"):
         parse({"capabilities": {"x": {"ceiling": ["*"]}}})
-    with pytest.raises(InterfaceError, match="not a Connected site name"):
+    with pytest.raises(InterfaceError, match="not a host site name"):
         parse({"capabilities": {"x": {"sites": ["a b"]}}})
 
 
-def test_a_conversation_on_the_site_selects_the_connected_site(w):
+def test_a_conversation_on_the_site_selects_the_host_site(w):
     from apps.agents.turn_context import for_turn
 
     def profile_for(turn, agent):

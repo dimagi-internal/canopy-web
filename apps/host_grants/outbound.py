@@ -1,7 +1,7 @@
 """Outbound requests to a URL an operator typed — the host grant flow's only way out.
 
 Every fetch the host grant flow makes (RFC 8414 metadata, the token endpoint,
-the host's MCP server) goes to a URL that came from a Connected site's config
+the host's MCP server) goes to a URL that came from a host site's config
 or from a document that URL returned. That makes each one a request canopy
 makes on an operator's word from inside a VPC with a metadata service, so the
 guards `jwks.py` established apply to every one of them, and live here once:

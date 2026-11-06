@@ -106,7 +106,7 @@ def _owner_client(site):
 
 def test_an_owner_sets_and_clears_a_sites_default(site):
     c = _owner_client(site)
-    url = f"/api/workspaces/w1/connected-apps/{site['app'].pk}"
+    url = f"/api/workspaces/w1/host-sites/{site['app'].pk}"
     r = c.patch(url, data={"default_agent": "trellis"}, content_type="application/json")
     assert r.status_code == 200 and r.json()["default_agent"] == "trellis"
     r = c.patch(url, data={"default_agent": "ada"}, content_type="application/json")
@@ -118,7 +118,7 @@ def test_an_owner_sets_and_clears_a_sites_default(site):
 
 def test_a_default_must_be_one_of_the_sites_agents(site):
     Agent.objects.create(slug="elsewhere", name="Elsewhere", workspace=site["ws"])
-    r = _owner_client(site).patch(f"/api/workspaces/w1/connected-apps/{site['app'].pk}",
+    r = _owner_client(site).patch(f"/api/workspaces/w1/host-sites/{site['app'].pk}",
                                   data={"default_agent": "elsewhere"}, content_type="application/json")
     assert r.status_code == 422
     assert not AppCredentialAgent.objects.filter(app=site["app"], is_default=True).exists()
@@ -127,7 +127,7 @@ def test_a_default_must_be_one_of_the_sites_agents(site):
 def test_agents_and_default_change_together(site):
     """Validated against the list as it is AFTER this request's `agents`."""
     Agent.objects.create(slug="newbie", name="Newbie", workspace=site["ws"])
-    r = _owner_client(site).patch(f"/api/workspaces/w1/connected-apps/{site['app'].pk}",
+    r = _owner_client(site).patch(f"/api/workspaces/w1/host-sites/{site['app'].pk}",
                                   data={"agents": ["ada", "newbie"], "default_agent": "newbie"},
                                   content_type="application/json")
     assert r.status_code == 200 and r.json()["default_agent"] == "newbie"
@@ -141,7 +141,7 @@ def test_taking_the_default_off_the_list_takes_the_default_with_it(site):
 
 def test_a_default_can_be_set_when_connecting(site):
     c = _owner_client(site)
-    r = c.post("/api/workspaces/w1/connected-apps", content_type="application/json",
+    r = c.post("/api/workspaces/w1/host-sites", content_type="application/json",
                data={"name": "other", "origins": [LABS], "agents": ["ada", "trellis"],
                      "default_agent": "trellis"})
     assert r.status_code == 201 and r.json()["default_agent"] == "trellis"
@@ -150,7 +150,7 @@ def test_a_default_can_be_set_when_connecting(site):
 def test_an_editor_cannot_set_a_sites_default(site):
     c = Client()
     c.force_login(site["visitor"])
-    r = c.patch(f"/api/workspaces/w1/connected-apps/{site['app'].pk}",
+    r = c.patch(f"/api/workspaces/w1/host-sites/{site['app'].pk}",
                 data={"default_agent": "ada"}, content_type="application/json")
     assert r.status_code in (403, 404)
 

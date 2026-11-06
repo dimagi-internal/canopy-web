@@ -22,7 +22,7 @@ describe('AccessLineForm with roles from the server', () => {
   it('offers the custom role with its description, weakest first, and not the fixed ones', () => {
     render(<AccessLineForm roles={ROLES} workspaces={[['dimagi', 'Dimagi']]} onAdd={vi.fn()} />)
     const names = screen.getAllByRole('radio').map((r) => (r as HTMLInputElement).value)
-    expect(names).toEqual(['read_only', 'connector', 'pilot', 'connected_site'])
+    expect(names).toEqual(['read_only', 'connector', 'pilot', 'host_site'])
     expect(screen.getByRole('radio', { name: /Connect site/ })).toBeTruthy()
     expect(screen.getByText(/only Connect/)).toBeTruthy()
   })

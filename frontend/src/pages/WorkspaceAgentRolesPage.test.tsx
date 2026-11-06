@@ -25,7 +25,7 @@ function catalog(over: Partial<AgentRolesOut> = {}): AgentRolesOut {
   return {
     roles: [
       role('editor', 'Editor', ['read', 'write', 'agent_edit'], { builtin: true, contains_write: true, can: ['drive the whole agent', 'change its skills and settings'] }),
-      role('connector', 'Connect site', ['read', 'use:connect'], { can: ['be answered in read mode', "use it from the 'connect' connected site"], in_use: { lines: 3, agents: 2, defaults: 1 } }),
+      role('connector', 'Connect site', ['read', 'use:connect'], { can: ['be answered in read mode', "use it from the 'connect' host site"], in_use: { lines: 3, agents: 2, defaults: 1 } }),
       role('read_only', 'Read only', ['read'], { builtin: true, can: ['be answered in read mode'] }),
     ],
     fixed: [{ key: 'owner', label: 'Owner', can: ['transfer or delete it'], why: 'whoever owns the agent' },
@@ -56,14 +56,14 @@ describe('WorkspaceAgentRolesPage', () => {
     listAgentRoles.mockResolvedValue(catalog())
     show()
     const row = await screen.findByTestId('agent-role-connector')
-    expect(row.textContent).toContain("Can be answered in read mode, use it from the 'connect' connected site")
+    expect(row.textContent).toContain("Can be answered in read mode, use it from the 'connect' host site")
     expect(row.textContent).toContain('3 lines · 2 agents · 1 default')
     expect(screen.getByTestId('agent-role-editor').textContent).toContain('built in')
     expect(screen.getByTestId('agent-role-fixed-owner').textContent).toContain('Not a line')
     expect(screen.queryByRole('button', { name: 'Delete Read only' })).toBeNull()      // a built-in is never deletable
   })
 
-  it('defines a role: the key follows the name, connected sites become use: entries', async () => {
+  it('defines a role: the key follows the name, host sites become use: entries', async () => {
     listAgentRoles.mockResolvedValue(catalog())
     createAgentRole.mockResolvedValue(role('reviewer', 'Reviewer', ['read', 'use:report']))
     show()
@@ -71,7 +71,7 @@ describe('WorkspaceAgentRolesPage', () => {
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Reviewer' } })
     expect((screen.getByLabelText('Key') as HTMLInputElement).value).toBe('reviewer')
     fireEvent.click(screen.getByLabelText(/Be answered in read mode/))
-    fireEvent.change(screen.getByLabelText('Connected sites'), { target: { value: 'report' } })
+    fireEvent.change(screen.getByLabelText('Host sites'), { target: { value: 'report' } })
     fireEvent.click(screen.getByRole('button', { name: 'Create role' }))
     await waitFor(() => expect(createAgentRole).toHaveBeenCalledWith('dimagi', {
       key: 'reviewer', label: 'Reviewer', description: '', permissions: ['read', 'use:report'],
@@ -110,7 +110,7 @@ describe('WorkspaceAgentRolesPage', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Copy Connect site' }))
     expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Connect site (copy)')
     expect((screen.getByLabelText('Key') as HTMLInputElement).disabled).toBe(false)
-    expect((screen.getByLabelText('Connected sites') as HTMLInputElement).value).toBe('connect')
+    expect((screen.getByLabelText('Host sites') as HTMLInputElement).value).toBe('connect')
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
 
     fireEvent.click(screen.getByRole('button', { name: 'Delete Connect site' }))

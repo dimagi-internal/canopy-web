@@ -17,7 +17,7 @@ UNSATISFIABLE = "__malformed__"
 #: declares of a box set up for sensitive data.
 SENSITIVE_DATA = "sensitive_data"
 _LABELS = {SENSITIVE_DATA: "sensitive-data"}
-#: What each flag means, as canopy states it to a connected site (the site
+#: What each flag means, as canopy states it to a host site (the site
 #: agents API's `runner_flags`). One entry per `RUNNER_FLAGS` member (a test holds it).
 MEANINGS = {
     SENSITIVE_DATA: ("a sensitive-data runner: its owner declared, and the box reports, that it "

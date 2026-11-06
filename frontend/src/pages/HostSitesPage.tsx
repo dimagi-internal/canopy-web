@@ -5,25 +5,25 @@ import { WorkbenchSubHeader } from 'canopy-ui'
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
 import { listAgents, type AgentOut } from '@/api/agents'
 import {
-  connectApp,
-  disconnectApp,
-  listConnectedApps,
-  updateConnectedApp,
-  type ConnectedApp,
-} from '@/api/connectedApps'
+  registerHostSite,
+  revokeHostSite,
+  listHostSites,
+  updateHostSite,
+  type HostSite,
+} from '@/api/hostSites'
 import { roleAllows } from '@/lib/workspaceRoles'
 import { ApiError } from '@/api/problem'
-import { parseKeys, parseOrigins, currentOrigin } from '@/pages/connectedApps/parse'
+import { parseKeys, parseOrigins, currentOrigin } from '@/pages/hostSites/parse'
 import {
   AgentPicker,
   DefaultAgentPicker,
   HostGrantEditor,
   HostGrantFields,
-} from '@/pages/connectedApps/HostGrantEditor'
-import { ConnectionTester } from '@/pages/connectedApps/ConnectionTester'
-import { SiteHealthTable } from '@/pages/connectedApps/SiteHealthTable'
-import { SiteNeedsSection } from '@/pages/connectedApps/SiteNeedsTable'
-import { FillFromSite, SiteAddressFill } from '@/pages/connectedApps/SiteFactsTable'
+} from '@/pages/hostSites/HostGrantEditor'
+import { ConnectionTester } from '@/pages/hostSites/ConnectionTester'
+import { SiteHealthTable } from '@/pages/hostSites/SiteHealthTable'
+import { SiteNeedsSection } from '@/pages/hostSites/SiteNeedsTable'
+import { FillFromSite, SiteAddressFill } from '@/pages/hostSites/SiteFactsTable'
 
 /**
  * Connect a site to canopy — the page that replaced the Django admin.
@@ -35,7 +35,7 @@ import { FillFromSite, SiteAddressFill } from '@/pages/connectedApps/SiteFactsTa
  * could not do at all.
  */
 
-export function ConnectedAppsPage(): JSX.Element | null {
+export function HostSitesPage(): JSX.Element | null {
   const { workspace: slug } = useParams()
   const { hash } = useLocation()
   const { workspaces } = useWorkspace()
@@ -46,14 +46,14 @@ export function ConnectedAppsPage(): JSX.Element | null {
   const isOwner = roleAllows(myRole, 'own')
   const canTest = roleAllows(myRole, 'integrations')
 
-  const [apps, setApps] = useState<ConnectedApp[] | null>(null)
+  const [apps, setApps] = useState<HostSite[] | null>(null)
   const [agents, setAgents] = useState<AgentOut[]>([])
   const [loadError, setLoadError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // The site the form just connected. Its card lands in the list above, out
   // of sight of the button, so the form says so and links to it.
-  const [connected, setConnected] = useState<ConnectedApp | null>(null)
+  const [connected, setConnected] = useState<HostSite | null>(null)
 
   const [name, setName] = useState('')
   const [origins, setOrigins] = useState('')
@@ -67,15 +67,15 @@ export function ConnectedAppsPage(): JSX.Element | null {
   const reload = useCallback(async () => {
     if (!slug) return
     try {
-      setApps(await listConnectedApps(slug))
+      setApps(await listHostSites(slug))
       setLoadError(null)
     } catch (e) {
       setLoadError(
         e instanceof ApiError && e.status === 403
-          ? 'Only a workspace admin or owner can see connected sites.'
+          ? 'Only a workspace admin or owner can see host sites.'
           : e instanceof Error
             ? e.message
-            : 'Could not load connected sites.',
+            : 'Could not load host sites.',
       )
     }
   }, [slug])
@@ -111,7 +111,7 @@ export function ConnectedAppsPage(): JSX.Element | null {
     e.preventDefault()
     setConnected(null)
     await run(async () => {
-      const app = await connectApp(slug!, {
+      const app = await registerHostSite(slug!, {
         name: name.trim(),
         origins: parseOrigins(origins),
         show_on_canopy_pages: showHere,
@@ -136,7 +136,7 @@ export function ConnectedAppsPage(): JSX.Element | null {
 
   return (
     <div className="max-w-4xl space-y-6">
-      <WorkbenchSubHeader title="Connected sites" count={apps?.length} />
+      <WorkbenchSubHeader title="Host sites" count={apps?.length} />
       <p className="-mt-4 text-sm text-muted-foreground">
         Websites allowed to host one of this workspace's agents.
       </p>
@@ -198,7 +198,7 @@ export function ConnectedAppsPage(): JSX.Element | null {
                     size="sm"
                     variant="ghost"
                     disabled={busy}
-                    onClick={() => void run(() => disconnectApp(slug, app.id))}
+                    onClick={() => void run(() => revokeHostSite(slug, app.id))}
                   >
                     Disconnect
                   </Button>
@@ -209,7 +209,7 @@ export function ConnectedAppsPage(): JSX.Element | null {
                   agents={agents}
                   selected={app.agents.map((a) => a.slug)}
                   onChange={(slugs) =>
-                    void run(() => updateConnectedApp(slug, app.id, { agents: slugs }))
+                    void run(() => updateHostSite(slug, app.id, { agents: slugs }))
                   }
                 />
               )}
@@ -218,7 +218,7 @@ export function ConnectedAppsPage(): JSX.Element | null {
                   app={app}
                   busy={busy}
                   onChange={(agent) =>
-                    void run(() => updateConnectedApp(slug, app.id, { default_agent: agent }))
+                    void run(() => updateHostSite(slug, app.id, { default_agent: agent }))
                   }
                 />
               )}
@@ -228,7 +228,7 @@ export function ConnectedAppsPage(): JSX.Element | null {
                   busy={busy}
                   onSave={(issuer, resource) =>
                     void run(() =>
-                      updateConnectedApp(slug, app.id, {
+                      updateHostSite(slug, app.id, {
                         host_issuer: issuer,
                         host_mcp_resource: resource,
                       }),
@@ -243,7 +243,7 @@ export function ConnectedAppsPage(): JSX.Element | null {
                   busy={busy}
                   onSave={(facts) =>
                     void run(() =>
-                      updateConnectedApp(slug, app.id, {
+                      updateHostSite(slug, app.id, {
                         ...facts,
                         // Re-adds canopy's own origin, which the site does not list.
                         ...(app.shows_on_canopy_pages ? { show_on_canopy_pages: true } : {}),

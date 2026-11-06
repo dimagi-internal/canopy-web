@@ -85,7 +85,7 @@ def _host_document(build) -> JsonResponse:
 
 @require_GET
 def host_jwks(request: HttpRequest) -> JsonResponse:
-    """The HOST signing key's public half — what the `canopy-web` Connected
+    """The HOST signing key's public half — what the `canopy-web` Host
     site's JWKS URL names, and what verifies the ID-JAGs canopy signs for its
     own pages. Distinct from `/oauth/jwks.json` (the CLIENT key)."""
     from apps.host_grants import self_host

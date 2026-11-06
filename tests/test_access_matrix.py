@@ -181,7 +181,7 @@ def test_members_through_every_signed_in_entry_point(w, entry, role, iface):
     want = EXPECT[role][iface]
     if entry == "api" and role == "viewer":
         # The harness API's agent branch is the editor tier's entry point: a viewer
-        # talks to an agent by chat, Slack or a connected site's MCP tool instead.
+        # talks to an agent by chat, Slack or a host site's MCP tool instead.
         assert turn is None
         return
     if turn is None:        # refused on the way in: the list does not name them

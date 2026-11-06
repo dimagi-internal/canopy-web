@@ -21,7 +21,7 @@ router = Router(auth=session_auth, tags=["events"])
 # (`apps/mcp/models.MCPAuditLog`), one row per tool call made through canopy's
 # MCP server — by a person's assistant, an agent session, or a script. Before
 # this it had no reader at all; only aggregates reached owners through a
-# connected site's traffic health.
+# host site's traffic health.
 @router.get("/mcp-calls", response=McpCallListOut,
             summary="MCP tool calls made in your workspaces (admins), and your own")
 @gate("logs.read", "self")  # the workspace's calls for admins; your own always

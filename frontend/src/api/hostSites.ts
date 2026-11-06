@@ -9,7 +9,7 @@ import { apiV2 } from './client.v2'
 import { ensureOk } from './problem'
 import type { components } from './generated'
 
-export type ConnectedApp = components['schemas']['ConnectedAppOut']
+export type HostSite = components['schemas']['HostSiteOut']
 
 // A refusal is the shared `ApiError` (./problem): `.status` tells 404 (not a
 // member) from 403 (a member who is not an owner).
@@ -18,14 +18,14 @@ async function unwrap<T>(res: { response: Response; data?: unknown; error?: unkn
   return res.data as T
 }
 
-export async function listConnectedApps(slug: string): Promise<ConnectedApp[]> {
-  const res = await apiV2.GET('/api/workspaces/{slug}/connected-apps', {
+export async function listHostSites(slug: string): Promise<HostSite[]> {
+  const res = await apiV2.GET('/api/workspaces/{slug}/host-sites', {
     params: { path: { slug } },
   })
-  return (await unwrap<ConnectedApp[]>(res, 'Could not load connected sites')) ?? []
+  return (await unwrap<HostSite[]>(res, 'Could not load host sites')) ?? []
 }
 
-export async function connectApp(
+export async function registerHostSite(
   slug: string,
   body: {
     name: string
@@ -43,15 +43,15 @@ export async function connectApp(
     /** One of `agents` for its panel to open on; "" (the default) for none. */
     default_agent?: string
   },
-): Promise<ConnectedApp> {
-  const res = await apiV2.POST('/api/workspaces/{slug}/connected-apps', {
+): Promise<HostSite> {
+  const res = await apiV2.POST('/api/workspaces/{slug}/host-sites', {
     params: { path: { slug } },
     body: { ...body, default_agent: body.default_agent ?? '' },
   })
-  return unwrap<ConnectedApp>(res, 'Could not connect the site')
+  return unwrap<HostSite>(res, 'Could not connect the site')
 }
 
-export async function updateConnectedApp(
+export async function updateHostSite(
   slug: string,
   appId: number,
   body: {
@@ -65,12 +65,12 @@ export async function updateConnectedApp(
     host_mcp_resource?: string
     show_on_canopy_pages?: boolean
   },
-): Promise<ConnectedApp> {
-  const res = await apiV2.PATCH('/api/workspaces/{slug}/connected-apps/{app_id}', {
+): Promise<HostSite> {
+  const res = await apiV2.PATCH('/api/workspaces/{slug}/host-sites/{app_id}', {
     params: { path: { slug, app_id: appId } },
     body,
   })
-  return unwrap<ConnectedApp>(res, 'Could not save the change')
+  return unwrap<HostSite>(res, 'Could not save the change')
 }
 
 export type ConnectionTest = components['schemas']['ConnectionTestOut']
@@ -78,15 +78,15 @@ export type ConnectionCheck = components['schemas']['ConnectionCheckOut']
 
 /** Run the SDK's conformance checks against this site's settings, from
  *  canopy's server. Owner-only, like everything else here. */
-export async function testConnectedApp(slug: string, appId: number): Promise<ConnectionTest> {
-  const res = await apiV2.POST('/api/workspaces/{slug}/connected-apps/{app_id}/test', {
+export async function testHostSite(slug: string, appId: number): Promise<ConnectionTest> {
+  const res = await apiV2.POST('/api/workspaces/{slug}/host-sites/{app_id}/test', {
     params: { path: { slug, app_id: appId } },
   })
   return unwrap<ConnectionTest>(res, 'Could not test the connection')
 }
 
-export async function disconnectApp(slug: string, appId: number): Promise<void> {
-  const res = await apiV2.DELETE('/api/workspaces/{slug}/connected-apps/{app_id}', {
+export async function revokeHostSite(slug: string, appId: number): Promise<void> {
+  const res = await apiV2.DELETE('/api/workspaces/{slug}/host-sites/{app_id}', {
     params: { path: { slug, app_id: appId } },
   })
   await unwrap<void>(res, 'Could not disconnect the site')
@@ -98,8 +98,8 @@ export type AgentFit = components['schemas']['AgentFitOut']
 
 /** What the site asks of agents (its signed `site.json`), and per agent canopy
  *  allows there whether it meets it. Fail-closed: `available: false` + reason. */
-export async function getConnectedAppNeeds(slug: string, appId: number): Promise<SiteNeeds> {
-  const res = await apiV2.GET('/api/workspaces/{slug}/connected-apps/{app_id}/needs', {
+export async function getHostSiteNeeds(slug: string, appId: number): Promise<SiteNeeds> {
+  const res = await apiV2.GET('/api/workspaces/{slug}/host-sites/{app_id}/needs', {
     params: { path: { slug, app_id: appId } },
   })
   return unwrap<SiteNeeds>(res, "Could not read what the site needs")
@@ -110,14 +110,14 @@ export type SiteFacts = components['schemas']['SiteFactsOut']
 
 /** The facts a site declares about itself in its signed `site.json` — origins,
  *  keys URL, sign-in issuer, MCP server — for an owner to adopt. Read-only:
- *  nothing changes until the owner saves them through `connectApp` /
- *  `updateConnectedApp`. `address` may be the site's address, its keys URL or the
+ *  nothing changes until the owner saves them through `registerHostSite` /
+ *  `updateHostSite`. `address` may be the site's address, its keys URL or the
  *  document's; with `appId` it is optional (canopy looks beside the site's keys). */
 export async function discoverSite(
   slug: string,
   opts: { address?: string; appId?: number },
 ): Promise<SiteDiscovery> {
-  const res = await apiV2.GET('/api/workspaces/{slug}/connected-apps/discover', {
+  const res = await apiV2.GET('/api/workspaces/{slug}/host-sites/discover', {
     params: {
       path: { slug },
       query: { address: opts.address ?? '', ...(opts.appId !== undefined ? { app_id: opts.appId } : {}) },

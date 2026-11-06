@@ -6449,7 +6449,7 @@ def _chat_key_env(turn: dict) -> dict:
     return {"CANOPY_CHAT_KEY": key, "CANOPY_CHAT_SESSION": chat_id}
 
 
-#: Set for a turn held on a Connected site's page (canopy-web `ClaimedTurnOut.page_site`):
+#: Set for a turn held on a host site's page (canopy-web `ClaimedTurnOut.page_site`):
 #: the site's name. Not a secret — it lets the agent's own code (an MCP headers helper)
 #: know that here it must not authenticate as the agent at that site.
 PAGE_SITE_ENV = "CANOPY_PAGE_SITE"
@@ -12789,7 +12789,7 @@ def _maybe_report_slash_commands(runner_id: str) -> None:
 
 # ── confined turns (who-is-asking phase 5, cloud) ────────────────────────────
 # A CALLER's turn — someone who is not the agent's owner or an admin — runs
-# confined to the profile canopy granted them (read mode or a connected site). On a laptop the runner cannot
+# confined to the profile canopy granted them (read mode or a host site). On a laptop the runner cannot
 # set a session's environment (emdash spawns it), so canopy's profile_guard finds
 # the profile from the `cx-` session name. Here the runner spawns claude itself,
 # so it says so directly: CANOPY_PROFILE=<profile file>, inherited by every hook

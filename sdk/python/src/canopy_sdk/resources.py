@@ -260,12 +260,12 @@ def updated_notification(site_name: str, site_key, audience: str, uris: Sequence
                          workspace: str = "", agent: str = "", now: float | None = None) -> str:
     """The host's signed "these resources changed".
 
-    ``iss`` = ``sub`` = the site's Connected-site name, ``aud`` = ``updated_url``,
+    ``iss`` = ``sub`` = the site's host-site name, ``aud`` = ``updated_url``,
     60 seconds, single-use ``jti``, ``uris``. ``workspace`` / ``agent`` name the
     tenant exactly as ``canopy_sdk.site_agents.request_assertion`` does."""
     name = str(site_name or "").strip()
     if not name:
-        raise ResourceError("not_configured", "the notification needs the site's Connected-site name")
+        raise ResourceError("not_configured", "the notification needs the site's host-site name")
     key = load_private_key(site_key, what="the site signing key")
     issued = int(time.time() if now is None else now)
     claims = {"iss": name, "sub": name, "aud": audience, "iat": issued,

@@ -1,4 +1,4 @@
-"""Fetching a connected site's public keys from the site itself.
+"""Fetching a host site's public keys from the site itself.
 
 **The point is that nobody copies a key.** A site pastes one PEM into canopy
 today, which works exactly once: the day it rotates, every assertion it signs

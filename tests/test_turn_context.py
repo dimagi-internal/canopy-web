@@ -208,7 +208,7 @@ def test_only_an_explicit_kind_has_no_lists_and_an_absent_list_elsewhere_denies(
     whole = turn_context.for_asker(w.agent, w.owner, verified=True).profile
     assert whole.kind == turn_context.WHOLE_AGENT and whole.tools is None and whole.as_envelope() is None
     site = turn_context.for_asker(w.agent, w.site_user, verified=True, requested="connect").profile
-    assert site.kind == turn_context.CONNECTED_SITE and site.site == "connect-labs" and site.bash in (None, [])
+    assert site.kind == turn_context.HOST_SITE and site.site == "connect-labs" and site.bash in (None, [])
     assert "mcp__*canopy-web__site_call" in site.tools
 
 
@@ -218,13 +218,13 @@ def test_each_profile_kind(w):
     review = _chat(w, **{REVIEW_METADATA_KEY: "x"})
     kind = lambda ctx: ctx.profile.kind  # noqa: E731
     assert kind(turn_context.for_asker(w.agent, w.reader, verified=True)) == turn_context.READ_MODE
-    assert kind(turn_context.for_asker(w.agent, w.site_user, verified=True, requested="connect")) == turn_context.CONNECTED_SITE
+    assert kind(turn_context.for_asker(w.agent, w.site_user, verified=True, requested="connect")) == turn_context.HOST_SITE
     assert kind(turn_context.for_turn(_turn(w, w.owner, review), w.agent)) == turn_context.SESSION_REVIEW
     assert kind(turn_context.for_asker(w.agent, w.owner, verified=True)) == turn_context.WHOLE_AGENT
     AgentGrant.objects.create(agent=w.agent, kind=AgentGrant.PERSON, user=w.member, capability="bare")
     bare = turn_context.for_asker(w.agent, w.member, verified=True, requested="bare").profile
-    assert bare.kind == turn_context.CONNECTED_SITE and bare.site is None        # a row with no site keeps the kind
-    assert turn_context.PROFILE_KINDS == {"whole_agent", "read_mode", "connected_site", "session_review", "deny_all", "no_agent"}
+    assert bare.kind == turn_context.HOST_SITE and bare.site is None        # a row with no site keeps the kind
+    assert turn_context.PROFILE_KINDS == {"whole_agent", "read_mode", "host_site", "session_review", "deny_all", "no_agent"}
 
 
 def test_an_entry_on_two_sites_names_the_one_this_conversation_is_on(w):
@@ -234,7 +234,7 @@ def test_an_entry_on_two_sites_names_the_one_this_conversation_is_on(w):
     assert turn_context.for_turn(turn, w.agent, "two").access == turn_context.FULL   # the owner keeps the whole agent
     AgentGrant.objects.create(agent=w.agent, kind=AgentGrant.PERSON, user=w.member, capability="two")
     on_b = turn_context.for_turn(_turn(w, w.member, _chat(w, embed_app="site-b")), w.agent, "two")
-    assert (on_b.profile.kind, on_b.profile.site) == (turn_context.CONNECTED_SITE, "site-b")
+    assert (on_b.profile.kind, on_b.profile.site) == (turn_context.HOST_SITE, "site-b")
     elsewhere = turn_context.for_asker(w.agent, w.member, verified=True, requested="two")
     assert elsewhere.profile.site == "site-a"
 
@@ -250,7 +250,7 @@ def test_a_read_mode_profile_says_which_default_it_ran_under(w):
 def test_a_review_chat_refuses_what_it_would_refuse_and_narrows_the_rest(w):
     review = _chat(w, **{REVIEW_METADATA_KEY: "x"})
     assert turn_context.for_turn(_turn(w, w.stranger, review), w.agent).refused
-    assert turn_context.for_turn(_turn(w, w.site_user, review), w.agent).refused    # `read` opens it; a connected-site line does not
+    assert turn_context.for_turn(_turn(w, w.site_user, review), w.agent).refused    # `read` opens it; a host-site line does not
     ctx = turn_context.for_turn(_turn(w, w.owner, review), w.agent)
     assert ctx.review.may_request_auto is False and ctx.review.may_pin_runner is False
 

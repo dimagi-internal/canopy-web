@@ -493,7 +493,7 @@ def _detail(request: HttpRequest, agent) -> AgentDetailOut:
     return AgentDetailOut.model_validate({
         **services.agent_detail(agent),
         "read_mode": answering.read_mode_of(agent),
-        "connected_sites": answering.connected_sites_of(agent),
+        "host_sites": answering.host_sites_of(agent),
         "canopy_user_request": login_request_out(pending) if pending is not None else None,
         "can_transfer_owner": _may_transfer_owner(request, agent),
         "is_admin": agent.is_admin(request.user),
@@ -670,7 +670,7 @@ def list_admins(request: HttpRequest, slug: str):
 def agent_access(request: HttpRequest, slug: str):
     """Every member of the agent's workspace with their role on the agent (owner, admin,
     editor, user, viewer), the reason for it, and what they reach signed in: the whole agent,
-    read mode or the connected sites their role may use, or nothing. People outside the workspace whom the
+    read mode or the host sites their role may use, or nothing. People outside the workspace whom the
     access list names are on the list itself (`/access-list`). Readable by any member, like
     the admin list."""
 

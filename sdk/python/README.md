@@ -26,10 +26,10 @@ with the sdist and wheel attached):
 
 ```
 # requirements.txt / pyproject — from the tag
-dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.27.0#subdirectory=sdk/python
+dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.27.1#subdirectory=sdk/python
 
 # or from the Release's wheel
-dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.27.0/dimagi_canopy-0.27.0-py3-none-any.whl
+dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.27.1/dimagi_canopy-0.27.1-py3-none-any.whl
 ```
 
 Add the `django` extra (`dimagi-canopy[django] @ ...`) for `canopy_sdk.django`,
@@ -63,7 +63,7 @@ MIDDLEWARE += ["canopy_sdk.django.middleware.CanopyPageTokenMiddleware"]  # opti
 CANOPY_HOST = {
     "SIGNING_KEY": env("CANOPY_SIGNING_KEY"),     # Ed25519 or P-256 PEM — never RSA/HMAC
     "CANOPY_BASE_URL": "https://canopy.dimagi.com",
-    "APP_NAME": "connect-labs",                   # your Connected-site name in canopy
+    "APP_NAME": "connect-labs",                   # your host-site name in canopy
     "WORKSPACE": "connect",                       # the canopy workspace it is registered in
     "AGENT_SLUG": "ace",                          # the default agent
     # The grant: all four present turns it on.
@@ -219,7 +219,7 @@ ctx = panel_context(request, resource="labs-data://visits", agent="labsdata",
 - `runner_requirements` **add to** `RUNNER_REQUIREMENTS` — a page raises the floor,
   never lowers it. To keep `sensitive_data` off the rest of the site, take it out of
   `RUNNER_REQUIREMENTS` and name it on the pages that need it.
-- The agent must be on the Connected site's allow-list in canopy; an arrival
+- The agent must be on the host site's allow-list in canopy; an arrival
   bound to any other agent is refused.
 - A page that grants no scopes may still choose its agent; it gets a page token
   for that alone.
@@ -424,7 +424,7 @@ report = conformance.check_client(issuer, resource, credentials=canopy_client_cr
 # client_accepted: invalid_grant for a throwaway-signed ID-JAG = the client got through
 ```
 
-That is what canopy-web's **Connected sites → Test connection** runs, beside
+That is what canopy-web's **Host sites → Test connection** runs, beside
 `check_metadata` and `check_jwks`, from canopy's own server.
 
 Network is used only inside those calls, through replaceable transports. For
@@ -473,7 +473,7 @@ site_agents.refresh()               # a "re-read now" button: raises SiteAgentsE
 Never build a canopy URL yourself: every one a host shows is in the answer
 (`site_settings_url`, `SiteAgent.url`, `SiteAgent.problem_links[].url`).
 
-**Which tenant.** A Connected-site name is unique only within a canopy
+**Which tenant.** A Host-site name is unique only within a canopy
 workspace. Set `CANOPY_HOST["WORKSPACE"]` to the workspace's slug: the SDK signs
 it as `canopy_workspace` into every site agents request and visitor assertion,
 and canopy selects the site's registration by it. Without it canopy falls back
@@ -491,7 +491,7 @@ show your operator, and `status` when canopy answered. The codes a host acts on:
 |---|---|
 | `not_configured` | this host lacks `SIGNING_KEY`, `CANOPY_BASE_URL` or `APP_NAME` |
 | `unreachable` | canopy could not be reached at all (network, DNS, TLS) |
-| `unknown_issuer` | canopy has no Connected site by `APP_NAME` in the tenant named |
+| `unknown_issuer` | canopy has no host site by `APP_NAME` in the tenant named |
 | `ambiguous_issuer` | several workspaces have one by that name — set `WORKSPACE` |
 | `workspace_mismatch` | `WORKSPACE` and the agent name different workspaces |
 | `bad_signature` | canopy's registered keys for the site do not verify your key |
@@ -506,14 +506,14 @@ redirects) and checks the signature, `typ`, `iss`, `aud` (your site name),
 **Your needs, back to canopy.** Mount `canopy_sdk.django.urls` and it serves
 `canopy/site.json` beside `canopy/jwks.json`: your `PAGE_SCOPES` (titled by
 `PAGE_TITLES`) and what `SITE_NEEDS` returns, signed with your key. canopy's
-Connected sites page reads it and shows, per agent, whether it meets your
+Host sites page reads it and shows, per agent, whether it meets your
 `sensitive_data.requires` and why not.
 
 It also carries a `site` block — your own facts, which canopy's owner would
 otherwise type: `origins` (`CANOPY_HOST["ORIGINS"]`, else the origin of `ISSUER`,
 else the address canopy fetched the document from), `jwks_url` (`JWKS_URL`, else
 the SDK's `jwks.json` route), `issuer` and `mcp_resource` (`ISSUER` and
-`RESOURCE`, while the grant is on). canopy's Connected sites page reads them
+`RESOURCE`, while the grant is on). canopy's host sites page reads them
 when its owner clicks "Fill from the site" and saves them only on the owner's
 confirm. Mount `views.site_document` at `/.well-known/canopy-site.json` too
 (above) so the site's address alone is enough to find it.
@@ -745,7 +745,7 @@ plus the tool and arguments to call:
 Unconfigured, the endpoint answers 404 and your RFC 8414 metadata does not name
 it. Configured, the metadata carries `"canopy_probe_endpoint": "<ENDPOINT>"`.
 
-canopy asserts, every 30 minutes per Connected site and on **Test connection**:
+canopy asserts, every 30 minutes per host site and on **Test connection**:
 (a) the probe tool succeeds, (b) a tool outside the scope is not listed and is
 refused when called, (c) the same call without a valid DPoP proof (none, a
 stranger's key, a plain bearer) is refused. The same steps for your own CI or a
@@ -788,7 +788,7 @@ constant in `canopy_sdk.contract`.
 The host POSTs `{"assertion": <JWS>, "agent_slug": "<agent>"}` to
 `{canopy base}/api/auth/contact-token`, server to server. The assertion: signed
 with the host's key (EdDSA, ES256 or RS256 — asymmetric only; `kid` = the key's
-RFC 7638 thumbprint), `iss` = the host's Connected-site name, `sub` = the host's
+RFC 7638 thumbprint), `iss` = the host's host-site name, `sub` = the host's
 OWN id for its signed-in user (never anything the browser sent), `aud` = canopy's
 base URL, `iat`, `exp` ≤ 120s after `iat`, a single-use `jti`; optional `name`,
 `email`, `email_verified`, `canopy_runner_requirements`, `canopy_agent` and

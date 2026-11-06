@@ -1,15 +1,15 @@
 import { useEffect, useState } from 'react'
 import {
-  deleteConnectedSite,
+  deleteAgentHostSite,
   getAgentSettingsHistory,
   getReadMode,
-  listConnectedSites,
-  putConnectedSite,
+  listAgentHostSites,
+  putAgentHostSite,
   putReadMode,
   resetReadMode,
   type AnsweringProfile,
-  type ConnectedSiteOut,
-  type ConnectedSitesOut,
+  type AgentHostSiteOut,
+  type AgentHostSitesOut,
   type ReadModeSettingOut,
   type SettingChangeOut,
 } from '@/api/agents'
@@ -193,7 +193,7 @@ export function ReadModeCard({ agentSlug, agentName, canEdit, onChange }: {
 type SiteDraft = Draft & { ceiling: string; own_login: string }
 
 function SiteForm({ row, busy, onSave, onCancel }: {
-  row: ConnectedSiteOut; busy: boolean; onSave: (fields: object) => void; onCancel: () => void
+  row: AgentHostSiteOut; busy: boolean; onSave: (fields: object) => void; onCancel: () => void
 }) {
   const [draft, setDraft] = useState<SiteDraft>({
     ...toDraft(row), ceiling: (row.ceiling ?? []).join('\n'), own_login: (row.own_login ?? []).join('\n'),
@@ -218,17 +218,17 @@ function SiteForm({ row, busy, onSave, onCancel }: {
   )
 }
 
-export function ConnectedSitesCard({ agentSlug, agentName, canEdit, onChange }: {
+export function HostSitesCard({ agentSlug, agentName, canEdit, onChange }: {
   agentSlug: string; agentName: string; canEdit: boolean; onChange: () => void
 }) {
-  const [data, setData] = useState<ConnectedSitesOut | null>(null)
+  const [data, setData] = useState<AgentHostSitesOut | null>(null)
   const [editing, setEditing] = useState<string | null>(null)
   const [adding, setAdding] = useState('')
-  const { busy, error, setError, run } = useSave<ConnectedSitesOut>((out) => { setData(out); onChange() })
+  const { busy, error, setError, run } = useSave<AgentHostSitesOut>((out) => { setData(out); onChange() })
 
   useEffect(() => {
     let cancelled = false
-    listConnectedSites(agentSlug)
+    listAgentHostSites(agentSlug)
       .then((d) => !cancelled && setData(d))
       .catch((e: unknown) => !cancelled && setError(e instanceof Error ? e.message : 'Could not load'))
     return () => { cancelled = true }
@@ -238,8 +238,8 @@ export function ConnectedSitesCard({ agentSlug, agentName, canEdit, onChange }: 
   const connected = new Set(data.sites.map((r) => r.site))
   const addable = data.available.filter((s) => !connected.has(s))
   return (
-    <div data-testid="connected-sites" className="flex flex-col gap-2 rounded-md border border-border p-2">
-      <div className="text-[12px] font-medium text-foreground">Connected sites</div>
+    <div data-testid="host-sites" className="flex flex-col gap-2 rounded-md border border-border p-2">
+      <div className="text-[12px] font-medium text-foreground">Host sites</div>
       {data.sites.length === 0 ? (
         <p className="m-0 text-[12px] text-muted-foreground">{agentName} cannot be reached from any site.</p>
       ) : (
@@ -255,7 +255,7 @@ export function ConnectedSitesCard({ agentSlug, agentName, canEdit, onChange }: 
           </thead>
           <tbody className="divide-y divide-border">
             {data.sites.map((row) => (
-              <tr key={row.site} data-testid="connected-site">
+              <tr key={row.site} data-testid="host-site">
                 <Td density="cozy" tone="foreground" className="align-top">
                   {siteName(row.site)}
                   <div className="text-[11px] text-muted-foreground">internal name: <span className="font-mono">{row.key}</span></div>
@@ -271,7 +271,7 @@ export function ConnectedSitesCard({ agentSlug, agentName, canEdit, onChange }: 
                       row={row}
                       busy={busy}
                       onCancel={() => setEditing(null)}
-                      onSave={(fields) => void run(() => putConnectedSite(agentSlug, row.site, fields)).then((saved) => saved && setEditing(null))}
+                      onSave={(fields) => void run(() => putAgentHostSite(agentSlug, row.site, fields)).then((saved) => saved && setEditing(null))}
                     />
                   )}
                 </Td>
@@ -296,7 +296,7 @@ export function ConnectedSitesCard({ agentSlug, agentName, canEdit, onChange }: 
                         aria-label={`Handles sensitive data on ${siteName(row.site)}`}
                         disabled={busy}
                         className={QUIET}
-                        onClick={() => void run(() => putConnectedSite(agentSlug, row.site, { sensitive: !row.sensitive }))}
+                        onClick={() => void run(() => putAgentHostSite(agentSlug, row.site, { sensitive: !row.sensitive }))}
                       >
                         {row.sensitive ? 'Turn off' : 'Turn on'}
                       </button>
@@ -306,7 +306,7 @@ export function ConnectedSitesCard({ agentSlug, agentName, canEdit, onChange }: 
                 {canEdit && (
                   <Td density="cozy" className="align-top whitespace-nowrap">
                     <button type="button" className={QUIET} aria-label={`Change ${siteName(row.site)}`} onClick={() => setEditing(row.site)}>Change</button>{' '}
-                    <button type="button" disabled={busy} className={DANGER} aria-label={`Remove ${siteName(row.site)}`} onClick={() => void run(() => deleteConnectedSite(agentSlug, row.site))}>Remove</button>
+                    <button type="button" disabled={busy} className={DANGER} aria-label={`Remove ${siteName(row.site)}`} onClick={() => void run(() => deleteAgentHostSite(agentSlug, row.site))}>Remove</button>
                   </Td>
                 )}
               </tr>
@@ -322,7 +322,7 @@ export function ConnectedSitesCard({ agentSlug, agentName, canEdit, onChange }: 
           className="flex items-center gap-2"
           onSubmit={(e) => {
             e.preventDefault()
-            if (adding) void run(() => putConnectedSite(agentSlug, adding, {})).then((saved) => saved && setAdding(''))
+            if (adding) void run(() => putAgentHostSite(agentSlug, adding, {})).then((saved) => saved && setAdding(''))
           }}
         >
           <select aria-label="Site to add" value={adding} onChange={(e) => setAdding(e.target.value)} className={FIELD}>
@@ -343,14 +343,14 @@ function changeLabel(c: SettingChangeOut): string {
     case 'put_read_mode': return 'Read mode customised'
     case 'reset_read_mode':
     case 'reset_interface': return 'Back to the default'
-    case 'put_connected_site': return 'Site changed'
-    case 'delete_connected_site': return 'Site removed'
+    case 'put_agent_host_site': return 'Site changed'
+    case 'delete_agent_host_site': return 'Site removed'
     case 'set_capability_sensitive': return 'Sensitive data changed'
     default: return 'Saved'
   }
 }
 
-/** Read mode and connected sites, with who changed them. */
+/** Read mode and host sites, with who changed them. */
 export function AgentAnsweringSettings({ agentSlug, agentName, canEdit = false }: {
   agentSlug: string; agentName?: string; canEdit?: boolean
 }) {
@@ -371,7 +371,7 @@ export function AgentAnsweringSettings({ agentSlug, agentName, canEdit = false }
   return (
     <div className="flex flex-col gap-2">
       <ReadModeCard agentSlug={agentSlug} agentName={name} canEdit={canEdit} onChange={changed} />
-      <ConnectedSitesCard agentSlug={agentSlug} agentName={name} canEdit={canEdit} onChange={changed} />
+      <HostSitesCard agentSlug={agentSlug} agentName={name} canEdit={canEdit} onChange={changed} />
       {history && history.length > 0 && (
         <div data-testid="settings-history" className="flex flex-col gap-1">
           <div className="text-[12px] font-medium text-foreground">Change history</div>

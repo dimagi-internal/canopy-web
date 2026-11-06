@@ -1,5 +1,5 @@
 """A workspace editor who is only a reader: the access list gives editors a `read_only` line, so
-they go through read mode and the connected sites like any member instead of driving the whole agent. The retired
+they go through read mode and the host sites like any member instead of driving the whole agent. The retired
 `editors: confined` setting is refused at publish and points at the access list.
 docs/architecture/access.md; the entry-point-by-entry-point matrix is in tests/test_access_matrix.py."""
 from __future__ import annotations
@@ -68,14 +68,14 @@ def test_editor_given_an_editor_line_is_full(w):
     assert (d.access, d.review.manual_only) == (access.FULL, False)
 
 
-def test_an_editor_whose_line_names_another_connected_site_is_refused_read_mode(w):
+def test_an_editor_whose_line_names_another_host_site_is_refused_read_mode(w):
     declare(w["agent"], {"ask": {"tools": ["Read"]}, "data": {"tools": ["Read"]}})
     AgentGrant.objects.create(agent=w["agent"], kind=AgentGrant.WORKSPACE,
                               subject_workspace_id=w["agent"].workspace_id, at_least="editor",
                               capability="data")
     d = turn_context.for_asker(w["agent"], w["editor"], verified=True, requested="data")
     assert (d.access, d.stamped) == (access.CONFINED, "data")
-    assert d.standing.agent_role is None and d.standing.permissions == {roles.use("data")}      # a connected site, not a role
+    assert d.standing.agent_role is None and d.standing.permissions == {roles.use("data")}      # a host site, not a role
     assert turn_context.for_asker(w["agent"], w["editor"], verified=True).access == turn_context.REFUSED   # no read-mode line
 
 

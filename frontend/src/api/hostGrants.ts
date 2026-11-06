@@ -1,5 +1,5 @@
 /**
- * Act-as-you permissions (host grants): a connected site letting an agent act as
+ * Act-as-you permissions (host grants): a host site letting an agent act as
  * you, within your own access, on the page you sent from — taken only when you send
  * in that site's panel, for 30 minutes at a time. Listed and stopped here.
  */

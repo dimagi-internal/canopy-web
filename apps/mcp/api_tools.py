@@ -187,7 +187,7 @@ EXCLUDED: dict[str, str] = {
     "app_view_message": _BROWSER,
     "app_view_subscribe": _BROWSER,
     "app_view_unsubscribe": _BROWSER,
-    # A connected site telling canopy its resources changed: signed by the site's own
+    # A host site telling canopy its resources changed: signed by the site's own
     # key, a host's route, never a person's or an agent's.
     "resources_updated": _HOST,
     # The same for the rest of the site's calls, and two cloud services' webhooks. The

@@ -1,4 +1,4 @@
-"""Mark a chat held on a Connected site's page, where its session's own code can see it.
+"""Mark a chat held on a host site's page, where its session's own code can see it.
 
 canopy-web sends `page_site` (`{site, withheld}`) with a turn whose conversation is
 held on a site's page that its agent serves: there the agent reaches the site ONLY

@@ -153,7 +153,7 @@ def parse_agent_claim(value) -> str:
 
 
 #: The canopy WORKSPACE (tenant) a host's signed request or assertion is for —
-#: its slug. A Connected-site name is unique only within a workspace, so canopy
+#: its slug. A Host-site name is unique only within a workspace, so canopy
 #: needs the tenant beside it; this names it directly, where ``AGENT_CLAIM``
 #: (and the arrival's ``agent_slug``) name it only through an agent, which a
 #: tenant can delete or move. When both are sent, canopy selects by this one and

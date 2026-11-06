@@ -112,7 +112,7 @@ def runner_admin_or_404(request: HttpRequest, runner_id: uuid.UUID) -> Runner:
 
 
 def turn_or_404(request: HttpRequest, turn_id: uuid.UUID, *, own_turn_ok: bool = False) -> Turn:
-    """`_tenant_turn_or_404`, then `site ∩ user`: a connected site acting for its
+    """`_tenant_turn_or_404`, then `site ∩ user`: a host site acting for its
     visitor sees only its own agents' turns (apps/embedding/delegation.py). Same
     uniform 404, so a site cannot learn another agent's turn exists."""
     from apps.embedding import delegation
@@ -162,7 +162,7 @@ def reporting_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     # it (canopy-web#1210). The claim is tenant- and routing-gated already, and it
     # handed the box the prompt; refusing the report then only stranded the turn
     # CLAIMED until its lease ran out — observed when a runner paired by one person
-    # claimed a private chat another member created. Not for a connected site
+    # claimed a private chat another member created. Not for a host site
     # acting for a visitor: a site never reports as a runner.
     from apps.embedding import delegation
 

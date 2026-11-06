@@ -106,13 +106,13 @@ def test_public_card_lists_only_what_an_outsider_can_reach(w):
     assert read_mode["description"] == "Ask ACE about your programme."
     # Only the lines that name outsiders become tags on the public card, and only the ones that
     # open THIS profile: `ask` is read mode (the unverified contact line); `marketplace` is a
-    # connected site named by a verified partner.org line.
+    # host site named by a verified partner.org line.
     assert read_mode["tags"] == ["caller:contact"]
     assert read_mode["securityRequirements"] == [{"schemes": {"canopyContactToken": {"list": []}}}]
     mkt = _skills(body)["marketplace"]
     assert mkt["tags"] == ["caller:contact", "domain:partner.org", "verified-sender"]
     # A known visitor with no proof (the `contact` line) reaches read mode, so it has a contact-token
-    # entry point; a connected site reached only by verified lines (`marketplace`) has none.
+    # entry point; a host site reached only by verified lines (`marketplace`) has none.
     assert "securityRequirements" not in mkt
 
 
@@ -149,7 +149,7 @@ def test_public_card_leaks_nothing_internal(w):
     text = Client().get(_card_url("ace")).content.decode()
     for needle in INTERNAL:
         assert needle not in text, needle
-    # Neither the member-only nor the admin-only connected site is advertised.
+    # Neither the member-only nor the admin-only host site is advertised.
     assert "summarise_opportunity" not in text and "Ship it." not in text
     # Nor the editor line granting a whole profile.
     assert "dimagi.com:verified" not in text
@@ -189,7 +189,7 @@ def test_a_member_sees_public_plus_their_own(w):
     r = pat_client(w["mem"]).get(_ext_url("ace"))
     assert r.status_code == 200, r.content
     skills = _skills(r.json())
-    # Public plus the connected sites their lines name; `deploy` is named by no line, so only admins have it.
+    # Public plus the host sites their lines name; `deploy` is named by no line, so only admins have it.
     assert set(skills) == {"ask", "marketplace", "summarise_opportunity"}
     # A member-only skill has no A2A entry point: members use the agent's plugin.
     assert "securityRequirements" not in skills["summarise_opportunity"]

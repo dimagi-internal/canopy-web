@@ -12,7 +12,7 @@ This middleware decides what such a request gets:
   host is connect-labs.
 * **Everything else keeps working in place** — the API, OAuth and well-known
   documents, health — because runners, the canopy plugin, MCP clients, Slack,
-  Gmail push and connected sites all hold the old address, and none of them
+  Gmail push and host sites all hold the old address, and none of them
   follows a redirect reliably (a 302 turns a POST into a GET; a WebSocket never
   follows one; WebSockets do not pass through here at all). For those requests
   the script prefix is put back, so a URL generated for an old-address caller

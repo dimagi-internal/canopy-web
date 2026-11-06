@@ -168,7 +168,7 @@ canopy hosts MCP Apps (SEP-1865, `io.modelcontextprotocol/ui`). Spec:
 `apps/mcp_apps_host/mcp_apps.py`, `mcp_apps_views.py`, `views_mcp_apps.py`;
 routes in `apps/canopy_sessions/app_views_api.py` and `apps/contacts/contact_api.py`.
 
-- A Connected site's tool may carry a **View** (`_meta.ui.resourceUri`, a `ui://`
+- A Host site's tool may carry a **View** (`_meta.ui.resourceUri`, a `ui://`
   HTML resource). canopy renders it sandboxed in `ChatPage` **and** the embed
   panel.
 - **A View's clicks call the site as the person looking at it**
@@ -356,7 +356,7 @@ needs an ID-JAG signed by the **host's** key. The live probe walks the rest.
   are pushed on the transition only — a site is not an agent, so there is no
   task to ask on.
 - **On demand only**, from Test connection
-  (`apps/embedding/connected_apps_api.py`): each probe mints a real grant and makes
+  (`apps/embedding/host_sites_api.py`): each probe mints a real grant and makes
   real calls at a host. A host with no probe is "not set up"
   (`last_probe_ok` null), never a failure.
 - **canopy-web probes itself the same way**: `/oauth/probe`, the `canopy-probe`

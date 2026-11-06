@@ -340,7 +340,7 @@ from apps.contacts.contact_api import contact_router, contact_token_router  # no
 from apps.contacts.hcp_api import router as hcp_router  # noqa: E402
 from apps.contacts.hcp_clients_api import router as hcp_clients_router  # noqa: E402
 from apps.contacts.people_api import router as people_router  # noqa: E402
-from apps.embedding.connected_apps_api import connected_apps_router  # noqa: E402
+from apps.embedding.host_sites_api import host_sites_router  # noqa: E402
 from apps.host_grants.api import needs_router as site_needs_router  # noqa: E402
 from apps.contacts.member_profile_api import router as member_profile_router  # noqa: E402
 from apps.host_grants.api import sites_router  # noqa: E402
@@ -416,7 +416,7 @@ api.add_router("", me_router)
 api.add_router("", public_router)
 api.add_router("/walkthroughs", walkthroughs_router)
 api.add_router("/tokens", tokens_router)
-# The MCP clients a person signed in (apps/oauth_server), under /api/tokens/connected-apps.
+# The MCP clients a person signed in (apps/oauth_server), under /api/tokens/authorized-apps.
 api.add_router("/tokens", oauth_connected_router)
 # A person's GitHub connection: its own app, still under /api/tokens/github (and
 # the `tokens` tag) where its routes and MCP tool names were published.
@@ -516,7 +516,7 @@ api.add_router("/workspaces", admission_rules_router)  # /{slug}/admission-… (
 api.add_router("/workspaces", workspace_routing_router)  # /{slug}/runner-topology, /runner-order (harness)
 api.add_router("/workspaces", workspace_health_router)  # /{slug}/health…, /agent-topology (agents)
 # Tenant-admin surface, same prefix and shape as members/invites (apps/tokens).
-api.add_router("/workspaces", connected_apps_router)
+api.add_router("/workspaces", host_sites_router)
 api.add_router("/workspaces", connection_apps_router)  # a workspace's OAuth clients for connections
 api.add_router("/workspaces", site_needs_router)
 api.add_router("/workspaces", member_profile_router)  # one member's page, by the caller's role

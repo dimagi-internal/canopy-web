@@ -50,7 +50,7 @@ def test_a_new_agent_is_created_with_the_default(w):
 def test_an_agent_holding_nothing_reads_as_the_default(w):
     Agent.objects.filter(pk=w["agent"].pk).update(interface={})   # a row from before the default
     assert w["c"].get("/api/agents/echo/read-mode").json()["source"] == "default"
-    assert w["c"].get("/api/agents/echo/connected-sites").json()["sites"] == []
+    assert w["c"].get("/api/agents/echo/host-sites").json()["sites"] == []
 
 
 def test_an_unknown_contact_emailing_an_agent_on_the_default_is_still_refused(w):

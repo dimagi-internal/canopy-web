@@ -100,7 +100,7 @@ export const USER_ROLES: UserRole[] = [
     surfaces: ['/w/:workspace/activity', '/w/:workspace/settings',
       '/w/:workspace/settings/members'],
     note:
-      'The event log, every turn\'s prompt and transcript, runner drills, connected-site ' +
+      'The event log, every turn\'s prompt and transcript, runner drills, host-site ' +
       'health; inviting, re-roling and removing viewers and editors; inbound mailboxes, ' +
       'Slack sync. Not the shared vault, an agent\'s credentials, the Slack app itself, or ' +
       'deleting the workspace — those are the owner\'s.',
@@ -114,7 +114,7 @@ export const USER_ROLES: UserRole[] = [
     surfaces: ['/w/:workspace/settings', '/w/:workspace/settings/members',
       '/w/:workspace/settings/secrets'],
     note:
-      'Everything an administrator does, plus making admins and owners, Slack, connected '
+      'Everything an administrator does, plus making admins and owners, Slack, host '
       + 'sites, secrets. Secrets has the SHARED vault every agent here reads (the '
       + 'Google OAuth clients, the GitHub token); an agent\'s OWN vault sits on the agent, '
       + 'under Settings → Security. Both are owner-only: they are the keys a runner '

@@ -101,7 +101,7 @@ def test_the_documented_page_exists_and_the_admin_is_no_longer_the_path(doc):
     frontend router is the authority for that, and the API it calls is the
     authority for the rest.
     """
-    assert "/w/<workspace>/settings/connected-apps" in doc
+    assert "/w/<workspace>/settings/host-sites" in doc
 
     router = (DOC.parent.parent.parent / "frontend" / "src" / "router.tsx").read_text()
     # The page is a SECTION of the workspace settings route now, so the URL the
@@ -110,12 +110,12 @@ def test_the_documented_page_exists_and_the_admin_is_no_longer_the_path(doc):
     assert "path: '/w/:workspace/settings'" in router, (
         "the doc sends a human to a page the router does not declare"
     )
-    assert "path: 'connected-apps'" in router, (
+    assert "path: 'host-sites'" in router, (
         "the doc sends a human to a settings section the router does not declare"
     )
 
     # The surface behind it must be real, and mounted where the client expects.
-    resolve("/api/workspaces/w1/connected-apps")
+    resolve("/api/workspaces/w1/host-sites")
 
     # The old admin page must not still be advertised: it is read-only now, so
     # following the doc there would be a dead end with no explanation.

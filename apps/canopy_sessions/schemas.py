@@ -742,7 +742,7 @@ class StandingOut(Schema):
 
 
 class ProfileOut(Schema):
-    #: whole_agent | read_mode | connected_site | session_review | deny_all | no_agent.
+    #: whole_agent | read_mode | host_site | session_review | deny_all | no_agent.
     kind: str
     name: str = ""
     site: str | None = None

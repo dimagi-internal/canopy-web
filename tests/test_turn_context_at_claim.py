@@ -135,7 +135,7 @@ def test_a_narrowed_turn_never_runs_whole_on_a_box_that_cannot_confine_it(world)
 
 def test_a_page_selected_site_whose_line_went_falls_back_to_read_mode_as_a_new_message_would(world):
     """The claim asks what the sender asked, not what they were stamped: someone who named nothing and got the page's
-    connected site gets read mode once that line goes, exactly as a message sent now would."""
+    host site gets read mode once that line goes, exactly as a message sent now would."""
     AgentGrant.objects.create(agent=world.agent, kind=AgentGrant.PERSON, user=world.member, role=roles.READ_ONLY)
     line = AgentGrant.objects.create(agent=world.agent, kind=AgentGrant.PERSON, user=world.member, capability="connect")
     session = _chat(world, creator=world.member, embed_app="connect-labs")
@@ -147,7 +147,7 @@ def test_a_page_selected_site_whose_line_went_falls_back_to_read_mode_as_a_new_m
     assert got.capability == "ask" and _row(turn).resolved_context["queued_as"] == "connect"
 
 
-def test_a_connected_site_removed_while_it_waited_is_refused_not_run_as_deny_all(world):
+def test_a_host_site_removed_while_it_waited_is_refused_not_run_as_deny_all(world):
     session = _chat(world, creator=world.site_user, embed_app="connect-labs")
     turn = _enqueue(world.site_user, session, box=world.box)
     assert turn.capability == "connect"
@@ -184,7 +184,7 @@ def test_a_whole_agent_turn_moved_onto_a_sensitive_site_runs_confined_to_that_si
     assert got.capability == "data"
     stored = _row(turn).resolved_context
     assert (stored["access"], stored["profile"]["kind"], stored["session_key_suffix"]) == \
-           ("confined", "connected_site", "#data")
+           ("confined", "host_site", "#data")
     assert claim_payload.claim_payload(got)["caller_context"]["capability"]["name"] == "data"
 
 

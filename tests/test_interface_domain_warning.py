@@ -3,7 +3,7 @@
 Until the access list (agent-roles design, 2026-10-30) an interface rule naming a mail domain that
 can never prove its senders (`member@<domain>`, no DMARC and no aligned DKIM) was WARNED about,
 never refused (canopy-web#1280). Those rules are gone: `parse` refuses the retired keys and points
-at the access list, and read mode and connected sites carry neither a `summary` nor `warnings`. What survives
+at the access list, and read mode and host sites carry neither a `summary` nor `warnings`. What survives
 is the DMARC lookup (`apps.contacts.domain_proof`), which decides whether a sender is proven.
 """
 from __future__ import annotations
@@ -51,7 +51,7 @@ def test_saving_the_old_rules_is_refused_and_saves_nothing(w):
 
 
 def test_the_settings_carry_no_summary_or_warnings(w):
-    for path in ("read-mode", "connected-sites"):
+    for path in ("read-mode", "host-sites"):
         body = w["client"].get(f"/api/agents/ace/{path}").json()
         assert "summary" not in body and "warnings" not in body
 

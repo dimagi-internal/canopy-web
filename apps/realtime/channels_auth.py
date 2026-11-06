@@ -230,7 +230,7 @@ def _delegated_token_sync(scope, *, known=None):
 
 @database_sync_to_async
 def _delegated_app(scope):
-    """The connected site behind a DELEGATED token on this socket, or None."""
+    """The host site behind a DELEGATED token on this socket, or None."""
     token = _delegated_token_sync(scope)
     return token.app if token is not None else None
 
@@ -251,7 +251,7 @@ def _redeem_ticket(scope):
 
     The token goes on the scope under WS_TOKEN — never back into the query
     string — so everything below resolves a ticketed socket exactly as it would
-    the token (identity, connected site, runner requirements, assurance), and a
+    the token (identity, host site, runner requirements, assurance), and a
     `token=` a client puts on the URL is read by nothing. An unknown, expired or
     spent ticket leaves no token: the consumer's existing check refuses it.
     """

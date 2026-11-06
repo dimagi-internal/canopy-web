@@ -293,7 +293,7 @@ Contacts may build up HCP interactions when they opt in from a trusted system, s
 as labs, whose email identity canopy trusts. Code: `apps/contacts/contact_hcp_api.py` (`/api/contact/hcp/…`), the widget's
 `frontend/src/embed/ContactMemory.tsx`; tests `tests/test_hcp_trusted_contacts.py`.
 
-**Who.** A contact (a widget visitor with no canopy account) on a connected site
+**Who.** A contact (a widget visitor with no canopy account) on a host site
 with `AppCredential.asserts_verified_email` set, whose arrival assertion signed
 `email_verified: true`. The address is recorded on that contact token
 (`ContactToken.verified_email`) at the exchange. Nothing else changes: an untrusted
@@ -310,9 +310,9 @@ is trusted (migration `tokens/0031`, matched on both, so a tenant that merely na
 - **Superusers decide trust, not workspace owners.** The person a trusted address
   keys is canopy-wide (`Person` keyed on email), not the tenant's. A tenant owner
   trusting their own site could have it claim any address — and read what another
-  site's visitors built up under it. Set with `PATCH …/connected-apps/{id}`
+  site's visitors built up under it. Set with `PATCH …/host-sites/{id}`
   `{asserts_verified_email}` (403 for anyone but a superuser); shown read-only on
-  the connected-sites page. **Changing the site's keys clears it**: trust is in the
+  the host-sites page. **Changing the site's keys clears it**: trust is in the
   signer, and new keys are a new signer.
 - **Identity / join rule.** Opting in re-points the contact at the email-keyed
   `Person` (creating it if needed). If the address belongs to a canopy ACCOUNT —

@@ -67,7 +67,7 @@ _VERIFIED_USER = frozenset({who.SESSION, who.PAT, who.PRIVATE_RUNNER_KEY, who.DE
 #: `contact` is anyone who is not a member of the agent's workspace (an emailer,
 #: a widget visitor, a canopy user from another tenant, someone unidentified).
 OWNER, ADMIN, MEMBER, CONTACT, SYSTEM = "owner", "admin", "member", "contact", "system"
-#: `profile` values: the agent's whole profile, or one confined profile (read mode or a connected site).
+#: `profile` values: the agent's whole profile, or one confined profile (read mode or a host site).
 FULL_PROFILE, CONFINED_PROFILE = "full", "confined"
 
 #: Envelope values from VERSION 1, and what they are called now.

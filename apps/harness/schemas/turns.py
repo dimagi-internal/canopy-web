@@ -296,7 +296,7 @@ class CallerContextOut(Schema):
 
 
 class ClaimPageSiteOut(Schema):
-    """A turn held on a Connected site's page (`interface.page_turn`)."""
+    """A turn held on a host site's page (`interface.page_turn`)."""
 
     # The site's name (the conversation's `embed_app`), which the agent serves.
     site: str
@@ -350,7 +350,7 @@ class ClaimedTurnOut(TurnOut):
     # executor renders it in its own CLI's terms (Claude Code types `prompt` as
     # is); null for a prompt of plain words.
     invocation: InvocationOut | None = None
-    # For a turn whose conversation is held on a Connected site's page that its agent
+    # For a turn whose conversation is held on a host site's page that its agent
     # serves: the site, and the agent's own credentials for it that the runner must
     # leave out of the turn (`interface.page_turn`). Null for every other turn.
     page_site: ClaimPageSiteOut | None = None

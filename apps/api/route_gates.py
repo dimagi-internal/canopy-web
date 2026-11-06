@@ -121,7 +121,7 @@ Vocabulary (closed — add to it deliberately, never in passing):
   (the fleet hold).
 * ``fleet-holder`` — an address in ``CANOPY_FLEET_HOLDERS`` (Ada): may SET the fleet
   hold, never release it (``apps/harness/api_runners_holds.py::_may_hold_fleet``).
-* ``host`` — a connected-site / machine protocol endpoint (assertion,
+* ``host`` — a host-site / machine protocol endpoint (assertion,
   jwt-bearer, Pub/Sub push).
 * ``hcp-grant`` — the Human Context Protocol subject rule
   (``apps/contacts/hcp_api.py::_principal``): an agent reaches ONLY the person
@@ -242,7 +242,7 @@ HAND_TOOL_GATES: dict[str, tuple[tuple[str, ...], str]] = {
     # The caller envelope of a turn: a member of the turn's tenant, or the
     # turn's own caller token. Same gate as `get_turn_caller_context`.
     "who_is_asking": (("member", "caller-token"), "read"),
-    # The Connected site the visitor is on: caller tokens only, and only with
+    # The host site the visitor is on: caller tokens only, and only with
     # the visitor's live host grant (`apps/host_grants/host_gateway.py`).
     "site_tools": (("caller-token",), "read"),
     "site_call": (("caller-token",), "action"),

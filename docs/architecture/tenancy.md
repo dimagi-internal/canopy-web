@@ -137,7 +137,7 @@ failure again.
 - **Personal access tokens** (`apps/tokens/`) authenticate machine callers with
   `Authorization: Bearer <raw>`; `apps.tokens.middleware.BearerTokenAuthMiddleware` resolves
   them after `AuthenticationMiddleware` and before `LoginRequiredMiddleware`. An MCP OAuth
-  access token is a `PersonalToken` too. A `DelegatedToken` (a connected site acting for a
+  access token is a `PersonalToken` too. A `DelegatedToken` (a host site acting for a
   visitor who has an account) resolves to a `User`; every surface applies that user's ACL.
   A token acts with exactly its person's role (`roles.md` → "A token can do whatever its
   person can").
@@ -606,12 +606,12 @@ THE predicate; every surface below asks it, one test each in
     seals) goes only to the person's browser: canopy's own signed-in page, or the panel's
     frame, whose fetches are `Sec-Fetch-Site: same-origin` (`sensitivity.request_is_panel_browser`).
     A site's backend calling canopy with the same delegated token gets `keyset: null`. The
-    trust boundary: a connected site vouches for who its visitor is, so it can always act
+    trust boundary: a host site vouches for who its visitor is, so it can always act
     as them and read what canopy hands them — ciphertext and their wrap, never anything that
     opens it. Their seals would let a site that forged the browser's header try passphrases
     offline (a passkey seal cannot be attacked so); the header keeps them out of every
     ordinary server-to-server call, and is not a proof against a site that forges it.
-    **A connected site's backend hears live words.** It holds the visitor's delegated
+    **A host site's backend hears live words.** It holds the visitor's delegated
     token, so it can open the chat socket or send as them, and the socket's live frames
     carry the words in transit: sealing protects what canopy-web STORES, not a site the
     person chose to use canopy through. Only connect a site you would trust with the
@@ -690,8 +690,8 @@ THE predicate; every surface below asks it, one test each in
   `/canopy cloud` leave a private conversation as it is and say so (`_move_to_cloud`),
   since its stranded turn could only be re-asked by Slack sending into it.
 - **The agent's memory:** every turn of a sensitive conversation runs confined to the same
-  connected site, so it resumes the Claude session of the conversation's previous turn when it
-  runs on the same sensitive-data box, in the same connected site for the same agent, and the
+  host site, so it resumes the Claude session of the conversation's previous turn when it
+  runs on the same sensitive-data box, in the same host site for the same agent, and the
   box still holds the transcript. The box records which session belongs to which
   conversation itself (`~/.canopy/kept-conversations/<session>.json`, runner/ec2
   `kept_resume` / `keep_conversation`), told by the claim that the turn is in one
@@ -739,9 +739,9 @@ THE predicate; every surface below asks it, one test each in
 - **No title:** create drops one, becoming sensitive clears one, `PUT …/title` is 422
   (`sensitivity.NO_TITLE`; clearing is allowed), and the `SESSION_CREATED` line keeps none.
 - **Who a site may say a visitor is takes a passkey:** a signed `email_verified` claim
-  resolves to a member, whose token reads their sensitive chats, so registering a connected
+  resolves to a member, whose token reads their sensitive chats, so registering a host
   site or changing its public keys, JWKS URL or issuer needs a fresh step-up; a token is
-  refused (`embedding/connected_apps_api.py`).
+  refused (`embedding/host_sites_api.py`).
 - **The chat page says so:** `SessionOut.sensitive` draws a banner and turns off Share to
   Slack.
 - **MCP Apps:** which View a call has is decided from its metadata columns alone (call id,
@@ -755,11 +755,11 @@ THE predicate; every surface below asks it, one test each in
 - **Never re-processed:** auto-debug starts nothing for a turn with any requirement; the
   fleet's transcript readers find none to read.
 - **A sensitive turn's token reaches a fixed few tools:** its caller token's tools are the
-  connected site's globs ∩ `sensitive_data.SENSITIVE_CANOPY_TOOLS` (`current_page`,
+  host site's globs ∩ `sensitive_data.SENSITIVE_CANOPY_TOOLS` (`current_page`,
   `who_is_asking`, `site_tools`, `site_call`, `site_read`) plus its own page's actions
   (`page_*`, `sensitive_data.sensitive_tool`: each runs in its person's tab and answers
-  only the turn, so nothing leaves its people), whatever the connected site's profile lists; it resolves to
-  nothing once the connected site stops saying `data: sensitive` (re-read on every call) or the
+  only the turn, so nothing leaves its people), whatever the host site's profile lists; it resolves to
+  nothing once the host site stops saying `data: sensitive` (re-read on every call) or the
   turn is not confined (`caller_tokens._sensitive_grant`, `mcp/turn_scope.py`). So a
   sensitive turn creates no schedule, task or turn of its own.
 - **Lineage is never dropped:** a caller token's own turn is the parent of anything its

@@ -1,7 +1,7 @@
 import { type JSX } from 'react'
 import { relativeAge } from '@/lib/relativeAge'
-import { type ConnectedApp } from '@/api/connectedApps'
-import { STATUS_STYLE } from '@/pages/connectedApps/ConnectionTester'
+import { type HostSite } from '@/api/hostSites'
+import { STATUS_STYLE } from '@/pages/hostSites/ConnectionTester'
 import { Td, Th, Tr } from '@/components/DataTable'
 
 export function ago(iso: string | null | undefined, now: Date): string {
@@ -9,7 +9,7 @@ export function ago(iso: string | null | undefined, now: Date): string {
 }
 
 /** The live probe's last verdict as a badge: pass, fail, or not set up. */
-function ProbeBadge({ probe }: { probe: ConnectedApp['live_probe'] }): JSX.Element {
+function ProbeBadge({ probe }: { probe: HostSite['live_probe'] }): JSX.Element {
   const [label, style] =
     probe.ok === true
       ? ['pass', STATUS_STYLE.pass]
@@ -31,7 +31,7 @@ export function SiteHealthTable({
   apps,
   now = new Date(),
 }: {
-  apps: readonly ConnectedApp[]
+  apps: readonly HostSite[]
   now?: Date
 }): JSX.Element | null {
   const rows = apps.filter((a) => a.issues_host_grants && !a.revoked)

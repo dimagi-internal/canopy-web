@@ -1,5 +1,5 @@
-"""The site agents API (`GET /api/sites/agents`) and what the Connected sites page reads
-back from the site (`…/connected-apps/{id}/needs`).
+"""The site agents API (`GET /api/sites/agents`) and what the host sites page reads
+back from the site (`…/host-sites/{id}/needs`).
 
 The API is driven over HTTP with a request signed the way a site's SDK signs
 it, and its answer is verified with the SDK's own verifier against canopy's
@@ -137,7 +137,7 @@ def test_an_unknown_site_is_refused_like_any_other(w):
     assert response.status_code == 401 and "unknown_issuer" in response.json()["detail"]
 
 
-def test_a_disconnected_site_is_unknown(w):
+def test_a_dishost_site_is_unknown(w):
     AppCredential.objects.filter(pk=w["app"].pk).update(revoked_at=timezone.now())
     assert _ask(w).status_code == 401
 
@@ -300,7 +300,7 @@ def test_the_response_is_signed_by_the_execution_key(w):
     assert header["kid"] == client_identity.published_jwks()["keys"][0]["kid"]
 
 
-# --- the site's needs, on the Connected sites page -------------------------------
+# --- the site's needs, on the host sites page -------------------------------
 
 
 NEEDS = {"sensitive_data": {"requires": {"handles_sensitive": True, "runner_flag": "sensitive_data"}},
@@ -334,7 +334,7 @@ def _needs(w):
     client = Client()
     client.force_login(w["owner"])
     grant_step_up(client)  # connecting a site takes a passkey
-    response = client.get(f"/api/workspaces/connect/connected-apps/{w['app'].pk}/needs")
+    response = client.get(f"/api/workspaces/connect/host-sites/{w['app'].pk}/needs")
     assert response.status_code == 200, response.content
     return response.json()
 
@@ -378,7 +378,7 @@ def test_an_agent_allowed_sensitive_data_without_a_sensitive_profile_says_why(w,
     _runner(w, w["labsdata"], w["ace"], sensitive=True)
     row = next(r for r in _needs(w)["agents"] if r["slug"] == "ace")
     assert row["sensitive_data"] and row["can_handle_sensitive_data"] is False
-    assert row["why_not"][0] == {"text": "ACE has no connected site for this site that handles sensitive data",
+    assert row["why_not"][0] == {"text": "ACE has no host site for this site that handles sensitive data",
                                  "url": row["url"] + "/settings#reach"}
     assert all(why["url"] and "canopy ›" not in why["text"] for why in row["why_not"])
 
@@ -429,7 +429,7 @@ def test_a_non_member_cannot_read_a_sites_needs(w):
     client = Client()
     client.force_login(stranger)
     grant_step_up(client)  # connecting a site takes a passkey
-    response = client.get(f"/api/workspaces/connect/connected-apps/{w['app'].pk}/needs")
+    response = client.get(f"/api/workspaces/connect/host-sites/{w['app'].pk}/needs")
     assert response.status_code == 404
 
 
@@ -485,7 +485,7 @@ def test_a_workspace_that_has_not_registered_the_site_is_unknown(w):
 
 def test_the_site_block_links_this_sites_page_in_canopy(w):
     got = _agents(w)
-    assert got.site_settings_url.endswith(f"/w/connect/settings/connected-apps#site-{w['app'].pk}")
+    assert got.site_settings_url.endswith(f"/w/connect/settings/host-sites#site-{w['app'].pk}")
     assert got.site_settings_url.startswith("http")
 
 
@@ -499,7 +499,7 @@ def test_every_problem_comes_with_the_url_that_fixes_it(w):
     assert reach.url.endswith("#reach")
 
 
-# --- filling a Connected site from the site's own document -----------------------------
+# --- filling a host site from the site's own document -----------------------------
 
 
 FACTS = {"origins": ["https://labs.example.org"], "jwks_url": "https://labs.example.org/canopy/jwks.json",
@@ -531,7 +531,7 @@ def _discover(w, user=None, **params):
     client = Client()
     client.force_login(user or w["owner"])
     grant_step_up(client)  # connecting a site takes a passkey
-    return client.get("/api/workspaces/connect/connected-apps/discover", params)
+    return client.get("/api/workspaces/connect/host-sites/discover", params)
 
 
 def test_a_new_site_is_found_from_its_address_alone(w, monkeypatch):
@@ -579,14 +579,14 @@ def test_adopting_the_facts_is_the_ordinary_audited_update(w, monkeypatch):
     client.force_login(w["owner"])
     grant_step_up(client)  # connecting a site takes a passkey
     site = body["site"]
-    response = client.patch(f"/api/workspaces/connect/connected-apps/{w['app'].pk}",
+    response = client.patch(f"/api/workspaces/connect/host-sites/{w['app'].pk}",
                             data={"origins": site["origins"], "jwks_url": site["jwks_url"],
                                   "host_issuer": site["issuer"],
                                   "host_mcp_resource": site["mcp_resource"]},
                             content_type="application/json")
     assert response.status_code == 200, response.content
     assert response.json()["origins"] == FACTS["origins"]
-    assert SettingChange.objects.filter(operation="update_connected_app").exists()
+    assert SettingChange.objects.filter(operation="update_host_site").exists()
 
 
 def test_a_document_signed_by_neither_the_registered_nor_the_named_keys_is_refused(w, monkeypatch):

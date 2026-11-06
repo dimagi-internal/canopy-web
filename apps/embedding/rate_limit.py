@@ -136,7 +136,7 @@ def check_site_agents_issuer(name: str) -> None:
 
 
 def check_resources_updated(client_ip, issuer: str = "") -> None:
-    """A connected site telling canopy its resources changed
+    """A host site telling canopy its resources changed
     (`POST /api/sites/resources-updated`): per client before anything is parsed,
     per site (`issuer`) before its signature is checked. Generous — a host may
     notify on every edit — but bounded."""

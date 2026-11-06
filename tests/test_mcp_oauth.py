@@ -330,12 +330,12 @@ def test_an_unknown_grant_type_is_refused():
     assert resp.status_code == 400 and resp.json()["error"] == "unsupported_grant_type"
 
 
-# -- connected apps --------------------------------------------------------
+# -- authorized apps --------------------------------------------------------
 
-def test_connected_apps_are_listed_apart_from_hand_minted_tokens(browser, user):
+def test_host_sites_are_listed_apart_from_hand_minted_tokens(browser, user):
     _login(browser)
     PersonalToken.create_for_user(user=user, label="by hand")
-    apps = browser.get("/api/tokens/connected-apps").json()
+    apps = browser.get("/api/tokens/authorized-apps").json()
     assert [a["client_name"] for a in apps["apps"]] == ["Claude Code"]
     assert apps["mcp_url"].endswith("/api/mcp/")
     assert [t["label"] for t in browser.get("/api/tokens/").json()] == ["by hand"]
@@ -343,8 +343,8 @@ def test_connected_apps_are_listed_apart_from_hand_minted_tokens(browser, user):
 
 def test_disconnecting_stops_the_token_and_the_refresh(browser):
     client_id, tokens = _login(browser)
-    grant_id = browser.get("/api/tokens/connected-apps").json()["apps"][0]["id"]
-    assert browser.delete(f"/api/tokens/connected-apps/{grant_id}").status_code == 204
+    grant_id = browser.get("/api/tokens/authorized-apps").json()["apps"][0]["id"]
+    assert browser.delete(f"/api/tokens/authorized-apps/{grant_id}").status_code == 204
     assert not _works_on_rest(tokens["access_token"])
     resp = Client().post("/oauth/token", {"grant_type": "refresh_token", "client_id": client_id,
                                           "refresh_token": tokens["refresh_token"]})
@@ -356,7 +356,7 @@ def test_nobody_else_can_disconnect_your_app(browser):
     grant_id = OAuthGrant.objects.get().pk
     other = Client()
     other.force_login(User.objects.create_user("sam", "sam@dimagi.com", "pw"))
-    assert other.delete(f"/api/tokens/connected-apps/{grant_id}").status_code == 404
+    assert other.delete(f"/api/tokens/authorized-apps/{grant_id}").status_code == 404
     assert OAuthGrant.objects.get().revoked_at is None
 
 
@@ -412,5 +412,5 @@ def test_the_sign_in_kept_its_tables_and_routes_when_it_got_its_own_app():
         "oauth_clients", "oauth_authorization_codes", "oauth_grants"}
     assert PersonalToken._meta.get_field("oauth_grant").related_model is OAuthGrant
     paths = api.get_openapi_schema()["paths"]
-    assert paths["/api/tokens/connected-apps"]["get"]["operationId"] == "tokens_list_connected_apps"
-    assert paths["/api/tokens/connected-apps/{grant_id}"]["delete"]["operationId"] == "tokens_disconnect_app"
+    assert paths["/api/tokens/authorized-apps"]["get"]["operationId"] == "list_authorized_apps"
+    assert paths["/api/tokens/authorized-apps/{grant_id}"]["delete"]["operationId"] == "disconnect_authorized_app"

@@ -1,4 +1,4 @@
-"""Read mode and connected sites over HTTP: the plain settings over `Agent.interface`.
+"""Read mode and host sites over HTTP: the plain settings over `Agent.interface`.
 
 `docs/superpowers/specs/2026-11-04-agent-settings-replace-the-interface-design.md` § 3. Driven through
 the routes, as the form, the CLI and an MCP tool reach them.
@@ -73,7 +73,7 @@ def _shaped(w, slug="ace"):
 
 
 READ = "/api/agents/hal/read-mode"
-SITES = "/api/agents/hal/connected-sites"
+SITES = "/api/agents/hal/host-sites"
 
 
 # --- read mode --------------------------------------------------------------------------------
@@ -118,7 +118,7 @@ def test_read_mode_has_no_way_to_name_anything_else(w, field):
     assert not w["agent"].interface.get("capabilities")
 
 
-# --- connected sites --------------------------------------------------------------------------
+# --- host sites --------------------------------------------------------------------------
 
 def test_a_new_site_starts_with_the_saved_defaults_and_can_go_sensitive_with_nothing_else(w):
     AppCredential.create_credential(name="connect-labs", created_by=w["owner"], workspace=w["ws"])
@@ -238,7 +238,7 @@ def test_session_review_stays_canopys_through_every_new_route(w):
     w["agent"].refresh_from_db()
     assert interface.SESSION_REVIEW not in w["agent"].interface["capabilities"]
     assert interface.profile(w["agent"], interface.SESSION_REVIEW) == canopy_review
-    # A key like it is an ordinary connected site: what it opens is that row, never the review.
+    # A key like it is an ordinary host site: what it opens is that row, never the review.
     assert "Bash" not in canopy_review["tools"]
     # The parser refuses the name too, whatever asks it.
     with pytest.raises(interface.InterfaceError):
@@ -410,7 +410,7 @@ def test_the_agents_own_page_carries_both(w):
     _shaped(w)
     body = _as(w["member"]).get("/api/agents/hal/").json()
     assert body["read_mode"]["source"] == "custom"
-    assert {r["key"] for r in body["connected_sites"]} == {"canopy", "connect"}
+    assert {r["key"] for r in body["host_sites"]} == {"canopy", "connect"}
 
 
 RETIRED_OPERATIONS = ("get_interface", "publish_interface", "validate_interface", "reset_interface",
@@ -441,8 +441,8 @@ def test_each_old_route_answers_410_and_saves_nothing(w, method, tail, prefix):
         assert response["Content-Type"] == "application/problem+json"
         body = response.json()
         assert body["read_mode"] == "/api/agents/hal/read-mode"
-        assert body["connected_sites"] == "/api/agents/hal/connected-sites"
-        for word in ("read-mode", "connected-sites", "dry_run", "sensitive"):
+        assert body["host_sites"] == "/api/agents/hal/host-sites"
+        for word in ("read-mode", "host-sites", "dry_run", "sensitive"):
             assert word in body["detail"], word
         # The plugin's credential_guard ends a turn on words like these. A 410 is not a login failing.
         assert not re.search(r"credential|authenticat|unauthori|api.?key|access token|401", response.content.decode(), re.I)
@@ -459,6 +459,6 @@ def test_the_old_routes_are_in_neither_openapi_nor_the_tools_and_the_new_ones_ar
              for op in methods.values()}
     for name in RETIRED_OPERATIONS:
         assert not [found for found in (*operations, *tools) if found.endswith(name)], name
-    for tail in ("get_read_mode", "put_read_mode", "reset_read_mode", "list_connected_sites", "put_connected_site",
-                 "delete_connected_site"):
+    for tail in ("get_read_mode", "put_read_mode", "reset_read_mode", "list_agent_host_sites", "put_agent_host_site",
+                 "delete_agent_host_site"):
         assert any(name.endswith(tail) and not op.get("deprecated") for name, op in operations.items()), tail

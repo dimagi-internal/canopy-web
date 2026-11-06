@@ -2,7 +2,7 @@ import { useState, type JSX } from 'react'
 import { Button } from 'canopy-ui/ui'
 import { type AgentOut } from '@/api/agents'
 import { runnerFlagLabel } from '@/components/chat/runnerEligibility'
-import { type ConnectedApp } from '@/api/connectedApps'
+import { type HostSite } from '@/api/hostSites'
 
 export function AgentPicker({
   agents,
@@ -56,7 +56,7 @@ export function DefaultAgentPicker({
   busy,
   onChange,
 }: {
-  app: ConnectedApp
+  app: HostSite
   busy: boolean
   onChange: (agent: string) => void
 }): JSX.Element {
@@ -125,7 +125,7 @@ export function HostGrantFields({
 
 /** What the host last said its visitors' runners must guarantee. Display only:
  *  the signed claim on each arrival is the authority. */
-export function RunnerRequirements({ app }: { app: Pick<ConnectedApp, 'runner_requirements'> }): JSX.Element | null {
+export function RunnerRequirements({ app }: { app: Pick<HostSite, 'runner_requirements'> }): JSX.Element | null {
   const reqs = app.runner_requirements ?? []
   if (reqs.length === 0) return null
   return (
@@ -140,7 +140,7 @@ export function HostGrantEditor({
   busy,
   onSave,
 }: {
-  app: ConnectedApp
+  app: HostSite
   busy: boolean
   onSave: (issuer: string, resource: string) => void
 }): JSX.Element {

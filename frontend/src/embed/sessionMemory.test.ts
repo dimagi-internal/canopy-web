@@ -14,7 +14,7 @@ describe('embedMemorySource', () => {
     expect(json).toHaveBeenCalledWith('/api/people/me/sessions/s1/agent-memory/')
   })
 
-  it('a connected site: the person route is refused, so it shows read-only with a link', async () => {
+  it('a host site: the person route is refused, so it shows read-only with a link', async () => {
     const json = vi
       .fn()
       .mockRejectedValueOnce(err(403))

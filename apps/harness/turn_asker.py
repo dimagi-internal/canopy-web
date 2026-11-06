@@ -16,7 +16,7 @@ agent acting for itself, exactly as before:
   PAT, which anything holding it could use to name any turn;
 * the turn that login serves NOW — its own turn, or for a session login the session's
   newest turn (each message is its own turn) — is still executing, is not a confined
-  turn (read mode or a connected site), and runs for this agent;
+  turn (read mode or a host site), and runs for this agent;
 * that turn was started by a verified, active human (not canopy, not an agent), or was
   itself started on such a person's behalf (the chain carries them), and the request did
   not put itself in a lower role (`acts_as` only lowers).

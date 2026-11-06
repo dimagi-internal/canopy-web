@@ -35,7 +35,7 @@ vi.mock('@/workspace/WorkspaceProvider', () => ({
 const { AgentAccessList } = await import('./AgentAccessList')
 
 const line = (o: Partial<AccessLineOut>): AccessLineOut => ({
-  id: 1, scope: 'agent', scope_workspace: null, kind: 'person', who: 'ann@dimagi.com', role: 'read_write', connected_site: '', include_below: false, user_id: 9,
+  id: 1, scope: 'agent', scope_workspace: null, kind: 'person', who: 'ann@dimagi.com', role: 'read_write', host_site: '', include_below: false, user_id: 9,
   subject_workspace: null, at_least: '', domain: '', verified: true, manual_only: false, note: '',
   granted_by_email: null, granted_at: null, can_edit: true, warning: '', ...o,
 })
@@ -43,11 +43,11 @@ const line = (o: Partial<AccessLineOut>): AccessLineOut => ({
 const LIST = (o: Partial<AccessListOut> = {}): AccessListOut => ({
   inherit_workspace_defaults: true,
   can_edit: true,
-  connected_sites: [],
+  host_sites: [],
   lines: [
     line({ id: 1, who: 'ann@dimagi.com', role: 'read_write' }),
     line({ id: 2, kind: 'domain', who: 'Anyone at @partner.org (verified)', role: 'read_only', domain: 'partner.org' }),
-    line({ id: 4, kind: 'person', who: 'cy@dimagi.com', role: '', connected_site: 'connect' }),
+    line({ id: 4, kind: 'person', who: 'cy@dimagi.com', role: '', host_site: 'connect' }),
     line({ id: 3, scope: 'workspace', scope_workspace: 'dimagi', kind: 'workspace', who: 'Everyone in dimagi or any workspace below it', role: 'read_only', include_below: true, can_edit: false }),
   ],
   implicit: [
@@ -114,8 +114,8 @@ describe('AgentAccessList', () => {
     const own = screen.getAllByTestId('access-line')
     expect(own).toHaveLength(3)
     expect((within(own[0]).getByLabelText('Role for ann@dimagi.com') as HTMLSelectElement).value).toBe('read_write')
-    // a line that opens one connected site says so, and has no role to change or approval gate to flip
-    expect(own[2].textContent).toContain('Only the “connect” connected site')
+    // a line that opens one host site says so, and has no role to change or approval gate to flip
+    expect(own[2].textContent).toContain('Only the “connect” host site')
     expect(within(own[2]).queryByRole('combobox')).toBeNull()
     const inherited = screen.getByTestId('access-line-inherited')
     expect(inherited.textContent).toContain('Everyone in dimagi or any workspace below it')
@@ -197,22 +197,22 @@ describe('AgentAccessList', () => {
     )
   })
 
-  it('adds one connected site, picked from the agent\'s own, instead of a role', async () => {
+  it('adds one host site, picked from the agent\'s own, instead of a role', async () => {
     addAccessLine.mockResolvedValue(line({}))
-    getAccessList.mockResolvedValue(LIST({ connected_sites: [{ name: 'canopy', site: 'canopy-web' }, { name: 'connect', site: 'connect-labs' }] }))
+    getAccessList.mockResolvedValue(LIST({ host_sites: [{ name: 'canopy', site: 'canopy-web' }, { name: 'connect', site: 'connect-labs' }] }))
     show()
     fireEvent.change(await screen.findByLabelText('Their email'), { target: { value: 'cy@dimagi.com' } })
-    fireEvent.click(screen.getByRole('radio', { name: /One connected site/ }))
+    fireEvent.click(screen.getByRole('radio', { name: /One host site/ }))
     expect(screen.queryByLabelText('Internal name of the site')).toBeNull()          // no free-text name
     expect((screen.getByRole('button', { name: 'Add' }) as HTMLButtonElement).disabled).toBe(true)   // needs a pick
-    const pick = screen.getByLabelText('Connected site') as HTMLSelectElement
+    const pick = screen.getByLabelText('Host site') as HTMLSelectElement
     expect([...pick.options].map((o) => o.value)).toEqual(['', 'canopy', 'connect'])
     expect([...pick.options].map((o) => o.textContent)).toEqual(['Pick a site…', 'canopy-web', 'connect-labs'])
     fireEvent.change(pick, { target: { value: 'connect' } })
     fireEvent.click(screen.getByRole('button', { name: 'Add' }))
     await waitFor(() =>
       expect(addAccessLine).toHaveBeenCalledWith('ace', expect.objectContaining({
-        kind: 'person', connected_site: 'connect', email: 'cy@dimagi.com', manual_only: false,
+        kind: 'person', host_site: 'connect', email: 'cy@dimagi.com', manual_only: false,
       })),
     )
     expect(addAccessLine.mock.calls[0][1].role).toBeUndefined()

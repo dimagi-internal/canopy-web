@@ -69,7 +69,7 @@ def test_write_opens_every_profile_read_opens_only_read_mode_and_a_use_line_open
     assert roles.can_use(roles.permissions_of(roles.READ_ONLY), "ask")
     assert not roles.can_use(roles.permissions_of(roles.READ_ONLY), "connect")
     assert roles.can_use({roles.use("connect")}, "connect")
-    assert not roles.can_use({roles.use("connect")}, "ask")      # a connected-site line is not `read`
+    assert not roles.can_use({roles.use("connect")}, "ask")      # a host-site line is not `read`
     assert not roles.can_use({roles.use("connect")}, "data")
 
 
@@ -249,19 +249,19 @@ def test_one_line_per_subject_per_scope(w):
         _line(w["hal"], roles.READ_ONLY, kind=G.DOMAIN, domain="DIMAGI.COM")     # the domain is folded to lower case
 
 
-# --- a line grants a role OR one named connected site ---------------------------------------
+# --- a line grants a role OR one named host site ---------------------------------------
 
-def test_a_connected_site_line_grants_use_of_that_site_and_nothing_else(w):
+def test_a_host_site_line_grants_use_of_that_site_and_nothing_else(w):
     G.objects.create(agent=w["hal"], kind=G.PERSON, user=w["out"], capability="connect")
     got = grants.resolve(w["hal"], _asker(w["out"]))
-    assert got.role is None                                   # a connected-site line is not a role
+    assert got.role is None                                   # a host-site line is not a role
     assert got.permissions == {roles.use("connect")}
     assert roles.can_use(got.permissions, "connect")
     assert not roles.can_use(got.permissions, "ask") and not roles.holds(got.permissions, roles.READ)
     assert not roles.holds(got.permissions, roles.WRITE)
 
 
-def test_several_connected_sites_for_one_subject_are_several_lines_beside_a_role_line(w):
+def test_several_host_sites_for_one_subject_are_several_lines_beside_a_role_line(w):
     G.objects.create(agent=w["hal"], kind=G.PERSON, user=w["out"], role=roles.READ_ONLY)
     G.objects.create(agent=w["hal"], kind=G.PERSON, user=w["out"], capability="connect")
     G.objects.create(agent=w["hal"], kind=G.PERSON, user=w["out"], capability="data")
@@ -273,7 +273,7 @@ def test_several_connected_sites_for_one_subject_are_several_lines_beside_a_role
         G.objects.create(agent=w["hal"], kind=G.PERSON, user=w["out"], capability="data")
 
 
-def test_a_line_has_a_role_or_a_connected_site_never_both_or_neither(w):
+def test_a_line_has_a_role_or_a_host_site_never_both_or_neither(w):
     with pytest.raises(IntegrityError), transaction.atomic():
         G.objects.create(agent=w["hal"], kind=G.PERSON, user=w["out"], role=roles.READ_ONLY, capability="x")
     with pytest.raises(IntegrityError), transaction.atomic():
@@ -301,7 +301,7 @@ def test_an_address_only_line_can_never_grant_a_role_containing_write(w, kind, r
 
 
 @pytest.mark.parametrize("kind", [G.DOMAIN, G.CONTACT])
-def test_an_address_only_line_may_give_read_only_or_a_named_connected_site(w, kind):
+def test_an_address_only_line_may_give_read_only_or_a_named_host_site(w, kind):
     assert grants.check_line(w["boss"], home="dimagi", kind=kind, role=roles.READ_ONLY, domain="dimagi.com")["role"] == "read_only"
     got = grants.check_line(w["boss"], home="dimagi", kind=kind, capability="connect", domain="dimagi.com")
     assert (got["role"], got["capability"]) == ("", "connect")
@@ -319,12 +319,12 @@ def test_only_the_three_built_in_roles_are_addable(w, role):
         grants.check_line(w["boss"], home="dimagi", kind=G.PERSON, role=role, email=w["ed"].email)
 
 
-def test_a_line_must_name_exactly_one_of_role_and_connected_site(w):
-    with pytest.raises(grants.LineError, match="either a role or one connected site"):
+def test_a_line_must_name_exactly_one_of_role_and_host_site(w):
+    with pytest.raises(grants.LineError, match="either a role or one host site"):
         grants.check_line(w["boss"], home="dimagi", kind=G.PERSON, role=roles.READ_ONLY, capability="x", email=w["ed"].email)
-    with pytest.raises(grants.LineError, match="either a role or one connected site"):
+    with pytest.raises(grants.LineError, match="either a role or one host site"):
         grants.check_line(w["boss"], home="dimagi", kind=G.PERSON, email=w["ed"].email)
-    with pytest.raises(grants.LineError, match="not the name of a connected site"):
+    with pytest.raises(grants.LineError, match="not the name of a host site"):
         grants.check_line(w["boss"], home="dimagi", kind=G.PERSON, capability="Not Valid", email=w["ed"].email)
 
 

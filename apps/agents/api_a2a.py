@@ -62,7 +62,7 @@ def public_agent_card(request: HttpRequest, slug: str, response: HttpResponse):
     """The agent's public Agent Card (A2A v1.0): what it offers people outside its workspace.
 
     Served only for an agent whose access list lets contacts or unknown callers
-    use read mode or a connected site; any other slug is a 404. Supports `If-None-Match`.
+    use read mode or a host site; any other slug is a 404. Supports `If-None-Match`.
     """
     card = agent_card.public_card(_agent_or_404(slug))
     if card is None:
@@ -78,7 +78,7 @@ def public_agent_card(request: HttpRequest, slug: str, response: HttpResponse):
 def extended_agent_card(request: HttpRequest, slug: str, response: HttpResponse):
     """The Agent Card as the signed-in caller sees it (A2A `GetExtendedAgentCard`).
 
-    The public card's skills plus read mode and every connected site the caller
+    The public card's skills plus read mode and every host site the caller
     may use themselves. A 404 when that is nothing. Supports `If-None-Match`.
     """
     card = agent_card.extended_card(_agent_or_404(slug), request.user)

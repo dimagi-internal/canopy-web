@@ -46,7 +46,7 @@ def _agent(ws, slug="labs-helper"):
 
 def _connect(c, body=None, slug="w1"):
     return c.post(
-        f"/api/workspaces/{slug}/connected-apps",
+        f"/api/workspaces/{slug}/host-sites",
         data=body or {"name": "connect-labs", "origins": [LABS]},
         content_type="application/json",
     )
@@ -66,7 +66,7 @@ def test_an_owner_can_connect_a_site_and_no_secret_is_issued():
     assert r.json()["origins"] == [LABS]
     assert "secret" not in r.json()
     assert not hasattr(AppCredential, "lookup")
-    assert c.post(f"/api/workspaces/w1/connected-apps/{r.json()['id']}/rotate").status_code \
+    assert c.post(f"/api/workspaces/w1/host-sites/{r.json()['id']}/rotate").status_code \
         in (404, 405)
 
 
@@ -83,7 +83,7 @@ def test_a_non_member_gets_404_not_403():
     c = Client()
     c.force_login(outsider)
     grant_step_up(c)  # connecting a site takes a passkey
-    assert c.get("/api/workspaces/w1/connected-apps").status_code == 404
+    assert c.get("/api/workspaces/w1/host-sites").status_code == 404
 
 
 def test_a_second_workspaces_owner_cannot_see_my_apps():
@@ -97,7 +97,7 @@ def test_a_second_workspaces_owner_cannot_see_my_apps():
     c2.force_login(other)
     grant_step_up(c2)  # connecting a site takes a passkey
 
-    assert c2.get("/api/workspaces/w2/connected-apps").json() == []
+    assert c2.get("/api/workspaces/w2/host-sites").json() == []
 
 
 # --- the URLs, which are the point --------------------------------------------
@@ -143,7 +143,7 @@ def test_several_environments_can_be_connected_at_once():
 
 
 def test_the_surface_hands_out_no_email_vouching_at_all():
-    """A connected site cannot speak for canopy's users. Vouching by email
+    """A host site cannot speak for canopy's users. Vouching by email
     domain, and the provisioning that rode with it, went with token-exchange —
     so there is no field for a form to set and none for the API to echo. A site
     proves who its visitor is with a signature instead, and an arrival never
@@ -170,7 +170,7 @@ def test_agents_can_be_offered_and_replaced():
     _agent(ws, "beta")
     app_id = _connect(c, {"name": "x", "origins": [LABS], "agents": ["alpha"]}).json()["id"]
 
-    r = c.patch(f"/api/workspaces/w1/connected-apps/{app_id}",
+    r = c.patch(f"/api/workspaces/w1/host-sites/{app_id}",
                 data={"agents": ["beta"]}, content_type="application/json")
 
     assert [a["slug"] for a in r.json()["agents"]] == ["beta"]
@@ -199,7 +199,7 @@ def test_disconnecting_makes_the_embed_shell_404_immediately():
     app_id = _connect(c).json()["id"]
     assert Client().get("/embed/chat?app=connect-labs").status_code == 200
 
-    c.delete(f"/api/workspaces/w1/connected-apps/{app_id}")
+    c.delete(f"/api/workspaces/w1/host-sites/{app_id}")
 
     assert Client().get("/embed/chat?app=connect-labs").status_code == 404
 
@@ -219,7 +219,7 @@ def test_a_name_that_would_not_survive_a_url_is_refused():
     assert _connect(c, {"name": "my app!", "origins": [LABS]}).status_code == 422
 
 
-# --- canopy's own pages are just another connected site ----------------------
+# --- canopy's own pages are just another host site ----------------------
 
 
 def test_ticking_the_box_makes_canopy_show_that_apps_panel():
@@ -264,7 +264,7 @@ def test_it_can_be_turned_off_again():
     app_id = _connect(c, {"name": "x", "origins": [LABS],
                           "show_on_canopy_pages": True}).json()["id"]
 
-    r = c.patch(f"/api/workspaces/w1/connected-apps/{app_id}",
+    r = c.patch(f"/api/workspaces/w1/host-sites/{app_id}",
                 data={"show_on_canopy_pages": False}, content_type="application/json")
 
     assert r.json()["shows_on_canopy_pages"] is False
@@ -293,7 +293,7 @@ def test_a_revoked_app_stops_showing_there():
     app_id = _connect(c, {"name": "x", "origins": [LABS],
                           "show_on_canopy_pages": True}).json()["id"]
 
-    c.delete(f"/api/workspaces/w1/connected-apps/{app_id}")
+    c.delete(f"/api/workspaces/w1/host-sites/{app_id}")
 
     assert c.get("/api/embed/self").json()["enabled"] is False
 
@@ -304,7 +304,7 @@ def test_a_revoked_app_stops_showing_there():
 # --- the service layer's own guard --------------------------------------------
 
 
-def test_connected_sites_are_read_by_admins_and_changed_by_owners():
+def test_host_sites_are_read_by_admins_and_changed_by_owners():
     """Reading sites, their health and Test connection is the integrations
     tier (admin); registering or changing one is the owner's — a registered
     key vouches for visitors as members. An editor reaches neither."""
@@ -382,7 +382,7 @@ def test_keys_can_be_rotated_by_editing():
     _p2, pub2 = _keypair()
     app_id = _connect(c, {"name": "x", "origins": [LABS], "public_keys": [pub1]}).json()["id"]
 
-    r = c.patch(f"/api/workspaces/w1/connected-apps/{app_id}",
+    r = c.patch(f"/api/workspaces/w1/host-sites/{app_id}",
                 data={"public_keys": [pub1, pub2]}, content_type="application/json")
 
     assert len(r.json()["public_keys"]) == 2
@@ -405,18 +405,18 @@ def test_changing_a_sites_origins_and_agents_is_audited():
     _agent(ws, "alpha")
     app_id = _connect(c).json()["id"]
 
-    r = c.patch(f"/api/workspaces/w1/connected-apps/{app_id}",
+    r = c.patch(f"/api/workspaces/w1/host-sites/{app_id}",
                 data={"origins": [LABS, "http://localhost:8000"], "agents": ["alpha"]},
                 content_type="application/json")
 
     assert r.status_code == 200, r.content
-    assert SettingChange.objects.filter(operation="update_connected_app").count() == 1
+    assert SettingChange.objects.filter(operation="update_host_site").count() == 1
 
 
 def test_an_injected_second_directive_is_refused_on_update():
     _user, _ws, c = _ctx()
     app_id = _connect(c).json()["id"]
-    r = c.patch(f"/api/workspaces/w1/connected-apps/{app_id}",
+    r = c.patch(f"/api/workspaces/w1/host-sites/{app_id}",
                 data={"origins": [f"{LABS}; default-src *"]}, content_type="application/json")
     assert r.status_code == 422
     assert AppCredential.objects.get(pk=app_id).allowed_frame_origins == [LABS]
@@ -435,14 +435,13 @@ def test_no_management_command_registers_a_site_or_writes_what_it_may_do():
     assert offenders == []
 
 
-def test_the_routes_kept_their_operation_ids_when_embedding_left_tokens():
-    """`list_connected_apps` / `disconnect_app` are shared view names (the MCP
-    sign-in has them too), so the operationIds are module-qualified; moving the
-    module to apps/embedding must not rename these MCP tools."""
+def test_the_host_site_and_authorized_app_tools_have_their_own_names():
+    """The workspace's host sites and a person's authorized apps no longer share view
+    names, so each route is published under its own name, unqualified."""
     from apps.api.api import api
 
     ops = {op["operationId"] for item in api.get_openapi_schema()["paths"].values()
            for op in item.values()}
-    assert {"tokens_connected_apps_list_connected_apps",
-            "tokens_connected_apps_disconnect_app"} <= ops
-    assert not any(o.startswith("embedding_") for o in ops)
+    assert {"list_host_sites", "register_host_site", "update_host_site", "test_host_site",
+            "revoke_host_site", "list_authorized_apps", "disconnect_authorized_app"} <= ops
+    assert not any(o.startswith(("embedding_", "tokens_host", "tokens_list", "tokens_disconnect")) for o in ops)

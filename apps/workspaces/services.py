@@ -566,7 +566,7 @@ def member_scope(user, pinned: str | None = None) -> set[str]:
 
 def _read_pin(request) -> str | None:
     """The workspace a request's LIST reads are pinned to: the `/api/w/{ws}/`
-    pin, else — for a connected site acting for its visitor (a delegated token)
+    pin, else — for a host site acting for its visitor (a delegated token)
     — the site's own workspace, which is the only one it may act in
     (`apps.embedding.delegation`). A site is one tenant's; its visitor being in
     several must not make its chat feed refuse or mix them.
@@ -594,7 +594,7 @@ def request_workspace_slugs(request) -> set[str]:
     can't drift per endpoint. `read_scope` is the rule: pinned → that workspace
     and the caller's workspaces below it; unpinned → the caller's memberships
     when they sit in one tenant tree, else a 422 (`WorkspaceRequired`) naming
-    them; empty for anonymous callers. A connected site acting for its visitor
+    them; empty for anonymous callers. A host site acting for its visitor
     reads exactly the site's workspace (a site is one tenant's).
 
     Filter list querysets by `workspace_id__in=request_workspace_slugs(request)`.
@@ -628,7 +628,7 @@ def each_organisation(request, read):
     route's own read rule applies unchanged and no query ever joins two trees.
     Rows already carry their workspace; re-sort the result if order matters.
 
-    Already pinned (`/api/w/<ws>/me/…`, or a connected site acting for its
+    Already pinned (`/api/w/<ws>/me/…`, or a host site acting for its
     visitor) → one run, exactly as the list would take it."""
     if _read_pin(request):
         return list(read())

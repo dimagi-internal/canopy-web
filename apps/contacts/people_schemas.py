@@ -58,7 +58,7 @@ class PersonFactDetailOut(PersonFactOut):
     source_turn_id: str | None = None
     learned_by: str = Field(default="", description="The agent's name, when an agent recorded it.")
     provenance_site: dict = Field(default_factory=dict,
-                                  description="The connected site the agent was reached through "
+                                  description="The host site the agent was reached through "
                                               "when it recorded this — {name, page?} — or {}.")
 
 

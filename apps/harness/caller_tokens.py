@@ -193,7 +193,7 @@ def _sensitive_grant(current: Turn, agent, globs: list[str], **kw) -> Grant | No
         return None
     allowed = sorted(name for name in sensitive_data.SENSITIVE_CANOPY_TOOLS
                      if any(fnmatch.fnmatchcase(name, g) for g in globs))
-    # The page's own actions, when the profile lists them (a connected site always
+    # The page's own actions, when the profile lists them (a host site always
     # does: `interface.PAGE_TOOLS`) — never a wider glob than `page_*`, whatever it says.
     if any(fnmatch.fnmatchcase(sensitive_data.PAGE_TOOL_GLOB, g) for g in globs):
         allowed.append(sensitive_data.PAGE_TOOL_GLOB)

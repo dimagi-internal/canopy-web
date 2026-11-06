@@ -1,4 +1,4 @@
-"""An agent's read mode and connected sites over HTTP (`apps/agents/answering.py`).
+"""An agent's read mode and host sites over HTTP (`apps/agents/answering.py`).
 
 Any member may read them, as they may read the interface; only the agent's owner or an admin changes
 them. MCP is the REST API, so each route here is a tool.
@@ -15,7 +15,7 @@ from apps.tokens.models import AppCredential
 
 from . import answering
 from .gates import agent_for_admin, agent_for_read
-from .schemas import ConnectedSiteIn, ConnectedSitesOut, ReadModeIn, ReadModeSettingOut
+from .schemas import AgentHostSiteIn, AgentHostSitesOut, ReadModeIn, ReadModeSettingOut
 
 router = Router(tags=["agents"])
 
@@ -34,7 +34,7 @@ def _run(edit, *args, **kwargs):
 def _sites_out(agent) -> dict:
     live = (AppCredential.objects.filter(workspace_id=agent.workspace_id, revoked_at__isnull=True)
             .order_by("name").values_list("name", flat=True))
-    return {"sites": answering.connected_sites_of(agent), "available": list(live),
+    return {"sites": answering.host_sites_of(agent), "available": list(live),
             "new_site_defaults": answering.new_site_defaults()}
 
 
@@ -72,38 +72,38 @@ def reset_read_mode(request: HttpRequest, slug: str):
     return answering.read_mode_of(locked)
 
 
-@router.get("/{slug}/connected-sites", response=ConnectedSitesOut,
+@router.get("/{slug}/host-sites", response=AgentHostSitesOut,
             summary="The sites this agent can be reached from, and the workspace's sites it could add")
 @gate("member")
-def list_connected_sites(request: HttpRequest, slug: str):
+def list_agent_host_sites(request: HttpRequest, slug: str):
     return _sites_out(agent_for_read(request, slug))
 
 
-@router.put("/{slug}/connected-sites/{site}", response=ConnectedSitesOut,
-            summary="Add or change one connected site: only the fields sent change. dry_run checks without saving")
+@router.put("/{slug}/host-sites/{site}", response=AgentHostSitesOut,
+            summary="Add or change one host site: only the fields sent change. dry_run checks without saving")
 @gate("agent-admin", setting=True)
-def put_connected_site(request: HttpRequest, slug: str, site: str, payload: ConnectedSiteIn):
+def put_agent_host_site(request: HttpRequest, slug: str, site: str, payload: AgentHostSiteIn):
     agent = agent_for_admin(request, slug)
     locked, before, after = _run(answering.set_site, agent, site, _changed(payload), by=request.user,
                                  dry_run=payload.dry_run)
     # A note that changed nothing is what keeps a dry run out of the audit.
     audit.note_change(scope=f"agent:{agent.slug}/site/{site}", before=before,
                       after=before if payload.dry_run else after,
-                      summary=f"connected site {site} changed on {agent.slug}")
+                      summary=f"host site {site} changed on {agent.slug}")
     if payload.dry_run:
         locked.interface = {"capabilities": after}
     return _sites_out(locked)
 
 
-@router.delete("/{slug}/connected-sites/{site}", response=ConnectedSitesOut,
-               summary="Remove one connected site from this agent")
+@router.delete("/{slug}/host-sites/{site}", response=AgentHostSitesOut,
+               summary="Remove one host site from this agent")
 @gate("agent-admin", setting=True)
-def delete_connected_site(request: HttpRequest, slug: str, site: str):
+def delete_agent_host_site(request: HttpRequest, slug: str, site: str):
     agent = agent_for_admin(request, slug)
     try:
         locked, before, after = _run(answering.remove_site, agent, site, by=request.user)
     except LookupError as exc:
         raise HttpError(404, f"{agent.slug} is not connected to {site}") from exc
     audit.note_change(scope=f"agent:{agent.slug}/site/{site}", before=before, after=after,
-                      summary=f"connected site {site} removed from {agent.slug}")
+                      summary=f"host site {site} removed from {agent.slug}")
     return _sites_out(locked)

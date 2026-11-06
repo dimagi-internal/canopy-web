@@ -729,7 +729,7 @@ def _sensitive(w):
     return box
 
 
-def test_site_read_is_a_tool_a_sensitive_connected_site_holds(w, host):
+def test_site_read_is_a_tool_a_sensitive_host_site_holds(w, host):
     _sensitive(w)
     sg.grant(w)
     out = _visitor_call(w, host, "site_call", {"tool": "data_query", "arguments": {"sql": "x"}})
@@ -754,7 +754,7 @@ def test_site_read_is_refused_outside_the_requirements_and_never_reaches_the_hos
     if breach == "runner":
         RunnerFlag.objects.filter(runner=box).delete()
     uri = host.store.save("query", {"rows": ROWS}, owner="u-42", name="r")["uri"]
-    # Refused by the caller token itself (an undeclared connected site's sensitive turn
+    # Refused by the caller token itself (an undeclared host site's sensitive turn
     # stands for nothing) or by the gateway — either way before any request.
     with pytest.raises(Exception):  # noqa: B017 - which check refuses is not the point
         with sg.visitor(w):

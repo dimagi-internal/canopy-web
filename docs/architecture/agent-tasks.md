@@ -55,7 +55,7 @@ who can read the task gets a 403. The result is validated against `output_schema
 a list of `{path, message}`, `path` a JSON Pointer into the result (`""` for the
 whole of it), at most 50 — and the task stays open, so the agent fixes each path and
 submits again. A task that has ended is a 409; a result over 1 MiB a 413. A confined
-turn (a caller's read mode or connected site) reaches canopy as its asker, not as the agent, so it
+turn (a caller's read mode or host site) reaches canopy as its asker, not as the agent, so it
 cannot submit: agent tasks are for turns that run as the agent.
 
 ## The completion rule

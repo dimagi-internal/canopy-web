@@ -244,7 +244,7 @@ def _capability_for(agent, iface: dict, permissions, capability, turn):
 
     Read mode (`read` and `READ_MODE_STAMP`, one thing: `interface.is_read_mode`) exists on every agent. It is
     the agent's own published read mode when it has one (the stamp is that name), else canopy's
-    default (`interface.default_read_profile`, stamped `read`). Any other name is a connected site and
+    default (`interface.default_read_profile`, stamped `read`). Any other name is a host site and
     must be published; an unknown or retired one is refused here, never widened."""
     def opens(name, cap):
         return iface_mod.opens(permissions, name)
@@ -286,7 +286,7 @@ def _from_access_list(agent, d: Decision, who, *, verified: bool, capability, tu
     name, _cap = _capability_for(agent, iface, got.permissions, capability, turn)
     if name is None:
         return d
-    # The review profile is opened by `read`; `line_opening` knows only connected sites and read mode.
+    # The review profile is opened by `read`; `line_opening` knows only host sites and read mode.
     line = got.line_for(roles.READ) if name == iface_mod.SESSION_REVIEW else got.line_opening(name)
     return Decision(relationship=d.relationship, access=CONFINED, capability=name, may_request_auto=False,
                     may_pin_runner=False, manual_only=False, basis=f"capability:{name}",
@@ -366,7 +366,7 @@ def _held_permissions(d, stamped: str | None) -> list[str]:
         return sorted(held)
     name = stamped or d.capability
     if iface_mod.is_read_mode(name):
-        # Read mode is `read`, not a connected site: nothing is named after it (no `use:read`, no `use:` + its stamp).
+        # Read mode is `read`, not a host site: nothing is named after it (no `use:read`, no `use:` + its stamp).
         return [roles.READ]
     kept = {p for p in held if p == roles.READ or (p.startswith(f"{roles.USE}:") and p != f"{roles.USE}:*")}
     if name:

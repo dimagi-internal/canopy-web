@@ -1,4 +1,4 @@
-"""The site agents API: what canopy tells a connected site, signed, about the
+"""The site agents API: what canopy tells a host site, signed, about the
 agents it may show there (spec connect-labs `2026-10-22-canopy-site-agents-api-design` §1).
 
 A site used to keep hand-typed copies of canopy's facts — which agents, which
@@ -10,7 +10,7 @@ client key (the `Canopy-Execution` key, `kid` in `/oauth/client.json`). Both
 anchors existed before this; nothing new is shared.
 
 `site_agents_content(app)` is the ONE answer to "which agents may this site show, and on
-what terms" — the endpoint signs it, and the Connected sites page reads the same
+what terms" — the endpoint signs it, and the host sites page reads the same
 function to say whether each agent meets what the site asks
 (`site_needs.fit`). The wire format and its checks are the SDK's
 (`canopy_sdk.site_agents`), which every site verifies with.
@@ -95,7 +95,7 @@ def site_for_request(token: str):
     if app is None:
         # One wording for unknown, revoked and another tenant's: a prober learns
         # nothing about which names are real.
-        raise SiteAgentsRefused("unknown_issuer", f"no connected site named {name!r}")
+        raise SiteAgentsRefused("unknown_issuer", f"no host site named {name!r}")
     return app
 
 
@@ -121,7 +121,7 @@ def verify_request(token: str):
     except wire.SiteAgentsError as exc:
         raise SiteAgentsRefused(exc.code, exc.message, 400 if exc.code in ("malformed", "bad_alg") else 401) from exc
     if claims.get("iss") != app.name:
-        raise SiteAgentsRefused("unknown_issuer", f"no connected site named {claims.get('iss')!r}")
+        raise SiteAgentsRefused("unknown_issuer", f"no host site named {claims.get('iss')!r}")
     return app, claims
 
 
@@ -218,10 +218,10 @@ def listed_agents(app) -> list[Agent]:
 
 
 def site_settings_url(app) -> str:
-    """This connected site's own place in canopy's UI: its card on the
-    workspace's Connected sites page, where its owner allows agents, changes its
+    """This host site's own place in canopy's UI: its card on the
+    workspace's host sites page, where its owner allows agents, changes its
     keys and URLs, and tests it."""
-    return scoped_url(app.workspace_id, f"/settings/connected-apps#site-{app.pk}")
+    return scoped_url(app.workspace_id, f"/settings/host-sites#site-{app.pk}")
 
 
 def site_agents_content(app) -> dict:

@@ -2,6 +2,15 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.27.1 — 2026-11-06
+
+**Words only: a "Connected site" is now a host site.**
+
+- canopy-web renamed the sites it hosts agents on from "Connected sites" to "Host sites"
+  (Settings › Host sites, `/w/<workspace>/settings/host-sites`). The README and docstrings
+  say host site. No code, setting or wire name changed: `APP_NAME`, `site_agents`,
+  `/api/sites/agents` and `AgentCapability` are as they were.
+
 ## 0.27.0 — 2026-11-03
 
 **Removed: `AgentCapability.callers`.**

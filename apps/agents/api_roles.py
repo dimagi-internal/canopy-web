@@ -87,7 +87,7 @@ def _need_rights(request: HttpRequest, ws: Workspace, *, before=None, after=None
 
 
 def _machine_may_not(request: HttpRequest, driving: bool) -> None:
-    """A token cannot touch a passkey: it may write a role that only reads or opens connected sites (the admin
+    """A token cannot touch a passkey: it may write a role that only reads or opens host sites (the admin
     rule and the audit still apply) and never one that drives or changes the agent. An agent's own login
     is no person at all."""
     stepup.require_a_person(request, "defining a role")

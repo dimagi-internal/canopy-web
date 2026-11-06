@@ -170,11 +170,11 @@ class Run:
         return self.box
 
     def step_declaration(self) -> str:
-        rows = self.api.get(f"/agents/{self.args.agent}/connected-sites")["sites"]
+        rows = self.api.get(f"/agents/{self.args.agent}/host-sites")["sites"]
         cap = next((r for r in rows if r["key"] == self.args.capability), {})
         if not cap.get("sensitive"):
             raise Failure(f"{self.args.agent}.{self.args.capability} does not handle sensitive data "
-                          f"(turn it on for its connected site, on the agent's settings): {cap}")
+                          f"(turn it on for its host site, on the agent's settings): {cap}")
         bad = [t for t in cap.get("tools") or []
                if t not in ALLOWED_TOOLS and "canopy-web__" not in t]
         if bad or cap.get("bash") or cap.get("write_paths"):

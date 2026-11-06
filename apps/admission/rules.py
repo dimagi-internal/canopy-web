@@ -44,7 +44,7 @@ def summary(rule: AdmissionRule) -> str:
     elif rule.access:
         extra.append(rule.access)
     if rule.capability:
-        extra.append("read mode" if is_read_mode(rule.capability) else f"connected site {rule.capability}")
+        extra.append("read mode" if is_read_mode(rule.capability) else f"host site {rule.capability}")
     if rule.turn_mode:
         extra.append(rule.turn_mode)
     if rule.runner_kind:
@@ -73,7 +73,7 @@ def rule_out(rule: AdmissionRule) -> dict:
     }
 
 
-_ACCESS_LABELS = {AdmissionRule.CONFINED: "Confined: answered in read mode or from a connected site"}
+_ACCESS_LABELS = {AdmissionRule.CONFINED: "Confined: answered in read mode or from a host site"}
 
 
 def choices() -> dict:

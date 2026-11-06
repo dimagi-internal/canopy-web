@@ -50,7 +50,7 @@ RUNNER_KEY = "runner-key"      # a runner's own token, bought with its approved 
 PRIVATE_RUNNER_KEY = "private-runner-key"  # its owner's direct session, signed in with their
                                # OWN private runner's device key (canopy-web#1705)
 DELEGATED = "delegated"        # a token minted FOR the user by an app (the widget)
-HOST_SIGNED = "host_signed"    # a connected site signed for its visitor; canopy resolved
+HOST_SIGNED = "host_signed"    # a host site signed for its visitor; canopy resolved
                                # them to an existing account (a weaker claim — not "verified")
 SLACK_LINKED = "slack_linked"  # a Slack user linked by signing in to canopy
 SLACK_EMAIL = "slack_email"    # a Slack member matched to a canopy user by profile email

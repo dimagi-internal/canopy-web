@@ -196,7 +196,7 @@ class WorkspaceMembership(models.Model):
     #
     # ADMIN (2026-10-02) sits between editor and owner: it runs the workspace
     # day to day — reads every log, manages invites and members below itself,
-    # and the integrations (mailboxes, connected sites, Slack sync) — without
+    # and the integrations (mailboxes, host sites, Slack sync) — without
     # the owner's keys: the shared vault, deleting or moving the workspace, the
     # Slack app itself, and agents' credentials.
     #

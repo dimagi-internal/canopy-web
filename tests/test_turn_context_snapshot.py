@@ -74,8 +74,8 @@ def _default_read_mode(w):
     return _chat(w, creator=w.reader), w.reader, w.box, "read_mode"
 
 
-def _connected_site(w):
-    return _chat(w, creator=w.site_user, embed_app="connect-labs"), w.site_user, w.box, "connected_site"
+def _host_site(w):
+    return _chat(w, creator=w.site_user, embed_app="connect-labs"), w.site_user, w.box, "host_site"
 
 
 def _session_review(w):
@@ -84,14 +84,14 @@ def _session_review(w):
 
 def _sensitive_entry(w):
     session = _chat(w, embed_app="data-site", **{rr.METADATA_KEY: [rr.SENSITIVE_DATA]})
-    return session, w.owner, _sensitive_box(w), "connected_site"
+    return session, w.owner, _sensitive_box(w), "host_site"
 
 
 def _no_agent(w):
     return Session.objects.create(workspace=w.ws, created_by=w.owner, project="repo"), w.owner, w.box, "no_agent"
 
 
-@pytest.mark.parametrize("make", [_whole_agent, _read_mode, _default_read_mode, _connected_site, _session_review,
+@pytest.mark.parametrize("make", [_whole_agent, _read_mode, _default_read_mode, _host_site, _session_review,
                                   _sensitive_entry, _no_agent], ids=lambda f: f.__name__.strip("_"))
 def test_a_claim_records_what_it_ran_as_and_nothing_seeded(world, make, grants_on_turn):
     session, user, box, kind = make(world)
@@ -391,7 +391,7 @@ def _gets(stored) -> dict:
     return {line["name"]: line["gets"] for line in stored["credentials"]}
 
 
-@pytest.mark.parametrize("make", [_whole_agent, _read_mode, _connected_site, _session_review, _no_agent],
+@pytest.mark.parametrize("make", [_whole_agent, _read_mode, _host_site, _session_review, _no_agent],
                          ids=lambda f: f.__name__.strip("_"))
 def test_the_caller_token_it_states_is_the_one_the_claim_mints(world, make):
     session, user, box, _kind = make(world)
@@ -552,7 +552,7 @@ def _written_tables(queries) -> set:
     return out - set(_SIGN_IN_BOOKKEEPING)
 
 
-@pytest.mark.parametrize("make", [_whole_agent, _read_mode, _connected_site, _session_review, _no_agent],
+@pytest.mark.parametrize("make", [_whole_agent, _read_mode, _host_site, _session_review, _no_agent],
                          ids=lambda f: f.__name__.strip("_"))
 def test_a_preview_and_a_snapshot_read_write_nothing(world, make, grants_on_turn):
     session, user, box, _kind = make(world)

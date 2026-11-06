@@ -1,7 +1,7 @@
 """The workspace ADMIN role — between editor and owner (2026-10-02).
 
 An admin RUNS the workspace: reads every log, manages members and invites
-strictly below themselves, and runs the integrations (mailboxes, connected-site
+strictly below themselves, and runs the integrations (mailboxes, host-site
 health, Slack sync). An admin does not hold the KEYS: the shared vault,
 deleting or moving the workspace, the Slack app itself, registering a site that
 vouches for visitors, and any agent's credentials stay the owner's (or the

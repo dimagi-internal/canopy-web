@@ -1,6 +1,6 @@
 # Access: confinement and acting on someone's behalf
 
-How a confined turn is enforced (what a caller's turn can and cannot reach), how an agent acts on behalf of the person who asked, and the two act-as-you permissions: canopy-web's own `ActAsGrant` in the agent's turn, and the passkey-confirmed host grants on a connected site. The words and the one rule are defined in [access.md](access.md).
+How a confined turn is enforced (what a caller's turn can and cannot reach), how an agent acts on behalf of the person who asked, and the two act-as-you permissions: canopy-web's own `ActAsGrant` in the agent's turn, and the passkey-confirmed host grants on a host site. The words and the one rule are defined in [access.md](access.md).
 
 **See also:** [access.md](access.md) (glossary, "Whose authority an agent acts with"), [access-direct-use-and-admission.md](access-direct-use-and-admission.md), [embedding-internals.md](embedding-internals.md) (host grants).
 
@@ -14,9 +14,9 @@ tool; and beside every delivered prompt — the runner leaves
 `caller_context` UserPromptSubmit hook adds a summary next to the person's words
 (cloud: `CANOPY_CALLER`).
 
-* **Default deny.** An agent with no `read` or `write` line and no connected site is reached only by
+* **Default deny.** An agent with no `read` or `write` line and no host site is reached only by
   its owner and agent admins; every contact or unidentified caller no line names, and every
-  line that opens nothing the agent has, is refused (row 4). Read mode exists on every agent. Read mode and connected sites are live state on canopy-web (stored in `Agent.interface`) —
+  line that opens nothing the agent has, is refused (row 4). Read mode exists on every agent. Read mode and host sites are live state on canopy-web (stored in `Agent.interface`) —
   never a file in the agent's repo; the owner or an agent admin edits it on the agent. It
   confines callers who reach the agent through canopy (web chat, Slack, email,
   embedded sites). canopy's MCP server offers NO per-agent tools: someone who
@@ -209,7 +209,7 @@ for 30 minutes, and does so only once you approve with your passkey
   read-only tools only; `write` reaches every route canopy's MCP server serves as a tool
   except one list, `act_as.EXCLUDED_PREFIXES` / `EXCLUDED_PATTERNS` / `EXCLUDED_TOOLS`:
   tokens and PATs, the person's memory switches and grants, passkeys, vaults, keys and
-  secrets, connected sites' signing keys, act-as and host-grant approvals, agent-login
+  secrets, host sites' signing keys, act-as and host-grant approvals, agent-login
   acceptance, workspace invites and the runner protocol. 30 minutes from the touch, never extended; a new approval needs a
   new request. Every request re-checks it: stopped, run out, or its turn and
   conversation over, and the token signs in as no one.
@@ -227,11 +227,11 @@ for 30 minutes, and does so only once you approve with your passkey
 - **You see and stop it**: Settings → Agents acting for you, beside host grants, and the
   approval page; the agent may stop it too (`POST …/{id}/stop`).
 
-## Acting as the person on a connected site (act-as-you permissions)
+## Acting as the person on a host site (act-as-you permissions)
 
 The **act-as-you permission** is the person's word for a **host grant**
 (`tokens.HostGrant`): a time-limited permission, given in the moment, that lets an
-agent call a connected site's tools as that person, within their own access on that
+agent call a host site's tools as that person, within their own access on that
 site, for the page they are on. It is the only way an agent acts as a person *on a
 host* (the header above is canopy-web's own decisions):
 
@@ -254,14 +254,14 @@ host* (the header above is canopy-web's own decisions):
 - **A chat on a page reaches that site only as the person, under their act-as-you
   permission — owners included.** The gateway (`site_tools` / `site_call` /
   `site_read`) serves every turn in a conversation held on a site's page (the
-  session's `embed_app`) whose agent is set up for that site — one of its connected sites
+  session's `embed_app`) whose agent is set up for that site — one of its host sites
   lists it in `sites:` (`interface.page_site_of`) — whatever the turn's
-  profile: a confined visitor's (its connected site must list the site), an editor's
+  profile: a confined visitor's (its host site must list the site), an editor's
   (scoped token), the owner's or an agent admin's (found from the chat key the runner gave
   only that session). Every call uses the SENDER's grant for that page. A full-profile
-  turn is narrowed by the site tool limit the owner set on that site's connected site
+  turn is narrowed by the site tool limit the owner set on that site's host site
   (`interface.site_ceiling`).
-- **The agent's own login at that site is withheld from such a turn.** A connected site
+- **The agent's own login at that site is withheld from such a turn.** A host site
   names it per site: `own_login: {connect-labs: [LABS_MCP_TOKEN]}` — credential names,
   never values. The claim carries `page_site: {site, withheld}`
   (`interface.page_turn`); a cloud runner leaves those names out of the turn's

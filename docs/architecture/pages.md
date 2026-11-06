@@ -260,7 +260,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
     workspace defaults it inherits — `GET /api/agents/{slug}/access-list` — beside a
     roster of every workspace member's role on the agent, why, and what they can
     reach — `GET /api/agents/{slug}/access`; agent admins granted/revoked on the row;
-    **Direct use**); **Channels** (read mode and connected sites, Slack, email, Google
+    **Direct use**); **Channels** (read mode and host sites, Slack, email, Google
     account); **External accounts** (GitHub delegation, the
     Google mailbox); **Security** — first **Vault**: the shared `VaultView`
     (`components/vault/`, adapter `pages/agents/AgentSecretsPanel.tsx`) — a summary
@@ -342,7 +342,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
     one-way, owner-only "declare the app an agent".
   - **inbound** — the Gmail push doorbell.
   - **email** — the workspace's own mail domain via SES: DNS records, per-address routes (agent / member forward / drop; the catch-all forwards or drops), daily send cap. Removing an address or the domain asks first and says existing threads are kept.
-  - **connected-apps** ("Connected sites") — which websites may host one of
+  - **host-sites** ("Host sites") — which websites may host one of
     this workspace's agents and which one its panel opens on ("Opens on"); per
     site, what it asks of agents (its signed
     `site.json`): per allowed agent, whether the site offers it, lets it work
@@ -368,7 +368,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
     workspace's alerts ("Alerts here", `workspace:<slug>`: an agent with no
     runner it can use, or none of whose routed runners declares its repo, is an alert —
     [`alerts.md`](alerts.md)) above two plain facts: agents confined by another
-    (to read mode or connected sites), and runners serving nobody. The side panel mounts the supervisor's
+    (to read mode or host sites), and runners serving nobody. The side panel mounts the supervisor's
     `RunnerDetail` and the agent's `AgentRouting` — this is where runners are
     configured on the web; each lane's "Add a runner" offers the Canopy Runner
     downloads (as on `/get-started#runner`), with the developer command
@@ -393,7 +393,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
       receiver's workspace); the grant names who could then steer the receiver
       through the sender, since admin is transitive. Same gate as runners.
     - `settings/runners`, `settings/agent-access` redirect to these.
-  - `/w/:ws/{members,inbound,slack,connected-apps}` redirect to their section,
+  - `/w/:ws/{members,inbound,slack,host-sites}` redirect to their section,
     keeping query and hash. Distinct from root `/settings` (your account).
 - **`/sessions`** (header: Sessions) — this workspace's sessions (and those of the
   workspaces below it) to continue from any device + "New chat with `<agent>`"
@@ -461,7 +461,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
 - **`/members/:userId`** — one member: role, when they joined, person or agent, the agents they
   operate here and the other workspaces you share with them; admins and owners also see who
   invited them and when they last signed in.
-- **`/sign-offs/:signOffId`** — a connected site asking you to approve one action
+- **`/sign-offs/:signOffId`** — a host site asking you to approve one action
   with your passkey (labs creating a full-access MCP token): the `approve_url` the
   site sends you to, also on Home. Shows the site, the action in its words, and the
   account it is for (an agent's request names the agent). Approve asks for your
@@ -476,7 +476,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
   `apps/agents/credentials/vault_health.py`) and properties — active projects, open tasks
   (`AgentTask.LIVE_STATUSES`) and those waiting on a person (`services.waiting_q`),
   each linking to the agent's page; who can use it (its owner and agent admins only, or the
-  read mode and connected sites it offers) and its turn mode; how it is used over
+  read mode and host sites it offers) and its turn mode; how it is used over
   30 days beside its setup, since an agent with steps left can be in use — turns
   started and how many failed, the people who used it, the runners its turns ran
   on (`analytics.agent_turns`, from the fact log), and a "Used" tile; open sessions and
@@ -775,7 +775,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
   - **Agents acting for you** — credentials you delegated, act-as-you
     permissions in both forms: on canopy (an agent in a turn you started that you
     let act as you, read or read + write, waiting or until a time —
-    `/api/me/act-as-requests/`) and on connected sites (each site whose panel you
+    `/api/me/act-as-requests/`) and on host sites (each site whose panel you
     sent from and confirmed with your passkey — `/api/me/host-grants/`). Stop ends
     either.
   - **Runners** — runners you administer (each linking to its page, where a
@@ -783,7 +783,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
     `ProjectOptIn`), Runner app (the page the Canopy Runner desktop window opens
     on; it loads `/runner-app/`, which redirects to the choice,
     `RunnerAppPreference`).
-  - **Connections** — GitHub, connected apps (OAuth MCP clients, disconnectable,
+  - **Connections** — GitHub, authorized apps (OAuth MCP clients, disconnectable,
     plus the MCP address and `claude mcp add` line), personal access tokens.
 - **`/sessions`** — your shared Claude Code transcripts (`/canopy:share-session`).
 - **`/system`** — capability catalog + Workflows view, read live from the

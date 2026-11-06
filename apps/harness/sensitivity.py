@@ -205,7 +205,7 @@ def register_resource_schemes(source) -> None:
 
 
 def resource_schemes(session) -> dict[str, int | None]:
-    """The URI schemes the session's Connected site declared for its artifacts, each
+    """The URI schemes the session's host site declared for its artifacts, each
     with the exact length of its result ids where it declared one (else None) — as
     `canopy_sdk.resources.validate_links` takes them. Empty — so every link is dropped —
     when it declared none, or it cannot be read."""
@@ -232,7 +232,7 @@ def register_site_tools(source) -> None:
 
 
 def is_site_tool(session, tool: str) -> bool:
-    """Whether `tool` is the session's Connected site's own tool (canopy's `site_call`,
+    """Whether `tool` is the session's host site's own tool (canopy's `site_call`,
     or the site's MCP tool reached directly): the only results whose links are kept.
     False when no source says so, or the tool is unknown."""
     if not tool:
@@ -542,7 +542,7 @@ def people_in(sessions, user) -> set:
 
 def request_is_chat_surface(request) -> bool:
     """A chat surface: the person at a browser, or the widget / SDK (a contact's or
-    a connected site's token). Never an MCP tool call, a PAT, OAuth or a session
+    a host site's token). Never an MCP tool call, a PAT, OAuth or a session
     minted from a token — the routes through which an AI reads sessions."""
     if getattr(request, "via_mcp", False):
         return False

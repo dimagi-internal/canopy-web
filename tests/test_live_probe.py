@@ -1,4 +1,4 @@
-"""canopy's live probe of a Connected site's grant chain (`apps/host_grants/live_probe.py`).
+"""canopy's live probe of a host site's grant chain (`apps/host_grants/live_probe.py`).
 
 The probe must use the REAL redemption (`host_grants.redeem`) and the REAL
 gateway client (`host_gateway`) — so every test here drives both against a real
@@ -81,7 +81,7 @@ def _in_lifespan(inner, fn):
     return async_to_sync(main)()
 
 
-# --- canopy-web as its own host (the `canopy-web` Connected site) -----------------------------
+# --- canopy-web as its own host (the `canopy-web` host site) -----------------------------
 
 
 @pytest.fixture()
@@ -348,7 +348,7 @@ def test_a_failure_is_recorded_evented_and_pushed_once_then_recovery_too(site, o
         assert site.last_probe_ok is False and site.last_probe_step == "probe_tool_succeeds"
         assert "host_unreachable" in site.last_probe_reason and site.last_probe_at
         assert push.call_count == 1 and push.call_args.args[0] == owner
-        assert push.call_args.args[3] == "/w/connect/settings/connected-apps"
+        assert push.call_args.args[3] == "/w/connect/settings/host-sites"
 
         # Still failing: the Event coalesces, nobody is pushed again.
         live_probe.record(site, _report(False))
@@ -434,13 +434,13 @@ def test_test_connection_runs_the_live_probe_and_the_table_shows_it(site, owner,
     c = Client()
     c.force_login(owner)
     monkeypatch.setattr("apps.embedding.connection_test.run", lambda app: [])
-    r = _in_lifespan(host.inner, lambda: c.post(f"/api/workspaces/connect/connected-apps/{site.pk}/test"))
+    r = _in_lifespan(host.inner, lambda: c.post(f"/api/workspaces/connect/host-sites/{site.pk}/test"))
     assert r.status_code == 200, r.content
     body = r.json()
     assert body["live_probe_ok"] is True and body["ok"] is True
     assert [s["name"] for s in body["live_probe"]] == list(live_probe.STEPS)
 
-    [row] = c.get("/api/workspaces/connect/connected-apps").json()
+    [row] = c.get("/api/workspaces/connect/host-sites").json()
     assert row["live_probe"]["ok"] is True and row["live_probe"]["at"]
     assert set(row["traffic"]) == {"last_redeemed_at", "last_site_call_at", "refusals_24h"}
 
@@ -452,8 +452,8 @@ def test_a_failing_live_probe_fails_test_connection(site, owner, monkeypatch):
     c.force_login(owner)
     monkeypatch.setattr("apps.embedding.connection_test.run", lambda app: [])
     body = _in_lifespan(host.inner, lambda: c.post(
-        f"/api/workspaces/connect/connected-apps/{site.pk}/test")).json()
+        f"/api/workspaces/connect/host-sites/{site.pk}/test")).json()
     assert body["ok"] is False and body["live_probe_ok"] is False
-    row = c.get("/api/workspaces/connect/connected-apps").json()[0]
+    row = c.get("/api/workspaces/connect/host-sites").json()[0]
     assert row["live_probe"]["step"] == "out_of_scope_refused"
     assert row["live_probe"]["step_label"] == live_probe.STEPS["out_of_scope_refused"]

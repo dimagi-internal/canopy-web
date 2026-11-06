@@ -2,7 +2,7 @@
 
 > Every term here — workspace roles, agent roles (`owner` / `admin` / `editor` /
 > `read_write` / `read_only`, plus `system`), the access list, access (`full` / `confined` /
-> `refused`), read mode and connected sites, turn mode — is defined once, with THE rule that decides an
+> `refused`), read mode and host sites, turn mode — is defined once, with THE rule that decides an
 > agent turn, in [`access.md`](access.md). This page is about enforcement.
 
 There are six tiers. Each contains the one below it.
@@ -10,10 +10,10 @@ There are six tiers. Each contains the one below it.
 | Tier | Enforced as | Can |
 |---|---|---|
 | **Link reader** | *no account* — a link you were sent | Read what was shared: a storyboard, a narrative, a walkthrough, a session transcript, the public explainer. |
-| **Viewer** | workspace member, `viewer` | Read the board and the turns you started; answer a blocked question, approve or decline a task. Talk to an agent only as far as its access list lets you (a read_only line opens read mode, a line naming a connected site opens that one; nothing is open by being in the workspace). Cannot change what an agent *is*, or anything else. |
+| **Viewer** | workspace member, `viewer` | Read the board and the turns you started; answer a blocked question, approve or decline a task. Talk to an agent only as far as its access list lets you (a read_only line opens read mode, a line naming a host site opens that one; nothing is open by being in the workspace). Cannot change what an agent *is*, or anything else. |
 | **Editor** | workspace member, `editor` | Create and edit agents, send turns to them (`POST /api/harness/turns/` needs this role **and** `turn_context.resolve_turn_context` giving you the agent; the whole agent needs a line on its access list that gives `write` (read_write or editor), and a line may make every such turn `manual`), edit schedules, route work (never in `auto`), **delete an agent**; create and change every product surface (projects, walkthroughs, shareouts, reviews, DDD, storyboards, issues). |
-| **Workspace admin** | workspace member, `admin` | Run the workspace: read every LOG (the event log, every turn's prompt / ledger / transcript / caller context, runner drills, connected-site health); invite, re-role and remove members **strictly below themselves**; the integrations (inbound mailboxes + push config, Slack history + sync, Test connection); the default runner order, retention, admission rules, and starting or declining a proposed project. Holds no keys. |
-| **Owner** | workspace member, `owner` | The keys: make admins and owners, the shared vault, every agent's credentials (a workspace owner is every agent's admin), the Slack app itself, registering or changing a connected site, deleting or moving the workspace; hold or stop the workspace's work (`control`). Gets the workspace's alert and access-request email. |
+| **Workspace admin** | workspace member, `admin` | Run the workspace: read every LOG (the event log, every turn's prompt / ledger / transcript / caller context, runner drills, host-site health); invite, re-role and remove members **strictly below themselves**; the integrations (inbound mailboxes + push config, Slack history + sync, Test connection); the default runner order, retention, admission rules, and starting or declining a proposed project. Holds no keys. |
+| **Owner** | workspace member, `owner` | The keys: make admins and owners, the shared vault, every agent's credentials (a workspace owner is every agent's admin), the Slack app itself, registering or changing a host site, deleting or moving the workspace; hold or stop the workspace's work (`control`). Gets the workspace's alert and access-request email. |
 | **Superuser** | workspace member, `superuser` | Everything an owner can do, in the workspace and every one below it, as oversight: none of the owner's email. Owners and superusers manage each other. The system superuser (`User.is_superuser`, Supervisor → Runners → System superusers) is the same idea for the whole fleet, with no workspace access. |
 
 The membership roles are a total order — `WorkspaceMembership.ROLE_RANK`
@@ -97,7 +97,7 @@ the same principle through `creation_workspace`.
 | pinned — `/api/w/<ws>/…`, or the MCP `workspace` argument | that workspace **and every workspace below it you belong to** (`pinned_read_scope`) |
 | unpinned, every membership in ONE tree (`dimagi` + `connect`) | the union — one org's own data |
 | unpinned, memberships in MORE THAN ONE tree (`dimagi` + `marshellis`) | **422** `workspace-required`, naming the caller's workspaces grouped by tree |
-| unpinned, a connected site acting for its visitor (delegated token) | the site's own workspace — a site is one tenant's |
+| unpinned, a host site acting for its visitor (delegated token) | the site's own workspace — a site is one tenant's |
 
 A tree is a root and everything under it (`services.tree_roots`; `WorkspaceOut.root` carries
 it to clients). The rule fails closed: nothing is guessed.
@@ -249,7 +249,7 @@ import of a private `apps.agents.api` helper from another module:
   `auto` — on a routing rule, an actor route or the agent's switch — additionally needs
   `Agent.is_admin` (`_refuse_auto_unless_admin`).
 - `agent_for_admin` — `Agent.is_admin`: the agent's owner, a workspace owner, or an explicit
-  `AgentAdmin`, each a CURRENT member. Credentials, the vault pointer, read mode and connected sites, the
+  `AgentAdmin`, each a CURRENT member. Credentials, the vault pointer, read mode and host sites, the
   Google mailbox mint, moving the agent to another workspace.
 - `allow_own_login=True` (agent runs, run documents, capabilities) admits the agent's own login
   (`Agent.is_own_login`) whatever its membership or role — `Agent.user` is one-to-one with the
@@ -330,7 +330,7 @@ default" paragraph).
 ### Leaving a workspace takes what it carried
 
 Every grant that hangs off membership is checked against **current** membership —
-including an agent's owner: once removed they are not its admin (credentials, read mode and connected sites,
+including an agent's owner: once removed they are not its admin (credentials, read mode and host sites,
 transfer), get no unconfined profile when messaging it, lend it no GitHub token and are not
 pushed about it. And removal sweeps the rest
 (`apps/workspaces/departure.py`, a registry that agents, harness, canopy_sessions and realtime fill from `ready()` in their own `departure.py`): AgentAdmin, RunnerAdmin and chat participant rows in that

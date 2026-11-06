@@ -1,6 +1,6 @@
 import { useEffect, useState, type JSX } from 'react'
 import { runnerFlagLabel } from '@/components/chat/runnerEligibility'
-import { getConnectedAppNeeds, type ConnectedApp, type SiteNeeds, type AgentFit } from '@/api/connectedApps'
+import { getHostSiteNeeds, type HostSite, type SiteNeeds, type AgentFit } from '@/api/hostSites'
 import { Td, Th, Tr } from '@/components/DataTable'
 
 function Tick({ on }: { on: boolean }): JSX.Element {
@@ -153,13 +153,13 @@ export function SiteNeedsTable({ needs }: { needs: SiteNeeds }): JSX.Element {
 }
 
 /** Loads and shows `SiteNeedsTable` for one site. */
-export function SiteNeedsSection({ slug, app }: { slug: string; app: ConnectedApp }): JSX.Element {
+export function SiteNeedsSection({ slug, app }: { slug: string; app: HostSite }): JSX.Element {
   const [needs, setNeeds] = useState<SiteNeeds | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let live = true
-    getConnectedAppNeeds(slug, app.id)
+    getHostSiteNeeds(slug, app.id)
       .then((n) => live && setNeeds(n))
       .catch((e: unknown) => live && setError(e instanceof Error ? e.message : String(e)))
     return () => {

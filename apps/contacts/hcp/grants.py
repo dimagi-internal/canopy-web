@@ -30,7 +30,7 @@ from .sensitive import is_sensitive_session
 def client_of_turn(turn) -> tuple[str, str]:
     """(channel, host) a turn reached its agent through. The channel is how the
     person came in (`initiator_via`: slack, email, chat, mcp …); the host is
-    the connected site when they came through an embedding SDK/widget."""
+    the host site when they came through an embedding SDK/widget."""
     channel = (getattr(turn, "initiator_via", "") or "").strip().lower()[:40]
     host = ""
     contact = getattr(turn, "initiator_contact", None) if getattr(turn, "initiator_contact_id", None) else None

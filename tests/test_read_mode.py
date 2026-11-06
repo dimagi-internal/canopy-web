@@ -2,7 +2,7 @@
 
 A person whose lines give `read` and not `write` is answered in read mode on EVERY agent: the agent's
 own published read mode when it has one (an override, the whole of it, stamped `READ_MODE_STAMP`), else canopy's default
-profile (stamp `read`). Any other name is a connected site and still has to be published.
+profile (stamp `read`). Any other name is a host site and still has to be published.
 """
 from __future__ import annotations
 
@@ -81,7 +81,7 @@ def test_other_names_still_have_to_be_published(w):
     allow(w["agent"], role=roles.READ_ONLY)
     allow(w["agent"], capability="canopy")
     d = turn_context.for_asker(w["agent"], w["vw"], verified=True, requested="canopy")
-    assert d.access == turn_context.REFUSED                      # `canopy` is a connected site; nobody published it
+    assert d.access == turn_context.REFUSED                      # `canopy` is a host site; nobody published it
     gone = interface.profile(w["agent"], "retired-site")
     assert gone["tools"] == [] and gone["bash"] == [] and gone["write_paths"] == []
 
@@ -182,7 +182,7 @@ def test_the_read_mode_route_says_which_read_mode_the_agent_has(w):
     assert got["source"] == "custom" and got["profile"]["tools"] == ["Read"]
 
 
-def test_the_access_list_names_the_connected_sites_a_line_may_open(w):
+def test_the_access_list_names_the_host_sites_a_line_may_open(w):
     from django.test import Client
 
     w["agent"].interface = parse({"capabilities": {"ask": {"tools": ["Read"]}, "canopy": {"tools": ["Read"]}}})
@@ -190,5 +190,5 @@ def test_the_access_list_names_the_connected_sites_a_line_may_open(w):
     c = Client()
     c.force_login(w["owner"])
     got = c.get("/api/agents/hal/access-list").json()
-    assert [s["name"] for s in got["connected_sites"]] == ["canopy"]
+    assert [s["name"] for s in got["host_sites"]] == ["canopy"]
     assert "read mode" in got["roles"][-1]["can"][0]

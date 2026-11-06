@@ -44,7 +44,7 @@ export function RolesTab({ agent, isAdmin, admins }: { agent: AgentOutletContext
           title="Access"
           who={`${agent.name}'s agent admins`}
           canEdit={isAdmin}
-          description={`Who can use ${agent.name}, and what each may do: read only, read & write, editor, then agent admin and owner. A line can also open just one connected site, which is rare.`}
+          description={`Who can use ${agent.name}, and what each may do: read only, read & write, editor, then agent admin and owner. A line can also open just one host site, which is rare.`}
         >
           <AgentAccessList
             agentSlug={agent.slug}

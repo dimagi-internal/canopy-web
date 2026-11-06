@@ -272,7 +272,7 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/tokens/connected-apps": {
+    readonly "/api/tokens/authorized-apps": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -284,7 +284,7 @@ export interface paths {
          * @description The apps (Claude, an editor, …) you signed in to canopy's MCP server
          *     from, and the address to give a new one.
          */
-        readonly get: operations["tokens_list_connected_apps"];
+        readonly get: operations["list_authorized_apps"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -293,7 +293,7 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/tokens/connected-apps/{grant_id}": {
+    readonly "/api/tokens/authorized-apps/{grant_id}": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -308,7 +308,7 @@ export interface paths {
          * @description Revoke the app's access at once: its current token stops working and it
          *     cannot refresh. It must be signed in again to reconnect.
          */
-        readonly delete: operations["tokens_disconnect_app"];
+        readonly delete: operations["disconnect_authorized_app"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -3180,7 +3180,7 @@ export interface paths {
         readonly put?: never;
         /**
          * Exchange a signed assertion for a contact token
-         * @description A connected site vouches for one of its visitors, and gets them a session.
+         * @description A host site vouches for one of its visitors, and gets them a session.
          *
          *     No `Authorization` header: the assertion is the credential, and that is the
          *     point. A shared secret would still have to exist, be distributed, and be
@@ -5462,7 +5462,7 @@ export interface paths {
          * Everyone's role on this agent, why, and what they can reach
          * @description Every member of the agent's workspace with their role on the agent (owner, admin,
          *     editor, user, viewer), the reason for it, and what they reach signed in: the whole agent,
-         *     read mode or the connected sites their role may use, or nothing. People outside the workspace whom the
+         *     read mode or the host sites their role may use, or nothing. People outside the workspace whom the
          *     access list names are on the list itself (`/access-list`). Readable by any member, like
          *     the admin list.
          */
@@ -5994,9 +5994,9 @@ export interface paths {
          * @description A line says who has what: a person, everyone in a workspace (optionally also any workspace
          *     below it), anyone at an email domain, or a known visitor or sender. What they get is a role
          *     (a key from `GET /api/workspaces/{ws}/agent-roles`: the built-ins read_only, read_write and editor,
-         *     and any a workspace defined) or, rarely, one connected site (`connected_site`, a name from the list's
-         *     `connected_sites`). A line that names people only by address (domain, contact) can give a role that
-         *     only reads or opens connected sites, never one that drives or changes the agent.
+         *     and any a workspace defined) or, rarely, one host site (`host_site`, a name from the list's
+         *     `host_sites`). A line that names people only by address (domain, contact) can give a role that
+         *     only reads or opens host sites, never one that drives or changes the agent.
          */
         readonly post: operations["add_access_line"];
         readonly delete?: never;
@@ -6063,7 +6063,7 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/agents/{slug}/connected-sites": {
+    readonly "/api/agents/{slug}/host-sites": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -6071,7 +6071,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** The sites this agent can be reached from, and the workspace's sites it could add */
-        readonly get: operations["list_connected_sites"];
+        readonly get: operations["list_agent_host_sites"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -6080,7 +6080,7 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/agents/{slug}/connected-sites/{site}": {
+    readonly "/api/agents/{slug}/host-sites/{site}": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -6088,11 +6088,11 @@ export interface paths {
             readonly cookie?: never;
         };
         readonly get?: never;
-        /** Add or change one connected site: only the fields sent change. dry_run checks without saving */
-        readonly put: operations["put_connected_site"];
+        /** Add or change one host site: only the fields sent change. dry_run checks without saving */
+        readonly put: operations["put_agent_host_site"];
         readonly post?: never;
-        /** Remove one connected site from this agent */
-        readonly delete: operations["delete_connected_site"];
+        /** Remove one host site from this agent */
+        readonly delete: operations["delete_agent_host_site"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -7435,7 +7435,7 @@ export interface paths {
          * @description The agent's public Agent Card (A2A v1.0): what it offers people outside its workspace.
          *
          *     Served only for an agent whose access list lets contacts or unknown callers
-         *     use read mode or a connected site; any other slug is a 404. Supports `If-None-Match`.
+         *     use read mode or a host site; any other slug is a 404. Supports `If-None-Match`.
          */
         readonly get: operations["public_agent_card"];
         readonly put?: never;
@@ -7457,7 +7457,7 @@ export interface paths {
          * An agent's authenticated extended A2A Agent Card
          * @description The Agent Card as the signed-in caller sees it (A2A `GetExtendedAgentCard`).
          *
-         *     The public card's skills plus read mode and every connected site the caller
+         *     The public card's skills plus read mode and every host site the caller
          *     may use themselves. A 404 when that is nothing. Supports `If-None-Match`.
          */
         readonly get: operations["extended_agent_card"];
@@ -10513,7 +10513,7 @@ export interface paths {
          * Which agents can send which other agents work, across this workspace and every one below it
          * @description Every agent in this workspace and its descendants, and for each ordered
          *     pair what the first gets when it sends the second work with its own canopy
-         *     login: the whole agent, read mode or some of its connected sites, or nothing — and why.
+         *     login: the whole agent, read mode or some of its host sites, or nothing — and why.
          *     Admin and above. Granting access is `PUT /api/agents/{slug}/admins/{user_id}`
          *     with the source agent's `login_user_id`.
          */
@@ -10526,7 +10526,7 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/workspaces/{slug}/connected-apps": {
+    readonly "/api/workspaces/{slug}/host-sites": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -10537,7 +10537,7 @@ export interface paths {
          * Sites connected to this workspace
          * @description Every site this workspace has connected, with what each may do.
          */
-        readonly get: operations["tokens_connected_apps_list_connected_apps"];
+        readonly get: operations["list_host_sites"];
         readonly put?: never;
         /**
          * Connect a site
@@ -10545,14 +10545,14 @@ export interface paths {
          *     confirmed with their passkey (403 `step_up_required` otherwise); a token is
          *     refused.
          */
-        readonly post: operations["connect_app"];
+        readonly post: operations["register_host_site"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/workspaces/{slug}/connected-apps/{app_id}": {
+    readonly "/api/workspaces/{slug}/host-sites/{app_id}": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -10569,20 +10569,20 @@ export interface paths {
          *     Retired rather than deleted: the row is what this workspace's visitors'
          *     records hang off, and the audit trail of what it once allowed.
          */
-        readonly delete: operations["tokens_connected_apps_disconnect_app"];
+        readonly delete: operations["revoke_host_site"];
         readonly options?: never;
         readonly head?: never;
         /**
-         * Change what a connected site may do
-         * @description Change what a connected site may do. A change to what it may sign — its
+         * Change what a host site may do
+         * @description Change what a host site may do. A change to what it may sign — its
          *     public keys, key URL or issuer — needs a person at a browser who just
          *     confirmed with their passkey (403 `step_up_required` otherwise); a token is
          *     refused it.
          */
-        readonly patch: operations["update_connected_app"];
+        readonly patch: operations["update_host_site"];
         readonly trace?: never;
     };
-    readonly "/api/workspaces/{slug}/connected-apps/{app_id}/test": {
+    readonly "/api/workspaces/{slug}/host-sites/{app_id}/test": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -10592,7 +10592,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /**
-         * Test a connected site's settings
+         * Test a host site's settings
          * @description Try this site's settings the way canopy uses them, from canopy's server.
          *
          *     Reads the site's published keys, and — when it lets the agent act as the
@@ -10607,7 +10607,7 @@ export interface paths {
          *     the probe runs on its schedule. Each step comes back as pass, fail or skip,
          *     with the reason.
          */
-        readonly post: operations["test_connected_app"];
+        readonly post: operations["test_host_site"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -10676,7 +10676,7 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/workspaces/{slug}/connected-apps/{app_id}/needs": {
+    readonly "/api/workspaces/{slug}/host-sites/{app_id}/needs": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -10684,7 +10684,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /**
-         * What a connected site asks of agents, and who meets it
+         * What a host site asks of agents, and who meets it
          * @description The site's signed `site.json` — which agents it offers, which of them it
          *     lets work with its sensitive data and what such an agent must be, and its
          *     pages with the scopes each grants (the site's own description; canopy never
@@ -10694,7 +10694,7 @@ export interface paths {
          *     (https only, bounded, cached) and fail-closed: an unreadable document is
          *     `available: false` with its reason.
          */
-        readonly get: operations["connected_app_needs"];
+        readonly get: operations["host_site_needs"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -10703,7 +10703,7 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/workspaces/{slug}/connected-apps/discover": {
+    readonly "/api/workspaces/{slug}/host-sites/discover": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -10714,7 +10714,7 @@ export interface paths {
          * Read a site's own facts from its signed site.json
          * @description Reads the site's signed `site.json` and returns the facts it declares
          *     about itself — its origins, the URL of its keys, its sign-in issuer and its
-         *     MCP server — so an owner can fill a Connected site from them instead of
+         *     MCP server — so an owner can fill a host site from them instead of
          *     typing them. `address` is the site's address, the URL of its keys, or of the
          *     document itself; the document is looked for beside its keys, at
          *     `/.well-known/canopy-site.json` and at `canopy/site.json`. With `app_id` (a
@@ -10762,11 +10762,11 @@ export interface paths {
             readonly cookie?: never;
         };
         /**
-         * The agents a connected site may show, signed
+         * The agents a host site may show, signed
          * @description Which agents this site may show, and on what terms — signed by canopy.
          *
          *     The site authenticates with `Authorization: Bearer <JWT>` signed by its own
-         *     key (the one at its `jwks_url`): `iss` = its Connected-site name, `aud` =
+         *     key (the one at its `jwks_url`): `iss` = its host-site name, `aud` =
          *     this URL, at most 60 s, single-use `jti`. `canopy_workspace` (the workspace
          *     slug) names which workspace's registration of the name is meant, or
          *     `canopy_agent` names one of its agents to the same end; both must agree
@@ -10798,12 +10798,12 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /**
-         * A connected site says some of its resources changed, signed
+         * A host site says some of its resources changed, signed
          * @description Tell the Views subscribed to some of this site's resources to re-read them.
          *
          *     The site authenticates with `Authorization: Bearer <JWT>` signed by its own key
          *     (the one at its `jwks_url`): `typ` `canopy-resources-updated+jwt`, `iss` = `sub`
-         *     = its Connected-site name, `aud` = this URL, at most 60 s, single-use `jti`, and
+         *     = its host-site name, `aud` = this URL, at most 60 s, single-use `jti`, and
          *     `uris` — the resource URIs that changed (1-50). `canopy_workspace` /
          *     `canopy_agent` name the tenant as for `GET /api/sites/agents`. Build and send it
          *     with `canopy_sdk.resources.notify_updated`. The body is ignored. Each View
@@ -10828,11 +10828,11 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /**
-         * A connected site asks a person to approve one action, signed
+         * A host site asks a person to approve one action, signed
          * @description Ask for a person's passkey approval of ONE action on this site.
          *
          *     `Authorization: Bearer <JWT>` signed by the site's own key: `typ`
-         *     `canopy-sign-off-request+jwt`, `iss` = `sub` = its Connected-site name, `aud` = this
+         *     `canopy-sign-off-request+jwt`, `iss` = `sub` = its host-site name, `aud` = this
          *     URL, at most 60 s, single-use `jti`, `canopy_workspace` / `canopy_agent` as for
          *     `GET /api/sites/agents`, and `sign_off_request`: `subject` (the account's email),
          *     `action` (`key`, `title`, `detail`), `site_ref` (the site's id for what waits on
@@ -10857,7 +10857,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /**
-         * A connected site reads one of its sign-off requests, signed
+         * A host site reads one of its sign-off requests, signed
          * @description The state of one request this site made: `{id, state, expires_at, approval}`,
          *     `state` one of `open`, `approved`, `declined`, `expired`. `approval` is the signed
          *     approval (verify it with `canopy_sdk.sign_offs.verify_approval`) for ten minutes
@@ -10882,7 +10882,7 @@ export interface paths {
         };
         /**
          * A sign-off request you may decide
-         * @description What a connected site asks you to approve: the site, the action in its own
+         * @description What a host site asks you to approve: the site, the action in its own
          *     words, the account it is for, and (for an agent's request) which agent. 404 unless
          *     you may decide it.
          */
@@ -12968,7 +12968,7 @@ export interface paths {
          *     the turn's agent owner's token for that agent. canopy decides whose — the
          *     runner only names the turn. Refused (409, with the reason) when the owner
          *     has lent none or it has expired, and always for a confined turn (read mode or a
-         *     connected site); there is no shared fallback.
+         *     host site); there is no shared fallback.
          */
         readonly post: operations["turn_github_token"];
         readonly delete?: never;
@@ -18141,7 +18141,7 @@ export interface paths {
         };
         /**
          * The agent an embedded panel opens on for you
-         * @description The agent every embedded panel — on a connected site or on canopy's own
+         * @description The agent every embedded panel — on a host site or on canopy's own
          *     pages — opens on for you, unless the page chose its own agent. Blank when you
          *     have not chosen one, and the site's own default applies.
          */
@@ -28511,10 +28511,10 @@ export interface components {
             readonly definition?: components["schemas"]["AgentDefinitionOut"] | null;
             readonly read_mode?: components["schemas"]["ReadModeSettingOut"] | null;
             /**
-             * Connected Sites
+             * Host Sites
              * @default []
              */
-            readonly connected_sites: readonly components["schemas"]["ConnectedSiteOut"][];
+            readonly host_sites: readonly components["schemas"]["AgentHostSiteOut"][];
             /**
              * Cli Models
              * @default {}
@@ -28573,6 +28573,55 @@ export interface components {
              * @description When the agent last RAN, over the same set as `turn_count`: the newest `started_at`, or the newest `created_at` when none has started yet. A queued turn nobody claimed is not a run.
              */
             readonly latest_turn_at?: string | null;
+        };
+        /** AgentHostSiteOut */
+        readonly AgentHostSiteOut: {
+            /**
+             * Description
+             * @default
+             */
+            readonly description: string;
+            /** Entry */
+            readonly entry?: string | null;
+            /**
+             * Tools
+             * @default []
+             */
+            readonly tools: readonly string[];
+            /**
+             * Bash
+             * @default []
+             */
+            readonly bash: readonly string[];
+            /**
+             * Read Paths
+             * @default []
+             */
+            readonly read_paths: readonly string[];
+            /**
+             * Write Paths
+             * @default []
+             */
+            readonly write_paths: readonly string[];
+            /** Site */
+            readonly site: string;
+            /** Key */
+            readonly key: string;
+            /**
+             * Ceiling
+             * @default []
+             */
+            readonly ceiling: readonly string[];
+            /**
+             * Own Login
+             * @default []
+             */
+            readonly own_login: readonly string[];
+            /**
+             * Sensitive
+             * @default false
+             */
+            readonly sensitive: boolean;
         };
         /**
          * AgentLoginRequestOut
@@ -28643,55 +28692,6 @@ export interface components {
              * @default []
              */
             readonly write_paths: readonly string[];
-        };
-        /** ConnectedSiteOut */
-        readonly ConnectedSiteOut: {
-            /**
-             * Description
-             * @default
-             */
-            readonly description: string;
-            /** Entry */
-            readonly entry?: string | null;
-            /**
-             * Tools
-             * @default []
-             */
-            readonly tools: readonly string[];
-            /**
-             * Bash
-             * @default []
-             */
-            readonly bash: readonly string[];
-            /**
-             * Read Paths
-             * @default []
-             */
-            readonly read_paths: readonly string[];
-            /**
-             * Write Paths
-             * @default []
-             */
-            readonly write_paths: readonly string[];
-            /** Site */
-            readonly site: string;
-            /** Key */
-            readonly key: string;
-            /**
-             * Ceiling
-             * @default []
-             */
-            readonly ceiling: readonly string[];
-            /**
-             * Own Login
-             * @default []
-             */
-            readonly own_login: readonly string[];
-            /**
-             * Sensitive
-             * @default false
-             */
-            readonly sensitive: boolean;
         };
         /** ReadModeSettingOut */
         readonly ReadModeSettingOut: {
@@ -29488,10 +29488,10 @@ export interface components {
             /** Role */
             readonly role: string;
             /**
-             * Connected Site
+             * Host Site
              * @default
              */
-            readonly connected_site: string;
+            readonly host_site: string;
             /** User Id */
             readonly user_id?: number | null;
             /** Subject Workspace */
@@ -29556,8 +29556,8 @@ export interface components {
              * @default false
              */
             readonly can_edit: boolean;
-            /** Connected Sites */
-            readonly connected_sites?: readonly components["schemas"]["ConnectedSiteChoiceOut"][];
+            /** Host Sites */
+            readonly host_sites?: readonly components["schemas"]["HostSiteChoiceOut"][];
         };
         /** AccessRoleOut */
         readonly AccessRoleOut: {
@@ -29594,10 +29594,10 @@ export interface components {
             readonly fixed: boolean;
         };
         /**
-         * ConnectedSiteChoiceOut
-         * @description One of the agent's connected sites, as an access-list line names it.
+         * HostSiteChoiceOut
+         * @description One of the agent's host sites, as an access-list line names it.
          */
-        readonly ConnectedSiteChoiceOut: {
+        readonly HostSiteChoiceOut: {
             /** Name */
             readonly name: string;
             /**
@@ -29608,7 +29608,7 @@ export interface components {
         };
         /**
          * AccessLineIn
-         * @description One line to add: who, and what they get: ONE role, or (rarely) ONE connected site.
+         * @description One line to add: who, and what they get: ONE role, or (rarely) ONE host site.
          */
         readonly AccessLineIn: {
             /**
@@ -29619,10 +29619,10 @@ export interface components {
             /** Role */
             readonly role?: string | null;
             /**
-             * Connected Site
+             * Host Site
              * @default
              */
-            readonly connected_site: string;
+            readonly host_site: string;
             /** User Id */
             readonly user_id?: number | null;
             /** Email */
@@ -29697,10 +29697,10 @@ export interface components {
              */
             readonly dry_run: boolean;
         };
-        /** ConnectedSitesOut */
-        readonly ConnectedSitesOut: {
+        /** AgentHostSitesOut */
+        readonly AgentHostSitesOut: {
             /** Sites */
-            readonly sites: readonly components["schemas"]["ConnectedSiteOut"][];
+            readonly sites: readonly components["schemas"]["AgentHostSiteOut"][];
             /** Available */
             readonly available: readonly string[];
             readonly new_site_defaults: components["schemas"]["NewSiteDefaults"];
@@ -29750,8 +29750,8 @@ export interface components {
              */
             readonly sensitive: boolean;
         };
-        /** ConnectedSiteIn */
-        readonly ConnectedSiteIn: {
+        /** AgentHostSiteIn */
+        readonly AgentHostSiteIn: {
             /** Description */
             readonly description?: string | null;
             /** Entry */
@@ -38525,7 +38525,7 @@ export interface components {
         /**
          * AgentEdgeOut
          * @description What `source` gets when it sends `target` work with its own login.
-         *     `access`: full | confined (to read mode or the connected sites named in `profiles`) | none.
+         *     `access`: full | confined (to read mode or the host sites named in `profiles`) | none.
          *     `basis`: owner | workspace-owner | admin | editor (full; manual only when its line says so) |
          *     no-interface (refused: nothing published) | profiles (confined) | nothing-offered |
          *     not-member | no-login. Terms: docs/architecture/access.md. `can_grant` / `can_revoke`: whether
@@ -38608,13 +38608,13 @@ export interface components {
             readonly name: string;
         };
         /**
-         * ConnectedAppOut
+         * HostSiteOut
          * @description A site connected to canopy.
          *
          *     A site has no secret: it proves itself by signing (`jwks_url` or
          *     `public_keys`), so there is nothing here to protect or rotate.
          */
-        readonly ConnectedAppOut: {
+        readonly HostSiteOut: {
             /** Id */
             readonly id: number;
             /** Name */
@@ -38957,7 +38957,7 @@ export interface components {
         };
         /**
          * SiteNeedsOut
-         * @description What a connected site asks of canopy's agents (its signed `site.json`).
+         * @description What a host site asks of canopy's agents (its signed `site.json`).
          */
         readonly SiteNeedsOut: {
             /** Url */
@@ -42665,7 +42665,7 @@ export interface components {
         };
         /**
          * ClaimPageSiteOut
-         * @description A turn held on a Connected site's page (`interface.page_turn`).
+         * @description A turn held on a host site's page (`interface.page_turn`).
          */
         readonly ClaimPageSiteOut: {
             /** Site */
@@ -47808,7 +47808,7 @@ export interface components {
             readonly identity: string;
             /**
              * Source
-             * @description How canopy came to know this person: "email" (wrote to an agent's inbox) or "embed" (used an agent on a connected site). It says which field is the identity.
+             * @description How canopy came to know this person: "email" (wrote to an agent's inbox) or "embed" (used an agent on a host site). It says which field is the identity.
              */
             readonly source: string;
             /**
@@ -47818,13 +47818,13 @@ export interface components {
             readonly email: string;
             /**
              * External Id
-             * @description The connected site's own id for this person, opaque to canopy. Scoped to that site, so it cannot collide with a canopy user or with another site's people.
+             * @description The host site's own id for this person, opaque to canopy. Scoped to that site, so it cannot collide with a canopy user or with another site's people.
              * @default
              */
             readonly external_id: string;
             /**
              * App Name
-             * @description The connected site that vouched for them, if any.
+             * @description The host site that vouched for them, if any.
              * @default
              */
             readonly app_name: string;
@@ -48116,7 +48116,7 @@ export interface components {
             readonly learned_by: string;
             /**
              * Provenance Site
-             * @description The connected site the agent was reached through when it recorded this — {name, page?} — or {}.
+             * @description The host site the agent was reached through when it recorded this — {name, page?} — or {}.
              */
             readonly provenance_site?: {
                 readonly [key: string]: unknown;
@@ -50016,7 +50016,7 @@ export interface operations {
             };
         };
     };
-    readonly tokens_list_connected_apps: {
+    readonly list_authorized_apps: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -50036,7 +50036,7 @@ export interface operations {
             };
         };
     };
-    readonly tokens_disconnect_app: {
+    readonly disconnect_authorized_app: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -58050,7 +58050,7 @@ export interface operations {
             };
         };
     };
-    readonly list_connected_sites: {
+    readonly list_agent_host_sites: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -58067,12 +58067,12 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["ConnectedSitesOut"];
+                    readonly "application/json": components["schemas"]["AgentHostSitesOut"];
                 };
             };
         };
     };
-    readonly put_connected_site: {
+    readonly put_agent_host_site: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -58084,7 +58084,7 @@ export interface operations {
         };
         readonly requestBody: {
             readonly content: {
-                readonly "application/json": components["schemas"]["ConnectedSiteIn"];
+                readonly "application/json": components["schemas"]["AgentHostSiteIn"];
             };
         };
         readonly responses: {
@@ -58094,12 +58094,12 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["ConnectedSitesOut"];
+                    readonly "application/json": components["schemas"]["AgentHostSitesOut"];
                 };
             };
         };
     };
-    readonly delete_connected_site: {
+    readonly delete_agent_host_site: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -58117,7 +58117,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["ConnectedSitesOut"];
+                    readonly "application/json": components["schemas"]["AgentHostSitesOut"];
                 };
             };
         };
@@ -64162,7 +64162,7 @@ export interface operations {
             };
         };
     };
-    readonly tokens_connected_apps_list_connected_apps: {
+    readonly list_host_sites: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -64179,12 +64179,12 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": readonly components["schemas"]["ConnectedAppOut"][];
+                    readonly "application/json": readonly components["schemas"]["HostSiteOut"][];
                 };
             };
         };
     };
-    readonly connect_app: {
+    readonly register_host_site: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -64205,12 +64205,12 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["ConnectedAppOut"];
+                    readonly "application/json": components["schemas"]["HostSiteOut"];
                 };
             };
         };
     };
-    readonly tokens_connected_apps_disconnect_app: {
+    readonly revoke_host_site: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -64231,7 +64231,7 @@ export interface operations {
             };
         };
     };
-    readonly update_connected_app: {
+    readonly update_host_site: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -64253,12 +64253,12 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["ConnectedAppOut"];
+                    readonly "application/json": components["schemas"]["HostSiteOut"];
                 };
             };
         };
     };
-    readonly test_connected_app: {
+    readonly test_host_site: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -64351,7 +64351,7 @@ export interface operations {
             };
         };
     };
-    readonly connected_app_needs: {
+    readonly host_site_needs: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;

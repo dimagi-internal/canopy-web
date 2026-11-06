@@ -51,7 +51,7 @@ class EmbedAppError(Exception):
 def require(user, slug: str, capability: str) -> None:
     """404 for a non-member, 403 for a member whose role lacks `capability`.
 
-    Two tiers (`apps/workspaces/permissions.py`): READING the connected sites,
+    Two tiers (`apps/workspaces/permissions.py`): READING the host sites,
     their health and running Test connection is the workspace's INTEGRATIONS
     tier (admin); registering a site, changing its origins, agents or signing
     key, or disconnecting it is the OWNER's — a registered key lets that site
@@ -66,7 +66,7 @@ def require(user, slug: str, capability: str) -> None:
     if not perms.can(user, slug, capability):
         raise EmbedAppError(
             "not_owner",
-            f"connected sites: this requires the {perms.MINIMUM_ROLE[capability]} role or above",
+            f"host sites: this requires the {perms.MINIMUM_ROLE[capability]} role or above",
         )
 
 
@@ -76,7 +76,7 @@ def apps_for(user, slug: str) -> QuerySet[AppCredential]:
     Each tenant registers a system itself, so there is no "site another
     workspace registered that we also use": what is listed here is exactly
     what an owner here may change, all of it. Retired rows are left out; a
-    disconnected site is gone from the tenant's point of view.
+    dishost site is gone from the tenant's point of view.
     """
     require(user, slug, perms.INTEGRATIONS)
     return (
@@ -388,7 +388,7 @@ def update(*, user, app: AppCredential, workspace_slug: str, origins=None, agent
     own, so there is one gate — owning the workspace the row belongs to."""
     require(user, workspace_slug, perms.OWN)
     if app.workspace_id != workspace_slug:
-        raise EmbedAppError("not_found", "no such connected site in this workspace")
+        raise EmbedAppError("not_found", "no such host site in this workspace")
 
     fields: list[str] = []
     if origins is not None:
@@ -438,7 +438,7 @@ def disconnect(*, user, app: AppCredential, workspace_slug: str) -> AppCredentia
     """
     require(user, workspace_slug, perms.OWN)
     if app.workspace_id != workspace_slug:
-        raise EmbedAppError("not_found", "no such connected site in this workspace")
+        raise EmbedAppError("not_found", "no such host site in this workspace")
     return revoke(app)
 
 
@@ -446,7 +446,7 @@ def self_app():
     """The app whose widget canopy shows on its own pages, or None.
 
     One query on a column, where this used to be a name read from a setting
-    and looked up. Nothing special-cases canopy: it is whichever connected
+    and looked up. Nothing special-cases canopy: it is whichever host
     site an owner ticked the box on, and usually that site is canopy itself.
     """
     return AppCredential.objects.filter(

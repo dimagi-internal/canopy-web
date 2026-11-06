@@ -26,16 +26,16 @@ SYSTEM = "system"
 
 #: Be answered by the agent in read mode: confined, on every agent from the start (`interface.is_read_mode`).
 READ = "read"
-#: Drive the whole agent, in its own authority: every skill it has, read mode and every connected site.
+#: Drive the whole agent, in its own authority: every skill it has, read mode and every host site.
 WRITE = "write"
 #: Change the agent itself: its skills, its persona and the code in its own repo (never where the
 #: repo points, the machine capabilities it leases or its keys: those are `admin`).
 AGENT_EDIT = "agent_edit"
-#: Configure the agent in canopy-web: access list, read mode and connected sites, credentials, routing.
+#: Configure the agent in canopy-web: access list, read mode and host sites, credentials, routing.
 ADMINISTER = "admin"
 #: Transfer or delete the agent, and name its admins. `Agent.owner`, never a line.
 OWN = "own"
-#: The scope of a named-site permission: `use:<site>` opens that one connected site.
+#: The scope of a named-site permission: `use:<site>` opens that one host site.
 USE = "use"
 
 _PLAIN = (READ, WRITE, AGENT_EDIT, ADMINISTER, OWN)
@@ -79,7 +79,7 @@ RESERVED_KEYS = frozenset({OWNER, ADMIN, SYSTEM, "viewer", "user", "member", "co
 _TABLE = {**{s.key: set(s.permissions) for s in SEED}, **_FIXED}
 
 #: The dependency rule: agent_edit implies write implies read; admin implies all but own; driving
-#: the whole agent opens every connected site.
+#: the whole agent opens every host site.
 _IMPLIES = {
     AGENT_EDIT: {WRITE},
     WRITE: {READ, f"{USE}:*"},
@@ -114,7 +114,7 @@ def validate_permissions(permissions) -> frozenset[str]:
     A role is built from the fixed vocabulary at the read / write / agent_edit level: `read`,
     `write`, `agent_edit` and `use:<site>`. `admin` and `own` are `Agent.is_admin` and
     `Agent.owner`, never a line, so no role can hold them; `use:*` is what `write` is. The set is
-    closed (write carries read and every connected site, agent_edit carries write) and stored closed."""
+    closed (write carries read and every host site, agent_edit carries write) and stored closed."""
     wanted = {str(p) for p in permissions or ()}
     if not wanted:
         raise InvalidRole("a role must allow something")
@@ -159,7 +159,7 @@ def highest(roles) -> str | None:
 
 
 def use(name: str) -> str:
-    """The scoped permission that opens one named connected site."""
+    """The scoped permission that opens one named host site."""
     return f"{USE}:{name}"
 
 

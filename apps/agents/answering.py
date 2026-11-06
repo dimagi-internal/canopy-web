@@ -1,4 +1,4 @@
-"""An agent's two plain settings, read mode and connected sites, as views of `Agent.interface`.
+"""An agent's two plain settings, read mode and host sites, as views of `Agent.interface`.
 
 `docs/superpowers/specs/2026-11-04-agent-settings-replace-the-interface-design.md` § 3. Nothing about
 storage moves and no reader changes: this reads the same document everything else reads and edits it
@@ -17,7 +17,7 @@ from . import interface as iface_mod
 from . import sensitive_data
 from .models import Agent
 
-#: The fields of a profile, in either setting. A connected site adds `ceiling`, `own_login`, `sensitive`.
+#: The fields of a profile, in either setting. A host site adds `ceiling`, `own_login`, `sensitive`.
 PROFILE_FIELDS = ("description", "entry", "tools", "bash", "read_paths", "write_paths")
 _RESERVED_KEYS = frozenset({*iface_mod.READ_MODE_NAMES, iface_mod.SESSION_REVIEW})
 _MAX_ENTRIES = 50
@@ -28,7 +28,7 @@ class SettingsError(ValueError):
 
 
 def new_site_defaults() -> dict:
-    """What a new connected site starts with, saved explicitly so a later change here widens nobody.
+    """What a new host site starts with, saved explicitly so a later change here widens nobody.
     Passes `sensitive_data.structural_refusals`: adding a site and switching sensitive on needs no more."""
     return {
         "description": "",
@@ -71,7 +71,7 @@ def _row(name: str, entry: dict, site: str) -> dict:
             "sensitive": entry.get("data") == sensitive_data.SENSITIVE}
 
 
-def connected_sites_of(agent) -> list[dict]:
+def host_sites_of(agent) -> list[dict]:
     """One row per site, by site. Read mode is never a row, even if a stored `READ_MODE_STAMP` entry names a site."""
     rows = [_row(name, entry or {}, site) for name, entry in _entries(agent).items()
             if not iface_mod.is_read_mode(name) for site in (entry or {}).get("sites") or []]

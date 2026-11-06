@@ -62,7 +62,7 @@ def workspace_health_setup(request: HttpRequest, slug: str, agents: str) -> Work
 def agent_topology(request: HttpRequest, slug: str) -> AgentTopologyOut:
     """Every agent in this workspace and its descendants, and for each ordered
     pair what the first gets when it sends the second work with its own canopy
-    login: the whole agent, read mode or some of its connected sites, or nothing — and why.
+    login: the whole agent, read mode or some of its host sites, or nothing — and why.
     Admin and above. Granting access is `PUT /api/agents/{slug}/admins/{user_id}`
     with the source agent's `login_user_id`."""
     # Same gate and per-descendant filter as runner_topology.

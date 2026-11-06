@@ -1,4 +1,4 @@
-"""Connected sites → "Test connection" (`POST /api/workspaces/{slug}/connected-apps/{id}/test`).
+"""Host sites → "Test connection" (`POST /api/workspaces/{slug}/host-sites/{id}/test`).
 
 The SDK's conformance checks, run from canopy's server against a site's own
 settings. Against: canopy-web itself (in-process), a host built only from
@@ -64,7 +64,7 @@ def _site(tenant, name, **fields):
 def _test(user, app):
     c = Client()
     c.force_login(user)
-    return c.post(f"/api/workspaces/connect/connected-apps/{app.pk}/test")
+    return c.post(f"/api/workspaces/connect/host-sites/{app.pk}/test")
 
 
 def _by_name(body):
@@ -223,7 +223,7 @@ def test_only_an_owner_may_test(tenant):
     app = _site(tenant, "canopy-web")
     assert _test(tenant["editor"], app).status_code == 403
     assert _test(tenant["stranger"], app).status_code == 404
-    assert Client().post(f"/api/workspaces/connect/connected-apps/{app.pk}/test").status_code in (401, 403)
+    assert Client().post(f"/api/workspaces/connect/host-sites/{app.pk}/test").status_code in (401, 403)
 
 
 def test_another_workspaces_site_is_not_found(tenant):

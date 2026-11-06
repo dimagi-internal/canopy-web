@@ -70,7 +70,7 @@ def read_only(tool) -> bool:
 def _allowed(name: str, claims: dict, tool=None) -> bool:
     if claims.get("sensitive"):
         # A sensitive turn's session: the canopy tools a `data: sensitive`
-        # connected site may hold (and its page's own actions), never more, whatever
+        # host site may hold (and its page's own actions), never more, whatever
         # else the claims say (`caller_tokens._sensitive_grant` already narrowed
         # them; this is the second line).
         if not sensitive_tool(name):

@@ -45,7 +45,7 @@ def test_stamped_read_mode_lines_become_read_only_and_a_duplicate_is_dropped(def
     Grant = apps.get_model("agents", "AgentGrant")
     ask = Grant.objects.get(pk=ask.pk)
     assert (ask.role, ask.capability, ask.subject_key) == ("read_only", "", "contact:dimagi.com")
-    assert Grant.objects.get(pk=other.pk).capability == "canopy"          # a real connected site is untouched
+    assert Grant.objects.get(pk=other.pk).capability == "canopy"          # a real host site is untouched
     assert Grant.objects.get(pk=dup_role.pk).role == "read_write"
     assert not Grant.objects.filter(pk=dup_cap.pk).exists()               # already held a role
     default = Grant.objects.get(pk=default.pk)

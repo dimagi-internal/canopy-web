@@ -5,7 +5,7 @@ One list per agent says `(who, what)` — see
 vocabulary and `docs/superpowers/specs/2026-11-02-agent-permissions-and-roles-design.md` for
 roles and permissions. `who` is a person, everyone in a workspace (optionally "at least editor"
 there, optionally also every workspace below it), or anyone whose address is at a domain. `what`
-is ONE role (`roles.py`) or, rarely, ONE named connected site. A person's permissions are the union
+is ONE role (`roles.py`) or, rarely, ONE named host site. A person's permissions are the union
 of the lines that name them; this module is the only thing that reads the lines.
 
 The agent's own lines are joined by the lines of its workspace and the workspaces above
@@ -76,7 +76,7 @@ class Resolution:
 
     role: str | None                     # the strongest ROLE line's role; None = no role line names them
     manual_only: bool = False            # every line that gives `write` demands approval (one without it frees them)
-    lines: tuple[AgentGrant, ...] = ()   # every line that matched, strongest first (role lines, then connected-site lines)
+    lines: tuple[AgentGrant, ...] = ()   # every line that matched, strongest first (role lines, then host-site lines)
     #: The union of what every matching line grants, closed under the dependency rule.
     permissions: frozenset[str] = frozenset()
 
@@ -157,7 +157,7 @@ def resolve(agent, asker: Asker, lines: list[AgentGrant] | None = None) -> Resol
     found = [ln for ln in (lines_for(agent) if lines is None else lines) if matches(ln, asker)]
     if not found:
         return Resolution(None)
-    # Role lines first, strongest first; then the connected-site lines by name.
+    # Role lines first, strongest first; then the host-site lines by name.
     # The strongest role is the one that allows the most (permissions after closure), ties by key; it
     # is for display and the envelope. `permissions` carries the decision.
     found.sort(key=lambda ln: (bool(ln.capability), -len(ln.permissions), ln.role, ln.capability))
@@ -180,7 +180,7 @@ _SITE_NAME = re.compile(r"^[a-z][a-z0-9_]{0,40}$")
 # defined, visible down its chain. `admin` and `owner` are never among them: `Agent.is_admin` and
 # `Agent.owner`, not lines.
 #: Kinds whose members are identified only by an address a message can claim. They can give
-#: `read_only` or open a named connected site; they can never give a role that contains `write`
+#: `read_only` or open a named host site; they can never give a role that contains `write`
 #: (that takes a named person or a workspace's people), whatever that role is called.
 #: (Rules published before the list are carried over as they were.)
 ADDRESS_ONLY = (AgentGrant.DOMAIN, AgentGrant.CONTACT)
@@ -213,7 +213,7 @@ def check_role(kind, role: str | None, home: str):
                         "to make someone an admin of the agent, add them as an admin")
     if kind in ADDRESS_ONLY and grants_write(row):
         raise LineError("a line that names people only by their address can give a role that only reads "
-                        f"or opens a connected site, not {role} (it lets them drive the whole agent, "
+                        f"or opens a host site, not {role} (it lets them drive the whole agent, "
                         "or change it): name the person, or everyone in a workspace")
     return row
 
@@ -233,13 +233,13 @@ def check_line(actor, *, home, kind, role=None, capability=None, user_id=None, e
                at_least="", domain="", verified=True, include_below=False, scope_is_workspace=False):
     """Validate one line a person is adding; returns the normalised field dict.
 
-    A line grants ONE role or, rarely, ONE connected site (stored in `capability`)."""
+    A line grants ONE role or, rarely, ONE host site (stored in `capability`)."""
     capability = (capability or "").strip()
     if bool(role) == bool(capability):
-        raise LineError("a line gives either a role or one connected site, not both and not neither")
+        raise LineError("a line gives either a role or one host site, not both and not neither")
     if capability:
         if not _SITE_NAME.match(capability):
-            raise LineError(f"{capability!r} is not the name of a connected site")
+            raise LineError(f"{capability!r} is not the name of a host site")
         role = ""
     else:
         role_def = check_role(kind, role, home)
