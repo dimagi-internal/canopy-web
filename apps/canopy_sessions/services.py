@@ -20,7 +20,7 @@ from apps.realtime import groups
 
 from . import activity as session_activity
 from . import attachment_storage, conversation_keys, drafts
-from . import lifecycle
+from . import lifecycle, lineage
 from . import transcript_read
 from .models import Attachment, Message, RunnerBinding, Session
 
@@ -373,11 +373,16 @@ def recheck_sockets(session_id, *, user_ids=()) -> None:
 
 def create_session(*, workspace, created_by=None, agent=None, project: str = "", title: str = "",
                    metadata: dict | None = None, contact=None, parent=None,
-                   conversation_key: dict | None = None, cli: str = "") -> Session:
+                   conversation_key: dict | None = None, cli: str = "",
+                   relation: str = "") -> Session:
     """One way to start a conversation, whoever starts it. A USER owns it (a
     participant row, SP3 multiplayer); a CONTACT has no account, so the session
     records them on `contact` instead and has no creator — which is what keeps
-    it out of every member's list (`access.contact_session_q`)."""
+    it out of every member's list (`access.contact_session_q`).
+
+    `relation` is how it stands to its parent (`lineage.RELATIONS`); a session
+    with a parent and none is a dispatch, and only a dispatch starts with the
+    parent's people."""
     # Atomic so a session never exists without its owner. Local imports avoid a cycle.
     from .models import SessionParticipant
     from .participants import ensure_participant
@@ -397,7 +402,7 @@ def create_session(*, workspace, created_by=None, agent=None, project: str = "",
     with transaction.atomic():
         session = Session(
             workspace=workspace, agent=agent, project=project, created_by=created_by,
-            title=title, metadata=meta, contact=contact, cli=cli,
+            title=title, metadata=meta, contact=contact, cli=cli, relation=relation,
             # What opened it (request + `parent`): apps/harness/provenance.py.
             **provenance.session_fields(parent=parent),
         )
@@ -407,7 +412,8 @@ def create_session(*, workspace, created_by=None, agent=None, project: str = "",
         session.save(force_insert=True)
         if created_by is not None:
             ensure_participant(session, created_by, SessionParticipant.OWNER)
-            _inherit_participants(session, created_by)
+            if lineage.inherits_people(session.relation):
+                _inherit_participants(session, created_by)
     return session
 
 

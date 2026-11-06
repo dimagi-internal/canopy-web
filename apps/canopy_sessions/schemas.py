@@ -1283,3 +1283,25 @@ class SessionExportOut(Schema):
     title: str
     message_count: int
     markdown: str
+
+
+class ReportBackIn(Schema):
+    """A child session's outcome, for the conversation it was started from."""
+    #: Markdown: the outcome, for people who did not follow the work — what was
+    #: decided, built or changed, links, and what is still open.
+    summary: str
+    #: False for an interim update; the work carries on.
+    final: bool = True
+    #: An agent's own live turn in the child session (the caller envelope's `turn_id`). Tried first.
+    turn_id: str = ""
+    session_id: str = ""
+
+
+class ReportBackOut(Schema):
+    #: "sent".
+    status: str
+    message: str
+    session_id: uuid.UUID
+    #: The conversation it reported to, and the turn there that carries the report.
+    parent_session_id: uuid.UUID
+    turn_id: uuid.UUID | None = None

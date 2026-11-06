@@ -135,6 +135,12 @@ def update_message(token: str, *, channel: str, ts: str, text: str, blocks: list
                                            "blocks": blocks or []})
 
 
+def open_dm(token: str, slack_user_id: str) -> str:
+    """The id of the bot's direct-message channel with this person (opened if new)."""
+    body = call("conversations.open", token=token, data={"users": slack_user_id})
+    return str((body.get("channel") or {}).get("id") or "")
+
+
 def post_ephemeral(token: str, *, channel: str, user: str, text: str, thread_ts: str = "") -> None:
     payload = {"channel": channel, "user": user, "text": text}
     if thread_ts:

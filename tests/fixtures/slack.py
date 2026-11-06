@@ -93,6 +93,8 @@ class FakeSlack:
         resp.raise_for_status = lambda: None
         if method in self.fail:
             body = {"ok": False, "error": self.fail[method]}
+        elif method == "conversations.open":
+            body = {"ok": True, "channel": {"id": "D" + str(payload.get("users") or "")}}
         elif method == "users.info":
             body = {"ok": True, "user": self.users.get(payload["user"], {"profile": {}})}
         elif method == "agents.sessions.setStatus":

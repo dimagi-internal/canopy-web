@@ -599,11 +599,14 @@ def handle_message(inbound: Inbound) -> Outcome:
         return route_mine_to_cloud(installation, inbound.slack_user_id)
     key = thread_key(inbound.team_id, inbound.channel_id, inbound.anchor)
     if not inbound.follow:
-        from . import branch
+        from . import branch, offline
 
         wants, ask = branch.is_branch(text)
         if wants:
             return branch.handle(installation, inbound, ask)
+        wants, ask = offline.is_offline(text)
+        if wants:
+            return offline.handle(installation, inbound, ask)
     # A thread a repo session was SHARED into (apps/slack/share.py) has no agent
     # to find it by. Naming an agent still asks that agent, as in any thread.
     from .share import bound_repo_session

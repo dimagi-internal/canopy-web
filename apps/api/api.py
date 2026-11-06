@@ -321,6 +321,7 @@ from apps.beta_requests.api import router as beta_requests_router  # noqa: E402
 from apps.canopy_sessions.api import me_router as my_sessions_router  # noqa: E402
 from apps.canopy_sessions.api import router as canopy_sessions_router  # noqa: E402
 from apps.canopy_sessions.app_views_api import router as app_views_router  # noqa: E402
+from apps.canopy_sessions.lineage_api import router as session_lineage_router  # noqa: E402
 from apps.canopy_sessions.secrets_api import router as session_secrets_router  # noqa: E402
 from apps.canopy_sessions.sharing_api import router as session_sharing_router  # noqa: E402
 from apps.agent_tasks.api import router as agent_tasks_router  # noqa: E402
@@ -573,6 +574,7 @@ api.add_router("/approvals", approvals_router)
 # A session's Slack thread (share / detach / new-thread) — Slack's own routes, at
 # the session paths they always had. Mounted first: fixed `/slack/...` paths.
 api.add_router("/canopy-sessions", slack_session_router)
+api.add_router("/canopy-sessions", session_lineage_router)
 api.add_router("/canopy-sessions", canopy_sessions_router)
 api.add_router("/me/session-sharing", session_sharing_router)
 api.add_router("/me", my_sessions_router)

@@ -257,7 +257,6 @@
 "apps/shareouts/timeline.py" = ["PLC0415"]  # 1
 "apps/slack/api.py" = ["PLC0415"]  # 3
 "apps/slack/apps.py" = ["PLC0415"]  # 6
-"apps/slack/branch.py" = ["PLC0415"]  # 1
 "apps/slack/client.py" = ["PLC0415"]  # 1
 "apps/slack/commands.py" = ["PLC0415"]  # 10
 "apps/slack/files.py" = ["PLC0415"]  # 2
