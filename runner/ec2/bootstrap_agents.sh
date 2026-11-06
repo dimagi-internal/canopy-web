@@ -238,14 +238,20 @@ step1_tooling() {
     warn "uv not on PATH — cannot install/verify the canopy CLI"
   fi
 
-  # The read-only labs telemetry profile (`aws ... --profile labs-observe`): its keys come
-  # from canopy-aws-broker on this box (runner/ec2/aws_broker.py) via `canopy aws
-  # credentials`, so a turn needs no SSO for metrics, alarms or ECS/ALB state. Idempotent;
-  # a canopy CLI older than the command only warns.
+  # The read-only labs profile (`aws ... --profile labs-read`): its keys come from
+  # canopy-aws-broker on this box (runner/ec2/aws_broker.py) via `canopy aws
+  # credentials`, so a turn needs no SSO for metrics, alarms or ECS/ALB/RDS state.
+  # Idempotent; a canopy CLI that predates the name writes the old `labs-observe`.
+  # `labs-readwrite` is not written here: an agent that may have it adds it itself
+  # (`canopy aws profile --role labs-readwrite`), and its keys come from canopy-web.
   if command -v canopy >/dev/null 2>&1; then
-    canopy aws profile --role labs-observe >/dev/null 2>&1 \
-      && ok "aws profile labs-observe present" \
-      || warn "could not add aws profile labs-observe (canopy CLI too old?)"
+    if canopy aws profile --role labs-read >/dev/null 2>&1; then
+      ok "aws profile labs-read present"
+    elif canopy aws profile --role labs-observe >/dev/null 2>&1; then
+      ok "aws profile labs-observe present (canopy CLI predates labs-read)"
+    else
+      warn "could not add aws profile labs-read (canopy CLI too old?)"
+    fi
   fi
 
   if ! command -v gog >/dev/null 2>&1; then

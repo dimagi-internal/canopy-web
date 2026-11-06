@@ -161,3 +161,12 @@ def test_stdlib_only():
         elif isinstance(node, ast.ImportFrom) and node.module:
             mods.add(node.module.split(".")[0])
     assert mods - set(sys.stdlib_module_names) == {"kms_broker"}
+
+
+def test_default_roles_are_read_only_and_keep_the_old_name(ab, monkeypatch):
+    monkeypatch.delenv("CANOPY_AWS_BROKER_ROLES", raising=False)
+    roles = ab.roles()
+    # labs-read is the name; labs-observe stays for profiles written before it.
+    assert roles["labs-read"] == roles["labs-observe"] == "labs-jj-observe-readonly"
+    # labs-readwrite is canopy-web's alone: a box cannot verify which agent asks.
+    assert "labs-readwrite" not in roles

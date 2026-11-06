@@ -815,11 +815,22 @@ MAIL_SES_REGION = env("MAIL_SES_REGION", default=CANOPY_SES_REGION)
 
 # AWS roles canopy-web vends to agents for one hour (apps/agents/api_aws.py):
 # name -> role ARN, JSON. Each role's trust policy must also name canopy-web's task
-# role. `labs-observe` is connect-labs' read-only, non-sensitive observability role
-# (infra/labs-observe-readonly.yml): metrics, alarms, resource metadata; no log
-# events, object bodies, secrets or task env.
+# role, and the task role must be allowed to assume it (canopy-web-task-role.cfn.yaml).
+# `labs-read` is connect-labs' read-only, non-sensitive role
+# (infra/labs-observe-readonly.yml): metrics, alarms, resource and RDS metadata; no
+# log events, object bodies, secrets or task env. `labs-observe` is its old name,
+# kept so older canopy CLIs and existing profiles keep working. `labs-readwrite`
+# (infra/labs-agent-readwrite.yml) changes agent-named RDS copies of production and
+# runs one psql client task; production is source-only.
 CANOPY_AWS_ROLES = env.json("CANOPY_AWS_ROLES", default={
+    "labs-read": "arn:aws:iam::858923557655:role/labs-jj-observe-readonly",
     "labs-observe": "arn:aws:iam::858923557655:role/labs-jj-observe-readonly",
+    "labs-readwrite": "arn:aws:iam::858923557655:role/labs-jj-agent-readwrite",
+})
+# Roles only some agents get: name -> agent slugs. A role not listed here goes to any
+# agent that may ask; one listed goes to those agents only (403 for the rest).
+CANOPY_AWS_ROLE_AGENTS = env.json("CANOPY_AWS_ROLE_AGENTS", default={
+    "labs-readwrite": ["hal", "ada"],
 })
 CANOPY_AWS_STS_REGION = env("CANOPY_AWS_STS_REGION", default="us-east-1")
 MAIL_INBOUND_BUCKET = env("MAIL_INBOUND_BUCKET", default="")

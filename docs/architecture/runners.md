@@ -227,11 +227,14 @@ leg — always AND it with `agent__isnull=False`), repo turns through
 A runner's turn cannot reach the instance role (IMDS is root's) and must not: it reads
 the runner seed secrets. For the one AWS access turns need routinely, labs telemetry,
 `runner/ec2/aws_broker.py` (root, `/run/canopy-aws/sock`, uid from `SO_PEERCRED`,
-like the KMS broker) assumes ONLY the roles it names (`labs-observe` ->
-`labs-jj-observe-readonly`, connect-labs `infra/labs-observe-readonly.yml`: metrics,
-alarms and resource metadata; log events, object bodies, secrets, task commands/env and
-DB content are denied) and hands the runner one hour of keys in `credential_process`
-shape. Each session carries `SourceIdentity=canopy-runner-<name>` (from the uid, not the
+like the KMS broker) assumes ONLY the read-only roles it names (`labs-read`, and its
+old name `labs-observe`, -> `labs-jj-observe-readonly`, connect-labs
+`infra/labs-observe-readonly.yml`: metrics, alarms, resource and RDS metadata; log
+events, object bodies, secrets, task commands/env and DB content are denied) and hands
+the runner one hour of keys in `credential_process` shape. It never vends
+`labs-readwrite` (`labs-jj-agent-readwrite`, `infra/labs-agent-readwrite.yml`): the
+agent a runner names is a claim, so that role comes only from canopy-web, which checks
+the agent and `settings.CANOPY_AWS_ROLE_AGENTS`. Each session carries `SourceIdentity=canopy-runner-<name>` (from the uid, not the
 request) and tags `runner`, `agent`. The instance role's `assume-labs-observe` policy
 (runner.cfn.yaml, fleet.cfn.yaml) and the role's own trust both have to allow it.
 
@@ -239,9 +242,10 @@ request) and tags `runner`, `agent`. The instance role's `assume-labs-observe` p
 imports (same sha) into `/opt/canopy-runner/aws-broker/` and runs `aws_broker.py
 --install` on every start of root's setup, so the updater delivers it the next time it
 restarts root's setup. The canopy CLI reads it with `canopy aws credentials --role
-labs-observe` (the AWS CLI's `credential_process`), falling back to canopy-web's
+labs-read` (the AWS CLI's `credential_process`), falling back to canopy-web's
 `POST /api/agents/{slug}/aws-credentials` (`apps/agents/api_aws.py`, canopy-web's task
-role assuming the same role) off the box.
+role assuming the same role) off the box, and going straight to canopy-web for
+`labs-readwrite`.
 
 ### The job broker (`canopy-job-broker`)
 

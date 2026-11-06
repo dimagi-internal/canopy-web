@@ -1,4 +1,4 @@
-"""`POST /api/agents/{slug}/aws-credentials` — one hour of a named read-only role, as the agent."""
+"""`POST /api/agents/{slug}/aws-credentials` — one hour of a named AWS role, as the agent."""
 from __future__ import annotations
 
 import datetime as dt
@@ -101,6 +101,35 @@ def test_only_roles_canopy_vends(tenancy, sts):
     assert r.status_code == 404
     assert "labs-observe" in r.json()["detail"]
     assert sts.calls == []
+
+
+RW_ARN = "arn:aws:iam::858923557655:role/labs-jj-agent-readwrite"
+
+
+def test_a_role_for_listed_agents_goes_to_those_agents_only(tenancy, sts, settings):
+    settings.CANOPY_AWS_ROLES = {"labs-read": ROLE_ARN, "labs-readwrite": RW_ARN}
+    settings.CANOPY_AWS_ROLE_AGENTS = {"labs-readwrite": ["ada"]}
+    r = _post(pat_client(tenancy["bot"]), role="labs-readwrite")
+    assert r.status_code == 403
+    assert "ada" in r.json()["detail"]
+    assert sts.calls == []
+    # Not listed: any agent that may ask.
+    assert _post(pat_client(tenancy["bot"]), role="labs-read").status_code == 200
+    settings.CANOPY_AWS_ROLE_AGENTS = {"labs-readwrite": ["hal"]}
+    r = _post(pat_client(tenancy["bot"]), role="labs-readwrite")
+    assert r.status_code == 200, r.content
+    assert sts.calls[-1]["RoleArn"] == RW_ARN
+    assert sts.calls[-1]["SourceIdentity"] == "canopy-agent-hal"
+
+
+def test_the_shipped_settings_keep_the_old_name_and_fence_readwrite():
+    from django.conf import settings as live
+
+    roles = live.CANOPY_AWS_ROLES
+    assert roles["labs-read"] == roles["labs-observe"] == ROLE_ARN
+    assert roles["labs-readwrite"] == RW_ARN
+    assert "labs-readwrite" in live.CANOPY_AWS_ROLE_AGENTS
+    assert "labs-read" not in live.CANOPY_AWS_ROLE_AGENTS
 
 
 def test_aws_refusal_is_a_502_with_the_reason(tenancy, monkeypatch, settings):
