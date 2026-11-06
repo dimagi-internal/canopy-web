@@ -334,7 +334,7 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-        image: pgvector/pgvector:pg16
+        image: pgvector/pgvector:pg18
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: canopy_web
@@ -375,14 +375,14 @@ jobs:
       # The dump is written and read by pg_dump/pg_restore run from the SAME image as
       # the service (see `pgc` below), not the runner's: `ubuntu-latest` moved to 26.04
       # on 2026-11-05, whose client is PG18, and a PG18 archive carries
-      # `SET transaction_timeout`, which the PG16 server (production is RDS 16) rejects.
+      # `SET transaction_timeout`, which a PG16 server rejects (production is RDS 18 now).
       # So the client version follows the server, whatever the runner ships.
       - name: Restore the migrated test DB
         id: testdb
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /tmp/testdb.dump
-          key: pg-testdb-v2-${{ hashFiles('apps/**/migrations/*.py', 'sdk/python/src/**/migrations/*.py', 'config/settings/*.py', 'uv.lock', 'pyproject.toml') }}
+          key: pg-testdb-v3-${{ hashFiles('apps/**/migrations/*.py', 'sdk/python/src/**/migrations/*.py', 'config/settings/*.py', 'uv.lock', 'pyproject.toml') }}
 
       - name: Build the test DB (every migration) — or load the cached build
         env:
@@ -391,7 +391,7 @@ jobs:
           DJANGO_SETTINGS_MODULE: config.settings.pgtest
           HIT: ${{ steps.testdb.outputs.cache-hit }}
         run: |
-          pgc() { docker run --rm --network host -e PGPASSWORD -v /tmp:/tmp pgvector/pgvector:pg16 "$@"; }
+          pgc() { docker run --rm --network host -e PGPASSWORD -v /tmp:/tmp pgvector/pgvector:pg18 "$@"; }
           psql -h localhost -U postgres -c "CREATE DATABASE test_canopy_web"
           if [ "$HIT" = "true" ] && pgc pg_restore -h localhost -U postgres -d test_canopy_web --no-owner --exit-on-error /tmp/testdb.dump; then
             echo "::notice::Restored the migrated test DB (migrations unchanged since main built it)."
@@ -814,7 +814,7 @@ jobs:
     timeout-minutes: 25
     services:
       postgres:
-        image: pgvector/pgvector:pg16
+        image: pgvector/pgvector:pg18
         env:
           POSTGRES_USER: e2e
           POSTGRES_PASSWORD: e2e

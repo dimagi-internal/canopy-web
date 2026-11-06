@@ -28,13 +28,13 @@ concurrency:
 jobs:
   test-backend-postgres-full:
     name: Backend pytest (PostgreSQL, whole suite)
-    # Pinned for the same reason as ci.yml's PostgreSQL job: the image's pg_dump
-    # must be able to restore into the PG16 service.
+    # pg_restore runs from the service's own image (`pgc` below), as in ci.yml, so
+    # the client version follows the server whatever the runner ships.
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     services:
       postgres:
-        image: pgvector/pgvector:pg16
+        image: pgvector/pgvector:pg18
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: canopy_web
@@ -78,15 +78,16 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /tmp/testdb.dump
-          key: pg-testdb-v1-${{ steps.image.outputs.id }}-${{ hashFiles('apps/**/migrations/*.py', 'sdk/python/src/**/migrations/*.py', 'config/settings/*.py', 'uv.lock', 'pyproject.toml') }}
+          key: pg-testdb-v2-${{ steps.image.outputs.id }}-${{ hashFiles('apps/**/migrations/*.py', 'sdk/python/src/**/migrations/*.py', 'config/settings/*.py', 'uv.lock', 'pyproject.toml') }}
 
       - name: Build the test DB (every migration) — or load the cached build
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/test_canopy_web
           HIT: ${{ steps.testdb.outputs.cache-hit }}
         run: |
+          pgc() { docker run --rm --network host -e PGPASSWORD -v /tmp:/tmp pgvector/pgvector:pg18 "$@"; }
           psql -h localhost -U postgres -c "CREATE DATABASE test_canopy_web"
-          if [ "$HIT" = "true" ] && pg_restore -h localhost -U postgres -d test_canopy_web --no-owner --exit-on-error /tmp/testdb.dump; then
+          if [ "$HIT" = "true" ] && pgc pg_restore -h localhost -U postgres -d test_canopy_web --no-owner --exit-on-error /tmp/testdb.dump; then
             echo "::notice::Restored the migrated test DB."
           else
             if [ "$HIT" = "true" ]; then
