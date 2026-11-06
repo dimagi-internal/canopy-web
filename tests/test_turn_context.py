@@ -255,27 +255,38 @@ def test_a_review_chat_refuses_what_it_would_refuse_and_narrows_the_rest(w):
     assert ctx.review.may_request_auto is False and ctx.review.may_pin_runner is False
 
 
-def test_the_session_grant_is_a_named_rule_in_the_trace(w):
+def test_an_editor_in_the_owners_own_session_answers_by_their_own_line(w):
+    """`session_writer` was removed on 2026-11-06: being added to a session raises nobody's access."""
     session = _chat(w)
     SessionParticipant.objects.create(session=session, user=w.stranger, role=SessionParticipant.EDITOR)
+    SessionParticipant.objects.create(session=session, user=w.reader, role=SessionParticipant.OWNER)
+    assert session_context.build(session).session_grants == ()
     ctx = turn_context.for_turn(_turn(w, w.stranger, session), w.agent)
-    assert ctx.basis == "session:editor" and ctx.standing.source == "session"
-    assert [g.kind for g in ctx._session_ctx.session_grants] == [session_context.SESSION_WRITER]
-    assert turn_context.TraceEntry("session_grants", session_context.SESSION_WRITER,
-                                   ctx._session_ctx.session_grants[0].source) in ctx.trace
+    assert ctx.refused and ctx.refusal.code == turn_context.NOT_ON_ACCESS_LIST
+    assert turn_context.TraceEntry("session_grants", "none") in ctx.trace
+    ctx = turn_context.for_turn(_turn(w, w.reader, session), w.agent)
+    assert ctx.access == turn_context.CONFINED and ctx.profile.kind == turn_context.READ_MODE
+
+
+def test_the_seam_applies_a_session_grant_kind_once_one_exists(w, monkeypatch):
+    """No kind exists now; the resolver keeps the one place one would apply (spec § 3.4), so adding a kind is a
+    builder in `SessionContext.session_grants` and a test. Here a made-up kind stands in for that builder."""
+    grant = session_context.SessionGrant(kind="probe_kind", user_id=w.stranger.pk, role="editor", source="a probe")
+    monkeypatch.setattr(session_context.SessionContext, "session_grants", property(lambda self: (grant,)))
+    session = _chat(w)
+    ctx = turn_context.for_turn(_turn(w, w.stranger, session), w.agent)
+    assert ctx.access == turn_context.FULL and ctx.basis == "session:editor" and ctx.standing.source == "session"
+    assert turn_context.TraceEntry("session_grants", "probe_kind", "a probe") in ctx.trace
+    # It drives the conversation, not the agent: what it holds stops at `write`.
+    assert "write" in ctx.held_permissions and roles.AGENT_EDIT not in ctx.held_permissions
+    # A grant is only for the person it names.
+    assert turn_context.for_turn(_turn(w, w.member, session), w.agent).refused
 
 
 def test_a_session_someone_else_started_grants_nothing(w):
     session = _chat(w, creator=w.member)
     SessionParticipant.objects.create(session=session, user=w.stranger, role=SessionParticipant.EDITOR)
     assert session_context.build(session).session_grants == ()
-    assert turn_context.for_turn(_turn(w, w.stranger, session), w.agent).refused
-
-
-def test_a_session_grant_is_only_for_the_person_it_names(w):
-    session = _chat(w)
-    SessionParticipant.objects.create(session=session, user=w.member, role=SessionParticipant.EDITOR)
-    assert turn_context.for_turn(_turn(w, w.member, session), w.agent).access == turn_context.FULL
     assert turn_context.for_turn(_turn(w, w.stranger, session), w.agent).refused
 
 
@@ -460,7 +471,8 @@ def test_a_question_with_no_session_skips_stage_0(w):
 def test_a_preview_asks_the_rule_of_the_session_it_is_about(w):
     site = _chat(w, embed_app="connect-labs")
     SessionParticipant.objects.create(session=site, user=w.reader, role=SessionParticipant.EDITOR)
-    assert _preview(w, w.reader, site).basis == "session:editor"
+    # Their read line, not their row: the site's entry is not open to them, so read mode.
+    assert _preview(w, w.reader, site).basis == "capability:ask"
     other = _chat(w, creator=w.member, embed_app="connect-labs")
     SessionParticipant.objects.create(session=other, user=w.site_user, role=SessionParticipant.EDITOR)
     ctx = _preview(w, w.site_user, other)

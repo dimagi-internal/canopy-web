@@ -72,19 +72,21 @@ resolver has one input shape.
 | `sensitive`, `sensitive_requirement` | Whether the conversation holds a site's sensitive data (`sensitivity.is_sensitive` for a turn, `any_sensitive` for a session), and the requirement that made it so. Once true it does not revert. |
 | `is_review`, `review_of` | This is a one-session review's chat, and the session it reviews. |
 | `audience`, `participants` | Who can see the session (`canopy_sessions.audience`) and its `(user_id, role)` rows. |
-| `session_grants` | Being in this session gives someone more than their own standing ("Session grants" below). |
+| `session_grants` | What being in this session would give someone beyond their own standing. Always empty now ("Session grants" below). |
 | `send_blocks` | Why this session takes no message from anyone, or from some people (stage 0 below). |
 
 ### Session grants
 
-`session_grants` is a list of `{kind, user_id, role, source}`, asked by stage 1 in one rule. Exactly one
-kind exists: **`session_writer`** (`interface.session_writers`): a participant with role owner or editor
-in a session the agent's owner or an admin started holds the whole agent there, so a colleague let into
-the owner's conversation continues the SAME runner session. Both halves matter: the creator must be the
-owner or an admin (or any member could start a chat and be "the owner of a session"), and the grant is an
-explicit participant row. It is read from a turn's `chat_session` only, never `canopy_session`. A session
-writer's permissions stop at `write`: nothing gives them the agent itself. Adding a kind is one builder in
-`session_context.py` and one test, with no change to the resolver.
+`session_grants` is a list of `{kind, user_id, role, source}`, asked by stage 1 in one rule. **No kind
+exists now**, so it is always empty and being in a session raises nobody's access: a person in one answers
+by their own line on the access list, like anyone else.
+
+The one kind there was, `session_writer` (a participant with role owner or editor in a session the agent's
+owner or an admin started held the whole agent there), was removed on 2026-11-06 at the owner's decision.
+Someone it let in now needs a line: `read_only` for read mode, `read_write` or `editor` for the whole agent.
+
+The seam stays. Adding a kind is one builder in `session_context.py` and one test; the resolver already
+applies a grant: the whole agent, with permissions that stop at `write`.
 
 ### What a Turn Context holds
 
@@ -147,7 +149,7 @@ its chat surfaces). A block is a refused Turn Context with its own code; it chan
 1. Canopy itself, another agent's approved dispatch, a schedule: `system`.
 2. For a person: `Agent.owner`, then the agent's own login (`system`), then `Agent.is_admin`
    (`caller_context.relationship_for_user`).
-3. `session_grants`.
+3. `session_grants` (none exist now).
 4. The access list (`grants.resolve`).
 5. Otherwise, nothing.
 
@@ -707,23 +709,23 @@ The old `/interface` routes answer 410.
 | # | Who | Access | Mode | May request `auto` | May pin a runner |
 |---|---|---|---|---|---|
 | 1 | **owner / agent admin / system** (no line needed) | `full` | the routing ladder | owner / agent admin, on a verified credential | owner / agent admin: any runner that may hold the agent |
-| 2 | a writer in an agent admin's own session (`session_writer`) | `full` | the routing ladder | no | only a runner they administer |
-| 3 | their lines give them **`write`** (read_write, editor) | `full` | the routing ladder, but **every turn `manual`** when every line that gives `write` is `manual_only` | no | only a runner they administer |
-| 4 | their lines give them **`read`** or a **connected site**, and a profile they open exists | `confined` to it | the routing ladder | no | — |
-| 5 | anyone else (no line, or lines that open nothing the agent has) | `refused` | — | — | — |
+| 2 | their lines give them **`write`** (read_write, editor) | `full` | the routing ladder, but **every turn `manual`** when every line that gives `write` is `manual_only` | no | only a runner they administer |
+| 3 | their lines give them **`read`** or a **connected site**, and a profile they open exists | `confined` to it | the routing ladder | no | — |
+| 4 | anyone else (no line, or lines that open nothing the agent has) | `refused` | — | — | — |
 
 The standing carries `agent_role` (their role in the table; `None` when refused or when only
 connected-site lines name them), `permissions` (everything their lines grant) and `source`
 (why): `owner`, `admin`, `system`, `session` or `list:<line>`. `basis` is the single word for the
-same thing: `owner`, `admin`, `system`, `session:<role>`, `grant:<line>` (row 3),
-`capability:<name>` (row 4, a wire value naming the read-mode or connected-site profile) or `refused`
-(row 5). The refusal says who can add the asker, and with which role ("Refusals").
+same thing: `owner`, `admin`, `system`, `session:<role>`, `grant:<line>` (row 2),
+`capability:<name>` (row 3, a wire value naming the read-mode or connected-site profile) or `refused`
+(row 4). `session` and `session:<role>` come only from a session grant, and none exists now; a turn
+recorded before 2026-11-06 may still say them. The refusal says who can add the asker, and with which role ("Refusals").
 
 * **Over the table: the sensitive-data rule** (`turn_context._sensitive_rule`, spec
   `2026-10-22-sensitive-data-agents` §5). A connected site that handles sensitive data (`data: sensitive`,
   `apps/agents/sensitive_data.py`) — the one a turn names, or the one its conversation's site or page
   selects — is **confined for everyone**: whoever the table gave `full` (owner, agent admin, `system`, a
-  `write` line, a session writer) runs that site's profile instead, keeping their role, mode and pin
+  `write` line) runs that site's profile instead, keeping their role, mode and pin
   rights (`basis: sensitive:<name>`). Any turn in a sensitive conversation (one that requires
   sensitive-data runners) must end in that profile; anything else — the whole agent, another profile, or a
   person whose lines do not open it — is refused (`sensitive_not_open`). The switch is saved by the
@@ -734,7 +736,7 @@ same thing: `owner`, `admin`, `system`, `session:<role>`, `grant:<line>` (row 3)
 * **A one-session review's chat** runs in `session_review` for everyone not refused, owner included
   (`turn_context._review_rule`): no login, no Bash, no tool but `read_asked_session` →
   [access-sessions-and-people.md](access-sessions-and-people.md) § Asking a coach to review one session.
-* Row 3 (a **`write` line**, read_write or editor): they may steer the whole agent. With
+* Row 2 (a **`write` line**, read_write or editor): they may steer the whole agent. With
   `manual_only` on every line that gives them `write`, every turn they start runs `manual` — outbound or irreversible
   actions wait for an agent admin — and they may not set `auto` anywhere: not on a dispatch, not on
   a routing rule or actor route, not on the agent's own switch. Without it the routing ladder
@@ -800,8 +802,8 @@ snapshot); an HTTP entry point's 403 or 422 says `message` (why, capitalised, th
 with `text`; the composer reads the preview and shows the reason and the fix above the input, which stays
 readable. A person added to a session who cannot take a turn is flagged on their participant row
 (`turn_refusal`, the same refusal said `about` them), only to someone who may add people, with a way to add
-them to the access list when the fix is a line and the viewer may add one; an editor added to a session the
-agent's owner or an admin started is a session writer and is never flagged.
+them to the access list when the fix is a line and the viewer may add one. Being in the session gives them
+nothing: an editor added to the owner's own session is flagged like anyone else.
 
 A turn refused at its **claim** (the rules changed while it waited) is said the same way, plus
 `refusals.CHANGED_WHILE_QUEUED` ("This changed after it was sent: …") on its note and in Slack: its thread's

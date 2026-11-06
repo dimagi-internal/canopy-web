@@ -312,6 +312,13 @@ def test_an_adder_who_may_edit_the_access_list_is_offered_the_line(w):
     assert again[w.member.email]["turn_refusal"] is None
 
 
+def test_an_editor_added_to_the_owners_own_session_is_flagged_like_anyone_else(w):
+    # Before 2026-11-06 an editor here was a session writer and never flagged; being in it now gives nothing.
+    rows = _add(w.owner, _chat(w), w.member.email)
+    assert rows[w.member.email]["turn_refusal"]["code"] == Code.NOT_ON_ACCESS_LIST
+    assert rows[w.member.email]["access_list_agent"] == "agent"
+
+
 def test_a_viewer_is_told_the_role_not_the_access_list(w):
     session = _chat(w)
     rows = _add(w.owner, session, w.member.email, role="viewer")

@@ -157,6 +157,7 @@ export function sourceText(source: string): string {
   if (source === "owner") return "being the agent's owner";
   if (source === "admin") return "being an admin of the agent";
   if (source === "system") return "being canopy itself";
+  // A turn recorded before 2026-11-06, when being in an admin's session could give the whole agent.
   if (source === "session") return "being in this session";
   if (source.startsWith("list:")) return "the agent's access list";
   return source;
@@ -397,13 +398,6 @@ export function participantsText(rows: readonly Record<string, unknown>[], me: n
     parts.push(`${who} (${roles})`);
   }
   return parts.join(", ");
-}
-
-/** A session grant: who it is for, and the reason the server gives in words. */
-export function grantText(g: Record<string, unknown>, me: number | null): string {
-  const who = me != null && String(g.user_id) === String(me) ? "You" : "One person";
-  const source = typeof g.source === "string" && g.source ? `: ${g.source}` : "";
-  return `${who} can use the whole agent here${source}`;
 }
 
 export function sendBlockText(b: Record<string, unknown>): string {

@@ -528,18 +528,18 @@ def _in_session(session, user, key):
     return t
 
 
-def test_an_editor_of_the_owners_session_continues_it_in_full(w):
-    """The 2026-10-01 case: a colleague replying in the owner's Slack thread ran
-    confined, so the runner keyed it to a separate cx- session."""
+def test_an_editor_of_the_owners_session_answers_by_their_own_line(w):
+    """Until 2026-11-06 an editor row in the owner's session ran the whole agent (`session_writer`). That rule
+    is gone: their own read line gives read mode, here as anywhere."""
     from apps.canopy_sessions.models import SessionParticipant
 
     _publish(w["agent"])
     session = _owners_session(w)
     SessionParticipant.objects.create(session=session, user=w["ed"], role=SessionParticipant.EDITOR)
     t = _in_session(session, w["ed"], "s1")
-    assert t.capability == "" and t.status == Turn.QUEUED   # FULL is stored as no capability
+    assert t.capability == READ_MODE_STAMP and t.status == Turn.QUEUED
     env = caller_context.build(t)
-    assert env["profile"] == "full" and env["granted_by"] == "session:editor"
+    assert env["granted_by"] == f"capability:{READ_MODE_STAMP}"
 
 
 def test_without_a_grant_in_the_session_the_member_stays_confined(w):

@@ -9,6 +9,10 @@ permissions, same role, source and basis, and a reason exactly when there is a r
 compared by nobody: they are `apps/agents/refusals.py`'s, and Stage 4 rewrote them on purpose.
 
 A difference means someone's access would change. The fix is in the resolver, never here.
+
+One change was made on purpose: on 2026-11-06 the owner removed the `session_writer` rule, in the resolver
+and in the reference alike. `test_being_added_to_an_admins_session_no_longer_raises_access` names the cases
+that changed.
 """
 from __future__ import annotations
 
@@ -298,7 +302,7 @@ def test_the_walk_has_not_shrunk(people):
     assert sum(1 for a in agents for _case in _cases(a, people)) == WALK
 
 
-# --- a saved session: the session grant, and what only a real row knows --------------------------
+# --- a saved session: being in it, and what only a real row knows --------------------------------
 
 def _chat(agent, creator, *, role=None, user=None, sensitive=False):
     session = Session.objects.create(agent=agent, workspace=agent.workspace, created_by=creator,
@@ -324,18 +328,54 @@ def _same(turn, agent, requested=None):
 @pytest.mark.parametrize("creator", ["owner", "admin", "viewer", "nobody"])
 @pytest.mark.parametrize("role", [SessionParticipant.OWNER, SessionParticipant.EDITOR, SessionParticipant.VIEWER, None])
 @pytest.mark.parametrize("sensitive", [False, True])
-def test_every_kind_of_session_writer(people, creator, role, sensitive):
+def test_being_in_a_session_gives_nobody_more_than_their_own_line(people, creator, role, sensitive):
+    """Whoever started it and whatever their row, a participant answers as they would with no session."""
     agent = _matrix_agents(people)[-1]
     session = _chat(agent, getattr(people, creator, None), role=role, user=people.outsider, sensitive=sensitive)
     for requested in (None, "connect", "data"):
-        new = _same(_turn_in(session, people.outsider, f"sw-{requested}"), agent, requested)
-        _same(_turn_in(session, people.viewer, f"sw-someone-else-{requested}"), agent, requested)   # a grant is for its own person
-    if creator in ("owner", "admin") and role in (SessionParticipant.OWNER, SessionParticipant.EDITOR) and not sensitive:
-        assert new["basis"] == "sensitive:data"     # the last one asked for: a writer is confined to it, like the owner
-        assert _same(_turn_in(session, people.outsider, "sw-plain"), agent)["basis"] == f"session:{role}"
+        new = _same(_turn_in(session, people.outsider, f"in-{requested}"), agent, requested)
+        assert new["access"] == "none" and not new["basis"].startswith("session")   # the outsider holds no line
+        _same(_turn_in(session, people.viewer, f"in-someone-else-{requested}"), agent, requested)
+    assert session_context.build(session).session_grants == ()
 
 
-def test_a_session_writer_is_read_from_the_chat_never_from_where_a_turn_ran(people):
+#: The cases the removal changed: an editor or owner participant in a session the agent's owner or an admin
+#: started. Before 2026-11-06 every one of them was `full` (basis `session:<role>`); now each answers by their
+#: own line. `(person, sensitive, requested) -> (access, stamp, basis, refusal code)`.
+CHANGED = {
+    ("outsider", False, None): ("none", None, "refused", "not_on_access_list"),
+    ("outsider", False, "data"): ("none", None, "refused", "not_on_access_list"),
+    ("outsider", True, "data"): ("none", None, "refused", "not_on_access_list"),
+    ("viewer", False, None): ("confined", "ask", "capability:ask", None),
+    ("viewer", True, "data"): ("none", None, "refused", "profile_not_open"),
+}
+#: Unchanged: a `write` line was already the whole agent, and stays it.
+UNCHANGED = {
+    ("editor", False, None): ("full", "", "grant:", None),   # `grant:<their line>`
+    ("editor", True, "data"): ("confined", "data", "sensitive:data", None),
+}
+
+
+@pytest.mark.parametrize("creator", ["owner", "admin"])
+@pytest.mark.parametrize("role", [SessionParticipant.OWNER, SessionParticipant.EDITOR])
+def test_being_added_to_an_admins_session_no_longer_raises_access(people, creator, role):
+    """The `session_writer` rule's removal, case by case: no line is refused as anyone with no line is, a read
+    line gives read mode, a write line is the whole agent as before, and a sensitive session holds each to its
+    own line too. The fix for someone who lost access is a line on the access list."""
+    agent = _matrix_agents(people)[-1]
+    for (name, sensitive, requested), want in {**CHANGED, **UNCHANGED}.items():
+        person = getattr(people, name)
+        session = _chat(agent, getattr(people, creator), role=role, user=person, sensitive=sensitive)
+        new = _same(_turn_in(session, person, f"{name}-{sensitive}-{requested}"), agent, requested)
+        ctx = turn_context.for_turn(_turn_in(session, person, f"ctx-{name}-{sensitive}-{requested}"), agent, requested)
+        basis = "grant:" if new["basis"].startswith("grant:") else new["basis"]
+        got = (new["access"], new["stamp"], basis, ctx.refusal.code if ctx.refused else None)
+        assert got == want, (name, sensitive, requested)
+        assert ctx.standing.source != "session"
+        assert [e.outcome for e in ctx.trace if e.rule == "session_grants"] in ([], ["none"])
+
+
+def test_a_session_is_read_from_the_chat_never_from_where_a_turn_ran(people):
     agent = _matrix_agents(people)[-1]
     session = _chat(agent, people.owner, role=SessionParticipant.EDITOR, user=people.outsider)
     turn = Turn.objects.create(agent=agent, canopy_session=session, origin=Turn.ORIGIN_API, initiator_kind=who_mod.USER,

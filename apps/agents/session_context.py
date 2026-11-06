@@ -25,9 +25,6 @@ from . import interface as iface_mod
 from .refusals import Code, Refusal
 from .refusals import make as refusal_of
 
-#: The one kind of session grant there is (§ 3.4): `interface.session_writers`.
-SESSION_WRITER = "session_writer"
-
 #: Who a send block stops (§ 3.3, stage 0): everyone, or only some people.
 ANYONE, SOME_PEOPLE = "anyone", "some_people"
 
@@ -123,8 +120,10 @@ class SessionContext:
 
     @cached_property
     def session_grants(self) -> tuple[SessionGrant, ...]:
-        """§ 3.4. Exactly one kind today, and adding a kind is adding one builder here."""
-        return _session_writer_grants(self._grant_session, self._agent)
+        """§ 3.4, the seam. No kind exists now: `session_writer` was removed on 2026-11-06, at the owner's
+        decision, so being in a session raises nobody's access. Adding a kind is one builder here, read from
+        this session and `self._agent`, and one test; the resolver already applies what this returns."""
+        return ()
 
     @cached_property
     def send_blocks(self) -> tuple[SendBlock, ...]:
@@ -135,13 +134,6 @@ class SessionContext:
     def _saved_session(self) -> bool:
         return self._session is not None and not self._session._state.adding
 
-    @property
-    def _grant_session(self):
-        # A chat turn only: the rule has never read a turn's `canopy_session`, or `origin_ref`'s chat.
-        if self._turn is not None:
-            return self._turn.chat_session if self._turn.chat_session_id else None
-        return self._session
-
 
 def empty(*, channel: str = "") -> SessionContext:
     """For a question asked with no conversation: the roster, topology, licenses, `may_edit_agent`."""
@@ -151,7 +143,7 @@ def empty(*, channel: str = "") -> SessionContext:
 def build(session, turn=None, *, agent=None) -> SessionContext:
     """The facts of `session`, or of `turn`'s conversation when it is given one. A turn with no
     session gets `session_id=None` and the turn's own channel and site. `agent`, when the caller holds
-    it, is who the session's grants are about; else the turn's or session's own."""
+    it, is who the session's grants would be about; else the turn's or session's own."""
     if turn is not None:
         return _of_turn(session, turn, agent)
     if session is None:
@@ -200,14 +192,6 @@ def _where_it_lives(session) -> str:
     if session._state.adding:
         return ""
     return session.turns.order_by("created_at").values_list("origin", flat=True).first() or ""
-
-
-def _session_writer_grants(session, agent) -> tuple[SessionGrant, ...]:
-    if session is None or agent is None:
-        return ()
-    return tuple(SessionGrant(kind=SESSION_WRITER, user_id=user_id, role=role,
-                              source=f"a {role} in a session the agent's owner or an admin started")
-                 for user_id, role in iface_mod.session_writers(session, agent))
 
 
 def _send_blocks(session) -> tuple[SendBlock, ...]:

@@ -10,13 +10,13 @@ downstream reads the `TurnContext` it returns, so no two of them can disagree.
     Agent settings  ─┘
 
 An agent's access is decided by two things: who the agent itself trusts without a list (its owner, its
-admins, canopy itself, and a writer in an admin's own session) and its **access list**
+admins and canopy itself) and its **access list**
 (`apps/agents/grants.py`), which gives everyone else a role. A role is a named bundle of permissions
 (`roles.py`), and a line may instead open one named connected site (`use:<name>`). The resolver runs:
 
 * **Stage 0, can this session take a message from them.** A preview only: a real turn is already through its send path.
 * **Stage 1, standing**, first match: canopy itself, the agent's own login or an approved dispatch
-  (`system`); its owner and admins; a session grant; the access list; otherwise nothing.
+  (`system`); its owner and admins; a session grant (no kind exists now); the access list; otherwise nothing.
 * **Stage 2, profile.** A base, then two rules that only narrow. Owner, admin, system, a session grant
   or `write` get `whole_agent`. Someone holding only `read` or named lines gets what they named if it
   opens for them, else (naming nothing) the site entry that opens for them, else read
@@ -279,8 +279,8 @@ class _Reach:
 
 
 def _no_list_stage(agent, asker: Asker, session_ctx, turn, trace: list) -> _Reach:
-    """Stage 1, the part that needs no list: the owner, the admins, canopy itself and a writer in an
-    admin's own session have the whole agent. Everyone else goes on to the access list."""
+    """Stage 1, the part that needs no list: the owner, the admins and canopy itself have the whole agent,
+    and so would someone a session grant names (no kind exists now). Everyone else goes on to the access list."""
     st = asker.standing
     user = None
     if turn is not None:
@@ -305,11 +305,14 @@ def _no_list_stage(agent, asker: Asker, session_ctx, turn, trace: list) -> _Reac
                       may_pin_runner=is_admin or rel in (OWNER, ADMIN))
     trace.append(TraceEntry("trusted_without_a_list", "no", f"relationship {rel}"))
     if user is not None:
+        # The seam (spec § 3.4): the one place a session grant applies. No kind exists now
+        # (`session_writer` was removed 2026-11-06), so this always finds none; a new kind is a builder
+        # in `session_context.SessionContext.session_grants`, and is applied here as it was: someone a
+        # grant names drives this conversation, nothing gives them the agent itself, so their
+        # permissions (what the envelope and the own-repo rail read) stop at `write`.
         grant = next((g for g in session_ctx.session_grants if g.user_id == user.pk), None)
         if grant is not None:
             trace.append(TraceEntry("session_grants", grant.kind, grant.source))
-            # A session writer drives this conversation; nothing gives them the agent itself, so
-            # their permissions (what the envelope and the own-repo rail read) stop at `write`.
             return _Reach(relationship=rel, access=FULL, basis=f"session:{grant.role}", agent_role=roles.EDITOR,
                           source="session", permissions=roles.ROLES.close({roles.WRITE}))
         trace.append(TraceEntry("session_grants", "none"))
