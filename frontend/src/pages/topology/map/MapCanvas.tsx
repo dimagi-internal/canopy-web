@@ -108,7 +108,7 @@ export function MapCanvas({
         prev.names.push(a.name)
         if (tone === 'warning') prev.tone = 'warning'
       } else {
-        targets.set(key, { el, tone, names: [a.name], label: e.access === 'full' ? 'all' : `${e.capabilities.join(', ')} only` })
+        targets.set(key, { el, tone, names: [a.name], label: e.access === 'full' ? 'all' : `${e.profiles.join(', ')} only` })
       }
     }
     const out: Arrow[] = []

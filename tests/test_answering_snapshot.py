@@ -123,7 +123,7 @@ def test_it_holds_everything_the_spec_lists(w):
 
     # A2A: the public card is whatever outsiders reach, and an extended card per answer.
     assert [s["id"] for s in ace["a2a"]["public"]["skills"]] == ["connect"]
-    assert {tuple(c["capabilities"]) for c in ace["a2a"]["extended"]} >= {("ask",)}
+    assert {tuple(c["profiles"]) for c in ace["a2a"]["extended"]} >= {("ask",)}
     assert plain["a2a"]["public"] is None
 
     # Topology edges, per tree.

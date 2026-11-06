@@ -92,7 +92,7 @@ export function AgentPanel({
                     {a.name}
                   </button>
                   <span className={clsx('text-[12px]', e.access === 'full' ? 'text-success' : e.access === 'confined' ? 'text-warning' : 'text-muted-foreground')}>
-                    {e.access === 'full' ? 'All' : e.access === 'confined' ? e.capabilities.join(', ') + ' only' : 'None'}
+                    {e.access === 'full' ? 'All' : e.access === 'confined' ? e.profiles.join(', ') + ' only' : 'None'}
                   </span>
                 </div>
                 {e.access !== 'full' && src && dst && (
@@ -138,7 +138,7 @@ export function AgentPanel({
               {a.name}
             </button>
             <span className={clsx('text-[12px]', e.access === 'full' ? 'text-success' : e.access === 'confined' ? 'text-warning' : 'text-muted-foreground')}>
-              {e.access === 'full' ? 'All' : e.access === 'confined' ? e.capabilities.join(', ') + ' only' : e.basis === 'not-member' ? `None · not in ${agent.workspace}` : 'None'}
+              {e.access === 'full' ? 'All' : e.access === 'confined' ? e.profiles.join(', ') + ' only' : e.basis === 'not-member' ? `None · not in ${agent.workspace}` : 'None'}
             </span>
           </div>
         ))}

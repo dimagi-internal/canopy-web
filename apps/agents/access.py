@@ -161,7 +161,7 @@ def roster(agent, members=None, standings: Standings | None = None) -> list[dict
             "basis": basis,
             "granted_at": grant.granted_at if grant is not None and held == ADMIN else None,
             "access": access,
-            "capabilities": caps,
+            "profiles": caps,
             "manual_only": manual_only,
             "may_request_auto": may_auto,
             "role": role,

@@ -37,10 +37,9 @@ from .tree import agents_in_tree
 
 #: Why an edge has the access it has. `editor`: full through a line that gives `write`
 #: (manual when that line is `manual_only`). `no-interface`: refused, and the target
-#: published no profile either. `PROFILES`: confined to the listed profiles (its wire value is
-#: `capabilities`).
+#: published no profile either. `PROFILES`: confined to the profiles listed in `profiles`.
 OWNER, WS_OWNER, ADMIN, EDITOR, NO_INTERFACE, PROFILES, NOTHING, NOT_MEMBER, NO_LOGIN = (
-    "owner", "workspace-owner", "admin", "editor", "no-interface", "capabilities",
+    "owner", "workspace-owner", "admin", "editor", "no-interface", "profiles",
     "nothing-offered", "not-member", "no-login",
 )
 
@@ -50,7 +49,7 @@ def _edge(src: Agent, dst: Agent, standings: access.Standings, may_manage: bool)
     agent's login (`may_manage`: the viewer owns `dst` or its workspace)."""
     login = src.user
     out = {"source": src.slug, "target": dst.slug, "access": "none", "basis": NO_LOGIN,
-           "capabilities": [], "explicit_admin": False,
+           "profiles": [], "explicit_admin": False,
            "can_grant": False, "can_revoke": False}
     if login is None:
         return out
@@ -74,7 +73,7 @@ def _edge(src: Agent, dst: Agent, standings: access.Standings, may_manage: bool)
             out.update(access="full", basis=EDITOR)
         elif d.access == turn_context.CONFINED:
             caps = iface_mod.reachable(d.standing.permissions, iface)
-            out.update(access="confined", basis=PROFILES, capabilities=caps)
+            out.update(access="confined", basis=PROFILES, profiles=caps)
         else:
             out["basis"] = NOTHING if iface_mod.published(iface) else NO_INTERFACE
         out["can_grant"] = may_manage
