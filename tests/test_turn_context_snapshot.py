@@ -20,108 +20,42 @@ from mcp.server.auth.middleware.auth_context import AuthenticatedUser, auth_cont
 from apps.admission.models import AdmissionRule
 from apps.agents import context_views, turn_context
 from apps.agents.credentials import for_turn as credentials_for_turn
-from apps.agents.models import AgentCredential, AgentGrant
+from apps.agents.models import AgentGrant
 from apps.api.api import api
 from apps.canopy_sessions.models import REVIEW_METADATA_KEY, Session, SessionParticipant
-from apps.contacts import people
-from apps.contacts import services as contacts_mod
 from apps.contacts.models import Contact
-from apps.harness import caller_context, claim, claim_payload, services, turn_snapshot
+from apps.harness import caller_context, claim, claim_payload, turn_snapshot
 from apps.harness import initiator as who
 from apps.harness import runner_requirements as rr
 from apps.harness.channels import email as email_channel
-from apps.harness.models import Runner, RunnerFlag, Turn
-from apps.harness.testing import enrolled
+from apps.harness.models import Runner, Turn
 from apps.mcp.server import mcp
 from apps.tokens.models import PersonalToken
-from apps.workspaces.models import WorkspaceMembership
 
-from .fixtures.turn_context import _chat, make_world
+from .fixtures.turn_context import _chat
+from .fixtures.turn_context_claims import (
+    FACT,
+    NOTE,
+    PROMPT,
+    VAULT_VALUE,
+    _assert_clean,
+    _box,
+    _browser,
+    _claim,
+    _context,
+    _enqueue,
+    _ran_as,
+    _seed_fact,
+    _sensitive_box,
+)
 
 pytestmark = pytest.mark.django_db
 
-CONFINING = {"signed_in": True, "profiles": 3, "envelope": 2}
-PROMPT = "SEEDEDPROMPTMARKER what are the KC metrics"
-FACT = "SEEDEDPERSONFACT leads the KC metrics"
-VAULT_VALUE = "zk1:SEEDEDVAULTVALUE"
-NOTE = "SEEDEDCONTACTNOTE"
-SEEDS = ("SEEDEDPROMPTMARKER", "SEEDEDPERSONFACT", "SEEDEDVAULTVALUE", "SEEDEDCONTACTNOTE", "SEEDEDBLOCKREASON")
-_keys = iter(range(10**6))
-
 
 @pytest.fixture()
-def world():
-    w = make_world()
-    # The owner runs the box: a viewer's box serves no workspace.
-    WorkspaceMembership.objects.filter(user=w.owner, workspace=w.ws).update(role=WorkspaceMembership.OWNER)
-    AgentCredential.objects.create(agent=w.agent, name="SEEDED_NAME", value_zk=VAULT_VALUE)
-    w.box = _box(w, "box-one")
-    return w
+def world(claim_world):
+    return claim_world
 
-
-def _box(w, name, **caps):
-    return enrolled(Runner.objects.create(
-        name=name, kind=Runner.CLOUD, host=name, owner=w.owner, status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
-        ready=True, capabilities={"sessions": True, "midturn": 1, "clis": {"claude-code": CONFINING}, **caps}))
-
-
-def _sensitive_box(w):
-    box = _box(w, "sensitive-box", data_mode="sensitive_data")
-    RunnerFlag.objects.create(runner=box, flag="sensitive_data", declared_by=w.owner)
-    return box
-
-
-def _seed_fact(w, user):
-    """A fact the person has made available, so the envelope's `person` block really carries it."""
-    response = _browser(user).put("/api/people/me/agent-memory/", {"use": {"available": True, "default": True}},
-                                  content_type="application/json")
-    assert response.status_code == 200, response.content
-    return people.record_fact(person=contacts_mod.person_for(user=user), workspace=w.ws, kind="role", statement=FACT, basis="declared")
-
-
-def _enqueue(user, session=None, *, agent=None, box=None, capability=None, prompt=PROMPT, origin=Turn.ORIGIN_CANOPY_WEB_CHAT):
-    turn, _ = services.enqueue_turn(
-        **({"session": session} if session is not None else {"agent": agent}), origin=origin, prompt=prompt,
-        idempotency_key=f"s-{next(_keys)}", capability=capability, pinned_runner=box,
-        initiator=who.for_user(user, via=origin, assurance=who.SESSION))
-    return turn
-
-
-def _claim(turn, box):
-    got = claim.claim_next_turn(box)
-    assert got is not None and got.pk == turn.pk, f"{turn.pk} was not claimed: {turn.status} {turn.result_note}"
-    return got
-
-
-def _browser(user):
-    c = Client()
-    c.force_login(user)
-    return c
-
-
-def _context(user, session, c=None):
-    return (c or _browser(user)).get(f"/api/canopy-sessions/{session.pk}/context")
-
-
-def _ran_as(user, session, turn, c=None):
-    return (c or _browser(user)).get(f"/api/canopy-sessions/{session.pk}/turns/{turn.pk}/context")
-
-
-def _keys_in(doc):
-    if isinstance(doc, dict):
-        for key, value in doc.items():
-            yield key
-            yield from _keys_in(value)
-    elif isinstance(doc, list):
-        for value in doc:
-            yield from _keys_in(value)
-
-
-def _assert_clean(doc, *values):
-    text = json.dumps(doc, default=str)
-    for seed in (*SEEDS, *values):
-        assert seed not in text, seed
-    assert "person" not in set(_keys_in(doc))
 
 
 # --- the seeded secret: a real claim, of every kind of profile --------------------------------------
@@ -184,13 +118,17 @@ def test_a_claim_records_what_it_ran_as_and_nothing_seeded(world, make, grants_o
     assert _context(user, session).json()["turn_context"] is not None
 
 
-def test_a_stamp_that_no_longer_resolves_is_recorded_as_deny_all_with_nothing_seeded(world):
+def test_a_stamp_that_no_longer_resolves_mid_turn_is_recorded_as_deny_all_with_nothing_seeded(world):
+    # Removed while it waited, the claim refuses it (`test_turn_context_at_claim`). Removed once it is claimed, the
+    # stamp stands for the rest of the turn, and a stamp that no longer resolves is deny_all.
     session = _chat(world, creator=world.site_user, embed_app="connect-labs")
     turn = _enqueue(world.site_user, session, box=world.box)
     assert turn.capability == "connect"
+    _claim(turn, world.box)
     world.agent.interface = {"capabilities": {"ask": world.agent.interface["capabilities"]["ask"]}}
     world.agent.save(update_fields=["interface"])
-    got = _claim(turn, world.box)
+    got = Turn.objects.get(pk=turn.pk)
+    turn_snapshot.record(got, turn_snapshot.CLAIM, runner=world.box)
     payload = claim_payload.claim_payload(got)
     stored = Turn.objects.get(pk=turn.pk).resolved_context
     assert stored["profile"]["kind"] == "deny_all" and stored["profile"]["tools"] == [] and stored["access"] == "confined"
@@ -360,12 +298,14 @@ def test_a_reclaim_overwrites_so_it_holds_the_run_that_last_happened(world):
     assert last["runner"]["name"] == "box-two" and last["recorded_at"] != first["recorded_at"]
 
 
-def test_the_enqueue_stamp_wins_at_claim_and_says_so(world):
+def test_a_claimed_turns_stamp_stands_and_the_route_says_when_the_rules_have_since_changed(world):
+    # Changed while it waited, the claim runs on the new answer (`test_turn_context_at_claim`). Changed once it is
+    # claimed, the stamp stands for the rest of the turn, and "what the rules say now" says so.
     session = _chat(world, creator=world.reader)
     turn = _enqueue(world.reader, session, box=world.box)
     assert turn.capability == "ask"
-    AgentGrant.objects.filter(agent=world.agent, user=world.reader).delete()    # no longer admitted
     got = _claim(turn, world.box)
+    AgentGrant.objects.filter(agent=world.agent, user=world.reader).delete()    # no longer admitted
     stored = Turn.objects.get(pk=turn.pk).resolved_context
     assert stored["access"] == "confined" and stored["stamped"] == "ask" and stored["session_key_suffix"] == "#ask"
     assert caller_context.build(got)["capability"]["name"] == "ask"

@@ -46,10 +46,16 @@ class Code(StrEnum):
     CLI_NOT_OFFERED = "cli_not_offered"
     #: Stage 0: a sensitive conversation takes messages only from its own people, at its chat surfaces.
     NOT_IN_SENSITIVE = "not_in_sensitive"
+    #: The claim: the agent this turn was sent to was deleted while it waited.
+    AGENT_GONE = "agent_gone"
 
 
 #: How a refused turn's note begins (`Turn.result_note`). Slack's status line and `turn_context.was_refused` read it.
 REFUSED_NOTE_PREFIX = "not run:"
+
+#: What a turn refused at its claim adds to its refusal: it was let in when it was sent, and the facts changed while it
+#: waited in the queue (`harness.claim`, spec § 3.3 "Two moments").
+CHANGED_WHILE_QUEUED = "This changed after it was sent: it was let in then, and not by the time it would have run."
 
 
 @dataclass(frozen=True)
@@ -82,6 +88,16 @@ class Refusal:
     def result_note(self) -> str:
         """`Turn.result_note` for a turn refused before it ran: "not run: <why>. <how_to_fix>"."""
         return f"{REFUSED_NOTE_PREFIX} {self.text}"
+
+    @property
+    def queued_text(self) -> str:
+        """`text`, for a turn let in when it was sent and refused when it was claimed."""
+        return f"{self.text} {CHANGED_WHILE_QUEUED}"
+
+    @property
+    def queued_result_note(self) -> str:
+        """`result_note` for a turn refused at its claim: why, how to fix it, and that it changed while it waited."""
+        return f"{REFUSED_NOTE_PREFIX} {self.queued_text}"
 
     def about(self, name: str) -> Refusal:
         """The same refusal, said about `name` rather than to "you"."""
@@ -244,6 +260,12 @@ def _not_in_sensitive(i: _In):
     return why, how, i.session_owner_role
 
 
+def _agent_gone(i: _In):
+    # Asked only of a turn whose conversation lost its agent while it waited: there is no agent left to name.
+    return ("the agent this was sent to was deleted before it ran",
+            "Start a new conversation with an agent that is still here.", i.say.you)
+
+
 _WORDS: dict[Code, Callable[[_In], tuple[str, str, str]]] = {
     Code.NOT_ON_ACCESS_LIST: _not_on_access_list,
     Code.SENDER_NOT_PROVEN: _sender_not_proven,
@@ -254,6 +276,7 @@ _WORDS: dict[Code, Callable[[_In], tuple[str, str, str]]] = {
     Code.CANNOT_WRITE: _cannot_write,
     Code.CLI_NOT_OFFERED: _cli_not_offered,
     Code.NOT_IN_SENSITIVE: _not_in_sensitive,
+    Code.AGENT_GONE: _agent_gone,
 }
 
 

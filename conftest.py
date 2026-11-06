@@ -36,6 +36,7 @@ pytest_plugins = [
     "tests.fixtures.self_host",
     "tests.fixtures.slack",
     "tests.fixtures.slack_channel_ingest",
+    "tests.fixtures.turn_context_claims",
 ]
 
 

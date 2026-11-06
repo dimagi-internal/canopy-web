@@ -820,6 +820,9 @@ class TurnSnapshotOut(TurnContextOut):
     requested: str | None = None
     #: What an admission rule did about it, when one did.
     admission: dict | None = None
+    #: The profile it waited in the queue under ("" for the whole agent), when the rules had changed by its claim
+    #: and it ran on, or was refused by, what they said then. None when nothing changed.
+    queued_as: str | None = None
 
 
 class SessionContextOut(Schema):

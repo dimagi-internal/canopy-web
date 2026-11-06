@@ -52,7 +52,9 @@ def _apply_capability(turn: Turn, requested: str | None = None) -> None:
     THE rule, `apps.agents.turn_context.resolve_turn_context` (docs/architecture/access.md): FULL
     for its owner, admins, canopy's own turns and an editor on its access list (whose
     turn runs manual if their line says so — `turn_mode.editor_cap`); a user or a viewer
-    gets the confined profile their role may use (read mode or a connected site). Anyone
+    gets the confined profile their role may use (read mode or a connected site). Its
+    question is kept on the turn (`turn_context.QUEUED_FOR`) and asked again when a runner
+    claims it, which runs on that answer (`claim.claim_next_turn`). Anyone
     offered nothing is refused: the turn is written already CANCELLED with the
     reason and what they CAN do, for the same reasons a blocked sender's is (the
     idempotency key holds, an old runner sees a 201, and the refusal is visible
@@ -66,8 +68,6 @@ def _apply_capability(turn: Turn, requested: str | None = None) -> None:
         return
     resolved = turn_context.for_turn(turn, agent, requested)
     cap = resolved.stamped
-    if cap == "":
-        return
     if cap is None:
         turn.status = Turn.CANCELLED
         turn.finished_at = timezone.now()
@@ -87,8 +87,10 @@ def _apply_capability(turn: Turn, requested: str | None = None) -> None:
 
         admission.at_refusal(turn, access="none")
         return
+    # The same question goes to the rule again at the claim (`turn_context.at_claim`), so keep what it was asked.
     turn.capability = cap
-    turn.save(update_fields=["capability"])
+    turn.origin_ref = {**(turn.origin_ref or {}), turn_context.QUEUED_FOR: turn_context.queued_for(agent, requested)}
+    turn.save(update_fields=["capability", "origin_ref"])
 
 
 class IdempotencyConflict(ProblemError):
@@ -266,8 +268,11 @@ def enqueue_turn(
     from . import turn_asker  # noqa: PLC0415 — cycle: turn_asker -> turn_agent_tokens -> services
 
     on_behalf = turn_asker.of(getattr(initiator, "user", None))
+    from apps.agents.turn_context import QUEUED_FOR  # noqa: PLC0415 — agents imports this package
+
+    # Server-written keys: a caller's copy is dropped, and these are written below from what canopy itself decided.
     origin_ref = {k: v for k, v in (origin_ref or {}).items()
-                  if k not in (turn_asker.UNATTENDED_DISPATCH, turn_asker.READS_FOR)}
+                  if k not in (turn_asker.UNATTENDED_DISPATCH, turn_asker.READS_FOR, QUEUED_FOR)}
     if on_behalf is not None:
         origin_ref = {**origin_ref, "on_behalf_of": on_behalf.record()}
     elif initiator.kind == "user":  # initiator.USER: an agent's login dispatching (stamp or nothing)

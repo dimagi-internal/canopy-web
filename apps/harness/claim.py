@@ -481,6 +481,34 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
                         skips[turn.pk] = (f"this box is not in {sess.agent.slug}'s runner order for "
                                           f"{turn.origin} turns, or a better-ranked runner is still available")
                         continue
+        # What it may do is decided HERE, again, from the rules as they are now
+        # (spec 2026-11-05 § 3.3, "Two moments"): a queued turn runs like any turn,
+        # not on what was true when it was sent. Before the turn's mode and the
+        # admission rules, which read it, and before a runner cap below is laid on
+        # the initiator, which the enqueue never saw.
+        queued_as = turn.capability
+        now_ctx = _resolve_now(turn)
+        if now_ctx is None:
+            skips[turn.pk] = "canopy could not work out what it may do now"
+            continue
+        if now_ctx.refused:
+            _refuse_at_claim(turn, now_ctx, queued_as)
+            continue
+        if now_ctx.stamped != queued_as:
+            # Written now, whether or not this box takes it: every other box, the
+            # turn's mode, the admission rules and the record read what it runs as.
+            turn.capability = now_ctx.stamped
+            _restamp(turn, queued_as)
+            # A changed profile is a changed runner session (`#<name>`, the `cx-`
+            # one), and a confined turn goes only to a box that confines it: the
+            # CLI is chosen again, and with none this box passes it over.
+            if not turn.job:
+                cli = clis.choose(turn, runner, reports=reports)
+            if cli is None:
+                skips[turn.pk] = ("what it may do changed while it waited, and no agent CLI on this box can "
+                                  "confine it")
+                continue
+
         # The mode is decided HERE, once, from the same rules that just routed
         # the turn (apps/harness/turn_mode.py), and stamped so a rule edited
         # mid-turn cannot flip the posture of work already under way.
@@ -529,7 +557,9 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
             # one_executing_turn_per_session index (concurrent claim for the
             # same conversation) must not poison an outer transaction.
             with transaction.atomic():
-                updated = Turn.objects.filter(pk=turn.pk, status=Turn.QUEUED).update(
+                # Guarded on the stamp it was resolved to, so a turn restamped in
+                # between is not run on this answer.
+                updated = Turn.objects.filter(pk=turn.pk, status=Turn.QUEUED, capability=turn.capability).update(
                     status=Turn.CLAIMED,
                     claimed_by=runner,
                     claimed_at=now,
@@ -552,7 +582,8 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
             # After the stamp above: what it records is this run. It cannot stop the claim.
             turn.claimed_by = runner
             turn_snapshot.record(turn, turn_snapshot.CLAIM, runner=runner,
-                                 admission=turn_snapshot.raised_to_auto(auto) if auto is not None else None)
+                                 admission=turn_snapshot.raised_to_auto(auto) if auto is not None else None,
+                                 queued_as=queued_as if turn.capability != queued_as else None)
             append_events(turn, [{"kind": "status", "payload": {
                 "status": Turn.CLAIMED, "runner": runner.name, "cli": cli,
                 **_routing_basis(turn, runner, priorities),
@@ -562,6 +593,45 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
             return turn
     _note_skips(runner, skips)
     return None
+
+
+def _resolve_now(turn: Turn):
+    """The Turn Context of a queued turn from the rules as they are now (`turn_context.at_claim`), or None when it
+    could not be worked out: then the turn is not claimed, never run on its old stamp. Never raises."""
+    from apps.agents import turn_context  # noqa: PLC0415 — agents.turn_context imports harness modules that import this
+
+    try:
+        return turn_context.at_claim(turn)
+    except Exception:  # noqa: BLE001 — a turn waits rather than run on an answer nobody could check
+        logger.exception("could not resolve queued turn %s at its claim", turn.pk)
+        return None
+
+
+def _restamp(turn: Turn, queued_as: str) -> None:
+    """Write the stamp the rules give now on a turn this box will not claim, so every other box and every
+    explanation of why it waits (`turn_reach`, `profile_q`, `clis.choose`) reads what it would run as."""
+    Turn.objects.filter(pk=turn.pk, status=Turn.QUEUED, capability=queued_as).update(capability=turn.capability)
+
+
+def _refuse_at_claim(turn: Turn, context, queued_as: str) -> bool:
+    """Close a queued turn the rules no longer let run, as a refusal at the enqueue is closed: CANCELLED, never
+    claimed, its note the refusal's why and fix plus that it changed after it was sent, the snapshot holding the
+    refusal, and the workspace's `offered-nothing` rule deciding who is told. Guarded on the stamp and the status, so
+    a turn another box claimed or restamped in the meantime is left alone."""
+    from apps.admission import evaluate as admission  # noqa: PLC0415 — admission imports harness, as at the claim below
+    from apps.agents import turn_context  # noqa: PLC0415 — agents.turn_context imports harness modules that import this
+
+    note = context.refusal.queued_result_note
+    with transaction.atomic():
+        if not close_turn(turn, Turn.CANCELLED, note, from_states=[Turn.QUEUED],
+                          where={"capability": queued_as},
+                          event={"refused_at_claim": context.refusal.code},
+                          drill_summary=f"drill turn refused: {note}", canopys_note=True):
+            return False
+        turn_snapshot.record(turn, turn_snapshot.CLAIM, context=context, queued_as=queued_as,
+                             requested=turn_context.requested_of(turn))
+    admission.at_refusal(turn, access="none")
+    return True
 
 
 def _routing_basis(turn: Turn, runner: Runner, priorities: dict) -> dict:

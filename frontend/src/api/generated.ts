@@ -47338,6 +47338,8 @@ export interface components {
             readonly admission?: {
                 readonly [key: string]: unknown;
             } | null;
+            /** Queued As */
+            readonly queued_as?: string | null;
         };
         /**
          * SlashCommandOut
