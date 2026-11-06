@@ -123,7 +123,7 @@ canopy-runner app remove <key>
 
 ### Menu bar
 
-An **Experimental** submenu in `runner/menubar`: each installed app's status, Start and Stop, **Stop all**, and **Browse apps…**, which opens the store. It calls `canopy-runner app …` through its existing `cli.run`, as **Close sessions** calls `close-sessions --list --json`. Start shows failed checks, or the `notice` in an `NSAlert`, then starts. A running app badges the status item, because an app that's listening should be obvious at a glance.
+An **Experimental** submenu in `runner/menubar`: each installed app's status, Start and Stop, **Stop all**, and **Browse apps…**, which opens the store. It calls `canopy-runner app …` through its existing `cli.run`, as **Close sessions** calls `close-sessions --list --json`. Start shows a start screen and, while running, a status window (see `docs/architecture/local-apps.md` § How a person sees it). A running app badges the status item, because an app that's listening should be obvious at a glance.
 
 ### Website
 

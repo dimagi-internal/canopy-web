@@ -87,6 +87,8 @@ export default function LocalAppDetailPage(): JSX.Element {
     >
       <AppOverview text={app.description} />
 
+      <HowItWorks presentation={app.presentation} />
+
       <AppDetailSection title="What it reads and sends" data-testid="local-app-disclosure">
         <p className="mt-2 text-sm">Runs on your computer.</p>
         {app.notice && <p className="mt-2 rounded-md border border-warning/30 bg-warning/10 p-2 text-[13px] text-foreground">{app.notice}</p>}
@@ -122,6 +124,38 @@ export default function LocalAppDetailPage(): JSX.Element {
         <InstallForm key={free.map((c) => c.id).join()} app={app} free={free} again={mine.length > 0} reload={load} />
       )}
     </AppDetailLayout>
+  )
+}
+
+/** The app's own steps, as the menu bar's start screen shows them. {agent} is whoever the person picks. */
+function HowItWorks({ presentation }: { presentation?: LocalAppDetail['presentation'] }): JSX.Element | null {
+  const uses = typeof presentation?.uses === 'string' ? presentation.uses : ''
+  const steps = Array.isArray(presentation?.steps)
+    ? presentation.steps.filter((s): s is string => typeof s === 'string' && s.trim() !== '')
+    : []
+  if (!uses && steps.length === 0) return null
+  return (
+    <AppDetailSection title="How it works" data-testid="local-app-how">
+      {uses && (
+        <p className="mt-2">
+          <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
+            Works with {uses}
+          </span>
+        </p>
+      )}
+      {steps.length > 0 && (
+        <ol className="mt-3 space-y-2.5">
+          {steps.map((step, i) => (
+            <li key={step} className="flex items-start gap-3 text-sm">
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/15 text-[11px] font-semibold text-primary">
+                {i + 1}
+              </span>
+              <span className="min-w-0">{step.replaceAll('{agent}', 'Your agent')}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </AppDetailSection>
   )
 }
 

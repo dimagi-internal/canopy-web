@@ -120,18 +120,43 @@ def test_text_waits_while_the_last_turn_is_unfinished():
     assert len(h.sent) == 2 and "three four" in h.sent[1][0]
 
 
-def test_small_batches_wait_for_more_words_and_for_the_interval():
+def test_the_first_words_go_at_once_and_later_ones_wait_for_more_words_and_the_interval():
     h = Harness()
     h.say(seg("one", 1))
-    h.advance()
-    assert not h.sent
+    h.advance(1)
+    assert not h.sent  # too few words to be worth a turn
     h.say(seg("two", 2))
-    h.t -= 45  # the interval clock restarts from a send, so go back to just before it is due
-    h.feed.last_send = h.t
-    h.advance(10)
-    assert not h.sent
-    h.advance(45)
+    h.advance(1)
+    assert len(h.sent) == 1  # the first batch doesn't wait 45 seconds, so the chat opens at once
+    h.say(seg("three", 3))
+    h.advance(1)
     assert len(h.sent) == 1
+    h.say(seg("four", 4))
+    h.advance(10)
+    assert len(h.sent) == 1
+    h.advance(45)
+    assert len(h.sent) == 2
+
+
+def test_the_chat_opens_once_when_its_session_is_made_and_only_if_wanted():
+    opened = []
+    calls = iter([(201, {"id": "s1", "url": "https://canopy.test/s1"}), (200, {"turn_id": "t1"}),
+                  (200, {"turn_id": "t2"})])
+    poster = m.CanopyPoster(lambda op, args: next(calls), lambda *a, **k: None, open_url=opened.append)
+    poster.post("a", "c1")
+    poster.post("b", "c2")
+    assert opened == ["https://canopy.test/s1"]
+    quiet = m.CanopyPoster(lambda op, args: (201, {"id": "s1", "url": "https://canopy.test/s1"}),
+                           lambda *a, **k: None)
+    quiet._ensure_session()  # no opener: nothing to open, and no error
+
+
+def test_only_an_https_link_is_handed_to_the_browser(monkeypatch):
+    ran = []
+    monkeypatch.setattr(m.subprocess, "run", lambda argv, **kw: ran.append(argv))
+    m.open_in_browser("file:///etc/passwd")
+    m.open_in_browser("https://canopy.test/s1")
+    assert ran == [["/usr/bin/open", "https://canopy.test/s1"]]
 
 
 def test_a_gone_meeting_stops_the_feed_and_drops_what_was_waiting():
@@ -265,7 +290,7 @@ def _read(proc):
 
 def test_as_a_program_it_sends_last_words_on_ended_and_reports_the_session():
     proc = _run_app()
-    _write(proc, {"type": "start", "settings": {"brief": "b"}, "run_id": "r1"})
+    _write(proc, {"type": "start", "settings": {"brief": "b", "open_chat": False}, "run_id": "r1"})
     assert _read(proc)["type"] == "status"
     _write(proc, seg("goodbye", 1))
     _write(proc, seg("everyone", 2))
@@ -298,7 +323,7 @@ def test_as_a_program_it_sends_last_words_on_ended_and_reports_the_session():
 
 def test_as_a_program_stop_means_nothing_further_goes_out():
     proc = _run_app()
-    _write(proc, {"type": "start", "settings": {}, "run_id": "r1"})
+    _write(proc, {"type": "start", "settings": {"open_chat": False}, "run_id": "r1"})
     assert _read(proc)["type"] == "status"
     _write(proc, seg("unsent", 1))
     _write(proc, {"type": "stop", "reason": "stopped_by_you"})
@@ -310,7 +335,7 @@ def test_as_a_program_stop_means_nothing_further_goes_out():
 
 def test_as_a_program_gone_drops_what_it_held_and_stops():
     proc = _run_app()
-    _write(proc, {"type": "start", "settings": {}, "run_id": "r1"})
+    _write(proc, {"type": "start", "settings": {"open_chat": False}, "run_id": "r1"})
     assert _read(proc)["type"] == "status"
     _write(proc, seg("private", 1))
     _write(proc, {"type": "gone"})
@@ -323,7 +348,7 @@ def test_as_a_program_gone_drops_what_it_held_and_stops():
 
 def test_as_a_program_a_refused_create_stops_with_a_reason():
     proc = _run_app()
-    _write(proc, {"type": "start", "settings": {}, "run_id": "r1"})
+    _write(proc, {"type": "start", "settings": {"open_chat": False}, "run_id": "r1"})
     assert _read(proc)["type"] == "status"
     _write(proc, seg("hello", 1))
     _write(proc, {"type": "ended"})

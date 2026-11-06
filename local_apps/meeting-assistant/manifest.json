@@ -2,8 +2,8 @@
   "key": "meeting-assistant",
   "name": "Meeting assistant",
   "description": "Live feedback from an agent during a meeting.",
-  "version": "0.3.0",
-  "changelog": "Saves the transcript of a meeting that ended by itself to your private Meetings page.",
+  "version": "0.4.2",
+  "changelog": "Shows what it's doing: the menu bar's start screen and status window use this app's own steps and wording.",
   "entry": [
     "{python}",
     "app.py"
@@ -19,7 +19,7 @@
   "notice": "What's said in this meeting leaves your Mac. Tell the people in it.",
   "disclosure": {
     "reads": [
-      "the transcript and speaker names of the Superwhisper meeting that started in the last 15 minutes"
+      "the transcript and speaker names of the Superwhisper meeting you're recording, started in the last 15 minutes or after you press Start"
     ],
     "sends": [
       "transcript text to the canopy session it opens, and so to the agent's model provider",
@@ -39,6 +39,11 @@
     "from_start": {
       "type": "bool",
       "label": "Include what was said before you pressed Start"
+    },
+    "open_chat": {
+      "type": "bool",
+      "label": "Open the chat in my browser when people start talking",
+      "default": true
     }
   },
   "checks": [
@@ -50,6 +55,15 @@
         "--check"
       ],
       "fix": "Install Superwhisper's command-line tool so that ~/.local/bin/superwhisper exists, then try again."
+    },
+    {
+      "label": "Superwhisper is open",
+      "run": [
+        "{python}",
+        "source.py",
+        "--check-open"
+      ],
+      "fix": "Open Superwhisper, then press Start again."
     }
   ],
   "canopy": [
@@ -57,5 +71,33 @@
     "sessions.send",
     "turns.status",
     "meetings.save"
-  ]
+  ],
+  "presentation": {
+    "uses": "Superwhisper",
+    "steps": [
+      "Start your meeting in Superwhisper.",
+      "{agent} listens and comments in a chat while you talk.",
+      "End the meeting in Superwhisper and the transcript is saved to your Meetings page."
+    ],
+    "states": {
+      "starting": "Starting\nChecking for your Superwhisper meeting.",
+      "waiting_for_your_meeting": "Start your meeting in Superwhisper\nIt's picked up as soon as it's recording.",
+      "joined_your_meeting": "Found your Superwhisper meeting\nWaiting for the first words.",
+      "waiting_for_words": "Recording\nWaiting for the first words.",
+      "listening": "Listening\n{agent} comments in the chat when something's worth saying.",
+      "meeting_ended": "Meeting ended\nThe transcript is saved to your Meetings page.",
+      "no_new_speech": "Stopped after 10 quiet minutes\nThe transcript is saved to your Meetings page.",
+      "saved": "Saved to your Meetings page\nOpen it from Meetings to ask {agent} for follow-up.",
+      "save_failed": "Meeting ended, but it couldn't be saved\nCanopy didn't answer. The chat still has what was sent.",
+      "save_refused": "Meeting ended, but Canopy refused to save it",
+      "no_meeting_started": "No meeting was started\nStart one in Superwhisper, then press Start again.",
+      "stopped_while_waiting": "Stopped before a meeting started",
+      "stopped_by_you": "Stopped\nNothing more was sent, and nothing was saved.",
+      "killed_by_stop_command": "Stopped\nNothing more was sent, and nothing was saved.",
+      "source_gone": "The meeting was deleted in Superwhisper\nWhat hadn't been sent was dropped, and nothing was saved.",
+      "max_minutes": "Stopped at the 2-hour limit\nNothing was saved.",
+      "canopy_refused": "Canopy refused the chat\nCheck the agent you chose under Configure.",
+      "host_died": "Stopped unexpectedly"
+    }
+  }
 }

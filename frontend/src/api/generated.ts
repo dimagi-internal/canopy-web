@@ -26467,6 +26467,13 @@ export interface components {
              * @default []
              */
             readonly versions: readonly components["schemas"]["LocalAppVersionOut"][];
+            /**
+             * Presentation
+             * @default {}
+             */
+            readonly presentation: {
+                readonly [key: string]: unknown;
+            };
         };
         /** LocalAppVersionOut */
         readonly LocalAppVersionOut: {
@@ -27002,6 +27009,13 @@ export interface components {
             readonly checks: readonly {
                 readonly [key: string]: unknown;
             }[];
+            /**
+             * Presentation
+             * @default {}
+             */
+            readonly presentation: {
+                readonly [key: string]: unknown;
+            };
         };
         /** RunnerLocalAppsOut */
         readonly RunnerLocalAppsOut: {

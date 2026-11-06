@@ -3,7 +3,6 @@ when it says a meeting is over, and that each word is emitted exactly once."""
 import datetime as dt
 import importlib.util
 import json
-import os
 import stat
 import subprocess
 import sys
@@ -161,51 +160,64 @@ def test_as_a_program_it_refuses_with_a_code_and_prints_only_protocol(tmp_path):
     bin_dir = _fake_cli(tmp_path, [], {})
     done = _run_source(tmp_path, bin_dir, [{"type": "start", "settings": {}, "run_id": "r"}])
     assert done.returncode == 0
-    assert [json.loads(x) for x in done.stdout.splitlines()] == [{"type": "stopped", "reason": "no_meeting"}]
+    # Stdin closing (the host gone) ends the wait at once, with a code and no words.
+    assert [json.loads(x) for x in done.stdout.splitlines()] == [
+        {"type": "event", "name": "waiting_for_your_meeting", "fields": {}},
+        {"type": "stopped", "reason": "stopped_while_waiting"}]
 
 
-def test_as_a_program_it_streams_a_finished_read_as_segments_and_ended(tmp_path):
-    now = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    # The first read must look live, so a counter file makes the later ones finished.
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    counter = tmp_path / "reads"
-    path = bin_dir / "superwhisper"
-    live = meeting(seg("hello", 1))
-    done_reading = meeting(seg("hello", 1), seg("bye", 2), summary="s")
-    path.write_text(
-        f"#!{sys.executable}\nimport json, sys, pathlib\n"
-        f"c = pathlib.Path({str(counter)!r})\n"
-        "n = int(c.read_text()) if c.exists() else 0\n"
-        "c.write_text(str(n + 1))\n"
-        f"listing = {json.dumps([{'id': 'abc', 'datetime': now}])!r}\n"
-        f"live = {json.dumps(live)!r}\n"
-        f"over = {json.dumps(done_reading)!r}\n"
-        # Call 0 is the listing and call 1 the attaching read.
-        "print((live if n <= 1 else over) if 'read' in sys.argv else listing)\n")
-    path.chmod(path.stat().st_mode | stat.S_IXUSR)
-    # Stdin stays open: closing it would read as the host going away.
-    env = {"PATH": str(bin_dir), "HOME": str(tmp_path)}
-    proc = subprocess.Popen([sys.executable, str(SOURCE)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                            text=True, env=env)
-    proc.stdin.write(json.dumps({"type": "start", "settings": {"from_start": True}, "run_id": "r"}) + "\n")
-    proc.stdin.flush()
-    out = [json.loads(line) for line in proc.stdout]
-    proc.stdin.close()
-    proc.wait(timeout=10)
-    assert [i["type"] for i in out] == ["segment", "segment", "ended", "stopped"]
-    assert [i.get("text") for i in out[:2]] == ["hello", "bye"]
+class Meetings:
+    """Superwhisper's newest meeting as seen over successive polls."""
+
+    def __init__(self, *listings):
+        self.listings = list(listings)
+
+    def __call__(self):
+        return self.listings.pop(0) if len(self.listings) > 1 else self.listings[0]
 
 
-def test_the_check_asks_for_help_only_and_reports_a_missing_tool(tmp_path):
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    seen = tmp_path / "argv"
-    path = bin_dir / "superwhisper"
-    path.write_text(f"#!{sys.executable}\nimport sys, pathlib\npathlib.Path({str(seen)!r}).write_text(' '.join(sys.argv[1:]))\n")
-    path.chmod(path.stat().st_mode | stat.S_IXUSR)
-    env = {"PATH": str(bin_dir), "HOME": str(tmp_path)}
-    assert subprocess.run([sys.executable, str(SOURCE), "--check"], env=env, timeout=30).returncode == 0
-    assert seen.read_text() == "meetings --help"
-    os.remove(path)
-    assert subprocess.run([sys.executable, str(SOURCE), "--check"], env=env, timeout=30).returncode == 1
+LIVE = [{"id": "theirs", "datetime": NOW.strftime("%Y-%m-%d %H:%M:%S")}]
+OLD = [{"id": "old", "datetime": "2026-11-01 10:00:00"}]
+
+
+def _wait(listing, *, wait=30, stop_after=None):
+    steps, sleeps = [], []
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        return stop_after is not None and len(sleeps) >= stop_after
+
+    got = m.attach({}, list_meetings=listing, read_meeting=lambda _id: meeting(seg("hi", 1)), now=NOW,
+                   wait=wait, sleep=sleep, clock=lambda: NOW, step=steps.append)
+    return got, steps
+
+
+def test_a_meeting_already_recording_is_joined_at_once():
+    _, steps = _wait(Meetings(LIVE))
+    assert steps == ["joined_your_meeting"]
+
+
+def test_with_no_meeting_yet_it_waits_for_the_person_and_joins_from_the_first_word():
+    (read, start_after), steps = _wait(Meetings(OLD, OLD, LIVE))
+    assert steps == ["waiting_for_your_meeting", "joined_your_meeting"]
+    assert start_after == 0.0 and read()["segments"][0]["text"] == "hi"
+
+
+def test_waiting_ends_with_a_reason_when_nobody_starts_a_meeting_or_stop_is_pressed():
+    with pytest.raises(m.Refused, match="no_meeting_started"):
+        _wait(Meetings(OLD), wait=9)
+    with pytest.raises(m.Refused, match="stopped_while_waiting"):
+        _wait(Meetings(OLD), stop_after=2)
+
+
+def test_it_never_tells_superwhisper_to_do_anything():
+    """Its tool can't start a meeting; what it does start is a dictation that types into the front window."""
+    import re
+    text = SOURCE.read_text()
+    commands = set(re.findall(r'run_cli\("(\w+)"', text)) | set(re.findall(r'cli_path\(\), "(\w+)"', text))
+    assert commands == {"meetings"}
+
+
+def test_without_a_wait_it_still_refuses_a_missing_meeting():
+    with pytest.raises(m.Refused, match="no_meeting"):
+        m.attach({}, list_meetings=lambda: [], read_meeting=lambda _id: None, now=NOW)

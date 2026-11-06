@@ -133,6 +133,7 @@ def get_local_app(request: HttpRequest, key: str) -> LocalAppDetailOut:
         notice=m["notice"],
         disclosure=m["disclosure"],
         settings=m["settings"],
+        presentation=m.get("presentation") or {},
         digest=trust.digest(m),
         agents=_usable_agents(request.user),
         computers=[{"id": str(r.pk), "name": r.name} for r in services.computers_of(request.user)],
@@ -474,6 +475,8 @@ def list_runner_local_apps(request: HttpRequest, runner_id: uuid.UUID) -> Runner
                 "running": services.live_run(inst) is not None,
                 "agent": _agent_name(inst, version) if version else None,
                 "checks": m["checks"],
+                # Copy from the version that will run; a manifest from before it existed has none.
+                "presentation": m.get("presentation") or {},
             }
         )
     return RunnerLocalAppsOut(apps=apps)

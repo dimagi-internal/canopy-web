@@ -291,7 +291,7 @@ def _list_entry_from_dev(key: str, record: dict) -> dict:
                 "notice": "", "disclosure": {}, "checks": []}
     return {"key": key, "name": manifest["name"], "version": manifest["version"], "unpublished": True,
             "notice": manifest["notice"], "disclosure": manifest["disclosure"],
-            "checks": manifest["checks"], "entry": manifest["entry"],
+            "checks": manifest["checks"], "entry": manifest["entry"], "presentation": manifest["presentation"],
             "max_minutes": manifest["max_minutes"], "settings": record.get("settings") or {},
             "needs_acceptance": False, "changes": [], "refusal": None}
 
