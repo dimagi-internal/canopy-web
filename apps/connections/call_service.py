@@ -39,7 +39,7 @@ from django.db.models.functions import Least
 from django.urls import reverse
 from django.utils import timezone
 
-from apps.api.renderers import OrjsonRenderer
+from apps.api.renderers import orjson_bytes
 from apps.common.rate_limit import over
 from apps.common.views_debug import is_machine
 from apps.workspaces.links import base_url
@@ -464,13 +464,14 @@ def _without(raw: bytes, token: str) -> bytes:
 
 
 def _answer(status: int, raw: bytes, provider: str, matched: calls.Match, sent: _Sent) -> dict:
-    """What goes back. JSON the API's own renderer can't write (a number over 64 bits, nesting too
-    deep) is refused here, where a sentence can still be said, not as a 500 after the view returns."""
+    """What goes back. JSON orjson can't write (a number over 64 bits, nesting too deep) is refused
+    here, where a sentence can still be said: the renderer's slow fallback is for stored data, not a
+    provider's answer."""
     if not raw:
         return {"status": status, "body": None}
     try:
         out = {"status": status, "body": json.loads(raw)}
-        OrjsonRenderer().render(None, out, response_status=200)
+        orjson_bytes(out)
     except (RecursionError, orjson.JSONEncodeError):
         sent.outcome = "unreadable"
         raise _unreadable(provider, matched) from None

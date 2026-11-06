@@ -1,13 +1,12 @@
 """The MCP audit log's reader: `GET /api/events/mcp-calls` (mounted under `/events`, where it was published)."""
 from __future__ import annotations
 
-import datetime as dt
-
 from django.db.models import Q
 from django.http import HttpRequest
 from ninja import Router
 
 from apps.api.auth import session_auth
+from apps.api.pagination import minutes_ago
 from apps.api.route_gates import gate
 from apps.workspaces import permissions as perms
 
@@ -46,7 +45,7 @@ def list_mcp_calls(
     if failed:
         qs = qs.filter(ok=False)
     if since_minutes:
-        qs = qs.filter(created_at__gte=dt.datetime.now(dt.UTC) - dt.timedelta(minutes=max(1, since_minutes)))
+        qs = qs.filter(created_at__gte=minutes_ago(since_minutes))
     rows = qs.order_by("-created_at")[: max(1, min(limit, 500))]
     return {"items": [{
         "id": r.pk,

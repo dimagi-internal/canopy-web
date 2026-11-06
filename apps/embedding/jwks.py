@@ -73,7 +73,7 @@ def _refuse_private(host: str) -> None:
     """Every address the host resolves to must be publicly routable."""
     try:
         infos = socket.getaddrinfo(host, 443, proto=socket.IPPROTO_TCP)
-    except OSError as exc:
+    except (OSError, UnicodeError) as exc:  # UnicodeError: a name IDNA cannot encode
         raise JwksError(f"{host!r} does not resolve ({exc})") from exc
     for info in infos:
         addr = info[4][0]

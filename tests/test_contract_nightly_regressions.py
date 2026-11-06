@@ -6,15 +6,20 @@ malformed request is the caller's mistake and answers 4xx, never 500.
 """
 from __future__ import annotations
 
+import datetime as dt
 import json
 import uuid
 
 import jsonschema
 import pytest
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, override_settings
 
 from apps.api.api import api
+from apps.api.renderers import OrjsonRenderer
+from apps.common.pg_datetime import OffsetSafeDatetimeDumper
+from apps.embedding.jwks import JwksError, _refuse_private
 from apps.tokens.schemas import MAX_TTL_DAYS
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -129,3 +134,51 @@ def test_push_without_keys_says_so_with_a_503(client):
 def test_push_with_keys_serves_the_public_key(client):
     r = client.get("/api/push/vapid-public-key")
     assert r.status_code == 200 and r.json()["public_key"] == "pub"
+
+
+# --- round 4 (#2598): schema-valid requests the server failed --------------------
+
+
+def _member_of_fuzz():
+    user = User.objects.get(username="fuzz")
+    ws = Workspace.objects.create(slug="fuzz", display_name="Fuzz", created_by=user)
+    WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.OWNER)
+    return user
+
+
+def test_a_utc_offset_postgres_cannot_parse_is_written_as_utc():
+    # ISO 8601 and Python allow ±23:59; PostgreSQL reads ±15:59. Same instant, in UTC.
+    when = dt.datetime(2026, 1, 1, 7, 21, tzinfo=dt.timezone(dt.timedelta(hours=17, minutes=10)))
+    dumped = bytes(OffsetSafeDatetimeDumper(dt.datetime).dump(when)).decode()
+    assert dumped == "2025-12-31 14:11:00+00:00"
+    usual = when.replace(tzinfo=dt.timezone(dt.timedelta(hours=5)))
+    assert bytes(OffsetSafeDatetimeDumper(dt.datetime).dump(usual)).decode().endswith("+05:00")
+
+
+def test_an_integer_past_64_bits_in_stored_json_renders_instead_of_500():
+    body = OrjsonRenderer().render(None, {"payload": {"n": 2**70}}, response_status=200)
+    assert json.loads(body) == {"payload": {"n": 2**70}}
+
+
+def test_a_century_of_since_minutes_is_every_row_not_an_overflow(client):
+    for path in ("/api/events/", "/api/events/setting-changes", "/api/events/mcp-calls"):
+        r = client.get(f"{path}?since_minutes={BIGGER_THAN_INT64}")
+        assert r.status_code == 200, (path, r.content)
+
+
+def test_a_task_filter_number_no_column_holds_matches_nothing(client):
+    _member_of_fuzz()
+    r = client.get(f"/api/tasks/?priority={BIGGER_THAN_INT64}&milestone={BIGGER_THAN_INT64}")
+    assert r.status_code == 200 and r.json() == [], r.content
+
+
+def test_an_upload_line_that_is_json_but_not_a_record_is_skipped(client):
+    _member_of_fuzz()
+    f = SimpleUploadedFile("t.jsonl", b'1\n"x"\n{"type": "user", "message": {"content": "hi"}}\n')
+    r = client.post("/api/w/fuzz/sessions/upload", {"file": f})
+    assert r.status_code == 201, r.content
+
+
+def test_a_host_idna_cannot_encode_is_refused_not_a_500():
+    with pytest.raises(JwksError):
+        _refuse_private("\u00e9\u008f.example")
