@@ -8,6 +8,7 @@ can see. "Waiting on you" is `GET /api/tasks/?waiting=me`; "My tasks" is
 from __future__ import annotations
 
 import datetime as dt
+from typing import Literal
 
 from django.contrib.auth import get_user_model
 from django.db import transaction
@@ -17,7 +18,7 @@ from ninja import Router, Status
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
-from apps.api.errors import TYPE_VALIDATION, ProblemError
+from apps.api.errors import TYPE_VALIDATION, ProblemError, refusals
 from apps.api.pagination import DEFAULT_LIMIT_CAP, Page, clamp_limit, paginate
 from apps.api.route_gates import gate
 from apps.events import audit
@@ -91,6 +92,8 @@ _SORTS = {
                     output_field=IntegerField()), "rank"),
     "title": ("title", "id"),
 }
+#: `?sort=` on the task list: a key of `_SORTS`.
+TaskSort = Literal[tuple(_SORTS)]
 
 
 def task_query(request: HttpRequest, *, agent: str = "", project: str = "", status: str = "",
@@ -121,7 +124,7 @@ def list_fleet_tasks(request: HttpRequest, agent: str = "", project: str = "", s
                      assignee: str = "", created_by: str = "", label: str = "", priority: str = "",
                      milestone: str = "", category: str = "", kind: str = "",
                      due_before: dt.date | None = None, due_after: dt.date | None = None,
-                     q: str = "", snoozed: str = "", sort: str = "",
+                     q: str = "", snoozed: str = "", sort: TaskSort = "",
                      limit: int = DEFAULT_LIMIT_CAP) -> list[AgentTaskOut]:
     """`waiting=me` is the caller's inbox: open asks nobody owns plus tasks
     parked on the caller. `assignee` / `created_by`: `me`, an email,
@@ -136,19 +139,19 @@ def list_fleet_tasks(request: HttpRequest, agent: str = "", project: str = "", s
                     batch=batch, parent=parent, assignee=assignee, created_by=created_by, label=label,
                     priority=priority, milestone=milestone, category=category, kind=kind,
                     due_before=due_before, due_after=due_after, q=q, snoozed=snoozed)
-    order = _SORTS.get(sort)
-    if sort not in _SORTS:
-        raise HttpError(422, f"sort must be one of {', '.join(k for k in _SORTS if k)}")
+    order = _SORTS[sort]
     qs = qs.order_by(*order) if order else qs.order_by(_ASK_RANK, "created_at", "id")
     return [AgentTaskOut.model_validate(t) for t in qs[:clamp_limit(limit)]]
 
 
-@router.post("/tasks/", response={201: AgentTaskOut}, summary="Create a task in a workspace")
+@router.post("/tasks/", response={201: AgentTaskOut, **refusals(422)}, summary="Create a task in a workspace")
 @gate("agent.work", kind="content")
 def create_task(request: HttpRequest, payload: TaskCreateIn) -> Status:
     """Filed by you, in `workspace` (default: its project's, else the one you
     are pinned to, else your only one), assigned as `assignee` says (nobody
-    when omitted). `project` is an address (`<ws>/<handle>`) or a handle there."""
+    when omitted). `project` is an address (`<ws>/<handle>`) or a handle there.
+    A reference that names nothing there — a `project`, a person, a `raised_by`
+    turn — is a 422."""
     data = payload.model_dump(exclude_unset=True)
     ws = (data.pop("workspace", "") or "").strip() or getattr(request, "workspace_slug", None) or ""
     ref = (data.get("project") or "").strip()
@@ -362,7 +365,7 @@ def list_mcp_servers(request: HttpRequest) -> list[McpServerOut]:
     return out
 
 
-@router.post("/workspace-projects/", response={201: AgentProjectOut},
+@router.post("/workspace-projects/", response={201: AgentProjectOut, **refusals(422)},
              summary="Create a project in a workspace, optionally led by an agent")
 @gate("agent.work", kind="content")  # an editor of the workspace (and of the lead agent's)
 def create_workspace_project(request: HttpRequest, payload: WorkspaceProjectIn):
@@ -370,7 +373,8 @@ def create_workspace_project(request: HttpRequest, payload: WorkspaceProjectIn):
     or the only one you are in — led by `steward` (an agent's slug) when given,
     with `member_agents` working on it. The handle is free from its name when
     omitted. `visibility: personal` makes it yours and its agents' alone, led by you
-    unless `owner_email` names someone else; a workspace admin does not read it."""
+    unless `owner_email` names someone else; a workspace admin does not read it.
+    A person, agent or handle that cannot be used there is a 422."""
     steward = agent_for_work(request, payload.steward.strip()) if payload.steward.strip() else None
     workspace = payload.workspace.strip() or (steward.workspace_id if steward else "")
     if not workspace:

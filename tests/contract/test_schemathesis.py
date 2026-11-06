@@ -70,6 +70,17 @@ _OPAQUE_CREDENTIAL = (
     "no JSON Schema can say 'carries a valid signature'. The 400 'malformed' is the "
     "designed answer for an unreadable one."
 )
+_DELIVERABLE_EMAIL = (
+    "`email` is validated as a deliverable address (pydantic EmailStr), which "
+    "refuses special-use domains such as `.test`; JSON Schema's `format: email` "
+    "admits them, and has no way to say 'deliverable'."
+)
+_HCP_MALFORMED = (
+    "The HCP protocol defines its own `malformed-request` answer (its own body, with "
+    "`hcp_version`) for a request it cannot read, so the route checks its inputs "
+    "itself: a schema rule would make the framework answer instead, in canopy's "
+    "shape, and Ninja cannot declare a rule it does not enforce."
+)
 _PER_ENDPOINT_EXCLUSIONS: dict[tuple[str, str], tuple[list, str]] = {
     ("POST", "/api/auth/contact-token"): ([positive_data_acceptance], _OPAQUE_CREDENTIAL),
     # The site routes read `Authorization: Bearer` as a SITE token, so the CI PAT
@@ -78,20 +89,20 @@ _PER_ENDPOINT_EXCLUSIONS: dict[tuple[str, str], tuple[list, str]] = {
     ("POST", "/api/sites/sign-offs"): ([positive_data_acceptance], _OPAQUE_CREDENTIAL),
     ("GET", "/api/sites/sign-offs/{sign_off_id}"): ([positive_data_acceptance], _OPAQUE_CREDENTIAL),
     ("POST", "/api/sites/resources-updated"): ([positive_data_acceptance], _OPAQUE_CREDENTIAL),
-    ("POST", "/api/beta-requests"): (
-        [positive_data_acceptance],
-        "`email` is validated as a deliverable address (pydantic EmailStr), which "
-        "refuses special-use domains such as `.test`; JSON Schema's `format: email` "
-        "admits them, and has no way to say 'deliverable'.",
-    ),
+    ("POST", "/api/beta-requests"): ([positive_data_acceptance], _DELIVERABLE_EMAIL),
+    ("POST", "/api/workspaces/{slug}/invites/"): ([positive_data_acceptance], _DELIVERABLE_EMAIL),
+    ("GET", "/api/oauth/google/callback"): ([positive_data_acceptance], _OPAQUE_CREDENTIAL),
     ("GET", "/api/hcp/v1/export"): (
         [positive_data_acceptance],
         "`include`/`exclude` are comma lists of fixed words (audit, versions / "
-        "deleted). The HCP protocol defines its own `malformed-request` answer for "
-        "any other value, so the route keeps them plain strings and checks them "
-        "itself; a schema `pattern` would make the framework answer instead, and "
-        "Ninja cannot declare a pattern it does not enforce.",
+        "deleted). " + _HCP_MALFORMED,
     ),
+    ("GET", "/api/hcp/v1/audit"): (
+        [positive_data_acceptance], "`cursor` is a value the route issued. " + _HCP_MALFORMED),
+    ("GET", "/api/hcp/v1/grants"): (
+        [positive_data_acceptance], "`cursor` is a value the route issued. " + _HCP_MALFORMED),
+    ("POST", "/api/hcp/v1/preferences/search"): (
+        [positive_data_acceptance], "`purpose` is required by the HCP protocol. " + _HCP_MALFORMED),
 }
 
 # Drive is an external service the CI box has no credentials for. A route that
@@ -100,11 +111,28 @@ _PER_ENDPOINT_EXCLUSIONS: dict[tuple[str, str], tuple[list, str]] = {
 _DRIVE_NOT_CONFIGURED = "/problems/drive-not-configured"
 
 
+def _is_documented_refusal(case, response) -> bool:
+    """A 4xx the operation declares in its own responses.
+
+    `positive_data_acceptance` judges a schema-valid request by a fixed list of
+    statuses (2xx, 401, 403, 404, 409, 429), and ignores the spec. But some
+    refusals of a well-formed request are the contract: a rule across fields
+    or against stored state ("send cut_id with cut_scene_ids", "that label
+    already exists") that JSON Schema cannot state. Such a route declares the
+    status (`response={201: X, 422: Problem}`) and documents the rule in its
+    description; a refusal with a status the operation does NOT declare is
+    still a failure."""
+    declared = {str(code) for code in case.operation.responses.status_codes}
+    return 400 <= response.status_code < 500 and str(response.status_code) in declared
+
+
 def _excluded_checks(case, response) -> list:
     excluded = list(_EXCLUDED_CHECKS)
     extra = _PER_ENDPOINT_EXCLUSIONS.get((case.operation.method.upper(), case.operation.path))
     if extra:
         excluded += extra[0]
+    if _is_documented_refusal(case, response):
+        excluded.append(positive_data_acceptance)
     if response.status_code == 503:
         try:
             problem_type = response.json().get("type", "")

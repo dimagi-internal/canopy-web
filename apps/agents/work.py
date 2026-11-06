@@ -314,13 +314,18 @@ def _clean_label(data: dict, label: Label) -> Label:
     return label
 
 
+class LabelTaken(ValueError):
+    """The workspace already has a label by that name — a conflict with what is
+    stored, not a malformed request (the API answers 409)."""
+
+
 def create_label(workspace_slug: str, data: dict) -> Label:
     label = _clean_label(data, Label(workspace_id=workspace_slug))
     try:
         with transaction.atomic():
             label.save()
     except IntegrityError:
-        raise ValueError(f"there is already a label {label.name!r}") from None
+        raise LabelTaken(f"there is already a label {label.name!r}") from None
     return label
 
 
@@ -330,7 +335,7 @@ def update_label(label: Label, data: dict) -> Label:
         with transaction.atomic():
             label.save()
     except IntegrityError:
-        raise ValueError(f"there is already a label {label.name!r}") from None
+        raise LabelTaken(f"there is already a label {label.name!r}") from None
     return label
 
 

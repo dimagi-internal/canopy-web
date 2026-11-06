@@ -290,7 +290,8 @@ def test_blocks_and_blocked_by_are_one_relation_read_both_ways(w):
 def test_labels_are_the_workspaces_and_filter_the_list(w):
     r = w["c"].post("/api/labels/", {"workspace": "dimagi", "name": "Bug", "color": "destructive"}, content_type=J)
     assert r.status_code == 201
-    assert w["c"].post("/api/labels/", {"workspace": "dimagi", "name": "bug"}, content_type=J).status_code == 422
+    # A name the workspace already has is a conflict with what is stored, not a bad request.
+    assert w["c"].post("/api/labels/", {"workspace": "dimagi", "name": "bug"}, content_type=J).status_code == 409
     assert w["c"].post("/api/labels/", {"workspace": "dimagi", "name": "x", "color": "red-500"},
                        content_type=J).status_code == 422
     _create(w["c"], title="Broken", labels=["bug"])

@@ -11,6 +11,7 @@ from ninja import Router
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.api.errors import refusals
 from apps.api.route_gates import gate
 from apps.events import audit
 from apps.workspaces import permissions as perms
@@ -51,13 +52,14 @@ def get_project_opt_in(request: HttpRequest) -> ProjectOptInOut:
     return _out(request.user, ProjectOptIn.for_user_id(request.user.pk))
 
 
-@router.put("/", response=ProjectOptInOut, summary="Set the repos canopy works in for you")
+@router.put("/", response={200: ProjectOptInOut, **refusals(422)}, summary="Set the repos canopy works in for you")
 @gate("self", setting=True)
 def set_project_opt_in(request: HttpRequest, payload: ProjectOptInIn) -> ProjectOptInOut:
     """Replace your choice: `everything`, or exactly `projects`, and when given,
     every repo's workspaces. Takes effect on every runner you own at once. Sessions
     already mirrored from a repo you remove stay in canopy, but nothing more of them
-    is sent. A chat already running on a box stays there."""
+    is sent. A chat already running on a box stays there. A workspace you cannot
+    run work in is a 422."""
     before = ProjectOptIn.for_user_id(request.user.pk)
     old = {"everything": before.everything, "projects": list(before.projects or []),
            "workspaces": dict(before.workspaces or {})}

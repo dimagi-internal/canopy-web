@@ -7,6 +7,9 @@ from pydantic import Field
 
 from apps.common.schemas import StrictModel
 
+#: What `ingest.resolve_channel` reads: an id (`ingest._CHANNEL`) or a name (`ingest._NAME`).
+_CHANNEL_REF = {"pattern": r"^([CG][A-Z0-9]{1,31}|#?[a-zA-Z0-9][a-zA-Z0-9_\-]{0,79})$"}
+
 #: The longest history window an owner may allow — a day. A policy the owner
 #: picks inside this, not a second policy.
 HISTORY_MAX_MINUTES_LIMIT = 24 * 60
@@ -59,7 +62,8 @@ class SlackChannelAllowOut(StrictModel):
 
 class SlackChannelAllowIn(StrictModel):
     agent: str = Field(description="The agent's slug (an agent of this workspace).")
-    channel: str = Field(description="The Slack channel: its id (C… or G…) or #name.")
+    channel: str = Field(description="The Slack channel: its id (C… or G…) or #name.",
+                         json_schema_extra=_CHANNEL_REF)
     follow: bool = Field(default=False, description="Also allow following new messages, not only one read.")
     review_sessions: bool = Field(default=False, description=(
         "Also let the agent read the canopy sessions that live in this channel, read-only "
@@ -98,7 +102,8 @@ class SlackConfigOut(StrictModel):
 
 class ChannelIngestIn(StrictModel):
     agent: str = Field(description="The agent's slug.")
-    channel: str = Field(description="The Slack channel: its id (C… or G…), or #name.")
+    channel: str = Field(description="The Slack channel: its id (C… or G…), or #name.",
+                         json_schema_extra=_CHANNEL_REF)
     purpose: str = Field(min_length=1, max_length=2000,
                          description="Why the agent wants the channel; shown to the people asked to approve.")
     follow: bool = Field(default=False, description="Keep reading new messages until revoked.")

@@ -54,6 +54,21 @@ class ProblemError(HttpError):
         self.problem_headers = headers
 
 
+def refusals(*statuses: int) -> dict[int, type[Problem]]:
+    """Declare the refusals a WELL-FORMED request can still get, beside the success.
+
+    ``response={201: ThingOut, **refusals(422)}`` for a rule JSON Schema cannot
+    state: one across fields ("send cut_id with cut_scene_ids") or against
+    stored state ("that label already exists"). Say the rule in the route's
+    docstring. The body is this module's ``Problem``, documented as
+    ``application/problem+json`` (``apps/api/openapi_doc.py``), and the nightly
+    contract fuzz accepts exactly the declared statuses as refusals
+    (``tests/contract/test_schemathesis.py``). A rule the schema CAN state
+    (an enum, a length, a pattern, a range) goes in the schema instead.
+    """
+    return dict.fromkeys(statuses, Problem)
+
+
 def status_title(status: int) -> str:
     """The stable ``title`` for a problem of ``type: about:blank`` — RFC 7807
     §4.2 says it SHOULD be the status's reason phrase, the same for every

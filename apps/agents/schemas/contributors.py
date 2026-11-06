@@ -10,6 +10,11 @@ from apps.common.schemas import StrictModel
 from .tasks import AgentTaskLink
 
 
+#: `_http_url` in the schema: an http(s) URL; `OPTIONAL_HTTP_URL` may also be blank.
+HTTP_URL = r"^\s*https?://[^\x00]*$"
+OPTIONAL_HTTP_URL = r"^\s*(https?://[^\x00]*)?$"
+
+
 def _http_url(value: str) -> str:
     value = (value or "").strip()
     if value and not value.startswith(("https://", "http://")):
@@ -21,7 +26,7 @@ class ContributorQuoteIn(StrictModel):
     """Something the person said, verbatim, and where they said it."""
 
     quote: str = Field(min_length=1, max_length=600, description="Their words, verbatim. Trim, never rephrase.")
-    source_url: str = Field(min_length=1, max_length=500,
+    source_url: str = Field(min_length=1, max_length=500, pattern=HTTP_URL,
                             description="Where they said it: a canopy session, a doc comment, an email thread.")
     said_at: dt.datetime | None = None
     where: str = Field(default="", max_length=120,
@@ -37,7 +42,7 @@ class ContributorIdeaIn(StrictModel):
 
     task: str = Field(min_length=1, max_length=64, description="The idea task's ext_id on this project (T71).")
     quote: str = Field(default="", max_length=600)
-    source_url: str = Field(default="", max_length=500)
+    source_url: str = Field(default="", max_length=500, pattern=OPTIONAL_HTTP_URL)
     said_at: dt.datetime | None = None
 
     _url = field_validator("source_url")(_http_url)
@@ -48,7 +53,7 @@ class ContributorOpenIn(StrictModel):
 
     text: str = Field(min_length=1, max_length=300, description="A short plain statement of the want.")
     quote: str = Field(default="", max_length=600)
-    source_url: str = Field(default="", max_length=500)
+    source_url: str = Field(default="", max_length=500, pattern=OPTIONAL_HTTP_URL)
     said_at: dt.datetime | None = None
 
     _url = field_validator("source_url")(_http_url)
@@ -56,7 +61,7 @@ class ContributorOpenIn(StrictModel):
 
 class ContributorSourceIn(StrictModel):
     label: str = Field(min_length=1, max_length=200)
-    url: str = Field(min_length=1, max_length=500)
+    url: str = Field(min_length=1, max_length=500, pattern=HTTP_URL)
 
     _url = field_validator("url")(_http_url)
 

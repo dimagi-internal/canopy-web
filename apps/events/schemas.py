@@ -3,17 +3,20 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from pydantic import Field
+
 from apps.common.schemas import StrictModel
 
 Level = Literal["info", "warn", "error"]
 
 
 class EventIn(StrictModel):
-    source: str
-    kind: str = ""
+    # The `Event` columns' widths.
+    source: str = Field(max_length=64)
+    kind: str = Field(default="", max_length=64)
     level: Level = "info"
-    key: str = ""
-    summary: str = ""
+    key: str = Field(default="", max_length=200)
+    summary: str = Field(default="", max_length=500)
     payload: dict = {}
 
 

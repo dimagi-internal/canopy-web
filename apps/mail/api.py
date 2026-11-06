@@ -24,6 +24,7 @@ from ninja.files import UploadedFile
 
 from apps.agents import turn_context
 from apps.api.auth import session_auth
+from apps.api.errors import refusals
 from apps.api.pagination import clamp_offset
 from apps.api.route_gates import gate
 from apps.events import audit
@@ -528,11 +529,13 @@ def _from_route(ws, slug: str, from_address: str | None) -> MailRoute | None:
     return route
 
 
-@router.get("/resolve", response=MailResolveOut, summary="Which mail backend serves an address or a thread")
+@router.get("/resolve", response={200: MailResolveOut, **refusals(422)},
+            summary="Which mail backend serves an address or a thread")
 @gate("authenticated")  # 404 unless the caller is a member of the address's workspace
 def resolve_mail_address(request: HttpRequest, address: str = "", thread: str = "") -> dict:
     """`?address=` — the SES mailbox an address is; `?thread=` — the SES thread a turn's
-    `thread_id` names (404 for a Gmail thread id, or one the caller may not see)."""
+    `thread_id` names (404 for a Gmail thread id, or one the caller may not see).
+    Name one of them: neither is a 422."""
     mine = wsvc.user_workspace_slugs(request.user)
     if thread:
         try:

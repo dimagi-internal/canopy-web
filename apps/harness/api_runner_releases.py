@@ -7,6 +7,8 @@ buttons list. Both name only the deployed `RUNNER_CODE_SHA` (`runner_releases`).
 from __future__ import annotations
 
 from django.http import HttpRequest
+from typing import Literal
+
 from ninja import Router
 from ninja.errors import HttpError
 
@@ -15,6 +17,9 @@ from apps.api.route_gates import gate
 
 from . import runner_releases as rel
 from .schemas import RunnerDownloadOut, RunnerDownloadsOut, RunnerReleaseOut
+
+#: A key of `runner_releases.PLATFORMS`.
+RunnerPlatform = Literal[tuple(rel.PLATFORMS)]
 
 router = Router(auth=session_auth, tags=["harness"])
 
@@ -28,14 +33,12 @@ def _manifest_or_503(sha: str) -> dict | None:
 
 @router.get("/current", response=RunnerReleaseOut, summary="The deployed runner version's update for a platform")
 @gate("authenticated")  # a person, or a runner's own token (runner_auth)
-def current_runner_release(request: HttpRequest, platform: str):
+def current_runner_release(request: HttpRequest, platform: RunnerPlatform):
     """The update artifact of the runner version this deployment ships, for
     `platform` (`macos-arm64`, `macos-x86_64`, `windows-x86_64`): its sha, file,
     sha256, size, whether it is signed (and notarized), and a download `url`
     good for 15 minutes. 404 when no release of that version is built for the
     platform — an updater then does nothing. 503 when downloads are off."""
-    if platform not in rel.PLATFORMS:
-        raise HttpError(422, f"unknown platform '{platform}'; one of {', '.join(rel.PLATFORMS)}")
     sha = rel.deployed_sha()
     if not sha:
         raise HttpError(404, "no deployed runner version")
