@@ -7,7 +7,8 @@ import pytest
 from django.contrib.auth.models import User
 from django.utils import timezone
 
-from apps.agents.models import Agent
+from apps.agents import roles
+from apps.agents.models import Agent, AgentGrant
 from apps.canopy_sessions.models import Session
 from apps.harness import claim
 from apps.harness import initiator as _initiator
@@ -92,8 +93,14 @@ def test_confined_turn_runs_only_where_its_cli_confines():
     agent, session, runner = _ctx(agent_clis=("claude-code",),
                                   report={"claude-code": {"signed_in": True},
                                           "codex": CONFINING})
-    turn = _agent_turn(agent)
-    Turn.objects.filter(pk=turn.pk).update(capability="ask")
+    # A turn that is really confined: a stamp written over an owner's turn would be put right at the claim, which
+    # asks the rule again (spec 2026-11-05 § 3.3).
+    reader = User.objects.create_user("reader", "reader@dimagi.com", "pw")
+    WorkspaceMembership.objects.create(user=reader, workspace=agent.workspace, role=WorkspaceMembership.VIEWER)
+    AgentGrant.objects.create(agent=agent, kind=AgentGrant.PERSON, user=reader, role=roles.READ_ONLY)
+    turn, _ = harness.enqueue_turn(initiator=_initiator.for_user(reader, via="test", assurance=_initiator.SESSION),
+                                   agent=agent, origin=Turn.ORIGIN_API, idempotency_key="confined", prompt="hi")
+    assert turn.capability
     assert claim.claim_next_turn(runner) is None
     agent.clis = ["claude-code", "codex"]
     agent.save(update_fields=["clis"])

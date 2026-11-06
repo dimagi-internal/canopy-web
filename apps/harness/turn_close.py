@@ -38,6 +38,7 @@ def close_turn(
     chat_hooks: bool = True,
     drill_summary: str | None = None,
     auto_debug: bool = True,
+    canopys_note: bool = False,
 ) -> bool:
     """Move `turn` to terminal `status` if it is still in `from_states` (and
     matches `where`), then fire every hook a terminal transition owes.
@@ -51,6 +52,8 @@ def close_turn(
     (admission's `_fire`, shared with refusals that never pass through here);
     `event` adds keys to the status line. `drill_summary`, when given, fails
     the turn's RunnerDrill if it is still pending (a no-op for a non-drill).
+    `canopys_note`: the note is canopy's own refusal, holding nothing the turn read,
+    so a sensitive turn keeps it as a refusal at the enqueue does (`_apply_capability`).
     """
     if status not in Turn.TERMINAL:
         raise ValueError(f"close_turn needs a terminal status, got {status!r}")
@@ -65,7 +68,7 @@ def close_turn(
         # Metadata only (spec 2026-10-22 §4): the prompt was held only until the
         # turn ended, and the note is withheld -- an error can quote what was read.
         fields["prompt"] = ""
-        if note:
+        if note and not canopys_note:
             fields["result_note"] = sensitivity.withheld_note(note)
     updated = Turn.objects.filter(pk=turn.pk, status__in=list(from_states), **(where or {})) \
         .update(**fields)

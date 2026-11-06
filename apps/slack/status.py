@@ -34,6 +34,7 @@ import logging
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
+from apps.agents import refusals
 from apps.harness import clis
 from apps.harness import runner_requirements as rr
 from apps.harness import turn_status as _ts
@@ -220,6 +221,9 @@ def render(turn: Turn, *, reach=None, cloud=None) -> tuple[str, list | None]:
         line = f":raised_hand: {agent} is waiting on a person, on {runner}."
     elif st.state == ts.DONE:
         line = f":white_check_mark: {agent} finished this on {runner}."
+    elif st.state == ts.CANCELLED and refusals.CHANGED_WHILE_QUEUED in (turn.result_note or ""):
+        # Let in when it was sent, refused when a runner came to it (`harness.claim`).
+        line = f":no_entry_sign: Not run — what {agent} may do for this person changed while it waited."
     elif st.state == ts.CANCELLED and (turn.result_note or "").startswith("not run:"):
         # Refused on the way in (its access list gives this caller nothing), never
         # started — not someone pressing stop. The sender gets the why privately.

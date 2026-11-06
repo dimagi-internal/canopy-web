@@ -164,10 +164,12 @@ gets also depends on `turn_agent_tokens.refusal`, `delegations` (`reads_for` get
 `credentials/for_turn.py` asks those same functions and states the result. It adds no rule, and any answer needing the runner
 is `pending`.
 
-**Two moments, and the stamp wins.** A turn is resolved at **enqueue**, which stamps `Turn.capability` and may refuse. At
-**claim** the resolver completes the Turn Context with the runner and final turn mode, and **does not re-decide the profile**:
-the stamp stands, as today (`claim.py:500-514`, `interface.py:627-633`), so a turn queued under one access level runs as it was
-admitted. A stamp that no longer resolves is `deny_all`. `who_is_asking` mid-turn stays live, as today.
+**Two moments.** A turn is resolved at **enqueue**, which stamps `Turn.capability` and may refuse. At **claim** the resolver
+is asked the same question again, from the facts as they are then, and the turn runs on that answer: a queued turn behaves like
+any turn (the owner, 2026-11-05: "Queued turns should behave like any turn right? Why would they behave differently?"). The
+claim stamps what it answered, then completes the Turn Context with the runner and final turn mode; from then on the stamp
+stands for the rest of the turn, and one that no longer resolves is `deny_all`. `who_is_asking` mid-turn stays live. (Until
+Stage 6 below, the stamp won at the claim too.)
 
 A **preview** and the "today it would be" comparison call the resolver with no stamp and no turn writes.
 
@@ -400,3 +402,23 @@ The words went, and these are what removing them found.
 | 3.3 | `canopy_sessions/doors.py` | `canopy_sessions/send_paths.py` (`SEND_PATHS`) |
 | 8 | Wording outside refusals leaves the snapshot hash alone | The default read profile's description is in the snapshot, and so are its version and the A2A card's label for read mode. Rewording them changes 137 leaves, none of them an access, profile, reason, basis or stamp |
 | 9 | Guard: no banned word in UI strings | Two guards: `tests/test_turn_context_words.py` (every server string that is prose, the OpenAPI text, and no new field name) and `frontend/src/turnContextWords.test.ts` (JSX text, attributes and prose literals). The verb "ask" passes; read mode's name does not |
+
+### What Stage 6 changed: a queued turn is resolved again at its claim
+
+The owner's decision: a turn that waits in the queue follows the rules as they are when it starts, like any turn. Before this,
+the stamp won at the claim, so a turn queued as the whole agent ran as the whole agent though, while it waited, its conversation
+had become sensitive, its sender had lost their line or role, or read mode had changed. Stage 2's record showed it; nothing
+stopped it.
+
+| Section | It said | What it is |
+|---|---|---|
+| 3.3, "Two moments" | At claim the stamp wins: the profile is not re-decided | `claim_next_turn` asks `turn_context.at_claim` (the enqueue's question, from today's facts) after routing and before the turn's mode, the admission rules and a runner's role cap. The enqueue's answer stays an early one: its immediate refusal and the preview |
+| 3.3 | The claim's inputs are the stamp and the runner | Also the enqueue's own question, kept on the turn by the server (`origin_ref.queued_for`: the agent and the profile the sender named; a caller's copy is dropped). Asking with the stamp instead would refuse someone a page's connected site had selected once that line went, where a new message gets read mode. A turn queued before this names its stamp |
+| 7 | Refused at enqueue, by the rule or a send path | Also at the claim: closed `cancelled`, never claimed, its note the refusal plus `refusals.CHANGED_WHILE_QUEUED`, its record the refusal (`moment: claim`, `queued_as`), the `offered-nothing` admission rule fired as at enqueue. Slack's status line says the rules changed while it waited, and a sender with a linked Slack account is told why privately |
+| 2, 3.1 | A stamped turn whose agent has gone is `deny_all`; one never stamped is `no_agent` | At the claim, a turn sent to an agent deleted while it waited is refused with a new code, `agent_gone`, whatever its stamp: run with no agent it would have been the sender's own session. One that never had an agent is what it was |
+| 6 | Turns under different profiles never share a runner session | Still so: the claim writes the new stamp before the payload is built, so the envelope, `session_key_suffix`, the `cx-` name, `profile_guard`, the caller token and `cloud_runner._kept_identity` all follow it. A box that cannot confine the new answer passes it over and writes the new stamp (`clis.choose` again), so it never runs whole there |
+| 6 | Wider is the same as narrower | A turn stamped confined reaches only a box that can confine (`profile_q`), so it widens on the first such box to come to it: every runner today |
+| 5 | Stored: what it ran as | Also `queued_as`, the stamp it waited under, when the claim ran it on (or refused it by) a different answer. The claim-time "today it would be different" no longer happens at the claim; the route's `differs` now means the rules changed after the turn started |
+| 3.3 | Every turn is resolved | A turn that names no initiator at all was never asked about by an enqueue (every one `enqueue_turn` writes names one): there is no asker to ask again, and it keeps its stamp |
+| — | — | Unchanged: the admission rules (they read the claim's stamp, as they read the enqueue's), turn mode's rules, a runner's role cap (still only the mode), a direct session (opened, never queued) and act-as (refused on a confined turn, which now means confined at the claim) |
+

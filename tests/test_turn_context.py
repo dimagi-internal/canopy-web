@@ -194,7 +194,9 @@ def test_a_sensitive_turn_stamped_with_a_read_mode_that_has_gone_is_deny_all(w):
     assert _at_claim(w, plain, "ask").profile.kind == turn_context.READ_MODE
 
 
-def test_a_whole_agent_turn_stays_whole_at_claim_though_its_asker_has_since_lost_it(w):
+def test_a_claimed_whole_agent_turn_stays_whole_mid_turn_though_its_asker_has_since_lost_it(w):
+    # The stamp's resolver, as the envelope reads a claimed turn mid-turn. Lost while it waited, the claim refuses
+    # it (`test_turn_context_at_claim`).
     turn = _turn(w, w.editor, _chat(w))
     AgentGrant.objects.filter(agent=w.agent, user=w.editor).delete()
     ctx = _at_claim(w, turn, "")

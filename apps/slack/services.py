@@ -31,7 +31,7 @@ from django.contrib.auth.models import AnonymousUser
 from django.core import signing
 from django.db import transaction
 
-from apps.agents import turn_context
+from apps.agents import refusals, turn_context
 from apps.agents.models import Agent
 from apps.canopy_sessions import control as session_control
 from apps.canopy_sessions import send_paths
@@ -47,6 +47,7 @@ from apps.workspaces import services as wsvc
 
 from . import audience, client, window
 from .models import SlackInstallation, SlackUserLink, SlackWorkspaceLink
+from .relay import turn_destination
 
 logger = logging.getLogger(__name__)
 
@@ -303,6 +304,9 @@ def refusal_message(agent: Agent, turn: Turn, *, named: bool, installation: Slac
     refusal = stored.get("refusal") if isinstance(stored.get("refusal"), dict) else None
     if refusal and refusal.get("why"):
         reason = f"{refusal['why']}. {refusal.get('how_to_fix') or ''}".strip()
+        if stored.get("moment") == "claim":
+            # Let in when it was sent, refused when a runner came to it (`harness.claim`).
+            reason = f"{reason} {refusals.CHANGED_WHILE_QUEUED}"
     else:
         reason = (turn.result_note or "").removeprefix("not run:").strip()
     parts = [f"`{agent.slug}` didn't run this: {reason}"]
@@ -311,6 +315,27 @@ def refusal_message(agent: Agent, turn: Turn, *, named: bool, installation: Slac
                      f"this thread was already talking to. {NOT_AN_AGENT}")
     parts.append(agent_list(installation))
     return " ".join(parts)
+
+
+def tell_refused_at_claim(turn: Turn) -> bool:
+    """A Slack message refused when a runner came to it rather than when it was sent (`harness.claim`): its sender
+    is told why privately, as they are told of a refusal on the way in (`refusal_message`), now that nobody is
+    holding the request open. Only a Slack message from a person whose Slack account is linked to canopy; the
+    thread's status line says "not run" for everyone else. Returns whether it was said."""
+    agent = turn.acting_agent
+    if turn.origin != Turn.ORIGIN_SLACK or agent is None or turn.initiator_user_id is None:
+        return False
+    dest = turn_destination(turn)
+    if dest is None:
+        return False
+    installation, channel, thread_ts = dest
+    link = SlackUserLink.objects.filter(installation=installation, user_id=turn.initiator_user_id).first()
+    if link is None:
+        return False
+    client.post_ephemeral(installation.bot_token, channel=channel, user=link.slack_user_id,
+                          text=refusal_message(agent, turn, named=True, installation=installation),
+                          thread_ts=thread_ts)
+    return True
 
 
 def slack_profile(installation: SlackInstallation, slack_user_id: str) -> dict:

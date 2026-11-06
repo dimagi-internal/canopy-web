@@ -585,9 +585,9 @@ def resolve_turn_context(session_ctx, asker: Asker, agent, *, requested: str | N
     `requested` is the profile the asker named. `turn`, when given, supplies what only a turn knows: its
     initiator and the conversation it continues.
 
-    **Two moments, and the stamp wins.** Without `stamp` this is the enqueue's question, and a preview's.
-    `stamp` is `Turn.capability` when completing a turn at claim: the stored profile stands, so a turn
-    queued under one access level runs as it was admitted. `runner` is what only the claim knows.
+    **Two moments.** Without `stamp` this is the question the enqueue asks, the claim asks again (`at_claim`) and a
+    preview asks. `stamp` is `Turn.capability` once the claim has written it: the stored profile stands for the rest
+    of the turn, while who is asking is still read live (`of_turn`). `runner` is what only the claim knows.
     """
     trace: list[TraceEntry] = []
     blocked = _send_refusal(session_ctx, asker, turn, trace)
@@ -652,11 +652,55 @@ def for_asker(agent, who=None, *, verified: bool, requested: str | None = None, 
 
 
 def of_turn(turn, agent, *, runner=None) -> TurnContext:
-    """What a written turn runs as: its stamp stands, whatever the rules say now (§ 3.3, "Two moments").
-    The envelope and the stored snapshot read this; `for_turn` is the question of what the rules say. `runner`
-    is the box that just claimed it, the one thing the claim adds."""
+    """What a claimed turn runs as: its stamp, which the claim wrote from the rules as they were then (`at_claim`), and
+    which stands for the rest of the turn (§ 3.3, "Two moments"). The envelope and the stored snapshot read this;
+    `for_turn` is the question of what the rules say. `runner` is the box that just claimed it."""
     return resolve_turn_context(sc.build(None, turn, agent=agent), Asker.of_turn(turn), agent, turn=turn,
                                 stamp=turn.capability, runner=runner)
+
+
+#: `Turn.origin_ref` key the enqueue writes, and only the server (`harness.services.enqueue_turn` drops a caller's), so
+#: the claim can put the enqueue's own question to the rule again: the agent the turn was sent to and the profile its
+#: sender named, or None.
+QUEUED_FOR = "queued_for"
+
+
+def queued_for(agent, requested: str | None) -> dict:
+    return {"agent": agent.pk, "profile": requested}
+
+
+def requested_of(turn) -> str | None:
+    """The profile this turn's sender named. A turn queued before the enqueue kept it names its stamp, which asks for
+    nothing wider than the stamp itself."""
+    queued = (turn.origin_ref or {}).get(QUEUED_FOR)
+    if isinstance(queued, dict):
+        return queued.get("profile") or None
+    return turn.capability or None
+
+
+def at_claim(turn) -> TurnContext:
+    """§ 3.3, "Two moments": a queued turn runs on the rules as they are when it starts, like any other turn. The claim
+    puts the enqueue's question to the rule again, from today's facts: the conversation may have become sensitive, the
+    sender may have lost their line or role, read mode may have changed. Its answer is what the turn runs as, and the
+    claim stamps it; a refusal here closes the turn as one at the enqueue would have.
+
+    A turn sent to an agent that was deleted while it waited (`Session.agent` is SET_NULL) is refused, never run as a
+    turn with no agent. One that never had an agent is what it was. So is one no enqueue ever asked about: it names
+    no initiator at all (every turn `enqueue_turn` writes names one, `tests/test_turn_initiator.py`), so there is no
+    asker to put the question to again, and its stamp is all anyone decided."""
+    agent = turn.acting_agent
+    if agent is not None:
+        if not turn.initiator_kind and not isinstance((turn.origin_ref or {}).get(QUEUED_FOR), dict):
+            return of_turn(turn, agent)
+        return for_turn(turn, agent, requested_of(turn))
+    queued = (turn.origin_ref or {}).get(QUEUED_FOR)
+    if not isinstance(queued, dict) or queued.get("agent") is None:
+        return of_turn(turn, None)
+    refusal = refusals.make(refusals.Code.AGENT_GONE)
+    return TurnContext(standing=Standing(relationship=cc.relationship(turn, None)), access=REFUSED, profile=None,
+                       basis=REFUSED_BASIS, session_key_suffix="", review=Review(mode=None), stamped=None,
+                       refusal=refusal, trace=(TraceEntry("agent", REFUSED, refusal.why),),
+                       _session_ctx=sc.build(None, turn), _turn=turn)
 
 
 def was_refused(turn) -> bool:

@@ -49,8 +49,10 @@ resolver. Entry points ask it through three wrappers:
 * `turn_context.for_asker(agent, who, *, verified, requested, turn, standing, lines, channel)` — a
   question with no turn (the roster, the topology, `may_edit_agent`, licenses), or about a turn when the
   caller knows better than the turn how far this message is proven.
-* `turn_context.of_turn(turn, agent, *, runner)` — what a written turn **runs as**: its stamp stands
+* `turn_context.at_claim(turn)` — the claim's question: the enqueue's, asked again from today's facts
   (see "Two moments").
+* `turn_context.of_turn(turn, agent, *, runner)` — what a claimed turn **runs as**: the stamp the claim
+  wrote stands for the rest of the turn (see "Two moments").
 
 ### Session Context
 
@@ -172,14 +174,34 @@ afresh when given the runner, and otherwise reports `pending`.
 
 ### Two moments: enqueue and claim
 
-A turn is resolved at **enqueue**, which stamps `Turn.capability` (`""` for the whole agent, else the
-profile's name) or refuses it. At **claim**, `of_turn` completes the Turn Context with the runner and final
-turn mode and **does not re-decide the profile: the stamp wins**, so a turn queued under one access level
-runs as it was admitted. A stamp that no longer resolves is `deny_all`. The asker's standing is still read
-live (the envelope's `permissions` need it): under the stamp, and when that no longer admits them, as they
-stand now. `who_is_asking` mid-turn stays live. A turn refused at enqueue has an empty stamp, and an empty
-stamp reads as the whole agent, so nothing asks what such a turn ran as without `turn_context.was_refused`
-first.
+A queued turn runs on the rules as they are when it starts, like any other turn. It is resolved at
+**enqueue**, which stamps `Turn.capability` (`""` for the whole agent, else the profile's name) or refuses
+it, and keeps the question it asked on the turn (`origin_ref.queued_for`: the agent and the profile the
+sender named, written only by the server). That answer is an early one: an immediate refusal, and the
+preview. At **claim**, `claim_next_turn` asks the same question again from today's facts
+(`turn_context.at_claim`), before the turn's mode and the admission rules, and runs on that answer:
+
+* **Narrower now** (the conversation became sensitive, a line or role went, read mode changed): it runs in
+  the narrower profile, or it is refused with the usual refusal (below), closed `cancelled` and never
+  claimed, its note adding that it changed after it was sent.
+* **Wider now** (a role was raised): it runs on the wider answer. A turn stamped confined is offered only to a
+  box that can confine (`profile_q`), so it widens on the first such box that comes to it — today every
+  runner.
+* **The stamp follows.** `Turn.capability` is rewritten to the claim's answer, so the runner session
+  (`#<name>`, the `cx-` session), `profile_guard`, the caller token and a sensitive conversation's kept
+  session (`cloud_runner._kept_identity`) all follow it: a whole-agent session never takes a confined
+  person's turn, nor the reverse. A box that cannot confine the new answer passes it over and writes the
+  new stamp, so every other box and `turn_reach` read what it would run as. If the rule cannot be asked,
+  the turn waits; it never runs on its old stamp.
+* A turn sent to an agent deleted while it waited is refused (`agent_gone`), never run as a turn with no
+  agent. One that names no initiator at all was never asked about by any enqueue and keeps its stamp.
+
+`Turn.resolved_context` records what it ran as, and `queued_as` the stamp it waited under when the two
+differ. Once claimed, `of_turn` reads the stamp for the rest of the turn: a stamp that no longer resolves is
+`deny_all`, and the asker's standing is still read live (the envelope's `permissions` need it), under the
+stamp and, when that no longer admits them, as they stand now. `who_is_asking` mid-turn stays live. A turn
+refused before it ran has no stamp it ran under, and an empty stamp reads as the whole agent, so nothing asks
+what such a turn ran as without `turn_context.was_refused` first.
 
 A **preview** (the session panel's "For you, now", the composer) resolves with no stamp and writes nothing.
 **Admission rules** are a separate layer after the Turn Context (`admission/evaluate.at_claim`,
@@ -742,8 +764,8 @@ same thing: `owner`, `admin`, `system`, `session:<role>`, `grant:<line>` (row 3)
 for every entry point — the harness API (`POST /api/harness/turns/`), a canopy-web chat send, Slack
 intake and email intake (after the existing sender triage: a blocked contact never reaches the rule; a
 member is recognised by mail only on THIS message's DMARC); the harness API also asks it up front to
-answer 403 with the refusal; the claim (`of_turn`, with the runner; turn mode reads an editor line's
-`manual_only`); the caller envelope (`access`, `profile`, `granted_by`); the extended A2A card
+answer 403 with the refusal; the claim, which asks it again (`at_claim`) and then completes it with the
+runner (`of_turn`; turn mode reads an editor line's `manual_only`); the caller envelope (`access`, `profile`, `granted_by`); the extended A2A card
 (`offered_to`); the access roster and the agent topology; the session panel's preview.
 
 ## Refusals
@@ -767,6 +789,7 @@ has exactly one builder (a test holds the two sets equal), so the words are the 
 | `cannot_write` | stage 0 | They may read the session but not act in it; the fix names the session's owner. |
 | `cli_not_offered` | stage 0 | The conversation is held to an agent CLI its agent is no longer set up for. |
 | `not_in_sensitive` | stage 0 | A sensitive conversation takes messages only from its own people, at its chat surfaces. |
+| `agent_gone` | the claim | The agent the turn was sent to was deleted while it waited. |
 
 How each channel says it: a refused turn is written `cancelled` with `result_note` "not run: <why>.
 <how_to_fix>" (`refusals.REFUSED_NOTE_PREFIX`; `turn_context.was_refused` reads it on turns older than the
@@ -776,6 +799,13 @@ readable. A person added to a session who cannot take a turn is flagged on their
 (`turn_refusal`, the same refusal said `about` them), only to someone who may add people, with a way to add
 them to the access list when the fix is a line and the viewer may add one; an editor added to a session the
 agent's owner or an admin started is a session writer and is never flagged.
+
+A turn refused at its **claim** (the rules changed while it waited) is said the same way, plus
+`refusals.CHANGED_WHILE_QUEUED` ("This changed after it was sent: …") on its note and in Slack: its thread's
+status line says the rules changed while it waited, and a sender whose Slack account is linked is told why
+privately (`slack.services.tell_refused_at_claim`). The workspace's `offered-nothing` admission rule fires
+for it as for a refusal at the enqueue. A sensitive turn keeps canopy's own refusal note (`close_turn`'s
+`canopys_note`) and loses its prompt.
 
 Refusals that do not depend on who is asking stay where they are and keep their own words: no runner
 available, an admission rule closing a turn, and the harness route's checks before a turn exists

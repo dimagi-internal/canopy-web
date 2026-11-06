@@ -45,6 +45,14 @@ def _relay_replies(sender, turn, rows, **kwargs):
         relay(turn, rows)
     except Exception:  # noqa: BLE001 — never break the runner's append over Slack
         logger.exception("slack relay failed")
+    if any(r.kind == "status" and (r.payload or {}).get("refused_at_claim") for r in rows):
+        # Refused when a runner came to it: its sender hears why, privately (`services.tell_refused_at_claim`).
+        from .services import tell_refused_at_claim  # noqa: PLC0415 — loaded at app start; services reaches other apps
+
+        try:
+            tell_refused_at_claim(turn)
+        except Exception:  # noqa: BLE001 — a courtesy note never breaks the claim's append
+            logger.exception("slack note for a turn refused at its claim failed")
     if any(r.kind == "status" for r in rows):
         from apps.harness.turn_status import waiting_behind
 

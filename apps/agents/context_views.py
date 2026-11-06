@@ -38,9 +38,11 @@ def turn_context(ctx) -> dict:
     }
 
 
-def snapshot(ctx, *, moment: str, at, runner=None, requested: str | None = None, admission: dict | None = None) -> dict:
+def snapshot(ctx, *, moment: str, at, runner=None, requested: str | None = None, admission: dict | None = None,
+             queued_as: str | None = None) -> dict:
     """What `Turn.resolved_context` holds: what the turn ran as, when that was decided, and what an admission rule
-    did about it. `requested` is the profile a refused turn named, which nothing else keeps."""
+    did about it. `requested` is the profile a refused turn named, which nothing else keeps. `queued_as` is the stamp
+    it waited under when the claim found the rules had changed since (`claim.claim_next_turn`), else None."""
     return {
         "version": SNAPSHOT_VERSION,
         "moment": moment,
@@ -48,6 +50,7 @@ def snapshot(ctx, *, moment: str, at, runner=None, requested: str | None = None,
         "runner": None if runner is None else {"id": str(runner.pk), "name": runner.name, "kind": runner.kind},
         "requested": requested,
         "admission": admission,
+        "queued_as": queued_as,
         **turn_context(ctx),
     }
 

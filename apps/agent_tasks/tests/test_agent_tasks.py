@@ -10,6 +10,7 @@ from django.utils import timezone
 
 from apps.agent_tasks import services
 from apps.agent_tasks.models import AgentTask
+from apps.agents import turn_context
 from apps.agents.models import AgentSkill
 from apps.harness import caller_context
 from apps.harness import services as harness
@@ -46,7 +47,7 @@ def test_create_queues_one_turn_that_names_the_task(world):
     assert body["status"] == "queued" and body["input"] is None and body["output_schema"] == SCHEMA
     turn = Turn.objects.get(pk=body["turn_id"])
     assert turn.agent == world["agent"] and turn.origin == Turn.ORIGIN_API
-    assert turn.origin_ref == {"agent_task": body["id"]}
+    assert {k: v for k, v in turn.origin_ref.items() if k != turn_context.QUEUED_FOR} == {"agent_task": body["id"]}
     assert turn.idempotency_key == f"agent-task:{body['id']}"
     assert "get_agent_task" in turn.prompt and "submit_agent_task_result" in turn.prompt
     assert "no outbound action" in turn.prompt
@@ -89,7 +90,8 @@ def test_a_client_cannot_stamp_agent_task_on_an_ordinary_turn(world, task):
         "agent_slug": "bailey", "origin": "api", "idempotency_key": "plain-1",
         "origin_ref": {"agent_task": str(task.pk), "note": "kept"}})
     assert r.status_code == 201, r.content
-    assert Turn.objects.get(idempotency_key="plain-1").origin_ref == {"note": "kept"}
+    ref = Turn.objects.get(idempotency_key="plain-1").origin_ref
+    assert {k: v for k, v in ref.items() if k != turn_context.QUEUED_FOR} == {"note": "kept"}
 
 
 # ---- read ----------------------------------------------------------------------

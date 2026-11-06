@@ -446,7 +446,8 @@ def get_session_turn_context(request: HttpRequest, session_id: uuid.UUID, turn_i
 
 
 def _now_of(turn, stored: dict | None) -> dict:
-    asked = turn.capability or (stored or {}).get("requested") or None
+    # The sender's own question, as the claim asks it again (`turn_context.requested_of`).
+    asked = turn_context.requested_of(turn) or (stored or {}).get("requested") or None
     now = context_views.turn_context(turn_context.for_turn(turn, turn.acting_agent, asked))
     # The turn's own mode is what it ran in. What it would be today needs a claim.
     return {**now, "review": {**now["review"], "mode": turn_context.PENDING, "basis": ""}}

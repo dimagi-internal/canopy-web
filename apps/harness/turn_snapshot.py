@@ -5,7 +5,8 @@ re-claim overwrites it so it holds the run that last happened, when a direct ses
 or rejected before it runs.
 
 **A record, never a decision, so it can never stop or widen a turn.** What a turn may do is its stamp
-(`Turn.capability`), already written; the runner's confinement reads that through the envelope. If building this
+(`Turn.capability`), already written by the claim from the rules as they were then; the runner's confinement reads
+that through the envelope. If building this
 raises, `record` logs it, stores `error` in place of the snapshot and returns: the claim goes on with its stamp, and the
 last run's snapshot is not left to pass for this one. A database error stays inside its own savepoint, so it cannot
 poison a transaction the caller is in.
@@ -49,9 +50,10 @@ def _store(turn, doc: dict) -> None:
 
 
 def record(turn, moment: str, *, context=None, runner=None, requested: str | None = None,
-           admission: dict | None = None) -> None:
+           admission: dict | None = None, queued_as: str | None = None) -> None:
     """Write what `turn` ran as. `context`: the answer, when the caller holds a refusal; else it is read from the
-    turn's stamp, and left on the turn so the envelope built from this same claim asks only once. Never raises."""
+    turn's stamp, and left on the turn so the envelope built from this same claim asks only once. `queued_as`: the
+    stamp it waited under, when the claim ran it on a different answer. Never raises."""
     from apps.agents import context_views, turn_context  # noqa: PLC0415 — agents imports this package
 
     now = timezone.now()
@@ -59,7 +61,7 @@ def record(turn, moment: str, *, context=None, runner=None, requested: str | Non
         with transaction.atomic():
             built = context if context is not None else turn_context.of_turn(turn, turn.acting_agent, runner=runner)
             _store(turn, context_views.snapshot(built, moment=moment, at=now, runner=runner, requested=requested,
-                                                admission=admission))
+                                                admission=admission, queued_as=queued_as))
     except Exception:  # noqa: BLE001 — a record of the turn is never worth the turn
         logger.exception("could not record what turn %s ran as", turn.pk)
         _record_the_failure(turn, moment, now)

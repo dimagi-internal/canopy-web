@@ -6,6 +6,7 @@ import datetime as dt
 import pytest
 from django.utils import timezone
 
+from apps.agents import turn_context
 from apps.agents.models import Agent
 from apps.harness import services
 from apps.harness import schedule_turns, claim
@@ -39,6 +40,9 @@ def test_fire_creates_a_cron_turn_and_advances_last_slot(schedule):
     assert turn.origin == Turn.ORIGIN_CANOPY_SCHEDULER
     assert turn.status == Turn.QUEUED
     assert turn.prompt == "/echo:manager-report"
+    # Beside what the schedule wrote, the enqueue's own question for the claim to ask again (`QUEUED_FOR`).
+    queued = turn.origin_ref.pop(turn_context.QUEUED_FOR)
+    assert queued == {"agent": schedule.agent_id, "profile": None}
     assert turn.origin_ref == {"schedule_id": schedule.id, "slot": SLOT_A.isoformat(),
                                "schedule_name": "Weekly manager report"}
     assert turn.idempotency_key == f"sched:{schedule.id}:{SLOT_A.isoformat()}"
