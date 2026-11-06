@@ -11,7 +11,6 @@ import {
   detailText,
   entryName,
   getsText,
-  grantText,
   headline,
   momentText,
   outcomeText,
@@ -54,7 +53,6 @@ export function SessionContextSection({
   me: number | null;
 }) {
   const audience = audienceLines(facts.audience as Record<string, unknown>, me);
-  const grants = facts.session_grants.map((g) => grantText(g, me));
   const blocks = facts.send_blocks.map((b) =>
     b.scope === "anyone"
       ? `Nobody: ${String(b.why ?? "")}`
@@ -88,7 +86,6 @@ export function SessionContextSection({
       />
       <Row label="Who can see it" value={audience.join("\n")} />
       <Row label="People in it" value={participantsText(facts.participants, me)} />
-      <Row label="Extra access here" value={grants.join("\n")} />
       <Row label="Who can't send" value={blocks.join("\n") || "nobody is blocked"} />
     </Section>
   );

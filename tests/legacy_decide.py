@@ -8,6 +8,11 @@ code, moved here unchanged.
 Do not import it from `apps/`, and do not edit it to make that test pass: this file is the reference. A
 difference means the resolver changed what someone may do. Facts that are not the rule (who holds which
 line, what a role grants, who is an admin, what an entry is) are still read from the real code.
+
+One deliberate edit since: on 2026-11-06 the owner removed the `session_writer` rule (a participant with
+role owner or editor in a session the agent's owner or an admin started held the whole agent). Its branch
+is gone from `_decide` and `_stamp` here exactly as it is gone from the resolver, so this stays the rule
+as stated. `tests/test_turn_context_equivalence.py` names the cases that changed.
 """
 from __future__ import annotations
 
@@ -18,11 +23,9 @@ from django.contrib.auth import get_user_model
 from apps.agents import grants, roles
 from apps.agents import interface as iface_mod
 from apps.agents.standings import Standing, standing_of
-from apps.canopy_sessions.models import SessionParticipant
 from apps.contacts.models import Contact
 from apps.harness import caller_context as cc
 from apps.harness import initiator as initiator_mod
-from apps.harness import initiator as who
 from apps.harness.caller_context import is_verified
 
 OWNER, ADMIN, MEMBER, CONTACT, SYSTEM = cc.OWNER, cc.ADMIN, cc.MEMBER, cc.CONTACT, cc.SYSTEM
@@ -54,21 +57,6 @@ def _site_capability(turn, iface: dict, opens) -> str | None:
     return None
 
 
-def session_writer(turn, agent) -> str | None:
-    if agent is None or turn.initiator_kind != who.USER or not getattr(turn, "chat_session_id", None):
-        return None
-    user, session = turn.initiator_user, turn.chat_session
-    creator = session.created_by
-    if user is None or creator is None:
-        return None
-    if creator.pk != agent.owner_id and not agent.is_admin(creator):
-        return None
-
-    role = (SessionParticipant.objects.filter(session=session, user=user)
-            .values_list("role", flat=True).first())
-    return role if role in (SessionParticipant.OWNER, SessionParticipant.EDITOR) else None
-
-
 @dataclass(frozen=True, kw_only=True)
 class Decision:
     """The answer for one (agent, asker, message). See docs/architecture/access.md."""
@@ -79,7 +67,7 @@ class Decision:
     may_request_auto: bool    # may ask for turn_mode=auto on a dispatch
     may_pin_runner: bool      # may pin ANY runner that can hold the agent (else: only runners they administer)
     manual_only: bool         # every turn they start runs manual (an editor line that says so)
-    # WHY: owner | admin | system | session:<role> | grant:<line> | capability:<name> |
+    # WHY: owner | admin | system | grant:<line> | capability:<name> |
     # sensitive:<capability> | refused
     basis: str
     # For `none`: what was refused and what the asker CAN do instead.
@@ -87,7 +75,7 @@ class Decision:
     # The asker's named role (`roles.py`): owner | admin | editor | read_write | read_only |
     # system, or None when refused or when they hold only named-capability lines.
     agent_role: str | None = None
-    # WHERE the role came from: `owner` | `admin` | `system` | `session` | `list:<line>`.
+    # WHERE the role came from: `owner` | `admin` | `system` | `list:<line>`.
     source: str = ""
     # `source` in words, for a person to read: the access-list line's `who` ("Anyone at
     # @dimagi.com (verified)").
@@ -124,7 +112,7 @@ def decide(agent, who=None, *, verified: bool, origin: str = "", capability: str
            turn=None, standing: Standing | None = None, lines=None) -> Decision:
     """THE rule: what `who` (a canopy User, a Contact, or None) may make `agent` do.
 
-    Owner, admin, system and a session writer (`_decide`), then the access list (`_from_access_list`)
+    Owner, admin and system (`_decide`), then the access list (`_from_access_list`)
     for everyone else, then the sensitive-data rule over it
     (`_sensitive_rule`): a capability that handles sensitive data (`data:
     sensitive`), and any turn in a sensitive conversation, is confined for
@@ -197,7 +185,7 @@ def _sensitive_rule(agent, d: Decision, *, capability: str | None, turn) -> Deci
     """Spec 2026-10-22-sensitive-data-agents §5, "confined for everyone".
 
     * in a sensitive-data capability, whoever would have had the agent's FULL profile (owner,
-      admin, system, an editor, a session writer) runs that capability's
+      admin, system, an editor) runs that capability's
       confined profile instead — same role, same mode, same pin rights;
     * a confined caller keeps the capability the table gave them;
     * a turn in a sensitive conversation that ends up anywhere but a
@@ -230,10 +218,6 @@ def _stamp(d: Decision) -> Decision:
         return replace(d, agent_role=roles.ADMIN, source="admin")
     if d.relationship == SYSTEM:
         return replace(d, agent_role=roles.SYSTEM, source="system")
-    if d.access == FULL:
-        # A session writer drives this conversation; nothing gives them the agent itself, so their
-        # `permissions` (what the envelope and the own-repo rail read) stop at `write`.
-        return replace(d, agent_role=roles.EDITOR, source="session", permissions=roles.ROLES.close({roles.WRITE}))
     return d
 
 
@@ -281,8 +265,8 @@ def _capability_for(agent, iface: dict, permissions, capability, turn):
 
 def _from_access_list(agent, d: Decision, who, *, verified: bool, capability, turn,
                       standing: Standing | None, lines) -> Decision:
-    """What the access list gives the asker. An owner, admin or canopy itself, and a session
-    writer, already have the whole agent; everyone else has exactly what their lines say."""
+    """What the access list gives the asker. An owner, admin or canopy itself already has the whole
+    agent; everyone else has exactly what their lines say."""
     if d.access == FULL:
         return d
     asker = _asker_of(who, turn, verified, standing)
@@ -312,15 +296,14 @@ def _from_access_list(agent, d: Decision, who, *, verified: bool, capability, tu
 
 def _decide(agent, who=None, *, verified: bool, origin: str = "", capability: str | None = None,
             turn=None, st: Standing | None = None) -> Decision:
-    """The part of the rule that needs no list: the owner, the admins, canopy itself and a
-    writer in an admin's own session have the whole agent; everyone else is `none` here and
-    gets whatever their line on the access list says (`_from_access_list`).
+    """The part of the rule that needs no list: the owner, the admins and canopy itself have the
+    whole agent; everyone else is `none` here and gets whatever their line on the access list
+    says (`_from_access_list`).
 
     `verified` is about THIS message (a signed-in request always is). `origin` is the channel
     (for the record; the rule does not vary by it). `capability` is one the asker named (e.g. a
     storyboard's), else the free-form one (`ask`). `turn`, when given, supplies what only a
-    turn knows: its initiator kind (canopy itself, another agent) and the conversation it
-    continues (`session_writer`).
+    turn knows: its initiator kind (canopy itself, another agent).
     """
     user = None
     if turn is not None:
@@ -341,11 +324,6 @@ def _decide(agent, who=None, *, verified: bool, origin: str = "", capability: st
     if rel in (OWNER, ADMIN, SYSTEM):
         return Decision(relationship=rel, access=FULL, capability=None, may_request_auto=may_auto,
                         may_pin_runner=is_admin or rel in (OWNER, ADMIN), manual_only=False, basis=rel)
-    if turn is not None:
-        role = session_writer(turn, agent)
-        if role:
-            return Decision(relationship=rel, access=FULL, capability=None, may_request_auto=False,
-                            may_pin_runner=False, manual_only=False, basis=f"session:{role}")
     return Decision(relationship=rel, access=NONE, capability=None, may_request_auto=False,
                     may_pin_runner=False, manual_only=False, basis="refused",
                     reason=_list_refusal(agent, verified_contact=rel == CONTACT and bool(verified)))

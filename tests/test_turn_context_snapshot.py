@@ -627,3 +627,19 @@ def test_the_view_is_an_allowlist_of_named_fields(world):
         "standing", "access", "basis", "profile", "session_key_suffix", "credentials", "review", "stamped", "refusal", "trace"}
     stamp = dt.datetime(2026, 11, 5, tzinfo=dt.UTC)
     assert set(context_views.snapshot(ctx, moment="claim", at=stamp)) >= {"version", "moment", "recorded_at", "runner", "admission"}
+
+
+def test_a_turn_recorded_under_the_removed_session_writer_rule_still_reads(world):
+    """`session_writer` went on 2026-11-06. A turn stored before then says so, and is served as it was stored."""
+    session = _chat(world)
+    turn = _enqueue(world.owner, session, box=world.box)
+    _claim(turn, world.box)
+    turn.refresh_from_db()
+    old = {**turn.resolved_context, "basis": "session:editor",
+           "standing": {**turn.resolved_context["standing"], "source": "session"},
+           "trace": [{"rule": "session_grants", "outcome": "session_writer",
+                      "detail": "a editor in a session the agent's owner or an admin started"}]}
+    Turn.objects.filter(pk=turn.pk).update(resolved_context=old)
+    body = _ran_as(world.owner, session, turn).json()
+    assert body["status"] == "recorded" and body["ran_as"]["basis"] == "session:editor"
+    assert body["ran_as"]["trace"][0]["outcome"] == "session_writer"

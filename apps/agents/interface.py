@@ -80,7 +80,6 @@ from apps.agents.interface_default import (  # noqa: F401  (re-exported)
     default_read_profile,
     is_read_mode,
 )
-from apps.canopy_sessions.models import SessionParticipant
 from apps.harness import invocations
 
 logger = logging.getLogger(__name__)
@@ -439,33 +438,6 @@ def is_review_turn(turn) -> bool:
     from apps.canopy_sessions import access as session_access  # noqa: PLC0415 — access imports the agents app
 
     return session_access.is_review_conversation(session_access.turn_conversation(turn))
-
-
-def session_writers(session, agent) -> list[tuple[int, str]]:
-    """Who in `session` holds the agent's whole profile by being in it, as `(user_id, role)`: someone
-    who holds it STARTED the session and gave them an owner/editor participant row in it.
-
-    A person let into the owner's conversation is part of it: their turn continues the SAME session, in
-    its profile. Confining them to a profile instead keys their turn to a separate `cx-` session on
-    the runner, so a colleague replying in the owner's Slack thread landed in a fresh session the owner
-    never saw (Jonathan, 2026-10-01: "if the user has access to my session, it should come back in the
-    session I already started").
-
-    Both halves are load-bearing. The creator must be the agent's owner or an admin: otherwise any
-    member could start their own chat with the agent and be "the owner of a session", which would undo
-    the interface for everyone. And the grant must be an explicit row: `role_for` also makes every
-    tenant member an editor of a runner-discovered session, a convenience for the web UI rather than
-    anyone being let into this conversation.
-    """
-    creator = session.created_by
-    if creator is None:
-        return []
-    if creator.pk != agent.owner_id and not agent.is_admin(creator):
-        return []
-    rows = (SessionParticipant.objects.filter(
-        session=session, role__in=(SessionParticipant.OWNER, SessionParticipant.EDITOR))
-        .order_by("user_id").values_list("user_id", "role"))
-    return list(rows)
 
 
 def grant_facts(turn, agent, *, context=None) -> dict:

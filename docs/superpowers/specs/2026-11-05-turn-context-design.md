@@ -184,15 +184,12 @@ it is not yet known how or if that will be used. The design must allow it withou
 
 So `SessionContext.session_grants` is a list of `{kind, user_id, role, source}`, and stage 1 asks it in one rule.
 
-**Exactly one kind exists today:** `session_writer`, the existing rule (`interface.session_writer`): a participant
-with role owner or editor in a session created by the agent's owner or an admin holds the whole agent. It is read from a turn's
-`chat_session` only, never `canopy_session`. `interface.session_writers(session, agent)` lists them, replacing the per-asker
-question. **It stays, unchanged**, because this project changes no one's access. It becomes visible in the trace as a named rule.
+**No kind exists now.** There was one, `session_writer`: a participant with role owner or editor in a session created by
+the agent's owner or an admin held the whole agent. This project kept it unchanged; the owner removed it on 2026-11-06
+(section 12, "After the five stages"). `session_grants` is always empty, and the resolver keeps the one place a grant would
+apply.
 
-`granted_by` is computed live and not stored, so Stage 1's report on how much this rule is used is an **approximation**: turns in
-the last 90 days whose initiator was a non-admin participant (owner or editor role) in an admin-created session and who holds
-no `write` line today. It's labelled as such. Stage 2's snapshot then records the real count going forward. Adding a grant
-kind later means adding one builder function and one test, with no resolver change.
+Adding a grant kind later means adding one builder function and one test, with no resolver change.
 
 A turn with no agent has no grants and no standing to compute: `no_agent`, from the existing `_relationship_without_agent`.
 
@@ -408,18 +405,30 @@ The words went, and these are what removing them found.
 ### After the five stages: what section 10 left out, removed
 
 The 2026-11-04 spec's P3 left three things for later, and this spec's non-goals kept them out. They are
-gone now, and nobody's access changed.
+gone now, and nobody's access changed. `session_writer`, kept by section 3.4, went later and did change access
+(below).
 
 | What | What it was | What happened |
 |---|---|---|
 | `pages` | An entry selected by the resource a page declared it was showing (`interface.page_entry`, and the page branch of `_sensitive_entry`) | Removed. A profile is selected by the conversation's site alone. `parse` refuses an entry carrying `pages:`, and migration `agents/0132` strips the empty key older saves wrote, after checking that no entry uses it. A Session Context still states its `page`: it is a fact about the conversation, and it selects nothing |
 | The site-ceiling union | `site_ceiling` and `own_login_of` combined every entry naming one site (no ceiling if any had none) | Removed. One entry per site was already the writer's rule, so these read that entry. `agents/0132` refuses to run over a document with two entries on one site |
 | `interface_source` | The YAML an old save kept beside the document. Nothing read it after the interface routes were retired | `agents/0133` takes it out of the code and gives the column a database default; `agents/0134` drops the column, in a later deploy, so no task on the previous image meets a table without it |
-| `session_writer` | Kept, pending a count of its use (3.4) | Kept, unchanged, and still uncounted: the read-only count needs a shell in the production task, and the labs admin login it takes had expired, so it waits for someone holding that login |
+| `session_writer` | Kept, pending a count of its use (3.4) | Removed 2026-11-06 at the owner's decision, without a usage count ("just remove the legacy path, we are going to get confused otherwise") |
 
 The proof is the one section 8 names: the Turn Context equivalence test and the access matrix are green,
 and the `answering_snapshot` hash over the fixture, without the three corner cases that existed only to
 exercise `pages` and the union, is unchanged across the removal.
+
+**`session_writer` is the exception: it is an access change.** The other three removed nothing anyone used;
+this one removes access. Who loses it: someone with role owner or editor in a session the agent's owner or
+an admin started, who holds no `write` line of their own. They now answer by their own line, like anyone
+else: no line is refused (`not_on_access_list`), a `read` line gives read mode, a `write` line is the whole
+agent as before, and a sensitive session holds them to their own line too. The way back is a line on the
+access list. Whoever adds such a person to a session now sees the notice on their row. The seam stays
+(3.4): `session_grants` is empty and the resolver still asks it. The reference copy of `decide`
+(`tests/legacy_decide.py`) lost the same branch, so the equivalence test still holds the resolver to the
+rule as stated, and names the cases that changed. The `answering_snapshot` hash is unchanged: its probe
+conversations are never a saved session with participants, so the rule never fired there.
 
 ### What Stage 6 changed: a queued turn is resolved again at its claim
 

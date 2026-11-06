@@ -41,8 +41,8 @@ def mint(turn: Turn, *, scoped: bool = False) -> str:
 
 #: Who holds the agent's whole profile AND may read as the runner's owner would:
 #: the people operating it, and canopy itself. Everyone else a `full` decision
-#: reaches — an editor line on the access list, a writer in an admin's
-#: session — is a CALLER, and their session reads canopy as themselves.
+#: reaches (an editor line on the access list) is a CALLER, and their session
+#: reads canopy as themselves.
 _OPERATORS = frozenset({"owner", "admin", "system"})
 
 

@@ -10,7 +10,7 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.test import Client
 
-from apps.agents import access, roles, turn_context
+from apps.agents import access, turn_context
 from apps.agents.models import Agent, AgentGrant, AgentRole
 from apps.events.models import SettingChange
 from apps.passkeys.testing import grant_step_up
@@ -291,18 +291,6 @@ def test_adding_agent_edit_to_a_write_role_is_refused_while_an_address_line_hold
     assert _json(_c(w["boss"]), "patch", f"{BASE}/pilot", {"label": "Pilot"}).status_code == 200
     line.delete()
     assert _json(_c(w["boss"]), "patch", f"{BASE}/pilot", {"permissions": ["agent_edit"]}).status_code == 200
-
-
-def test_a_session_writers_envelope_stops_at_write():
-    """They drive this conversation, not the agent: the own-repo rail reads `agent_edit` from this list."""
-    d = turn_context.TurnContext(
-        standing=turn_context.Standing(relationship="member", agent_role=roles.EDITOR, source="session",
-                                       permissions=roles.ROLES.close({roles.WRITE})),
-        access=turn_context.FULL, profile=turn_context.Profile(kind=turn_context.WHOLE_AGENT), basis="session:editor",
-        session_key_suffix="", review=turn_context.Review(), stamped="", refusal=None, trace=(),
-        _reach=turn_context._Reach(relationship="member", access=turn_context.FULL))
-    held = d.held_permissions
-    assert "write" in held and "agent_edit" not in held
 
 
 def _move(user, slug, parent):
