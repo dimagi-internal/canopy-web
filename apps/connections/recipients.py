@@ -55,7 +55,7 @@ REVOKER_GONE_AFTER = timedelta(minutes=15)
 
 
 def statement_agent_pks(statement: dict | None) -> list[int]:
-    return [int(a) for a in (statement or {}).get("agents", []) if str(a).isdigit()]
+    return [int(a) for a in (statement or {}).get("agents", []) if str(a).isdecimal()]
 
 
 def owner_agent_usable(conn: Connection) -> bool:

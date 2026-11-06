@@ -105,7 +105,7 @@ def sync_bundled() -> None:
 
 
 def _version_key(v: str) -> tuple:
-    return tuple(int(p) if p.isdigit() else 0 for p in re.split(r"[.\-]", v or "0"))
+    return tuple(int(p) if p.isdecimal() else 0 for p in re.split(r"[.\-]", v or "0"))
 
 
 def latest_version(tmpl: AppTemplate) -> AppTemplateVersion:
@@ -913,7 +913,7 @@ def _effects(inst: AppInstallation, m: dict, spec: dict, rec: AppRecord, space: 
             dur = rec.data.get(e["ics"].get("duration_field") or "") or 45
             ics = ics_invite(uid=f"app-{inst.pk}-{rec.pk}@canopy", title=subject, day=rec.data[e["ics"]["date_field"]],
                              at=rec.data.get(e["ics"]["time_field"]) or "09:00",
-                             minutes=int(dur) if str(dur).isdigit() else 45,
+                             minutes=int(dur) if str(dur).isdecimal() else 45,
                              location=str(rec.data.get(e["ics"].get("location_field") or "") or ""), description=body)
             out["invite"] = True
         hours = min(float(params.get(e["delay_param"]) or 0), MAX_DELAY_HOURS) if e.get("delay_param") else 0

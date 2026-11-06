@@ -146,7 +146,7 @@ def records_of(body) -> list:
 
 def _retry_after(r, default: float) -> float:
     raw = (r.headers.get("Retry-After") or "").strip()
-    if raw.isdigit():
+    if raw.isdecimal():
         return float(raw)
     try:
         return max(0.0, (parsedate_to_datetime(raw) - datetime.now(UTC)).total_seconds())
@@ -240,7 +240,7 @@ class ExportClient:
                 self.sleep(min(60.0, 2.0 ** failures))
                 continue
             limit = r.headers.get("X-RateLimit-Limit", "")
-            if api and limit.isdigit() and 0 < int(limit) < self.budget:
+            if api and limit.isdecimal() and 0 < int(limit) < self.budget:
                 self.budget = int(limit)
             return r
 

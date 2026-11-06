@@ -209,17 +209,17 @@ def parse(prompt: str, *, max_minutes: int, tz: Callable[[], str] | None = None,
         word = unit["unit"].lower()
         messages, threads = word.startswith(("msg", "message")), word.startswith("thread")
         top = message_ceiling() if messages else THREAD_COUNT_CEILING if threads else max_minutes
-        if not (n or "").isdigit() or not 1 <= int(n) <= top:
+        if not (n or "").isdecimal() or not 1 <= int(n) <= top:
             raise HistoryFlagError(f"`--history {said}` — {usage(max_minutes)}")
         win = Window(0, last=int(n)) if messages else Window(0, threads=int(n)) if threads else Window(int(n))
         return win, rest.strip()
-    count_after = _COUNT_AFTER.match(arg) or (arg.isdigit() and _SPLIT_COUNT.match(rest))
+    count_after = _COUNT_AFTER.match(arg) or (arg.isdecimal() and _SPLIT_COUNT.match(rest))
     if count_after:
         n = re.match(r"\d+", arg).group(0)
         flag = "threads" if count_after["unit"].lower().startswith("thread") else "msgs"
         raise HistoryFlagError(f"`--history {arg}…` — put the unit first: `--history --{flag} {n}`. "
                                f"{usage(max_minutes)}")
-    if arg.isdigit():
+    if arg.isdecimal():
         if not 1 <= int(arg) <= max_minutes:
             raise HistoryFlagError(f"`--history {arg}` — {usage(max_minutes)}")
         return Window(int(arg)), rest.strip()

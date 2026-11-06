@@ -218,7 +218,7 @@ def _find(installation, inbound: services.Inbound, action: dict) -> tuple[SlackC
     """The post and button a click names — only if the click came from that very
     message, in this Slack. A button's value is a claim, and is re-checked."""
     post_id, _, index = str(action.get("value") or "").partition(":")
-    if not index.isdigit():
+    if not index.isdecimal():
         return None, 0
     try:
         post = (SlackChoicePost.objects.select_related("session__agent")

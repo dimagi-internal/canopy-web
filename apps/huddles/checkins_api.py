@@ -105,7 +105,7 @@ def _project(request: HttpRequest, slug: str, ref: str) -> AgentProject:
 
 def _checkin_or_404(project: AgentProject, name: str) -> ProjectCheckin:
     c = _qs().filter(project=project, name__iexact=name.strip()).first()
-    if c is None and name.strip().isdigit():
+    if c is None and name.strip().isdecimal():
         c = _qs().filter(project=project, pk=int(name.strip())).first()
     if c is None:
         raise HttpError(404, f"{project.name} has no check-in {name!r}")

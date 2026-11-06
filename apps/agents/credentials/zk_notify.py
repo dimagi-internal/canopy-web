@@ -114,15 +114,15 @@ def sweep(now=None) -> int:
         # A person who started over with a new key waits for a PERSON: no keeper grants
         # a changed key (it is what a swapped one looks like), so tell the holders now.
         restarted = dict(UserVaultKeyset.objects.filter(
-            user_id__in=[int(tg) for (k, tg) in pending if k == "member" and tg.isdigit()],
+            user_id__in=[int(tg) for (k, tg) in pending if k == "member" and tg.isdecimal()],
             replaced_at__isnull=False).values_list("user_id", "replaced_at"))
-        waiting_people = {int(tg) for (k, tg) in pending if k == "member" and tg.isdigit()}
+        waiting_people = {int(tg) for (k, tg) in pending if k == "member" and tg.isdecimal()}
         for (kind, target), t in pending.items():
             notice, _ = ZkGrantNotice.objects.get_or_create(
                 **w.where, kind=kind, target=target, kv=w.kv,
                 defaults={"first_seen_at": now, "label": _label(t)[:300]},
             )
-            new_key = restarted.get(int(target)) if kind == "member" and target.isdigit() else None
+            new_key = restarted.get(int(target)) if kind == "member" and target.isdecimal() else None
             if notice.notified_at or notice.cleared_at or (new_key is None and now - notice.first_seen_at < GRACE):
                 continue
             if kind == "member":

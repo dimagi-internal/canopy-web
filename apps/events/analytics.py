@@ -195,7 +195,7 @@ def _contacts_who_are_known(contact_ids: set[str]) -> dict[str, str]:
     from apps.contacts.models import Contact
     from apps.inbound.models import InboundMailbox
 
-    rows = list(Contact.objects.filter(pk__in=[int(i) for i in contact_ids if i.isdigit()])
+    rows = list(Contact.objects.filter(pk__in=[int(i) for i in contact_ids if i.isdecimal()])
                 .values_list("pk", "email", "user_id"))
     emails = {str(pk): (email or "").lower() for pk, email, _ in rows if email}
     wanted = set(emails.values())
@@ -298,9 +298,9 @@ def network(workspace_slugs: list[str], *, viewer, days: int = 30, now=None) -> 
         if t["agent"]:
             ids["agent"].add(t["agent"])
     users = {str(u.pk): (u.get_full_name() or u.email or u.get_username())
-             for u in get_user_model().objects.filter(pk__in=[int(i) for i in ids["person"] if i.isdigit()])}
+             for u in get_user_model().objects.filter(pk__in=[int(i) for i in ids["person"] if i.isdecimal()])}
     contacts = {str(pk): (name or email or f"{source} contact") for pk, name, email, source in (
-        Contact.objects.filter(pk__in=[int(i) for i in ids["contact"] if str(i).isdigit()])
+        Contact.objects.filter(pk__in=[int(i) for i in ids["contact"] if str(i).isdecimal()])
         .values_list("pk", "display_name", "email", "source"))}
     agents = {slug: (name, ws) for slug, name, ws in Agent.objects.filter(slug__in=ids["agent"])
               .values_list("slug", "name", "workspace_id")}

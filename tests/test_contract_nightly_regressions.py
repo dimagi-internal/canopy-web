@@ -107,6 +107,17 @@ def test_a_task_raised_by_a_turn_that_does_not_exist_is_a_422_not_a_500(client):
     assert r.status_code == 422, r.content
 
 
+@pytest.mark.parametrize("query", ["priority=%C2%B3", "priority=1,%C2%B3", "milestone=%C2%B2"])
+def test_a_superscript_digit_in_a_task_filter_is_not_a_500(client, query):
+    # "³".isdigit() is True but int("³") raises: the count badge used to 500.
+    user = User.objects.get(username="fuzz")
+    ws = Workspace.objects.create(slug="fuzz", display_name="Fuzz", created_by=user)
+    WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.OWNER)
+    for path in ("/api/tasks/count/", "/api/tasks/"):
+        r = client.get(f"{path}?{query}")
+        assert r.status_code == 200, (path, r.content)
+
+
 @override_settings(VAPID_PUBLIC_KEY="", VAPID_PRIVATE_KEY="")
 def test_push_without_keys_says_so_with_a_503(client):
     # Unconfigured push is the deployment's state, not a fault: 503, as designed.
