@@ -1757,3 +1757,117 @@ def test_someone_outside_the_vault_vouches_for_nothing(fleet):
     res = c.post(f"{ZK}/endorsements", content_type="application/json",
                  data={"endorsements": [_endorse_device(fleet, key, ecdh, priv, ed)]})
     assert res.status_code == 403, res.content
+
+
+# ---- a person confirms their own box for a zk workspace vault (DIM-SA-W175) -----------------
+# gshubdesk: owned by its person, zk_kv 0 (values already readable, so no Give access and no
+# agent vault key), served by the Shared workspace vault. Neither agent-vault list named the
+# box, approving it signed nothing, and Shared's keepers skipped it forever.
+
+def _owners_own_box(fleet, name="isma-box"):
+    from apps.agents.models import Vault
+
+    _keyless(fleet)                                   # eva: kv 0, nothing stored
+    vid, binding, vk = _ws_enabled(fleet, {"gog-oauth-client-web": "x"})
+    box = Runner.objects.create(name=name, kind=Runner.COMPUTER, owner=fleet.user, private=True,
+                                status=Runner.ONLINE, workspace=fleet.ws, last_heartbeat_at=timezone.now(),
+                                capabilities={})
+    RunnerAssignment.objects.create(agent=fleet.agent, runner=box, rank=0)
+    ecdh = ec.generate_private_key(ec.SECP256R1())
+    key = _register(fleet, ec.generate_private_key(ec.SECP256R1()), ecdh, runner=box)
+    return Vault.objects.get(pk=vid), binding, vk, box, key, ecdh
+
+
+def _vouch_row(fleet, box):
+    [row] = fleet.client.get(f"/api/runner-device-keys/?runner={box.pk}").json()
+    return row
+
+
+def test_an_owner_approving_their_own_box_for_a_kv0_agent_signs_it_and_a_keeper_grants_it(fleet):
+    from apps.agents.credentials import zk_endorse
+
+    vault, binding, vk, box, key, ecdh = _owners_own_box(fleet)
+    assert fleet.agent.is_admin(fleet.user)
+    # The approve screen (key still pending) already names the agent to sign under, so the
+    # approval touch signs it — approveAndGrant no longer returns early.
+    row = _vouch_row(fleet, box)
+    assert row["status"] == "pending" and row["zk_vouch_agents"] == [{"slug": "eva", "agent_id": _aid(fleet)}]
+    res = fleet.client.post(f"/api/runner-device-keys/{key.pk}/approve")
+    assert res.status_code == 200 and res.json()["zk_vouch_agents"] == [{"slug": "eva", "agent_id": _aid(fleet)}]
+    key.refresh_from_db()
+
+    # The person's own signature, under the kv-0 agent.
+    res = fleet.client.post(f"{ZK}/endorsements", content_type="application/json",
+                            data={"endorsements": [_endorse_device(fleet, key, ecdh, fleet.member_priv, fleet.user)]})
+    assert res.status_code == 200 and res.json() == {"stored": 1}, res.content
+    assert _vouch_row(fleet, box)["zk_vouch_agents"] == []      # nothing more to confirm
+
+    # One keeper pass: Shared's work lists the box AND a verifiable signature for it, and the
+    # keeper's wrap is accepted.
+    work = fleet.client.get(_keeper_url(fleet)).json()["agents"]
+    w = next(x for x in work if x.get("vault_id") == str(vault.pk))
+    assert ("device", str(key.pk)) in {(p["kind"], p["target"]) for p in w["pending"]}
+    [e] = [e for e in w["endorsements"] if e["target"] == key.ecdh_jkt]
+    assert e["by"] == str(fleet.user.pk) and e["agent_id"] == _aid(fleet)
+    assert zk_endorse.verify(e["agent_id"], kind="device", target=key.ecdh_jkt, key_jkt=key.ecdh_jkt,
+                             sig=e["sig"], endorser_jwk=e["by_public_jwk"])
+    wrap = ref.wrap_ecdh_es(vk, ecdh.public_key(), ref.device_info(binding, 1, key.ecdh_jkt),
+                            ec.generate_private_key(ec.SECP256R1()), os.urandom(12))
+    res = fleet.client.post(w["grant_path"], content_type="application/json",
+                            data={"kv": 1, "wraps": [{"kind": "device", "target": str(key.pk), "wrap": wrap}]})
+    assert res.status_code == 200 and res.json() == {"granted": 1}, res.content
+    assert _vouch_row(fleet, box)["zk_vouch_agents"] == []      # it holds the key now
+
+
+def test_a_box_approved_before_this_is_offered_confirm_access(fleet):
+    # The five boxes stuck on Shared were approved long ago: their row offers Confirm access now.
+    vault, binding, vk, box, key, ecdh = _owners_own_box(fleet)
+    assert fleet.client.post(f"/api/runner-device-keys/{key.pk}/approve").status_code == 200
+    row = _vouch_row(fleet, box)
+    assert row["status"] == "active" and row["zk_vouch_agents"] == [{"slug": "eva", "agent_id": _aid(fleet)}]
+
+
+def test_a_box_whose_person_is_in_no_served_agents_vault_is_offered_nothing(fleet):
+    # Nobody can sign it: no Confirm access that would fail. The vault's admin gives it access.
+    vault, binding, vk, box, key, ecdh = _owners_own_box(fleet, "orphan-box")
+    assert fleet.client.post(f"/api/runner-device-keys/{key.pk}/approve").status_code == 200
+    _leave_the_vault(fleet)
+    assert _vouch_row(fleet, box)["zk_vouch_agents"] == []
+
+
+def test_someone_elses_box_is_not_theirs_to_confirm(fleet):
+    from apps.agents.credentials import workspace_vouch
+
+    vault, binding, vk, box, key, ecdh = _owners_own_box(fleet)
+    other = get_user_model().objects.create_user(username="nb", email="nb@dimagi.com")
+    assert workspace_vouch.agents_to_sign_under(fleet.user.pk, key) != []
+    assert workspace_vouch.agents_to_sign_under(other.pk, key) == []
+
+
+def test_the_workspace_vouch_reads_once_per_request_not_per_key(fleet):
+    # The listing asks this of every key: after the first, another key costs at most the
+    # one endorsement read, however many workspace vaults and agents there are.
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    from apps.agents.credentials import workspace_vouch
+    from apps.harness import device_keys
+
+    vault, binding, vk, box, key, ecdh = _owners_own_box(fleet)
+    key2 = _register(fleet, ec.generate_private_key(ec.SECP256R1()), ec.generate_private_key(ec.SECP256R1()),
+                     runner=_second_box(fleet))
+    # As the listing reads it (`list_runner_device_keys`).
+    key2 = RunnerDeviceKey.objects.select_related("runner__owner", "approved_by").get(pk=key2.pk)
+    facts = device_keys.serving_facts(list(Agent.objects.select_related("workspace", "owner")))
+    assert [a.slug for a in workspace_vouch.agents_to_sign_under(fleet.user.pk, key, facts)] == ["eva"]
+    with CaptureQueriesContext(connection) as q:
+        assert [a.slug for a in workspace_vouch.agents_to_sign_under(fleet.user.pk, key2, facts)] == ["eva"]
+    assert len(q.captured_queries) <= 1, [x["sql"][:200] for x in q.captured_queries]
+
+
+def _second_box(fleet):
+    box = Runner.objects.create(name="isma-box-2", kind=Runner.COMPUTER, owner=fleet.user, private=True,
+                                status=Runner.ONLINE, workspace=fleet.ws, last_heartbeat_at=timezone.now(),
+                                capabilities={})
+    RunnerAssignment.objects.create(agent=fleet.agent, runner=box, rank=0)
+    return box

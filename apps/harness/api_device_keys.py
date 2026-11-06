@@ -229,7 +229,7 @@ def list_runner_device_keys(request: HttpRequest, runner: uuid.UUID | None = Non
         qs = RunnerDeviceKey.objects.filter(
             Q(runner__owner=request.user) | Q(runner_id__in=admin_of),
         ).exclude(runner__status=Runner.RETIRED)
-    qs = qs.select_related("runner", "approved_by").order_by("-created_at")
+    qs = qs.select_related("runner__owner", "approved_by").order_by("-created_at")
     # Read once for every key in the list: the agents, and the fleet's facts about which
     # box serves which (each helper below used to rebuild them per key and agent).
     everyone = list(Agent.objects.select_related("workspace", "owner"))

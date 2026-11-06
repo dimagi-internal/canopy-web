@@ -183,6 +183,26 @@ describe('approve = wrap', () => {
     expect(items[0]).toMatchObject({ kind: 'device', target: device.jkt, key_jkt: device.jkt })
   })
 
+  it('a box the listing named nothing for still gets its person\'s signature when the approved key lists one', async () => {
+    // DIM-SA-W175: it runs only a kv-0 agent its person owns, under a zk workspace vault.
+    // The pre-approval listing named nothing; the approved key names the agent to sign under.
+    const me = await principal(), device = await principal()
+    const prfOut = zk.randomBytes(32)
+    const seal = await zk.sealUserKey(me.scalar, USER, 'cred-1', prfOut)
+    api.getKeyset.mockResolvedValue({ user_id: USER, exists: true, public_jwk: me.publicJwk, prf_input: 'cHJm',
+                                      seals: [seal], passkeys: [] })
+    prf.assertWithPrf.mockResolvedValue({ cred: 'cred-1', prf: prfOut })
+    approveRunnerDeviceKey.mockResolvedValue({ id: 'dk1', status: 'active', zk_pending_agents: [],
+      zk_vouch_agents: [{ slug: 'gshubdesk', agent_id: AGENT_ID }],
+      ecdh_jkt: device.jkt, ecdh_public_jwk: device.publicJwk })
+    api.addZkEndorsements.mockResolvedValue({ stored: 1 })
+    const out = await ops.approveAndGrant('dk1', [], vi.fn())
+    expect(out.vouched).toEqual(['gshubdesk'])
+    const [slug, items] = api.addZkEndorsements.mock.calls[0]
+    expect(slug).toBe('gshubdesk')
+    expect(items[0]).toMatchObject({ kind: 'device', target: device.jkt, key_jkt: device.jkt })
+  })
+
   it('a key no zero-knowledge agent waits on is just approved', async () => {
     approveRunnerDeviceKey.mockResolvedValue({ id: 'dk1', status: 'active', zk_pending_agents: [] })
     const out = await ops.approveAndGrant('dk1', [], vi.fn())
