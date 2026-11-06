@@ -1,7 +1,7 @@
 """Read-anomaly alerts on an agent's secrets (Canopy Vault Phase 1b, canopy-web#1549).
 
 When an agent resolves its secrets from canopy-web, `/credentials/resolve` is
-the only way to their values, so it is where a misuse shows. Four things are
+the only way to their values, so it is where a misuse shows. Three things are
 worth a person's attention, and each is told to the agent's OWNER (or, with no
 owner, its explicit admins) the way canopy tells an admin about an access
 request: an email and a Web Push, each linking to the agent's Credentials.
@@ -21,10 +21,10 @@ request: an email and a Web Push, each linking to the agent's Credentials.
   its own scheduled credential refresh, also expected without a turn. The owner's
   own token proved by their own laptop's device key is the owner opening a
   session there — an `admin` read, not a box (2026-10-18).
-* `undeclared-ref` — a read that asks for, or is handed, a ref the agent does not
-  declare: not among its declared secrets on canopy-web (`runtime_secrets`, written by
-  `canopy agent vault` — the vault is the one declaration since 2026-10-22)
-  nor supplied by a layered workspace vault.
+* `undeclared-ref` — retired 2026-11-06. It compared a read against a second list of
+  names (`Agent.runtime_secrets`) that only ever repeated what was stored, so it fired on
+  nothing but the writers that skipped that list (the Google mint, a delegated token).
+  Old rows still show; nothing raises a new one.
 * `burst` — more than CANOPY_VAULT_READ_BURST_LIMIT resolves (default 50) of one
   agent inside a 5-minute window. Counted per resolve request, not per ref: one
   unscoped resolve of ACE hands out 45 refs and is one read.
@@ -63,7 +63,6 @@ from apps.events import services as events
 from apps.push.services import send_to_user
 from apps.workspaces import links as wslinks
 
-from .. import services
 from ..models import Agent, AgentAdmin, AgentCredentialAlert
 
 logger = logging.getLogger(__name__)
@@ -82,11 +81,10 @@ def _burst_limit() -> int:
     return int(getattr(settings, "CANOPY_VAULT_READ_BURST_LIMIT", 50) or 50)
 
 
-def after_read(agent, request, *, via: str, turn_id: str, asked: set[str] | None,
+def after_read(agent, request, *, via: str, turn_id: str,
                handed: list[str], runner=None) -> list:
     """Check one SUCCESSFUL resolve. `via` is resolve's principal (`runner` or
-    `admin`), `asked` the `?refs=` scope (None when unscoped), `handed` the
-    credential refs whose values went out. Returns the alerts raised (new rows
+    `admin`), `handed` the credential refs whose values went out. Returns the alerts raised (new rows
     only)."""
     raised = []
     try:
@@ -117,19 +115,6 @@ def after_read(agent, request, *, via: str, turn_id: str, asked: set[str] | None
                     detail=f"a box{box} ({_who(user)}) read {agent.slug}'s secrets outside a turn "
                            "(no X-Canopy-Turn-Id)",
                     refs=sorted(handed)))
-        # A name a workspace vault layered under the agent holds is declared by that
-        # vault, not missing from the agent's own declaration (Jonathan, 2026-10-22: the gog OAuth
-        # clients are the same for every dimagi agent and live in the workspace vault).
-        from . import workspace_vaults  # noqa: PLC0415 — a cycle: zk imports this module, workspace_vaults imports zk
-        declared = services.declared_credential_names(agent) | workspace_vaults.layered_names(agent)
-        undeclared = sorted(((asked or set()) | set(handed)) - declared - _EXTRAS)
-        if undeclared:
-            raised.append(raise_alert(
-                agent, "undeclared-ref", user=user, runner=runner, turn_id=turn_id,
-                request=request,
-                detail=f"{_who(user)} asked for refs {agent.slug} does not declare: "
-                       + ", ".join(undeclared)[:300],
-                refs=undeclared))
         count = _count_read(agent)
         if count > _burst_limit():
             raised.append(raise_alert(
@@ -190,12 +175,6 @@ def unrouted_box_refused(agent, request, *, runner) -> None:
         }], workspace=agent.workspace)
     except Exception:  # noqa: BLE001 - must not turn a 401 into a 500
         logger.exception("unrouted-box event failed for %s", agent.slug)
-
-
-#: Names an older canopy CLI still sends that are fields, not refs an agent declares, so
-#: naming them is never "undeclared". `github_token` and `op_sa_token` were fields once;
-#: neither is ever returned now.
-_EXTRAS = {"op_sa_token", "github_token"}
 
 
 def _count_read(agent) -> int:

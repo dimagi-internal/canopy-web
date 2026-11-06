@@ -34,7 +34,6 @@ from apps.harness import device_keys
 from apps.harness.models import RunnerDeviceKey
 from apps.passkeys.models import Passkey, UserVaultKeyset
 
-from .. import services
 from ..models import Agent, AgentCredential, AgentVaultWrap, VaultKeyWrap
 from . import vault_alerts, vault_engine as engine, vault_members
 
@@ -355,14 +354,14 @@ def needs_wrap(values: dict) -> bool:
 def resolve_payload(agent, device_key, wanted: set[str] | None) -> tuple[dict, dict | None]:
     """`(values, wrap)` for a resolve by `device_key`: the ciphertexts (`zk1`
     under the vault key, or `zks1` sealed to recipients — scoped by `?refs=` to
-    the agent's declared refs) and that device's wrap at the current kv, or None
+    the names asked for) and that device's wrap at the current kv, or None
     when it has none."""
 
     # A delegated entry never rides `values`: it goes only to a machine that runs the
     # agent, in the resolve's own `delegated` field (`accounts.resolve_payload`).
     qs = AgentCredential.objects.filter(agent=agent).exclude(value_zk="").exclude(account="delegated")
     if wanted is not None:
-        qs = qs.filter(name__in=sorted(set(wanted) & services.declared_credential_names(agent)))
+        qs = qs.filter(name__in=sorted(wanted))
     values = {c.name: c.value_zk for c in qs}
     w = (AgentVaultWrap.objects.filter(agent=agent, kv=agent.zk_kv, kind="device",
                                        device_key=device_key).first() if agent.zk_kv else None)

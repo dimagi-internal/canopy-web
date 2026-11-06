@@ -129,8 +129,7 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
     """The one route that returns values, and it is not for a browser.
 
     **Scoping (`?refs=a,b`).** Without `refs` the response is everything, as it
-    always was. With `refs`, `values` holds only the named refs that the
-    agent also declares (`runtime_secrets`). `mailbox` is not a secret and is always
+    always was. With `refs`, `values` holds only the named refs that are stored. `mailbox` is not a secret and is always
     returned.
 
     **Delegated credentials** (a token a person gave the agent from their own
@@ -154,7 +153,7 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
 
     **Alerts.** The agent's owner is told
     (email + push, at most once per kind per hour) of a box read (`via`
-    runner) with no `X-Canopy-Turn-Id`, a read of an undeclared ref, a burst of
+    runner) with no `X-Canopy-Turn-Id`, a burst of
     reads, or a refusal for a bad or missing device proof.
 
     **Read log.** Every ref handed out is recorded with the caller, the runner
@@ -264,7 +263,7 @@ def agent_device_keys(request: HttpRequest, slug: str):
 @gate("agent-admin")  # read-anomaly alerts; never a value
 def agent_credential_alerts(request: HttpRequest, slug: str, limit: int = 50):
     """Canopy Vault (canopy-web#1549), newest first: reads with no turn id by
-    someone not the owner or an admin, reads of undeclared refs, bursts, and
+    someone not the owner or an admin, bursts, and
     resolves refused for a bad or missing device proof. At most one per kind
     per hour (`occurrences` counts the rest). The agent's owner or an admin."""
 
