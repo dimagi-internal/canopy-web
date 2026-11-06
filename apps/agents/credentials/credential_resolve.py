@@ -360,7 +360,7 @@ def _record_read(request: HttpRequest, agent, *, via: str, runner, wanted, value
     except Exception:  # noqa: BLE001 - a log hiccup must not deny a runner its secrets
         logger.exception("credential read log failed for %s", agent.slug)
     # Never raises (canopy-web#1549): an alert hiccup must not deny a runner either.
-    vault_alerts.after_read(agent, request, via=via, turn_id=turn_id, asked=wanted,
+    vault_alerts.after_read(agent, request, via=via, turn_id=turn_id,
                             handed=list(values), runner=runner)
     try:
         events.record(

@@ -80,14 +80,14 @@ def test_unscoped_resolve_is_unchanged(fleet):
     assert "op_sa_token" not in body and "op_vault" not in body
 
 
-def test_refs_returns_only_named_and_declared(fleet):
+def test_refs_returns_only_the_named_stored_refs(fleet):
     _put(fleet["client"], {"canopy-pat": "a", "gog-token": "b", "nova-api-key": "n"})
-    # Stored without the API (which declares what an admin stores): an orphan.
+    # Stored without the API (which declares what an admin stores): declaration is no gate,
+    # so it is handed out by name like any stored ref. `gog-token` was not asked for and
+    # `not-stored` holds nothing.
     services.set_agent_credentials(Agent.objects.get(slug="eva"), {"undeclared": "c"})
-    body = _resolve(fleet, "?refs=canopy-pat,undeclared,nova-api-key").json()
-    # `undeclared` is stored but not declared: never handed out by name.
-    # `nova-api-key` is declared through runtime_sources.
-    assert set(body["values"]) == {"canopy-pat", "nova-api-key"}
+    body = _resolve(fleet, "?refs=canopy-pat,undeclared,nova-api-key,not-stored").json()
+    assert set(body["values"]) == {"canopy-pat", "undeclared", "nova-api-key"}
     assert "op_sa_token" not in body and "op_vault" not in body
 
 

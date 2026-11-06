@@ -33,9 +33,6 @@ from apps.agents.models import (
     AgentCredentialAlert,
     AgentCredentialRead,
     AgentPatRotation,
-    Vault,
-    VaultAttachment,
-    VaultSecret,
 )
 from apps.harness import aws_iam_proof
 from apps.harness.models import Runner, RunnerAssignment, RunnerDeviceKey
@@ -550,32 +547,14 @@ def test_an_admin_resolving_by_hand_without_a_turn_is_expected(proven_box, fleet
     assert _alerts("no-turn") == []
 
 
-def test_asking_for_an_undeclared_ref_alerts(proven_box, fleet):
-    res = _resolve(fleet, path=RESOLVE + "?refs=CANOPY_WEB_PAT,aws-root-key")
-    assert res.status_code == 200 and "aws-root-key" not in res.json()["values"]
-    [alert] = _alerts("undeclared-ref")
-    assert alert.refs == ["aws-root-key"]
-
-
-def test_an_unscoped_read_of_a_stored_orphan_alerts(proven_box, fleet):
+def test_reading_a_stored_ref_the_agent_does_not_declare_raises_no_alert(proven_box, fleet):
+    """Declaration is no gate on a read (`undeclared-ref` is retired). A name stored by a writer
+    that never declares it (the Google mint's `gog-token`, a delegated token) is read like any
+    other, scoped or not, without an alert."""
     AgentCredential.objects.create(agent=fleet["agent"], name="old-secret", value_zk="zks1:x", kv=0)
-    _resolve(fleet)
-    assert _alerts("undeclared-ref")[0].refs == ["old-secret"]
-
-
-def test_a_name_a_workspace_vault_supplies_is_not_undeclared(proven_box, fleet):
-    """The fleet's gog OAuth clients live in the workspace vault, not in each
-    agent's declaration; asking for one is not an undeclared read."""
-    v = Vault.objects.create(workspace=fleet["ws"], kind=Vault.WORKSPACE, name="Shared", kv=1)
-    VaultAttachment.objects.create(vault=v, workspace=fleet["ws"])
-    VaultSecret.objects.create(vault=v, name="gog-oauth-client-web", value_zk="zk1:x", kv=1)
-    _resolve(fleet, path=RESOLVE + "?refs=CANOPY_WEB_PAT,gog-oauth-client-web,aws-root-key")
-    [alert] = _alerts("undeclared-ref")
-    assert alert.refs == ["aws-root-key"]
-
-
-def test_naming_a_resolve_extra_is_not_undeclared(proven_box, fleet):
-    _resolve(fleet, path=RESOLVE + "?refs=CANOPY_WEB_PAT,github_token")
+    scoped = _resolve(fleet, path=RESOLVE + "?refs=old-secret,not-stored")
+    assert scoped.status_code == 200 and "old-secret" in scoped.json()["values"]
+    assert _resolve(fleet).status_code == 200
     assert _alerts("undeclared-ref") == []
 
 
