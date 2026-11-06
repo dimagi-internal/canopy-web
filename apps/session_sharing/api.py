@@ -20,7 +20,7 @@ from ninja import File, Form, Router, Status
 from ninja.files import UploadedFile
 
 from apps.api.auth import session_auth
-from apps.api.errors import TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
+from apps.api.errors import TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError, refusals
 from apps.api.route_gates import gate
 from apps.workspaces import links as wslinks
 from apps.workspaces import permissions as perms
@@ -145,7 +145,7 @@ def _get_owned_or_403(request: HttpRequest, slug: str) -> Session:
 
 @router.post(
     "/upload",
-    response={201: SessionUploadOut},
+    response={201: SessionUploadOut, **refusals(422)},
     summary="Upload a Claude .jsonl transcript (multipart)",
 )
 @gate("self", kind="content")
@@ -157,8 +157,10 @@ def upload_session(
     visibility: SessionVisibility = Form("link"),
     started_at: str = Form(""),
     ended_at: str = Form(""),
-    active_seconds: int = Form(0),
+    active_seconds: int = Form(0, le=2**31 - 1),  # an IntegerField
 ) -> Status:
+    """A `file` whose records are not shaped like a Claude transcript, or a
+    `started_at`/`ended_at` that is not a real time, is a 422."""
     if file.size > MAX_UPLOAD_BYTES:
         raise ProblemError(
             413,
@@ -168,8 +170,11 @@ def upload_session(
 
     # When the session actually ran + how long it actively took (the uploader
     # reads these from the raw transcript; the reduced upload has no timestamps).
-    started_dt = parse_datetime(started_at) if started_at else None
-    ended_dt = parse_datetime(ended_at) if ended_at else None
+    try:
+        started_dt = parse_datetime(started_at) if started_at else None
+        ended_dt = parse_datetime(ended_at) if ended_at else None
+    except ValueError as exc:  # well formed but not a real time (month 13)
+        raise ProblemError(422, "Invalid time", type_=TYPE_VALIDATION, detail=str(exc)) from exc
     active_secs = active_seconds if active_seconds > 0 else None
 
     with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False) as tmp:
@@ -178,6 +183,9 @@ def upload_session(
         tmp_path = Path(tmp.name)
     try:
         parsed = parse_session_file(tmp_path)
+    except (AttributeError, TypeError) as exc:  # a record whose fields have the wrong shape
+        raise ProblemError(422, "Not a Claude transcript", type_=TYPE_VALIDATION,
+                           detail="a line of the file is not shaped like a Claude .jsonl record") from exc
     finally:
         tmp_path.unlink(missing_ok=True)
 
@@ -398,11 +406,12 @@ def _get_owned_arc_or_403(request: HttpRequest, slug: str) -> SessionArc:
 
 @router.post(
     "/arcs",
-    response={201: ArcCreateOut},
+    response={201: ArcCreateOut, **refusals(422)},
     summary="Create an arc from owned sessions (ordered)",
 )
 @gate("self", kind="content")  # only own sessions
 def create_arc(request: HttpRequest, payload: ArcCreateIn) -> Status:
+    """`items` are your own sessions, each at most once (a repeat is a 422)."""
     slugs = [it.session_slug for it in payload.items]
     if len(set(slugs)) != len(slugs):
         raise ProblemError(

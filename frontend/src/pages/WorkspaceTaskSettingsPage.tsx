@@ -19,7 +19,7 @@ import {
   type TaskSettings,
 } from '@/api/work'
 import { LabelChip } from '@/components/work/bits'
-import { DEFAULT_CATEGORY_NAMES, LABEL_COLORS, type Category } from '@/components/work/meta'
+import { DEFAULT_CATEGORY_NAMES, LABEL_COLORS, type Category, type LabelColor } from '@/components/work/meta'
 import { invalidateDirectory } from '@/components/work/useDirectory'
 import { roleAllows } from '@/lib/workspaceRoles'
 import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
@@ -193,7 +193,7 @@ export function WorkspaceTaskSettingsPage(): JSX.Element {
 function Labels({ slug, canEdit }: { slug: string; canEdit: boolean }): JSX.Element {
   const [labels, setLabels] = useState<Label[] | null>(null)
   const [draft, setDraft] = useState('')
-  const [color, setColor] = useState<string>('muted')
+  const [color, setColor] = useState<LabelColor>('muted')
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(() => {
@@ -346,7 +346,15 @@ function LabelRow({
   )
 }
 
-function ColorPicker({ value, onChange, label }: { value: string; onChange: (c: string) => void; label: string }): JSX.Element {
+function ColorPicker({
+  value,
+  onChange,
+  label,
+}: {
+  value: string
+  onChange: (c: LabelColor) => void
+  label: string
+}): JSX.Element {
   return (
     <span role="radiogroup" aria-label={label} className="inline-flex items-center gap-1">
       {LABEL_COLORS.map((c) => (

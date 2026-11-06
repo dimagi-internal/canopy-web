@@ -170,7 +170,7 @@ def transfer_all(request: HttpRequest, payload: TransferAllIn):
     rows = (_filtered_sessions(request, state="active")
             .filter(runner_binding__runner=source).order_by("created_at"))
     if payload.session_ids:
-        rows = rows.filter(pk__in=[_uuid_or_422(x) for x in payload.session_ids])
+        rows = rows.filter(pk__in=payload.session_ids)
     results = []
     for session in rows:
         key = session.runner_binding.session_key if session.runner_binding else ""
@@ -206,11 +206,6 @@ def transfer_all(request: HttpRequest, payload: TransferAllIn):
     return {"from_runner": source.name, "to_runner": target.name, "results": results}
 
 
-def _uuid_or_422(value: str) -> uuid.UUID:
-    try:
-        return uuid.UUID(str(value))
-    except ValueError:
-        raise HttpError(422, f"not a session id: {value!r}")
 
 
 @router.post(

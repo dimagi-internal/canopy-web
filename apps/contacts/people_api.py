@@ -25,7 +25,7 @@ from ninja import Router
 from apps.agents import access as agent_access
 from apps.agents.models import Agent, PreferredAgent
 from apps.api.auth import session_auth
-from apps.api.errors import TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
+from apps.api.errors import TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError, refusals
 from apps.api.route_gates import gate
 from apps.embedding import defaults as agent_defaults
 from apps.workspaces import services as wsvc
@@ -220,13 +220,15 @@ def _the_person_themself(request: HttpRequest) -> Person:
     return person
 
 
-@router.post("/me/addresses/", response={201: PersonAddressOut},
+@router.post("/me/addresses/", response={201: PersonAddressOut, **refusals(400)},
              summary="Add a way to reach you")
 @gate("self", kind="person-data")  # only the person: never an agent's login or a caller token
 def add_my_address(request: HttpRequest, payload: PersonAddressIn):
     """Add a labelled email or phone of yours (`kind` email | phone, `label`
     such as work or personal). Everyone who shares a workspace with you, and
-    its agents, can read it. The same kind and value again relabels it."""
+    its agents, can read it. The same kind and value again relabels it.
+    A request it cannot act on (no workspace named, a value of the wrong form)
+    is a 400 naming what is wrong."""
     person = _the_person_themself(request)
     try:
         row = people.add_address(person=person, kind=payload.kind, label=payload.label,
@@ -376,7 +378,7 @@ def set_my_session_memory(request: HttpRequest, session_id: str,
     return session_memory_payload(person, session)
 
 
-@router.post("/me/sessions/{session_id}/agent-grants/", response=SessionMemoryOut,
+@router.post("/me/sessions/{session_id}/agent-grants/", response={200: SessionMemoryOut, **refusals(400)},
              summary="Grant this session's agent access to what it learns about you")
 @gate("self", setting=True)  # The person granting their session's agent (HCP 4.1.6) — only the person, never an agent.
 def grant_my_session_agent(request: HttpRequest, session_id: str, payload: AgentGrantIn) -> dict:
@@ -386,7 +388,9 @@ def grant_my_session_agent(request: HttpRequest, session_id: str, payload: Agent
     session ends or after `session_grant_hours`) or always for that agent
     (`duration=always`, until you revoke it on /people/me). Only features you
     made available can be granted. Granting one that is off by default also turns
-    it on for this session. Only you can do this."""
+    it on for this session. Only you can do this.
+    A request it cannot act on (no workspace named, a value of the wrong form)
+    is a 400 naming what is wrong."""
     person = _the_person_themself(request)
     session = _my_session(request, session_id)
     agent = getattr(session, "agent", None)
@@ -407,7 +411,7 @@ def grant_my_session_agent(request: HttpRequest, session_id: str, payload: Agent
     return session_memory_payload(person, session)
 
 
-@router.get("/coverage/", response=PeopleCoverageOut,
+@router.get("/coverage/", response={200: PeopleCoverageOut, **refusals(400)},
             summary="Is the people brain working? Per-agent coverage")
 @gate("member", "agent-admin")  # counts only; a non-member agent admin sees just their agents
 def people_coverage(request: HttpRequest, workspace: str | None = None, days: int = 7) -> dict:
@@ -418,7 +422,9 @@ def people_coverage(request: HttpRequest, workspace: str | None = None, days: in
 
     Counts only: no person is named. Members of the workspace see every agent;
     an admin of one of its agents who is not a member sees only the agents they
-    administer."""
+    administer.
+    A request it cannot act on (no workspace named, a value of the wrong form)
+    is a 400 naming what is wrong."""
     from apps.agents.models import Agent
     from apps.workspaces.models import Workspace
 
@@ -444,7 +450,7 @@ def people_coverage(request: HttpRequest, workspace: str | None = None, days: in
     return coverage.workspace_coverage(ws.pk, days=days, agents=agents)
 
 
-@router.get("/addresses/", response=WorkspaceAddressesOut,
+@router.get("/addresses/", response={200: WorkspaceAddressesOut, **refusals(400)},
             summary="Every member's other addresses, as one workspace sees them")
 @gate("member")  # every human member of `?workspace=`; each person whose addresses are returned gets a logged read
 def list_workspace_addresses(request: HttpRequest, workspace: str | None = None) -> dict:
@@ -452,7 +458,9 @@ def list_workspace_addresses(request: HttpRequest, workspace: str | None = None)
     accounts) with their labelled emails and phones — how an agent finds, say,
     every family member's work email in one read. `may_edit` is true only on
     your own row: a person changes their own, at `POST /api/people/me/addresses/`.
-    Members of that workspace only."""
+    Members of that workspace only.
+    A request it cannot act on (no workspace named, a value of the wrong form)
+    is a 400 naming what is wrong."""
     ws = _workspace(request, workspace)
     reader_agent = people.agent_of_login(request.user)
     users = [m.user for m in wsvc.effective_memberships(ws) if people.is_human_account(m.user)]
@@ -476,11 +484,13 @@ def list_workspace_addresses(request: HttpRequest, workspace: str | None = None)
     return {"workspace": ws.pk, "people": out}
 
 
-@router.get("/lookup/", response=PersonRefOut, summary="Find a person by email")
+@router.get("/lookup/", response={200: PersonRefOut, **refusals(400)}, summary="Find a person by email")
 @gate("member")  # 404 unless known in one of the caller's workspaces
 def lookup_person(request: HttpRequest, email: str, workspace: str | None = None) -> dict:
     """The person an address names — only if a workspace you are a member of
-    deals with them (`?workspace=` narrows to one), else 404. Creates nothing."""
+    deals with them (`?workspace=` narrows to one), else 404. Creates nothing.
+    A request it cannot act on (no workspace named, a value of the wrong form)
+    is a 400 naming what is wrong."""
     person = people.by_email(email)
     if person is None:
         raise _not_found()
@@ -494,11 +504,13 @@ def lookup_person(request: HttpRequest, email: str, workspace: str | None = None
     return _ref(person)
 
 
-@router.get("/{person_id}/", response=PersonOut, summary="A person, as one workspace knows them")
+@router.get("/{person_id}/", response={200: PersonOut, **refusals(400)}, summary="A person, as one workspace knows them")
 @gate("member")  # read logged as PersonAccess(via=api)
 def get_person(request: HttpRequest, person_id: int, workspace: str | None = None) -> dict:
     """Live facts (corrections first) for `?workspace=`. Members
-    of that workspace only, and the read is logged where the person can see it."""
+    of that workspace only, and the read is logged where the person can see it.
+    A request it cannot act on (no workspace named, a value of the wrong form)
+    is a 400 naming what is wrong."""
     ws = _workspace(request, workspace)
     if people.agent_of_login(request.user) is not None:
         # HCP 3.1: an agent never bulk-reads a person. It recalls what is
@@ -516,13 +528,15 @@ def get_person(request: HttpRequest, person_id: int, workspace: str | None = Non
     }
 
 
-@router.get("/{person_id}/projects/", response=PersonProjectsOut,
+@router.get("/{person_id}/projects/", response={200: PersonProjectsOut, **refusals(400)},
             summary="The projects a person takes part in, in one workspace")
 @gate("member")  # same gate as get_person (known_in); read logged
 def list_person_projects(request: HttpRequest, person_id: int, workspace: str | None = None) -> dict:
     """The projects of `?workspace=`'s agents this person is a participant of —
     most recently active first, archived included. Members of that workspace
-    only, and the read is logged where the person can see it."""
+    only, and the read is logged where the person can see it.
+    A request it cannot act on (no workspace named, a value of the wrong form)
+    is a 400 naming what is wrong."""
     from apps.agents import participants
 
     ws = _workspace(request, workspace)
@@ -536,14 +550,16 @@ def list_person_projects(request: HttpRequest, person_id: int, workspace: str | 
          "source": r.source, "since": _iso(r.created_at)} for r in rows]}
 
 
-@router.get("/{person_id}/addresses/", response=PersonAddressesOut,
+@router.get("/{person_id}/addresses/", response={200: PersonAddressesOut, **refusals(400)},
             summary="Every other way to reach a person")
 @gate("member")  # same gate as get_person (known_in), agents included; read logged
 def list_person_addresses(request: HttpRequest, person_id: int, workspace: str | None = None) -> dict:
     """The person's labelled emails and phones (work, personal …), beyond
     the address that identifies them. Anyone who shares `?workspace=` with
     them, an agent's login included — the person declared these, an agent did
-    not learn them — and the read is logged where the person can see it."""
+    not learn them — and the read is logged where the person can see it.
+    A request it cannot act on (no workspace named, a value of the wrong form)
+    is a 400 naming what is wrong."""
     ws = _workspace(request, workspace)
     person = _person_in(person_id, ws)
     people.log_access(person, via=PersonAccess.VIA_API, workspace_slug=ws.pk,
@@ -552,7 +568,7 @@ def list_person_addresses(request: HttpRequest, person_id: int, workspace: str |
             "addresses": [people.address_dict(a) for a in people.addresses_of(person)]}
 
 
-@router.post("/{person_id}/facts/", response={201: PersonFactCreatedOut},
+@router.post("/{person_id}/facts/", response={201: PersonFactCreatedOut, **refusals(400)},
              summary="Remember something about a person")
 @gate(
     "member",
@@ -566,7 +582,9 @@ def add_person_fact(request: HttpRequest, person_id: int, payload: PersonFactIn)
     """Append a work-context fact (`kind` is closed: anything outside role,
     project, instance, preference, correction, terminology is a 400). With
     `supersedes_id`, that fact (same person, same workspace) stops being live.
-    Asserted by the calling agent when you are an agent's login, else by you."""
+    Asserted by the calling agent when you are an agent's login, else by you.
+    A request it cannot act on (no workspace named, a value of the wrong form)
+    is a 400 naming what is wrong."""
     from apps.agents.models import AgentProject
     from apps.harness.models import Turn
 
@@ -629,7 +647,7 @@ def retract_person_fact(request: HttpRequest, person_id: int, fact_id: int) -> d
     return {**people.fact_dict(fact), "supersedes_id": fact.supersedes_id}
 
 
-@router.get("/{person_id}/conversations/", response=PersonConversationsOut,
+@router.get("/{person_id}/conversations/", response={200: PersonConversationsOut, **refusals(400)},
             summary="The conversations a person had with one agent")
 @gate("agent-admin")  # or the agent's OWN login; an admin gets only turns turn_access already shows them
 def list_person_conversations(request: HttpRequest, person_id: int, agent: str,
@@ -640,7 +658,9 @@ def list_person_conversations(request: HttpRequest, person_id: int, agent: str,
     Only for that agent's OWN login, or an admin of that agent — "an agent may
     recall conversations it was party to". It widens no other visibility: not
     another agent, not a workspace member, and an admin who is not the agent's
-    login sees only the turns the turn ACL already lets them read."""
+    login sees only the turns the turn ACL already lets them read.
+    A request it cannot act on (no workspace named, a value of the wrong form)
+    is a 400 naming what is wrong."""
     from apps.agents.models import Agent
 
     target = Agent.objects.filter(slug=agent).select_related("workspace").first()
@@ -777,7 +797,7 @@ def _with_text(person: Person, rows: list[dict]) -> list[dict]:
     return out
 
 
-@router.get("/me/memory-searches/", response=SearchHistoryOut,
+@router.get("/me/memory-searches/", response={200: SearchHistoryOut, **refusals(400)},
             summary="Every search agents ran over your memory, as it ran")
 @gate("self")  # Every search agents ran over your memory, as it ran — only the person.
 def list_my_memory_searches(request: HttpRequest, before: str | None = None, limit: int = 30) -> dict:
@@ -785,7 +805,9 @@ def list_my_memory_searches(request: HttpRequest, before: str | None = None, lim
     the question, and every entry it scored — what came back, in what place,
     and why; what was left out and why not — with the settings at that moment.
     Searches from before scores were kept (`scored` false) show what came back
-    only. Entry text is what the entry says now."""
+    only. Entry text is what the entry says now.
+    A request it cannot act on (no workspace named, a value of the wrong form)
+    is a 400 naming what is wrong."""
     return _searches(_the_person_themself(request), before, limit)
 
 
@@ -1143,11 +1165,13 @@ def get_memory_page(request: HttpRequest, person_id: int) -> dict:
             "collections": _collections(person)}
 
 
-@router.get("/{person_id}/page/audit/", response=MemoryPageAuditOut,
+@router.get("/{person_id}/page/audit/", response={200: MemoryPageAuditOut, **refusals(400)},
             summary="What happened to a person's memory, as they let this agent see it")
 @gate("page-viewer")
 def get_memory_page_audit(request: HttpRequest, person_id: int, cursor: str | None = None) -> dict:
-    """Their audit log, newest first, 50 at a time — the page's "What happened"."""
+    """Their audit log, newest first, 50 at a time — the page's "What happened".
+    A request it cannot act on (no workspace named, a value of the wrong form)
+    is a 400 naming what is wrong."""
     from .hcp_api import audit_page
 
     person = _page_of(request, person_id)

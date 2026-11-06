@@ -12,7 +12,7 @@ from ninja.errors import HttpError
 
 from apps.agents import context_views, session_context, turn_context
 from apps.agents.credentials import delegations
-from apps.api.errors import ProblemError
+from apps.api.errors import ProblemError, refusals
 from apps.api.pagination import clamp_limit
 from apps.api.route_gates import gate
 from apps.embedding import delegation
@@ -55,6 +55,7 @@ from .schemas import (
 # The one session router and the helpers its routes share; api.py imports this
 # module after defining them.
 from .api import (
+    SessionState,
     _aware,
     _filtered_sessions,
     _session_by_key_or_404,
@@ -69,10 +70,11 @@ from .session_row import mark_people_in, mark_started_by_you, session_out
 OPERATION_LABEL = "canopy_sessions"
 
 
-@router.get("/", response=list[SessionOut], summary="List sessions (web + runner-discovered)")
+@router.get("/", response={200: list[SessionOut], **refusals(422)},
+            summary="List sessions (web + runner-discovered)")
 @gate("session-acl")  # readable_sessions
 def list_sessions(
-    request: HttpRequest, state: str = "active", limit: int = 200,
+    request: HttpRequest, state: SessionState = "active", limit: int = 200,
     source: str = "", opp_slug: str = "", opp_run_id: str = "",
     origin_key: str = "", embed_app: str = "",
     resource: str = "", page_path: str = "", reply: bool = False,
@@ -94,6 +96,7 @@ def list_sessions(
     `slack_channel` (a Slack channel id: the sessions that live in it — how an agent
     an admin gave that channel to lists what it may review). To reach EVERY session
     rather than the newest 500, walk `GET /api/canopy-sessions/search` instead.
+    A `pr` in none of its three forms is a 422.
     """
     # The ONE list: every session the caller can see in their workspaces — their
     # own web sessions UNION any session that has a RunnerBinding
@@ -144,7 +147,8 @@ def _list_order(r):
 
 @me_router.get("/sessions/", response=list[SessionOut], summary="Your sessions, across every workspace you are in")
 @gate("session-acl")  # the same list per organisation (wsvc.each_organisation)
-def list_my_sessions(request: HttpRequest, state: str = "active", limit: int = 200, reply: bool = False, q: str = ""):
+def list_my_sessions(request: HttpRequest, state: SessionState = "active", limit: int = 200, reply: bool = False,
+                     q: str = ""):
     """The session list (`GET /api/canopy-sessions/`) as a user-level view:
     each organisation you are in is read on its own and every row carries its
     workspace, so a page off any one workspace (Supervisor, the IDE) needs one
@@ -201,10 +205,11 @@ def read_asked_session(request: HttpRequest, before: int | None = None,
             "has_more_before": has_more}
 
 
-@router.get("/search", response=SessionSearchPageOut, summary="Page through every session (cursor)")
+@router.get("/search", response={200: SessionSearchPageOut, **refusals(422)},
+            summary="Page through every session (cursor)")
 @gate("session-acl")  # readable_sessions, via the list's _filtered_sessions
 def search_sessions(
-    request: HttpRequest, cursor: str = "", limit: int = 100, state: str = "all",
+    request: HttpRequest, cursor: str = "", limit: int = 100, state: SessionState = "all",
     q: str = "", repo: str = "", since: dt.datetime | None = None,
     until: dt.datetime | None = None, source: str = "", origin_key: str = "",
     embed_app: str = "", session_key: str = "", branch: str = "", pr: str = "",
@@ -213,7 +218,7 @@ def search_sessions(
     at a time — the whole history, not just the newest 500.
 
     Pass the response's `next_cursor` back as `cursor` (with the same filters)
-    for the next page; it is null when the walk is done. Ordered by
+    for the next page (any other cursor is a 422); it is null when the walk is done. Ordered by
     (last activity, id), descending, so the order is total and stable. `state`
     defaults to `all`. Filters: `q` (title or session_key contains), `repo` (the
     repo it ran in or worked on), `branch`, `pr` (as on the list), `since` /

@@ -21,6 +21,7 @@ from apps.agents import access as agent_access
 from apps.agents import turn_context
 from apps.agents.models import Agent
 from apps.api.auth import session_auth
+from apps.api.errors import refusals
 from apps.api.route_gates import gate
 from apps.contacts import people
 from apps.harness.runner_queries import runner_or_404
@@ -213,20 +214,13 @@ def install_local_app(request: HttpRequest, key: str, payload: LocalAppInstallIn
         inst = services.install(
             key=key,
             user=request.user,
-            runner_id=_uuid(payload.runner_id),
+            runner_id=payload.runner_id,
             settings=payload.settings,
             accept_digest=payload.accept_digest,
         )
     except services.Refused as exc:
         raise _refused(exc) from exc
     return Status(201, _installation_out(inst, request.user))
-
-
-def _uuid(raw: str) -> uuid.UUID:
-    try:
-        return uuid.UUID(str(raw))
-    except ValueError as exc:
-        raise HttpError(422, "not an id") from exc
 
 
 @router.get(
@@ -315,14 +309,15 @@ def _submission_out(sub: LocalAppSubmission) -> dict:
 
 @router.post(
     "/submissions/",
-    response={201: LocalAppSubmissionOut, 200: LocalAppSubmissionOut},
+    response={201: LocalAppSubmissionOut, 200: LocalAppSubmissionOut, **refusals(422)},
     summary="Submit a local app version for review",
 )
 @gate("content.write", kind="request")
 def submit_local_app(request: HttpRequest, payload: LocalAppSubmitIn):
     """A package from `canopy-runner app pack`, base64-encoded. Nothing runs on the
     server. Files an approval for a superuser; nothing reaches anyone until it's
-    approved. The same version with the same bytes returns the same submission."""
+    approved. The same version with the same bytes returns the same submission.
+    A package that is not a valid one (not a zip, no manifest, a bad version) is a 422."""
     if payload.workspace:
         ws = _workspace_or_404(request, payload.workspace)
     else:

@@ -52,7 +52,7 @@ class AgentIn(StrictModel):
     repo_url: str | None = Field(default=None, max_length=300)
     repo_ref: str | None = Field(default=None, max_length=120)
     # The agent CLIs it runs on, preferred first (`harness.clis`); None = unchanged.
-    clis: list[CliName] | None = None
+    clis: list[CliName] | None = Field(default=None, min_length=1, json_schema_extra={"uniqueItems": True})
     # A model per CLI, e.g. {"codex": "gpt-6.1-sol"}; None = unchanged.
     cli_models: dict[CliName, Annotated[str, Field(max_length=64)]] | None = None
     runtime_secrets: list[str] | None = None
@@ -107,6 +107,13 @@ class AgentMoveOut(StrictModel):
     stops_working: list[AgentMoveBreakOut]
 
 
+#: What `creation.parse_repo` reads: `owner/name`, or its github.com URL (an
+#: optional `.git` and trailing slash), padded with whitespace at most.
+GITHUB_REPO_PATTERN = (
+    r"^\s*((https?://)?(www\.)?github\.com/)?[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}/*\s*$"
+)
+
+
 class AgentScaffoldIn(StrictModel):
     """A new agent's repository, stamped by the agent factory and pushed into an empty repo."""
 
@@ -121,7 +128,7 @@ class AgentScaffoldIn(StrictModel):
     google_account: str = Field(default="", max_length=254)
     stakeholders: str = Field(default="", max_length=300)
     # `owner/name`, or its github.com URL. The person creates it, empty; canopy only pushes.
-    repo: str = Field(min_length=3, max_length=200)
+    repo: str = Field(min_length=3, max_length=200, pattern=GITHUB_REPO_PATTERN)
     # The person's fine-grained token for that repo — used for the push, never stored
     # here. The same token becomes the agent's delegation via PUT …/github.
     token: str = Field(min_length=1, max_length=400)
@@ -140,7 +147,7 @@ class AgentScaffoldOut(StrictModel):
 class RepoCheckIn(StrictModel):
     workspace: str = Field(min_length=1, max_length=64)
     slug: str = Field(min_length=1, max_length=80)
-    repo: str = Field(min_length=3, max_length=200)
+    repo: str = Field(min_length=3, max_length=200, pattern=GITHUB_REPO_PATTERN)
     # Empty is allowed: the answer still carries the links to make the repo and token.
     token: str = Field(default="", max_length=400)
 
@@ -197,7 +204,7 @@ class TurnModeIn(StrictModel):
 class AgentClisIn(StrictModel):
     """The agent CLIs an agent runs on, preferred first, and optionally a model for each."""
 
-    clis: list[CliName]
+    clis: list[CliName] = Field(min_length=1, json_schema_extra={"uniqueItems": True})
     # None leaves the models as they are; {} clears them.
     cli_models: dict[CliName, Annotated[str, Field(max_length=64)]] | None = None
 

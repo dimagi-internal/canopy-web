@@ -11,7 +11,8 @@ class VapidKeyOut(StrictModel):
 
 
 class PushSubscribeIn(StrictModel):
-    endpoint: str
+    # A browser's push service URL: https (the view also refuses a private host).
+    endpoint: str = Field(pattern=r"^\s*https://[^\x00]+$")
     # p256dh/auth map to fixed-width columns (200/100) and are exact crypto values —
     # bound them at the boundary so an over-length value is a 422, not a Postgres-only
     # 500. (user_agent is informational and stays leniently truncated in the view.)

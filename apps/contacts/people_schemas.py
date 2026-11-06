@@ -109,7 +109,9 @@ class WorkspaceAddressesOut(StrictModel):
 
 
 class PersonAddressIn(StrictModel):
-    kind: str = Field(description="email | phone — anything else is a 400.")
+    # Checked by `people.add_address`, whose refusal is the route's 400.
+    kind: str = Field(description="email | phone — anything else is a 400.",
+                      json_schema_extra={"enum": ["email", "phone"]})
     label: str = Field(description="What it is for, 1–40 characters: work, personal, school …")
     value: str = Field(description="The address or number. The same kind and value again relabels it.")
 

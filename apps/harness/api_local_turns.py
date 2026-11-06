@@ -20,6 +20,7 @@ from ninja import Router, Status
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.api.errors import refusals
 from apps.api.route_gates import gate
 from apps.workspaces import links as wslinks
 from apps.workspaces import services as wsvc
@@ -39,7 +40,7 @@ private_runners_router = Router(auth=session_auth, tags=["harness"])
 local_turns_router = Router(auth=session_auth, tags=["harness"])
 
 
-@private_runners_router.post("/", response={200: PrivateRunnerOut, 201: PrivateRunnerOut},
+@private_runners_router.post("/", response={200: PrivateRunnerOut, 201: PrivateRunnerOut, **refusals(422)},
                           summary="Register this machine as one of your private runners")
 @gate("self", setting=True)  # your own machines (direct use)
 def register_private_runner(request: HttpRequest, payload: PrivateRunnerIn):
@@ -49,7 +50,8 @@ def register_private_runner(request: HttpRequest, payload: PrivateRunnerIn):
 
     `runner_id` is the runner that holds this machine's device keys: the runner app
     you link (`runner`), else a `computer` runner made for it — enrol a key on it
-    (`POST /api/runner-device-keys/`) to read a zero-knowledge agent's vault here."""
+    (`POST /api/runner-device-keys/`) to read a zero-knowledge agent's vault here.
+    A `runner` that is not a live runner of yours is a 422."""
     runner = None
     if payload.runner is not None:
         runner = Runner.objects.filter(pk=payload.runner, owner=request.user).exclude(

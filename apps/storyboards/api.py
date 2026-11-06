@@ -16,13 +16,15 @@ layer is request-free.
 from __future__ import annotations
 
 import uuid
+from typing import Annotated
 
 from django.db import IntegrityError, transaction
 from django.http import HttpRequest
-from ninja import Router
+from ninja import Path, Router
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.api.errors import refusals
 from apps.api.route_gates import gate
 from apps.common.csrf import csrf_rejected
 from apps.feedback import reactions
@@ -52,6 +54,9 @@ from apps.storyboards.schemas import (
 from apps.workspaces import links as wslinks
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
+
+#: A round's number is an IntegerField; past int32 the database refuses the lookup.
+RoundNumber = Annotated[int, Path(le=2**31 - 1)]
 
 router = Router(tags=["storyboards"])
 
@@ -294,9 +299,13 @@ def list_storyboards(
     }
 
 
-@router.post("/", response=StoryboardOut, auth=session_auth, summary="Create a storyboard")
+@router.post("/", response={200: StoryboardOut, **refusals(422)}, auth=session_auth,
+             summary="Create a storyboard")
 @gate("content.write", kind="content")
 def create_storyboard(request: HttpRequest, payload: StoryboardIn) -> dict:
+    """`decisions` rows are checked as a set: ids unique and not a review gate's,
+    `recommended`/`override` one of the row's `options`, a deferred row with
+    `revisit_when`, `required-before` with `needed_by`. A row that breaks one is a 422."""
     ws = wsvc.creation_workspace(request)
     if ws is None:
         raise HttpError(422, f"no workspace to create this storyboard in: {wsvc.creation_refusal(request)}")
@@ -522,7 +531,7 @@ def open_storyboard_round(request: HttpRequest, slug: str, ws: str = "") -> dict
 )
 @gate("content.write", kind="content")
 def close_storyboard_round(
-    request: HttpRequest, slug: str, number: int, payload: RoundCloseIn, ws: str = ""
+    request: HttpRequest, slug: str, number: RoundNumber, payload: RoundCloseIn, ws: str = ""
 ) -> dict:
     """Editors only. Applies staged decision edits, then creates one task on the
     board's project and approves it — exactly one agent turn for the whole round.
@@ -564,7 +573,7 @@ def delete_storyboard_round_note(request: HttpRequest, slug: str, note_id: int, 
     summary="Read a feedback round in full (members)",
 )
 @gate("member")
-def get_storyboard_round(request: HttpRequest, slug: str, number: int, ws: str = "") -> dict:
+def get_storyboard_round(request: HttpRequest, slug: str, number: RoundNumber, ws: str = "") -> dict:
     """The agent's read of a round. Members only; a token holder 404s."""
     board = _owned_or_404(request, slug, ws)
     rnd = board_rounds.by_number(board, number)
@@ -581,7 +590,7 @@ def get_storyboard_round(request: HttpRequest, slug: str, number: int, ws: str =
 )
 @gate("content.write", kind="content")
 def consume_storyboard_round(
-    request: HttpRequest, slug: str, number: int, payload: RoundConsumeIn, ws: str = ""
+    request: HttpRequest, slug: str, number: RoundNumber, payload: RoundConsumeIn, ws: str = ""
 ) -> dict:
     """Editors only (the agent's PAT). Refuses while any note is unanswered;
     opens round N+1 on each narrative's current version."""

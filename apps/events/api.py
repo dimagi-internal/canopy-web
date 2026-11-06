@@ -11,13 +11,12 @@ on the observation.
 """
 from __future__ import annotations
 
-import datetime as dt
-
 from django.http import HttpRequest
 from ninja import Router
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.api.pagination import minutes_ago
 from apps.api.route_gates import gate
 from apps.events import after_record, services
 from apps.events.models import Event
@@ -106,7 +105,7 @@ def list_events(
     knowing the full dotted names."""
     since = None
     if since_minutes:
-        since = dt.datetime.now(dt.UTC) - dt.timedelta(minutes=max(1, since_minutes))
+        since = minutes_ago(since_minutes)
     # The event log is a LOG: the workspace admin's (`permissions.LOGS_READ`).
     # It names who read which Slack channel, which mailbox failed, which turn
     # errored — every member, viewers included, used to read all of it. Scoped
@@ -155,7 +154,7 @@ def list_setting_changes(
     if actor:
         qs = qs.filter(actor_email__iexact=actor)
     if since_minutes:
-        qs = qs.filter(created_at__gte=dt.datetime.now(dt.UTC) - dt.timedelta(minutes=max(1, since_minutes)))
+        qs = qs.filter(created_at__gte=minutes_ago(since_minutes))
     rows = qs.order_by("-created_at")[: max(1, min(limit, 500))]
     return {"items": [{
         "id": r.pk,

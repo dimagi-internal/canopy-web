@@ -29,6 +29,7 @@ from apps.api.errors import (
     TYPE_UPSTREAM,
     TYPE_VALIDATION,
     ProblemError,
+    refusals,
 )
 from apps.api.pagination import Page, clamp_limit, paginate
 from apps.api.route_gates import gate
@@ -157,9 +158,11 @@ def _creating_owner(request: HttpRequest, home):
 SELF_FIELDS = ("name", "description", "persona", "email", "google_account", "avatar_url", "runner_preference")
 
 
-@router.post("/", response={201: AgentOut}, summary="Create or update an agent (upsert by slug)",)
+@router.post("/", response={201: AgentOut, **refusals(422)}, summary="Create or update an agent (upsert by slug)",)
 @gate("agent.work", "agent-admin", setting=True)  # editor in target ws; a MOVE also needs agent admin
 def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
+    """A `google_account` that is not an email address, a CLI the agent cannot run,
+    or no single workspace to home a new agent in (pass `workspace`) is a 422."""
     # The tenant is resolved BEFORE the row is written, because Agent.workspace is
     # NOT NULL (agents/0013) — an agent is never briefly unhomed. A home matters
     # only on CREATE (`services.upsert_agent` applies it via create_defaults), so
@@ -428,7 +431,7 @@ def check_scaffold_repo(request: HttpRequest, payload: RepoCheckIn) -> RepoCheck
                         suggested_slug=state.suggested_slug, **links)
 
 
-@router.post("/scaffold", response={201: AgentScaffoldOut},
+@router.post("/scaffold", response={201: AgentScaffoldOut, **refusals(422)},
              summary="Push a new agent's scaffold into an empty repository")
 # editor in target ws; re-pushing a taken slug needs its admin
 # pushes code into the caller's own repo; registering is upsert_agent (a setting)
@@ -932,14 +935,15 @@ def set_repository(request: HttpRequest, slug: str, payload: RepositoryIn) -> Ag
     return _detail(request, agent)
 
 
-@router.patch("/{slug}/clis", response=AgentDetailOut,
+@router.patch("/{slug}/clis", response={200: AgentDetailOut, **refusals(422)},
               summary="Set which agent CLIs an agent runs on")
 @gate("agent-admin", setting=True)  # what its boxes run: a DEFINITION_FIELDS change
 def set_agent_clis(request: HttpRequest, slug: str, payload: AgentClisIn) -> AgentDetailOut:
     """The agent CLIs its turns may run on, preferred first ("claude-code", "codex"),
     and optionally the model each starts on. A turn runs on the first one its runner
     has signed in and can confine it on; a conversation keeps the one it started on.
-    The agent's owner or an admin."""
+    The agent's owner or an admin. A CLI no runner serving the workspace has set up
+    yet is a 422."""
     agent = agent_for_admin(request, slug)
     if (refused := clis.list_refusal(agent, list(payload.clis))) is not None:
         raise HttpError(422, refused)

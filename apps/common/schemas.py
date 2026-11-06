@@ -14,11 +14,33 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
+#: A string already trimmed: non-blank, no whitespace at either end, no NUL.
+#: "Whitespace" is what Python's `str.strip` removes, which is wider than a JSON
+#: Schema (ECMA) `\s`: it also takes the separators U+001C-U+001F and U+0085.
+_EDGE = r"[^\s\x00\x1c-\x1f\x85]"
+TRIMMED_PATTERN = rf"^{_EDGE}([^\x00]*{_EDGE})?$"
+
+
+def strip_means_non_blank(schema: dict, _cls: type) -> None:
+    """`str_strip_whitespace` strips BEFORE `min_length` is checked, so a field
+    with a minimum length refuses a value that is all whitespace, and one that
+    only reaches the minimum with its padding. Say so in the JSON Schema — a
+    value already trimmed is measured as sent — or a client (and the contract
+    fuzz) reads `minLength: 1` as "any one character" and is refused for
+    sending a space."""
+    for prop in (schema.get("properties") or {}).values():
+        for node in [prop, *prop.get("anyOf", [])]:
+            if (node.get("type") == "string" and node.get("minLength", 0) >= 1
+                    and not any(k in node for k in ("pattern", "enum", "const", "format"))):
+                node["pattern"] = TRIMMED_PATTERN
+
+
 class StrictModel(BaseModel):
     model_config = ConfigDict(
         extra="forbid",  # request bodies reject unknown fields
         from_attributes=True,  # allow ORM-instance hydration
         str_strip_whitespace=True,
+        json_schema_extra=strip_means_non_blank,
     )
 
 

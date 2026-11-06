@@ -7,6 +7,7 @@ from django.http import HttpRequest
 from ninja.errors import HttpError
 
 from apps.agents import services as agent_services
+from apps.api.errors import refusals
 from apps.api.route_gates import gate
 from apps.embedding import delegation
 from apps.harness import acting_person, clis
@@ -75,7 +76,7 @@ def _set_status(request: HttpRequest, session_id: uuid.UUID, status: str) -> dic
     return session_out(session)
 
 
-@router.post("/", response=SessionOut, summary="Create a chat session")
+@router.post("/", response={200: SessionOut, **refusals(422)}, summary="Create a chat session")
 # wsvc.current_workspace; any member may start a chat
 @gate(
     "member",
@@ -87,7 +88,9 @@ def _set_status(request: HttpRequest, session_id: uuid.UUID, status: str) -> dic
 def create_session(request: HttpRequest, payload: SessionCreateIn):
     """Create a chat session. Started from inside a canopy session? Pass
     `parent={turn, session}` (the caller-context hook prints both ids) so the new
-    session records where it came from and includes that conversation's people."""
+    session records where it came from and includes that conversation's people.
+    An agent and a project together, a CLI the target cannot run (a chat with no
+    agent runs on Claude Code only), or no workspace to start it in, is a 422."""
     if payload.agent_slug and payload.project:
         raise HttpError(422, "a session targets an agent or a project, not both")
     try:

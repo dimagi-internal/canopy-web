@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from django.http import HttpRequest
 from ninja import Field, Router, Schema
@@ -34,9 +35,10 @@ router = Router(auth=session_auth, tags=["act as you"])
 
 class ActAsRequestIn(Schema):
     #: Why the agent needs to act as the person — shown to them verbatim.
-    reason: str = Field(..., max_length=act_as.REASON_MAX)
+    #: Not blank: at least one character that is not whitespace.
+    reason: str = Field(..., max_length=act_as.REASON_MAX, pattern=r"[^\s\x1c-\x1f\x85]")
     #: `read`, `write`, or `either` (the person picks; read-only is offered first).
-    scope: str = "either"
+    scope: Literal["read", "write", "either"] = "either"
 
 
 class ActAsCreatedOut(Schema):

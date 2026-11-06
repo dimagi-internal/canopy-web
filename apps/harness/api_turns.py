@@ -14,7 +14,7 @@ from ninja.errors import HttpError
 
 from apps.agents.gates import agent_for_read
 from apps.agents.models import Agent
-from apps.api.errors import ProblemError
+from apps.api.errors import ProblemError, refusals
 from apps.api.route_gates import gate
 from apps.embedding import delegation
 from apps.workspaces import permissions as perms
@@ -96,13 +96,14 @@ def list_unclaimable_turns(request: HttpRequest):
     return rows
 
 
-@router.post("/turns/", response={200: TurnOut, 201: TurnOut})
+@router.post("/turns/", response={200: TurnOut, 201: TurnOut, **refusals(422)})
 @gate("agent.work", kind="turn")  # agent and project turns alike
 def enqueue_turn(request: HttpRequest, payload: TurnIn):
     """Queue a turn for a runner. Started from inside a canopy session? Pass
     `parent={turn, session}` (the caller-context hook prints both ids) so the
     session the runner makes for it records where it came from and includes that
-    conversation's people."""
+    conversation's people. A turn names an `agent_slug` or a `project`, not both;
+    a shape the target cannot take (a CLI, a pin, an origin) is a 422."""
     turn_gates.check_shape(payload)
     origin_ref = turn_gates.capped_origin_ref(request, payload)
     agent, workspace = turn_gates.resolve_target(request, payload)

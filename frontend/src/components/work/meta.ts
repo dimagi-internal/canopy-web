@@ -113,6 +113,7 @@ export function displayPerson(email: string): string {
 
 /** Semantic label colours (never palette literals). */
 export const LABEL_COLORS = ['muted', 'primary', 'success', 'warning', 'destructive', 'info'] as const
+export type LabelColor = (typeof LABEL_COLORS)[number]
 
 export const LABEL_CLASSES: Record<string, string> = {
   muted: 'bg-muted text-muted-foreground border-border',

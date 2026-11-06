@@ -16,6 +16,7 @@ from ninja.errors import HttpError
 
 from apps.agents.models import Agent
 from apps.api.auth import session_auth
+from apps.api.errors import refusals
 from apps.api.pagination import MAX_OFFSET
 from apps.api.route_gates import gate
 from apps.contacts import people
@@ -177,13 +178,14 @@ def list_meetings(
     }
 
 
-@router.post("/", response={200: MeetingOut, 201: MeetingOut}, summary="Save a meeting, and optionally get help")
+@router.post("/", response={200: MeetingOut, 201: MeetingOut, **refusals(422)},
+             summary="Save a meeting, and optionally get help")
 @gate("self", "content.write", kind="request")  # the person's own row; attaching needs content.write in that project
 def create_meeting(request: HttpRequest, payload: MeetingIn):
     """For a transcript, notes or a link to them. It stays private to the person unless a
     project is named, which shares it with whoever can read that project. An agent on a turn saves
     it for the person who started that turn. If the same link or text has been saved before,
-    this returns that meeting."""
+    this returns that meeting. A `workspace`, `project` or `agent` the caller cannot use there is a 422."""
     actor = _actor(request)
     try:
         chosen = services.usable_agent(payload.agent, actor.user) if payload.agent else None

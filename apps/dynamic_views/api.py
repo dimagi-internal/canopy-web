@@ -17,6 +17,7 @@ from apps.agents import services as agent_services
 from apps.agents.gates import listed_agent_workspaces, may_edit_project, visible_agent_workspaces
 from apps.agents.models import AgentProject
 from apps.api.auth import session_auth
+from apps.api.errors import refusals
 from apps.api.route_gates import gate
 from apps.connections import declarations
 from apps.workspaces import permissions as perms
@@ -153,7 +154,7 @@ def list_dynamic_views(request: HttpRequest, project: str = "") -> list[DynamicV
     return [DynamicViewSummaryOut(**_summary_fields(v)) for v in qs]
 
 
-@router.post("/", response={201: DynamicViewOut}, summary="Create a dynamic view")
+@router.post("/", response={201: DynamicViewOut, **refusals(422)}, summary="Create a dynamic view")
 @gate("agent.work", kind="content")
 def create_dynamic_view(request: HttpRequest, payload: DynamicViewIn) -> Status:
     """Validates the code (it must define `View`), every source against the

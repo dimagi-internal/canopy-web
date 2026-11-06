@@ -318,12 +318,14 @@ def filter_tasks(qs, *, user=None, project: str = "", status: str = "", waiting:
         for name in _split(label):
             qs = qs.filter(labels__name__iexact=name)
     if priority:
-        qs = qs.filter(priority__in=[int(p) for p in _split(priority) if p.isdecimal()])
+        # A number no column can hold matches nothing; it is not the database's to refuse.
+        qs = qs.filter(priority__in=[int(p) for p in _split(priority) if p.isdecimal() and int(p) < 2**31])
     if milestone == "none":
         qs = qs.filter(milestone__isnull=True)
     elif milestone:
         qs = qs.filter(Q(milestone__name__iexact=milestone) | Q(milestone_id=int(milestone))
-                       if milestone.isdecimal() else Q(milestone__name__iexact=milestone))
+                       if milestone.isdecimal() and int(milestone) < 2**63
+                       else Q(milestone__name__iexact=milestone))
     if kind:
         qs = qs.filter(kind=kind)
     if due_before:

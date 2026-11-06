@@ -21,7 +21,7 @@ from ninja.errors import HttpError
 
 from apps.agents.models import Agent
 from apps.api.auth import session_auth
-from apps.api.errors import TYPE_FORBIDDEN, ProblemError
+from apps.api.errors import TYPE_FORBIDDEN, ProblemError, refusals
 from apps.api.route_gates import gate
 from apps.tokens.models import AppCredential, DelegatedToken, EmbedAuditLog
 from apps.tokens.schemas import WsTicketOut
@@ -304,7 +304,7 @@ def embed_self_token(request: HttpRequest, page: str = "", workspace: str = "") 
     return EmbedSelfTokenOut(token=raw, expires_at=token.expires_at.isoformat(), host_grant=granted)
 
 
-@embed_router.post("/ws-ticket", response=WsTicketOut,
+@embed_router.post("/ws-ticket", response={200: WsTicketOut, **refusals(400)},
                    summary="Trade this delegated token for a one-time socket ticket")
 # a one-time socket ticket standing for the caller's own delegated token  # mints a 15-min DelegatedToken for the caller
 @gate("self", kind="ephemeral-credential")
@@ -314,7 +314,8 @@ def embed_ws_ticket(request: HttpRequest) -> WsTicketOut:
     Open the socket with `?ticket=<ticket>` instead of `?token=`: the ticket
     works once, within `expires_in` seconds, and stands for the delegated token
     this request presented. Fetch a fresh one for every connection, reconnects
-    included.
+    included. Any other credential (a session, a PAT) has no delegated token to
+    trade and is a 400.
     """
     # Only a delegated token is traded. A browser on canopy's own pages signs its
     # socket in with the session cookie, and a PAT client can send a header.
