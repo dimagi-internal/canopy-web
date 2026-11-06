@@ -642,6 +642,9 @@ refused (422) with a pointer here.
 
 ## Read mode and connected sites
 
+(The whole path for a site, from the workspace's registration to the gateway, is
+[connected-sites.md](connected-sites.md).)
+
 The two settings admins edit for **what** a confined turn may do (Settings → Channels → Read mode and
 connected sites; `GET|PUT|DELETE /api/agents/{slug}/read-mode`, `GET /api/agents/{slug}/connected-sites`,
 `PUT|DELETE …/connected-sites/{site}`; `apps/agents/answering.py`). Who may use them is the access list,
@@ -725,7 +728,7 @@ recorded before 2026-11-06 may still say them. The refusal says who can add the 
 
 * **Over the table: the sensitive-data rule** (`turn_context._sensitive_rule`, spec
   `2026-10-22-sensitive-data-agents` §5). A connected site that handles sensitive data (`data: sensitive`,
-  `apps/agents/sensitive_data.py`) — the one a turn names, or the one its conversation's site or page
+  `apps/agents/sensitive_data.py`) — the one a turn names, or the one its conversation's site
   selects — is **confined for everyone**: whoever the table gave `full` (owner, agent admin, `system`, a
   `write` line) runs that site's profile instead, keeping their role, mode and pin
   rights (`basis: sensitive:<name>`). Any turn in a sensitive conversation (one that requires

@@ -29,7 +29,7 @@ mechanism, and a loopback would run every tool as one identity.
 **Exposure is the default.** Leaving a route out is never how you secure it: a
 tool is exactly as powerful as the caller's token already is against REST, so
 the refusal belongs in the route. There are **no web-app-only actions** —
-invites, roles, an agent's interface, credentials and admins, vaults and Slack
+invites, roles, an agent's read mode and connected sites, credentials and admins, vaults and Slack
 config all work over MCP under the caller's role. Don't add browser-only gates;
 they take from MCP the administration it is most useful for. Two deliberate
 exceptions: `create_token` is not a tool (it would put a fresh raw PAT into a

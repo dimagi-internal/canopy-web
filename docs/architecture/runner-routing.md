@@ -135,7 +135,7 @@ headless); `claude-desktop` and `emdash` run Claude Code only.
   session: its turn records `cli="claude-code"`.
 - **A prompt's plugin command is parsed once** (`apps/harness/invocations.py`): a first
   line `/<plugin>:<skill> <args>` is the canonical text canopy-web stores, shows and
-  builds (`invocations.command` — mail turns, dispatches; an interface's `entry` must
+  builds (`invocations.command` — mail turns, dispatches; a profile's `entry` must
   parse), and the claimed turn carries it parsed as `invocation` (`plugin`, `skill`,
   `args`, `rest`: the lines after). A turn executor renders that in its CLI's terms —
   Claude Code types `prompt` as it is; a CLI that loads skills but not commands invokes
@@ -179,7 +179,11 @@ In order, each a hard stop:
    availability cascade for the agent / repo order / session agent — over a list
    with every box that reports it cannot run the agent removed (`cannot_serve`) —
    and, for an unbound project chat, `routing.project_session_allows` (below).
-5. Turn mode decided and stamped (`turn_mode.for_turn`), an admission `auto` rule
+5. **The Turn Context is asked again**, from today's facts (`turn_context.at_claim`, with the enqueue's own question
+   kept in `origin_ref.queued_for`; access.md § Two moments). Refused: the turn is closed `cancelled`, never claimed,
+   its note the refusal plus `refusals.CHANGED_WHILE_QUEUED`. Otherwise the new stamp is written to `Turn.capability`
+   before the payload is built, and a box that cannot confine the new answer passes it over.
+6. Turn mode decided and stamped (`turn_mode.for_turn`), an admission `auto` rule
    may raise a standing manual to auto, then admission rejects
    (`apps/admission`, see `access-direct-use-and-admission.md` → "Admission rules"), then the conditional
    update to CLAIMED inside its own `transaction.atomic()` (an `IntegrityError` from

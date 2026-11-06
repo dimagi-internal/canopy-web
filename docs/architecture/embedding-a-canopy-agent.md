@@ -51,6 +51,11 @@ You do not need it to do this.
 
 Steps 1–2 are one-off per environment. Steps 3–5 are the only code you write.
 
+**On canopy's side, step 1 needs a second record:** the agent's own owner or admin adds your site under the
+agent's Read mode and connected sites (what a visitor there may do). Without it the site-agents API answers
+`ready: false` ("is not connected to <site>"). The two records, and how they combine, are
+[connected-sites.md](connected-sites.md).
+
 ---
 
 ## 1. Register your app in canopy
