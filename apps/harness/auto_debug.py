@@ -561,6 +561,32 @@ def _delivery_evidence(turn: Turn) -> list[str]:
     return rows[-EVIDENCE_MAX_EVENTS:]
 
 
+#: The runner's `lifecycle` events (cloud_runner `_lifecycle`: claimed, started,
+#: adopted, exited, lost, reported, left_for_requeue …), copied in as evidence too.
+#: Investigation 35 (turn 918a10da, ada chat on cloud-ec2-live, 2026-11-06 21:37Z)
+#: and 36 (an ace turn one second later, same box) both ended "turn ended:
+#: cancelled (the adapter's own: canopy sent no cancel)", 36 minutes after the
+#: box's bootstrap and just after canopy 0.2.863 shipped — the shape of a mid-turn
+#: self-refresh HANDOFF that failed to carry its turns. Whether either turn was
+#: `adopted` by a new daemon is posted to the turn's ledger, but the chat ACL keeps
+#: the debugger out of it and the prompt carried only delivery events, so the
+#: cause could not be decided. Allow-listed MACHINE fields only: never `cwd`,
+#: `target` or `detail` (a runner error can quote the adapter's stderr).
+_LIFECYCLE_KEYS = ("event", "executor", "pid", "attempt", "exited", "adopted", "adoptable",
+                   "ok", "stop_reason", "code", "status", "http", "reason", "streak",
+                   "after_failures", "resume", "session")
+
+
+def _lifecycle_evidence(turn: Turn) -> list[str]:
+    rows = []
+    for ev in turn.events.filter(kind="lifecycle").order_by("seq"):
+        payload = ev.payload or {}
+        fields = " ".join(f"{k}={str(payload[k])[:120]}" for k in _LIFECYCLE_KEYS if k in payload)
+        if fields:
+            rows.append(f"- {_iso(ev.ts)} {fields}")
+    return rows[-EVIDENCE_MAX_EVENTS:]
+
+
 def landed(turn: Turn) -> str:
     """The runner's last word on whether the message reached the transcript:
     "yes" | "no" | "unknown" (no delivery events say, or an older runner)."""
@@ -791,6 +817,11 @@ def render_prompt(inv: FailureInvestigation, turn: Turn, riders=(), *, alert=Non
                   "The runner's delivery events on the failed turn (diagnostic fields "
                   "only; the withheld ones are readable by the chat's participants):"]
         lines += evidence
+    lifecycle = _lifecycle_evidence(turn)
+    if lifecycle:
+        lines += ["", "What the runner did with the failed turn (its lifecycle events; "
+                      "`adopted` means a new daemon took it over after a restart or handoff):"]
+        lines += lifecycle
     if riders:
         lines += ["", "Also carried by this turn — failures canopy recorded but did not "
                       "start a turn for (held by the rate cap, or their debug turn failed):"]
