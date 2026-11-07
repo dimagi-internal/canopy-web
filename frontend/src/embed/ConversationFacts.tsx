@@ -4,7 +4,7 @@ import { PRIVATE_DETAILS, PRIVATE_LINE } from '@/components/chat/PrivateConversa
 import { SessionAudienceLine, type SessionAudience } from '@/components/SessionAudienceLine'
 import { untilLabel, type PageGrant } from './pageGrant'
 import { useConfirmedGrant } from './PageGrantConfirm'
-import { siteLabel } from './siteLabel'
+import { scopePhrases, siteName } from './grantWords'
 
 /** The conversation's facts in one line under the header — private or not, the
  *  page, who can read it, the act-as-you permission — with the full sentences a
@@ -35,7 +35,7 @@ export function ConversationFacts({ pageName, audience, sensitive, pageGrant, ag
         </button>
         {grant && pageGrant && (
           <span className="flex shrink-0 items-center gap-1" data-testid="page-grant-line"
-                title={`What ${siteLabel(grant.site)} lets ${who} do with your permission: ${grant.scope || 'this page'}`}>
+                title={`What ${siteName(grant)} lets ${who} do with your permission: ${scopePhrases(grant).join('; ') || grant.scope || 'this page'}`}>
             <span>{who} has your permission{until ? ` until ${until}` : ''}</span>
             <span aria-hidden>·</span>
             <button type="button" disabled={stopping}
@@ -57,7 +57,7 @@ export function ConversationFacts({ pageName, audience, sensitive, pageGrant, ag
           {sensitive && <p className="m-0" data-testid="sensitive-details">{PRIVATE_LINE}. {PRIVATE_DETAILS}</p>}
           {grant && (
             <p className="m-0">
-              {who} has your permission on this page and its data on {siteLabel(grant.site)} ({grant.scope || 'this page'})
+              {who} has your permission on this page and its data on {siteName(grant)} ({grant.scope || 'this page'})
               {until ? ` until ${until}` : ''}.
             </p>
           )}

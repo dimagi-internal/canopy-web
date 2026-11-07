@@ -26,10 +26,10 @@ with the sdist and wheel attached):
 
 ```
 # requirements.txt / pyproject — from the tag
-dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.27.1#subdirectory=sdk/python
+dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.28.0#subdirectory=sdk/python
 
 # or from the Release's wheel
-dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.27.1/dimagi_canopy-0.27.1-py3-none-any.whl
+dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.28.0/dimagi_canopy-0.28.0-py3-none-any.whl
 ```
 
 Add the `django` extra (`dimagi-canopy[django] @ ...`) for `canopy_sdk.django`,
@@ -508,6 +508,13 @@ redirects) and checks the signature, `typ`, `iss`, `aud` (your site name),
 `PAGE_TITLES`) and what `SITE_NEEDS` returns, signed with your key. canopy's
 Host sites page reads it and shows, per agent, whether it meets your
 `sensitive_data.requires` and why not.
+
+It can also say, for the person asked to let an agent use one of your pages, who you are and what
+each scope means: have `SITE_NEEDS` return `"title": "Connect Labs"` and
+`"scope_labels": {"marketplace:read": "read the network's organisations and rounds"}`. canopy's
+prompt prints them beside the raw scope names, as what your site says its scopes cover. They are
+descriptive only (never enforced); leave them out and the prompt falls back to your site's name
+and the raw scopes.
 
 It also carries a `site` block — your own facts, which canopy's owner would
 otherwise type: `origins` (`CANOPY_HOST["ORIGINS"]`, else the origin of `ISSUER`,

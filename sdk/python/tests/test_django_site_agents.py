@@ -269,3 +269,21 @@ def test_site_json_honours_explicit_origins_and_jwks_url(world):
                                         [world.host_key.public_key()], site_name="connect-labs")
     assert got.site.origins == ("https://a.example.org", "https://b.example.org")
     assert got.site.jwks_url == "https://keys.example.org/jwks.json"
+
+
+def test_site_json_carries_the_title_and_scope_labels_the_needs_hook_returns(world):
+    labels = {"marketplace:read": "read the network's organisations and rounds",
+              "marketplace:review": "write AI reviews, each confirmed on a card"}
+    cfg = _settings(world, PAGE_SCOPES={"marketplace:round": ["marketplace:read", "marketplace:review"]},
+                    SITE_NEEDS=lambda: {"title": "Connect Labs", "scope_labels": labels})
+    got = site_mod.verify_site_document(_site_json(cfg), [world.host_key.public_key()],
+                                        site_name="connect-labs")
+    assert got.title == "Connect Labs"
+    assert dict(got.scope_labels) == labels
+
+
+def test_site_json_without_a_title_or_labels_is_as_it_was(world):
+    got = site_mod.verify_site_document(_site_json(_settings(world)), [world.host_key.public_key()],
+                                        site_name="connect-labs")
+    assert got.title == "" and dict(got.scope_labels) == {}
+    assert "title" not in got.claims and "scope_labels" not in got.claims

@@ -240,7 +240,11 @@ host* (the header above is canopy-web's own decisions):
   conversation whose live card needs it); nothing can use it until they confirm it
   with their passkey in the panel ("<agent> needs your permission to interact with this
   page and data on <Site>", with the agent's reason and the 30 minutes), which is asked only when
-  the agent's turn first calls the site, never at the send. It then shows "<agent> has your
+  the agent's turn first calls the site, never at the send. The words are the site's own, read
+  from its signed `site.json` (already fetched and cached, `site_needs`): its display name
+  (`title`), its title for the page, and one phrase per scope (`scope_labels`), printed as what
+  the site says the scopes cover beside the raw scope names. They are descriptive only, never
+  enforced; a site that publishes none gets its registered name as words and the raw scopes. It then shows "<agent> has your
   permission until <time> · Stop". 30 minutes from the passkey: the panel's token
   renewals carry the same end, never extend it.
 - **Never a contact's.** Only a canopy user has a passkey, so a contact is never

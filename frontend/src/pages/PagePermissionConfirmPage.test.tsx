@@ -41,6 +41,33 @@ describe('PagePermissionConfirmPage', () => {
     expect(api.confirmMyHostGrant).toHaveBeenCalledWith(7)
   })
 
+  it('says what the site says: its name, what each scope lets the agent do, and the raw permissions', async () => {
+    api.getMyHostGrant.mockResolvedValue({
+      ...GRANT, site: 'connect-labs', scope: 'marketplace:read reviews:read', site_title: 'Connect Labs (Dimagi)',
+      page_title: 'A marketplace round',
+      scope_labels: [{ scope: 'marketplace:read', label: 'read the network’s organisations' },
+                     { scope: 'reviews:read', label: 'read a round’s responses and reviews' }],
+    })
+    open()
+    expect(await screen.findByText('Let Ada interact with this page and data on Connect Labs (Dimagi) for 30 minutes?'))
+      .toBeTruthy()
+    const words = screen.getByTestId('page-permission-words').textContent ?? ''
+    expect(words).toContain('Connect Labs (Dimagi) says this lets it:')
+    expect(words).toContain('read the network’s organisations')
+    expect(words).toContain('read a round’s responses and reviews')
+    expect(words).toContain('A marketplace round · permissions: marketplace:read reviews:read')
+  })
+
+  it('falls back to the plain sentence when the site describes nothing', async () => {
+    api.getMyHostGrant.mockResolvedValue(GRANT)
+    open()
+    await screen.findByTestId('page-permission-words')
+    const words = screen.getByTestId('page-permission-words').textContent ?? ''
+    expect(words).toContain('only what you can yourself, and only what that page allows')
+    expect(words).not.toContain('says this lets it')
+    expect(words).toContain('permissions: sessions:close')
+  })
+
   it('Not now stops it', async () => {
     api.getMyHostGrant.mockResolvedValue(GRANT)
     api.stopMyHostGrant.mockResolvedValue(true)

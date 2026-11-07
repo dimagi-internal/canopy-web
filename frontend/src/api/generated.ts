@@ -23667,6 +23667,21 @@ export interface components {
             /** Site */
             readonly site: string;
             /**
+             * Site Title
+             * @default
+             */
+            readonly site_title: string;
+            /**
+             * Page Title
+             * @default
+             */
+            readonly page_title: string;
+            /**
+             * Scope Labels
+             * @default []
+             */
+            readonly scope_labels: readonly components["schemas"]["ScopeLabelOut"][];
+            /**
              * Agent
              * @default
              */
@@ -23710,6 +23725,13 @@ export interface components {
         /** PanelGrantOut */
         readonly PanelGrantOut: {
             readonly grant?: components["schemas"]["HostGrantOut"] | null;
+        };
+        /** ScopeLabelOut */
+        readonly ScopeLabelOut: {
+            /** Scope */
+            readonly scope: string;
+            /** Label */
+            readonly label: string;
         };
         /** PasskeyOptionsOut */
         readonly PasskeyOptionsOut: {

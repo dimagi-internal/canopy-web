@@ -2,7 +2,7 @@ import { useEffect, useState, type JSX } from 'react'
 import { useParams } from 'react-router-dom'
 import { Button } from 'canopy-ui/ui'
 import { confirmMyHostGrant, getMyHostGrant, stopMyHostGrant, type HostGrant } from '@/api/hostGrants'
-import { siteLabel } from '@/embed/siteLabel'
+import { scopePhrases, siteName } from '@/embed/grantWords'
 
 /**
  * Confirm a page's act-as-you permission in your browser
@@ -66,17 +66,33 @@ export function PagePermissionConfirmPage(): JSX.Element | null {
   }
 
   const who = grant.agent_name || 'The agent'
+  const site = siteName(grant)
+  const phrases = scopePhrases(grant)
   const until = new Date(grant.expires_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
   return (
     <div className="max-w-2xl space-y-4">
       <section className="rounded-lg border border-border bg-card p-5" aria-label="The permission">
         <h1 className="text-sm font-semibold text-foreground">
-          Let {who} interact with this page and data on {siteLabel(grant.site)} for 30 minutes?
+          Let {who} interact with this page and data on {site} for 30 minutes?
         </h1>
-        <p className="mt-2 text-[13px] text-foreground-secondary">
-          It can see and do on {siteLabel(grant.site)} only what you can yourself, and only what that page
-          allows ({grant.scope || 'that page'}). Anything it changes is done as you. You can stop it at any time.
-        </p>
+        <div className="mt-2 space-y-2 text-[13px] text-foreground-secondary" data-testid="page-permission-words">
+          {phrases.length ? (
+            <>
+              <p>{site} says this lets it:</p>
+              <ul className="list-disc space-y-0.5 pl-5 text-foreground">
+                {phrases.map((p) => <li key={p}>{p}</li>)}
+              </ul>
+            </>
+          ) : (
+            <p>It can see and do on {site} only what you can yourself, and only what that page allows.</p>
+          )}
+          <p>
+            It uses your own access on {site}, and anything it changes is done as you. You can stop it at any time.
+          </p>
+          <p className="text-[12px]">
+            {grant.page_title ? `${grant.page_title} · ` : ''}permissions: {grant.scope || 'that page'}
+          </p>
+        </div>
         {state === 'stopped' ? (
           <p className="mt-3 text-[13px] text-foreground" data-testid="page-permission-stopped">
             Stopped. {who} has no permission on that page or its data; you can close this tab.
