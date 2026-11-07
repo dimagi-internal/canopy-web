@@ -45,7 +45,7 @@ from apps.passkeys import stepup
 from apps.passkeys.schemas import PasskeyAssertIn, PasskeyOptionsOut
 from apps.tokens.models import HostGrant
 
-from . import host_grants
+from . import host_grants, site_needs
 
 
 class ConfirmIn(PasskeyAssertIn):
@@ -58,10 +58,24 @@ me_router = Router(auth=session_auth, tags=["host grants"])
 embed_grant_router = Router(auth=session_auth, tags=["host grants"])
 
 
+class ScopeLabelOut(Schema):
+    scope: str
+    #: What the SITE says this scope lets an agent do, in a phrase.
+    label: str
+
+
 class HostGrantOut(Schema):
     id: int
     #: The host site's name — whose tools the agent reads as you.
     site: str
+    #: The site's display name from its own site.json ("" when it publishes none).
+    site_title: str = ""
+    #: The title the site gives the page this grant is for ("" when it names none, or
+    #: more than one of its pages grants exactly these scopes).
+    page_title: str = ""
+    #: What the site says each of this grant's scopes lets an agent do, in the order of
+    #: `scope`; only those it describes. Descriptive: canopy shows it, never enforces it.
+    scope_labels: list[ScopeLabelOut] = []
     #: The agent the page chose ("" = any agent the site offers).
     agent: str = ""
     agent_name: str = ""
@@ -86,8 +100,32 @@ class PanelGrantOut(Schema):
     grant: HostGrantOut | None = None
 
 
-def _out(grant) -> HostGrantOut:
+def site_words(app, scope: str) -> dict:
+    """What the site says about itself for the permission prompt: its name, the page this
+    grant is for and what each scope lets an agent do (its signed `site.json`, which canopy
+    already reads and caches). Never raises and never blocks the grant: a site that is
+    unreachable, or publishes nothing, gives `{}`, and the prompt falls back to the site's
+    registered name and the raw scopes."""
+    try:
+        needs = site_needs.needs_for(app).document
+    except Exception:  # noqa: BLE001 — words for a prompt must never fail the route
+        return {}
+    if needs is None:
+        return {}
+    scopes = scope.split()
+    pages = [p for p in needs.pages if set(p.scopes) == set(scopes)] if scopes else []
+    return {
+        "site_title": needs.title,
+        "page_title": pages[0].title if len(pages) == 1 else "",
+        "scope_labels": [ScopeLabelOut(scope=sc, label=needs.scope_labels[sc])
+                         for sc in scopes if sc in needs.scope_labels],
+    }
+
+
+def _out(grant, words: dict | None = None) -> HostGrantOut:
+    words = site_words(grant.app, grant.scope) if words is None else words
     return HostGrantOut(
+        **words,
         id=grant.pk, site=grant.app.name,
         agent=grant.agent.slug if grant.agent_id else "",
         agent_name=(grant.agent.name or grant.agent.slug) if grant.agent_id else "",
@@ -119,7 +157,9 @@ def list_my_host_grants(request: HttpRequest) -> list[HostGrantOut]:
     read, and until when — one row per page you sent from. A grant is taken only
     once you send a message in a site's panel and confirm it with your passkey,
     and lasts 30 minutes from that confirmation."""
-    return [_out(g) for g in host_grants.live_for(user=request.user)]
+    seen: dict = {}  # one read of a site's words per site and scope, not one per row
+    return [_out(g, seen.setdefault((g.app_id, g.scope), site_words(g.app, g.scope)))
+            for g in host_grants.live_for(user=request.user)]
 
 
 @me_router.delete("/me/host-grants/{int:grant_id}", response={204: None},

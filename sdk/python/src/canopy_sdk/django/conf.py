@@ -41,7 +41,11 @@
         # canopy/site.json (canopy_sdk.site): a callable (or dotted path)
         # returning {"sensitive_data": {"requires": {"handles_sensitive": True,
         # "runner_flag": "sensitive_data"}}, "uses": {"agents": [...], "sensitive_data_agents":
-        # [...], "version": "<site agents version>"}, "titles": {page_key: title}}.
+        # [...], "version": "<site agents version>"}, "titles": {page_key: title},
+        # "title": "<this site's display name>", "scope_labels": {scope: "what it lets an
+        # agent do, in a phrase"}}. The last two are what canopy's permission prompt says
+        # ("ACE needs your permission to interact with this page and data on <title>", then
+        # one line per scope); both optional, descriptive only, never enforced.
         # The pages and their scopes are PAGE_SCOPES; PAGE_TITLES names them.
         "SITE_NEEDS": None,
         "PAGE_TITLES": {},

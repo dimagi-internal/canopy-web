@@ -352,3 +352,41 @@ def test_a_malformed_site_block_is_refused(site):
     with pytest.raises(site_mod.SiteDocumentError) as exc:
         site_mod.site_document(SITE, site=site)
     assert exc.value.code == "malformed"
+
+
+# --- the site's name and what its scopes mean, for the consent prompt -------------------
+
+
+def _needs(**extra):
+    doc = site_mod.site_document(SITE, pages=[{"key": "p", "title": "A page", "scopes": ["a:read"]}], **extra)
+    return site_mod.SiteNeeds.from_claims(doc, site_name=SITE)
+
+
+def test_title_and_scope_labels_round_trip_and_collapse_whitespace():
+    got = _needs(title="  Connect   Labs ", scope_labels={"a:read": "read  the   rounds"})
+    assert got.title == "Connect Labs"
+    assert dict(got.scope_labels) == {"a:read": "read the rounds"}
+
+
+def test_a_site_that_publishes_neither_is_unchanged():
+    got = _needs()
+    assert got.title == "" and dict(got.scope_labels) == {}
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"title": "x" * (site_mod.MAX_TITLE + 1)},
+    {"title": "two\x00lines"},
+    {"title": 7},
+    {"scope_labels": ["a:read"]},
+    {"scope_labels": {"a b": "no spaces in a scope name"}},
+    {"scope_labels": {"a:read": "y" * (site_mod.MAX_LABEL + 1)}},
+    {"scope_labels": {f"s{i}:read": "x" for i in range(site_mod.MAX_LABELS + 1)}},
+])
+def test_a_title_or_label_that_is_not_one_short_line_of_text_is_refused(kwargs):
+    with pytest.raises(site_mod.SiteDocumentError) as err:
+        site_mod.site_document(SITE, **kwargs)
+    assert err.value.code == "malformed"
+
+
+def test_an_empty_label_is_left_out():
+    assert dict(_needs(scope_labels={"a:read": "   "}).scope_labels) == {}

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { type PageGrant } from './pageGrant'
-import { siteLabel } from './siteLabel'
+import { scopePhrases, siteName } from './grantWords'
 import { openInBrowser, PASSKEY_IN_BROWSER, passkeysWorkHere, useWhileAway } from '@/auth/passkeyHere'
 
 /** A confirmed act-as-you permission while it is live, else null. */
@@ -37,7 +37,8 @@ export function PageGrantConfirm({ pageGrant, agentName }: { pageGrant: PageGran
   // Only once something needs it (the turn or a card): a send alone never asks.
   if (!grant || !asking) return null
   const who = grant.agent_name || agentName
-  const site = siteLabel(grant.site)
+  const site = siteName(grant)
+  const phrases = scopePhrases(grant)
   const here = passkeysWorkHere()
   const confirmInBrowser = () => {
     openInBrowser(`/confirm/page-permission/${grant.id}`)
@@ -73,11 +74,28 @@ export function PageGrantConfirm({ pageGrant, agentName }: { pageGrant: PageGran
             To {grant.requested_reason.replace(/^to\s+/i, '')}
           </p>
         )}
-        <p className="text-[12px] text-muted-foreground">
-          For 30 minutes it can see and do on {site} only what you can yourself, and only what this
-          page allows ({grant.scope || 'this page'}). Anything it changes is done as you. Confirm
-          with your passkey; you can stop it at any time.
-        </p>
+        <div className="space-y-1.5 text-[12px] text-muted-foreground" data-testid="page-grant-words">
+          {phrases.length ? (
+            <>
+              <p>For 30 minutes, {site} says this lets it:</p>
+              <ul className="list-disc space-y-0.5 pl-4 text-foreground">
+                {phrases.map((p) => <li key={p}>{p}</li>)}
+              </ul>
+            </>
+          ) : (
+            <p>
+              For 30 minutes it can see and do on {site} only what you can yourself, and only what this
+              page allows.
+            </p>
+          )}
+          <p>
+            It uses your own access on {site}, and anything it changes is done as you. Confirm with your
+            passkey; you can stop it at any time.
+          </p>
+          <p className="text-[11px]" data-testid="page-grant-scopes">
+            {grant.page_title ? `${grant.page_title} · ` : ''}permissions: {grant.scope || 'this page'}
+          </p>
+        </div>
         {inBrowser ? (
           <p className="text-[12px] text-foreground" data-testid="page-grant-in-browser">
             Waiting for you to confirm in your browser…

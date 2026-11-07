@@ -2,6 +2,19 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.28.0 — 2026-11-07
+
+**`site.json` can say the site's name and what each scope means, in words.**
+
+- New optional `title` (the site's display name) and `scope_labels` (`{scope: phrase}`), built
+  by `site_document(title=, scope_labels=)`, returned by the Django `SITE_NEEDS` hook
+  (`{"title": ..., "scope_labels": {...}}`) and read back as `SiteNeeds.title` /
+  `SiteNeeds.scope_labels`. canopy's permission prompt prints them ("ACE needs your permission
+  to interact with this page and data on <title>", one line per scope), beside the raw scope
+  names, as what the site says its own scopes cover. Descriptive only: never enforced, and a
+  site that publishes neither is as it was. Each is one short line (80 and 160 characters, at
+  most 64 labels); anything else is a `malformed` document.
+
 ## 0.27.1 — 2026-11-06
 
 **Words only: a "Connected site" is now a host site.**

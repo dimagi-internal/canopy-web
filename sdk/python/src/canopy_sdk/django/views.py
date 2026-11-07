@@ -189,7 +189,8 @@ def site_document(request):
         token = sign_site_document(config.signing_key, build(
             config.app_name, pages=conf.site_pages(needs.get("titles")),
             sensitive_data=needs.get("sensitive_data"), uses=needs.get("uses"),
-            site=site_facts(request, config)))
+            site=site_facts(request, config), title=needs.get("title") or "",
+            scope_labels=needs.get("scope_labels")))
     except HostNotConfigured:
         return _json({"error": "not_configured"}, 503)
     except SiteDocumentError as exc:

@@ -52,6 +52,11 @@ export interface PageGrantInfo {
   requested?: boolean
   /** What the agent said it needs it for, in its own words ("" = none given). */
   requested_reason?: string
+  /** The site's own words for the prompt (its signed site.json): its display name, the page
+   *  this permission is for, and what each scope lets an agent do. All optional. */
+  site_title?: string
+  page_title?: string
+  scope_labels?: readonly { scope: string; label: string }[]
 }
 
 export interface PageGrant {

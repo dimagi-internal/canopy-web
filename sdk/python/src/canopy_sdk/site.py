@@ -28,6 +28,12 @@ It is a compact JWS signed with the site's key (``kid`` in its JWKS), ``typ``
               "resource_schemes": ["labs-result"],
               "resource_id_lengths": {"labs-result": 24}}}
 
+``title`` (optional) is the site's display name ("Connect Labs"), and ``scope_labels`` (optional) says
+in a short phrase what each scope lets an agent do ("read a round's responses and reviews"). They
+exist for one reader: the person asked to let an agent use the site's page. canopy prints them in that
+prompt, beside the raw scope names, as what the SITE says its own scopes cover; it never enforces
+them. Both are descriptive text only: a missing one falls back to the site's name and the raw scopes.
+
 ``site`` (optional) is the site's own facts — the values canopy's Host
 sites form otherwise has someone type: the origins that frame the panel, where
 its keys are, its OAuth issuer and its MCP server. canopy never applies them on
@@ -123,6 +129,45 @@ def _requires(value) -> dict:
             raise SiteDocumentError("malformed", f"sensitive_data.requires.runner_flag {flag!r} is not a "
                                                  f"runner flag canopy knows ({sorted(contract.RUNNER_FLAGS)})")
         out["runner_flag"] = flag
+    return out
+
+
+#: A display name or scope label is shown to a person in a consent prompt: one short line.
+MAX_TITLE = 80
+MAX_LABEL = 160
+MAX_LABELS = 64
+
+
+def _text(value, what: str, limit: int) -> str:
+    """One short line of descriptive text: no control characters, no newlines, bounded."""
+    if value is None or value == "":
+        return ""
+    if not isinstance(value, str):
+        raise SiteDocumentError("malformed", f"{what} must be text")
+    text = " ".join(value.split())
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in value.replace("\n", " ").replace("\t", " ")):
+        raise SiteDocumentError("malformed", f"{what} must not contain control characters")
+    if len(text) > limit:
+        raise SiteDocumentError("malformed", f"{what} is longer than {limit} characters")
+    return text
+
+
+def _scope_labels(value) -> dict[str, str]:
+    """``scope_labels``: ``{scope: phrase}`` — what each scope lets an agent do, in words."""
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise SiteDocumentError("malformed", "scope_labels must map a scope to a phrase")
+    if len(value) > MAX_LABELS:
+        raise SiteDocumentError("malformed", f"scope_labels has more than {MAX_LABELS} scopes")
+    out: dict[str, str] = {}
+    for scope, label in value.items():
+        key = str(scope).strip()
+        if not key or any(ch.isspace() for ch in key):
+            raise SiteDocumentError("malformed", f"scope_labels: {scope!r} is not a scope name")
+        text = _text(label, f"scope_labels[{key}]", MAX_LABEL)
+        if text:
+            out[key] = text
     return out
 
 
@@ -231,6 +276,12 @@ def _normalize(claims: Mapping) -> dict:
     body = {"pages": pages, "sensitive_data": {"requires": _requires(sensitive.get("requires"))},
             "uses": {"agents": agents, "sensitive_data_agents": sensitive_agents,
                      "version": str(uses.get("version") or "")}}
+    title = _text(claims.get("title"), "title", MAX_TITLE)
+    if title:
+        body["title"] = title
+    labels = _scope_labels(claims.get("scope_labels"))
+    if labels:
+        body["scope_labels"] = labels
     site = _site(claims.get("site"))
     if site:
         body["site"] = site
@@ -239,17 +290,19 @@ def _normalize(claims: Mapping) -> dict:
 
 def site_document(site_name: str, *, pages: Sequence[Mapping] = (), sensitive_data: Mapping | None = None,
                   uses: Mapping | None = None, site: Mapping | None = None,
+                  title: str = "", scope_labels: Mapping | None = None,
                   now: float | None = None) -> dict:
     """The payload, validated: ``pages`` as ``[{key, title, scopes}]``,
     ``sensitive_data`` as ``{"requires": {"handles_sensitive", "runner_flag"}}``, ``uses`` as
     ``{"agents", "sensitive_data_agents", "version"}``, ``site`` as ``{"origins",
     "jwks_url", "issuer", "mcp_resource", "resource_schemes", "resource_id_lengths"}`` (each optional; left out
-    when empty)."""
+    when empty), ``title`` the site's display name and ``scope_labels`` as ``{scope: phrase}`` (both optional,
+    descriptive text for the consent prompt)."""
     name = str(site_name or "").strip()
     if not name:
         raise SiteDocumentError("not_configured", "the document needs the site's host-site name")
     body = _normalize({"pages": list(pages), "sensitive_data": sensitive_data or {}, "uses": uses or {},
-                       "site": site})
+                       "site": site, "title": title, "scope_labels": scope_labels})
     return {"v": SITE_DOCUMENT_VERSION, "iss": name, "iat": int(time.time() if now is None else now),
             **body}
 
@@ -303,6 +356,10 @@ class SiteNeeds:
     uses_version: str = ""
     #: The site's own facts (its ``site`` block), or None when it declares none.
     site: SiteFacts | None = None
+    #: The site's display name ("" when it publishes none): canopy's consent prompt says it.
+    title: str = ""
+    #: ``{scope: phrase}`` — what the site says each scope lets an agent do. Descriptive only.
+    scope_labels: Mapping = field(default_factory=dict)
     claims: dict = field(repr=False, default_factory=dict)
 
     @classmethod
@@ -323,6 +380,7 @@ class SiteNeeds:
                             resource_id_lengths=tuple(
                                 (body["site"].get("resource_id_lengths") or {}).items()))
                   if body.get("site") else None),
+            title=body.get("title", ""), scope_labels=dict(body.get("scope_labels") or {}),
             claims=dict(claims))
 
 
