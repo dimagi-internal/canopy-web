@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 
 /**
  * Sticky-bottom auto-scroll for a streaming message list.
@@ -89,7 +89,11 @@ export function useStickyBottom<T>(
     setFollow(true);
   }, [setFollow]);
 
-  useEffect(() => {
+  // A layout effect, not a passive one: it runs before the browser paints, so a
+  // transcript that just arrived (a page load painting dozens of rows at once) is
+  // first SEEN at the bottom. After paint, it showed the top for a frame and then
+  // jumped, which reads as the whole chat scrolling past.
+  useLayoutEffect(() => {
     if (!enabled) return;
     const el = containerRef.current;
     if (!el) return;

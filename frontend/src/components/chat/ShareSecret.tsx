@@ -9,6 +9,8 @@ import {
 } from "@/api/chat";
 import { getZkRecipients } from "@/api/vault";
 import { SecretSealCard } from "@/components/vault/SecretSealCard";
+import { passkeysWorkHere } from "@/auth/passkeyHere";
+import { PasskeyInBrowserNotice } from "@/auth/PasskeyInBrowserNotice";
 import { fingerprint, jkt, sealValue } from "@/vault/zk";
 
 /**
@@ -169,6 +171,13 @@ export function ShareSecretForm({ sessionId, agentSlug, onDone }: {
         )}
       </section>
 
+      {/* Adding one is a passkey step-up (`share_secret`'s gate), which never
+          succeeds in the runner app: say so before anything is typed. */}
+      {!passkeysWorkHere() ? (
+        <div className="border-t border-border pt-3">
+          <PasskeyInBrowserNotice what="Adding a secret" />
+        </div>
+      ) : (
       <form
         className="space-y-3 border-t border-border pt-3"
         autoComplete="off"
@@ -244,6 +253,7 @@ export function ShareSecretForm({ sessionId, agentSlug, onDone }: {
           </button>
         </div>
       </form>
+      )}
     </div>
   );
 }
