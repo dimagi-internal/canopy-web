@@ -142,7 +142,8 @@ def test_a_stale_proof_is_refused(w):
 def test_a_revoked_or_unknown_key_is_refused_with_one_wording(w):
     RunnerDeviceKey.objects.filter(runner=w["laptop"]).update(status=RunnerDeviceKey.REVOKED)
     revoked = _post(w, {"kind": "dpop", "proof": _dpop(w), "htu": _htu()})
-    stranger = _post(w, {"kind": "dpop", "proof": make_dpop_proof(generate_private_key("ES256"), "POST", _htu()), "htu": _htu()})
+    unknown = make_dpop_proof(generate_private_key("ES256"), "POST", _htu())
+    stranger = _post(w, {"kind": "dpop", "proof": unknown, "htu": _htu()})
     assert revoked.status_code == stranger.status_code == 401
     assert revoked.json() == stranger.json()
 
@@ -161,7 +162,8 @@ def test_the_request_must_be_signed_by_the_site(w):
 
 
 def test_a_sign_off_request_is_not_an_attestation_request(w):
-    res = _post(w, {"kind": "dpop", "proof": _dpop(w), "htu": _htu()}, audience=wire.create_url(client_identity.public_base()))
+    res = _post(w, {"kind": "dpop", "proof": _dpop(w), "htu": _htu()},
+                audience=wire.create_url(client_identity.public_base()))
     assert res.status_code == 401
 
 

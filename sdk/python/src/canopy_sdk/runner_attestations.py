@@ -92,8 +92,8 @@ def parse_header(value: str) -> tuple[str, str]:
     return kind, proof.strip()
 
 
-def request_attestation(canopy_url: str, site_name: str, site_key, *, kind: str, proof: str, htu: str, speaks_for: str = "",
-                        workspace: str = "", agent: str = "",
+def request_attestation(canopy_url: str, site_name: str, site_key, *, kind: str, proof: str, htu: str,
+                        speaks_for: str = "", workspace: str = "", agent: str = "",
                         post: Callable[..., tuple] | None = None) -> Attestation:
     """Ask canopy who made ``proof``. ``htu`` is ``bound_url(<this site's endpoint>, <the request body>)``:
     canopy requires the proof to be for exactly that URL. ``speaks_for`` is the agent the request says it is
