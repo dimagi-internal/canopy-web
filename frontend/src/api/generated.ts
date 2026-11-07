@@ -16341,6 +16341,7 @@ export interface paths {
          *     Refused (409) for a conversation not in a channel thread (a DM, the web chat),
          *     or a person whose canopy account is not linked to Slack; 403 for a private
          *     conversation, or someone who may not write in it.
+         *     Naming no session is a 422.
          */
         readonly post: operations["take_session_offline"];
         readonly delete?: never;
@@ -16374,6 +16375,7 @@ export interface paths {
          *
          *     409 for a session that was not started from another conversation, or whose
          *     parent is closed; 403 for someone who may not write in the parent.
+         *     Naming no session (`turn_id` or `session_id`) is a 422.
          */
         readonly post: operations["report_back_to_parent"];
         readonly delete?: never;
@@ -72050,6 +72052,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["SlackOfflineOut"];
                 };
             };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly report_back_to_parent: {
@@ -72072,6 +72083,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ReportBackOut"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };

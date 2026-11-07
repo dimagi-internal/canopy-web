@@ -215,7 +215,7 @@ def start_new_slack_thread(request: HttpRequest, payload: SlackNewThreadIn):
                          "permalink": prev.get("permalink") or ""}}
 
 
-@router.post("/slack/offline", response=SlackOfflineOut,
+@router.post("/slack/offline", response={200: SlackOfflineOut, **declared_refusals(422)},
              summary="Take a channel thread's work offline into a private DM thread")
 @gate("session-acl", "agent-login", kind="conversation")  # write; or the agent's own live turn
 def take_session_offline(request: HttpRequest, payload: SlackOfflineIn):
@@ -239,6 +239,7 @@ def take_session_offline(request: HttpRequest, payload: SlackOfflineIn):
     Refused (409) for a conversation not in a channel thread (a DM, the web chat),
     or a person whose canopy account is not linked to Slack; 403 for a private
     conversation, or someone who may not write in it.
+    Naming no session is a 422.
     """
     session = _slack_session_for(request, turn_id=payload.turn_id, session_id=payload.session_id)
     asker, origin_turn = request.user, None

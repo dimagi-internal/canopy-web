@@ -15,6 +15,7 @@ from ninja.errors import HttpError
 
 from apps.agents import refusals
 from apps.api.auth import session_auth
+from apps.api.errors import refusals as declared_refusals
 from apps.api.route_gates import gate
 from apps.harness import initiator as who
 from apps.harness.models import Turn
@@ -31,7 +32,7 @@ REPORT_VIA = "report_back"
 _REPORTS_KEPT = 20
 
 
-@router.post("/lineage/report-back", response=ReportBackOut,
+@router.post("/lineage/report-back", response={200: ReportBackOut, **declared_refusals(422)},
              summary="Report a session's outcome back to the conversation it came from")
 @gate("session-acl", "agent-login", kind="conversation")  # write; or the agent's own live turn
 def report_back_to_parent(request: HttpRequest, payload: ReportBackIn):
@@ -49,6 +50,7 @@ def report_back_to_parent(request: HttpRequest, payload: ReportBackIn):
 
     409 for a session that was not started from another conversation, or whose
     parent is closed; 403 for someone who may not write in the parent.
+    Naming no session (`turn_id` or `session_id`) is a 422.
     """
     user = request.user
     own = access.own_turn_session(user, payload.turn_id) if payload.turn_id else None
