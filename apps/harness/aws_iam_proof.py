@@ -225,10 +225,14 @@ def verify(raw: str, request, *, now: float | None = None) -> str:
     return canonical_role_arn(verify_caller(raw, request, now=now))
 
 
-def verify_caller(raw: str, request, *, now: float | None = None) -> str:
+def verify_caller(raw: str, request, *, now: float | None = None, htu_ok=None) -> str:
     """`verify`, returning the signer's ARN exactly as STS named it — for an EC2
     box `arn:aws:sts::<acct>:assumed-role/<role>/<instance id>`, which `known_key`
-    needs to tell one fleet member from another."""
+    needs to tell one fleet member from another.
+
+    `htu_ok`, a predicate on the signed URL, replaces the "is this canopy's own
+    endpoint" check for a proof made for a host site's endpoint
+    (`runner_attestations`); `request` is then unused."""
     obj = _decode(raw)
     _check_url(obj)
     headers = _headers(obj)
@@ -242,7 +246,8 @@ def verify_caller(raw: str, request, *, now: float | None = None) -> str:
     # request's headers; absent is the pinned host, anything else is refused.
     if headers.setdefault("host", STS_HOST).lower() != STS_HOST:
         raise AwsProofError(f"the proof must be signed for host {STS_HOST}")
-    if not device_keys.htu_matches(_htu_without_query(headers.get(HTU_HEADER, "")), request):
+    htu = _htu_without_query(headers.get(HTU_HEADER, ""))
+    if not (htu_ok(htu) if htu_ok else device_keys.htu_matches(htu, request)):
         raise AwsProofError("the proof is for a different URL")
     try:
         iat = float(headers.get(IAT_HEADER, ""))
