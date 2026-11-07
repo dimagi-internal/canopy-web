@@ -19,9 +19,9 @@ from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
-from . import access, answering, grants, rolecatalog, roles
+from . import access, profile_settings, grants, rolecatalog, roles
 from .gates import agent_for_admin, agent_for_read
-from .interface import is_read_mode
+from .published_profiles import is_read_mode
 from .models import Agent, AgentGrant
 from .schemas import (
     AccessImplicitOut,
@@ -164,7 +164,7 @@ def get_access_list(request: HttpRequest, slug: str) -> AccessListOut:
 
 def _host_sites(agent: Agent) -> list[HostSiteChoiceOut]:
     """Every entry a line may name (all but read mode), with the site it is connected to."""
-    site_of = {row["key"]: row["site"] for row in answering.host_sites_of(agent)}
+    site_of = {row["key"]: row["site"] for row in profile_settings.host_sites_of(agent)}
     names = sorted(n for n in ((agent.interface or {}).get("capabilities") or {}) if not is_read_mode(n))
     return [HostSiteChoiceOut(name=n, site=site_of.get(n, "")) for n in names]
 

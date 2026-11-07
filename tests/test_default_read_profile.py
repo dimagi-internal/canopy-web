@@ -6,8 +6,8 @@ thing out: a diff to it needs a person's review, and `READ_PROFILE_VERSION` must
 """
 from types import SimpleNamespace
 
-from apps.agents import interface
-from apps.agents.interface_default import READ_MODE_STAMP, READ_PROFILE_VERSION, default_read_profile
+from apps.agents import published_profiles
+from apps.agents.read_mode import READ_MODE_STAMP, READ_PROFILE_VERSION, default_read_profile
 
 
 def _agent(**kw):
@@ -85,7 +85,7 @@ def test_entry_only_when_the_catalog_has_answer_caller():
 
 def test_it_is_a_valid_profile_and_pinned_version():
     got = default_read_profile(_agent(email="a@b.c", repo_url="https://github.com/o/r"), skills=["answer-caller"])
-    parsed = interface.parse({"capabilities": {READ_MODE_STAMP: got}})["capabilities"][READ_MODE_STAMP]
+    parsed = published_profiles.parse({"capabilities": {READ_MODE_STAMP: got}})["capabilities"][READ_MODE_STAMP]
     assert parsed["tools"] == got["tools"] and parsed["bash"] == got["bash"]
     assert parsed["write_paths"] == got["write_paths"]
     assert READ_PROFILE_VERSION == 4

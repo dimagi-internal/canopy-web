@@ -13,13 +13,13 @@ import re
 from django.db import transaction
 from django.utils import timezone
 
-from . import interface as iface_mod
+from . import published_profiles as profiles_mod
 from . import sensitive_data
 from .models import Agent
 
 #: The fields of a profile, in either setting. A host site adds `ceiling`, `own_login`, `sensitive`.
 PROFILE_FIELDS = ("description", "entry", "tools", "bash", "read_paths", "write_paths")
-_RESERVED_KEYS = frozenset({*iface_mod.READ_MODE_NAMES, iface_mod.SESSION_REVIEW})
+_RESERVED_KEYS = frozenset({*profiles_mod.READ_MODE_NAMES, profiles_mod.SESSION_REVIEW})
 _MAX_ENTRIES = 50
 
 
@@ -59,10 +59,10 @@ def _profile_of(entry: dict) -> dict:
 
 def read_mode_of(agent) -> dict:
     """`{source: default|custom, profile}`: what someone who may only read gets from `agent`."""
-    name = iface_mod.read_mode_override(agent.interface)
+    name = profiles_mod.read_mode_override(agent.interface)
     if name is not None:
         return {"source": "custom", "profile": _profile_of(_entries(agent)[name])}
-    return {"source": "default", "profile": _profile_of(iface_mod.default_read_profile(agent))}
+    return {"source": "default", "profile": _profile_of(profiles_mod.default_read_profile(agent))}
 
 
 def _row(name: str, entry: dict, site: str) -> dict:
@@ -74,7 +74,7 @@ def _row(name: str, entry: dict, site: str) -> dict:
 def host_sites_of(agent) -> list[dict]:
     """One row per site, by site. Read mode is never a row, even if a stored `READ_MODE_STAMP` entry names a site."""
     rows = [_row(name, entry or {}, site) for name, entry in _entries(agent).items()
-            if not iface_mod.is_read_mode(name) for site in (entry or {}).get("sites") or []]
+            if not profiles_mod.is_read_mode(name) for site in (entry or {}).get("sites") or []]
     return sorted(rows, key=lambda r: (r["site"], r["key"]))
 
 
@@ -88,7 +88,7 @@ def document_problems(caps: dict) -> list[str]:
         sites = cap.get("sites") or []
         for site in sites:
             by_site.setdefault(site, []).append(name)
-        if iface_mod.is_read_mode(name):
+        if profiles_mod.is_read_mode(name):
             if sites or cap.get("ceiling") or cap.get("own_login") or cap.get("data"):
                 out.append(f"{name}: read mode names sites, a ceiling, a login or sensitive data")
         elif not sites:
@@ -101,7 +101,7 @@ def document_problems(caps: dict) -> list[str]:
 
 def key_for(site: str, taken) -> str:
     """The internal name for a new site's row: never renamed, because it is what a turn is stamped with
-    and what an access line names. Fits `interface.parse`'s name rule, and is never a name canopy
+    and what an access line names. Fits `published_profiles.parse`'s name rule, and is never a name canopy
     reserves: not read mode's, and not `session_review`, which nobody can publish."""
     base = re.sub(r"[^a-z0-9_]", "_", site.lower())[:37]
     if not base[:1].isalpha():
@@ -125,8 +125,8 @@ def store(agent, parsed: dict, by) -> None:
 
 def _validated(name: str, entry: dict) -> dict:
     try:
-        return iface_mod.parse({"capabilities": {name: entry}})["capabilities"][name]
-    except iface_mod.InterfaceError as exc:
+        return profiles_mod.parse({"capabilities": {name: entry}})["capabilities"][name]
+    except profiles_mod.InterfaceError as exc:
         # The parser names the stored document's keys; a person at the form reads the form's words.
         raise SettingsError(re.sub(r" \(`\w+:` must be empty\)", "", str(exc))) from exc
 
@@ -159,8 +159,8 @@ def set_read_mode(agent, fields: dict, *, by, dry_run: bool = False):
     as it stands for this agent, and saves it as the agent's own."""
     def change(doc):
         caps = doc["capabilities"]
-        name = iface_mod.read_mode_override(doc) or iface_mod.READ_MODE_STAMP
-        start = caps.get(name) or _profile_of(iface_mod.default_read_profile(agent))
+        name = profiles_mod.read_mode_override(doc) or profiles_mod.READ_MODE_STAMP
+        start = caps.get(name) or _profile_of(profiles_mod.default_read_profile(agent))
         caps[name] = _validated(name, {**_profile_of(start), **fields})
     return _edit(agent, change, by=by, dry_run=dry_run)
 
@@ -168,14 +168,9 @@ def set_read_mode(agent, fields: dict, *, by, dry_run: bool = False):
 def reset_read_mode(agent, *, by, dry_run: bool = False):
     """Back to canopy's default: both names go, or the other would take over."""
     def change(doc):
-        for name in iface_mod.READ_MODE_NAMES:
+        for name in profiles_mod.READ_MODE_NAMES:
             doc["capabilities"].pop(name, None)
     return _edit(agent, change, by=by, dry_run=dry_run)
-
-
-def _name_for_site(caps: dict, site: str) -> str | None:
-    return next((name for name, entry in caps.items()
-                 if not iface_mod.is_read_mode(name) and site in ((entry or {}).get("sites") or [])), None)
 
 
 def _limits_nothing(globs) -> str | None:
@@ -194,7 +189,7 @@ def set_site(agent, site: str, fields: dict, *, by, dry_run: bool = False):
     """Add or change `site`'s row: `fields` over what it holds now, or over `new_site_defaults`."""
     def change(doc):
         caps = doc["capabilities"]
-        name = _name_for_site(caps, site)
+        name = profiles_mod.entry_for_site({"capabilities": caps}, site)
         start = _row(name, caps[name] or {}, site) if name else new_site_defaults()
         # Only a limit this save CHANGES is checked: the form sends the stored one back with every
         # save, and a row stored before this guard must stay editable.
@@ -220,7 +215,7 @@ def remove_site(agent, site: str, *, by, dry_run: bool = False):
     """Take `site`'s row away. A turn already stamped with it gets the deny-all profile, as for any
     profile that is gone, and an access line naming it opens nothing."""
     def change(doc):
-        name = _name_for_site(doc["capabilities"], site)
+        name = profiles_mod.entry_for_site(doc, site)
         if name is None:
             raise LookupError(site)
         doc["capabilities"].pop(name)

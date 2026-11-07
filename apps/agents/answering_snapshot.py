@@ -35,11 +35,11 @@ from apps.tokens.models import AppCredential
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
-from . import access, agent_card, answering, roles, sensitive_data, topology, turn_context
-from . import interface as iface_mod
+from . import access, agent_card, profile_settings, roles, sensitive_data, topology, turn_context
+from . import published_profiles as profiles_mod
 from .models import Agent, AgentGrant, AgentRole
 from .setup import runner_takers
-from .standings import Standing
+from .standings import Membership
 
 #: A stamp nothing was ever published under: it must keep resolving to the deny-all profile.
 RETIRED_STAMP = "retired_probe"
@@ -152,8 +152,9 @@ def _shape(agents) -> dict:
     slugs = {a.pk: a.slug for a in agents}
     named_lines = list(AgentGrant.objects.exclude(capability="").values_list("agent_id", "capability"))
     dangling = sorted(f"{slugs[agent_id]}: {name}" for agent_id, name in named_lines
-                      if agent_id and not iface_mod.is_read_mode(name) and name not in published[agent_id])
-    problems = {a.slug: answering.document_problems((a.interface or {}).get("capabilities") or {}) for a in agents}
+                      if agent_id and not profiles_mod.is_read_mode(name) and name not in published[agent_id])
+    problems = {a.slug: profile_settings.document_problems((a.interface or {}).get("capabilities") or {})
+                for a in agents}
     role_names = {p for row in AgentRole.objects.values_list("permissions", flat=True) for p in row or []
                   if p.startswith(f"{roles.USE}:") and p != f"{roles.USE}:*"}
     return {
@@ -170,14 +171,14 @@ def _shape(agents) -> dict:
 
 def _agent(agent, members, standings, workspace_sites: set[str]) -> dict:
     caps = sorted((agent.interface or {}).get("capabilities") or {})
-    stamps = [iface_mod.FULL, *iface_mod.READ_MODE_NAMES, *caps, RETIRED_STAMP]
-    served = iface_mod.page_sites(agent)
+    stamps = [profiles_mod.FULL_STAMP, *profiles_mod.READ_MODE_NAMES, *caps, RETIRED_STAMP]
+    served = profiles_mod.page_sites(agent)
     roster = access.roster(agent, members, standings)
     out = {
         "workspace": agent.workspace_id,
-        "profile": {stamp: iface_mod.profile(agent, stamp) for stamp in stamps},
-        "sites_served": {site: {"ceiling": iface_mod.site_ceiling(agent, site),
-                                "own_login": iface_mod.own_login_of(agent, site)} for site in sorted(served)},
+        "profile": {stamp: profiles_mod.profile(agent, stamp) for stamp in stamps},
+        "sites_served": {site: {"ceiling": profiles_mod.site_ceiling(agent, site),
+                                "own_login": profiles_mod.own_login_of(agent, site)} for site in sorted(served)},
         "lines": _lines(standings.lines_of(agent)),
         "decide": _matrix(agent, caps, sorted(served | workspace_sites), members, roster, standings),
         "roster": [{k: row[k] for k in ("email", "agent_role", "access", "profiles", "role", "source",
@@ -221,7 +222,7 @@ def _probe_person(role: str) -> tuple:
     row = AgentRole(pk=_PROBE_PK, key=role, permissions=sorted(roles.permissions_of(role)))
     line = AgentGrant(kind=AgentGrant.PERSON, user=user, role=role, role_def=row, verified=False,
                       subject_key=f"probe:{role}")
-    return user, Standing(None, False, {}, [line], {}), [line]
+    return user, Membership(None, False, {}, [line], {}), [line]
 
 
 def _probe_contact(site: str) -> tuple:
@@ -245,7 +246,7 @@ def _personas(agent, caps, members, roster, standings) -> list[tuple]:
     for role in (roles.EDITOR, roles.READ_ONLY):
         out.append((role, *_probe_person(role)))
     for name in caps:
-        if not iface_mod.is_read_mode(name):
+        if not profiles_mod.is_read_mode(name):
             out.append((f"contact_use_{name}", *_probe_contact(name)))
     return out
 
@@ -260,7 +261,7 @@ def _contexts(sites: list[str]) -> list[tuple]:
 
 
 def _matrix(agent, caps, sites, members, roster, standings) -> dict:
-    asks = [None, *iface_mod.READ_MODE_NAMES, *caps, RETIRED_STAMP]
+    asks = [None, *profiles_mod.READ_MODE_NAMES, *caps, RETIRED_STAMP]
     out: dict = {}
     for label, who, standing, lines in _personas(agent, caps, members, roster, standings):
         by_context = out.setdefault(label, {})

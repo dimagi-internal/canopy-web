@@ -12,7 +12,7 @@ from django.contrib.auth.models import User
 from django.test import Client
 
 from apps.agents import roles
-from apps.agents.interface import FULL, READ_MODE_STAMP, InterfaceError, parse
+from apps.agents.published_profiles import FULL_STAMP, READ_MODE_STAMP, InterfaceError, parse
 from apps.agents.models import Agent, AgentAdmin
 from apps.harness import caller_context, claim, services
 from apps.harness import initiator as who
@@ -115,7 +115,7 @@ def test_write_paths_are_their_own_list_and_reach_the_profile():
     # One list for read and write let a caller overwrite the script its bash
     # allowlist runs (bin/ace-email) and then run it. Writes get their own list;
     # none published means none allowed (the guard reads an empty list as deny).
-    from apps.agents.interface import profile
+    from apps.agents.published_profiles import profile
 
     got = parse({"capabilities": {"ask": {**READ_MODE_PROFILE, "write_paths": ["{cwd}/.ace-ask/*"]}}})
     assert got["capabilities"]["ask"]["write_paths"] == ["{cwd}/.ace-ask/*"]
@@ -159,7 +159,7 @@ def test_with_the_editors_line_an_editor_gets_the_whole_agent_manual(w):
     wsvc.ensure_member(w["agent"].workspace, member, WorkspaceMembership.EDITOR)
     t, _ = services.enqueue_turn(agent=w["agent"], origin=Turn.ORIGIN_API, idempotency_key="m1",
                                 prompt="x", initiator=who.for_user(member, via="api", assurance="pat"))
-    assert t.status == Turn.QUEUED and t.capability == FULL
+    assert t.status == Turn.QUEUED and t.capability == FULL_STAMP
     env = caller_context.build(t)
     assert env["granted_by"].startswith("grant:workspace:connect:editor") and env["relationship"] == "member"
     assert env["turn_mode"]["mode"] == "manual"
@@ -181,7 +181,7 @@ def test_an_agents_own_login_is_the_agent_itself(w):
     _publish(w["agent"])                      # even with an interface that confines callers
     t, _ = services.enqueue_turn(agent=w["agent"], origin=Turn.ORIGIN_API, idempotency_key="self",
                                 prompt="x", initiator=who.for_user(login, via="api", assurance="pat"))
-    assert t.capability == FULL
+    assert t.capability == FULL_STAMP
     assert caller_context.build(t)["relationship"] == "system"
 
 
@@ -213,7 +213,7 @@ def test_an_unverified_emailer_is_refused_when_read_mode_needs_verified(w):
     _publish(w["agent"])
     t = _email(w["agent"], "e1")
     assert t.status == Turn.CANCELLED and "access list" in t.result_note
-    assert t.capability == FULL        # never ran, so never had a profile
+    assert t.capability == FULL_STAMP        # never ran, so never had a profile
 
 
 def test_owner_workspace_owner_and_admin_stay_full(w):
@@ -222,7 +222,7 @@ def test_owner_workspace_owner_and_admin_stay_full(w):
     M.objects.create(user=boss, workspace=w["ws"], role=M.OWNER)
     AgentAdmin.objects.create(agent=w["agent"], user=w["ed"])
     for i, u in enumerate((w["op"], boss, w["ed"])):
-        assert _as_user(w["agent"], u, f"k{i}").capability == FULL
+        assert _as_user(w["agent"], u, f"k{i}").capability == FULL_STAMP
 
 
 def test_a_plain_member_is_a_caller(w):
@@ -240,7 +240,7 @@ def test_a_schedule_stays_full(w):
     _publish(w["agent"])
     t, _ = services.enqueue_turn(agent=w["agent"], origin=Turn.ORIGIN_CANOPY_SCHEDULER,
                                  idempotency_key="s", initiator=who.system(via="schedule:1"))
-    assert t.capability == FULL
+    assert t.capability == FULL_STAMP
 
 
 def test_an_email_thread_session_turn_is_decided_too(w):

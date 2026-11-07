@@ -236,12 +236,12 @@ def resolve(turn_id: str, *, reason: str = "") -> SiteContext:
         raise GatewayRefusal("site_not_configured",
                              f"{site} does not let me act for you there")
 
-    from apps.agents import interface  # noqa: PLC0415 — as the model reads above: loads with a call
+    from apps.agents import published_profiles# noqa: PLC0415 — as the model reads above: loads with a call
 
     if turn.capability:
         # A confined turn: its own profile must name the site.
         cap = ((agent.interface or {}).get("capabilities") or {}).get(turn.capability)
-        if not cap or site not in (cap.get("sites") or []):
+        if not published_profiles.names_site(cap, site):
             raise GatewayRefusal("site_not_in_capability",
                                  f"I am not set up to use {site}'s tools in this conversation")
         ceiling = list(cap.get("ceiling") or [])
@@ -249,12 +249,12 @@ def resolve(turn_id: str, *, reason: str = "") -> SiteContext:
         # A FULL-profile turn (the owner, an admin, an editor) in a conversation held
         # on a site's page: it reaches the site the same way a visitor's does — as the
         # person who sent, under their act-as-you permission for the page, never with
-        # the agent's own login there (withheld from the turn, `interface.own_login_of`).
+        # the agent's own login there (withheld from the turn, `published_profiles.own_login_of`).
         # Only on a site the agent is set up for (some host site lists it).
-        if interface.page_site_of(turn, agent) != site:
+        if published_profiles.page_site_of(turn, agent) != site:
             raise GatewayRefusal("site_not_in_capability",
                                  f"I am not set up to use {site}'s tools in this conversation")
-        ceiling = interface.site_ceiling(agent, site)
+        ceiling = published_profiles.site_ceiling(agent, site)
 
     # WHO ASKED, from the turn — the grant is theirs or there is none. And for
     # WHICH agent: a grant a page bound to another agent is not this one's. And

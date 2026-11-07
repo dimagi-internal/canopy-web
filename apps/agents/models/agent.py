@@ -6,7 +6,7 @@ from django.db import models
 from apps.harness import clis as clis_vocab
 
 from .. import roles
-from ..interface_default import default_interface
+from ..read_mode import default_interface
 
 #: An argument not passed, so read from the database. `None` is an answer (not
 #: a member), so it cannot also mean "not given".
@@ -39,10 +39,10 @@ class Agent(models.Model):
     )
     #: The DECLARED INTERFACE — what callers (anyone not the owner or an admin)
     #: may ask this agent for. LIVE STATE held here, not in the agent's repo:
-    #: edited as read mode and host sites (`apps/agents/answering.py`, the one writer),
-    #: validated by `apps.agents.interface.parse`.
+    #: edited as read mode and host sites (`apps/agents/profile_settings.py`, the one writer),
+    #: validated by `apps.agents.published_profiles.parse`.
     #: Never empty: an agent is created with the default interface (owner, admins and
-    #: editors only). See `apps/agents/interface.py`.
+    #: editors only). See `apps/agents/published_profiles.py`.
     interface = models.JSONField(default=default_interface, blank=True)
     interface_published_at = models.DateTimeField(null=True, blank=True)
     #: Does this agent also take the access-list lines set on its workspace (and the

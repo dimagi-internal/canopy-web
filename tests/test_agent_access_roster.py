@@ -11,7 +11,7 @@ import pytest
 from django.contrib.auth.models import User
 from django.test import Client
 
-from apps.agents import interface, roles, turn_context
+from apps.agents import published_profiles, roles, turn_context
 from apps.agents.models import Agent, AgentAdmin
 from apps.harness import initiator as who
 from apps.harness.models import Turn
@@ -146,7 +146,7 @@ def test_roster_agrees_with_the_harness_for_a_signed_in_turn(world, published):
                     initiator_assurance=who.SESSION, initiator_user=user)
         decided = turn_context.for_turn(turn, a).stamped
         row = rows[user.email]
-        if decided == interface.FULL:
+        if decided == published_profiles.FULL_STAMP:
             assert row["access"] == "full", user.email
         elif decided is None:
             assert row["access"] == "none", user.email

@@ -18,7 +18,7 @@ Tests that exercise the rule itself build `AgentGrant` rows directly
 from __future__ import annotations
 
 from apps.agents import roles
-from apps.agents.interface import parse
+from apps.agents.published_profiles import parse
 from apps.agents.models import AgentGrant
 
 

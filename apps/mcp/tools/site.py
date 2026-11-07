@@ -24,7 +24,7 @@ conversation with the chat key the runner handed only to that session. So a
 session cannot point the gateway at somebody else's conversation. A chat held on a
 site's page reaches that site only this way, as the person who sent — the owner
 included: the agent's own login there is withheld from the turn
-(`interface.own_login_of`). A PAT with no chat key (no page conversation) is refused.
+(`published_profiles.own_login_of`). A PAT with no chat key (no page conversation) is refused.
 """
 from __future__ import annotations
 

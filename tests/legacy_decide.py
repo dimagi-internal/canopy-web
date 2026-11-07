@@ -21,8 +21,8 @@ from dataclasses import dataclass, replace
 from django.contrib.auth import get_user_model
 
 from apps.agents import grants, roles
-from apps.agents import interface as iface_mod
-from apps.agents.standings import Standing, standing_of
+from apps.agents import published_profiles as profiles_mod
+from apps.agents.standings import Membership, standing_of
 from apps.contacts.models import Contact
 from apps.harness import caller_context as cc
 from apps.harness import initiator as initiator_mod
@@ -35,7 +35,7 @@ FULL, CONFINED, NONE = "full", "confined", "none"
 def _page_capability(turn, iface: dict, opens) -> str | None:
     from fnmatch import fnmatchcase
 
-    resource = iface_mod._declared_resource(turn)
+    resource = profiles_mod._declared_resource(turn)
     if not resource:
         return None
     for name, cap in (iface.get("capabilities") or {}).items():
@@ -48,7 +48,7 @@ def _page_capability(turn, iface: dict, opens) -> str | None:
 
 
 def _site_capability(turn, iface: dict, opens) -> str | None:
-    site = iface_mod._conversation_site(turn)
+    site = profiles_mod._conversation_site(turn)
     if not site:
         return None
     for name, cap in (iface.get("capabilities") or {}).items():
@@ -88,7 +88,7 @@ class Decision:
     def stamp(self) -> str | None:
         """`Turn.capability` for this decision: FULL (""), a name, or None (refused)."""
         if self.access == FULL:
-            return iface_mod.FULL
+            return profiles_mod.FULL_STAMP
         if self.access == CONFINED:
             return self.capability
         return None
@@ -109,7 +109,7 @@ def _list_refusal(agent, *, verified_contact: bool = False) -> str:
 
 
 def decide(agent, who=None, *, verified: bool, origin: str = "", capability: str | None = None,
-           turn=None, standing: Standing | None = None, lines=None) -> Decision:
+           turn=None, standing: Membership | None = None, lines=None) -> Decision:
     """THE rule: what `who` (a canopy User, a Contact, or None) may make `agent` do.
 
     Owner, admin and system (`_decide`), then the access list (`_from_access_list`)
@@ -125,9 +125,9 @@ def decide(agent, who=None, *, verified: bool, origin: str = "", capability: str
     Everyone but the owner, the admins and canopy gets what their line on the access list
     gives them, and nothing else.
     """
-    review = turn is not None and iface_mod.is_review_turn(turn)
+    review = turn is not None and profiles_mod.is_review_turn(turn)
     if review:
-        capability = iface_mod.SESSION_REVIEW
+        capability = profiles_mod.SESSION_REVIEW
     decision = _stamp(_decide(agent, who, verified=verified, origin=origin, capability=capability,
                               turn=turn, st=standing))
     decision = _from_access_list(agent, decision, who, verified=verified, capability=capability,
@@ -144,8 +144,8 @@ def _review_rule(d: Decision) -> Decision:
     message there picks up the agent's whole profile, nor a login, a token or a send."""
     if d.access == NONE:
         return d
-    return replace(d, access=CONFINED, capability=iface_mod.SESSION_REVIEW, may_request_auto=False,
-                   may_pin_runner=False, basis=f"capability:{iface_mod.SESSION_REVIEW}")
+    return replace(d, access=CONFINED, capability=profiles_mod.SESSION_REVIEW, may_request_auto=False,
+                   may_pin_runner=False, basis=f"capability:{profiles_mod.SESSION_REVIEW}")
 
 
 #: Why a sensitive conversation with no capability that handles sensitive data is refused.
@@ -165,12 +165,12 @@ def _sensitive_capability(agent, iface: dict, capability: str | None, turn) -> s
     if capability:
         # `read` and `ask` are one thing: naming either finds the agent's published read-mode
         # profile, and if that handles sensitive data, naming `read` must not dodge the rule.
-        published, cap = iface_mod.published_profile(iface, capability)
+        published, cap = profiles_mod.published_profile(iface, capability)
         return published if (cap or {}).get("data") == sensitive_data.SENSITIVE else None
     if turn is None:
         return None
-    site = iface_mod._conversation_site(turn)
-    resource = iface_mod._declared_resource(turn)
+    site = profiles_mod._conversation_site(turn)
+    resource = profiles_mod._declared_resource(turn)
     for name, cap in caps.items():
         if cap.get("data") != sensitive_data.SENSITIVE:
             continue
@@ -221,7 +221,7 @@ def _stamp(d: Decision) -> Decision:
     return d
 
 
-def _asker_of(who, turn, verified: bool, standing: Standing | None) -> grants.Asker:
+def _asker_of(who, turn, verified: bool, standing: Membership | None) -> grants.Identity:
     """The asker as the access list sees them: a canopy user, or a contact known by address."""
     user = contact = None
     if turn is not None:
@@ -233,7 +233,7 @@ def _asker_of(who, turn, verified: bool, standing: Standing | None) -> grants.As
     elif isinstance(who, Contact):
         contact = who
     email = (getattr(user, "email", "") or getattr(contact, "email", "") or "").strip().lower()
-    return grants.Asker(user=user, email=email, verified=bool(verified), contact=contact is not None,
+    return grants.Identity(user=user, email=email, verified=bool(verified), contact=contact is not None,
                         workspace_roles=getattr(standing, "roles", None),
                         descendants=getattr(standing, "descendants", None))
 
@@ -242,29 +242,29 @@ def _capability_for(agent, iface: dict, permissions, capability, turn):
     """The capability someone confined is held to: the one named, else the page's or the
     site's, else read mode — among those their permissions open.
 
-    Read mode (`read` and `READ_MODE_STAMP`, one thing: `interface.is_read_mode`) exists on every agent. It is
+    Read mode (`read` and `READ_MODE_STAMP`, one thing: `published_profiles.is_read_mode`) exists on every agent. It is
     the agent's own published read mode when it has one (the stamp is that name), else canopy's
-    default (`interface.default_read_profile`, stamped `read`). Any other name is a host site and
+    default (`published_profiles.default_read_profile`, stamped `read`). Any other name is a host site and
     must be published; an unknown or retired one is refused here, never widened."""
     def opens(name, cap):
-        return iface_mod.opens(permissions, name)
+        return profiles_mod.opens(permissions, name)
 
-    if capability == iface_mod.SESSION_REVIEW:
+    if capability == profiles_mod.SESSION_REVIEW:
         # Canopy's own profile, for a turn in a review chat only (`decide`): `read` opens it.
-        is_review = turn is not None and iface_mod.is_review_turn(turn)
+        is_review = turn is not None and profiles_mod.is_review_turn(turn)
         return (capability, {}) if is_review and roles.holds(permissions, roles.READ) else (None, None)
     name = capability
     if name is None and turn is not None:
         name = _page_capability(turn, iface, opens) or _site_capability(turn, iface, opens)
-    name = name or iface_mod.READ_MODE_STAMP
-    published, cap = iface_mod.published_profile(iface, name)
-    if published is None and iface_mod.is_read_mode(name):
-        published, cap = iface_mod.READ_MODE, {}   # {}: canopy's default, built at claim (`profile`)
+    name = name or profiles_mod.READ_MODE_STAMP
+    published, cap = profiles_mod.published_profile(iface, name)
+    if published is None and profiles_mod.is_read_mode(name):
+        published, cap = profiles_mod.READ_MODE_NAME, {}   # {}: canopy's default, built at claim (`profile`)
     return (published, cap) if cap is not None and opens(published, cap) else (None, None)
 
 
 def _from_access_list(agent, d: Decision, who, *, verified: bool, capability, turn,
-                      standing: Standing | None, lines) -> Decision:
+                      standing: Membership | None, lines) -> Decision:
     """What the access list gives the asker. An owner, admin or canopy itself already has the whole
     agent; everyone else has exactly what their lines say."""
     if d.access == FULL:
@@ -287,7 +287,7 @@ def _from_access_list(agent, d: Decision, who, *, verified: bool, capability, tu
     if name is None:
         return d
     # The review profile is opened by `read`; `line_opening` knows only host sites and read mode.
-    line = got.line_for(roles.READ) if name == iface_mod.SESSION_REVIEW else got.line_opening(name)
+    line = got.line_for(roles.READ) if name == profiles_mod.SESSION_REVIEW else got.line_opening(name)
     return Decision(relationship=d.relationship, access=CONFINED, capability=name, may_request_auto=False,
                     may_pin_runner=False, manual_only=False, basis=f"capability:{name}",
                     agent_role=got.role, source=f"list:{line.subject_key}", via=grants.describe(line),
@@ -295,7 +295,7 @@ def _from_access_list(agent, d: Decision, who, *, verified: bool, capability, tu
 
 
 def _decide(agent, who=None, *, verified: bool, origin: str = "", capability: str | None = None,
-            turn=None, st: Standing | None = None) -> Decision:
+            turn=None, st: Membership | None = None) -> Decision:
     """The part of the rule that needs no list: the owner, the admins and canopy itself have the
     whole agent; everyone else is `none` here and gets whatever their line on the access list
     says (`_from_access_list`).
@@ -365,7 +365,7 @@ def _held_permissions(d, stamped: str | None) -> list[str]:
     if d.access == FULL and not stamped:
         return sorted(held)
     name = stamped or d.capability
-    if iface_mod.is_read_mode(name):
+    if profiles_mod.is_read_mode(name):
         # Read mode is `read`, not a host site: nothing is named after it (no `use:read`, no `use:` + its stamp).
         return [roles.READ]
     kept = {p for p in held if p == roles.READ or (p.startswith(f"{roles.USE}:") and p != f"{roles.USE}:*")}
@@ -376,7 +376,7 @@ def _held_permissions(d, stamped: str | None) -> list[str]:
 
 def envelope_profile(agent, capability: str, turn=None):
     """`caller_context._profile`, as it was before the envelope read the Turn Context."""
-    from apps.agents.interface import profile
+    from apps.agents.published_profiles import profile
     from apps.harness import sensitivity
 
     if agent is None or not capability:

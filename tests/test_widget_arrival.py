@@ -161,7 +161,7 @@ def _turn_as(raw, agent_slug="echo"):
 
 
 def test_an_agents_own_login_arrives_as_itself_and_runs_unconfined(w):
-    from apps.agents.interface import FULL
+    from apps.agents.published_profiles import FULL_STAMP
     from apps.harness import caller_context
 
     bot, agent = _agent_login(w)
@@ -173,7 +173,7 @@ def test_an_agents_own_login_arrives_as_itself_and_runs_unconfined(w):
     assert t.initiator_user_id == bot.pk
     env = caller_context.build(t)
     assert env["relationship"] == "system"
-    assert t.capability == FULL and env["profile"] == "full" and env["granted_by"] == "system"
+    assert t.capability == FULL_STAMP and env["profile"] == "full" and env["granted_by"] == "system"
 
 
 def test_the_contact_it_already_fell_to_is_promoted_on_the_next_arrival(w):

@@ -19,7 +19,7 @@ from fastmcp.exceptions import ToolError
 from mcp.server.auth.middleware.auth_context import AuthenticatedUser, auth_context_var
 
 from apps.agents import turn_context
-from apps.agents import interface
+from apps.agents import published_profiles
 from apps.agents.credentials import delegations
 from apps.agents.models import Agent, AgentGrant
 from apps.canopy_sessions import access, audience, coaching, placement
@@ -154,7 +154,7 @@ def test_pressing_starts_a_turn_asked_by_the_person_in_the_review_profile(w):
     assert caller_context.is_verified(turn)
     assert str(w["mine"].pk) in turn.prompt
     # lili is an editor, who would run the agent's whole profile anywhere else.
-    assert turn.capability == interface.SESSION_REVIEW
+    assert turn.capability == published_profiles.SESSION_REVIEW
     assert raw.startswith("cct_")
     assert caller_context.build(turn)["capability"]["bash"] == []
 
@@ -168,11 +168,12 @@ def test_the_review_profile_is_for_everyone_who_has_any_access_and_nobody_else(w
                  **{"initiator_kind": initiator.USER, "initiator_assurance": "session", "initiator_user": user, **kw})
         return turn_context.for_turn(t, w["trellis"]).stamped
 
-    assert stamp(w["owner"]) == interface.SESSION_REVIEW                       # its owner, narrowed
-    assert stamp(w["bo"]) == interface.SESSION_REVIEW                          # an editor
+    assert stamp(w["owner"]) == published_profiles.SESSION_REVIEW                       # its owner, narrowed
+    assert stamp(w["bo"]) == published_profiles.SESSION_REVIEW                          # an editor
     # Canopy itself, and the agent's own login, gets no way out of it either.
-    assert stamp(None, initiator_kind=initiator.SYSTEM, initiator_assurance="internal") == interface.SESSION_REVIEW
-    assert stamp(w["trellis"].user) == interface.SESSION_REVIEW
+    got = stamp(None, initiator_kind=initiator.SYSTEM, initiator_assurance="internal")
+    assert got == published_profiles.SESSION_REVIEW
+    assert stamp(w["trellis"].user) == published_profiles.SESSION_REVIEW
     stranger = User.objects.create_user("x", "x@example.com", "pw")
     assert stamp(stranger) is None
 
@@ -185,18 +186,19 @@ def test_every_later_message_in_that_chat_stays_in_the_review_profile(w):
         later, _ = services.enqueue_turn(session=ask.review_session, origin=Turn.ORIGIN_CANOPY_WEB_CHAT,
                                          idempotency_key=uuid.uuid4().hex, prompt="and now?",
                                          initiator=initiator.for_user(who, via="chat", assurance="session"))
-        assert later.capability == interface.SESSION_REVIEW
+        assert later.capability == published_profiles.SESSION_REVIEW
         Turn.objects.filter(pk=later.pk).update(status=Turn.DONE)
 
 
 def test_nobody_can_publish_or_widen_the_review_profile(w):
-    with pytest.raises(interface.InterfaceError):
-        interface.parse({"capabilities": {interface.SESSION_REVIEW: {"description": "x", "tools": ["Bash"]}}})
+    with pytest.raises(published_profiles.InterfaceError):
+        published_profiles.parse(
+            {"capabilities": {published_profiles.SESSION_REVIEW: {"description": "x", "tools": ["Bash"]}}})
     # Whatever a stored interface says, the profile's tools are canopy's.
     Agent.objects.filter(pk=w["trellis"].pk).update(
-        interface={"capabilities": {interface.SESSION_REVIEW: {"tools": ["Bash"], "bash": ["*"]}}})
+        interface={"capabilities": {published_profiles.SESSION_REVIEW: {"tools": ["Bash"], "bash": ["*"]}}})
     w["trellis"].refresh_from_db()
-    built = interface.profile(w["trellis"], interface.SESSION_REVIEW)
+    built = published_profiles.profile(w["trellis"], published_profiles.SESSION_REVIEW)
     assert built["bash"] == [] and "Bash" not in built["tools"] and "Write" not in built["tools"]
     assert built["write_paths"] == []
 
@@ -207,7 +209,7 @@ def test_naming_the_review_profile_elsewhere_opens_nothing(w):
     AgentGrant.objects.create(agent=w["trellis"], kind=G.PERSON, user=w["bo"], role="read_only")
     Agent.objects.filter(pk=w["trellis"].pk).update(inherit_workspace_defaults=False)
     w["trellis"].refresh_from_db()
-    d = turn_context.for_asker(w["trellis"], w["bo"], verified=True, requested=interface.SESSION_REVIEW)
+    d = turn_context.for_asker(w["trellis"], w["bo"], verified=True, requested=published_profiles.SESSION_REVIEW)
     assert d.access == turn_context.REFUSED
 
 
@@ -511,7 +513,7 @@ def test_read_only_access_is_enough_and_no_access_is_told_so(w):
     Agent.objects.filter(pk=w["trellis"].pk).update(inherit_workspace_defaults=False)
     assert _person(w["lili"]).get(_url(w["mine"])).json()["offer"]["available"] is True
     _, turn, raw = _pressed(w)
-    assert turn.capability == interface.SESSION_REVIEW
+    assert turn.capability == published_profiles.SESSION_REVIEW
     assert _read(raw)["session_id"] == str(w["mine"].pk)
 
     AgentGrant.objects.filter(user=w["bo"]).delete()

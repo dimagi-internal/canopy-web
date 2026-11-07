@@ -4,7 +4,7 @@ Design: `docs/superpowers/specs/2026-11-05-turn-context-design.md` § 3.3, stage
 static table by kind and can't say this alone: what a turn gets also depends on
 `turn_agent_tokens.refusal`, `delegations.github_refusal` (a review's `reads_for` gets no GitHub
 identity), `caller_tokens.is_caller_scoped` (an editor's whole-agent turn gets a read-only token that
-reads as the asker) and `interface.page_turn` (the agent's own login is withheld on a site's page).
+reads as the asker) and `published_profiles.page_turn` (the agent's own login is withheld on a site's page).
 
 This asks those same functions and states the result. **It adds no rule**, and any answer that needs the
 runner is `PENDING`. It only reads, and reads the turn as it would be stamped, on a copy.
@@ -86,9 +86,9 @@ def _caller_token(context, stamped, caller_tokens) -> CredentialLine:
 
 
 def _withheld_on_page(stamped, agent) -> list[CredentialLine]:
-    from .. import interface  # noqa: PLC0415 — interface reads models
+    from .. import published_profiles# noqa: PLC0415 — interface reads models
 
-    page = interface.page_turn(stamped, agent) if agent is not None else None
+    page = published_profiles.page_turn(stamped, agent) if agent is not None else None
     if page is None:
         return []
     return [CredentialLine(name, authority.AGENT_ONLY, NO,

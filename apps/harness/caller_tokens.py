@@ -130,7 +130,7 @@ def canopy_tool_globs(entry: dict | None) -> list[str]:
 
 def resolve(raw: str) -> Grant | None:
     """The grant behind a raw token, or None. Fails closed on anything odd."""
-    from apps.agents.interface import profile
+    from apps.agents.published_profiles import profile
 
     if not raw or not raw.startswith(PREFIX):
         return None
@@ -194,7 +194,7 @@ def _sensitive_grant(current: Turn, agent, globs: list[str], **kw) -> Grant | No
     allowed = sorted(name for name in sensitive_data.SENSITIVE_CANOPY_TOOLS
                      if any(fnmatch.fnmatchcase(name, g) for g in globs))
     # The page's own actions, when the profile lists them (a host site always
-    # does: `interface.PAGE_TOOLS`) — never a wider glob than `page_*`, whatever it says.
+    # does: `published_profiles.PAGE_TOOLS`) — never a wider glob than `page_*`, whatever it says.
     if any(fnmatch.fnmatchcase(sensitive_data.PAGE_TOOL_GLOB, g) for g in globs):
         allowed.append(sensitive_data.PAGE_TOOL_GLOB)
     return Grant(turn=current, tool_globs=allowed, sensitive=True, **kw)

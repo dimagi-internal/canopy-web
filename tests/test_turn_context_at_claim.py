@@ -65,7 +65,10 @@ def _refused_at_claim(turn, box, code):
     assert row.result_note == f"{refusals.REFUSED_NOTE_PREFIX} {stored['refusal']['why']}. " \
                               f"{stored['refusal']['how_to_fix']} {CHANGED}"
     # Everything that asks what a turn ran as first asks whether it was refused.
-    assert turn_context.was_refused(row) and caller_context.build(row)["access"] == "refused"
+    env = caller_context.build(row)
+    assert turn_context.was_refused(row) and env["access"] == "refused"
+    # ...and holds nothing: an unstamped turn reads as the whole agent, so its grant must not.
+    assert env["granted_by"] == "refused" and env["permissions"] == [] and env["role"] is None
     return row
 
 
@@ -195,7 +198,8 @@ def test_read_mode_changed_while_it_waited_runs_the_read_mode_there_is_now(world
     session = _chat(world, creator=world.reader)
     turn = _enqueue(world.reader, session, box=world.box)
     assert turn.capability == "read"                           # canopy's default read mode
-    # What saving the Read mode setting writes (`answering.set_read_mode`, which this fixture's older entries refuse).
+    # What saving the Read mode setting writes (`profile_settings.set_read_mode`, which this fixture's older
+    # entries refuse).
     world.agent.interface["capabilities"]["ask"] = {"description": "Answers from the runbook", "tools": ["Read", "Grep"]}
     world.agent.save(update_fields=["interface"])
 

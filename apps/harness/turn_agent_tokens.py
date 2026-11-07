@@ -64,8 +64,8 @@ def refusal(turn: Turn) -> str:
         return ("a direct turn is a person's own session, which acts as that person — "
                 "it is never given its agent's login")
     if turn.capability:
-        from apps.agents import interface  # noqa: PLC0415 — interface imports harness
-        return (f"this turn is confined to {interface.stamp_words(turn.capability)}, and a "
+        from apps.agents import published_profiles# noqa: PLC0415 — interface imports harness
+        return (f"this turn is confined to {published_profiles.stamp_words(turn.capability)}, and a "
                 f"confined turn is never given its agent's login")
     agent = turn_agent(turn)
     if agent is None:

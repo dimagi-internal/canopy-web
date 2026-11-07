@@ -26,7 +26,7 @@ from asgiref.sync import async_to_sync
 from django.contrib.auth.models import User
 
 from apps.agents import roles
-from apps.agents.interface import InterfaceError, own_login_of, page_sites, parse, site_ceiling
+from apps.agents.published_profiles import InterfaceError, own_login_of, page_sites, parse, site_ceiling
 from apps.agents.models import Agent
 from apps.canopy_sessions import chat_keys
 from apps.canopy_sessions.models import Session

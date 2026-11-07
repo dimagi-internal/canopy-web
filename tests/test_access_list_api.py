@@ -167,7 +167,7 @@ def test_a_host_site_line_is_not_given_a_role_by_a_patch(w):
 
 
 def test_a_host_site_the_agent_has_not_published_is_added_with_a_warning(w):
-    from apps.agents.interface import parse
+    from apps.agents.published_profiles import parse
 
     Agent.objects.filter(pk=w["agent"].pk).update(interface=parse({"capabilities": {"ask": {"tools": ["Read"]}}}))
     w["agent"].refresh_from_db()
@@ -228,7 +228,7 @@ def test_workspace_defaults_belong_to_workspace_admins_and_write_defaults_to_its
 
 
 def test_a_default_reaches_the_agent_and_removing_it_takes_it_back(w):
-    from apps.agents.interface import parse
+    from apps.agents.published_profiles import parse
 
     Agent.objects.filter(pk=w["agent"].pk).update(
         interface=parse({"capabilities": {"ask": {"tools": ["Read"]}}}))

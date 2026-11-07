@@ -1,7 +1,7 @@
 from django.db import migrations, models
 
-import apps.agents.interface_default
-from apps.agents.interface_default import default_interface
+import apps.agents.read_mode
+from apps.agents.read_mode import default_interface
 
 
 def give_every_agent_an_interface(apps, schema_editor):
@@ -23,7 +23,7 @@ class Migration(migrations.Migration):
         migrations.AlterField(
             model_name='agent',
             name='interface',
-            field=models.JSONField(blank=True, default=apps.agents.interface_default.default_interface),
+            field=models.JSONField(blank=True, default=apps.agents.read_mode.default_interface),
         ),
         migrations.RunPython(give_every_agent_an_interface, migrations.RunPython.noop),
     ]

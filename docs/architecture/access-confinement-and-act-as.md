@@ -41,7 +41,7 @@ tool; and beside every delivered prompt — the runner leaves
   installs the current `@anthropic-ai/claude-code` from npm (`runner/ec2/runner.cfn.yaml`,
   `bootstrap_agents.sh`), and that build answers "No such tool available" to both. A profile that
   lists them grants nothing there and sends the model reaching for a tool that does not exist, so
-  canopy's default read profile (`interface.default_read_profile`) does not list them. File search
+  canopy's default read profile (`published_profiles.default_read_profile`) does not list them. File search
   in a confined session needs an explicit bash pattern in the profile. The default
   carries no network tool (no `curl`: the session's cwd is a worktree of the agent's own repo, and
   `Read` covers it). It does carry `ToolSearch`, which only loads a deferred MCP tool's schema (the
@@ -260,16 +260,16 @@ host* (the header above is canopy-web's own decisions):
   permission — owners included.** The gateway (`site_tools` / `site_call` /
   `site_read`) serves every turn in a conversation held on a site's page (the
   session's `embed_app`) whose agent is set up for that site — one of its host sites
-  lists it in `sites:` (`interface.page_site_of`) — whatever the turn's
+  lists it in `sites:` (`published_profiles.page_site_of`) — whatever the turn's
   profile: a confined visitor's (its host site must list the site), an editor's
   (scoped token), the owner's or an agent admin's (found from the chat key the runner gave
   only that session). Every call uses the SENDER's grant for that page. A full-profile
   turn is narrowed by the site tool limit the owner set on that site's host site
-  (`interface.site_ceiling`).
+  (`published_profiles.site_ceiling`).
 - **The agent's own login at that site is withheld from such a turn.** A host site
   names it per site: `own_login: {connect-labs: [LABS_MCP_TOKEN]}` — credential names,
   never values. The claim carries `page_site: {site, withheld}`
-  (`interface.page_turn`); a cloud runner leaves those names out of the turn's
+  (`published_profiles.page_turn`); a cloud runner leaves those names out of the turn's
   environment and its per-turn env file and sets `CANOPY_PAGE_SITE`; a laptop runner
   cannot set an emdash session's environment, so it leaves a by-task marker
   (`~/.canopy/page/task/<task>.json`) for the agent's own MCP headers helper — the

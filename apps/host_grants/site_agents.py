@@ -39,7 +39,7 @@ from canopy_sdk.jose import unverified_claims
 from django.conf import settings
 from django.core.cache import cache
 
-from apps.agents import sensitive_data
+from apps.agents import published_profiles, sensitive_data
 from apps.agents.models import Agent, AgentBootstrapReport
 from apps.agents.setup import runner_takers
 from apps.embedding import assertions
@@ -145,7 +145,7 @@ def site_profiles(agent: Agent, site: str) -> list[dict]:
     caps = ((agent.interface or {}).get("capabilities") or {})
     for name in sorted(caps):
         cap = caps[name] or {}
-        if site not in (cap.get("sites") or []):
+        if not published_profiles.names_site(cap, site):
             continue
         claim = sensitive_data.as_claim(agent, name)
         out.append({

@@ -28,9 +28,9 @@ admins and canopy itself) and its **access list**
 It writes nothing: `caller_context.build` writes a `PersonAccess` row, and that stays in the envelope's
 `person` block outside this module.
 
-Three different things are called a standing. `Standing` here is what the asker holds on this agent
-and why, on the result. `standings.Standing` is what the database says about a person, read in bulk
-and passed in on `Asker`. `harness.turn_asker.Standing` is who a turn's login answers to.
+`Standing` is what the asker holds on this agent and why, on the result. `standings.Membership` is what
+the database says about a person, read in bulk and passed in on `Asker`; `harness.turn_asker.AnsweringTo`
+is who a turn's login answers to.
 """
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ from apps.harness import initiator as initiator_mod
 from apps.harness.caller_context import is_verified
 
 from . import grants, refusals, roles, sensitive_data
-from . import interface as iface_mod
+from . import published_profiles as profiles_mod
 from . import session_context as sc
 from .standings import standing_of
 
@@ -171,7 +171,7 @@ class Profile:
             # What the envelope already gives a stamp that no longer resolves (`caller_context._profile`).
             return {"name": self.name, "description": "", "entry": None, "tools": [], "bash": [],
                     "read_paths": [], "write_paths": []}
-        return iface_mod.profile(self._agent, self.name)
+        return profiles_mod.profile(self._agent, self.name)
 
     def _read(self, key):
         return (self._definition or {}).get(key)
@@ -248,7 +248,7 @@ class TurnContext:
         if reach.access == FULL and not self.stamped:
             return sorted(held)
         name = self.stamped or reach.name or ""
-        if iface_mod.is_read_mode(name):
+        if profiles_mod.is_read_mode(name):
             # Read mode is `read`, not a host site: nothing is named after it (no `use:read`, no
             # `use:<READ_MODE_STAMP>`).
             return [roles.READ]
@@ -320,7 +320,7 @@ def _no_list_stage(agent, asker: Asker, session_ctx, turn, trace: list) -> _Reac
                   facts=(("automated", rel == CONTACT and bool(asker.verified)),))
 
 
-def _list_asker(asker: Asker, turn) -> grants.Asker:
+def _list_asker(asker: Asker, turn) -> grants.Identity:
     """The asker as the access list sees them: a canopy user, or a contact known by address."""
     user, contact, verified = asker.user, asker.contact, asker.verified
     if turn is not None:
@@ -328,7 +328,7 @@ def _list_asker(asker: Asker, turn) -> grants.Asker:
         contact = turn.initiator_contact if turn.initiator_kind == initiator_mod.CONTACT else None
         verified = is_verified(turn)
     email = (getattr(user, "email", "") or getattr(contact, "email", "") or "").strip().lower()
-    return grants.Asker(user=user, email=email, verified=bool(verified), contact=contact is not None,
+    return grants.Identity(user=user, email=email, verified=bool(verified), contact=contact is not None,
                         workspace_roles=getattr(asker.standing, "roles", None),
                         descendants=getattr(asker.standing, "descendants", None))
 
@@ -336,7 +336,7 @@ def _list_asker(asker: Asker, turn) -> grants.Asker:
 def _selected_entry(iface: dict, opens, session_ctx) -> str | None:
     """The entry this conversation's site selects, if this asker can open it. One they cannot open is
     skipped, not fatal: read mode may still admit them."""
-    return iface_mod.site_entry(session_ctx.site, iface, opens)
+    return profiles_mod.site_entry(session_ctx.site, iface, opens)
 
 
 def _entry_for(iface: dict, permissions, requested, session_ctx, trace: list) -> str | None:
@@ -344,9 +344,9 @@ def _entry_for(iface: dict, permissions, requested, session_ctx, trace: list) ->
     else read mode, among those their permissions open. Read mode exists on every agent; any other
     name must be published, and an unknown or retired one is refused, never widened."""
     def opens(name, _cap):
-        return iface_mod.opens(permissions, name)
+        return profiles_mod.opens(permissions, name)
 
-    if requested == iface_mod.SESSION_REVIEW:
+    if requested == profiles_mod.SESSION_REVIEW:
         # Canopy's own, for a turn in a review chat only: `read` opens it.
         allowed = session_ctx.is_review and roles.holds(permissions, roles.READ)
         trace.append(TraceEntry("entry", requested if allowed else "not open", "review chat"))
@@ -355,10 +355,10 @@ def _entry_for(iface: dict, permissions, requested, session_ctx, trace: list) ->
     if name is None:
         name, how = _selected_entry(iface, opens, session_ctx), "site"
     if name is None:
-        name, how = iface_mod.READ_MODE_STAMP, "read mode"
-    published, cap = iface_mod.published_profile(iface, name)
-    if published is None and iface_mod.is_read_mode(name):
-        published, cap = iface_mod.READ_MODE, {}   # {}: canopy's default, built when it is read
+        name, how = profiles_mod.READ_MODE_STAMP, "read mode"
+    published, cap = profiles_mod.published_profile(iface, name)
+    if published is None and profiles_mod.is_read_mode(name):
+        published, cap = profiles_mod.READ_MODE_NAME, {}   # {}: canopy's default, built when it is read
     allowed = cap is not None and opens(published, cap)
     trace.append(TraceEntry("entry", published if allowed else "not open", f"{how}: {name}"))
     return published if allowed else None
@@ -389,11 +389,12 @@ def _base_stage(agent, reach: _Reach, asker: Asker, requested, session_ctx, turn
     trace.append(TraceEntry("access_list", ",".join(sorted(got.permissions)), got.basis))
     name = _entry_for(iface, got.permissions, requested, session_ctx, trace)
     if name is None:
-        published = bool(requested) and (iface_mod.published_profile(iface, requested)[0] is not None
-                                         or iface_mod.is_read_mode(requested) or requested == iface_mod.SESSION_REVIEW)
+        published = bool(requested) and (profiles_mod.published_profile(iface, requested)[0] is not None
+                                         or profiles_mod.is_read_mode(requested)
+                                         or requested == profiles_mod.SESSION_REVIEW)
         return replace(reach, code=PROFILE_NOT_OPEN, facts=(("name", requested), ("published", published)))
     # The review entry is opened by `read`; `line_opening` knows only named entries and read mode.
-    line = got.line_for(roles.READ) if name == iface_mod.SESSION_REVIEW else got.line_opening(name)
+    line = got.line_for(roles.READ) if name == profiles_mod.SESSION_REVIEW else got.line_opening(name)
     return replace(reach, access=CONFINED, name=name, basis=f"capability:{name}", agent_role=got.role,
                    source=f"list:{line.subject_key}", via=grants.describe(line), permissions=got.permissions,
                    code="", facts=())
@@ -407,9 +408,9 @@ def _review_rule(reach: _Reach, trace: list) -> _Reach:
     if reach.access == REFUSED:
         trace.append(TraceEntry("review_chat", "already refused"))
         return reach
-    trace.append(TraceEntry("review_chat", iface_mod.SESSION_REVIEW))
-    return replace(reach, access=CONFINED, name=iface_mod.SESSION_REVIEW, may_request_auto=False,
-                   may_pin_runner=False, basis=f"capability:{iface_mod.SESSION_REVIEW}")
+    trace.append(TraceEntry("review_chat", profiles_mod.SESSION_REVIEW))
+    return replace(reach, access=CONFINED, name=profiles_mod.SESSION_REVIEW, may_request_auto=False,
+                   may_pin_runner=False, basis=f"capability:{profiles_mod.SESSION_REVIEW}")
 
 
 def _sensitive_entry(iface: dict, requested, session_ctx) -> str | None:
@@ -418,12 +419,12 @@ def _sensitive_entry(iface: dict, requested, session_ctx) -> str | None:
     if requested:
         # `read` and `READ_MODE_STAMP` are one thing: naming either finds the agent's published read-mode
         # profile, and if that handles sensitive data, naming `read` must not dodge the rule.
-        published, cap = iface_mod.published_profile(iface, requested)
+        published, cap = profiles_mod.published_profile(iface, requested)
         return published if (cap or {}).get("data") == sensitive_data.SENSITIVE else None
     for name, cap in (iface.get("capabilities") or {}).items():
         if cap.get("data") != sensitive_data.SENSITIVE:
             continue
-        if session_ctx.site and session_ctx.site in (cap.get("sites") or []):
+        if profiles_mod.names_site(cap, session_ctx.site):
             return name
     return None
 
@@ -456,7 +457,7 @@ def _sensitive_rule(agent, reach: _Reach, requested, session_ctx, trace: list) -
 def _rules(agent, asker: Asker, session_ctx, requested, turn, trace: list) -> _Reach:
     """Stages 1 and 2, in the order they have always run."""
     if session_ctx.is_review:
-        requested = iface_mod.SESSION_REVIEW
+        requested = profiles_mod.SESSION_REVIEW
     reach = _no_list_stage(agent, asker, session_ctx, turn, trace)
     reach = _base_stage(agent, reach, asker, requested, session_ctx, turn, trace)
     if session_ctx.is_review:
@@ -467,9 +468,9 @@ def _rules(agent, asker: Asker, session_ctx, requested, turn, trace: list) -> _R
 # --- the result ------------------------------------------------------------------------------------
 
 def _kind_of(name: str) -> str:
-    if name == iface_mod.SESSION_REVIEW:
+    if name == profiles_mod.SESSION_REVIEW:
         return SESSION_REVIEW
-    return READ_MODE if iface_mod.is_read_mode(name) else HOST_SITE
+    return READ_MODE if profiles_mod.is_read_mode(name) else HOST_SITE
 
 
 def _site_of(agent, name: str, session_ctx) -> str | None:
@@ -490,12 +491,12 @@ def stamped_profile(agent, stamp: str, session_ctx) -> Profile:
     """The profile a turn stamped `stamp` runs in, whatever the rules say now. A stamp that no longer
     resolves is `deny_all`, never the whole agent, and so is a sensitive turn stamped with read mode
     that has since gone: canopy's default read profile is not what it was admitted to."""
-    if stamp == iface_mod.FULL:
+    if stamp == profiles_mod.FULL_STAMP:
         return Profile(kind=WHOLE_AGENT, _agent=agent)
-    if stamp == iface_mod.SESSION_REVIEW:
+    if stamp == profiles_mod.SESSION_REVIEW:
         return _profile_of(agent, stamp, session_ctx)
-    published, _cap = iface_mod.published_profile(getattr(agent, "interface", None), stamp)
-    if published is None and (not iface_mod.is_read_mode(stamp) or session_ctx.sensitive):
+    published, _cap = profiles_mod.published_profile(getattr(agent, "interface", None), stamp)
+    if published is None and (not profiles_mod.is_read_mode(stamp) or session_ctx.sensitive):
         return Profile(kind=DENY_ALL, name=stamp, _agent=agent)
     # Stamped under its own name: an agent that later publishes the other read-mode name keeps the key.
     return _profile_of(agent, stamp, session_ctx)
@@ -524,7 +525,7 @@ def _finish(agent, reach: _Reach, session_ctx, turn, runner, trace: list) -> Tur
         profile, stamped, suffix = None, None, ""
         refusal = refusals.make(reach.code, agent=agent, session=session_ctx._session, **dict(reach.facts))
     elif reach.access == FULL:
-        profile, stamped, suffix, refusal = Profile(kind=WHOLE_AGENT, _agent=agent), iface_mod.FULL, "", None
+        profile, stamped, suffix, refusal = Profile(kind=WHOLE_AGENT, _agent=agent), profiles_mod.FULL_STAMP, "", None
     else:
         profile, stamped, suffix, refusal = (_profile_of(agent, reach.name, session_ctx), reach.name,
                                              f"#{reach.name}", None)
@@ -569,7 +570,8 @@ def _no_agent(asker: Asker, session_ctx, turn, stamp, trace: list) -> TurnContex
                            basis=NO_INTERFACE, session_key_suffix=f"#{stamp}", review=review, stamped=stamp, refusal=None,
                            trace=tuple(trace), _session_ctx=session_ctx, _turn=turn)
     return TurnContext(standing=Standing(relationship=rel), access=FULL, profile=Profile(kind=NO_AGENT),
-                       basis=NO_INTERFACE, session_key_suffix="", review=review, stamped=iface_mod.FULL, refusal=None,
+                       basis=NO_INTERFACE, session_key_suffix="", review=review, stamped=profiles_mod.FULL_STAMP,
+                       refusal=None,
                        trace=tuple(trace), _session_ctx=session_ctx, _turn=turn)
 
 

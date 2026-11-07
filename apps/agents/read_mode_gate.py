@@ -13,7 +13,7 @@ owner's decision.
 from __future__ import annotations
 
 from . import grants, roles
-from . import interface as iface_mod
+from . import published_profiles as profiles_mod
 from .models import Agent
 
 
@@ -25,10 +25,10 @@ def exposures() -> list[dict]:
     lines_of = grants.lines_for_many(agents)
     out = []
     for agent in agents:
-        if iface_mod.read_mode_override(agent.interface) is not None:
+        if profiles_mod.read_mode_override(agent.interface) is not None:
             continue
         hits = [ln for ln in lines_of[agent.pk]
-                if iface_mod.opens(ln.permissions, iface_mod.READ_MODE)
+                if profiles_mod.opens(ln.permissions, profiles_mod.READ_MODE_NAME)
                 and not roles.holds(ln.permissions, roles.WRITE)]
         if hits:
             out.append({"agent": agent.slug, "workspace": agent.workspace_id,

@@ -13,7 +13,7 @@ import pytest
 from asgiref.sync import async_to_sync
 from fastmcp.exceptions import ToolError
 
-from apps.agents.interface import PAGE_TOOLS, profile
+from apps.agents.published_profiles import PAGE_TOOLS, profile
 from apps.agents.sensitive_data import PAGE_TOOL_GLOB, structural_refusals
 from apps.canopy_sessions import page_actions
 from apps.canopy_sessions.models import PageAction, Session

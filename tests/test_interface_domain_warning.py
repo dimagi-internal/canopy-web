@@ -12,7 +12,7 @@ import pytest
 from django.contrib.auth.models import User
 from django.test import Client
 
-from apps.agents.interface import InterfaceError, parse
+from apps.agents.published_profiles import InterfaceError, parse
 from apps.agents.models import Agent
 from apps.contacts import domain_proof
 from apps.workspaces.models import Workspace, WorkspaceMembership

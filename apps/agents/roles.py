@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from typing import NamedTuple
 
-from apps.agents.interface_default import READ_MODE_NAMES, is_read_mode
+from apps.agents.read_mode import READ_MODE_NAMES, is_read_mode
 from apps.common.rolesets import RoleSet
 
 OWNER, ADMIN, EDITOR, READ_WRITE, READ_ONLY = "owner", "admin", "editor", "read_write", "read_only"
@@ -24,7 +24,7 @@ SYSTEM = "system"
 
 # --- permissions ------------------------------------------------------------------
 
-#: Be answered by the agent in read mode: confined, on every agent from the start (`interface.is_read_mode`).
+#: Be answered by the agent in read mode: confined, on every agent from the start (`published_profiles.is_read_mode`).
 READ = "read"
 #: Drive the whole agent, in its own authority: every skill it has, read mode and every host site.
 WRITE = "write"

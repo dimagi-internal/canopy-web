@@ -24,9 +24,9 @@ from types import SimpleNamespace
 import pytest
 from django.contrib.auth import get_user_model
 
-from apps.agents import answering_snapshot, grants, interface, roles, session_context, turn_context
+from apps.agents import answering_snapshot, grants, published_profiles, roles, session_context, turn_context
 from apps.agents.models import Agent, AgentAdmin, AgentGrant
-from apps.agents.standings import Standing, Standings
+from apps.agents.standings import Membership, Standings
 from apps.canopy_sessions.models import REVIEW_METADATA_KEY, Session, SessionParticipant
 from apps.contacts.models import Contact
 from apps.harness import caller_context
@@ -168,7 +168,8 @@ def _keys(agent) -> list[str]:
 
 
 def _requested(agent) -> list:
-    return [None, interface.READ_MODE, interface.READ_MODE_STAMP, *_keys(agent), RETIRED, interface.SESSION_REVIEW]
+    return [None, published_profiles.READ_MODE_NAME, published_profiles.READ_MODE_STAMP, *_keys(agent), RETIRED,
+            published_profiles.SESSION_REVIEW]
 
 
 def _askers(agent, p) -> list[SimpleNamespace]:
@@ -203,7 +204,7 @@ def _askers(agent, p) -> list[SimpleNamespace]:
 def _conversations(agent) -> list[dict]:
     """No conversation, one with no site, one on each site, one on a page, and a review chat; each of
     those ordinary and sensitive. No entry selects by page, so a page's resource changes nothing."""
-    sites = sorted(interface.page_sites(agent))
+    sites = sorted(published_profiles.page_sites(agent))
     out = [{"no_turn": True}, {}, {"sensitive": True}, {"review": True}, {"review": True, "sensitive": True}]
     for site in [*sites, "site_no_agent_serves"]:
         out += [{"site": site}, {"site": site, "sensitive": True}, {"site": site, "review": True}]
@@ -396,7 +397,7 @@ def test_a_turn_with_no_session_inherits_sensitivity_and_a_review_from_where_it_
     named = Turn.objects.create(agent=agent, origin=Turn.ORIGIN_API, initiator_kind=who_mod.USER, initiator_user=people.owner,
                                 initiator_assurance=who_mod.SESSION, prompt="hi", idempotency_key="named",
                                 origin_ref={"chat_session_id": str(review.pk)})
-    assert _same(named, agent)["capability"] == interface.SESSION_REVIEW
+    assert _same(named, agent)["capability"] == published_profiles.SESSION_REVIEW
 
 
 def test_a_stale_standing_handed_in_with_a_turn_answers_as_it_did(people):
@@ -405,7 +406,7 @@ def test_a_stale_standing_handed_in_with_a_turn_answers_as_it_did(people):
     session = _chat(agent, people.owner)
     for user in (people.owner, people.admin):
         turn = _turn_in(session, user, f"stale-{user.pk}")
-        stale = Standing(None, False)
+        stale = Membership(None, False)
         old = _old_answer(reference.decide(agent, user, verified=True, turn=turn, standing=stale))
         new = _new_answer(turn_context.for_asker(agent, user, verified=True, turn=turn, standing=stale))
         assert old == new, _differs(old, new)
@@ -432,14 +433,15 @@ def test_a_stamped_turn_keeps_its_stamp_and_reports_what_the_envelope_reports(pe
         for conv in _conversations(agent):
             if conv.get("no_turn"):
                 continue
-            for stamp in ["", interface.READ_MODE, interface.READ_MODE_STAMP, *_keys(agent), RETIRED, interface.SESSION_REVIEW]:
+            for stamp in ["", published_profiles.READ_MODE_NAME, published_profiles.READ_MODE_STAMP, *_keys(agent), RETIRED,
+                          published_profiles.SESSION_REVIEW]:
                 turn = _probe(asker, conv)
                 turn.capability = stamp
                 session_ctx = session_context.build(None, turn, agent=agent)
                 ctx = turn_context.resolve_turn_context(session_ctx, turn_context.Asker.of_turn(turn), agent, turn=turn,
                                                         stamp=stamp)
                 old = reference.grant_facts(turn, agent)
-                assert interface.grant_facts(turn, agent) == old, (asker.who, conv, stamp)
+                assert published_profiles.grant_facts(turn, agent) == old, (asker.who, conv, stamp)
                 assert _facts(ctx) == {k: old[k] for k in ("granted_by", "role", "source")}, (asker.who, conv, stamp)
                 assert ctx.stamped == stamp
                 assert ctx.profile.as_envelope() == reference.envelope_profile(agent, stamp, turn), (asker.who, conv, stamp)

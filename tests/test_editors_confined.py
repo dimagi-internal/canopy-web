@@ -8,7 +8,7 @@ import pytest
 from django.contrib.auth.models import User
 
 from apps.agents import access, roles, turn_context
-from apps.agents.interface import InterfaceError, parse
+from apps.agents.published_profiles import InterfaceError, parse
 from apps.agents.models import Agent, AgentAdmin, AgentGrant
 from apps.workspaces.models import Workspace
 from apps.workspaces.models import WorkspaceMembership as M

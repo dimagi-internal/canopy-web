@@ -46,7 +46,7 @@ from apps.tokens.middleware import minting_refusal
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from . import access, agent_login, answering, command_sync, creation, mailbox, services
+from . import access, agent_login, profile_settings, command_sync, creation, mailbox, services
 from . import move as agent_move
 from .creation import repo_url
 from .credentials import delegations, licenses, login_test_key
@@ -495,8 +495,8 @@ def _detail(request: HttpRequest, agent) -> AgentDetailOut:
     pending = agent_login.pending_request(agent) if agent.is_admin(request.user) else None
     return AgentDetailOut.model_validate({
         **services.agent_detail(agent),
-        "read_mode": answering.read_mode_of(agent),
-        "host_sites": answering.host_sites_of(agent),
+        "read_mode": profile_settings.read_mode_of(agent),
+        "host_sites": profile_settings.host_sites_of(agent),
         "canopy_user_request": login_request_out(pending) if pending is not None else None,
         "can_transfer_owner": _may_transfer_owner(request, agent),
         "is_admin": agent.is_admin(request.user),

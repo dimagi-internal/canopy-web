@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class Asker:
+class Identity:
     """What the resolver needs to know about whoever is asking. Not a database row: the
     caller supplies it, so the rule is the same for a signed-in person, an email sender
     and a Slack member."""
@@ -127,7 +127,7 @@ def lines_for_many(agents) -> dict[int, list[AgentGrant]]:
     return out
 
 
-def matches(line: AgentGrant, asker: Asker) -> bool:
+def matches(line: AgentGrant, asker: Identity) -> bool:
     if line.kind == AgentGrant.PERSON:
         return asker.user is not None and getattr(asker.user, "pk", None) == line.user_id
     if line.kind == AgentGrant.WORKSPACE:
@@ -149,7 +149,7 @@ def matches(line: AgentGrant, asker: Asker) -> bool:
     return False
 
 
-def resolve(agent, asker: Asker, lines: list[AgentGrant] | None = None) -> Resolution:
+def resolve(agent, asker: Identity, lines: list[AgentGrant] | None = None) -> Resolution:
     """What the access list gives `asker` on `agent`: the union of their lines' permissions.
 
     `lines` is `lines_for(agent)` when the caller already read it (a roster resolving

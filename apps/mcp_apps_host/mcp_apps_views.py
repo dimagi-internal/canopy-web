@@ -43,6 +43,7 @@ from canopy_sdk import resources as resource_links
 from django.db import transaction
 from django.utils import timezone
 
+from apps.agents import published_profiles
 from apps.harness import sensitivity
 from apps.host_grants import host_gateway
 from apps.realtime import groups
@@ -374,7 +375,7 @@ def _ceiling(session, row: ViewRow) -> list[str]:
                                    content__id=row.ref["tool_call_id"])
             .select_related("turn").values_list("turn__capability", flat=True).first())
     cap = ((agent.interface or {}).get("capabilities") or {}).get(turn or "")
-    if not cap or row.app.name not in (cap.get("sites") or []):
+    if not published_profiles.names_site(cap, row.app.name):
         return []
     return list(cap.get("ceiling") or [])
 

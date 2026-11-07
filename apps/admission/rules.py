@@ -9,7 +9,7 @@ import logging
 
 from django.core.exceptions import ValidationError
 
-from apps.agents.interface import is_read_mode
+from apps.agents.published_profiles import is_read_mode
 
 from .models import AdmissionRule, AdmissionSettings
 

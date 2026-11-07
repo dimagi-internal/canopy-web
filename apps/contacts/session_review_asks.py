@@ -6,7 +6,7 @@ whose asker is that person; the coach replies there. Nothing that reads a
 `SessionReviewGrant` reads this table: it enrols nobody in the weekly pass, uploads no other
 session, and appears on no roster (`tests/test_session_review_asks.py` pins each).
 
-The turn runs confined in canopy's `interface.SESSION_REVIEW` profile, whoever asks
+The turn runs confined in canopy's `published_profiles.SESSION_REVIEW` profile, whoever asks
 (`turn_context.resolve_turn_context`), because the transcript is text someone may have aimed at whoever reads it:
 no agent login, no GitHub, no Bash, no canopy tool but `read_asked_session`, which reads the
 session as the person through the session ACL (`access.turn_reach`). Anyone with any access to
@@ -24,7 +24,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.agents import turn_context
-from apps.agents import interface as agent_iface
+from apps.agents import published_profiles as profiles_mod
 from apps.api.errors import TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
 from apps.canopy_sessions import access, control, lifecycle, send_paths, services
 from apps.canopy_sessions.models import REVIEW_METADATA_KEY, SessionReviewAsk
@@ -139,7 +139,7 @@ def ask(request, person: Person, session) -> SessionReviewAsk:
         runner_requirements=getattr(request, "runner_requirements", ()),
         chat_surface=sensitivity.request_is_chat_surface(request),
         initiator=who.for_request(request, via=VIA))
-    if turn is not None and (turn.status == Turn.CANCELLED or turn.capability != agent_iface.SESSION_REVIEW):
+    if turn is not None and (turn.status == Turn.CANCELLED or turn.capability != profiles_mod.SESSION_REVIEW):
         # the rule changed its mind between the check and the stamp: nothing may read.
         withdraw(person, session, user=user)
         raise ProblemError(422, turn.result_note or f"{_name(agent)} could not take this", type_=TYPE_VALIDATION)

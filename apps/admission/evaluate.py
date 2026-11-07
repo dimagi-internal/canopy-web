@@ -48,7 +48,7 @@ from django.db import transaction
 from django.db.models import F, Q
 from django.utils import timezone
 
-from apps.agents.interface import is_read_mode
+from apps.agents.published_profiles import is_read_mode
 
 from .models import AdmissionRule
 

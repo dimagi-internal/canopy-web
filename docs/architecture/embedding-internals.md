@@ -306,7 +306,7 @@ page within their own access. The rules:
   user (only the live probe's synthetic principal, `probe=True`, is exempt and is
   deleted with the probe), `contact_api` sends no ID-JAG on to it, and `lookup`
   finds none for a contact. An agent that serves the site on pages
-  (`interface.page_sites`) is left off a contact's list there and cannot be started
+  (`published_profiles.page_sites`) is left off a contact's list there and cannot be started
   by one (`contact_api._for_contacts`); when that leaves no agent, the frame posts
   `unavailable` and the loader removes the launcher (as the visitor's × does).
 - **A conversation reads only through its own page's grant.** `host_grants.lookup`

@@ -64,7 +64,7 @@ def test_the_audience_is_exactly_who_the_acl_lets_read():
     from apps.harness import turn_asker
 
     setattr(people["coach"], turn_asker.STANDING_ATTR,
-            turn_asker.Standing("t", person_id=people["owner"].pk, operator=True))
+            turn_asker.AnsweringTo("t", person_id=people["owner"].pk, operator=True))
     for label, s in shapes.items():
         readers = audience.readers(s)
         for who, user in people.items():

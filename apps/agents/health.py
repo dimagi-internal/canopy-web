@@ -25,7 +25,7 @@ from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
 from . import access as access_rule
-from . import interface as iface_mod
+from . import published_profiles as profiles_mod
 from .credentials.vault_health import vault_health
 from . import grants as grants_mod
 from .models import Agent, AgentProject, AgentTask
@@ -73,7 +73,7 @@ def agent_row(agent: Agent, viewer, last_turns: dict, counts: dict, sessions: di
         "email": agent.email,
         "repo_url": agent.repo_url,
         "turn_mode": agent.turn_mode,
-        "has_interface": iface_mod.published(agent.interface or {}),
+        "has_interface": profiles_mod.published(agent.interface or {}),
         "capabilities": len((agent.interface or {}).get("capabilities") or {}),
         "access_lines": [f"{grants_mod.describe(ln)}: {ln.role or 'use ' + ln.capability}"
                          for ln in standings.lines_of(agent)],

@@ -137,7 +137,7 @@ def test_reading_works_while_live_and_stops_on_revoke(w):
     # Read-only: the grant never lets it write, send or share.
     from apps.harness import turn_asker
 
-    setattr(trellis.user, "_canopy_turn_standing", turn_asker.Standing("t", person_id=0, operator=True))
+    setattr(trellis.user, "_canopy_turn_standing", turn_asker.AnsweringTo("t", person_id=0, operator=True))
     assert access.role_for(trellis.user, w["chat"]) == "viewer"
     assert not access.can_write(trellis.user, w["chat"])
     assert not access.can_share(trellis.user, w["chat"])

@@ -2,7 +2,7 @@
 
 `docs/superpowers/specs/2026-11-04-agent-settings-replace-the-interface-design.md` § 6. Every
 function here reads only the stored `agent.interface` document (and the `interface_published_*`
-columns), and repeats what `apps/agents/interface.py`, `interface_default.py`, `access.py`,
+columns), and repeats what `apps/agents/interface.py`, `read_mode.py`, `access.py`,
 `sensitive_data.py`, `site_agents.py`, `execution.py` and `caller_context._profile` do with it.
 `tests/test_answering_settings_equivalence.py` holds the real code equal to this.
 

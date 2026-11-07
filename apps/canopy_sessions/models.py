@@ -328,7 +328,7 @@ class SessionReviewAsk(models.Model):
     page. Deliberately not a `SessionReviewGrant`: nothing that reads grants as "this
     person is coached" reads this table, so a row enrols nobody, uploads nothing more
     and appears on no roster. No agent's login reads under it: the turn runs confined in
-    `interface.SESSION_REVIEW` with no login at all, and reads `session` as the person,
+    `published_profiles.SESSION_REVIEW` with no login at all, and reads `session` as the person,
     with a caller token pinned to it (`access.turn_reach`, `read_asked_session`).
 
     One row per (session, agent, person). Live until `expires_at` or `revoked_at`;

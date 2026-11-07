@@ -42903,7 +42903,7 @@ export interface components {
         };
         /**
          * ClaimPageSiteOut
-         * @description A turn held on a host site's page (`interface.page_turn`).
+         * @description A turn held on a host site's page (`published_profiles.page_turn`).
          */
         readonly ClaimPageSiteOut: {
             /** Site */

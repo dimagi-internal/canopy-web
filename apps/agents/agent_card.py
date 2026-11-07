@@ -3,7 +3,7 @@
 The Agent2Agent protocol (A2A v1.0, Linux Foundation) discovers an agent by
 fetching a JSON "Agent Card": who it is, what skills it offers, where to reach
 it and how to authenticate. canopy already holds every one of those facts —
-the skills are the agent's published profiles (`apps/agents/interface.py`),
+the skills are the agent's published profiles (`apps/agents/published_profiles.py`),
 the auth is canopy's own — so the card is a RENDERING of that state, never a
 second place policy lives. Nothing here decides who may do anything:
 `turn_context.resolve_turn_context` does that at enqueue, on every turn, whatever a
@@ -26,7 +26,7 @@ known visitor or sender) — with a role that may use one of its profiles. Every
 404s, identically to a slug that does not exist, so a private agent's existence does not leak.
 An editor line that happens to name outsiders is not advertised: the whole agent is not a skill.
 The public card lists only those outsider profiles; the EXTENDED card adds what the
-requesting canopy user may invoke themselves (`interface.offered_to`).
+requesting canopy user may invoke themselves (`published_profiles.offered_to`).
 
 **No MCP entry point.** canopy's MCP server is canopy the product, not a way to run an
 agent: a member uses an agent by installing its plugin into their own Claude
@@ -53,7 +53,7 @@ import json
 from django.conf import settings
 
 from . import grants, roles
-from . import interface as iface_mod
+from . import published_profiles as profiles_mod
 from .schemas import (
     A2AAgentCapabilities,
     A2AAgentCardOut,
@@ -97,7 +97,7 @@ def base_url() -> str:
 
 def _profiles(agent) -> dict:
     iface = getattr(agent, "interface", None) or {}
-    if not iface_mod.published(iface):
+    if not profiles_mod.published(iface):
         return {}
     return iface.get("capabilities") or {}
 
@@ -111,7 +111,7 @@ def _outsider_lines(agent) -> list:
 
 
 def _reaching(lines: list, name: str) -> list:
-    return [ln for ln in lines if iface_mod.opens(ln.permissions, name)]
+    return [ln for ln in lines if profiles_mod.opens(ln.permissions, name)]
 
 
 def public_profiles(agent) -> list[str]:
@@ -155,7 +155,7 @@ def _requirement(*names: str) -> A2ASecurityRequirement:
 def _skill(agent, name: str, cap: dict, *, public: bool) -> A2AAgentSkill:
     security = [_requirement(CONTACT)] if _contact_token_reaches(_outsider_lines(agent), name) else []
     # `id` is the stored name a caller sends back; `name` is what a person reads, so read mode says so.
-    label = "read mode" if iface_mod.is_read_mode(name) else name.replace("_", " ")
+    label = "read mode" if profiles_mod.is_read_mode(name) else name.replace("_", " ")
     return A2AAgentSkill(
         id=name,
         name=label.capitalize(),
@@ -260,7 +260,7 @@ def extended_card(agent, user) -> A2AAgentCardOut | None:
     `user` may invoke. None when that is nothing — the same answer, to them, as
     an agent that does not exist."""
     caps = dict(_profiles(agent))
-    mine = set(iface_mod.offered_to(user, agent))
+    mine = set(profiles_mod.offered_to(user, agent))
     public_names = public_profiles(agent)
     names = sorted(mine | set(public_names))
     if not names:

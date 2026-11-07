@@ -494,6 +494,8 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         if now_ctx.refused:
             _refuse_at_claim(turn, now_ctx, queued_as)
             continue
+        # The turn's mode reads the asker's manual-only line from this answer, not a second resolve.
+        turn._claim_context = now_ctx
         if now_ctx.stamped != queued_as:
             # Written now, whether or not this box takes it: every other box, the
             # turn's mode, the admission rules and the record read what it runs as.

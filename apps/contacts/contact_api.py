@@ -22,7 +22,7 @@ from ninja import Router, Schema
 from ninja.errors import HttpError
 from ninja.security import HttpBearer
 
-from apps.agents.interface import page_sites
+from apps.agents.published_profiles import page_sites
 from apps.api.route_gates import gate
 from apps.canopy_sessions.conversation_keys import CannotHold
 from apps.canopy_sessions.models import Session
@@ -494,7 +494,7 @@ def _tenant_for(app, agent_slug: str):
 
 def _for_contacts(app, agents) -> list:
     """The agents of `agents` a contact may talk to on `app`'s pages: never one that
-    serves the site on pages (`interface.page_sites`). On a page such an agent reaches
+    serves the site on pages (`published_profiles.page_sites`). On a page such an agent reaches
     the site only as the person, under an act-as-you permission confirmed with a
     passkey, and with its own login there withheld — a contact has no passkey, so it
     could do nothing there. A site offering only such agents shows a contact no panel."""

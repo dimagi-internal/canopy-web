@@ -276,7 +276,7 @@ def note(ob: OnBehalf, decision: str) -> None:
         logger.exception("on behalf: could not record %s for %s", decision, ob.turn.pk)
 
 
-# --- who a turn's login is answering to, for the reads that ask (`Standing`) -----------
+# --- who a turn's login is answering to, for the reads that ask (`AnsweringTo`) -----------
 #: On the request's user: the credential the request authenticated with, stashed by the
 #: middleware (`remember`) so `standing` can be worked out lazily, only by a read that asks.
 CREDENTIAL_ATTR = "_canopy_turn_credential"
@@ -291,7 +291,7 @@ READS_FOR = "reads_for"
 
 
 @dataclass(frozen=True)
-class Standing:
+class AnsweringTo:
     """Who the running turn behind an agent's login is answering to: one `person_id`
     (its verified human asker, or the person it was started on behalf of), or `unattended`
     (canopy or another agent started it and no person is behind it: a schedule, a trigger,
@@ -313,7 +313,7 @@ def remember(user, credential: dict | None) -> None:
         setattr(user, CREDENTIAL_ATTR, dict(credential))
 
 
-def standing(user) -> Standing | None:
+def standing(user) -> AnsweringTo | None:
     """Whom `user`'s request answers to, from server state alone (`Turn.initiator_*`, the
     server-stamped `origin_ref["on_behalf_of"]`) — nothing the agent sends. None when the
     request is not made inside a running turn of the agent whose login it is (a stored
@@ -338,7 +338,7 @@ def standing(user) -> Standing | None:
     return found
 
 
-def _standing_of(turn: Turn, agent: Agent) -> Standing | None:
+def _standing_of(turn: Turn, agent: Agent) -> AnsweringTo | None:
     try:
         person = _principal(turn)
     except Refused:
@@ -352,9 +352,9 @@ def _standing_of(turn: Turn, agent: Agent) -> Standing | None:
         person = turn.initiator_user
     if person is not None:
         acting_cap(turn)  # their `acts_as` lowers their administering too, as on their turn
-        return Standing(str(turn.pk), person_id=person.pk, operator=agent.is_admin(person))
+        return AnsweringTo(str(turn.pk), person_id=person.pk, operator=agent.is_admin(person))
     ref = turn.origin_ref if isinstance(turn.origin_ref, dict) else {}
-    nobody = Standing(str(turn.pk), unattended=True, reads_for=reads_for_of(turn),
+    nobody = AnsweringTo(str(turn.pk), unattended=True, reads_for=reads_for_of(turn),
                       conversation_id=str(turn.chat_session_id or ref.get("chat_session_id") or ""))
     if turn.initiator_kind in (who.SYSTEM, who.AGENT):
         return nobody

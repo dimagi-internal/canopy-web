@@ -71,8 +71,8 @@ import logging
 import re
 
 from apps.agents import roles
-from apps.agents.interface_default import (  # noqa: F401  (re-exported)
-    READ_MODE,
+from apps.agents.read_mode import (  # noqa: F401  (re-exported)
+    READ_MODE_NAME,
     READ_MODE_NAMES,
     READ_MODE_STAMP,
     READ_PROFILE_VERSION,
@@ -106,7 +106,7 @@ SESSION_REVIEW_TOOLS = ("Read", "ToolSearch", "mcp__*canopy-web__who_is_asking",
 
 #: `Turn.capability` for a turn in the agent's FULL profile. Empty so that every
 #: turn predating this reads as "full", which is what it was.
-FULL = ""
+FULL_STAMP = ""
 
 def read_mode_override(iface: dict | None) -> str | None:
     """The name of the agent's own published read-mode profile (`READ_MODE_STAMP`, else `read`), or
@@ -352,6 +352,19 @@ def session_site(session) -> str:
     return site.strip() if isinstance(site, str) else ""
 
 
+def names_site(cap: dict | None, site: str | None) -> bool:
+    """Does this profile list `site` in `sites:`? The one test every reader of a host-site entry asks."""
+    return bool(site) and site in ((cap or {}).get("sites") or [])
+
+
+def entry_for_site(iface: dict | None, site: str | None) -> str | None:
+    """The name of the one host-site entry that lists `site`, or None. One entry per site is the writer's rule
+    (`profile_settings.document_problems`, which also keeps sites off read mode), and migration `agents/0132` refused to
+    deploy over a document that broke it, so there is no second entry to combine."""
+    caps = (iface or {}).get("capabilities") or {}
+    return next((n for n in sorted(caps) if names_site(caps[n], site)), None)
+
+
 def site_entry(site: str, iface: dict, opens) -> str | None:
     """The host site whose `sites` include the site this conversation is on.
 
@@ -361,7 +374,7 @@ def site_entry(site: str, iface: dict, opens) -> str | None:
     if not site:
         return None
     for name, cap in (iface.get("capabilities") or {}).items():
-        if site in (cap.get("sites") or []) and opens(name, cap):
+        if names_site(cap, site) and opens(name, cap):
             return name
     return None
 
@@ -384,11 +397,10 @@ def page_sites(agent) -> set[str]:
 
 
 def _cap_for_site(agent, site: str) -> dict:
-    """The one host site entry that lists `site`, or {}. One entry per site is the writer's rule
-    (`answering.document_problems`), and migration `agents/0132` refused to deploy over a document
-    that broke it, so there is no second entry to combine."""
-    caps = ((getattr(agent, "interface", None) or {}).get("capabilities") or {})
-    return next((caps[n] for n in sorted(caps) if site in (caps[n].get("sites") or [])), {})
+    """The entry that lists `site` (`entry_for_site`), or {}."""
+    iface = getattr(agent, "interface", None) or {}
+    name = entry_for_site(iface, site)
+    return (iface.get("capabilities") or {}).get(name) or {} if name else {}
 
 
 def page_site_of(turn, agent=None) -> str:
@@ -446,7 +458,7 @@ def grant_facts(turn, agent, *, context=None) -> dict:
     when refused), `source` (what put them there: owner | admin | system |
     capability:<name> | session | list:<access-list line>), `permissions` (what they hold on
     THIS turn, sorted) and `manual_only`. `context`: the turn's, when the caller already holds it."""
-    from . import turn_context  # cycle: agents.turn_context -> agents.interface  # noqa: PLC0415
+    from . import turn_context  # cycle: agents.turn_context -> agents.published_profiles  # noqa: PLC0415
 
     d = context if context is not None else turn_context.of_turn(turn, agent)
     return {"granted_by": d.basis, "role": d.standing.agent_role, "source": d.standing.source,
@@ -460,8 +472,8 @@ def reachable(permissions, iface: dict | None) -> list[str]:
     extended card, so none reads "published nothing" as "offers nothing"."""
     caps = (iface or {}).get("capabilities") or {}
     names = [n for n in caps if opens(permissions, n)]
-    if read_mode_override(iface) is None and opens(permissions, READ_MODE):
-        names.append(READ_MODE)
+    if read_mode_override(iface) is None and opens(permissions, READ_MODE_NAME):
+        names.append(READ_MODE_NAME)
     return sorted(names)
 
 
@@ -476,7 +488,7 @@ def offered_to(user, agent) -> list[str]:
     caps = iface.get("capabilities") or {}
     if not getattr(user, "is_authenticated", False):
         return []
-    from . import turn_context  # cycle: agents.turn_context -> agents.interface  # noqa: PLC0415
+    from . import turn_context  # cycle: agents.turn_context -> agents.published_profiles  # noqa: PLC0415
 
     d = turn_context.for_asker(agent, user, verified=True)
     if d.access == turn_context.FULL:
@@ -493,7 +505,7 @@ def profile(agent, name: str) -> dict | None:
     deny everything — never the full one: a turn that was restricted when it
     was queued must not become unrestricted because the file changed.
     """
-    if name == FULL:
+    if name == FULL_STAMP:
         return None
     if name == SESSION_REVIEW:
         return {"name": SESSION_REVIEW, "entry": None, "tools": list(SESSION_REVIEW_TOOLS), "bash": [],
