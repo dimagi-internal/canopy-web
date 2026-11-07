@@ -173,11 +173,6 @@ def reset_read_mode(agent, *, by, dry_run: bool = False):
     return _edit(agent, change, by=by, dry_run=dry_run)
 
 
-def _name_for_site(caps: dict, site: str) -> str | None:
-    return next((name for name, entry in caps.items()
-                 if not iface_mod.is_read_mode(name) and site in ((entry or {}).get("sites") or [])), None)
-
-
 def _limits_nothing(globs) -> str | None:
     """The first tool-limit glob that matches every tool the site offers, or None.
 
@@ -194,7 +189,7 @@ def set_site(agent, site: str, fields: dict, *, by, dry_run: bool = False):
     """Add or change `site`'s row: `fields` over what it holds now, or over `new_site_defaults`."""
     def change(doc):
         caps = doc["capabilities"]
-        name = _name_for_site(caps, site)
+        name = iface_mod.entry_for_site({"capabilities": caps}, site)
         start = _row(name, caps[name] or {}, site) if name else new_site_defaults()
         # Only a limit this save CHANGES is checked: the form sends the stored one back with every
         # save, and a row stored before this guard must stay editable.
@@ -220,7 +215,7 @@ def remove_site(agent, site: str, *, by, dry_run: bool = False):
     """Take `site`'s row away. A turn already stamped with it gets the deny-all profile, as for any
     profile that is gone, and an access line naming it opens nothing."""
     def change(doc):
-        name = _name_for_site(doc["capabilities"], site)
+        name = iface_mod.entry_for_site(doc, site)
         if name is None:
             raise LookupError(site)
         doc["capabilities"].pop(name)

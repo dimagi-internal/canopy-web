@@ -423,7 +423,7 @@ def _sensitive_entry(iface: dict, requested, session_ctx) -> str | None:
     for name, cap in (iface.get("capabilities") or {}).items():
         if cap.get("data") != sensitive_data.SENSITIVE:
             continue
-        if session_ctx.site and session_ctx.site in (cap.get("sites") or []):
+        if iface_mod.names_site(cap, session_ctx.site):
             return name
     return None
 

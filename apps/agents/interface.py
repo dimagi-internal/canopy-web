@@ -352,6 +352,19 @@ def session_site(session) -> str:
     return site.strip() if isinstance(site, str) else ""
 
 
+def names_site(cap: dict | None, site: str | None) -> bool:
+    """Does this profile list `site` in `sites:`? The one test every reader of a host-site entry asks."""
+    return bool(site) and site in ((cap or {}).get("sites") or [])
+
+
+def entry_for_site(iface: dict | None, site: str | None) -> str | None:
+    """The name of the one host-site entry that lists `site`, or None. One entry per site is the writer's rule
+    (`answering.document_problems`, which also keeps sites off read mode), and migration `agents/0132` refused to
+    deploy over a document that broke it, so there is no second entry to combine."""
+    caps = (iface or {}).get("capabilities") or {}
+    return next((n for n in sorted(caps) if names_site(caps[n], site)), None)
+
+
 def site_entry(site: str, iface: dict, opens) -> str | None:
     """The host site whose `sites` include the site this conversation is on.
 
@@ -361,7 +374,7 @@ def site_entry(site: str, iface: dict, opens) -> str | None:
     if not site:
         return None
     for name, cap in (iface.get("capabilities") or {}).items():
-        if site in (cap.get("sites") or []) and opens(name, cap):
+        if names_site(cap, site) and opens(name, cap):
             return name
     return None
 
@@ -384,11 +397,10 @@ def page_sites(agent) -> set[str]:
 
 
 def _cap_for_site(agent, site: str) -> dict:
-    """The one host site entry that lists `site`, or {}. One entry per site is the writer's rule
-    (`answering.document_problems`), and migration `agents/0132` refused to deploy over a document
-    that broke it, so there is no second entry to combine."""
-    caps = ((getattr(agent, "interface", None) or {}).get("capabilities") or {})
-    return next((caps[n] for n in sorted(caps) if site in (caps[n].get("sites") or [])), {})
+    """The entry that lists `site` (`entry_for_site`), or {}."""
+    iface = getattr(agent, "interface", None) or {}
+    name = entry_for_site(iface, site)
+    return (iface.get("capabilities") or {}).get(name) or {} if name else {}
 
 
 def page_site_of(turn, agent=None) -> str:

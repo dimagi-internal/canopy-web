@@ -241,7 +241,7 @@ def resolve(turn_id: str, *, reason: str = "") -> SiteContext:
     if turn.capability:
         # A confined turn: its own profile must name the site.
         cap = ((agent.interface or {}).get("capabilities") or {}).get(turn.capability)
-        if not cap or site not in (cap.get("sites") or []):
+        if not interface.names_site(cap, site):
             raise GatewayRefusal("site_not_in_capability",
                                  f"I am not set up to use {site}'s tools in this conversation")
         ceiling = list(cap.get("ceiling") or [])
