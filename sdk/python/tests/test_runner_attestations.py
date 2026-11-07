@@ -29,7 +29,7 @@ def test_the_header_round_trips_and_refuses_junk():
 
 def _ok(url, payload, headers=None):
     assert url == "https://canopy.example.org/api/sites/runner-attestations"
-    assert payload == {"kind": "dpop", "proof": "p", "agent": "ace"}
+    assert payload == {"kind": "dpop", "proof": "p", "htu": "https://labs.example.org/x/attest/ab", "agent": "ace"}
     assert headers["Authorization"].startswith("Bearer ")
     return 200, json.dumps({"runner": "cloud-ec2-2", "kind": "aws-iam", "jkt": "j", "agent": "ace",
                             "serves_agent": True}).encode(), {}
@@ -37,7 +37,7 @@ def _ok(url, payload, headers=None):
 
 def test_request_attestation_reads_canopys_answer():
     got = ra.request_attestation("https://canopy.example.org", "connect-labs", SITE_KEY, kind="dpop",
-                                 proof="p", speaks_for="ace", post=_ok)
+                                 proof="p", htu="https://labs.example.org/x/attest/ab", speaks_for="ace", post=_ok)
     assert got == ra.Attestation("cloud-ec2-2", "aws-iam", "j", "ace", True)
 
 
@@ -47,7 +47,7 @@ def test_a_refusal_carries_canopys_code_and_a_dead_canopy_is_unreachable():
 
     with pytest.raises(ra.AttestationError) as err:
         ra.request_attestation("https://canopy.example.org", "connect-labs", SITE_KEY, kind="dpop", proof="p",
-                               post=refuse)
+                               htu="h", post=refuse)
     assert err.value.code == "proof_refused" and err.value.status == 401
 
     def down(url, payload, headers=None):
@@ -55,12 +55,12 @@ def test_a_refusal_carries_canopys_code_and_a_dead_canopy_is_unreachable():
 
     with pytest.raises(ra.AttestationError) as err:
         ra.request_attestation("https://canopy.example.org", "connect-labs", SITE_KEY, kind="dpop", proof="p",
-                               post=down)
+                               htu="h", post=down)
     assert err.value.code == "unreachable"
 
 
 def test_a_malformed_answer_is_not_believed():
     with pytest.raises(ra.AttestationError) as err:
         ra.request_attestation("https://canopy.example.org", "connect-labs", SITE_KEY, kind="dpop", proof="p",
-                               post=lambda *a, **k: (200, b'{"runner": "x"}', {}))
+                               htu="h", post=lambda *a, **k: (200, b'{"runner": "x"}', {}))
     assert err.value.code == "malformed"

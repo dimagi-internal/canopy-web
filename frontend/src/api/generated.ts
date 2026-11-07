@@ -10890,9 +10890,9 @@ export interface paths {
          *
          *     `Authorization: Bearer <JWT>` signed by the site's own key, as for
          *     `POST /api/sites/sign-offs` but with `aud` = this URL and no `sign_off_request`.
-         *     The body carries the runner's proof, made for an `htu` on an origin the site
-         *     registered (the runner signs `<site endpoint>/<sha256 of the request>`, so the proof
-         *     vouches for that request only) and single-use. Answers `{runner, kind, jkt, agent,
+         *     The body carries the runner's proof and the exact `htu` it must be made for (an origin
+         *     the site registered; the runner signs `<site endpoint>/attest/<sha256 of the request>`, so
+         *     the proof vouches for that request only); single-use. Answers `{runner, kind, jkt, agent,
          *     serves_agent}`; 401 `proof_refused` when no ACTIVE approved device key proved it, with
          *     one wording whatever the reason.
          */
@@ -39177,6 +39177,8 @@ export interface components {
             readonly kind: string;
             /** Proof */
             readonly proof: string;
+            /** Htu */
+            readonly htu: string;
             /**
              * Agent
              * @default

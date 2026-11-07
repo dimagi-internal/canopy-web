@@ -6,7 +6,8 @@
     from canopy_sdk.django import runner_attestations
 
     kind, proof = runner_attestations.parse_header(request.headers["X-Canopy-Runner-Proof"])
-    got = runner_attestations.attest(kind=kind, proof=proof, speaks_for="ace")
+    htu = runner_attestations.bound_url(request_url, request.body)
+    got = runner_attestations.attest(kind=kind, proof=proof, htu=htu, speaks_for="ace")
     # got.runner, got.serves_agent ...
 
 Signs as ``APP_NAME`` with ``SIGNING_KEY`` at ``CANOPY_BASE_URL``, naming the tenant like
@@ -29,7 +30,7 @@ from . import conf
 from .site_agents import _selector
 
 
-def attest(*, kind: str, proof: str, speaks_for: str = "", post=None) -> Attestation:
+def attest(*, kind: str, proof: str, htu: str, speaks_for: str = "", post=None) -> Attestation:
     """Ask canopy who made ``proof`` (a runner's, for a request to this host)."""
     try:
         config = conf.get_host_config()
@@ -41,4 +42,4 @@ def attest(*, kind: str, proof: str, speaks_for: str = "", post=None) -> Attesta
         raise AttestationError(NOT_CONFIGURED, "CANOPY_HOST needs CANOPY_BASE_URL and APP_NAME to ask canopy")
     workspace, agent = _selector(config)
     return request_attestation(config.canopy_base_url, config.app_name, config.signing_key, kind=kind, proof=proof,
-                               speaks_for=speaks_for, workspace=workspace, agent=agent, post=post)
+                               htu=htu, speaks_for=speaks_for, workspace=workspace, agent=agent, post=post)

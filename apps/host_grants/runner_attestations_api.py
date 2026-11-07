@@ -25,6 +25,9 @@ class RunnerAttestationIn(Schema):
     kind: str
     #: The runner's proof: the `DPoP` JWS, or the `X-Canopy-Aws-Proof` value.
     proof: str
+    #: The exact URL the proof must be for: the site's endpoint and a digest of the request
+    #: (`canopy_sdk.runner_attestations.bound_url`), on an origin the site registered.
+    htu: str
     #: The agent the request says it speaks for, when it names one.
     agent: str = ""
 
@@ -46,9 +49,9 @@ def attest_runner(request, payload: RunnerAttestationIn):
 
     `Authorization: Bearer <JWT>` signed by the site's own key, as for
     `POST /api/sites/sign-offs` but with `aud` = this URL and no `sign_off_request`.
-    The body carries the runner's proof, made for an `htu` on an origin the site
-    registered (the runner signs `<site endpoint>/<sha256 of the request>`, so the proof
-    vouches for that request only) and single-use. Answers `{runner, kind, jkt, agent,
+    The body carries the runner's proof and the exact `htu` it must be made for (an origin
+    the site registered; the runner signs `<site endpoint>/attest/<sha256 of the request>`, so
+    the proof vouches for that request only); single-use. Answers `{runner, kind, jkt, agent,
     serves_agent}`; 401 `proof_refused` when no ACTIVE approved device key proved it, with
     one wording whatever the reason.
     """
@@ -61,7 +64,8 @@ def attest_runner(request, payload: RunnerAttestationIn):
         claimed = site_agents.site_for_request(token)
         check_site_agents_issuer(f"{claimed.workspace_id}:{claimed.name}")
         app, _claims = service.verify_request(token)
-        return service.attest(app, kind=payload.kind, proof=payload.proof, agent=payload.agent)
+        return service.attest(app, kind=payload.kind, proof=payload.proof, htu=payload.htu,
+                              agent=payload.agent)
     except SiteAgentsRateLimitError as exc:
         raise HttpError(429, f"rate_limited: {exc}")
     except site_agents.SiteAgentsRefused as exc:
