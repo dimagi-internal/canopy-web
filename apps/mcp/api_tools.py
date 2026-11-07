@@ -198,6 +198,7 @@ EXCLUDED: dict[str, str] = {
     "get_site_agents": _HOST,
     "create_site_sign_off": _HOST,
     "get_site_sign_off": _HOST,
+    "attest_runner": _HOST,
     "ses_inbound": "Amazon SNS push webhook",
     "ses_events": "Amazon SNS push webhook",
     # A box proving its own key or instance role: refused for any tool call, the same false
