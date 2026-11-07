@@ -13,7 +13,7 @@ from django.contrib.auth.models import User
 from django.test import Client
 
 from apps.agents import access, roles, sensitive_data, turn_context
-from apps.agents.interface import InterfaceError, is_read_mode, parse, published
+from apps.agents.published_profiles import InterfaceError, is_read_mode, parse, published
 from apps.agents.models import Agent, AgentAdmin
 from apps.canopy_sessions.models import Session
 from apps.events.models import SettingChange
@@ -36,7 +36,7 @@ IFACE = {"capabilities": {"data": DATA,
 #: Who the access list lets in, by profile: "member" (the workspace's members) or "contact".
 WHO = {"data": ["contact", "member"], "ask": ["member"], "connect": ["contact"]}
 SITE = "connect-labs"
-#: The internal name a new connected-labs row gets (`answering.key_for`).
+#: The internal name a new connected-labs row gets (`profile_settings.key_for`).
 KEY = "connect_labs"
 SAFE = {"tools": DATA["tools"], "sensitive": True}
 

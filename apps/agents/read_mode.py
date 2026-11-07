@@ -1,8 +1,8 @@
-"""The default interface, apart from `interface.py` so the Agent model can use it as a
-field default without importing the whole access machinery.
+"""Read mode, and the empty published document every agent starts with.
 
-Every agent has an interface from the moment it exists: this one, until its owner
-changes it. See `apps/agents/interface.py` and `docs/architecture/access.md`.
+Kept apart from `published_profiles.py` so the Agent model can use `default_interface` as a field default
+without importing the whole access machinery: no host site and no read-mode override, until its owner
+changes them. See `apps/agents/published_profiles.py` and `docs/architecture/access.md`.
 """
 from __future__ import annotations
 

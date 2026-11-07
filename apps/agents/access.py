@@ -13,7 +13,7 @@ from apps.harness.runners import can_administer_runner
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from . import interface as iface_mod
+from . import published_profiles as profiles_mod
 from . import roles, turn_context
 from .standings import Membership, Standings
 
@@ -143,7 +143,7 @@ def roster(agent, members=None, standings: Standings | None = None) -> list[dict
         if held == MEMBER:
             d = turn_context.for_asker(agent, user, verified=True, channel="canopy_web",
                                        standing=standings.of(user, agent), lines=lines)
-            caps = iface_mod.reachable(d.standing.permissions, iface) if d.access == CONFINED else []
+            caps = profiles_mod.reachable(d.standing.permissions, iface) if d.access == CONFINED else []
             # The roster's own word for a refusal, which its readers (the API, the vault, topology) know.
             access, manual_only, may_auto = ROSTER_REFUSED if d.refused else d.access, d.review.manual_only, False
             role, source, via = d.standing.agent_role, d.standing.source, d.standing.via

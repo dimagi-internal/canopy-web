@@ -21,7 +21,7 @@ from functools import cached_property
 
 from apps.harness import clis, sensitivity
 
-from . import interface as iface_mod
+from . import published_profiles as profiles_mod
 from .refusals import Code, Refusal
 from .refusals import make as refusal_of
 
@@ -155,7 +155,7 @@ def build(session, turn=None, *, agent=None) -> SessionContext:
         session_id=session.pk, agent=_slug(agent), workspace=session.workspace_id,
         channel=_where_it_lives(session),
         runner_requested=(session.metadata or {}).get("requested_runner_id"),
-        site=iface_mod.session_site(session), page=iface_mod.session_resource(session),
+        site=profiles_mod.session_site(session), page=profiles_mod.session_resource(session),
         sensitive=sensitivity.any_sensitive(session),
         is_review=session_access.is_review_conversation(session),
         review_of=_reviewed_session(session),
@@ -165,12 +165,12 @@ def build(session, turn=None, *, agent=None) -> SessionContext:
 def _of_turn(session, turn, agent) -> SessionContext:
     session = session if session is not None else sensitivity.conversation_of(turn)
     agent = agent if agent is not None else turn.acting_agent
-    is_review = iface_mod.is_review_turn(turn)
+    is_review = profiles_mod.is_review_turn(turn)
     return SessionContext(
         session_id=getattr(session, "pk", None), agent=_slug(agent),
         workspace=agent.workspace_id if agent is not None else getattr(session, "workspace_id", None),
         channel=turn.origin, runner_requested=turn.pinned_runner_id,
-        site=iface_mod._conversation_site(turn), page=iface_mod._declared_resource(turn),
+        site=profiles_mod._conversation_site(turn), page=profiles_mod._declared_resource(turn),
         sensitive=sensitivity.is_sensitive(turn), is_review=is_review,
         review_of=_reviewed_session(session) if is_review else None,
         _session=session, _turn=turn, _agent=agent)

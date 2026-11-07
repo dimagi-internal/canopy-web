@@ -6459,7 +6459,7 @@ _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,100}$")
 def page_site(turn: dict) -> tuple[str, frozenset]:
     """(site, withheld credential names) for a turn held on a site's page, else ("", ∅).
 
-    canopy-web decides it (`interface.page_turn`): the conversation is on a site the
+    canopy-web decides it (`published_profiles.page_turn`): the conversation is on a site the
     agent serves, so the agent reaches that site only as the person who sent, through
     canopy's gateway — never with its own login there, which this turn must not hold."""
     block = turn.get("page_site")

@@ -17,7 +17,7 @@ from django.db import connection
 from django.test import Client
 from django.test.utils import CaptureQueriesContext
 
-from apps.agents import answering, interface, roles, sensitive_data, turn_context
+from apps.agents import profile_settings, published_profiles, roles, sensitive_data, turn_context
 from apps.agents.answering_snapshot import probe_turn
 from apps.agents.models import Agent, AgentAdmin, AgentGrant
 from apps.api.api import api
@@ -82,7 +82,7 @@ def test_read_mode_starts_on_the_default_and_customising_starts_from_it(w):
     client = _as(w["admin"])
     got = client.get(READ).json()
     assert got["source"] == "default"
-    assert got["profile"]["tools"] == interface.default_read_profile(w["agent"])["tools"]
+    assert got["profile"]["tools"] == published_profiles.default_read_profile(w["agent"])["tools"]
 
     saved = _put(client, READ, {"description": "Ask Hal."}).json()
     assert saved["source"] == "custom" and saved["profile"]["description"] == "Ask Hal."
@@ -200,7 +200,7 @@ def test_a_login_on_a_row_is_stored_for_its_site_and_withheld_there(w):
     _put(_as(w["admin"]), f"{SITES}/site-a", {"own_login": ["A_TOKEN"]})
     agent.refresh_from_db()
     turn = probe_turn(user=w["owner"], site="site-a")
-    assert interface.page_turn(turn, agent) == {"site": "site-a", "withheld": ["A_TOKEN"]}
+    assert published_profiles.page_turn(turn, agent) == {"site": "site-a", "withheld": ["A_TOKEN"]}
 
 
 @pytest.mark.parametrize("site,key", [
@@ -214,7 +214,7 @@ def test_a_new_rows_key_is_one_the_parser_accepts_and_canopy_has_not_reserved(w,
     assert response.status_code == 200, response.content
     assert response.json()["sites"][0]["key"] == key
     w["agent"].refresh_from_db()
-    assert interface.parse(w["agent"].interface)
+    assert published_profiles.parse(w["agent"].interface)
 
 
 def test_two_sites_that_clean_up_to_one_name_get_two_keys(w):
@@ -228,7 +228,7 @@ def test_session_review_stays_canopys_through_every_new_route(w):
     """No route publishes it: not by naming a site after it, nor by a field. A row that cleans up to its
     name gets another key, so canopy's profile stays canopy's and a person cannot open it with a line."""
     client = _as(w["admin"])
-    canopy_review = interface.profile(w["agent"], interface.SESSION_REVIEW)
+    canopy_review = published_profiles.profile(w["agent"], published_profiles.SESSION_REVIEW)
     for site in ("session_review", "Session-Review", "session-review"):
         assert _put(client, f"{SITES}/{site}", {"tools": ["Bash"]}).status_code == 200
     assert _put(client, f"{SITES}/x", {"key": "session_review"}).status_code == 422
@@ -236,13 +236,13 @@ def test_session_review_stays_canopys_through_every_new_route(w):
     assert _put(client, READ, {"name": "session_review"}).status_code == 422
 
     w["agent"].refresh_from_db()
-    assert interface.SESSION_REVIEW not in w["agent"].interface["capabilities"]
-    assert interface.profile(w["agent"], interface.SESSION_REVIEW) == canopy_review
+    assert published_profiles.SESSION_REVIEW not in w["agent"].interface["capabilities"]
+    assert published_profiles.profile(w["agent"], published_profiles.SESSION_REVIEW) == canopy_review
     # A key like it is an ordinary host site: what it opens is that row, never the review.
     assert "Bash" not in canopy_review["tools"]
     # The parser refuses the name too, whatever asks it.
-    with pytest.raises(interface.InterfaceError):
-        interface.parse({"capabilities": {"session_review": {}}})
+    with pytest.raises(published_profiles.InterfaceError):
+        published_profiles.parse({"capabilities": {"session_review": {}}})
 
 
 def test_a_sensitive_row_must_be_able_to_hold_it(w):
@@ -266,7 +266,7 @@ def test_removing_a_row_closes_it_for_turns_already_stamped_with_it(w):
     rows = client.delete(f"{SITES}/connect-labs").json()["sites"]
     assert [r["key"] for r in rows] == ["canopy"]
     agent.refresh_from_db()
-    assert interface.profile(agent, "connect")["tools"] == []
+    assert published_profiles.profile(agent, "connect")["tools"] == []
     assert client.delete(f"{SITES}/connect-labs").status_code == 404
 
 
@@ -308,12 +308,13 @@ def test_a_document_these_settings_cannot_hold_says_what_a_person_can_do(w):
 # --- every fixture agent round-trips ----------------------------------------------------------
 
 @pytest.mark.parametrize("slug", [s for s, row in _fixture().items()
-                                  if not answering.document_problems(row["interface"].get("capabilities") or {})])
+                                  if not profile_settings.document_problems(
+                                      row["interface"].get("capabilities") or {})])
 def test_saving_each_setting_back_changes_no_answer(w, slug):
     agent = _shaped(w, slug)
     stored = copy.deepcopy(agent.interface)
-    stamps = ["", "read", "ask", interface.SESSION_REVIEW, *stored["capabilities"], "retired_probe"]
-    profiles = {s: interface.profile(agent, s) for s in stamps}
+    stamps = ["", "read", "ask", published_profiles.SESSION_REVIEW, *stored["capabilities"], "retired_probe"]
+    profiles = {s: published_profiles.profile(agent, s) for s in stamps}
     client = _as(w["admin"])
 
     read_mode = client.get(READ).json()
@@ -324,8 +325,8 @@ def test_saving_each_setting_back_changes_no_answer(w, slug):
         assert _put(client, f"{SITES}/{row['site']}", body).status_code == 200
 
     agent.refresh_from_db()
-    assert interface.parse(agent.interface) == interface.parse(stored)
-    assert {s: interface.profile(agent, s) for s in stamps} == profiles
+    assert published_profiles.parse(agent.interface) == published_profiles.parse(stored)
+    assert {s: published_profiles.profile(agent, s) for s in stamps} == profiles
 
 
 # --- what a save does around the document -----------------------------------------------------
@@ -371,15 +372,15 @@ def test_a_save_says_who_saved_it_as_every_save_has(w):
 def test_two_edits_from_stale_copies_both_survive(w):
     stale_one = Agent.objects.get(pk=w["agent"].pk)
     stale_two = Agent.objects.get(pk=w["agent"].pk)
-    answering.set_site(stale_one, "site-a", {}, by=w["admin"])
-    answering.set_site(stale_two, "site-b", {}, by=w["admin"])
+    profile_settings.set_site(stale_one, "site-a", {}, by=w["admin"])
+    profile_settings.set_site(stale_two, "site-b", {}, by=w["admin"])
     w["agent"].refresh_from_db()
     assert {"site_a", "site_b"} <= set(w["agent"].interface["capabilities"])
 
 
 def test_the_writer_holds_the_rows_lock(w):
     with CaptureQueriesContext(connection) as ctx:
-        answering.set_site(w["agent"], "site-a", {}, by=w["admin"])
+        profile_settings.set_site(w["agent"], "site-a", {}, by=w["admin"])
     if connection.vendor == "postgresql":
         assert any("FOR UPDATE" in q["sql"] for q in ctx.captured_queries)
     w["agent"].refresh_from_db()

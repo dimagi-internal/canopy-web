@@ -84,7 +84,7 @@ That writes one `SessionReviewAsk` per (session, agent, person), live for 7 days
 verified asker is them.
 
 **The profile.** Every turn in that chat runs confined in canopy's built-in `session_review`
-profile (`interface.SESSION_REVIEW`, `turn_context._review_rule`), whoever asks: owner, admin and
+profile (`published_profiles.SESSION_REVIEW`, `turn_context._review_rule`), whoever asks: owner, admin and
 canopy too, as a sensitive conversation does, and a fork or a Slack branch of it stays in it or is
 refused. `turn_context.resolve_turn_context` decides this; nothing is started as canopy. The transcript is text someone
 may have written to steer whoever reads it, so the turn holds:

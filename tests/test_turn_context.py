@@ -12,7 +12,7 @@ from django.db import connection
 from django.test import Client
 from django.utils import timezone
 
-from apps.agents import answering_snapshot, interface, roles, session_context, turn_context
+from apps.agents import answering_snapshot, published_profiles, roles, session_context, turn_context
 from apps.agents.credentials import for_turn as credentials_for_turn
 from apps.agents.models import AgentGrant
 from apps.agents.standings import Standings
@@ -243,8 +243,8 @@ def test_a_read_mode_profile_says_which_default_it_ran_under(w):
     declare(w.agent, None)
     profile = turn_context.for_asker(w.agent, w.reader, verified=True).profile
     assert profile.kind == turn_context.READ_MODE and profile.name == "read"
-    assert profile.default_profile_version == interface.READ_PROFILE_VERSION
-    assert profile.as_envelope() == interface.profile(w.agent, "read")
+    assert profile.default_profile_version == published_profiles.READ_PROFILE_VERSION
+    assert profile.as_envelope() == published_profiles.profile(w.agent, "read")
 
 
 def test_a_review_chat_refuses_what_it_would_refuse_and_narrows_the_rest(w):

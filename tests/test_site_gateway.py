@@ -18,7 +18,7 @@ import pytest
 from asgiref.sync import async_to_sync
 from django.utils import timezone
 
-from apps.agents.interface import GATEWAY_TOOLS, parse, profile
+from apps.agents.published_profiles import GATEWAY_TOOLS, parse, profile
 from apps.agents.models import Agent
 from apps.harness.models import Turn
 from apps.host_grants import host_gateway
@@ -234,7 +234,7 @@ def test_a_confined_session_without_the_host_site_cannot_even_see_it(w, host):
 
 
 def test_the_interface_parses_sites_and_ceiling_and_refuses_nonsense(w):
-    from apps.agents.interface import InterfaceError
+    from apps.agents.published_profiles import InterfaceError
 
     out = w["agent"].interface["capabilities"]["connect"]     # IFACE, published
     assert out["sites"] == ["connect-labs"] and out["ceiling"] == ["mcp__*connect_labs__marketplace_*"]

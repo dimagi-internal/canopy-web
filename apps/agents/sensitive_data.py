@@ -5,7 +5,7 @@ sensitive data — an interface setting, `data: sensitive` (spec
 A host site says `data: sensitive` on the published interface. That is accepted only
 
 * **when it is structurally true** (`structural_refusals`, asked by
-  `interface.parse`): the host site reaches its host through canopy's gateway
+  `published_profiles.parse`): the host site reaches its host through canopy's gateway
   (`sites:` is required), and its tools may be only the gateway's site tools
   (`site_tools`, `site_call`, `site_read`), `current_page`, `who_is_asking`, the
   page's own actions (`page_*`) and read-only local tools — no shell, no
@@ -13,7 +13,7 @@ A host site says `data: sensitive` on the published interface. That is accepted 
   Anything else is a 422 naming it;
 * **from the agent's owner or an admin**, from the browser or a token, like any other
   change to an agent's settings: the `sensitive` field of its host site
-  (`answering.set_site`). Every such save is a setting change, audited with its before
+  (`profile_settings.set_site`). Every such save is a setting change, audited with its before
   and after (`apps/events/audit.py`).
 
 What it buys, and what reads it:

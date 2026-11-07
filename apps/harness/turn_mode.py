@@ -142,7 +142,9 @@ def editor_cap(turn, agent) -> Resolved | None:
         return _accountable_cap(turn, agent)
     from apps.agents import turn_context
 
-    if not turn_context.for_turn(turn, agent).review.manual_only:
+    # The claim's own answer when it holds one (`claim._resolve_now`), else the rules as they are now.
+    context = getattr(turn, "_claim_context", None) or turn_context.for_turn(turn, agent)
+    if not context.review.manual_only:
         return None
     email = turn.initiator_user.email if turn.initiator_user is not None else "a member"
     return Resolved(MANUAL, f"editor {email}: manual — outbound needs an admin of {agent.slug}")

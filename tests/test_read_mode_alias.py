@@ -1,4 +1,4 @@
-"""`read` and `READ_MODE_STAMP` are one read mode, and `interface.is_read_mode` is the only place that says so.
+"""`read` and `READ_MODE_STAMP` are one read mode, and `published_profiles.is_read_mode` is the only place that says so.
 
 Spec 2026-11-03-agent-read-mode-and-doors-design.md, Phase 1 step 2: an alias only. Read mode still
 resolves only through a published profile here; stored data (stamps, rules, lines) behaves as before.
@@ -11,8 +11,8 @@ from django.contrib.auth import get_user_model
 from apps.admission import evaluate
 from apps.admission import rules as admission_rules
 from apps.admission.models import AdmissionRule
-from apps.agents import access, interface, roles, turn_context
-from apps.agents.interface import is_read_mode, parse
+from apps.agents import access, published_profiles, roles, turn_context
+from apps.agents.published_profiles import is_read_mode, parse
 from apps.agents.models import Agent
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -36,15 +36,15 @@ def test_the_one_function():
     ({roles.WRITE, "use:*", roles.READ}, "canopy", True),
 ])
 def test_opens_treats_read_and_the_stamp_alike(held, name, ok):
-    assert interface.opens(frozenset(held), name) is ok
+    assert published_profiles.opens(frozenset(held), name) is ok
 
 
 def test_profile_of_either_name_is_the_published_read_mode():
     class A:
         interface = parse(IFACE)
 
-    assert interface.profile(A, "ask")["tools"] == ["Read"]
-    got = interface.profile(A, "read")
+    assert published_profiles.profile(A, "ask")["tools"] == ["Read"]
+    got = published_profiles.profile(A, "read")
     assert got["tools"] == ["Read"] and got["name"] == "read"       # the stamp is kept as given
 
 
@@ -52,7 +52,7 @@ def test_an_unpublished_name_still_fails_closed():
     class A:
         interface = parse(IFACE)
 
-    gone = interface.profile(A, "retired-site")
+    gone = published_profiles.profile(A, "retired-site")
     assert gone["tools"] == [] and gone["bash"] == [] and gone["write_paths"] == []
 
     # (a bare agent's `read` now builds the default read profile: tests/test_read_mode.py)

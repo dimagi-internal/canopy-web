@@ -192,13 +192,13 @@ def _sender_not_proven(i: _In):
 
 
 def _profile_not_open(i: _In):
-    from . import interface  # noqa: PLC0415 — interface reads the agents' models
+    from . import published_profiles# noqa: PLC0415 — interface reads the agents' models
 
     name = i.facts.get("name")
-    if name == interface.SESSION_REVIEW:
+    if name == published_profiles.SESSION_REVIEW:
         why = f"a review chat needs read access to {i.slug}, and {i.say.your} place on its access list does not give it"
         how = f"Have {i.admins} give {i.say.you} the read only role on {i.slug}'s access list."
-    elif name and interface.is_read_mode(name):
+    elif name and published_profiles.is_read_mode(name):
         why = f"{i.say.your} place on {i.slug}'s access list does not open read mode"
         how = f"Have {i.admins} give {i.say.you} the read only role on {i.slug}'s access list."
     elif name and not i.facts.get("published"):

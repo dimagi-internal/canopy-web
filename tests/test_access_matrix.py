@@ -239,7 +239,7 @@ def test_a_refusal_says_what_the_caller_can_do(w):
 
 
 def test_the_mcp_tool_list_follows_the_rule(w):
-    from apps.agents.interface import offered_to
+    from apps.agents.published_profiles import offered_to
 
     _publish(w["agent"], "hal")
     assert offered_to(w["editor"], w["agent"]) == ["ask"]      # a whole-agent line: every profile

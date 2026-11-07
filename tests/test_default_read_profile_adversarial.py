@@ -18,9 +18,9 @@ from types import SimpleNamespace
 import pytest
 from django.contrib.auth import get_user_model
 
-from apps.agents import access, interface, roles, turn_context
-from apps.agents.interface import parse
-from apps.agents.interface_default import default_read_profile
+from apps.agents import access, published_profiles, roles, turn_context
+from apps.agents.published_profiles import parse
+from apps.agents.read_mode import default_read_profile
 from apps.agents.models import Agent
 from apps.harness import caller_context
 from apps.harness.models import Turn
@@ -220,5 +220,5 @@ def test_a_sensitive_conversation_gets_no_default_profile_when_its_read_mode_is_
 
 
 def test_read_and_ask_stay_one_thing_for_the_profile():
-    assert interface.is_read_mode("ask") and interface.is_read_mode("read")
-    assert not interface.is_read_mode("canopy") and not interface.is_read_mode(None)
+    assert published_profiles.is_read_mode("ask") and published_profiles.is_read_mode("read")
+    assert not published_profiles.is_read_mode("canopy") and not published_profiles.is_read_mode(None)

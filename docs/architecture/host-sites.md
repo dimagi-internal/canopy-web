@@ -28,7 +28,7 @@ separate pages, and neither creates the other.
 |---|---|---|---|
 | **The site** (`AppCredential`) | canopy knows this host: it may vouch for its visitors with a signed assertion and frame the widget; with `host_issuer` + `host_mcp_resource` it also issues act-as-you permissions (`issues_host_grants`) | workspace owner | `apps/tokens/models.py`, `apps/embedding/embed_apps.py` (`register`, `update`, `revoke`) |
 | **Agents it may offer** (`AppCredentialAgent`) | the site's picker may show this agent | workspace owner, on the site's card | `embed_apps.set_agents` |
-| **The agent's host site** (one entry of `Agent.interface`) | how this agent behaves in a conversation held on that site: the confined profile a visitor gets, and the site's narrowing and login rules for everyone there | agent owner or agent admin | `apps/agents/answering.py` (`set_site`, `remove_site`), routes `…/agents/{slug}/host-sites/{site}` |
+| **The agent's host site** (one entry of `Agent.interface`) | how this agent behaves in a conversation held on that site: the confined profile a visitor gets, and the site's narrowing and login rules for everyone there | agent owner or agent admin | `apps/agents/profile_settings.py` (`set_site`, `remove_site`), routes `…/agents/{slug}/host-sites/{site}` |
 
 The host's readiness check (`GET /api/sites/agents`, below) needs both: an offered agent with no entry for
 the site is `ready: false` with the problem "is not connected to <site>".
@@ -38,7 +38,7 @@ the site is `ready: false` with the problem "is not connected to <site>".
 | Word | Means | Example |
 |---|---|---|
 | site name | `AppCredential.name`, unique per workspace; what `sites:` lists and what a session's `embed_app` holds | `connect-labs` |
-| entry key | the agent's own key for its host-site entry (`answering.key_for`, never renamed). It is what a turn is stamped with (`Turn.capability`), what an access line names (`use:<key>`, `AgentGrant.capability`) and what the envelope's `capability` / `granted_by: capability:<key>` say | `connect` |
+| entry key | the agent's own key for its host-site entry (`profile_settings.key_for`, never renamed). It is what a turn is stamped with (`Turn.capability`), what an access line names (`use:<key>`, `AgentGrant.capability`) and what the envelope's `capability` / `granted_by: capability:<key>` say | `connect` |
 | authorized app, connection | **not this.** An authorized app is an MCP client a person signed in to canopy with (`list_authorized_apps`); a connection is a third-party OAuth login (`apps/connections`, `list_connection_apps`) | — |
 
 The entry key and the site name differ. An access line opens an entry by **key**, per agent.
@@ -48,7 +48,7 @@ The entry key and the site name differ. An access line opens an entry by **key**
 1. **Workspace owner:** register the site (Settings › Host sites): its name, signing key or JWKS URL,
    frame origins; for act-as-you, its `host_issuer` and MCP resource URL. Tick the agents it may offer.
 2. **Agent owner or admin:** add the site under the agent's Read mode and host sites. A new entry
-   starts from `answering.new_site_defaults`; set its tools and paths, and whether it handles sensitive data.
+   starts from `profile_settings.new_site_defaults`; set its tools and paths, and whether it handles sensitive data.
 3. **Access list:** who gets what on the site is the agent's access list, never the entry. Someone holding
    `read` reaches the entry on that site; a `use:<key>` line opens exactly that entry; `write`, owner and
    admin reach the whole agent (narrowed on the site's pages, below).
@@ -61,7 +61,7 @@ The entry key and the site name differ. An access line opens an entry by **key**
 
 A session created through a site's delegated token is stamped server-side with that site's name
 (`canopy_sessions.services.stamp_host_metadata` → `metadata["embed_app"]`). Nothing the page or the caller
-sends can set or change it. The Session Context reports it as `site` (`interface.session_site`), and its
+sends can set or change it. The Session Context reports it as `site` (`published_profiles.session_site`), and its
 `page` (`page_state.resource`) is a fact about the conversation that selects nothing.
 
 ## What a turn there may do
@@ -87,13 +87,13 @@ included; anything else in a sensitive conversation is refused (`sensitive_not_o
 An entry for a site changes more than what a visitor may do:
 
 * **Gateway tools.** Its profile gains canopy's site tools (`site_tools`, `site_call`, `site_read`,
-  `interface.GATEWAY_TOOLS`) and the page's own actions (`page_*`).
+  `published_profiles.GATEWAY_TOOLS`) and the page's own actions (`page_*`).
 * **Everyone reaches the site as themselves.** On a site the agent has an entry for, every turn held on
   that site's page, the owner's included, reaches the site only under the sender's act-as-you permission
   (`HostGrant`, confirmed with a passkey, 30 minutes), never with the agent's own credentials
-  (`interface.page_site_of`, `page_turn`; the runner withholds the entry's `own_login` names).
+  (`published_profiles.page_site_of`, `page_turn`; the runner withholds the entry's `own_login` names).
 * **Ceiling.** `ceiling` optionally narrows the host's tools on the owner's word, for every turn on that
-  site (`interface.site_ceiling`). Absent, the host's grant decides.
+  site (`published_profiles.site_ceiling`). Absent, the host's grant decides.
 * **Contacts.** A contact (no passkey, so no act-as-you permission) is not offered an agent that has an
   entry for the site (`contacts/contact_api._for_contacts`).
 * **Sensitive.** See the table above; the site's runner requirements also pin the conversation to a
@@ -137,12 +137,12 @@ model, the `Agent.interface` column and its `capabilities` key, the entry key, `
 | Question | Where |
 |---|---|
 | Register / change / revoke a site, which agents it offers | `apps/embedding/embed_apps.py` |
-| The agent's entries: read, add, change, remove | `apps/agents/answering.py` |
-| Parse and validate an entry | `apps/agents/interface.py::parse` |
-| Which site is this conversation on | `interface.session_site` (`embed_app`) |
-| Which entry does a site select for this asker | `turn_context._entry_for` → `interface.site_entry` |
-| Does this turn run on a site's page; what is withheld | `interface.page_site_of`, `page_turn`, `own_login_of` |
-| The ceiling | `interface.site_ceiling` |
+| The agent's entries: read, add, change, remove | `apps/agents/profile_settings.py` |
+| Parse and validate an entry | `apps/agents/published_profiles.py::parse` |
+| Which site is this conversation on | `published_profiles.session_site` (`embed_app`) |
+| Which entry does a site select for this asker | `turn_context._entry_for` → `published_profiles.site_entry` |
+| Does this turn run on a site's page; what is withheld | `published_profiles.page_site_of`, `page_turn`, `own_login_of` |
+| The ceiling | `published_profiles.site_ceiling` |
 | Sensitive | `apps/agents/sensitive_data.py`, `turn_context._sensitive_rule` |
 | The gateway | `apps/host_grants/host_gateway.py`, `apps/mcp/tools/site.py` |
 | What the host is told | `apps/host_grants/site_agents.py` |

@@ -13,7 +13,7 @@ import pytest
 from django.contrib.auth.models import User
 from django.test import Client
 
-from apps.agents.interface import InterfaceError, default_interface, parse, published
+from apps.agents.published_profiles import InterfaceError, default_interface, parse, published
 from apps.agents.models import Agent
 from apps.harness import services
 from apps.harness.models import Turn

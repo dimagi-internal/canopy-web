@@ -33,7 +33,7 @@ from fastmcp.server.dependencies import get_http_headers
 from fastmcp.tools import ToolResult
 from mcp.types import ResourceLink, TextContent
 
-from apps.agents.interface import parse
+from apps.agents.published_profiles import parse
 from apps.agents.models import Agent
 from apps.canopy_sessions import agui
 from apps.canopy_sessions import transcript_ingest as chat_transcript_ingest

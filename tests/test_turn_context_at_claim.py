@@ -198,7 +198,8 @@ def test_read_mode_changed_while_it_waited_runs_the_read_mode_there_is_now(world
     session = _chat(world, creator=world.reader)
     turn = _enqueue(world.reader, session, box=world.box)
     assert turn.capability == "read"                           # canopy's default read mode
-    # What saving the Read mode setting writes (`answering.set_read_mode`, which this fixture's older entries refuse).
+    # What saving the Read mode setting writes (`profile_settings.set_read_mode`, which this fixture's older
+    # entries refuse).
     world.agent.interface["capabilities"]["ask"] = {"description": "Answers from the runbook", "tools": ["Read", "Grep"]}
     world.agent.save(update_fields=["interface"])
 

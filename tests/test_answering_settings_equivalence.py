@@ -24,7 +24,8 @@ from django.contrib.auth import get_user_model
 from django.test import override_settings
 from django.utils import timezone
 
-from apps.agents import answering_snapshot, grants, interface, roles, sensitive_data, session_context, turn_context
+from apps.agents import (answering_snapshot, grants, published_profiles, roles, sensitive_data, session_context,
+                         turn_context)
 from apps.agents.answering_snapshot import probe_turn
 from apps.agents.models import Agent, AgentAdmin, AgentGrant
 from apps.canopy_sessions.models import Session
@@ -69,9 +70,10 @@ def _envelope_profile(agent, stamp, turn):
 
 
 REAL = SimpleNamespace(
-    profile=interface.profile, envelope_profile=_envelope_profile, reachable=interface.reachable,
-    page_sites=interface.page_sites, site_ceiling=interface.site_ceiling, own_login_of=interface.own_login_of,
-    page_turn=interface.page_turn, page_site_of=interface.page_site_of,
+    profile=published_profiles.profile, envelope_profile=_envelope_profile, reachable=published_profiles.reachable,
+    page_sites=published_profiles.page_sites, site_ceiling=published_profiles.site_ceiling,
+    own_login_of=published_profiles.own_login_of,
+    page_turn=published_profiles.page_turn, page_site_of=published_profiles.page_site_of,
     handles_sensitive=sensitive_data.handles_sensitive, as_claim=sensitive_data.as_claim,
     sensitive_capabilities=sensitive_data.sensitive_profiles, facts_for=execution.facts_for,
     site_capabilities=site_agents.site_profiles, agent_entry=site_agents.agent_entry, decide=_real_decide,
@@ -83,7 +85,7 @@ def _keys(agent) -> list[str]:
 
 
 def _sites(agent) -> list[str]:
-    return sorted(interface.page_sites(agent))
+    return sorted(published_profiles.page_sites(agent))
 
 
 @pytest.fixture()
@@ -284,11 +286,11 @@ def test_a_saved_turn_on_a_real_session_gets_the_same_answers(world):
             assert _outcomes(dataclasses.asdict(real)) == _outcomes(dataclasses.asdict(frozen))
             turn.capability = real.stamp or ""
             turn.save(update_fields=["capability"])
-            facts = interface.grant_facts(turn, agent)
+            facts = published_profiles.grant_facts(turn, agent)
             assert facts["granted_by"]
             assert _envelope_profile(agent, turn.capability, turn) == \
                 legacy_interface.envelope_profile(agent, turn.capability, turn)
-            assert interface.page_turn(turn, agent) == legacy_interface.page_turn(turn, agent)
+            assert published_profiles.page_turn(turn, agent) == legacy_interface.page_turn(turn, agent)
             assert execution.facts_for(turn, agent, session, [rr.SENSITIVE_DATA]) == \
                 legacy_interface.facts_for(turn, agent, session, [rr.SENSITIVE_DATA])
     assert grants.lines_for(ace), "the matrix is empty if the lines did not save"

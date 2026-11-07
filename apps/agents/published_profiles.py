@@ -71,7 +71,7 @@ import logging
 import re
 
 from apps.agents import roles
-from apps.agents.interface_default import (  # noqa: F401  (re-exported)
+from apps.agents.read_mode import (  # noqa: F401  (re-exported)
     READ_MODE_NAME,
     READ_MODE_NAMES,
     READ_MODE_STAMP,
@@ -359,7 +359,7 @@ def names_site(cap: dict | None, site: str | None) -> bool:
 
 def entry_for_site(iface: dict | None, site: str | None) -> str | None:
     """The name of the one host-site entry that lists `site`, or None. One entry per site is the writer's rule
-    (`answering.document_problems`, which also keeps sites off read mode), and migration `agents/0132` refused to
+    (`profile_settings.document_problems`, which also keeps sites off read mode), and migration `agents/0132` refused to
     deploy over a document that broke it, so there is no second entry to combine."""
     caps = (iface or {}).get("capabilities") or {}
     return next((n for n in sorted(caps) if names_site(caps[n], site)), None)

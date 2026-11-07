@@ -31,7 +31,7 @@ from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
 from . import access, turn_context
-from . import interface as iface_mod
+from . import published_profiles as profiles_mod
 from .models import Agent
 from .tree import agents_in_tree
 
@@ -72,10 +72,10 @@ def _edge(src: Agent, dst: Agent, standings: access.Standings, may_manage: bool)
         if d.access == turn_context.FULL:
             out.update(access="full", basis=EDITOR)
         elif d.access == turn_context.CONFINED:
-            caps = iface_mod.reachable(d.standing.permissions, iface)
+            caps = profiles_mod.reachable(d.standing.permissions, iface)
             out.update(access="confined", basis=PROFILES, profiles=caps)
         else:
-            out["basis"] = NOTHING if iface_mod.published(iface) else NO_INTERFACE
+            out["basis"] = NOTHING if profiles_mod.published(iface) else NO_INTERFACE
         out["can_grant"] = may_manage
     return out
 
@@ -127,7 +127,7 @@ def build(root: Workspace, viewer, visible: Callable[[str], bool] = lambda _s: T
             "owner_email": a.owner.email if a.owner_id else None,
             "login_email": a.user.email if a.user_id else None,
             "login_user_id": a.user_id,
-            "interface_published": iface_mod.published(iface),
+            "interface_published": profiles_mod.published(iface),
             "full_people": sorted(e for e in full if e),
         })
 

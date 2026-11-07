@@ -296,7 +296,7 @@ class CallerContextOut(Schema):
 
 
 class ClaimPageSiteOut(Schema):
-    """A turn held on a host site's page (`interface.page_turn`)."""
+    """A turn held on a host site's page (`published_profiles.page_turn`)."""
 
     # The site's name (the conversation's `embed_app`), which the agent serves.
     site: str
@@ -352,7 +352,7 @@ class ClaimedTurnOut(TurnOut):
     invocation: InvocationOut | None = None
     # For a turn whose conversation is held on a host site's page that its agent
     # serves: the site, and the agent's own credentials for it that the runner must
-    # leave out of the turn (`interface.page_turn`). Null for every other turn.
+    # leave out of the turn (`published_profiles.page_turn`). Null for every other turn.
     page_site: ClaimPageSiteOut | None = None
 
     # Nothing about a visitor's HOST credential is ever here (host grant
@@ -389,7 +389,7 @@ class ClaimedTurnOut(TurnOut):
 
     @staticmethod
     def resolve_page_site(obj) -> dict | None:
-        from apps.agents.interface import page_turn  # noqa: PLC0415 — as resolve_caller_context: the interface reads models, loaded with a call
+        from apps.agents.published_profiles import page_turn  # noqa: PLC0415 — as resolve_caller_context: the interface reads models, loaded with a call
 
         return page_turn(obj)
 

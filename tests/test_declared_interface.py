@@ -12,7 +12,7 @@ from django.contrib.auth.models import User
 from django.test import Client
 
 from apps.agents import roles
-from apps.agents.interface import FULL_STAMP, READ_MODE_STAMP, InterfaceError, parse
+from apps.agents.published_profiles import FULL_STAMP, READ_MODE_STAMP, InterfaceError, parse
 from apps.agents.models import Agent, AgentAdmin
 from apps.harness import caller_context, claim, services
 from apps.harness import initiator as who
@@ -115,7 +115,7 @@ def test_write_paths_are_their_own_list_and_reach_the_profile():
     # One list for read and write let a caller overwrite the script its bash
     # allowlist runs (bin/ace-email) and then run it. Writes get their own list;
     # none published means none allowed (the guard reads an empty list as deny).
-    from apps.agents.interface import profile
+    from apps.agents.published_profiles import profile
 
     got = parse({"capabilities": {"ask": {**READ_MODE_PROFILE, "write_paths": ["{cwd}/.ace-ask/*"]}}})
     assert got["capabilities"]["ask"]["write_paths"] == ["{cwd}/.ace-ask/*"]

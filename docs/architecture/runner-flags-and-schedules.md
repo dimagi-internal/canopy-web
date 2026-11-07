@@ -70,7 +70,7 @@ retries, and its live tail ticks once more as it stops.
 ## A turn on a site's page withholds the agent's own login there
 
 A turn whose conversation is held on a host site's page that its agent serves
-carries `page_site: {site, withheld}` in its claim (`interface.page_turn`; the
+carries `page_site: {site, withheld}` in its claim (`published_profiles.page_turn`; the
 names come from the host site's `own_login`). There the agent reaches the
 site only through canopy's gateway, as the person who sent (`access-confinement-and-act-as.md` § Acting as
 the person on a host site), so:

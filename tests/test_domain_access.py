@@ -13,7 +13,7 @@ import pytest
 from django.contrib.auth.models import User
 
 from apps.agents import roles
-from apps.agents.interface import FULL_STAMP, READ_MODE_STAMP
+from apps.agents.published_profiles import FULL_STAMP, READ_MODE_STAMP
 from apps.agents.models import Agent
 from apps.contacts.email_auth import grade_of
 from apps.contacts.models import Contact
@@ -116,7 +116,7 @@ def test_an_outsider_is_a_caller(w):
 
 
 def test_a_member_at_a_trusted_domain_gets_every_mcp_tool(w):
-    from apps.agents.interface import offered_to
+    from apps.agents.published_profiles import offered_to
 
     agent = w["agent"]
     _ace(agent, "report")

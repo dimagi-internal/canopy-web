@@ -161,7 +161,7 @@ def _turn_as(raw, agent_slug="echo"):
 
 
 def test_an_agents_own_login_arrives_as_itself_and_runs_unconfined(w):
-    from apps.agents.interface import FULL_STAMP
+    from apps.agents.published_profiles import FULL_STAMP
     from apps.harness import caller_context
 
     bot, agent = _agent_login(w)

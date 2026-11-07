@@ -12,7 +12,7 @@ import pytest
 from django.contrib.auth import get_user_model
 
 from apps.agents import access, roles, turn_context
-from apps.agents.interface import parse
+from apps.agents.published_profiles import parse
 from apps.agents.models import Agent, AgentAdmin, AgentGrant
 from apps.contacts.models import Contact
 from apps.harness.models import Turn

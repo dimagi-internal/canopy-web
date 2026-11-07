@@ -12,7 +12,7 @@ from allauth.account.models import EmailAddress
 from django.contrib.auth.models import User
 
 from apps.agents import roles
-from apps.agents.interface import FULL_STAMP, READ_MODE_STAMP
+from apps.agents.published_profiles import FULL_STAMP, READ_MODE_STAMP
 from apps.agents.models import Agent, AgentAdmin
 from apps.contacts.models import Contact
 from apps.harness import caller_context, services

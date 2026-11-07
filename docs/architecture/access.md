@@ -3,7 +3,7 @@
 Every word canopy uses about who may do what has exactly one meaning, and it is
 defined here. Code docstrings point at this page instead of re-defining terms
 (`apps/agents/turn_context.py`, `session_context.py`, `refusals.py`, `grants.py`, `roles.py`,
-`interface.py`, `answering.py`, `apps/harness/caller_context.py`, `apps/harness/turn_mode.py`,
+`published_profiles.py`, `profile_settings.py`, `apps/harness/caller_context.py`, `apps/harness/turn_mode.py`,
 `apps/workspaces/permissions.py`). Reuse existing words, one meaning per word, no new terms.
 Designs: `docs/superpowers/specs/2026-11-05-turn-context-design.md` (the Turn Context) and
 `docs/superpowers/specs/2026-10-30-agent-roles-and-access-list-design.md` (roles and the access list).
@@ -68,7 +68,7 @@ resolver has one input shape.
 | `session_id`, `agent`, `workspace` | Which conversation, which agent (its slug; none for a person's own repo or project session), which tenant. |
 | `channel` | `turn.origin` for a turn, which is what turn mode reads; for a preview, where the conversation lives (the origin of its first turn). Never `Session.origin`, which only says which side created the row. |
 | `runner_requested`, `runner_bound` | The runner asked for (`turn.pinned_runner_id`, or `metadata.requested_runner_id`) and the one backing it now. |
-| `site`, `page` | The host site the conversation is held on, and the resource its page declared (`interface.session_site`, `session_resource`). |
+| `site`, `page` | The host site the conversation is held on, and the resource its page declared (`published_profiles.session_site`, `session_resource`). |
 | `sensitive`, `sensitive_requirement` | Whether the conversation holds a site's sensitive data (`sensitivity.is_sensitive` for a turn, `any_sensitive` for a session), and the requirement that made it so. Once true it does not revert. |
 | `is_review`, `review_of` | This is a one-session review's chat, and the session it reviews. |
 | `audience`, `participants` | Who can see the session (`canopy_sessions.audience`) and its `(user_id, role)` rows. |
@@ -219,13 +219,13 @@ beside the Turn Context; a preview does not predict them, and says so.
 | **Tokens and credentials** | `credentials/for_turn.py`, `caller_tokens`, `turn_agent_tokens`, `delegations`: below. |
 | **Refusals and the composer** | `refusal`: a refused turn's `result_note`, an entry point's 403, Slack's reply, the composer's notice ("Refusals"). |
 | **The session panel** | `GET /api/canopy-sessions/{id}/context` and `…/turns/{turn_id}/context` ("Seeing it"). |
-| **Everything else** | The roster and topology, `may_edit_agent`, licenses, `turn_mode`, `turn_gates`, `interface.grant_facts`/`offered_to`, admission, `answering_snapshot`. |
+| **Everything else** | The roster and topology, `may_edit_agent`, licenses, `turn_mode`, `turn_gates`, `published_profiles.grant_facts`/`offered_to`, admission, `answering_snapshot`. |
 
 **Credentials.** `TurnContext.credentials` is a true statement of what the turn gets — `canopy_login`
 (agent-only), `github_identity` (delegated), `caller_token`, `agent_vault`, and the agent's own login at a
 site, withheld on that site's page — each `yes | no | pending` with why, never a value. It adds no rule: it
 asks the functions that decide (`turn_agent_tokens.refusal`, `delegations.github_refusal`,
-`caller_tokens.is_caller_scoped`, `interface.page_turn`, `credentials/authority.py`), and anything only a
+`caller_tokens.is_caller_scoped`, `published_profiles.page_turn`, `credentials/authority.py`), and anything only a
 box can settle is `pending`. A confined turn's environment never holds the agent's own values; only
 `whole_agent` gets delegated credentials and the agent's full login.
 
@@ -279,9 +279,9 @@ paths and names are configuration, readable to members.
 | **access list** | The one list per agent that says who has what: lines of `(who, role)` or, rarely, `(who, one host site)`. | `AgentGrant`, `apps/agents/grants.py` |
 | **line** | One entry of an access list. `who` is a person, everyone in a workspace (optionally also every workspace below it), anyone at a domain, or a known visitor or sender. | "The access list" below |
 | **workspace default** | A line set once on a workspace; every agent in it, and in the workspaces below it, inherits it unless the agent opts out. | `AgentGrant.workspace`, `Agent.inherit_workspace_defaults` |
-| **read mode** | The default confined profile for someone who holds `read` and not `write`. It **exists on every agent from the start**: canopy's default (`interface.default_read_profile`), or the agent's own, which replaces the default whole. | "Read mode and host sites" |
+| **read mode** | The default confined profile for someone who holds `read` and not `write`. It **exists on every agent from the start**: canopy's default (`published_profiles.default_read_profile`), or the agent's own, which replaces the default whole. | "Read mode and host sites" |
 | **host site** | A confined profile tied to one registered site (ACE's `connect`): which tools and paths a conversation held on that site may use. Rare. It never says who may use it: that is the access list's job. | "Read mode and host sites" |
-| **site tool limit** | Optional, per host site: tool-name globs that narrow which of the host's tools an agent may call there. It never widens: the host's grant (its scopes for that page and the person's own access) decides what exists, and an empty limit adds nothing. Settings form: "Site tools it may use". Stored and sent as `ceiling`, a name that stays (below); the old word suggested a maximum grant, which it is not. A limit that matches every tool the site offers is refused as a save, since it limits nothing. | `answering.set_site`, `host_gateway.tool_allowed` |
+| **site tool limit** | Optional, per host site: tool-name globs that narrow which of the host's tools an agent may call there. It never widens: the host's grant (its scopes for that page and the person's own access) decides what exists, and an empty limit adds nothing. Settings form: "Site tools it may use". Stored and sent as `ceiling`, a name that stays (below); the old word suggested a maximum grant, which it is not. A limit that matches every tool the site offers is refused as a save, since it limits nothing. | `profile_settings.set_site`, `host_gateway.tool_allowed` |
 | **entry point** | A way work reaches an agent: the harness API, a canopy-web chat, Slack, email, a site's panel. Every one asks the rule. | "Where it is asked" |
 | **role** vs **source** | A role is what someone can do; a source is why they have it (`owner`, `admin`, `system`, `session`, `list:<line>`). Never the same word. | `Standing.agent_role`, `Standing.source` |
 | **contact** | Not a role. How canopy knows someone who is not a workspace member: an emailer, a Slack person outside the workspace, a widget visitor (who may have no address at all). A contact has an agent role only if a line names them; with no line they are refused. | `apps/contacts` |
@@ -647,13 +647,13 @@ refused (422) with a pointer here.
 
 The two settings admins edit for **what** a confined turn may do (Settings → Channels → Read mode and
 host sites; `GET|PUT|DELETE /api/agents/{slug}/read-mode`, `GET /api/agents/{slug}/host-sites`,
-`PUT|DELETE …/host-sites/{site}`; `apps/agents/answering.py`). Who may use them is the access list,
+`PUT|DELETE …/host-sites/{site}`; `apps/agents/profile_settings.py`). Who may use them is the access list,
 never these settings. Saving is for the agent's owner or an agent admin, browser or token; `dry_run: true`
 on a PUT checks a draft with the server's own parser without saving; every save is a settings change
 (the page shows its history).
 
 * **Read mode** is the default confined profile for someone who holds `read` and not `write`, **on every
-  agent with no setup**. With no setting it is canopy's default (`interface_default.default_read_profile`,
+  agent with no setup**. With no setting it is canopy's default (`read_mode.default_read_profile`,
   built from the agent and pinned exactly by `tests/test_default_read_profile.py`, so a code change that
   widens every agent at once cannot pass unnoticed; its version rides the envelope as
   `default_profile_version`): it reads the agent's own worktree, drafts a reply in its scratch folders,
@@ -668,7 +668,7 @@ on a PUT checks a draft with the server's own parser without saving; every save 
   that narrow what the host's grant already allows, on the owner's word; empty adds nothing), `own_login` (the agent's own credentials at that site) and **Handles sensitive data**. A
   conversation held on that site selects it, and its profile gains canopy's gateway tools (`site_tools`,
   `site_call`, `site_read`) and the page's own actions (`page_*`) → [access-confinement-and-act-as.md](access-confinement-and-act-as.md).
-  A new row starts from `answering.new_site_defaults`, saved explicitly so a later change widens nobody.
+  A new row starts from `profile_settings.new_site_defaults`, saved explicitly so a later change widens nobody.
   Removing a row gives a turn already stamped with it the `deny_all` profile, and a line naming it opens
   nothing. **Handles sensitive data** is per site, not per agent: it confines a conversation on that site
   for everyone (the decision table), while the owner's ordinary chat with the same agent is still the whole
@@ -676,14 +676,14 @@ on a PUT checks a draft with the server's own parser without saving; every save 
   `who_is_asking` and read-only local tools is a 422.
 
 **Storage and the names that stay.** Both settings are views of one document, `Agent.interface`, which
-stays the only storage and is written only by `answering.store` (live state on canopy-web, never a repo
+stays the only storage and is written only by `profile_settings.store` (live state on canopy-web, never a repo
 file). Its stored entries live under a `capabilities` key; a host site's row is an entry naming that
-one site, and the entry's name (`answering.key_for`, never renamed) is what a turn is stamped with and what
+one site, and the entry's name (`profile_settings.key_for`, never renamed) is what a turn is stamped with and what
 an access line names. These stored and wire names stay, each behind one constant:
 
 * **Read mode's stored name.** Canopy's default is stamped `read`; an agent's own read mode is stored and
-  stamped under the name `ask` — the one place that name lives is `interface_default.READ_MODE_STAMP`, and
-  `interface.is_read_mode` is the one place that says the two names are read mode. New read-mode entries
+  stamped under the name `ask` — the one place that name lives is `read_mode.READ_MODE_STAMP`, and
+  `published_profiles.is_read_mode` is the one place that says the two names are read mode. New read-mode entries
   are written under it, and turns stamped with it keep resolving.
 * A host site's **site tool limit** is stored and sent as `ceiling` (`Agent.interface`, `/host-sites`).
 * `Turn.capability` (the stamp), `AgentGrant.capability` (a line's host site), `AdmissionRule.capability`,
@@ -692,16 +692,16 @@ an access line names. These stored and wire names stay, each behind one constant
   conversations (`session_naming.restricted_key`, `cloud_runner._kept_identity`).
 
 **One entry per site.** A host site's entry names exactly one site, and no site is named by two
-entries: the writer refuses a document that breaks either (`answering.document_problems`). So a site's
-tool limit and its own login are that one entry's (`interface.site_ceiling`, `interface.own_login_of`), and
+entries: the writer refuses a document that breaks either (`profile_settings.document_problems`). So a site's
+tool limit and its own login are that one entry's (`published_profiles.site_ceiling`, `published_profiles.own_login_of`), and
 a page's declared resource selects nothing: an entry carrying `pages:` is refused.
 
 **What a document may hold.** The settings routes refuse a document they cannot hold
-(`answering.document_problems`, which `manage.py answering_snapshot` reports as `shape`) and leave it as
+(`profile_settings.document_problems`, which `manage.py answering_snapshot` reports as `shape`) and leave it as
 it is. Retired keys are refused: `full:`, `editors:` and an entry's `callers:` or `role:` are a 422 naming
 the access list; `callers_default: none`, `version` and an entry's `input` are accepted and ignored, and
 not written back. An unknown key is refused, not ignored. The default document is `{capabilities: {}}`
-(`interface_default.default_interface()`): no host site and no read mode of its own. Every agent has
+(`read_mode.default_interface()`): no host site and no read mode of its own. Every agent has
 one (a row holding `{}` reads as the default), and an agent with nothing set is reached by its owner, its
 agent admins, the people whose lines give `write`, and, in read mode, the people whose lines give `read`.
 The old `/interface` routes answer 410.

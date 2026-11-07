@@ -448,7 +448,7 @@ def build(turn, *, reader_user=None) -> dict:
         # pasted it, and every transcript showed a JSON dump under the question.
         "page": _page(cs),
         # THE SITE THIS CONVERSATION IS HELD ON, when its agent serves that site on
-        # pages (`interface.page_turn`): the agent reaches it here ONLY through
+        # pages (`published_profiles.page_turn`): the agent reaches it here ONLY through
         # canopy's `site_tools` / `site_call` / `site_read`, as the person who sent,
         # under the act-as-you permission they granted from the page — whoever they
         # are, the agent's owner included. Its own login there (`withheld`) is not in
@@ -530,7 +530,7 @@ def _page(session) -> dict | None:
 def _site(turn, agent) -> dict | None:
     if agent is None:
         return None
-    from apps.agents.interface import page_turn  # noqa: PLC0415 — as _profile: the interface reads models, loaded with a call
+    from apps.agents.published_profiles import page_turn  # noqa: PLC0415 — as _profile: the interface reads models, loaded with a call
 
     block = page_turn(turn, agent)
     if block is None:
@@ -757,11 +757,11 @@ def _grant(turn, agent, context=None) -> dict:
     whole agent, so it never answers for one (`turn_context.was_refused`)."""
     from apps.agents import turn_context  # noqa: PLC0415 — it imports this module
 
-    refused = turn_context.was_refused(turn)
+    refused = turn is not None and turn_context.was_refused(turn)
     if refused or agent is None:
         return {"granted_by": turn_context.REFUSED if refused else "no-interface", "role": None, "source": "",
                 "permissions": [], "manual_only": False}
-    from apps.agents.interface import grant_facts
+    from apps.agents.published_profiles import grant_facts
 
     return grant_facts(turn, agent, context=context)
 
