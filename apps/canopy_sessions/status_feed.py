@@ -38,6 +38,15 @@ logger = logging.getLogger(__name__)
 #: than this.
 SWEEP_EVERY_SECONDS = 15
 SWEEP_LOCK = "canopy_sessions:turn_status_sweep"
+#: How long after a turn ends the sweep keeps re-saying `idle` for its session
+#: (`_resay_idle`). Past this, a page still showing "working" has been open and
+#: untouched a long while, and its next connect corrects it.
+RESAY_IDLE_FOR_SECONDS = 30 * 60
+#: Leave a session alone this long after its turn ends, and after anything was
+#: last typed into it on its laptop. A prompt typed straight into emdash makes no
+#: Turn, and the laptop's engine flag reports it a report or two late: inside
+#: this window the resolver can still read IDLE for a session that is working.
+RESAY_IDLE_QUIET_SECONDS = 2 * 60
 
 
 def status_for_session(session) -> dict | None:
@@ -158,4 +167,43 @@ def sweep(*, force: bool = False) -> int:
         except Exception:  # noqa: BLE001 — one bad session must not stop the rest
             logger.exception("turn-status sweep failed for session %s", sid)
         n += 1
+    _resay_idle()
     return n
+
+
+def _resay_idle() -> None:
+    """Say `idle` again for sessions whose turn ended recently.
+
+    The runner's live `activity:working` / `activity:idle` frames are never
+    stored, and the two backstops that close a run (`publish_idle` at the turn's
+    end, and on the laptop's engine-stopped edge) each fire ONCE. A page that
+    missed all three keeps drawing "Thinking…" over a finished reply until it
+    reconnects — while the snapshot a reconnect reads says idle. Re-saying it
+    on the sweep's clock closes that, and is idempotent: a client that already
+    heard `idle` replaces it with `idle`. `publish_idle` still says nothing
+    unless the session resolver agrees nothing is running.
+    """
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.harness.models import Turn
+
+    now = timezone.now()
+    quiet = now - timedelta(seconds=RESAY_IDLE_QUIET_SECONDS)
+    ended = (Turn.objects.filter(chat_session__isnull=False,
+                                 finished_at__gte=now - timedelta(seconds=RESAY_IDLE_FOR_SECONDS),
+                                 finished_at__lte=quiet)
+             .exclude(status__in=list(Turn.NON_TERMINAL))
+             .values_list("chat_session_id", flat=True).distinct())
+    open_turns = (Turn.objects.filter(chat_session__isnull=False, status__in=list(Turn.NON_TERMINAL))
+                  .values_list("chat_session_id", flat=True))
+    session_ids = (Session.objects.filter(pk__in=ended)
+                   .exclude(pk__in=open_turns)
+                   .exclude(runner_binding__last_interacted_at__gt=quiet)
+                   .values_list("pk", flat=True))
+    for sid in session_ids:
+        try:
+            publish_idle(sid)
+        except Exception:  # noqa: BLE001 — one bad session must not stop the rest
+            logger.exception("idle re-say failed for session %s", sid)
