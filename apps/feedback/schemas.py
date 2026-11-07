@@ -5,6 +5,8 @@ import datetime as dt
 import uuid
 from typing import Literal
 
+from pydantic import Field
+
 from apps.common.schemas import StrictModel
 
 Kind = Literal["comment", "suggestion"]
@@ -15,7 +17,7 @@ State = Literal["new", "triaged", "answered", "declined"]
 class FeedbackIn(StrictModel):
     target_kind: str = "narrative"
     target_ref: str
-    target_version: int | None = None
+    target_version: int | None = Field(default=None, ge=-(2**31), le=2**31 - 1)  # an IntegerField
     anchor_id: str = ""
     kind: Kind = "comment"
     body: str = ""
@@ -67,7 +69,7 @@ class FeedbackIngestOut(StrictModel):
 class FeedbackResolveIn(StrictModel):
     state: State
     note: str = ""
-    resolved_in_version: int | None = None
+    resolved_in_version: int | None = Field(default=None, ge=-(2**31), le=2**31 - 1)  # an IntegerField
 
 
 # --------------------------------------------------- artifact origin + reaction

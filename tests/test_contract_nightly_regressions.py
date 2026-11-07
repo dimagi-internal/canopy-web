@@ -20,6 +20,7 @@ from ninja.errors import HttpError
 from pydantic import ValidationError
 
 from apps.agent_runs.api import _run_id_or_404
+from apps.agents.models import Agent
 from apps.agent_runs.documents import MAX_ITERATIONS, RunDocStateIn, _state_iteration
 from apps.api.api import api
 from apps.api.openapi_doc import NO_NUL_PATTERN
@@ -257,3 +258,20 @@ def test_the_device_proof_401_is_documented_as_problem_json():
     schema = json.loads(json.dumps(api.get_openapi_schema(), default=str))
     resolve = schema["paths"]["/api/agents/{slug}/credentials/resolve"]["get"]["responses"]
     assert list(resolve["401"]["content"]) == ["application/problem+json"]
+
+
+# --- round 6 (#2598) -----------------------------------------------------------------
+
+
+def test_a_feedback_version_past_its_integer_column_is_a_422_not_a_400(client):
+    body = {"items": [{"target_ref": "x", "target_version": -(2**33), "body": "b"}]}
+    r = client.post("/api/feedback/", data=json.dumps(body), content_type="application/json")
+    assert r.status_code == 422, r.content
+
+
+def test_a_run_given_one_step_key_twice_is_a_422_not_a_500(client):
+    user = _member_of_fuzz()
+    Agent.objects.create(slug="fuzz-agent", name="F", workspace_id="fuzz", owner=user)
+    body = {"label": "r", "steps": [{"key": "a"}, {"key": "a"}]}
+    r = client.post("/api/w/fuzz/agents/fuzz-agent/runs/", data=json.dumps(body), content_type="application/json")
+    assert r.status_code == 422, r.content

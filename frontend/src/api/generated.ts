@@ -6971,6 +6971,7 @@ export interface paths {
          * Add a person to the agent's vault by name
          * @description `{email, role}` — a direct membership, kept whatever happens to the
          *     agent's access list. The person must be a member of the agent's workspace.
+         *     An `email` no canopy user has is a 422.
          */
         readonly post: operations["add_agent_vault_member"];
         readonly delete?: never;
@@ -7527,7 +7528,10 @@ export interface paths {
         /** List an agent's runs */
         readonly get: operations["list_runs"];
         readonly put?: never;
-        /** Create a run */
+        /**
+         * Create a run
+         * @description Each step's `key` names it within the run, so a key given twice is a 422.
+         */
         readonly post: operations["create_run"];
         readonly delete?: never;
         readonly options?: never;
@@ -7741,6 +7745,7 @@ export interface paths {
          *     `get_google_delegation` until `authorize_url` is set, then open it with a top-level
          *     navigation and sign in as `account`; you come back to the agent's connect page.
          *     Withdraw it at Settings, `DELETE /api/me/delegated-credentials/{id}`.
+         *     An `account` that is not a Google account address is a 422.
          */
         readonly post: operations["start_google_delegation"];
         readonly delete?: never;
@@ -60168,6 +60173,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["VaultMembersOut"];
                 };
             };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly remove_agent_vault_member: {
@@ -60864,6 +60878,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["RunSummary"];
                 };
             };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly agent_runs_get_run: {
@@ -61201,6 +61224,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["GoogleMintOut"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };

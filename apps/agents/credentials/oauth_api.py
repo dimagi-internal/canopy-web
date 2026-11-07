@@ -21,7 +21,7 @@ from ninja import Router
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
-from apps.api.errors import TYPE_CONFLICT, TYPE_VALIDATION, ProblemError
+from apps.api.errors import TYPE_CONFLICT, TYPE_VALIDATION, ProblemError, refusals
 from apps.api.route_gates import gate
 
 from ..gates import agent_for_admin
@@ -79,7 +79,7 @@ def get_google_mint(request: HttpRequest, slug: str, mint_id: uuid.UUID) -> Goog
     return mint_out(mint)
 
 
-@router.post("/{slug}/google/delegate", response=GoogleMintOut,
+@router.post("/{slug}/google/delegate", response={200: GoogleMintOut, **refusals(422)},
              summary="Start connecting MY OWN Google account to this agent (finished on its runner)")
 # the token is exchanged and sealed on the runner to the machines that may hold it
 @gate("agent-admin", kind="action")
@@ -92,7 +92,8 @@ def start_google_delegation(request: HttpRequest, slug: str, payload: GoogleDele
     `no_mint_runner` when no runner that may hold it is online. Poll
     `get_google_delegation` until `authorize_url` is set, then open it with a top-level
     navigation and sign in as `account`; you come back to the agent's connect page.
-    Withdraw it at Settings, `DELETE /api/me/delegated-credentials/{id}`."""
+    Withdraw it at Settings, `DELETE /api/me/delegated-credentials/{id}`.
+    An `account` that is not a Google account address is a 422."""
     agent = agent_for_admin(request, slug)
     try:
         mint = google_mint.start_delegated(agent, user=request.user, account=payload.account,
