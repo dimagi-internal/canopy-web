@@ -112,8 +112,14 @@ def htu_matches(htu: str, request) -> bool:
     return strip_to_flat(parts.path) == strip_to_flat(request.path)
 
 
-def verify_proof(request, *, now: float | None = None) -> str:
+def verify_proof(request, *, now: float | None = None, proof: str | None = None,
+                 method: str | None = None, htu_ok=None) -> str:
     """Verify the request's DPoP proof and consume its jti. Returns the `jkt`.
+
+    By default the proof is the request's `DPoP` header, for that request's own method
+    and URL. A proof made for ANOTHER endpoint (a host site checking a runner's request
+    to the site, `runner_attestations`) passes `proof`, its `method` and `htu_ok`, a
+    predicate on the proof's `htu`; nothing else about the check loosens.
 
     Raises ProofError with a reason; never returns a jkt for a proof that did
     not verify."""
@@ -121,7 +127,7 @@ def verify_proof(request, *, now: float | None = None) -> str:
     from canopy_sdk.contract import ContractError, check_jti
     from canopy_sdk.keys import public_key_for
 
-    proof = request.META.get(PROOF_HEADER, "")
+    proof = request.META.get(PROOF_HEADER, "") if proof is None else proof
     if not proof:
         raise ProofError("no DPoP proof")
     try:
@@ -135,9 +141,10 @@ def verify_proof(request, *, now: float | None = None) -> str:
         jti = check_jti(claims)
     except ContractError as exc:
         raise ProofError(str(exc)) from exc
-    if str(claims.get("htm", "")).upper() != request.method.upper():
+    if str(claims.get("htm", "")).upper() != (method or request.method).upper():
         raise ProofError("the proof is for a different HTTP method")
-    if not htu_matches(str(claims.get("htu", "")), request):
+    htu = str(claims.get("htu", ""))
+    if not (htu_ok(htu) if htu_ok else htu_matches(htu, request)):
         raise ProofError("the proof is for a different URL")
     iat = claims.get("iat")
     current = time.time() if now is None else now

@@ -10950,6 +10950,34 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/sites/runner-attestations": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * A host site asks who signed a runner's proof, signed
+         * @description Who holds the approved device key that signed `proof`.
+         *
+         *     `Authorization: Bearer <JWT>` signed by the site's own key, as for
+         *     `POST /api/sites/sign-offs` but with `aud` = this URL and no `sign_off_request`.
+         *     The body carries the runner's proof, made for an `htu` on an origin the site
+         *     registered (the runner signs `<site endpoint>/<sha256 of the request>`, so the proof
+         *     vouches for that request only) and single-use. Answers `{runner, kind, jkt, agent,
+         *     serves_agent}`; 401 `proof_refused` when no ACTIVE approved device key proved it, with
+         *     one wording whatever the reason.
+         */
+        readonly post: operations["attest_runner"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/sign-offs/{sign_off_id}": {
         readonly parameters: {
             readonly query?: never;
@@ -39363,6 +39391,31 @@ export interface components {
             /** Approvers */
             readonly approvers: string;
         };
+        /** RunnerAttestationOut */
+        readonly RunnerAttestationOut: {
+            /** Runner */
+            readonly runner: string;
+            /** Kind */
+            readonly kind: string;
+            /** Jkt */
+            readonly jkt: string;
+            /** Agent */
+            readonly agent: string;
+            /** Serves Agent */
+            readonly serves_agent: boolean;
+        };
+        /** RunnerAttestationIn */
+        readonly RunnerAttestationIn: {
+            /** Kind */
+            readonly kind: string;
+            /** Proof */
+            readonly proof: string;
+            /**
+             * Agent
+             * @default
+             */
+            readonly agent: string;
+        };
         /** SignOffOut */
         readonly SignOffOut: {
             /** Id */
@@ -65723,6 +65776,30 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    readonly attest_runner: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerAttestationIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerAttestationOut"];
+                };
             };
         };
     };
