@@ -8,9 +8,10 @@ own signed request, and canopy answers who the key belongs to. The site then sho
 beside what the request says about itself, which is a claim and nothing more.
 
 The proof is bound to the request it vouches for through its `htu`: the runner signs
-`<site origin>/<path>/<sha256 of the request's content>`, so a proof cannot be reused for a
+`<site endpoint>/attest/<sha256 of the request's content>`, so a proof cannot be reused for a
 different request, and its signature covers the digest with no change to either proof kind.
-The `htu` must sit on an origin this site registered, so a proof made for one site is of no use
+The site states the exact `htu` it expects and canopy requires the proof to carry precisely
+that; it must sit on an origin the site registered, so a proof made for one site is of no use
 to another. Each proof is single-use, as everywhere it is checked.
 """
 from __future__ import annotations
@@ -69,24 +70,26 @@ def verify_request(token: str):
     return app, claims
 
 
-def _htu_ok(app):
-    origins = sign_off_service.site_origins(app)
+def _htu_ok(app, expected: str):
+    """The proof must be for EXACTLY the URL the site says it expects (the endpoint and a
+    digest of the request), and that URL must sit on an origin this site registered."""
+    origins = {o.lower() for o in sign_off_service.site_origins(app)}
+    parts = urlsplit(expected or "")
+    if parts.query or parts.fragment or parts.scheme != "https" or f"https://{parts.netloc.lower()}" not in origins:
+        raise SiteAgentsRefused("malformed", "htu must be an https URL on an origin this site registered", 400)
 
     def ok(htu: str) -> bool:
-        parts = urlsplit(htu or "")
-        if parts.query or parts.fragment or parts.scheme != "https":
-            return False
-        return f"https://{parts.netloc.lower()}" in {o.lower() for o in origins}
+        return htu == expected
 
     return ok
 
 
-def attest(app, *, kind: str, proof: str, method: str = "POST", agent: str = "") -> dict:
+def attest(app, *, kind: str, proof: str, htu: str, method: str = "POST", agent: str = "") -> dict:
     """Who signed `proof`, as canopy knows them: `{runner, kind, jkt, agent, serves_agent}`.
 
     Raises `SiteAgentsRefused` (401, one wording) when no ACTIVE device key proved it; the
     reason goes to the log, not the caller."""
-    ok = _htu_ok(app)
+    ok = _htu_ok(app, htu)
     try:
         if kind == "aws-iam":
             key = aws_iam_proof.known_key(aws_iam_proof.verify_caller(proof, None, htu_ok=ok))

@@ -15,7 +15,8 @@ The contract both halves build against:
   ``kind`` being ``dpop`` (a key the runner holds: RFC 9449, ES256, ``htm`` POST) or
   ``aws-iam`` (an EC2 runner's instance role: ``X-Canopy-Aws-Proof``'s value);
 * the site reads it with ``parse_header`` and asks canopy with ``request_attestation``,
-  a request signed by the SITE's key, exactly as for a sign-off.
+  a request signed by the SITE's key, exactly as for a sign-off, stating the ``bound_url`` it
+  expects for the request in hand; canopy accepts only a proof made for exactly that URL.
 
 Each proof is single-use and fresh within 120 seconds, and canopy answers 401
 ``proof_refused`` in one wording whatever the reason.
@@ -91,10 +92,11 @@ def parse_header(value: str) -> tuple[str, str]:
     return kind, proof.strip()
 
 
-def request_attestation(canopy_url: str, site_name: str, site_key, *, kind: str, proof: str, speaks_for: str = "",
+def request_attestation(canopy_url: str, site_name: str, site_key, *, kind: str, proof: str, htu: str, speaks_for: str = "",
                         workspace: str = "", agent: str = "",
                         post: Callable[..., tuple] | None = None) -> Attestation:
-    """Ask canopy who made ``proof``. ``speaks_for`` is the agent the request says it is
+    """Ask canopy who made ``proof``. ``htu`` is ``bound_url(<this site's endpoint>, <the request body>)``:
+    canopy requires the proof to be for exactly that URL. ``speaks_for`` is the agent the request says it is
     for (canopy says whether the runner serves it); ``workspace`` / ``agent`` name the
     site's tenant exactly as ``sign_offs.request_sign_off`` does. Raises ``AttestationError``."""
     from . import fetch
@@ -108,7 +110,7 @@ def request_attestation(canopy_url: str, site_name: str, site_key, *, kind: str,
         raise AttestationError(sign_offs.NOT_CONFIGURED, str(exc)) from exc
     sender = post or fetch.post_json
     try:
-        status, raw, _headers = sender(url, {"kind": kind, "proof": proof, "agent": speaks_for},
+        status, raw, _headers = sender(url, {"kind": kind, "proof": proof, "htu": htu, "agent": speaks_for},
                                        headers={"Authorization": f"Bearer {token}"})
     except fetch.FetchError as exc:
         raise AttestationError(sign_offs.UNREACHABLE, str(exc)) from exc
