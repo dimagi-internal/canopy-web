@@ -15,7 +15,7 @@ from .models import AgentAdmin
 
 
 @dataclass(frozen=True)
-class Standing:
+class Membership:
     """What the database says about one person and one agent — all the rule reads
     about them: their role in the agent's workspace (`wsvc.member_role`, None =
     not a member) and whether they hold an explicit `AgentAdmin` grant (None =
@@ -32,8 +32,8 @@ class Standing:
     descendants: Mapping[str, frozenset[str]] | None = None
 
 
-def standing_of(user, agent) -> Standing:
-    return Standing(wsvc.member_role(user, agent.workspace_id))
+def standing_of(user, agent) -> Membership:
+    return Membership(wsvc.member_role(user, agent.workspace_id))
 
 
 class Standings:
@@ -62,9 +62,9 @@ class Standings:
         """The agent's access list (its own lines and the workspace defaults it inherits)."""
         return self._lines[agent.pk]
 
-    def of(self, user, agent) -> Standing:
+    def of(self, user, agent) -> Membership:
         mine = self._roles[user.pk]
-        return Standing(mine.get(agent.workspace_id), user.pk in self.grants[agent.pk], mine,
+        return Membership(mine.get(agent.workspace_id), user.pk in self.grants[agent.pk], mine,
                         self._lines[agent.pk], self._below)
 
     def is_admin(self, user, agent) -> bool:

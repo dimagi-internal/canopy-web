@@ -29,8 +29,8 @@ It writes nothing: `caller_context.build` writes a `PersonAccess` row, and that 
 `person` block outside this module.
 
 Three different things are called a standing. `Standing` here is what the asker holds on this agent
-and why, on the result. `standings.Standing` is what the database says about a person, read in bulk
-and passed in on `Asker`. `harness.turn_asker.Standing` is who a turn's login answers to.
+and why, on the result. `standings.Membership` is what the database says about a person, read in bulk
+and passed in on `Asker`. `harness.turn_asker.AnsweringTo` is who a turn's login answers to.
 """
 from __future__ import annotations
 
@@ -320,7 +320,7 @@ def _no_list_stage(agent, asker: Asker, session_ctx, turn, trace: list) -> _Reac
                   facts=(("automated", rel == CONTACT and bool(asker.verified)),))
 
 
-def _list_asker(asker: Asker, turn) -> grants.Asker:
+def _list_asker(asker: Asker, turn) -> grants.Identity:
     """The asker as the access list sees them: a canopy user, or a contact known by address."""
     user, contact, verified = asker.user, asker.contact, asker.verified
     if turn is not None:
@@ -328,7 +328,7 @@ def _list_asker(asker: Asker, turn) -> grants.Asker:
         contact = turn.initiator_contact if turn.initiator_kind == initiator_mod.CONTACT else None
         verified = is_verified(turn)
     email = (getattr(user, "email", "") or getattr(contact, "email", "") or "").strip().lower()
-    return grants.Asker(user=user, email=email, verified=bool(verified), contact=contact is not None,
+    return grants.Identity(user=user, email=email, verified=bool(verified), contact=contact is not None,
                         workspace_roles=getattr(asker.standing, "roles", None),
                         descendants=getattr(asker.standing, "descendants", None))
 
@@ -358,7 +358,7 @@ def _entry_for(iface: dict, permissions, requested, session_ctx, trace: list) ->
         name, how = iface_mod.READ_MODE_STAMP, "read mode"
     published, cap = iface_mod.published_profile(iface, name)
     if published is None and iface_mod.is_read_mode(name):
-        published, cap = iface_mod.READ_MODE, {}   # {}: canopy's default, built when it is read
+        published, cap = iface_mod.READ_MODE_NAME, {}   # {}: canopy's default, built when it is read
     allowed = cap is not None and opens(published, cap)
     trace.append(TraceEntry("entry", published if allowed else "not open", f"{how}: {name}"))
     return published if allowed else None

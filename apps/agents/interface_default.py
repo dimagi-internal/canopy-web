@@ -24,9 +24,9 @@ def default_interface() -> dict:
 #: (`Turn.capability`, an `AgentGrant`/`AdmissionRule` naming it, the published document's key, the
 #: envelope's `capability`), never a word a person reads. New read-mode entries are still written under
 #: it, because renaming it would split live conversations (`session_naming.restricted_key`).
-READ_MODE = "read"
+READ_MODE_NAME = "read"
 READ_MODE_STAMP = "ask"
-READ_MODE_NAMES = (READ_MODE_STAMP, READ_MODE)
+READ_MODE_NAMES = (READ_MODE_STAMP, READ_MODE_NAME)
 
 
 def is_read_mode(name: str | None) -> bool:
@@ -47,7 +47,7 @@ ANSWER_CALLER_SKILL = "answer-caller"
 #: the other is the fleet's stored folder name: the fleet template's `answer-caller` skill (ace, echo,
 #: eva, hal, trellis) drafts under it, and published read modes list it in `write_paths`, so listing
 #: both lets those skills work unchanged. Nothing else is writable.
-SCRATCH_SUFFIXES = (READ_MODE, READ_MODE_STAMP)
+SCRATCH_SUFFIXES = (READ_MODE_NAME, READ_MODE_STAMP)
 
 
 def default_read_profile(agent, *, skills=None) -> dict:

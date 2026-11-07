@@ -89,7 +89,7 @@ def test_other_names_still_have_to_be_published(w):
 def test_write_is_still_the_whole_agent(w):
     allow(w["agent"], role=roles.READ_WRITE)
     d = turn_context.for_asker(w["agent"], w["ed"], verified=True)
-    assert d.access == access.FULL and d.stamped == interface.FULL
+    assert d.access == access.FULL and d.stamped == interface.FULL_STAMP
 
 
 def test_a_sensitive_conversation_never_gets_the_email_reply_read_mode(w, monkeypatch):

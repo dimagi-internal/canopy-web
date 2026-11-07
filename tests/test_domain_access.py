@@ -13,7 +13,7 @@ import pytest
 from django.contrib.auth.models import User
 
 from apps.agents import roles
-from apps.agents.interface import FULL, READ_MODE_STAMP
+from apps.agents.interface import FULL_STAMP, READ_MODE_STAMP
 from apps.agents.models import Agent
 from apps.contacts.email_auth import grade_of
 from apps.contacts.models import Contact
@@ -91,7 +91,7 @@ def test_header_d_is_read_too():
 ])
 def test_a_verified_sender_at_each_trusted_domain_gets_the_whole_agent(w, domain, headers):
     t = _email(w["agent"], f"someone@{domain}", domain, headers)
-    assert t.capability == FULL and t.status == Turn.QUEUED
+    assert t.capability == FULL_STAMP and t.status == Turn.QUEUED
     env = caller_context.build(t)
     assert env["profile"] == "full"
     assert env["role"] == "editor" and env["source"].startswith("list:") and domain in env["source"]

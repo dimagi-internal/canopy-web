@@ -168,7 +168,7 @@ def _keys(agent) -> list[str]:
 
 
 def _requested(agent) -> list:
-    return [None, interface.READ_MODE, interface.READ_MODE_STAMP, *_keys(agent), RETIRED, interface.SESSION_REVIEW]
+    return [None, interface.READ_MODE_NAME, interface.READ_MODE_STAMP, *_keys(agent), RETIRED, interface.SESSION_REVIEW]
 
 
 def _askers(agent, p) -> list[SimpleNamespace]:
@@ -432,7 +432,7 @@ def test_a_stamped_turn_keeps_its_stamp_and_reports_what_the_envelope_reports(pe
         for conv in _conversations(agent):
             if conv.get("no_turn"):
                 continue
-            for stamp in ["", interface.READ_MODE, interface.READ_MODE_STAMP, *_keys(agent), RETIRED, interface.SESSION_REVIEW]:
+            for stamp in ["", interface.READ_MODE_NAME, interface.READ_MODE_STAMP, *_keys(agent), RETIRED, interface.SESSION_REVIEW]:
                 turn = _probe(asker, conv)
                 turn.capability = stamp
                 session_ctx = session_context.build(None, turn, agent=agent)

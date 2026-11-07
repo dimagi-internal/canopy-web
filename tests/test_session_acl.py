@@ -138,7 +138,7 @@ def test_a_coach_and_a_runner_admin_read_what_was_sent_and_nothing_more():
     people, s, _ws = _world()
     # The coach's login reads inside a turn dispatched for that one grantor: `review_grantors`.
     setattr(people["coach"], "_canopy_turn_standing",
-            turn_asker.Standing("t", unattended=True, reads_for=people["owner"].pk))
+            turn_asker.AnsweringTo("t", unattended=True, reads_for=people["owner"].pk))
     for who in ("coach", "box_admin"):
         user = people[who]
         assert access.role_for(user, s["discovered"]) == SessionParticipant.VIEWER, who

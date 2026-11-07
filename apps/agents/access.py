@@ -15,7 +15,7 @@ from apps.workspaces import services as wsvc
 
 from . import interface as iface_mod
 from . import roles, turn_context
-from .standings import Standing, Standings
+from .standings import Membership, Standings
 
 #: How canopy knows the asker, strongest first (defined once, in `caller_context`). `system` is
 #: not a person. Not agent roles: those are `roles.py`.
@@ -26,7 +26,7 @@ FULL, CONFINED = turn_context.FULL, turn_context.CONFINED
 ROSTER_REFUSED = "none"
 
 
-def may_edit_agent(user, agent, *, standing: Standing | None = None, lines=None) -> bool:
+def may_edit_agent(user, agent, *, standing: Membership | None = None, lines=None) -> bool:
     """May `user` change THE AGENT ITSELF (its skills, its persona, and the work in its repo)?
 
     The ONE predicate for the `agent_edit` permission: never write a second. It is the rule's

@@ -12,7 +12,7 @@ from allauth.account.models import EmailAddress
 from django.contrib.auth.models import User
 
 from apps.agents import roles
-from apps.agents.interface import FULL, READ_MODE_STAMP
+from apps.agents.interface import FULL_STAMP, READ_MODE_STAMP
 from apps.agents.models import Agent, AgentAdmin
 from apps.contacts.models import Contact
 from apps.harness import caller_context, services
@@ -107,7 +107,7 @@ def test_arrival_never_creates_an_account(w):
 def test_with_an_interface_the_owner_by_email_stays_full_and_a_stranger_is_confined(w):
     declare(w["agent"], {"ask": {}})
     allow(w["agent"], role=roles.READ_ONLY, contact=True, verified=True)
-    assert _email(w["agent"], "op@dimagi.com", "o", _hdr("pass")).capability == FULL
+    assert _email(w["agent"], "op@dimagi.com", "o", _hdr("pass")).capability == FULL_STAMP
     partner = _email(w["agent"], "fatima@llo-foo.org", "p", _hdr("pass", domain="llo-foo.org"))
     assert partner.capability == READ_MODE_STAMP
 
@@ -129,7 +129,7 @@ def test_the_agents_own_login_emailing_is_the_agent_itself(w):
     allow(w["agent"], role=roles.READ_ONLY, contact=True, verified=True)
     t = _email(w["agent"], "ACE <ace@dimagi-ai.com>", headers=_hdr("pass", domain="dimagi-ai.com"))
     assert (t.initiator_kind, t.initiator_user_id) == (who.USER, bot.pk)
-    assert caller_context.build(t)["relationship"] == "system" and t.capability == FULL
+    assert caller_context.build(t)["relationship"] == "system" and t.capability == FULL_STAMP
 
 
 def test_the_agents_login_still_needs_dmarc_alignment(w):

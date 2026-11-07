@@ -39,7 +39,7 @@ from . import access, agent_card, answering, roles, sensitive_data, topology, tu
 from . import interface as iface_mod
 from .models import Agent, AgentGrant, AgentRole
 from .setup import runner_takers
-from .standings import Standing
+from .standings import Membership
 
 #: A stamp nothing was ever published under: it must keep resolving to the deny-all profile.
 RETIRED_STAMP = "retired_probe"
@@ -170,7 +170,7 @@ def _shape(agents) -> dict:
 
 def _agent(agent, members, standings, workspace_sites: set[str]) -> dict:
     caps = sorted((agent.interface or {}).get("capabilities") or {})
-    stamps = [iface_mod.FULL, *iface_mod.READ_MODE_NAMES, *caps, RETIRED_STAMP]
+    stamps = [iface_mod.FULL_STAMP, *iface_mod.READ_MODE_NAMES, *caps, RETIRED_STAMP]
     served = iface_mod.page_sites(agent)
     roster = access.roster(agent, members, standings)
     out = {
@@ -221,7 +221,7 @@ def _probe_person(role: str) -> tuple:
     row = AgentRole(pk=_PROBE_PK, key=role, permissions=sorted(roles.permissions_of(role)))
     line = AgentGrant(kind=AgentGrant.PERSON, user=user, role=role, role_def=row, verified=False,
                       subject_key=f"probe:{role}")
-    return user, Standing(None, False, {}, [line], {}), [line]
+    return user, Membership(None, False, {}, [line], {}), [line]
 
 
 def _probe_contact(site: str) -> tuple:

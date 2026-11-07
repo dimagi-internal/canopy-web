@@ -22,7 +22,7 @@ from django.contrib.auth import get_user_model
 
 from apps.agents import grants, roles
 from apps.agents import interface as iface_mod
-from apps.agents.standings import Standing, standing_of
+from apps.agents.standings import Membership, standing_of
 from apps.contacts.models import Contact
 from apps.harness import caller_context as cc
 from apps.harness import initiator as initiator_mod
@@ -88,7 +88,7 @@ class Decision:
     def stamp(self) -> str | None:
         """`Turn.capability` for this decision: FULL (""), a name, or None (refused)."""
         if self.access == FULL:
-            return iface_mod.FULL
+            return iface_mod.FULL_STAMP
         if self.access == CONFINED:
             return self.capability
         return None
@@ -109,7 +109,7 @@ def _list_refusal(agent, *, verified_contact: bool = False) -> str:
 
 
 def decide(agent, who=None, *, verified: bool, origin: str = "", capability: str | None = None,
-           turn=None, standing: Standing | None = None, lines=None) -> Decision:
+           turn=None, standing: Membership | None = None, lines=None) -> Decision:
     """THE rule: what `who` (a canopy User, a Contact, or None) may make `agent` do.
 
     Owner, admin and system (`_decide`), then the access list (`_from_access_list`)
@@ -221,7 +221,7 @@ def _stamp(d: Decision) -> Decision:
     return d
 
 
-def _asker_of(who, turn, verified: bool, standing: Standing | None) -> grants.Asker:
+def _asker_of(who, turn, verified: bool, standing: Membership | None) -> grants.Identity:
     """The asker as the access list sees them: a canopy user, or a contact known by address."""
     user = contact = None
     if turn is not None:
@@ -233,7 +233,7 @@ def _asker_of(who, turn, verified: bool, standing: Standing | None) -> grants.As
     elif isinstance(who, Contact):
         contact = who
     email = (getattr(user, "email", "") or getattr(contact, "email", "") or "").strip().lower()
-    return grants.Asker(user=user, email=email, verified=bool(verified), contact=contact is not None,
+    return grants.Identity(user=user, email=email, verified=bool(verified), contact=contact is not None,
                         workspace_roles=getattr(standing, "roles", None),
                         descendants=getattr(standing, "descendants", None))
 
@@ -259,12 +259,12 @@ def _capability_for(agent, iface: dict, permissions, capability, turn):
     name = name or iface_mod.READ_MODE_STAMP
     published, cap = iface_mod.published_profile(iface, name)
     if published is None and iface_mod.is_read_mode(name):
-        published, cap = iface_mod.READ_MODE, {}   # {}: canopy's default, built at claim (`profile`)
+        published, cap = iface_mod.READ_MODE_NAME, {}   # {}: canopy's default, built at claim (`profile`)
     return (published, cap) if cap is not None and opens(published, cap) else (None, None)
 
 
 def _from_access_list(agent, d: Decision, who, *, verified: bool, capability, turn,
-                      standing: Standing | None, lines) -> Decision:
+                      standing: Membership | None, lines) -> Decision:
     """What the access list gives the asker. An owner, admin or canopy itself already has the whole
     agent; everyone else has exactly what their lines say."""
     if d.access == FULL:
@@ -295,7 +295,7 @@ def _from_access_list(agent, d: Decision, who, *, verified: bool, capability, tu
 
 
 def _decide(agent, who=None, *, verified: bool, origin: str = "", capability: str | None = None,
-            turn=None, st: Standing | None = None) -> Decision:
+            turn=None, st: Membership | None = None) -> Decision:
     """The part of the rule that needs no list: the owner, the admins and canopy itself have the
     whole agent; everyone else is `none` here and gets whatever their line on the access list
     says (`_from_access_list`).

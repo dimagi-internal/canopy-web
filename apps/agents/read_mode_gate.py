@@ -28,7 +28,7 @@ def exposures() -> list[dict]:
         if iface_mod.read_mode_override(agent.interface) is not None:
             continue
         hits = [ln for ln in lines_of[agent.pk]
-                if iface_mod.opens(ln.permissions, iface_mod.READ_MODE)
+                if iface_mod.opens(ln.permissions, iface_mod.READ_MODE_NAME)
                 and not roles.holds(ln.permissions, roles.WRITE)]
         if hits:
             out.append({"agent": agent.slug, "workspace": agent.workspace_id,

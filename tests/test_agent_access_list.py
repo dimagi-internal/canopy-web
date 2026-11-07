@@ -11,7 +11,7 @@ from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
 
 from apps.agents import grants, roles
-from apps.agents.grants import Asker
+from apps.agents.grants import Identity
 from apps.agents.models import Agent, AgentGrant
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -102,7 +102,7 @@ def w():
 
 
 def _asker(user=None, *, email=None, verified=True):
-    return Asker(user=user, email=email if email is not None else getattr(user, "email", ""),
+    return Identity(user=user, email=email if email is not None else getattr(user, "email", ""),
                  verified=verified)
 
 
@@ -225,7 +225,7 @@ def test_bulk_read_workspace_roles_answer_the_same_as_reading_them_per_workspace
     _line(w["hal"], roles.READ_WRITE, kind=G.WORKSPACE, subject_workspace=w["root"])
     lines = grants.lines_for(w["hal"])
     for user in (w["boss"], w["ed"], w["vw"], w["ada"], w["out"]):
-        bulk = Asker(user=user, email=user.email, verified=True,
+        bulk = Identity(user=user, email=user.email, verified=True,
                      workspace_roles=wsvc.member_roles_of([user])[user.pk])
         assert grants.resolve(w["hal"], bulk, lines) == grants.resolve(w["hal"], _asker(user), lines)
 
@@ -398,7 +398,7 @@ def test_bulk_read_answers_the_same_for_a_subtree_line(tree):
     lines = grants.lines_for(tree["hal"])
     below = {"dimagi": frozenset({"connect", "ops"})}
     for user in (tree["kid"], tree["ops_admin"], tree["stranger"], tree["vw"], tree["out"]):
-        bulk = Asker(user=user, email=user.email, verified=True,
+        bulk = Identity(user=user, email=user.email, verified=True,
                      workspace_roles=wsvc.member_roles_of([user])[user.pk], descendants=below)
         assert grants.resolve(tree["hal"], bulk, lines) == grants.resolve(tree["hal"], _asker(user), lines)
 

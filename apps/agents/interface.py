@@ -72,7 +72,7 @@ import re
 
 from apps.agents import roles
 from apps.agents.interface_default import (  # noqa: F401  (re-exported)
-    READ_MODE,
+    READ_MODE_NAME,
     READ_MODE_NAMES,
     READ_MODE_STAMP,
     READ_PROFILE_VERSION,
@@ -106,7 +106,7 @@ SESSION_REVIEW_TOOLS = ("Read", "ToolSearch", "mcp__*canopy-web__who_is_asking",
 
 #: `Turn.capability` for a turn in the agent's FULL profile. Empty so that every
 #: turn predating this reads as "full", which is what it was.
-FULL = ""
+FULL_STAMP = ""
 
 def read_mode_override(iface: dict | None) -> str | None:
     """The name of the agent's own published read-mode profile (`READ_MODE_STAMP`, else `read`), or
@@ -472,8 +472,8 @@ def reachable(permissions, iface: dict | None) -> list[str]:
     extended card, so none reads "published nothing" as "offers nothing"."""
     caps = (iface or {}).get("capabilities") or {}
     names = [n for n in caps if opens(permissions, n)]
-    if read_mode_override(iface) is None and opens(permissions, READ_MODE):
-        names.append(READ_MODE)
+    if read_mode_override(iface) is None and opens(permissions, READ_MODE_NAME):
+        names.append(READ_MODE_NAME)
     return sorted(names)
 
 
@@ -505,7 +505,7 @@ def profile(agent, name: str) -> dict | None:
     deny everything — never the full one: a turn that was restricted when it
     was queued must not become unrestricted because the file changed.
     """
-    if name == FULL:
+    if name == FULL_STAMP:
         return None
     if name == SESSION_REVIEW:
         return {"name": SESSION_REVIEW, "entry": None, "tools": list(SESSION_REVIEW_TOOLS), "bash": [],

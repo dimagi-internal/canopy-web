@@ -82,7 +82,7 @@ def test_the_strongest_role_of_a_person_is_the_one_that_allows_most(w):
     make_role(w["root"], "pilot", {roles.WRITE})
     _line(w["agent"], w["siteuser"], "connector")
     AgentGrant.objects.create(workspace=w["root"], kind=AgentGrant.PERSON, user=w["siteuser"], role="pilot")
-    got = grants.resolve(w["agent"], grants.Asker(user=w["siteuser"], verified=True))
+    got = grants.resolve(w["agent"], grants.Identity(user=w["siteuser"], verified=True))
     assert got.role == "pilot" and roles.holds(got.permissions, roles.WRITE)
 
 

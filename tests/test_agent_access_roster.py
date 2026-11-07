@@ -146,7 +146,7 @@ def test_roster_agrees_with_the_harness_for_a_signed_in_turn(world, published):
                     initiator_assurance=who.SESSION, initiator_user=user)
         decided = turn_context.for_turn(turn, a).stamped
         row = rows[user.email]
-        if decided == interface.FULL:
+        if decided == interface.FULL_STAMP:
             assert row["access"] == "full", user.email
         elif decided is None:
             assert row["access"] == "none", user.email
