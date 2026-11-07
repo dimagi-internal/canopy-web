@@ -65,7 +65,10 @@ def _refused_at_claim(turn, box, code):
     assert row.result_note == f"{refusals.REFUSED_NOTE_PREFIX} {stored['refusal']['why']}. " \
                               f"{stored['refusal']['how_to_fix']} {CHANGED}"
     # Everything that asks what a turn ran as first asks whether it was refused.
-    assert turn_context.was_refused(row) and caller_context.build(row)["access"] == "refused"
+    env = caller_context.build(row)
+    assert turn_context.was_refused(row) and env["access"] == "refused"
+    # ...and holds nothing: an unstamped turn reads as the whole agent, so its grant must not.
+    assert env["granted_by"] == "refused" and env["permissions"] == [] and env["role"] is None
     return row
 
 

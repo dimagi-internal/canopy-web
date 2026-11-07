@@ -753,8 +753,13 @@ def _access(turn, context) -> str:
 
 
 def _grant(turn, agent, context=None) -> dict:
-    if agent is None:
-        return {"granted_by": "no-interface", "role": None, "source": "",
+    """The asker's standing on this turn. A refused turn holds nothing: its unstamped context would read as the
+    whole agent, so it never answers for one (`turn_context.was_refused`)."""
+    from apps.agents import turn_context  # noqa: PLC0415 — it imports this module
+
+    refused = turn_context.was_refused(turn)
+    if refused or agent is None:
+        return {"granted_by": turn_context.REFUSED if refused else "no-interface", "role": None, "source": "",
                 "permissions": [], "manual_only": False}
     from apps.agents.interface import grant_facts
 
