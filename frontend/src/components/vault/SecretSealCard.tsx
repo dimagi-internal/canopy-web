@@ -12,6 +12,8 @@ import { assess, changedKey, loadPins, newEndorsers, savePins, type Assessment, 
 import { isPasskeyRefusal, PASSKEY_NOT_COMPLETED } from '@/vault/prf'
 import { useUnlockPrompt } from '@/vault/UnlockPrompt'
 import { fingerprint } from '@/vault/zk'
+import { passkeysWorkHere } from '@/auth/passkeyHere'
+import { PasskeyInBrowserNotice } from '@/auth/PasskeyInBrowserNotice'
 
 /**
  * Give an agent a secret — one field (pasted, or loaded from a file), sealed in
@@ -200,6 +202,11 @@ export function SecretSealCard({ slug, name, requestId, onStored }: {
 
       {closed ? (
         <div className="text-muted-foreground" data-testid="secret-seal-closed">This request is {req?.status}.</div>
+      ) : !passkeysWorkHere() ? (
+        // Sealing starts with a passkey (step-up + opening your vault key), which
+        // never runs in the runner app: send the person to their browser first,
+        // rather than after they have pasted the value.
+        <PasskeyInBrowserNotice what="Storing a secret" />
       ) : (
         // Not a <form>: the card is also mounted inside other forms (Share secret).
         <div className="flex flex-wrap items-center gap-2" role="group" aria-label={`Seal ${name}`}>

@@ -60,6 +60,7 @@ import { useTailCheck } from './chat/useTailCheck'
 import { COMPOSER_REFUSED, usePreviewRefusal } from './chat/usePreviewRefusal'
 import { RefusalNotice } from '@/components/chat/RefusalNotice'
 import { openInBrowser, passkeysWorkHere } from '@/auth/passkeyHere'
+import { useAuth } from '@/auth/AuthProvider'
 import { cachedMessages, rememberMessages } from './chat/sessionCache'
 
 /**
@@ -191,7 +192,11 @@ function ChatPageInner({
   // A private conversation's file is sealed here to its people (vault/sealedFiles.ts) as
   // well as uploaded for the agent's one turn; with no key to seal to, it is refused.
   const sealTarget = meta?.sensitive ? meta.sealed_key ?? null : null
-  const meId = socket.state.current_user_id
+  // Who you are, before the socket's snapshot says so: the transcript paints first
+  // from this tab's cache or the REST tail, and with no viewer id every line you
+  // wrote drew on the left as someone else's until the snapshot moved it right.
+  const signedInId = useAuth().user?.user_id ?? null
+  const meId = socket.state.current_user_id ?? signedInId
   const privateFiles = useMemo<PrivateFiles | null>(
     () => (sealTarget && meId != null
       ? { target: { conversation: sealTarget.conversation, public_jwk: sealTarget.public_jwk as { x?: string; y?: string } },
@@ -531,7 +536,7 @@ function ChatPageInner({
           state={panelState}
           connected={socket.connected}
           statusSlot={meta?.slack ? <SlackThreadChip thread={meta.slack} /> : undefined}
-          currentUserId={socket.state.current_user_id}
+          currentUserId={meId}
           onSend={(body) => {
             // The server consumes whatever the session is holding, so the chips
             // are spent the moment we send — leaving them would imply they will
