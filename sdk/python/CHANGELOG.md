@@ -2,6 +2,16 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.28.0 — 2026-11-06
+
+**Runner attestations: a host site learns which approved runner made a request.**
+
+- `canopy_sdk.runner_attestations`: the shared contract for a runner to prove a request to a
+  site (`bound_url`, `header_value` / `parse_header`, the `X-Canopy-Runner-Proof` header) and
+  `request_attestation`, the site's signed ask to canopy (`POST /api/sites/runner-attestations`)
+  for who holds the approved device key, and whether that runner serves the agent the
+  request names. Additive; nothing existing changed.
+
 ## 0.27.1 — 2026-11-06
 
 **Words only: a "Connected site" is now a host site.**
