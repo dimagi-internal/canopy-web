@@ -169,3 +169,11 @@ def test_a_sign_off_request_is_not_an_attestation_request(w):
 
 def test_a_bad_kind_is_malformed(w):
     assert _post(w, {"kind": "rsa", "proof": "x", "htu": _htu()}).status_code == 400
+
+
+def test_the_route_is_reachable_without_a_login():
+    """A site is not a logged-in user: the login gate must let its signed request reach the
+    route (it answered 'Authentication required' in production until this was listed)."""
+    from apps.common import middleware
+
+    assert middleware._is_public(service.PATH)
