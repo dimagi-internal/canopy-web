@@ -28,9 +28,9 @@ admins and canopy itself) and its **access list**
 It writes nothing: `caller_context.build` writes a `PersonAccess` row, and that stays in the envelope's
 `person` block outside this module.
 
-Three different things are called a standing. `Standing` here is what the asker holds on this agent
-and why, on the result. `standings.Membership` is what the database says about a person, read in bulk
-and passed in on `Asker`. `harness.turn_asker.AnsweringTo` is who a turn's login answers to.
+`Standing` is what the asker holds on this agent and why, on the result. `standings.Membership` is what
+the database says about a person, read in bulk and passed in on `Asker`; `harness.turn_asker.AnsweringTo`
+is who a turn's login answers to.
 """
 from __future__ import annotations
 
