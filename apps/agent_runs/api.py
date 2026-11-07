@@ -17,6 +17,7 @@ from ninja.errors import HttpError
 from pydantic import Field
 
 from apps.api.auth import session_auth
+from apps.api.errors import refusals
 from apps.api.pagination import Page, clamp_limit, paginate
 from apps.api.route_gates import gate
 from apps.common.schemas import StrictModel
@@ -116,10 +117,14 @@ def list_runs(request: HttpRequest, slug: str, limit: int = 100) -> Page[RunSumm
     return paginate(items, offset=0, limit=limit)
 
 
-@router.post("/{slug}/runs/", response={201: RunSummary}, summary="Create a run",)
+@router.post("/{slug}/runs/", response={201: RunSummary, **refusals(422)}, summary="Create a run",)
 @gate("agent.work", kind="content")
 def create_run(request: HttpRequest, slug: str, payload: RunCreateIn) -> Status:
+    """Each step's `key` names it within the run, so a key given twice is a 422."""
     agent, store = _store_for(request, slug, write=True)
+    keys = [s.key for s in payload.steps]
+    if len(set(keys)) != len(keys):
+        raise HttpError(422, "each step's key names it within the run: a key is given twice")
     try:
         summary = store.create_run(
             agent.slug,

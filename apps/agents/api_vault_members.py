@@ -68,12 +68,13 @@ def get_agent_vault_members(request: HttpRequest, slug: str) -> VaultMembersOut:
     return _vault_out(vault, request.user)
 
 
-@router.post("/{slug}/vault/members", response=VaultMembersOut,
+@router.post("/{slug}/vault/members", response={200: VaultMembersOut, **refusals(422)},
              summary="Add a person to the agent's vault by name")
 @gate("vault-admin", setting=True, step_up=True)  # browser: + step-up; token allowed
 def add_agent_vault_member(request: HttpRequest, slug: str, payload: VaultMemberIn) -> VaultMembersOut:
     """`{email, role}` — a direct membership, kept whatever happens to the
-    agent's access list. The person must be a member of the agent's workspace."""
+    agent's access list. The person must be a member of the agent's workspace.
+    An `email` no canopy user has is a 422."""
 
     _, vault = agent_vault(request, slug, manage=True)
     user = get_user_model().objects.filter(email__iexact=payload.email.strip()).first()
