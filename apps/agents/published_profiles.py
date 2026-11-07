@@ -458,7 +458,7 @@ def grant_facts(turn, agent, *, context=None) -> dict:
     when refused), `source` (what put them there: owner | admin | system |
     capability:<name> | session | list:<access-list line>), `permissions` (what they hold on
     THIS turn, sorted) and `manual_only`. `context`: the turn's, when the caller already holds it."""
-    from . import turn_context  # cycle: agents.turn_context -> agents.interface  # noqa: PLC0415
+    from . import turn_context  # cycle: agents.turn_context -> agents.published_profiles  # noqa: PLC0415
 
     d = context if context is not None else turn_context.of_turn(turn, agent)
     return {"granted_by": d.basis, "role": d.standing.agent_role, "source": d.standing.source,
@@ -488,7 +488,7 @@ def offered_to(user, agent) -> list[str]:
     caps = iface.get("capabilities") or {}
     if not getattr(user, "is_authenticated", False):
         return []
-    from . import turn_context  # cycle: agents.turn_context -> agents.interface  # noqa: PLC0415
+    from . import turn_context  # cycle: agents.turn_context -> agents.published_profiles  # noqa: PLC0415
 
     d = turn_context.for_asker(agent, user, verified=True)
     if d.access == turn_context.FULL:
