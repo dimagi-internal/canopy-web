@@ -37,7 +37,7 @@ def _ok(url, payload, headers=None):
 
 def test_request_attestation_reads_canopys_answer():
     got = ra.request_attestation("https://canopy.example.org", "connect-labs", SITE_KEY, kind="dpop",
-                                 proof="p", agent="ace", post=_ok)
+                                 proof="p", speaks_for="ace", post=_ok)
     assert got == ra.Attestation("cloud-ec2-2", "aws-iam", "j", "ace", True)
 
 

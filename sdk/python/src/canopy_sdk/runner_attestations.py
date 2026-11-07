@@ -91,9 +91,12 @@ def parse_header(value: str) -> tuple[str, str]:
     return kind, proof.strip()
 
 
-def request_attestation(canopy_url: str, site_name: str, site_key, *, kind: str, proof: str, agent: str = "",
-                        workspace: str = "", post: Callable[..., tuple] | None = None) -> Attestation:
-    """Ask canopy who made ``proof``. Raises ``AttestationError``."""
+def request_attestation(canopy_url: str, site_name: str, site_key, *, kind: str, proof: str, speaks_for: str = "",
+                        workspace: str = "", agent: str = "",
+                        post: Callable[..., tuple] | None = None) -> Attestation:
+    """Ask canopy who made ``proof``. ``speaks_for`` is the agent the request says it is
+    for (canopy says whether the runner serves it); ``workspace`` / ``agent`` name the
+    site's tenant exactly as ``sign_offs.request_sign_off`` does. Raises ``AttestationError``."""
     from . import fetch
 
     if kind not in KINDS:
@@ -105,7 +108,7 @@ def request_attestation(canopy_url: str, site_name: str, site_key, *, kind: str,
         raise AttestationError(sign_offs.NOT_CONFIGURED, str(exc)) from exc
     sender = post or fetch.post_json
     try:
-        status, raw, _headers = sender(url, {"kind": kind, "proof": proof, "agent": agent},
+        status, raw, _headers = sender(url, {"kind": kind, "proof": proof, "agent": speaks_for},
                                        headers={"Authorization": f"Bearer {token}"})
     except fetch.FetchError as exc:
         raise AttestationError(sign_offs.UNREACHABLE, str(exc)) from exc
