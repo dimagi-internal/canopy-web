@@ -87,6 +87,7 @@ _PER_ENDPOINT_EXCLUSIONS: dict[tuple[str, str], tuple[list, str]] = {
     # this suite sends is (correctly) not one they can read.
     ("GET", "/api/sites/agents"): ([positive_data_acceptance], _OPAQUE_CREDENTIAL),
     ("POST", "/api/sites/sign-offs"): ([positive_data_acceptance], _OPAQUE_CREDENTIAL),
+    ("POST", "/api/sites/runner-attestations"): ([positive_data_acceptance], _OPAQUE_CREDENTIAL),
     ("GET", "/api/sites/sign-offs/{sign_off_id}"): ([positive_data_acceptance], _OPAQUE_CREDENTIAL),
     ("POST", "/api/sites/resources-updated"): ([positive_data_acceptance], _OPAQUE_CREDENTIAL),
     ("POST", "/api/beta-requests"): ([positive_data_acceptance], _DELIVERABLE_EMAIL),
