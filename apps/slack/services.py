@@ -601,12 +601,17 @@ def handle_message(inbound: Inbound) -> Outcome:
     if not inbound.follow:
         from . import branch, offline
 
-        wants, ask = branch.is_branch(text)
-        if wants:
-            return branch.handle(installation, inbound, ask)
-        wants, ask = offline.is_offline(text)
-        if wants:
-            return offline.handle(installation, inbound, ask)
+        # `@canopy branch|offline …`, or `@canopy <agent> branch|offline …` to pick
+        # that agent's conversation when the thread has more than one. Outside a
+        # channel thread a named agent is just being asked: "hal branch out the
+        # tests" starts a conversation.
+        for_agent, rest = named_agent(installation, text)
+        if for_agent is not None and (inbound.is_dm or not inbound.thread_ts):
+            for_agent, rest = None, ""
+        for check, handle in ((branch.is_branch, branch.handle), (offline.is_offline, offline.handle)):
+            wants, ask = check(rest)
+            if wants:
+                return handle(installation, inbound, ask, for_agent)
     # A thread a repo session was SHARED into (apps/slack/share.py) has no agent
     # to find it by. Naming an agent still asks that agent, as in any thread.
     from .share import bound_repo_session
