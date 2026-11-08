@@ -1,5 +1,5 @@
 /**
- * The five roles in canopy, as a ladder — each contains the one below.
+ * The roles in canopy (five today, counted by `rolesHeading`), as a ladder — each contains the one below.
  *
  * Rendered by BOTH the public explainer (`/about`) and the in-app guide
  * (`/guide`), so the public promise cannot drift from the internal docs —
@@ -121,3 +121,12 @@ export const USER_ROLES: UserRole[] = [
       + 'resolves everything else from.',
   },
 ]
+
+const COUNT_WORDS = ['No', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten']
+
+/** The heading over the role list ("Five roles"), counted from USER_ROLES so it
+ *  cannot disagree with the list the page renders. */
+export function rolesHeading(): string {
+  const n = USER_ROLES.length
+  return `${COUNT_WORDS[n] ?? String(n)} ${n === 1 ? 'role' : 'roles'}`
+}

@@ -17,9 +17,11 @@ import { roleAllows, type Capability } from '@/lib/workspaceRoles'
  * for two reasons. Each fetches its own data (members + invites, the Slack
  * config, the push config + mailboxes + agents, the app list + agents), so
  * stacking them would make every visit pay for all four. And the Slack section
- * holds a one-way action — declaring the Slack app an agent, which Slack
- * cannot undo — which belongs on a section you navigated to deliberately, not
- * halfway down a long page you were scrolling through for something else.
+ * holds actions that change the Slack app itself (connecting or reinstalling
+ * it, managing its slash commands), which belong on a section you navigated to
+ * deliberately, not halfway down a long page you were scrolling through for
+ * something else. (Declaring the Slack app an agent is an owner-only API route,
+ * POST /api/slack/{workspace}/declare-agent, with no button on this page.)
  *
  * Each section keeps its own heading: the tab says where you are, the heading
  * says what the section is (and carries its count, where it has one).

@@ -3,11 +3,13 @@ import { startDrill, listDrills, type RunnerDrillOut } from '@/api/drills'
 import { relativeAge } from '@/lib/relativeAge'
 import { Td, Th, Tr } from '@/components/DataTable'
 
-// Per-agent readiness grid for one runner — the drill-down behind the
-// RunnerStatus badge. Loads the runner's drill outcomes, offers a "Drill
-// runner" fan-out button, and self-polls while anything is still pending
-// (a drill turn resolves asynchronously via the agent's own report
-// callback — see apps/harness/services.py::start_drill).
+// Per-agent readiness checks for one runner, shown on the runner's overview
+// page (pages/runner/RunnerOverview.tsx). Loads the runner's drill outcomes,
+// offers a "Check readiness" button that queues one drill turn per agent the
+// caller may drill (POST /runners/:id/drill), and self-polls every 10s while
+// any row is still pending. A drill resolves asynchronously: the drilled
+// agent's own report callback, or its turn failing, sets the outcome
+// (apps/harness/drills.py::start_drill).
 
 const POLL_MS = 10_000
 const PENDING_TIMEOUT_MS = 30 * 60 * 1000 // 30 minutes

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { COMPONENTS, ONE_SENTENCE } from '@/guide/components'
-import { USER_ROLES } from '@/guide/paths'
+import { USER_ROLES, rolesHeading } from '@/guide/paths'
 import { getPublicStats, type PublicStats } from '@/api/publicStats'
 import { apiUrl } from '@/api/base'
 
@@ -64,7 +64,7 @@ export function AboutPage() {
         </section>
 
         <section className="mt-12">
-          <h2 className="text-sm font-semibold text-foreground">Four roles</h2>
+          <h2 className="text-sm font-semibold text-foreground">{rolesHeading()}</h2>
           <div className="mt-4 space-y-3">
             {USER_ROLES.map((p) => (
               <div key={p.id} className="rounded-lg border border-border bg-card p-4">
