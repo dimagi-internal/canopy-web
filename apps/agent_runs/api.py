@@ -10,6 +10,8 @@ model stays the single source of truth.
 """
 from __future__ import annotations
 
+from typing import Literal
+
 from django.core.exceptions import ObjectDoesNotExist
 from django.http import HttpRequest
 from ninja import Router, Status
@@ -73,7 +75,8 @@ class RunForkIn(StrictModel):
     """Fork a run at a step boundary."""
 
     at_step: str = Field(min_length=1, max_length=120)
-    mode: str = "keep-overrides-only"
+    # `FORK_MODES` (canopy_agent_runs).
+    mode: Literal["keep-overrides-only", "keep-all"] = "keep-overrides-only"
     # {step_key: {question: <override-str-or-edit-dict>}} — see stores._apply_decision_edit
     edits: dict = Field(default_factory=dict)
 

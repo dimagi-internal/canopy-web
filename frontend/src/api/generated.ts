@@ -6127,7 +6127,10 @@ export interface paths {
             readonly cookie?: never;
         };
         readonly get?: never;
-        /** Add or change one host site: only the fields sent change. dry_run checks without saving */
+        /**
+         * Add or change one host site: only the fields sent change. dry_run checks without saving
+         * @description A field of the wrong shape (an empty or over-long `bash` entry, a malformed path) is a 422.
+         */
         readonly put: operations["put_agent_host_site"];
         readonly post?: never;
         /** Remove one host site from this agent */
@@ -33939,8 +33942,9 @@ export interface components {
             /**
              * Mode
              * @default keep-overrides-only
+             * @enum {string}
              */
-            readonly mode: string;
+            readonly mode: "keep-overrides-only" | "keep-all";
             /** Edits */
             readonly edits?: {
                 readonly [key: string]: unknown;
@@ -58684,6 +58688,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentHostSitesOut"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
