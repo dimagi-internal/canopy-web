@@ -181,6 +181,14 @@ try:
     # checks on the PR that causes it — the v4 call sites were verified by
     # importing the package and inspecting signatures, not by a green run.
     schema = schemathesis.openapi.from_url(SCHEMA_URL)
+    # No NUL in generated strings. The API refuses NUL in every JSON body — a value
+    # or a key, at any depth — with 400 "Value cannot be stored" (apps/api/nul_guard.py,
+    # tested in tests/test_contract_nightly_regressions.py), and the document says so
+    # for every free-text string (`openapi_doc`). Inside free-form JSON (`dict`, `Any`)
+    # no JSON Schema keyword can say it, so the fuzz would call a refusal the API
+    # documents a "schema-valid request rejected". Generating no NUL is the suite
+    # agreeing with that rule, not hiding a failure: the rule has its own tests.
+    schema.config.generation.update(allow_x00=False)
     _schema_available = True
 except Exception:
     schema = None

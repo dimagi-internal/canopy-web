@@ -323,7 +323,9 @@ def test_you_cannot_assign_a_repo_to_a_workspace_you_cannot_work_in(jj, laptop):
     Workspace.objects.create(slug="theirs", display_name="T", created_by=stranger)
     r = _client(jj).put("/api/me/canopy-projects/", {"everything": True, "repo_workspaces": {"a": ["theirs"]}},
                         content_type="application/json")
-    assert r.status_code == 422
+    # Well formed, but not yours to use: a permission refusal, not a validation one.
+    assert r.status_code == 403
+    assert "theirs" in r.json()["detail"]
 
 
 def test_a_chosen_box_is_refused_for_a_repo_not_assigned_to_the_chats_workspace(jj, family, laptop):

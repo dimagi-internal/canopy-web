@@ -24,6 +24,8 @@ from .errors import (
     TYPE_NOT_FOUND,
     TYPE_PAYLOAD_TOO_LARGE,
     TYPE_VALIDATION,
+    UNSTORABLE_DETAIL,
+    UNSTORABLE_TITLE,
     Problem,
     ProblemError,
     status_title,
@@ -260,9 +262,9 @@ def _on_out_of_range(request: HttpRequest, exc: Exception) -> HttpResponse:
     the caller's input, not a server fault."""
     problem = Problem(
         type=TYPE_VALIDATION,
-        title="Value cannot be stored",
+        title=UNSTORABLE_TITLE,
         status=400,
-        detail="A value in the request is out of range, or holds a character the database refuses.",
+        detail=UNSTORABLE_DETAIL,
         instance=request.path,
     )
     return _problem_response(request, problem)
