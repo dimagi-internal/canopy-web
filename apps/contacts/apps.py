@@ -16,6 +16,6 @@ class ContactsConfig(AppConfig):
 
 
 def _hcp_deliver() -> None:
-    from .hcp_oauth import maybe_deliver
+    from .hcp_webhooks import maybe_deliver
 
     maybe_deliver()

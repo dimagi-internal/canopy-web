@@ -1,4 +1,4 @@
-"""The HCP service: OAuth 2.0 for clients canopy does not operate (HCP 5.2.1).
+"""The HCP service's OAuth 2.0 server: for clients canopy does not operate (HCP 5.2.1).
 
 canopy's own agents reach a person's HCP instance as FIRST-PARTY clients (one
 grant per agent, given in a session: `hcp.grant_for`, `hcp.issue_agent_grant`).
@@ -8,6 +8,11 @@ authorization-code flow, for access to some categories of their instance. That
 is what makes canopy's `authorization_profile` "oauth2" and the service eligible
 for HCP v1 Interop. The design record, every judgment call, and what "public"
 would take are in docs/architecture/hcp-service.md.
+
+Start reading at `parse_authorize` (step 1), `issue_grant` and `issue_code`
+(step 2), then `exchange` (the token endpoint) and `authenticate_access` (the
+bearer a client sends). The routes are in `hcp_oauth_views.py`; the revocation
+webhook is in `hcp_webhooks.py`.
 
 The shape, in the spec's terms:
 
@@ -31,15 +36,14 @@ The shape, in the spec's terms:
 * **Tokens** live 1 hour (access) and 30 days (refresh, persistent) or until the
   grant's absolute expiry (temporary) — 4.1.3. Refresh tokens rotate; a used one
   presented again revokes the grant. Revoking a grant kills every token at once
-  (4.2.2) and owes the client's webhook a signed, retried notification (4.2.3).
+  (4.2.2) and owes the client's webhook a signed, retried notification (4.2.3),
+  which `hcp_webhooks.py` sends.
 * **Internal only, for now** — `settings.HCP_SERVICE_AUDIENCE`, read here and
   nowhere else.
 """
 from __future__ import annotations
 
 import datetime as dt
-import hashlib
-import hmac
 import json
 import logging
 import secrets
@@ -57,6 +61,7 @@ from apps.common import oauth_core
 from apps.common.oauth_core import OAuthError
 
 from . import hcp
+from .hcp_webhooks import _deliver_soon
 from .models import (HcpAuthorizationCode, HcpClient, HcpRevocationDelivery, HcpToken, Person,
                      PersonAuditEvent, PersonFact, PersonGrant)
 
@@ -79,12 +84,6 @@ ACCESS_PREFIX, REFRESH_PREFIX, CODE_PREFIX = "hcpat_", "hcprt_", "hcpac_"
 MODALITY = "oauth2-authorization-code (canopy consent page: allow, then a separate keep-access question)"
 #: The source a grant restriction names for the person's personal entries.
 PERSONAL = hcp.PERSONAL_SOURCE
-#: 4.2.3: at least 5 attempts over at least an hour. The waits between attempts;
-#: after the last wait's attempt fails, the delivery is abandoned — 6 attempts
-#: spanning about 1 h 51 min.
-WEBHOOK_BACKOFF = [dt.timedelta(minutes=m) for m in (1, 5, 15, 30, 60)]
-WEBHOOK_MAX_ATTEMPTS = len(WEBHOOK_BACKOFF) + 1
-WEBHOOK_TIMEOUT_S = 5
 
 
 class BadClientOrRedirect(Exception):
@@ -488,108 +487,6 @@ def revoke(grant: PersonGrant, *, actor: hcp.Actor, reason: str = "") -> PersonG
                      "hcp_version": hcp.HCP_VERSION})
         transaction.on_commit(lambda: _deliver_soon(delivery.pk))
     return grant
-
-
-def _deliver_soon(delivery_id: int) -> None:
-    import threading
-
-    threading.Thread(target=_attempt_by_id, args=(delivery_id,), daemon=True).start()
-
-
-def _attempt_by_id(delivery_id: int) -> None:
-    from django.db import close_old_connections
-
-    try:
-        d = HcpRevocationDelivery.objects.select_related("client", "grant__person").filter(pk=delivery_id).first()
-        if d is not None:
-            attempt(d)
-    except Exception:  # noqa: BLE001
-        logger.exception("hcp: revocation delivery %s failed", delivery_id)
-    finally:
-        close_old_connections()
-
-
-def sign(secret: str, timestamp: int, body: bytes) -> str:
-    """4.2.3: hex HMAC-SHA256 over `<timestamp>.<raw body>`."""
-    return hmac.new(secret.encode(), f"{timestamp}.".encode() + body, hashlib.sha256).hexdigest()
-
-
-def webhook_secret(client: HcpClient) -> str:
-    from apps.common.encryption import decrypt_secret as decrypt
-
-    return decrypt(client.webhook_secret_encrypted) if client.webhook_secret_encrypted else ""
-
-
-def _post(url: str, body: bytes, headers: dict) -> int:
-    import urllib.request
-
-    req = urllib.request.Request(url, data=body, method="POST", headers=headers)
-    with urllib.request.urlopen(req, timeout=WEBHOOK_TIMEOUT_S) as resp:  # noqa: S310 — admin-registered https URL
-        return resp.status
-
-
-def attempt(d: HcpRevocationDelivery, *, now: dt.datetime | None = None, post=None) -> None:
-    """One delivery attempt. Same payload every time; a fresh HCP-Delivery-Id each
-    attempt. Audits `revocation.notified` on first success and on abandonment."""
-    now = now or timezone.now()
-    with transaction.atomic():
-        d = HcpRevocationDelivery.objects.select_for_update(of=("self",)).select_related(
-            "client", "grant__person").get(pk=d.pk)
-        if d.delivered_at or d.abandoned_at or d.next_attempt_at > now:
-            return
-        body = json.dumps(d.payload, sort_keys=True, separators=(",", ":")).encode()
-        ts = int(now.timestamp())
-        headers = {"Content-Type": "application/json", "HCP-Timestamp": str(ts),
-                   "HCP-Signature": sign(webhook_secret(d.client), ts, body),
-                   "HCP-Delivery-Id": str(uuid.uuid4())}
-        try:
-            status = (post or _post)(d.client.webhook_url, body, headers)
-            ok, note = 200 <= status < 300, f"HTTP {status}"
-        except Exception as exc:  # noqa: BLE001 — any failure is a retry
-            ok, note = False, f"{type(exc).__name__}: {exc}"[:200]
-        d.attempts += 1
-        d.last_status = note
-        fields = ["attempts", "last_status"]
-        if ok:
-            d.delivered_at = now
-            fields.append("delivered_at")
-            hcp.audit(d.grant.person, "revocation.notified", actor=hcp.SYSTEM, grant=d.grant,
-                      detail=f"delivered to {d.client.name} after {d.attempts} attempt(s): {note}")
-        elif d.attempts >= WEBHOOK_MAX_ATTEMPTS:
-            d.abandoned_at = now
-            fields.append("abandoned_at")
-            hcp.audit(d.grant.person, "revocation.notified", actor=hcp.SYSTEM, grant=d.grant,
-                      detail=f"abandoned after {d.attempts} attempts over "
-                             f"{(now - d.created_at).total_seconds() / 3600:.1f}h: {note}")
-        else:
-            d.next_attempt_at = now + WEBHOOK_BACKOFF[d.attempts - 1]
-            fields.append("next_attempt_at")
-        d.save(update_fields=fields)
-
-
-def deliver_due(now: dt.datetime | None = None, limit: int = 20) -> int:
-    """Attempt every delivery that is due. Run from the off-request clock
-    (`maybe_deliver`), like the retention sweep."""
-    now = now or timezone.now()
-    due = list(HcpRevocationDelivery.objects.filter(
-        delivered_at__isnull=True, abandoned_at__isnull=True, next_attempt_at__lte=now)
-        .order_by("next_attempt_at")[:limit])
-    for d in due:
-        try:
-            attempt(d, now=now)
-        except Exception:  # noqa: BLE001
-            logger.exception("hcp: revocation delivery %s failed", d.pk)
-    return len(due)
-
-
-def maybe_deliver(now: dt.datetime | None = None) -> None:
-    """The off-request clock's entry point: at most once a minute across the fleet. Never raises."""
-    try:
-        if not cache.add("hcp-revocation-deliveries", "1", timeout=60):
-            return
-        deliver_due(now)
-    except Exception:  # noqa: BLE001
-        logger.exception("hcp: revocation deliveries failed")
 
 
 # --- metadata (RFC 8414) and the MCP manifest (Appendix B) ------------------------------------

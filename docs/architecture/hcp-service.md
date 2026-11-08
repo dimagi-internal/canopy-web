@@ -31,13 +31,13 @@ self-audit against the spec is `hcp-conformance.md`.
 | Consent screen | `templates/contacts/hcp_consent.html` (act 1), `hcp_keep.html` (act 2) |
 | Tokens | `HcpToken` (access 1 h; refresh rotates), `HcpAuthorizationCode` (10 min, single use) |
 | Bearer access | `apps/tokens/middleware.py` → `request.hcp_access`; `hcp_api._principal` |
-| Revocation notices | `HcpRevocationDelivery`; signed, retried from the off-request clock |
+| Revocation notices | `HcpRevocationDelivery`; signed, retried from the off-request clock; all in `hcp_webhooks.py` (`hcp_webhooks.attempt` is where to start) |
 | Discovery | `/api/hcp/.well-known/hcp-configuration` (also `/.well-known/hcp-configuration`) |
 | RFC 8414 metadata | `/api/hcp/.well-known/oauth-authorization-server` and `/.well-known/oauth-authorization-server/api/hcp` |
 | MCP manifest (Appendix B) | `/api/hcp/.well-known/mcp-manifest` |
 | The internal-only gate | `settings.HCP_SERVICE_AUDIENCE`, read only by `hcp_oauth.audience()` (`test_the_audience_setting_is_read_in_one_place`) |
 | Management commands | `hcp_embed`, `hcp_explain`, `hcp_backfill_searches` ("Commands" below) |
-| The code | `apps/contacts/hcp/` (`core`: errors, actors, constants; `entries`: the entry chain; `grants`: grants and reach; `consent`: the person's switches and the rollout; `relevance`: search; `sensitive`: sensitive sessions; `conformance`: discovery), the transports `hcp_api.py` (REST), `contact_hcp_api.py` (trusted-site contacts), `hcp_oauth.py` with `hcp_oauth_views.py` (the service), and `hcp_collections.py` (memory collections) |
+| The code | `apps/contacts/hcp/` (`core`: errors, actors, constants; `entries`: the entry chain; `grants`: grants and reach; `consent`: the person's switches and the rollout; `relevance`: search; `sensitive`: sensitive sessions; `conformance`: discovery), the transports `hcp_api.py` (REST), `contact_hcp_api.py` (trusted-site contacts), `hcp_oauth.py` with `hcp_oauth_views.py` (the service) and `hcp_webhooks.py` (its revocation webhook), and `hcp_collections.py` (memory collections) |
 
 ## The flow
 
@@ -135,7 +135,7 @@ the revocation is committed even though the exchange itself is refused.
 **A client revoking its own token ends the grant (RFC 7009).** It has said it no
 longer wants access. The person sees `grant.revoked` with the client as actor.
 
-**Webhooks retry from the off-request clock** (`apps/common/ticks.py`). canopy-web
+**Webhooks retry from the off-request clock** (`apps/common/ticks.py`; the code is `hcp_webhooks.py`). canopy-web
 has no job queue; the retention sweep runs on the same clock.
 - **First attempt:** a short background thread fires right after commit.
 - **Retries:** from the off-request clock, at most once a minute across the fleet.

@@ -28,7 +28,7 @@ from django.contrib.auth.models import User
 from django.test import Client
 from django.utils import timezone
 
-from apps.contacts import hcp, hcp_oauth
+from apps.contacts import hcp, hcp_oauth, hcp_webhooks
 from apps.contacts import services as contacts
 from apps.contacts.models import HcpRevocationDelivery, HcpToken, Person, PersonAuditEvent, PersonFact, PersonGrant
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -256,10 +256,10 @@ def test_revoking_kills_every_token_and_notifies_the_webhook(lili, client_id, dj
         seen.append((url, body, headers))
         return 204
 
-    hcp_oauth.attempt(d, post=post)
+    hcp_webhooks.attempt(d, post=post)
     url, body, headers = seen[0]
     assert url == "https://app.example.org/hcp-hook"
-    secret = hcp_oauth.webhook_secret(d.client)
+    secret = hcp_webhooks.webhook_secret(d.client)
     expected = hmac.new(secret.encode(), f"{headers['HCP-Timestamp']}.".encode() + body,
                         hashlib.sha256).hexdigest()
     assert hmac.compare_digest(headers["HCP-Signature"], expected)
@@ -283,7 +283,7 @@ def test_a_failing_webhook_is_retried_then_abandoned(lili, client_id, django_cap
         d.refresh_from_db()
         if d.abandoned_at:
             break
-        hcp_oauth.attempt(d, now=now, post=post)
+        hcp_webhooks.attempt(d, now=now, post=post)
         d.refresh_from_db()
         now = d.next_attempt_at
     assert d.abandoned_at is not None and d.attempts >= 5

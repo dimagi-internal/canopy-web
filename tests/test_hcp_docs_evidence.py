@@ -10,7 +10,7 @@ line to fix.
 What is checked, by the shape of the backticked token (see `check`):
 
 * a test name (`test_x`, or `test_x…` for a prefix) is a `def` in `tests/`;
-* `hcp.x`, `hcp_api.x`, `hcp_oauth.x`, `embeddings.x` is an attribute of that module;
+* `hcp.x`, `hcp_api.x`, `hcp_oauth.x`, `hcp_webhooks.x`, `embeddings.x` is an attribute of that module;
 * a model, `Model.field` is a model in `apps/` with that attribute or field;
 * a path (`apps/...`, `hcp/relevance.py`, `templates/...`, a bare `x.md`) is a file;
 * a migration (`contacts/0022`) and a management command (`manage.py hcp_embed`)
@@ -113,7 +113,8 @@ def _norm_path(p: str) -> str:
 
 
 MODULES = {"hcp": "apps.contacts.hcp", "hcp_api": "apps.contacts.hcp_api",
-           "hcp_oauth": "apps.contacts.hcp_oauth", "embeddings": "apps.contacts.embeddings"}
+           "hcp_oauth": "apps.contacts.hcp_oauth", "hcp_webhooks": "apps.contacts.hcp_webhooks",
+           "embeddings": "apps.contacts.embeddings"}
 AUDIT_PREFIXES = ("grant.", "conflict.", "revocation.", "preference.", "collection.", "viewer.")
 
 
@@ -134,7 +135,7 @@ def check(tok: str, c: dict) -> str | None:
     if re.fullmatch(r"[\w]+\.test\.tsx?", tok):
         return None if any(f.endswith("/" + tok) for f in c["files"]) else "no such frontend test"
     # `module.symbol` or `module.symbol(args)`.
-    m = re.match(r"(hcp|hcp_api|hcp_oauth|embeddings)\.([A-Za-z_]\w*)", tok)
+    m = re.match(r"(hcp|hcp_api|hcp_oauth|hcp_webhooks|embeddings)\.([A-Za-z_]\w*)", tok)
     if m and m.group(2) != "py" and not tok.startswith("hcp.me"):
         mod = importlib.import_module(MODULES[m.group(1)])
         return None if hasattr(mod, m.group(2)) else f"{MODULES[m.group(1)]} has no {m.group(2)}"
@@ -272,7 +273,7 @@ def test_the_conformance_table_cites_tests_it_can_run(corpus):
 def _numbers():
     from django.conf import settings
 
-    from apps.contacts import hcp, hcp_oauth
+    from apps.contacts import hcp, hcp_oauth, hcp_webhooks
 
     h = dt.timedelta
     return [
@@ -287,8 +288,8 @@ def _numbers():
          tuple(hcp_oauth.TEMPORARY_CHOICES.values()), (h(hours=1), h(hours=4), h(hours=24))),
         ("hcp-service.md", "4 h (pre-selected)", hcp_oauth.TEMPORARY_DEFAULT, "4h"),
         ("hcp-service.md", "1, 5, 15, 30 and 60 minutes",
-         tuple(hcp_oauth.WEBHOOK_BACKOFF), tuple(h(minutes=m) for m in (1, 5, 15, 30, 60))),
-        ("hcp-service.md", "6 attempts", hcp_oauth.WEBHOOK_MAX_ATTEMPTS, 6),
+         tuple(hcp_webhooks.WEBHOOK_BACKOFF), tuple(h(minutes=m) for m in (1, 5, 15, 30, 60))),
+        ("hcp-service.md", "6 attempts", hcp_webhooks.WEBHOOK_MAX_ATTEMPTS, 6),
         ("hcp-service.md", "120 requests a minute per client", hcp_oauth.RATE_LIMIT_PER_MINUTE, 120),
         ("hcp-conformance.md", "min(maxEntries, 20)", hcp.MAX_ENTRIES, 20),
         ("hcp-service.md", "at most 20 entries per search", hcp.MAX_ENTRIES, 20),
