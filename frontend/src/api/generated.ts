@@ -17975,10 +17975,10 @@ export interface paths {
             readonly cookie?: never;
         };
         /**
-         * The projects you could share your laptop sessions with
-         * @description Every project in your workspaces whose repo is one you work in through
-         *     canopy, and whether your laptop sessions in that repo are shared with its
-         *     team. Unset: nothing is shared — a laptop session is yours alone.
+         * The projects you still share your laptop sessions with
+         * @description Every project whose team can still read, write and pull your laptop
+         *     sessions in its repo, because you shared them before this was retired.
+         *     Empty for almost everyone: a laptop session is yours alone.
          */
         readonly get: operations["list_session_sharing"];
         readonly put?: never;
@@ -17998,12 +17998,11 @@ export interface paths {
         };
         readonly get?: never;
         /**
-         * Share (or stop sharing) your laptop sessions with a project's team
-         * @description On: every session discovered on a box you own, in this project's repo and
-         *     workspace, is visible to the project's team — its owner and the people taking
-         *     part in it, never an agent's own login — who read, write and may ask your
-         *     machine for its live stream and history. Never a sensitive one. Off: the next
-         *     read drops it.
+         * Stop sharing your laptop sessions with a project's team
+         * @description `shared: false` turns off a share you have: the project's team stops
+         *     seeing your laptop sessions in its repo on the next read. `shared: true` is
+         *     refused (409): sharing all your sessions in a repo with a project's team is
+         *     retired. To share one session with named people, add them on its page.
          */
         readonly put: operations["set_session_sharing"];
         readonly post?: never;
@@ -48130,7 +48129,7 @@ export interface components {
         };
         /**
          * ProjectSessionShareOut
-         * @description One project you could share your laptop sessions with (`/api/me/session-sharing/`).
+         * @description A project you still share your laptop sessions with (`/api/me/session-sharing/`).
          */
         readonly ProjectSessionShareOut: {
             /**
@@ -48168,7 +48167,7 @@ export interface components {
         };
         /**
          * ProjectSessionShareIn
-         * @description Turn sharing your laptop sessions with one project's team on or off.
+         * @description `false` stops sharing your laptop sessions with one project's team; `true` is refused (retired).
          */
         readonly ProjectSessionShareIn: {
             /** Shared */

@@ -242,8 +242,9 @@ The anonymous token-scoped viewers, and the root pages: the public site, getting
   - **Profile** — every workspace you are in, your role, and how members there
     see you.
   - **Account** — contact details, presence, where your sessions are filed,
-    which project teams you share them with (`#session-sharing`), who may review
-    them.
+    who may review them; and, only for someone who still has one, the project
+    teams they share laptop sessions with, to stop (`#session-sharing`; starting
+    a new share is retired).
   - **Security** — passkeys and your vault key (`#vault-key`: set up with a PRF
     passkey or a passphrase + Secret Key with a one-time Emergency Kit),
     recovery, runner device keys (`#device-keys`, `#your-runners`; a box's

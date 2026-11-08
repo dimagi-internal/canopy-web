@@ -505,7 +505,7 @@ QUERY_ALLOWLIST = {
     ("apps/contacts/people_api.py", "add_person_fact"): "the writer: refuses a personal project",
     ("apps/runs/aggregate.py", "narrative_signals"): "project_out renders a personal project as None",
     ("apps/dynamic_views/api.py", "connection_share_target"): "filtered to workspace projects",
-    ("apps/canopy_sessions/sharing.py", "candidates"): "filtered to workspace projects",
+    ("apps/canopy_sessions/sharing.py", "shared_projects"): "the caller's own live shares, workspace projects only",
     ("apps/canopy_sessions/access.py", "_project_share_q"): "filtered to workspace projects",
     ("apps/canopy_sessions/audience.py", "_project_teams"): "filtered to workspace projects",
 }
