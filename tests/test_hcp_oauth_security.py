@@ -26,7 +26,7 @@ from django.utils import timezone
 
 from apps.contacts import hcp, hcp_oauth
 from apps.contacts.models import HcpClient, PersonAuditEvent, PersonFact, PersonGrant
-from tests.test_hcp_service import (
+from tests.fixtures.hcp_oauth import (
     READ,
     REDIRECT,
     WRITE,
