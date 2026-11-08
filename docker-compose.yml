@@ -9,7 +9,7 @@ services:
     ports:
       - "9102:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - pgdata18:/var/lib/postgresql
 
   app:
     build: .
@@ -28,4 +28,4 @@ services:
       - .:/app
 
 volumes:
-  pgdata:
+  pgdata18:
