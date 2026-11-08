@@ -1,5 +1,12 @@
 # The HCP service
 
+> **Owner:** Jonathan Jackson. **Read this before touching HCP** (CLAUDE.md points
+> here). Start with "The pieces" below; the self-audit against the spec is
+> `hcp-conformance.md`. Both pages are pinned to the code by
+> `tests/test_hcp_docs_evidence.py` (every symbol, test, path, route, event and figure
+> they cite must resolve), and the OAuth properties are attacked, one by one, in
+> `tests/test_hcp_oauth_security.py`.
+
 canopy holds each person's **Human Context Protocol** instance (HCP v1, draft 4:
 `apps/contacts/hcp/` — `core`, `consent`, `sensitive`, `entries`, `grants`,
 `relevance`, `conformance` — and `hcp_api.py`). canopy's own agents reach it under grants
@@ -19,7 +26,7 @@ self-audit against the spec is `hcp-conformance.md`.
 | Piece | Where |
 |---|---|
 | A person's own instance, with or without a workspace | `PersonFact.workspace` NULL = a **personal** entry (`contacts/0020`); `/people/me` |
-| Client registry (admins) | `HcpClient`; `/api/hcp-admin/clients` (`hcp_clients_api.py`); page `/hcp-clients` |
+| Client registry (superusers) | `HcpClient`; `/api/hcp-admin/clients` (`hcp_clients_api.py`); page `/hcp-clients` (`HcpClientsPage.tsx`): register an app, disable it, view and set its `allowed_scopes` from the scopes the service publishes (`scopes_supported` in the RFC 8414 metadata) |
 | Authorization server | `hcp_oauth.py`, `hcp_oauth_views.py`; issuer `<origin>/api/hcp`; PKCE, token-endpoint redirect_uri and one-time redemption shared with the MCP sign-in in `apps/common/oauth_core.py` |
 | Consent screen | `templates/contacts/hcp_consent.html` (act 1), `hcp_keep.html` (act 2) |
 | Tokens | `HcpToken` (access 1 h; refresh rotates), `HcpAuthorizationCode` (10 min, single use) |
@@ -28,7 +35,9 @@ self-audit against the spec is `hcp-conformance.md`.
 | Discovery | `/api/hcp/.well-known/hcp-configuration` (also `/.well-known/hcp-configuration`) |
 | RFC 8414 metadata | `/api/hcp/.well-known/oauth-authorization-server` and `/.well-known/oauth-authorization-server/api/hcp` |
 | MCP manifest (Appendix B) | `/api/hcp/.well-known/mcp-manifest` |
-| The internal-only gate | `settings.HCP_SERVICE_AUDIENCE` (env), read only by `hcp_oauth.audience()` |
+| The internal-only gate | `settings.HCP_SERVICE_AUDIENCE`, read only by `hcp_oauth.audience()` (`test_the_audience_setting_is_read_in_one_place`) |
+| Management commands | `hcp_embed`, `hcp_explain`, `hcp_backfill_searches` ("Commands" below) |
+| The code | `apps/contacts/hcp/` (`core`: errors, actors, constants; `entries`: the entry chain; `grants`: grants and reach; `consent`: the person's switches and the rollout; `relevance`: search; `sensitive`: sensitive sessions; `conformance`: discovery), the transports `hcp_api.py` (REST), `contact_hcp_api.py` (trusted-site contacts), `hcp_oauth.py` with `hcp_oauth_views.py` (the service), and `hcp_collections.py` (memory collections) |
 
 ## The flow
 
@@ -42,9 +51,10 @@ self-audit against the spec is `hcp-conformance.md`.
    must be a fully named `hcp:{category}:{read|write}` for a category canopy holds,
    and must be within the client's `allowed_scopes`. Errors from here on are
    redirected back to the client, as RFC 6749 says.
-4. **Sign-in and the audience gate.** The person signs in if they aren't already.
+4. **Sign-in and the gates.** The person signs in if they aren't already.
    A session minted from a token is refused (`is_machine`). Then the audience gate
-   applies.
+   applies (an empty `AUTH_ALLOWED_EMAIL_DOMAIN` authorizes nobody while internal),
+   then the rollout gate (`HCP_PEOPLE`, "Who has memory at all").
 5. **Act 1: the consent screen.** It shows:
    - the client's name and operator;
    - a row per category with read / save-or-change;
@@ -89,8 +99,8 @@ to an outside app by default would leak a tenant's dealings. So the consent scre
 offers each workspace that holds entries about the person, **unticked**, and the
 choice is recorded on the grant as a 4.1.5.1 restriction:
 `narrowedTo: {"sources": ["personal", "workspace:<slug>"]}`. `narrowedTo` is
-implementation-defined at v1. The person's grant list shows the reach (Rule 3), and
-every read path filters by it (Rule 4, `hcp.within_grant`).
+implementation-defined at v1. The person's grant list shows the reach (4.1.5.1 Rule 3), and
+every read path filters by it (4.1.5.1 Rule 4, `hcp.within_grant`).
 
 **A client's writes are personal entries.** No workspace's agent is told an entry
 an outside app wrote.
@@ -591,3 +601,25 @@ deploy.
 - **The agent-facing contract does not change with the ranker:** ≤20 results, no
   paging, provenance redacted (4.4.4), no counts of what was withheld (4.4.5). An
   LLM re-rank of the top 10–20, if added, declares `llm`.
+
+## Commands
+
+All three run with `python manage.py <name>` on a task (the `aws ecs execute-command`
+form is under "Seeing and tuning search"). Each has its usage in the module docstring.
+
+| Command | What it does | When |
+|---|---|---|
+| `hcp_embed [--dry-run]` | Gives every served entry a vector from the current model. Prints the zero-retention check first and refuses on a no. | Right after turning embeddings on or changing `HCP_EMBEDDINGS_MODEL`. Searches fill missing vectors a batch at a time on their own. |
+| `hcp_explain --person <email> "<question>" [--floor --weight --boost --project --limit]` | Scores every one of a person's entries against a question and says why each did or did not come back. Read-only, but the read lands in the person's own audit. | Tuning search. |
+| `hcp_backfill_searches [--dry-run]` | Rebuilds a `PersonSearch` for each search that ran before searches were recorded, from the audit (`preference.read` rows sharing a `retrievalId`). Idempotent; the rebuilt rows are unscored. | Once, if old searches should show on `/people/me` → What happened. |
+
+## What keeps this page true
+
+- `tests/test_hcp_docs_evidence.py` resolves every symbol, test, path, route, audit
+  event and setting named here and in `hcp-conformance.md`, and pins the figures
+  (lifetimes, limits, defaults) to the constants that implement them.
+- `tests/test_hcp_oauth_security.py` attacks the OAuth server: stolen codes and
+  refresh tokens, PKCE downgrade, redirect near-misses, scope widening, revoked and
+  expired grants, machine sessions, one person against another, the internal-only gate.
+- `.github/workflows/hcp-spec-probe.yml` watches the spec site for the schema and for a
+  draft newer than the one this implements (`scripts/hcp_spec_probe.py`).

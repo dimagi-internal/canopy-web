@@ -1,13 +1,23 @@
 # HCP v1 conformance self-audit
 
-**What this audits:** canopy's HCP instance (`apps/contacts/hcp*.py`) against HCP
-v1, draft 4 (*"Human Context Protocol (HCP) v1 — Draft Reference Specification,
+> **Owner:** Jonathan Jackson. **Start here before touching HCP** (the design is
+> `hcp-service.md`; CLAUDE.md points here). `tests/test_hcp_docs_evidence.py` resolves
+> every symbol, test, path, route, event and figure this page cites, so a change to the
+> code this page depends on fails there until the page is true again.
+> `.github/workflows/hcp-spec-probe.yml` watches for the one thing that closes the
+> open MUST (below) to appear.
+
+**What this audits:** canopy's HCP instance (`apps/contacts/hcp/`, `hcp_api.py`,
+`hcp_oauth.py`, `hcp_oauth_views.py`, `hcp_clients_api.py`, `hcp_collections.py`,
+`contact_hcp_api.py`) against HCP v1, draft 4 (*"Human Context Protocol (HCP) v1 — Draft Reference Specification,
 1.0-draft-4"*, Stanford HAI, Sept 2026).
 
 **Method** (the service itself is `hcp-service.md`): each criterion of
 5.2 (Core), plus what 5.2.1 adds for Interop, is marked **pass**, **gap** (with
 the reason), **n/a**, or **SHOULD-gap**. Evidence is a code path, or a test in
-`tests/test_hcp.py`, `test_hcp_personal.py` or `test_hcp_service.py`.
+`tests/test_hcp.py`, `test_hcp_personal.py`, `test_hcp_service.py`,
+`test_hcp_oauth_security.py`, `test_hcp_agent_grants.py`, `test_hcp_trusted_contacts.py`
+or `test_hcp_relevance.py`.
 
 ## Verdict
 
@@ -25,7 +35,7 @@ the reason), **n/a**, or **SHOULD-gap**. Evidence is a code path, or a test in
 
 | Open MUST | Why it is open | What closes it |
 |---|---|---|
-| **2.1.1 Tier 1 JSON Schema validation.** | Appendix A says the schema *will be* published at `https://hcp.me/schemas/v1`. It is not, so there is nothing authoritative to validate against. | Validate on write and emit once the schema is published. |
+| **2.1.1 Tier 1 JSON Schema validation.** | Appendix A says the schema *will be* published at `https://hcp.me/schemas/v1`. That URL answers 200 `text/html` (the spec site's single-page-app shell), not a schema, so there is nothing authoritative to validate against. | Validate on write and emit once the schema is published. The scheduled probe (`scripts/hcp_spec_probe.py`, run by `.github/workflows/hcp-spec-probe.yml`) opens an issue when that URL starts returning JSON with a `$schema`; that issue is the signal to build the validation and change `hcp.CONFORMANCE_LEVEL`. |
 
 ### Closed
 
@@ -73,7 +83,7 @@ the reason), **n/a**, or **SHOULD-gap**. Evidence is a code path, or a test in
 | Category-scoped, revocable grants exposed per 4.1.5 | pass | `PersonGrant`, `hcp.grant_dict` |
 | Authorization distinct from authentication (4.1.6), no silent scope expansion | pass | Contacts: arriving through a trusted site authorizes nothing; opting in is their act in canopy's frame, after the disclosure (`test_the_site_holding_the_token_can_do_none_of_it`). OAuth: consent acts 1 + 2. canopy's agents: the session's allow act, after the disclosure; a feature the agent's grant lacks needs a new act (`test_widening_is_its_own_act…`) |
 | Grants SHOULD use OAuth 2.0; else declared per 5.2.1 | pass | `authorization_profile: oauth2` |
-| Grant objects; the person can enumerate and revoke | pass | `GET` / `DELETE /v1/grants`; `/people/me` |
+| Grant objects; the person can enumerate and revoke | pass | `GET /v1/grants`, `DELETE /v1/grants/{grantId}`; `/people/me` |
 | A grant never disclosed to another client | pass | `GET /v1/grants` with a client token returns its own; `test_a_token_opens_hcp_v1_only…` |
 | `grantor` when the authorizer is not the subject | pass | always the subject at v1; `grantor` null |
 | Narrowed grants: restriction carried, presented, enforced (4.1.5.1) | pass | Every grant carries its reach in `narrowedTo.sources`, and one `hcp.reach_of` answers it on every read path (search, get, the envelope). OAuth grants: personal plus the workspaces the person ticked. First-party agent grants: derived, never chosen in a prompt — `tree:<agent's root workspace>` (every division of the agent's own organisation, as it is when read; never another organisation's, never personal). A site is not a context: an agent reached through a trusted site's widget gets the same reach. To let an agent reach more, the person points it at one of their memory collections (`MemoryCollection`, `hcp_collections` — built from whole organisations, single workspaces and entries in no workspace; the **Reads** picker on each agent's card and the Collections panel on `/people/me`); the restriction then names `collection:<id>` plus the resolved sources. Any widening — pointing an agent at a wider collection, or adding a context to a collection in use — is refused until the person confirms, naming every affected grant, and each gets a `grant.issued`; a narrowing applies at once with `grant.narrowed`. The disclosure, `grant.issued` detail, `/people/me` and `GET /v1/grants` all name the reach. Agent grants that predate reach carry `workspace:<slug>` (migration 0023) — exactly the reach they were enforced to, so nothing is widened and no `grant.issued` is owed. `test_workspace_entries_are_reached_only_when_ticked`, `test_an_agent_in_another_division_reads_org_wide_but_not_personal`, `test_personal_is_reached_only_through_a_collection_with_confirmation`, `test_editing_a_collection_needs_confirmation_to_widen_and_narrows_at_once`, `test_a_collection_of_one_workspace_narrows_an_agent_to_it`, `test_another_organisations_agent_never_reaches_dimagis_memory` |
@@ -123,13 +133,15 @@ the reason), **n/a**, or **SHOULD-gap**. Evidence is a code path, or a test in
 
 | Gate | Status | Test |
 |---|---|---|
-| Authorization code + PKCE S256 required; `plain` refused | pass | `test_pkce_is_required`, `test_a_wrong_verifier_gets_no_token` |
-| Exact redirect URI; an unregistered one is shown, not redirected to | pass | `test_a_redirect_uri_not_registered_is_never_redirected_to` |
+| Authorization code + PKCE S256 required; `plain` refused; a plain verifier sent as the challenge buys nothing | pass | `test_pkce_is_required`, `test_a_wrong_verifier_gets_no_token`, `test_a_plain_verifier_offered_as_a_challenge_buys_nothing` |
+| Exact redirect URI; an unregistered one is shown, not redirected to | pass | `test_a_redirect_uri_not_registered_is_never_redirected_to`, `test_a_redirect_uri_must_match_exactly` |
 | Scopes per 4.1.1, no wildcards, never beyond registration | pass | `test_a_client_cannot_ask_beyond_its_registration_or_with_a_wildcard` |
 | Declining creates no grant | pass | `test_denying_creates_no_grant` |
-| Codes single use; replay revokes | pass | `test_a_code_works_once` |
-| Refresh rotation; reuse revokes | pass | `test_a_rotated_refresh_token_presented_again_revokes_the_grant` |
-| Temporary grant not refreshed past expiry; `grant.expired` logged | pass | `test_a_temporary_grant_is_not_refreshed_past_its_expiry` |
+| Codes single use; replay revokes; a code or refresh token belongs to its client | pass | `test_a_code_works_once`, `test_a_code_is_redeemable_only_by_the_client_it_was_issued_to`, `test_a_refresh_token_is_redeemable_only_by_its_client` |
+| Refresh rotation; reuse revokes; refreshing never widens scope | pass | `test_a_rotated_refresh_token_presented_again_revokes_the_grant`, `test_refreshing_cannot_widen_the_scope` |
+| Temporary grant not refreshed past expiry; `grant.expired` logged; its access token stops too | pass | `test_a_temporary_grant_is_not_refreshed_past_its_expiry`, `test_an_expired_temporary_grant_stops_its_access_token` |
+| A revoked grant opens nothing; a token minted into a session cannot answer the consent screen | pass | `test_a_revoked_grant_cannot_be_redeemed_for_tokens`, `test_a_session_minted_from_a_token_cannot_answer_the_consent_screen` |
+| One person's token reaches nothing of another's | pass | `test_one_persons_token_reaches_nothing_of_anothers`, `test_two_people_authorizing_one_client_get_separate_grants` |
 | RFC 7009 revocation | pass | `test_a_client_revoking_its_token_ends_the_grant` |
 | RFC 8414 metadata | pass | `test_discovery_says_oauth2_and_where_everything_is` |
 | Token introspection (RFC 7662) | n/a | not required by HCP |

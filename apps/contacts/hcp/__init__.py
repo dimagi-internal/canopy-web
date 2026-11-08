@@ -16,8 +16,10 @@ Spec: "Human Context Protocol (HCP) v1 — Draft Reference Specification",
   this session" or "always" (`issue_agent_grant`); the person's settings are
   policy that bounds it. Nothing is presumed. OAuth apps consent on the HCP
   service's screen (`hcp_oauth`).
-* **Relevance is lexical** (4.4.3): term overlap between the query and the
-  entry, with a person's corrections and role always relevant to their own turn.
+* **Relevance is declared** (4.4.3): `lexical` (term overlap between the query
+  and the entry) or, while `HCP_EMBEDDINGS_MODEL` names a model, `hybrid` (the same
+  plus closeness in meaning); a person's corrections and role are always relevant
+  to their own turn. See `relevance.py`.
 
 Every rule a route could get subtly wrong is a function here, so REST, MCP and
 the turn envelope apply the same one.
