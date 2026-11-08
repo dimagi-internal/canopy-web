@@ -21,7 +21,11 @@ hold a correct prior — which a client that just connected does not have.
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 
+from django.utils import timezone
+
+from apps.harness.models import Turn
 from apps.realtime.groups import publish, session_group
 
 from . import session_state
@@ -183,12 +187,6 @@ def _resay_idle() -> None:
     heard `idle` replaces it with `idle`. `publish_idle` still says nothing
     unless the session resolver agrees nothing is running.
     """
-    from datetime import timedelta
-
-    from django.utils import timezone
-
-    from apps.harness.models import Turn
-
     now = timezone.now()
     quiet = now - timedelta(seconds=RESAY_IDLE_QUIET_SECONDS)
     ended = (Turn.objects.filter(chat_session__isnull=False,
