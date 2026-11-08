@@ -265,6 +265,71 @@ def test_a_settled_turn_is_not_swept(monkeypatch):
     assert _statuses(sent, session) == []
 
 
+def _idles(sent, session):
+    return [m for g, m in sent
+            if g.endswith(session.id.hex) and m.get("type") == "chat.turn_event"
+            and m["event"]["kind"] == "activity:idle"]
+
+
+def _ended(session, runner, *, minutes_ago):
+    turn, _ = harness.enqueue_turn(initiator=_BY_CANOPY, session=session, origin=Turn.ORIGIN_API,
+                                   idempotency_key=f"k{minutes_ago}", prompt="hi")
+    turn.status, turn.claimed_by = Turn.DONE, runner
+    turn.finished_at = timezone.now() - _dt.timedelta(minutes=minutes_ago)
+    turn.save(update_fields=["status", "claimed_by", "finished_at"])
+    return turn
+
+
+def test_the_sweep_says_idle_again_for_a_session_whose_turn_ended_recently(monkeypatch):
+    """The live frame that ends a run is never stored and its backstops fire once,
+    so a page that missed them drew "Thinking…" over a finished reply until it
+    reconnected. The sweep says it again while the turn is recent."""
+    from django.core.cache import cache
+
+    cache.delete(status_feed.SWEEP_LOCK)
+    user, ws, agent, session = _ctx()
+    runner = _runner("jj-mbp", runner_owner=user, ws=ws, agent=agent, online=True)
+    _ended(session, runner, minutes_ago=6)
+
+    sent = _capture(monkeypatch)
+    status_feed.sweep(force=True)
+    assert len(_idles(sent, session)) == 1
+
+
+@pytest.mark.parametrize("minutes_ago", [0, 45])
+def test_not_while_the_turn_has_only_just_ended_nor_long_after(monkeypatch, minutes_ago):
+    from django.core.cache import cache
+
+    cache.delete(status_feed.SWEEP_LOCK)
+    user, ws, agent, session = _ctx()
+    runner = _runner("jj-mbp", runner_owner=user, ws=ws, agent=agent, online=True)
+    _ended(session, runner, minutes_ago=minutes_ago)
+
+    sent = _capture(monkeypatch)
+    status_feed.sweep(force=True)
+    assert _idles(sent, session) == []
+
+
+def test_not_for_a_session_just_typed_into_on_its_laptop(monkeypatch):
+    """A prompt typed straight into emdash makes no Turn, and the engine flag that
+    would say "working" arrives a report late: re-saying idle there would put the
+    page wrong the other way."""
+    from django.core.cache import cache
+
+    from apps.canopy_sessions.models import RunnerBinding
+
+    cache.delete(status_feed.SWEEP_LOCK)
+    user, ws, agent, session = _ctx()
+    runner = _runner("jj-mbp", runner_owner=user, ws=ws, agent=agent, online=True)
+    _ended(session, runner, minutes_ago=6)
+    RunnerBinding.objects.update_or_create(session=session, defaults={
+        "runner": runner, "last_interacted_at": timezone.now()})
+
+    sent = _capture(monkeypatch)
+    status_feed.sweep(force=True)
+    assert _idles(sent, session) == []
+
+
 # -- queued behind the turn ahead (canopy-web#1147) ---------------------------
 #
 # The status and the claim must give the same answer, so these drive the real
