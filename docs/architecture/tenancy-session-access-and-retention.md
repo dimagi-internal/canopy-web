@@ -15,9 +15,11 @@ One module decides who may see and act on a chat session: `apps/canopy_sessions/
   the box — `access.may_move`) · a **project share**: the box owner shared their laptop
   sessions in a project's repo with that project's team, and you are on it (its
   `owner_user` or a `ProjectParticipant`; never an agent's own login, never a sensitive
-  session; editor, may pull). Per person × project, opt-in, revocable, each change an
-  audited setting (`ProjectSessionShare`, `canopy_sessions/sharing.py`,
-  `/api/me/session-sharing/`, Settings → Account). Who sees what per
+  session; editor, may pull). Per person × project, revocable, each change an audited
+  setting (`ProjectSessionShare`, `canopy_sessions/sharing.py`,
+  `/api/me/session-sharing/`, Settings → Account). Retired for new shares — the team
+  is the project's participants, which canopy grows by itself, so it never matched
+  what a person agreed to; existing shares hold until their person stops them. Who sees what per
   channel: `access-sessions-and-people.md` § Who can see a session.
 - **Pulling from a machine is `access.may_pull`.** Asking a runner to stream a session
   (`POST /{id}/attach`, and the chat socket's connect) or to ship its history

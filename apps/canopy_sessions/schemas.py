@@ -14,7 +14,7 @@ from apps.harness.schemas import ChatSendOrigin, ParentIn, TurnOut, chat_send_or
 
 
 class ProjectSessionShareOut(Schema):
-    """One project you could share your laptop sessions with (`/api/me/session-sharing/`)."""
+    """A project you still share your laptop sessions with (`/api/me/session-sharing/`)."""
     project_id: int = Field(description="The project's id.")
     handle: str = Field(description="The project's handle in its workspace.")
     name: str
@@ -25,7 +25,7 @@ class ProjectSessionShareOut(Schema):
 
 
 class ProjectSessionShareIn(Schema):
-    """Turn sharing your laptop sessions with one project's team on or off."""
+    """`false` stops sharing your laptop sessions with one project's team; `true` is refused (retired)."""
     shared: bool
 
 

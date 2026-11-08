@@ -2,10 +2,11 @@ import { useEffect, useState } from 'react'
 import { getSessionSharing, setSessionSharing, type SessionShare } from '@/api/canopyProjects'
 
 /**
- * "Share my sessions with the project team" — per project, off by default. A
- * session on your laptop is yours alone; turning a project on shows your sessions
- * in its repo to that project's team, who can read and work in them
- * (apps/canopy_sessions/sharing.py, ProjectSessionShare).
+ * The project teams you still share your laptop sessions with — shown only to
+ * someone who has such a share, so they can end it. Starting a new one is
+ * retired (apps/canopy_sessions/sharing.py): the "team" was the project's
+ * participants, a list canopy grows by itself, so it never matched what a
+ * person thought they agreed to. To share one session, add people on its page.
  */
 export function SessionSharingPanel() {
   const [rows, setRows] = useState<SessionShare[] | null>(null)
@@ -15,15 +16,15 @@ export function SessionSharingPanel() {
   useEffect(() => {
     getSessionSharing()
       .then(setRows)
-      .catch((e) => setError(e instanceof Error ? e.message : 'could not load'))
+      .catch(() => setRows([]))
   }, [])
 
-  const toggle = async (row: SessionShare) => {
+  const stop = async (row: SessionShare) => {
     setBusy(row.project_id)
     setError(null)
     try {
-      const next = await setSessionSharing(row.project_id, !row.shared)
-      setRows((prev) => (prev ?? []).map((r) => (r.project_id === next.project_id ? next : r)))
+      await setSessionSharing(row.project_id, false)
+      setRows((prev) => (prev ?? []).filter((r) => r.project_id !== row.project_id))
     } catch (e) {
       setError(e instanceof Error ? e.message : 'could not save')
     } finally {
@@ -31,41 +32,38 @@ export function SessionSharingPanel() {
     }
   }
 
-  if (rows === null && !error) return null
+  if (!rows || rows.length === 0) return null
   return (
     <div id="session-sharing" className="rounded-xl border border-border bg-card p-5 space-y-3" data-testid="settings-session-sharing">
       <div>
-        <h2 className="text-sm font-semibold text-foreground">Share my sessions with a project team</h2>
+        <h2 className="text-sm font-semibold text-foreground">Laptop sessions you still share with a project team</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Sessions on your machines are yours alone. Turn a project on and your sessions in its repo
-          are visible to that project&apos;s team, who can read and work in them. Agents never see
-          them this way. Turn it off at any time.
+          Every session on your own machines in these repos can be read, worked in and pulled from your
+          machine by the project&apos;s owner and anyone canopy counts as taking part in it — a list that
+          grows as people reply on its tasks or join its check-ins. This setting is retired: you can stop
+          sharing, but not start again. To share one session, add people to it from its page.
         </p>
       </div>
-      {rows && rows.length === 0 ? (
-        <p className="text-[12px] text-muted-foreground">No project in your workspaces works in one of your repos.</p>
-      ) : (
-        <ul className="divide-y divide-border rounded-md border border-border">
-          {(rows ?? []).map((row) => (
-            <li key={row.project_id}>
-              <label className="flex items-center gap-2 px-2 py-1 text-[13px] text-foreground">
-                <input
-                  type="checkbox"
-                  checked={row.shared}
-                  disabled={busy !== null}
-                  onChange={() => void toggle(row)}
-                  data-testid={`session-sharing-${row.project_id}`}
-                />
-                <span>{row.name}</span>
-                <span className="font-mono text-[12px] text-muted-foreground">{row.repo}</span>
-                <span className="text-[11px] text-muted-foreground">
-                  {row.workspace} · team of {row.team_size}
-                </span>
-              </label>
-            </li>
-          ))}
-        </ul>
-      )}
+      <ul className="divide-y divide-border rounded-md border border-border">
+        {rows.map((row) => (
+          <li key={row.project_id} className="flex items-center gap-2 px-2 py-1.5 text-[13px] text-foreground">
+            <span>{row.name}</span>
+            <span className="font-mono text-[12px] text-muted-foreground">{row.repo}</span>
+            <span className="text-[11px] text-muted-foreground">
+              {row.workspace} · {row.team_size} {row.team_size === 1 ? 'person' : 'people'} today
+            </span>
+            <button
+              type="button"
+              className="ml-auto rounded-md border border-border px-2 py-0.5 text-[12px] hover:bg-muted disabled:opacity-50"
+              disabled={busy !== null}
+              onClick={() => void stop(row)}
+              data-testid={`session-sharing-stop-${row.project_id}`}
+            >
+              Stop sharing
+            </button>
+          </li>
+        ))}
+      </ul>
       {error && <p className="text-[12px] text-destructive">{error}</p>}
     </div>
   )

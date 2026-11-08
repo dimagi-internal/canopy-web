@@ -1,57 +1,47 @@
 """Sharing your laptop sessions in a project's repo with that project's team.
 
-A runner-discovered session is its box owner's alone (`access`, leg 3). The way
-to make it multiplayer for a whole project, rather than one session at a time,
-is this: per person × project, the person's own explicit, revocable choice
-(`ProjectSessionShare`). Once on, every laptop session of theirs in the
-project's repo and workspace is visible — read, write and pull — to the
-project's team (its owner and the people taking part in it), never to an
-agent's own login (`access._project_share_q`, leg 7).
+RETIRED for new shares; the shares that already exist keep working until their
+person turns them off.
 
-The routes are `/api/me/session-sharing/` (`sharing_api.py`); each change is an
-audited setting change.
+A runner-discovered session is its box owner's alone (`access`, leg 3). A
+`ProjectSessionShare` is the person's explicit, revocable choice, per project:
+while it is live, every laptop session of theirs in the project's repo and
+workspace is visible — read, write and pull — to the project's team (its owner
+and the people taking part in it), never to an agent's own login
+(`access._project_share_q`, leg 7).
+
+Nobody may start a new one: the team it shares with is not a list anyone
+chose — canopy adds a project's participants by itself, as people reply on its
+tasks, back it, comment on its storyboards or join its check-ins — so turning a
+project on handed edit and pull rights over your machine's sessions to people
+who joined later. Sharing one session with named people is its page's "Add
+people" (leg 2).
+
+The routes are `/api/me/session-sharing/` (`sharing_api.py`): list your live
+shares and turn one off. Each change is an audited setting change.
 """
 from __future__ import annotations
 
 from django.db import transaction
-from django.db.models import Q
 from django.utils import timezone
 
 from apps.agents.models import AgentProject, ProjectParticipant
-from apps.harness.models import ProjectOptIn, Runner
-from apps.workspaces import services as wsvc
 
 from . import lifecycle
 from .models import ProjectSessionShare
 
 
-def _held_repos(user) -> set[str]:
-    """The repos the person works in through canopy: what their boxes hold that
-    they opted into (`Runner.project_names`), plus the repos they named."""
-    held = set(ProjectOptIn.for_user_id(user.pk).projects or [])
-    for runner in Runner.objects.filter(owner=user).exclude(status=Runner.RETIRED):
-        held.update(runner.project_names())
-    return {r.lower() for r in held if r}
-
-
-def candidates(user):
-    """The projects the person could share with: projects in their workspaces
-    whose repo is one of theirs, plus any they already share."""
-    slugs = wsvc.user_workspace_slugs(user)
-    repos = _held_repos(user)
-    q = Q(pk__in=live(user).values("project_id"))
-    if repos:
-        repo_q = Q()
-        for r in repos:
-            repo_q |= Q(repo_slug__iexact=r)
-        q |= repo_q
-    # Never a personal project: its team is not who would read these sessions.
-    return (AgentProject.objects.filter(workspace_id__in=slugs, visibility=AgentProject.WORKSPACE).exclude(repo_slug="")
-            .filter(q).select_related("workspace").order_by("workspace_id", "handle"))
-
-
 def live(user):
     return ProjectSessionShare.objects.filter(user=user, revoked_at__isnull=True)
+
+
+def shared_projects(user):
+    """The projects the person still shares their laptop sessions with. Never a
+    personal one: a share on a project that became personal grants nothing (leg 7
+    asks for a workspace project) and its name is not theirs to see."""
+    return (AgentProject.objects.filter(pk__in=live(user).values("project_id"),
+                                        visibility=AgentProject.WORKSPACE)
+            .select_related("workspace").order_by("workspace_id", "handle"))
 
 
 def team_size(project) -> int:
@@ -64,18 +54,10 @@ def team_size(project) -> int:
     return len(ids)
 
 
-def set_shared(user, project, shared: bool) -> bool:
-    """Turn sharing on or off. Returns whether it is on afterwards. The caller has
-    checked the project is in one of the person's workspaces."""
+def stop_sharing(user, project) -> None:
+    """Turn a live share off. The next read drops the sessions it covered."""
     with transaction.atomic():
-        current = live(user).filter(project=project).first()
-        changed = (shared and current is None) or (not shared and current is not None)
-        if shared and current is None:
-            ProjectSessionShare.objects.create(user=user, project=project)
-        elif not shared and current is not None:
-            live(user).filter(project=project).update(revoked_at=timezone.now())
-        if changed:
+        if live(user).filter(project=project).update(revoked_at=timezone.now()):
             lifecycle.record(lifecycle.SHARING_CHANGED, None, by=user, workspace_id=project.workspace_id,
                              change={"field": "project_share", "user_id": user.pk, "project": project.pk,
-                                     "before": not shared, "after": shared})
-    return shared
+                                     "before": True, "after": False})
