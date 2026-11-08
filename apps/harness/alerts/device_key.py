@@ -10,9 +10,8 @@ reconcile no longer reports it. `approve` is a link to the existing approve deep
 link (`api_device_keys.approve_path`); taking it does not close the alert by
 itself, the approval does.
 
-This replaces the "approve <runner>" mail `device_key_notify.notify_pending`
-sent for a NEW key: the alert's own blocking notice reaches the same people
-(those who hold `approve`). Private runners (`workspace_id` NULL) are skipped:
+For a NEW key this alert's blocking notice is what reaches the people who hold
+`approve`; `device_key_notify.notify_pending` does not also mail it. Private runners (`workspace_id` NULL) are skipped:
 an alert needs a workspace (`Alert.workspace` is NOT NULL), so their pending-key
 mail stays. A re-approval (an active key with a new ECDH key) is not `pending`
 and also stays a mail.

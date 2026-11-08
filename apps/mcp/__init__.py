@@ -1,4 +1,4 @@
-"""canopy-web MCP server (FastMCP 3.x).
+"""canopy-web MCP server (FastMCP 4.x).
 
 A best-practice in-process MCP server: tools are explicit Python
 functions that run AS the authenticated user (resolved from a per-user

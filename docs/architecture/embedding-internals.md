@@ -11,8 +11,7 @@ Not this doc:
   with the code it describes.
 - **The host grant wire contract** (ID-JAG → jwt-bearer + `private_key_jwt` +
   DPoP → `site_call`) → [`sdk/python/README.md`](../../sdk/python/README.md#host-grant-contract-v1)
-  (`host-grant-contract.md` is a pointer to it). Design:
-  `docs/superpowers/specs/2026-09-26-embedded-caller-delegation-design.md`.
+  (`host-grant-contract.md` is a pointer to it).
 - **The MCP server itself** (generated tools, auth, `site_tools`/`site_call`) →
   [`mcp-surface.md`](mcp-surface.md).
 
@@ -20,14 +19,9 @@ Not this doc:
 
 One **contract version** across several packages; they share the contract, not
 code, because their consumers and dependencies differ (browser npm code vs. a
-Python server library).
-
-| Package | Where | What |
-|---|---|---|
-| `canopy-ui` | `frontend/packages/canopy-ui`, npm | Design-system kit + the chat kit (`canopy-ui/chat`: `ChatPanel`, `MenuPrompt`, `PlacementBanner`…), consumed by canopy-web and ace-web. |
-| `canopy-client` | `frontend/packages/canopy-client`, npm | Layer 1: framework-free transport — token cache, REST, session WS URL, host bridge. |
-| `canopy-widget` | `frontend/packages/canopy-widget`, **not published** | Layer 3: the drop-in loader, built and **served** by canopy at `/embed/widget.js` (`config/urls.py`). |
-| `dimagi-canopy` (import `canopy_sdk`) | `sdk/python`, GitHub Releases | The server side of host grant contract v1. |
+Python server library). Where each lives: `frontend/packages/{canopy-ui,canopy-client,canopy-widget}`
+and `sdk/python`. `canopy-widget` is **not published**: canopy builds and serves it at
+`/embed/widget.js` (`config/urls.py`).
 
 ### npm packages
 
@@ -47,19 +41,14 @@ Python server library).
   token — a new package needs a one-time Trusted Publisher setup on npmjs, see
   the workflow header), and write the `<pkg>-v<version>` tag. Don't push a tag
   by hand as the release step.
-- ace-web tracks the newest versions through Dependabot (daily, canopy packages
-  only) plus an auto-merge gated on its frontend build.
 
 ### `dimagi-canopy` (Python)
 
-`canopy_sdk.contract` (the wire values, defined once), `.host` (what a site
-runs: sign the assertion + ID-JAG, the page registry, the jwt-bearer
-`GrantHandler`, the MCP-side DPoP `ResourceVerifier` / `DPoPGate`,
-`ProbeHandler`), `.consumer` (canopy's half), `.django` (optional wiring, app
-label `canopy_host`), `.conformance`.
+Import name `canopy_sdk`; modules `.contract`, `.host`, `.consumer`, `.django`
+(app label `canopy_host`), `.conformance` — each module's docstring says what it is for.
 
 - **canopy-web imports `.contract` / `.consumer`** in
-  `apps/tokens/{assertions,host_grants,host_gateway,client_identity}.py` — never
+  `apps/tokens/{assertions,client_identity}.py` and `apps/host_grants/{host_grants,host_gateway}.py` — never
   keep a copy of a contract value in canopy-web. `tests/test_sdk_round_trip.py`
   runs the SDK's real host half against canopy's real arrival, redemption and
   `site_call`, so the two halves cannot drift.
@@ -80,22 +69,18 @@ label `canopy_host`), `.conformance`.
 ## The embedded widget is canopy's chat page
 
 Which agent it opens on is ranked in one place, `apps/embedding/defaults.py`
-(bound token > `PreferredAgent` > `AppCredentialAgent.is_default`, each only if
-listed), surfaced as `default` on the agent list; the frame's own fallbacks
-(`init.agent`, the only agent, the picker) are `frontend/src/embed/pickAgent.ts`.
+(its docstring has the order); the frame's own fallbacks are `frontend/src/embed/pickAgent.ts`.
 
 `frontend/src/embed/EmbedApp.tsx` mounts the same `ChatPanel` (canopy-ui/chat)
 over the same `ag-ui` protocol as `ChatPage`. When the widget looks or behaves
 worse than canopy-web, the cause is a **seam** — a prop or call `ChatPage` makes
-and the embed does not — not a component. Compare against `ChatPage.tsx`:
+and the embed does not — not a component. Compare against `ChatPage.tsx` for
+`renderMarkdown`, `disabledReason`, `emptyState`, `awaitingReply`, and:
 
-- `renderMarkdown` — without it `MessageItem` falls back to plain text and
-  replies show literal `**bold**`.
 - A `banner` carrying `MenuPrompt` — on `activity: blocked` the panel withdraws
   the working bubble, and without a menu a blocked agent looks like a finished
   conversation. (Contacts get the question as words: answer-menu is not on
   `/api/contact/`.)
-- `disabledReason`, `emptyState`, `awaitingReply={socket.awaitingReply}`.
 - **A REST send must call `socket.noteLocalSend(text, clientId)`.**
   `awaitingReply` is raised only by `sendChat()` or `noteLocalSend`, and the
   person's own line is not a server row until the agent's transcript ships it
@@ -103,7 +88,7 @@ and the embed does not — not a component. Compare against `ChatPage.tsx`:
   otherwise vanishes into an empty box. Don't track the HTTP request as the
   "waiting" signal: it ends long before the reply.
 
-### Opening a conversation, and naming one
+### Opening a conversation
 
 - **Every way into a conversation is read as the visitor first** — the page's
   `widget.openSession`, a row of the start screen's list, and a chat whose socket
@@ -112,271 +97,168 @@ and the embed does not — not a component. Compare against `ChatPage.tsx`:
   private one they are not in is canopy's ask-to-join interstitial. Never hand an
   id straight to the socket.
 - **A refused socket is an answer.** `useSessionSocket` stops reconnecting on close
-  `4003`/`4004` (`REFUSAL_CLOSE_CODES`) and reports `refused` (with the server's
-  `session.error` words, e.g. `needs_key`); the panel then says so instead of a
-  chat that reads "Reconnecting…" over "Nothing here yet" forever.
+  `4003`/`4004` (`REFUSAL_CLOSE_CODES`) and reports `refused`; the panel then says
+  so instead of a chat that reads "Reconnecting…" forever.
 - **The list is your conversations**: rows with `you_are_in_it === false` (a
-  co-tenant's private conversation, listed so they could ask to join) are left out.
-  Each row is told apart by **metadata only** (`conversationLabels.ts`): when it
-  began and the page it began on (`origin_resource`, "on this page" when it is the
-  page's declared `resource`) — never its words, which canopy cannot read.
-- **The agent is named by `agentLabel`** (its name; a slug-for-a-name reads as a
-  word), and the panel says which page the agent is told about ("Asking about …":
-  the page state's `title` if the host declares one, else its `resource` as words).
+  co-tenant's private conversation, listed so they could ask to join) are left out,
+  and rows are told apart by **metadata only** (`conversationLabels.ts`) — never
+  their words, which canopy cannot read.
 
-### Styling: two halves, two routes in
+### Styling and chrome
 
-`frontend/packages/canopy-widget/src/theme.ts`:
+`frontend/packages/canopy-widget/src/theme.ts` and `chrome.ts` (comments there give the rules):
 
-- **The launcher** is host DOM inside a shadow root (a host's stray `button {}`
-  cannot reach it). It is themable only through `--canopy-*` custom properties
-  (the one thing that crosses a shadow boundary; `all: initial` does not reset
-  them), `::part(launcher|dismiss|panel)`, or `canopy.init({ theme })`. Every
-  launcher colour is `var(--canopy-*, <default>)`, so an unthemed host gets the
-  default look.
-- **The panel** is canopy's own document in an iframe, reachable only through
-  `theme`, which rides the handshake and is **re-validated inside the frame**
-  with the same `normalizeTheme` — the loader's check runs in the host's page,
-  where a raw `postMessage` can skip it.
-- `theme.mode` goes in the iframe URL (`?theme=`, allowlisted) and is rendered
-  by the server (`apps/embedding/views_embed.py::_theme_mode`); applying it from JS
-  flashes the wrong theme on load.
-- The accent overrides canopy's own `--primary`. The font is set inline on
-  `body`: `--font-sans` lives in a `@theme inline` block, so overriding the
-  variable does nothing.
+- The launcher is host DOM in a shadow root, themable only through `--canopy-*`
+  properties, `::part(...)` or `canopy.init({ theme })`. The panel is canopy's own
+  document in an iframe, reachable only through `theme`, which is **re-validated
+  inside the frame** with the same `normalizeTheme`: the loader's check runs in the
+  host's page, where a raw `postMessage` can skip it.
+- `theme.mode` goes in the iframe URL and is rendered by the server
+  (`apps/embedding/views_embed.py::_theme_mode`); applying it from JS flashes the wrong theme.
+- Panel size, expanded state, snap and resize are chrome state kept per `app`
+  through the injected `storage` (`chrome.ts`, `dragging.ts`: `MIN_PANEL`, `syncReserve`).
+  A host's own `expand()` / `initialDisplay` is not remembered.
 - `tests/test_embedding_doc_is_true.py` fails if the host guide documents a
   variable, part or field the code does not read.
 
 ## A site sign-off in the frame (`canopy.signOff`)
 
-The widget's second entry point, beside `init`: `canopy.signOff({baseUrl, app, tokenUrl,
-csrfToken, id})` (`frontend/packages/canopy-widget/src/signOff.ts`) opens a modal over the
-host's page holding `/embed/sign-off?app=&sign_off=` — the same shell and framing policy
-as the chat (`views_embed.embed_sign_off`), rendering `SignOffFrame` instead of
-`EmbedApp`. No launcher, no chat, no act-as-you permission: the frame mints a plain token
-(`{}`) at the host's panel endpoint, shows the request (`/api/embed/sign-offs/{id}`, only
-the frame of the site that asked), and approves with a passkey assertion made in the frame,
-as `PageGrantConfirm` does. It posts `sign-off {id, state}` to the page and nothing else:
-the approval stays in canopy for the site's server to read. Django hosts use the SDK's
-`{% canopy_sign_off %}`. Tests: `canopy-widget/src/signOff.test.ts`,
-`src/embed/SignOffFrame.test.tsx`, `tests/test_site_sign_offs.py` (§ in canopy's frame).
+The widget's second entry point, beside `init`: `canopy.signOff(...)`
+(`frontend/packages/canopy-widget/src/signOff.ts`) opens a modal holding
+`/embed/sign-off` (`views_embed.embed_sign_off`, same framing policy as the chat),
+rendering `SignOffFrame` instead of `EmbedApp`. No launcher, no chat, no act-as-you
+permission: the frame mints a plain token (`{}`), shows the request (only the frame
+of the site that asked), and approves with a passkey assertion made in the frame. It
+posts `sign-off {id, state}` to the page and nothing else: the approval stays in
+canopy for the site's server to read. Tests: `signOff.test.ts`,
+`SignOffFrame.test.tsx`, `tests/test_site_sign_offs.py`.
 
 ## canopy as an MCP Apps host
 
-canopy hosts MCP Apps (SEP-1865, `io.modelcontextprotocol/ui`). Spec:
-`docs/superpowers/specs/2026-10-08-mcp-apps-host-design.md`. Code:
-`apps/mcp_apps_host/mcp_apps.py`, `mcp_apps_views.py`, `views_mcp_apps.py`;
-routes in `apps/canopy_sessions/app_views_api.py` and `apps/contacts/contact_api.py`.
+canopy hosts MCP Apps (SEP-1865, `io.modelcontextprotocol/ui`). Start at the module
+docstrings of `apps/mcp_apps_host/{mcp_apps,mcp_apps_views,views_mcp_apps}.py`; routes
+are in `apps/canopy_sessions/app_views_api.py` and `apps/contacts/contact_api.py`.
 
 - A Host site's tool may carry a **View** (`_meta.ui.resourceUri`, a `ui://`
-  HTML resource). canopy renders it sandboxed in `ChatPage` **and** the embed
-  panel.
+  HTML resource), rendered sandboxed in `ChatPage` **and** the embed panel.
 - **A View's clicks call the site as the person looking at it**
-  (`mcp_apps_views.resolve_for_viewer`), never as the turn's initiator or the
-  agent.
-- Which rows get a View is decided server-side (`mcp_apps_views.annotate`, and
-  the live `chat.tool_result` frame → `app` on the row) from the site's UI tool
-  index, `AppCredential.mcp_apps_index`, refreshed by every listing.
+  (`mcp_apps_views.resolve_for_viewer`), never as the turn's initiator or the agent.
+- Which rows get a View is decided server-side (`mcp_apps_views.annotate`) from the
+  site's UI tool index, `AppCredential.mcp_apps_index`; a client never guesses.
 - **App-only tools** (`_meta.ui.visibility: ["app"]`) are hidden from
-  `site_tools` and refused by `site_call`. The View routes
-  (`/api/canopy-sessions/{id}/apps/{tool_call_id}/…`; contacts under
-  `/api/contact/sessions/…`) are not MCP tools and refuse a PAT, so a View's
+  `site_tools` and refused by `site_call` (`host_gateway`, `mcp_apps.MODEL`). The View
+  routes are not MCP tools and refuse a PAT (`app_views_api.py`), so a View's
   commit token can never reach the model.
-- **The sandbox proxy is a canopy sub-path** (`MCP_APPS_SANDBOX_URL`, default
-  `/mcp-apps/sandbox/`) made opaque by `sandbox="allow-scripts"` with no
-  `allow-same-origin` — a deliberate deviation from the standard's
-  separate-origin rule, recorded in the spec. Views therefore cannot use
-  storage. It is answered by `McpAppsSandboxMiddleware`, which runs before
-  sessions and auth, so it can never set a cookie. Don't add `allow-same-origin`.
-- **Size and display modes come from the `AppHost`** (`canopy-ui` `mcpApps/context.ts`):
-  `maxWidth` / `maxHeight` (default 900, floor 80) bound an inline View, and
-  `fullscreen: true` advertises `availableDisplayModes: ["inline","fullscreen"]`
-  and grants `ui/request-display-mode` → the same frame restyled `fixed inset-0`
-  with a close control and Esc (never remounted; `ui/notifications/host-context-changed`
-  tells the View).
-- **A View draws in canopy's look**: `hostContext.styles.variables` carries canopy's
-  tokens, resolved, under the standard MCP Apps names (`mcpApps/hostStyles.ts`; the
-  accent goes as the `info` colours), and again on a theme switch. Without the flag the answer is always `inline`. ChatPage and
-  the embed panel set it; the embed lifts `maxWidth: 420` and raises `maxHeight`
-  while the panel is expanded.
-- **A View's header names it and collapses it** (a button with `aria-expanded`).
-  The title is its result link's `name` ("Query over …"), else the tool humanised —
-  always the tool in a sensitive conversation, whose kept link's name is only its
-  URI's scheme (`sensitivity.strip_result`);
-  the raw tool name is the tooltip. `MessageList` names the newest View in the
-  conversation (`LatestAppViewContext`): it opens expanded, every earlier one
-  collapsed to one line (rows × columns, time, a row-cap cut-off, from the tool
-  result's `structuredContent`; the link's `description` when only the link is kept;
-  MCP Apps has no title or size notification). A person's toggle is kept per `tool_call_id` in
-  `sessionStorage`. A collapsed View gets no frame until first expanded; collapsing
-  hides the frame and never unmounts it.
+- **The sandbox proxy is a canopy sub-path** (`MCP_APPS_SANDBOX_URL`) made opaque by
+  `sandbox="allow-scripts"` with no `allow-same-origin` — a deliberate deviation from
+  the standard's separate-origin rule (`views_mcp_apps.py` docstring). Views therefore
+  cannot use storage. `McpAppsSandboxMiddleware` answers before sessions and auth, so
+  it can never set a cookie. Don't add `allow-same-origin`.
+- Sizing, display modes, host styles and the collapsed-header behaviour are
+  `frontend/packages/canopy-ui/src/chat/mcpApps/` (`context.ts`, `hostStyles.ts`, `AppView.tsx`).
+  In a sensitive conversation a View's header always names the tool, since the kept
+  link's name is only its URI scheme (`sensitivity.strip_result`).
 
-Tests: `tests/test_mcp_apps_{gateway,sandbox,views}.py`; frontend
-`mcpApps/{bridge,AppView}.test.ts(x)`.
-
-### The expanded panel
-
-Overlay and docked panels can expand to `inset: 16px` (the whole viewport under
-640px). It is a STATE over the mode (`data-expanded` on the panel, `chrome.ts`),
-so collapsing returns to the same overlay or rail; it uses `!important` because
-a dragged position and a frame-requested height are inline styles that must
-survive untouched. The frame asks (`expand`, frame→host) and the host answers
-(`display`, host→frame) — the frame's button follows the answer. The visitor's
-choice is remembered per `app` (`canopy.widget.display.<app>`) through the
-injected `storage`; a host's `expand()` / `initialDisplay` is not. Esc collapses
-from either document (a full-screen View takes the first Esc). Tests:
-`canopy-widget/src/widget.test.ts` § expanding the panel, `src/embed/hostLink.test.ts`.
-
-Overlay and docked panels have a resize grip (`part=resize`). Overlay: the
-top-left corner, away from the bubble; the drag keeps the bottom-right fixed.
-Docked: the same corner, with the rail on the window's bottom edge — shorter
-than the window it gets `top: auto` and an inline height (`data-short`); at the
-window's height the inline height is removed, so it is the 100vh CSS rail again. Sizes
-stay within `MIN_PANEL` and the window (`dragging.resizePanel`), are remembered
-per `app` (`canopy.widget.size.<app>`), and are reported to the host's
-`onResize` (a docked rail overlays the page, so a host that reserved a column
-follows it). A visitor-chosen size makes the frame's `resize` request a no-op.
-Inline (host-sized) has no grip; expanded hides it.
-
-A docked rail can be SNAPPED into the page (`chrome.ts` `syncReserve`): it pads
-the host's `snapTarget` (default `document.documentElement`) by its width while
-it is snapped AND open AND not expanded, restoring the element's own inline
-`padding-right` exactly when any of those stops (or on `destroy`). Every path
-that changes the rail calls the one `syncReserve`, which reads state rather than
-being told. The frame asks (`snap`, frame→host); the host answers with
-`display` carrying `snapped` (absent from an older loader = unchanged), and
-`init` carries `snappable`/`snapped`. Remembered per `app`
-(`canopy.widget.snap.<app>`). Tests: `widget.test.ts` § snapping,
-`src/embed/{hostLink,EmbedApp}.test.ts(x)`. Tests: `dragging.test.ts` / `widget.test.ts` § resizing.
+Tests: `tests/test_mcp_apps_{gateway,sandbox,views}.py`; frontend `mcpApps/{bridge,AppView}.test.ts(x)`.
 
 ## Act-as-you permissions (host grants): when, which, and Stop
 
 A host grant (`tokens.HostGrant`) is, to the person, an **act-as-you permission**: a
 time-limited permission they give in the moment, so the agent acts on the host's
-page within their own access. The rules:
+page within their own access. The lifecycle is the docstring of
+`apps/host_grants/host_grants.py`; the rules:
 
 - **Minted only when the person acts, never on load.** The widget's load mint is
-  plain (`{}` to the host's token endpoint, `apps/embedding/embed_api.py` for
+  plain (`{}` to the host's token endpoint; `apps/embedding/embed_api.py` for
   canopy's own pages). The frame (`frontend/src/embed/pageGrant.ts`) asks for one —
   `token-request` with `grant: true`, which the loader sends to the host as
-  `{"grant": true}` — when the person sends (the opening message, before the
-  conversation is created; or a later one, followed by a page declaration so the
-  conversation is stamped before the turn), when a View sends a `ui/message`, and
-  when a card in a conversation they open loads read-only or is refused `no_grant`
-  (opening their own conversation is their act). From then on every mint of that
-  tab asks again (a granted token lives 10 minutes, so about every 5) until they
-  press Stop.
+  `{"grant": true}` — when the person sends, when a View sends a `ui/message`, and
+  when a card in a conversation they open loads read-only or is refused `no_grant`.
+  From then on every mint of that tab asks again (`HOST_GRANT_REMINT_SECONDS`,
+  `apps/contacts/contact_api.py`) until they press Stop.
 - **Unusable until confirmed with the person's passkey.** A redeemed grant has no
   `confirmed_at`; `host_grants.live`, `lookup` (→ `UNCONFIRMED`) and
   `host_gateway.context_for_grant` refuse it. **The passkey is asked for only when
-  something needs the grant — a send never waits for it**, since most turns never act
-  as the person. When the agent's turn calls the site and `lookup` says
-  `UNCONFIRMED`, the gateway marks the page's waiting rows `requested_at` and
-  `requested_reason` — the agent's own sentence, `site_call(reason=…)`, else "use
-  <tool>" (`host_grants.ask`, carried across re-mints by `_inherit`) — and tells the
-  agent it asked and to retry in ~20s (`host_gateway.page_grant_asked`). It **pushes**
-  `host_grant.requested` (the grant id only) down the conversation's socket
-  (`_push_ask` → `SessionConsumer.host_grant_requested`, which passes it only to the
-  grant's own person; AG-UI `CUSTOM canopy.host_grant.requested`); the panel re-reads
-  its grant and opens the prompt (`PageGrantConfirm` in `EmbedApp.tsx`): who is
-  asking, the reason, the site, scope and 30 minutes. No polling for the ask;
-  the panel's 60s re-read stays only to notice a Stop elsewhere or the end;
-  a live card refused for want of a grant asks at once (`pageGrant.need`) and waits
-  for the answer (`pageGrant.settled`). **Confirm with passkey** runs a WebAuthn
-  assertion in canopy's frame against `POST /api/embed/host-grant/confirm/begin|finish`
-  (the panel's own token; the challenge in the cache, keyed to the grant), which
-  `host_grants.confirm`s it; **Not now** stops it, and the agent's retry is told so.
-  The token is the host's to hold, so it proves nothing about the person; the
-  assertion is signed over canopy's origin, which the framing page cannot produce.
-  The frame's `allow="publickey-credentials-get"` is set by the loader.
+  something needs the grant — a send never waits for it.** When the agent's turn
+  calls the site and `lookup` says `UNCONFIRMED`, the gateway marks the page's
+  waiting rows `requested_at` / `requested_reason` (`host_grants.ask`, carried across
+  re-mints by `_inherit`), tells the agent to retry shortly
+  (`host_gateway.page_grant_asked`) and **pushes** `host_grant.requested` (the grant id
+  only) down the conversation's socket (`_push_ask` →
+  `SessionConsumer.host_grant_requested`, which passes it only to the grant's own
+  person); the panel opens `PageGrantConfirm` (`EmbedApp.tsx`). **Confirm with
+  passkey** runs a WebAuthn assertion in canopy's frame against
+  `POST /api/embed/host-grant/confirm/begin|finish` (`apps/host_grants/grants_api.py`),
+  which `host_grants.confirm`s it. The host's token proves nothing about the person;
+  the assertion is signed over canopy's origin, which the framing page cannot
+  produce. The loader sets the frame's `allow="publickey-credentials-get"`.
 - **30 minutes from the passkey, never extended.** `host_grants.confirm` caps the
   grant at `CONFIRM_SECONDS` after the touch (and never past the host token's own
-  30, `canopy_sdk.contract.ACCESS_TOKEN_MAX_LIFETIME`). Each re-mint of the same
+  `canopy_sdk.contract.ACCESS_TOKEN_MAX_LIFETIME`). Each re-mint of the same
   page (`same_page`) inherits the newest live confirmation AND its end
-  (`host_grants._inherit`), so renewing the token never prompts and never extends;
-  after the 30 minutes the passkey is asked for again the next time a turn needs it.
+  (`host_grants._inherit`), so renewing the token never prompts and never extends.
   **Testing the end of the window in production:** add `?canopy_debug_window=30` to the
-  host page's URL (any site with the widget). The widget copies it to the frame as
-  `debug_window=30`, the panel sends it as `window_seconds` with the passkey assertion,
-  and `host_grants.confirm` stores it on the grant (`HostGrant.window_seconds`, kept by
-  `_inherit` across re-mints). Only a SHORTER window is honoured (`window_for`: never
-  longer than `CONFIRM_SECONDS`, floor `MIN_WINDOW_SECONDS`), so the param widens
-  nothing and needs no gate or deploy; the panel's "until …" line shows the real end.
+  host page's URL; the widget copies it to the frame, the panel sends it as
+  `window_seconds` with the assertion, and `host_grants.confirm` stores it
+  (`HostGrant.window_seconds`). Only a SHORTER window is honoured (`window_for`), so the
+  param widens nothing and needs no gate.
 - **Never a contact's.** A contact has no passkey: `redeem` refuses a grant with no
   user (only the live probe's synthetic principal, `probe=True`, is exempt and is
   deleted with the probe), `contact_api` sends no ID-JAG on to it, and `lookup`
   finds none for a contact. An agent that serves the site on pages
-  (`published_profiles.page_sites`) is left off a contact's list there and cannot be started
+  (`published_profiles.page_sites`) is left off a contact's list and cannot be started
   by one (`contact_api._for_contacts`); when that leaves no agent, the frame posts
-  `unavailable` and the loader removes the launcher (as the visitor's × does).
+  `unavailable` and the loader removes the launcher.
 - **A conversation reads only through its own page's grant.** `host_grants.lookup`
   (the gateway's and Views' one lookup): with a session, only the grant
-  `note_host_grant` stamped for that person — by a send, a page-state/actions
-  declaration, the create, or a View call (stamped in `resolve_for_viewer` after the
-  View's gates) — while it lives. Expired/pruned → `EXPIRED`, stopped → `REVOKED`,
-  not confirmed → `UNCONFIRMED`, none → `NONE`; never another page's grant. The agent says
+  `note_host_grant` (`canopy_sessions/services.py`) stamped for that person — by a
+  send, a page-state/actions declaration, the create, or a View call — while it lives.
+  Expired/pruned → `EXPIRED`, stopped → `REVOKED`, not confirmed → `UNCONFIRMED`,
+  none → `NONE`; never another page's grant. The agent says
   `host_gateway.no_grant_message`. Outside a conversation, the latest LIVE grant
-  (bound to the agent first, then unbound). So a turn never reads through a grant
-  the person did not give by acting in that conversation's page.
+  (bound to the agent first, then unbound). A turn never reads through a grant the
+  person did not give by acting in that conversation's page.
 - **See and stop.** `host_grants.live_for` lists one row per page
-  (`same_page`: same site, person, agent, scope — the panel re-mints, so a page is
-  several rows); `host_grants.revoke` sets `revoked_at` on every live row of that
-  page and wipes their tokens. Routes (`apps/host_grants/grants_api.py`):
-  `GET/DELETE /api/me/host-grants/` (Settings → Act-as-you permissions; by person,
-  like a token — a site in a workspace you are not in can hold one for you),
-  `GET/DELETE /api/embed/host-grant` (the panel's line, its passkey prompt while
-  `confirmed` is false, and Stop). The panel re-reads its grant
-  every minute and stops asking when it is gone; a Stop pressed on Settings can
-  race one re-mint of an open tab, which then shows in both places to stop again.
+  (`same_page`: same site, person, agent, scope); `host_grants.revoke` sets
+  `revoked_at` on every live row of that page and wipes their tokens. Routes in
+  `apps/host_grants/grants_api.py`: `/api/me/host-grants/` (Settings → Act-as-you
+  permissions; by person, like a token — a site in a workspace you are not in can hold
+  one for you) and `/api/embed/host-grant` (the panel's line, its prompt, and Stop). A
+  Stop pressed on Settings can race one re-mint of an open tab, which then shows in
+  both places to stop again.
 - **A View's card button says it is the person's.** `host_gateway.view_call` carries
-  `Canopy-View` on the View's own `tools/call` (uri = the View's `ui://` resource,
-  when the listed tool's `_meta.ui.resourceUri` is that View; `rpc` = that call), as
-  a View's `resources/read` does. An agent's call never does.
+  `Canopy-View` on the View's own `tools/call` (when the listed tool's
+  `_meta.ui.resourceUri` is that View), as a View's `resources/read` does. An agent's
+  call never does.
 
 ## Live host-grant probe
 
 Test connection's conformance stops where a visitor starts, because a real grant
-needs an ID-JAG signed by the **host's** key. The live probe walks the rest.
+needs an ID-JAG signed by the **host's** key; the live probe walks the rest.
+The steps, and what it asserts, are the docstring of `apps/host_grants/live_probe.py`.
 
-- A host with a probe identity (`CANOPY_HOST["PROBE"]`,
-  `canopy_sdk.host.ProbeHandler`) signs a real ID-JAG for one dedicated,
-  low-privilege principal and one read-only scope, for canopy's client only
-  (`private_key_jwt` + DPoP; any other principal, tool or scope is refused;
-  marked `canopy_probe: true`).
-- `apps/host_grants/live_probe.py` runs the chain through the real code —
-  `host_grants.redeem`, then `host_gateway.context_for_grant` +
-  `host_gateway.probe_call` (the client `site_call` uses) — and asserts: the
-  probe tool succeeds; an out-of-scope tool is refused **by the host** (canopy's
-  own ceiling is opened to exactly the two tools); no proof, a stranger's proof
-  and a plain bearer are refused. It then deletes the probe's grant and records
-  **no** `host_grant.*` Event, so real-traffic health is never flattered.
-- The verdict is stored on the site (`AppCredential.last_probe_*`). A failure
-  records a `host_probe.failed` error Event coalesced per site, recovery a
-  `host_probe.recovered` Event, and the workspace's owners (ancestors included)
-  are pushed on the transition only — a site is not an agent, so there is no
-  task to ask on.
-- **On demand only**, from Test connection
-  (`apps/embedding/host_sites_api.py`): each probe mints a real grant and makes
-  real calls at a host. A host with no probe is "not set up"
-  (`last_probe_ok` null), never a failure.
-- **canopy-web probes itself the same way**: `/oauth/probe`, the `canopy-probe`
-  user from migration `tokens/0026_probe_user` (no password, no email, no
-  membership), named by `CANOPY_HOST_PROBE_USERNAME` (set in
-  `config/settings/connectlabs.py`); probe tool `list_fleet_tasks` (page
-  `agent.tasks`, scope `tasks:read`), denied tool `skill_history`.
+- It runs through the real code (`host_grants.redeem`, `host_gateway.context_for_grant`,
+  `host_gateway.probe_call`), against a host's probe identity
+  (`CANOPY_HOST["PROBE"]`, `canopy_sdk.host.ProbeHandler`) for one dedicated,
+  low-privilege principal. It deletes the probe's grant and records **no**
+  `host_grant.*` Event, so real-traffic health is never flattered.
+- **On demand only**, from Test connection (`apps/embedding/host_sites_api.py`): each
+  probe mints a real grant and makes real calls at a host. A host with no probe is
+  "not set up" (`last_probe_ok` null), never a failure. A failure records a
+  `host_probe.failed` Event and recovery `host_probe.recovered`, and the workspace's
+  owners are pushed on the transition only.
+- **canopy-web probes itself the same way**: `/oauth/probe`, the probe user from
+  migration `tokens/0026_probe_user` (no password, no email, no membership), named by
+  `CANOPY_HOST_PROBE_USERNAME` (`config/settings/connectlabs.py`); see `self_host.py`.
 - **`self_host.config()` must not read the database by default**: the DPoP gate
   builds its verifier in async context. Only the probe endpoint and the
   metadata call `config(with_probe=True)`.
-- Not built: an agent-turn leg (a drill making a real confined `site_call`).
 
 ## Live end-to-end check: `scripts/e2e_embed_widget.py`
 
-The embed seam's failures (cookie names, the API base path, the tenant a session
-is created in, a provider no module imports, a session cookie hiding the
-frame's bearer, a session created on page load) cannot be caught by a test that
-constructs both ends, so this script drives the real deployment the way a
-browser does: the loader, `/api/embed/self`, the framable shell and its
-`frame-ancestors`, a minted token, the **same** token listing agents — then
-checks the count of empty sessions did not move (no create-on-load). Read-only
-by default; `--send "text"` starts a real conversation and costs real tokens.
-Its sibling for the chat page is `scripts/e2e_session_chat.py`.
+Drives a real deployment the way a browser does (loader, `/api/embed/self`, the
+framable shell, a minted token, the same token listing agents, no session created
+on load), because the embed seam's failures cannot be caught by a test that
+constructs both ends. Read-only by default; `--send "text"` starts a real
+conversation and costs real tokens. Its sibling for the chat page is
+`scripts/e2e_session_chat.py`.

@@ -1,12 +1,10 @@
 """The agent login a runner gets for ONE turn — issued while it holds the turn, dead after.
 
-An agent's runner turn used to act as the agent with its stored, never-expiring
-`canopy-pat`: a bearer secret that lets whoever holds it be the agent, sitting in a
-vault and on laptops. canopy-web already knows which box claimed which turn of which
-agent, so it hands that box an agent login scoped to the turn instead: a
-`PersonalToken` for `Agent.user` that expires in `TTL` and is revoked as soon as the
-turn stops executing on that runner. Spec:
-docs/superpowers/specs/2026-10-21-turn-scoped-agent-token-design.md.
+An agent's runner turn acts as the agent with a login scoped to the turn, not with the
+agent's stored, never-expiring `canopy-pat` (a bearer secret that lets whoever holds it be
+the agent). canopy-web knows which box claimed which turn of which agent, so it hands that
+box a `PersonalToken` for `Agent.user` that expires in `TTL` and is revoked as soon as the
+turn stops executing on that runner.
 
 Who gets one is decided in `issue` (every refusal says why); `revoke_for_turn` and
 `revoke_stale` end them. The route is `api_turn_agent_token.py`.

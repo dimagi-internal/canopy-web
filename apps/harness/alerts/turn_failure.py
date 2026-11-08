@@ -1,7 +1,7 @@
 """Alert source `turn_failure`: an unexpected turn failure, from the moment it is
 recorded until it is fixed.
 
-One lifecycle (Jonathan, 2026-10-23). A failure becomes a `FailureInvestigation`
+One lifecycle. A failure becomes a `FailureInvestigation`
 (the memory: fingerprint, occurrences, fix commit, evidence) and, at once, this
 alert (its face) — `auto_debug.on_turn_failed` raises it with `raise_now` before
 the debug turn it starts, and the tick's `reconcile` below agrees. WHO HAS IT is
@@ -16,17 +16,13 @@ the alert's handler (`Alert.handler_agent` / `handler_user`):
 - `resolved` — no alert; the open one closes with the cause, PR and deploy state
   on its `resolved` event (`auto_debug.resolve`).
 
-This used to raise only for the person statuses, and an `open` investigation
-lived outside the alert model entirely, because an alert meant "a thing that
-needs a person" and had no assignee. So the agent-owned stage could not be an
-alert, the debugger's only verb was resolve, and resolving "needs Jonathan"
-cleared the alert and re-armed the next escalation (investigation 10: debug
-turns 2026-10-22 15:02 and 15:04, each emailing him).
+An alert has an assignee, so the agent-owned stages are alerts too: the debugger
+holds it, and handing it off assigns a person rather than resolving it (resolving
+would clear the alert and re-arm the next escalation).
 
-That workspace is where the debugger records the investigation, which may not
-be the failing agent's own workspace. The alert lives there on purpose — a
-deliberate deviation from the spec's Tenancy line ("the subject's workspace"):
-`auto_debug.can_handle`, the only gate on its actions, is asked about that same
+The alert's workspace is where the debugger records the investigation, which may
+not be the failing agent's own workspace. The alert lives there on purpose, not in
+the subject's workspace: `auto_debug.can_handle`, the only gate on its actions, is asked about that same
 workspace, so an agent-workspace member who is not a log reader there would
 see an alert with nothing to do on it. The agent and runners are still named
 in its scopes, so their pages show it to those who can act.
@@ -91,7 +87,7 @@ def _first_sentence(note: str) -> str:
 def title_for(inv) -> str:
     runners = ", ".join(inv.runners or []) or "the fleet"
     # One failure is not a pattern: saying "keep failing" sends the reader looking
-    # for an outage (2026-11-03, investigation 26: one test turn, read as a recurring fault).
+    # for an outage.
     subject = "turns keep failing" if (inv.occurrences or 0) > 1 else "a turn failed"
     lead = {
         FailureInvestigation.PENDING_DEPLOY: f"Fix pending deploy on {runners}",
@@ -105,11 +101,9 @@ def investigation_path(inv) -> str:
     Turns tab, else the workspace's activity log, opened on its failed turns
     (of that agent, when there is one). App-relative.
 
-    The agent may live in a workspace BELOW the investigation's (otto is in
-    `connect`, the investigation in `dimagi`): link to its Turns tab in its own
-    workspace. Matching only the investigation's workspace sent investigation 31's
-    "Open in Canopy" to dimagi's activity log, which lists none of otto's turns
-    (Jonathan, 2026-11-06)."""
+    The agent may live in a workspace BELOW the investigation's: link to its
+    Turns tab in its own workspace, because the investigation's workspace's
+    activity log lists none of that agent's turns."""
     ws = inv.workspace_id
     slug = (inv.agents or [None])[0]
     if slug:

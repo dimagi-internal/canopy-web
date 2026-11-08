@@ -18,7 +18,7 @@ Three routes, and picking the wrong one is the commonest mistake:
 
 The classic wrong one is a "dismiss these rows" action on a feed. It is a *data
 mutation wearing a page action's clothes* — unaudited, dead the moment the tab
-closes, capped by a 20-second wait, and a second implementation of a delete the
+closes, capped by a wait (`page_actions.DEFAULT_TIMEOUT_SECONDS`), and a second implementation of a delete the
 REST API already has. The only reason to build one is a page that cannot be told
 its data changed, and [§5a](embedding-advanced.md#5a-being-told-when-your-data-changes) removes that reason. The Tasks page shows the right
 shape: declining is the server tool `act_on_task`, and the page hears about it
@@ -96,21 +96,13 @@ One request, from a signed-in user on your page.
 
 **What a user's token can reach: your site ∩ the user.** When your visitor is
 an existing canopy user, the token you hold for them acts *as* them — but only
-inside what your site is for. It reaches:
-
-- the chat API (`/api/canopy-sessions/…`, `/api/w/<ws>/canopy-sessions/…`) and
-  `/api/embed/…`;
-- read-only `GET /api/harness/turns/…`, `/api/harness/sessions` and
-  `/api/harness/runners/` — enough to show "what is the agent doing";
-- the chat websocket;
-
-and within those, **only the agents your site offers** in the workspace that
-registered it. The same person's chats with any other agent, in that workspace
-or another, are a 404 to your token, exactly as to a stranger. Every other
-canopy route answers `403 not_delegable`; the token is never the user's whole
-canopy account. If your integration needs a
-route this does not cover, ask for it by name — it is a list in
-`apps/embedding/delegation.py`, deliberately.
+inside what your site is for: the chat API, `/api/embed/…`, the chat websocket and a
+read-only view of harness turns, sessions and runners. The surface list is
+`apps/embedding/delegation.py` (`_SURFACE`; ask for a route by name rather than
+widening it). Within that, **only the agents your site offers** in the workspace that
+registered it (`offered_agent_ids`): the same person's chats with any other agent are a
+404 to your token, exactly as to a stranger. Every other canopy route answers
+`403 not_delegable`; the token is never the user's whole canopy account.
 
 **The property that matters:** nothing is frozen into the token. Tokens are
 opaque random strings stored as hashes, and memberships are re-read from the
@@ -150,54 +142,44 @@ conformance checks you can run against your deployment. canopy-web's CI runs its
 host half against canopy's real redemption code, so it cannot drift from what
 canopy accepts.
 
-In three steps — every claim, lifetime, header and refusal is in
-[the SDK README § Host grant contract v1](../../sdk/python/README.md#host-grant-contract-v1):
+The steps — every claim, lifetime, header and refusal — are in
+[the SDK README § Host grant contract v1](../../sdk/python/README.md#host-grant-contract-v1).
+The parts a host must not get wrong:
 
-1. **Arrival — only once the person asks.** Beside `assertion` ([§3](embedding-a-canopy-agent.md#3-add-one-backend-endpoint)), send `id_jag` — an ID-JAG
-   (`typ: oauth-id-jag+jwt`) for your own MCP server, scoped by your server to what THIS page
-   offers — **only on a mint whose JSON body is `{"grant": true}`**. This is the person's
-   **act-as-you permission**: a time-limited permission they give in the moment, so the agent
-   acts within their own access on this page. The widget's mint on page load is always `{}`;
-   it sends `{"grant": true}` once the person sends their first message in the panel (or opens a
-   conversation whose live card needs to read your site as them), and on every mint of that tab
-   after, until they press **Stop**. Expect your first grant only after that first send.
-   `canopy_sdk.django`'s `panel_token` already does this. canopy holds the grant unusable until
-   the person confirms it with their canopy passkey in the panel (30 minutes from that touch;
-   your later grants for the same page carry the same end). Only a visitor who arrives as a
+1. **Arrival — only once the person asks.** Beside `assertion` ([§3](embedding-a-canopy-agent.md#3-add-one-backend-endpoint)), send `id_jag` (an ID-JAG,
+   `typ: oauth-id-jag+jwt`, for your own MCP server, scoped to what THIS page offers)
+   **only on a mint whose JSON body is `{"grant": true}`**. This is the person's
+   **act-as-you permission**. The widget's mint on page load is always `{}`; it sends
+   `{"grant": true}` once the person sends in the panel (or opens a conversation whose
+   live card needs to read your site as them), and on every mint of that tab after,
+   until they press **Stop**. `canopy_sdk.django`'s `panel_token` already does this.
+   canopy holds the grant unusable until the person confirms it with their canopy
+   passkey in the panel (30 minutes from that touch). Only a visitor who arrives as a
    canopy user can: an ID-JAG sent with a contact's arrival is ignored, and an agent that
-   serves your site on pages is not offered to a contact at all — when that is every agent
-   you offer, canopy's frame tells the loader and the launcher is removed for them.
+   serves your site on pages is not offered to a contact at all.
 2. **Redeem.** canopy (client id `{canopy base}/oauth/client.json`, keys at
    `{canopy base}/oauth/jwks.json`) redeems it at your token endpoint with
    `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer`, `private_key_jwt` and DPoP;
    you answer a short-lived, DPoP-bound access token for the visitor — no refresh token.
-3. **Use.** canopy's `site_tools` / `site_call` / `site_read` call your MCP with `Authorization: DPoP <token>`,
-   a fresh proof and an informational `Canopy-Actor` header; run the tool as `sub`, within the
-   token's scopes.
-4. **Sensitive data? Verify `Canopy-Execution`.** On an agent's turn every request also carries
-   canopy's signed statement about the call: the agent, its author's declaration that the
-   host site handles sensitive data (`data: sensitive`, made by its owner or an admin), the
-   runner and its flags in force (`sensitive_data`, declared by a person and matched by the
-   box's own report), and the
-   conversation's requirements. `canopy_sdk.django.execution.verify_execution(request)` checks
-   it (canopy's client key, your resource, 60s, single-use, bound to the DPoP key and token);
-   `execution.sensitive_clearance(agents={...})` says whether to release sensitive data or keep the
-   agent on synthetic data, and why. Claims and refusal codes:
+3. **Use.** canopy's `site_tools` / `site_call` / `site_read` call your MCP with
+   `Authorization: DPoP <token>`, a fresh proof and an informational `Canopy-Actor`
+   header; run the tool as `sub`, within the token's scopes.
+4. **Sensitive data? Verify `Canopy-Execution`.** On an agent's turn every request also
+   carries canopy's signed statement about the call (the agent, its host-site
+   `data: sensitive` declaration, the runner's flags, the conversation's requirements).
+   `canopy_sdk.django.execution.verify_execution(request)` checks it;
+   `execution.sensitive_clearance(agents={...})` says whether to release sensitive data.
+   canopy's gateway itself never calls you for a sensitive conversation whose host site
+   does not handle sensitive data. Claims and refusal codes:
    [SDK README § `Canopy-Execution`](../../sdk/python/README.md#canopy-execution--what-canopy-vouches-for-per-request).
-   canopy's gateway itself never calls you for a sensitive conversation whose host site does
-   not handle sensitive data.
-5. **The person's own View? Verify `Canopy-View`, never infer it.** A View's `resources/read`
-   carries canopy's signed `Canopy-View` (`actor: "view"`, your id for the person as `sub`, the
-   resource as `uri`, the conversation, 60s, single-use, bound to the DPoP key and token), and so
-   does a View's own `tools/call` (a card's button) of a tool whose `_meta.ui.resourceUri` is
-   that View — `uri` then the View's `ui://` resource, `rpc` that very call (verify with
-   `rpc=("tools/call", {"name": …, "arguments": …})`). An agent's own tool call never carries
-   one. Either rides only
-   when the principal behind the View is a person acting as themselves — never an agent's turn,
-   caller token or own login, whatever route it uses (`apps/harness/acting_person.py`) — and only
-   in a conversation they are in (`mcp_apps_views.view_facts`). If you give a View more than an
-   agent, give it on `canopy_sdk.django.execution.verify_view(request, uri=, subject=)` alone: a
-   delegated call with **no** statement is no one you may trust. Check it live with
+5. **The person's own View? Verify `Canopy-View`, never infer it.** A View's
+   `resources/read`, and a View's own `tools/call` of a tool whose `_meta.ui.resourceUri`
+   is that View, carry canopy's signed `Canopy-View`; an agent's own tool call never does.
+   It rides only when the principal behind the View is a person acting as themselves
+   (`apps/harness/acting_person.py`) in a conversation they are in
+   (`mcp_apps_views.view_facts`). If you give a View more than an agent, give it on
+   `canopy_sdk.django.execution.verify_view(request, uri=, subject=)` alone: a delegated
+   call with **no** statement is no one you may trust. Check it live with
    `manage.py view_read_probe --session <id> --email <person>` in canopy-web's container.
 
 **What canopy adds on its side.** In your site's host-site row
@@ -265,31 +247,25 @@ re-reads it there. The agent reads it with **`site_read`** (beside `site_call`),
 the visitor, only when it needs more than the facts — so a large result never has to
 be in its context. Your ACL and your audit apply to every read.
 
-**What canopy keeps of a tool result.** Exactly this, and nothing else:
-
-| | ordinary conversation | sensitive conversation |
-|---|---|---|
-| the call | `tool_use_id`, `is_error` | `tool_use_id`, `is_error`, `status` (one of a short list: `completed`, `failed`, …), `withheld: true` |
-| your text | the first 8,000 characters (a row's display text) | nothing |
-| `structuredContent` | inside that text, when your tool's answer is short enough | nothing |
-| each link | `{type, uri, name, mimeType}`, kept whole | `{type, uri, mimeType}` with `name` set to the URI's **scheme** |
+**What canopy keeps of a tool result** is `sensitivity.strip_result`
+(`apps/harness/sensitivity.py`). In a sensitive conversation: the call's id, error flag and
+status, `withheld: true`, none of your text, and each link as `{type, uri, mimeType}` with
+`name` set to the URI's **scheme**. Ordinary conversations keep your text (bounded) and
+each link whole.
 
 A link is kept only when **your own tool returned it** — `site_call` to your site, or
 one of your tools a runner reached directly — never from another tool's output (link-shaped
 JSON a shell or a file read prints is the agent's words, and goes). It must be a
-well-formed `resource_link` whose URI is **`<scheme>://<id>`**: a **URI scheme your
-`site.json` declares** in `site.resource_schemes`, then a url-safe id (`A–Z a–z 0–9 _ -`)
-and nothing else — no path, query or fragment. Declare the exact length of your ids in
-`site.resource_id_lengths` (`{"labs-result": 24}` for `secrets.token_urlsafe(18)`) and
-canopy keeps nothing longer or shorter; undeclared, an id may be up to 64 characters. Its
-`mimeType` must be one of `application/json`, `text/csv`, `text/plain`, `text/markdown`,
-`image/png`, `image/jpeg`, `application/pdf`. At most **10** per result. Its
-`description`, `_meta` and `annotations` are never kept, and in a sensitive conversation
-neither is its `name`: those links rest in plaintext, so nothing in them may be data —
-make the id opaque (`labs-result://Zk3…`), never a query, a name or a filter. A link is
-pulled out of your result **before** the text is cut, so a long answer still reaches its
-card. Declare your own scheme (`labs-result`), never `http(s)`, `data`, `ui` or `file`;
-canopy reads the declaration live from your signed document, with no owner step.
+well-formed `resource_link` whose URI is **`<scheme>://<id>`** with a scheme your
+`site.json` declares in `site.resource_schemes` (never `http(s)`, `data`, `ui` or `file`),
+a url-safe id, no path, query or fragment; the id length (`site.resource_id_lengths`),
+the allowed `mimeType`s and the per-result cap are `canopy_sdk/resources.py`
+(`validate_links`). Its `description`, `_meta` and `annotations` are never kept, and in a
+sensitive conversation neither is its `name`: those links rest in plaintext, so nothing in
+them may be data — make the id opaque (`labs-result://Zk3…`), never a query, a name or a
+filter. A link is pulled out of your result **before** the text is cut, so a long answer
+still reaches its card. canopy reads the scheme declaration live from your signed
+document, with no owner step.
 
 The agent gets your answer through `site_call` as `{site, tool, is_error, links,
 content, structured}`: your links first, then the rest, with MCP's text copy of
@@ -299,27 +275,18 @@ ordinary conversation, your tool result as it was, with the kept links first. In
 the View reads each link as its viewer. canopy refuses any answer from your MCP server
 over **4 MB** (`result too large; use a smaller page_size`), so page what you return.
 
-**A minimal host** — no SDK storage; a store of your own and two MCP handlers
-(FastMCP 2.12+ shown, any MCP server works the same way). The resource handler applies
-**the same sensitive-data rule as the tool**: a result is a second route to the same rows,
-so a host that clears only `tools/call` lets an agent `site_read` back what its tool
-withheld.
+**A minimal host** (a tool returning facts and a link, and a `resources/read` handler) is
+in [SDK README § Host-held results](../../sdk/python/README.md#host-held-results-return-facts--a-link),
+with `CANOPY_HOST["RESOURCE_SCHEMES"]` / `["RESOURCE_ID_LENGTHS"]` to declare the scheme.
+The resource handler must apply **the same sensitive-data rule as the tool**: a result is a
+second route to the same rows, so a host that clears only `tools/call` lets an agent
+`site_read` back what its tool withheld. One rule, asked by every handler that returns rows:
 
 ```python
-import json, secrets
-from fastmcp import FastMCP
-from fastmcp.exceptions import ResourceError
-from fastmcp.server.dependencies import get_http_request
-from mcp.types import ResourceLink, TextContent
 from canopy_sdk.django import execution
 
-mcp = FastMCP("labs")
-RESULTS = {}   # yours: a table with an owner and an expiry, a cache, object storage...
-
-def cleared(uri: str | None = None) -> bool:
-    """Your ONE rule for releasing sensitive data, asked by every handler that returns rows.
-    A delegated request with neither statement is no one: never cleared."""
-    request = get_http_request()
+def cleared(request, uri: str | None = None) -> bool:
+    """A delegated request with neither statement is no one: never cleared."""
     if request.headers.get("Canopy-Execution"):                 # an agent's turn (§8a step 4)
         try:
             call = execution.verify_execution(request)
@@ -333,45 +300,12 @@ def cleared(uri: str | None = None) -> bool:
             return False
         return True
     return False
-
-@mcp.tool
-def data_query(sql: str):
-    columns, rows = run_query(sql, sensitive=cleared())     # as the visitor, under your ACL
-    rid = secrets.token_urlsafe(18)                          # unguessable, and short
-    RESULTS[rid] = {"owner": current_subject(), "sensitive": holds_sensitive(columns),
-                    "columns": columns, "rows": rows}
-    facts = {"row_count": len(rows), "columns": columns, "sample": rows[:5], "sql": sql}
-    link = ResourceLink(type="resource_link", uri=f"labs-result://{rid}", name="Visits by worker",
-                        mimeType="application/json")
-    return [TextContent(type="text", text=json.dumps(facts)), link]
-
-@mcp.resource("labs-result://{rid}{?page,page_size}", mime_type="application/json")
-def result(rid: str, page: str = "1", page_size: str = "100"):
-    kept = RESULTS.get(rid)
-    if kept is None or not may_read(current_subject(), kept):   # the owner, or your ACL
-        raise ResourceError("not found")
-    if kept["sensitive"] and not cleared(f"labs-result://{rid}"):  # the tool's rule, again
-        raise ResourceError("forbidden: sensitive")
-    start = (int(page) - 1) * int(page_size)                    # a table pages here,
-    return json.dumps({**kept, "rows": kept["rows"][start:start + int(page_size)]})  # never in chat
 ```
-
-`current_subject()` is whoever the MCP request acts for (on a delegated request, the
-visitor's `sub`). Expire results on your own schedule. Then **declare the scheme** in
-your signed `site.json`'s `site.resource_schemes` — with the Python SDK
-(`dimagi-canopy` ≥ 0.19) that is `CANOPY_HOST["RESOURCE_SCHEMES"] = ["labs-result"]`
-and, from 0.22, `CANOPY_HOST["RESOURCE_ID_LENGTHS"] = {"labs-result": 24}`, or
-`site_document(..., site={"resource_schemes": ["labs-result"], "resource_id_lengths":
-{"labs-result": 24}})` without Django; from 0.21 a bad entry fails the Django system check
-`canopy_host.E011` at startup (0.22: a length that is not 16–64, or names an undeclared
-scheme, too), since it would make the whole `site.json` malformed.
-[SDK README § Host-held results](../../sdk/python/README.md#host-held-results-return-facts--a-link).
 
 **Live updates.** A View may `resources/subscribe` to a link. canopy holds the
 subscription (its gateway's MCP sessions last one request), so your host tells canopy
 when a result changes — a POST to `/api/sites/resources-updated` with a JWT signed by
-your site key (`typ` `canopy-resources-updated+jwt`, `iss` = `sub` = your
-Host-site name, `aud` = that URL, 60 s, single-use `jti`, `uris`);
+your site key (signed with your site key; the wire is `canopy_sdk/resources.py`, canopy's check `apps/host_grants/resources_updated.py`);
 `canopy_sdk.resources.notify_updated(canopy_url, site_name, site_key, [uri],
 workspace=...)` builds and sends it. canopy sends each subscribed View
 `notifications/resources/updated` — the URI, never data — and the View re-reads it

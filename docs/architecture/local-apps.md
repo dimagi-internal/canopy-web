@@ -1,41 +1,39 @@
 # Local apps
 
-A **local app** (in the product, a **user app**, on the **Personal apps** tab of the apps page, each marked **Unreleased** for now) is a real program from Canopy's app store that a person installs for themselves, not for a workspace. Today every one runs on their own computer, started by them, with its agentic work done through normal Canopy sessions. The first is Meeting assistant: it reads a running meeting's transcript and sends batches to an agent's session. Design and reasons: `docs/superpowers/specs/2026-11-03-local-apps-design.md`. Writing an app: `local_apps/README.md`.
+A **local app** (in the product, a **user app**, on the **Personal apps** tab of the apps page) is a real program from Canopy's app store that a person installs for themselves, not for a workspace. Every one runs on their own computer, started by them, with its agentic work done through normal Canopy sessions. Start reading at `apps/local_apps/services.py` (module docstring), `apps/local_apps/api.py` and `apps/local_apps/trust.py`; writing an app: `local_apps/README.md`.
 
 ## What it shares with workspace apps
 
-The catalog: an approved version is an `AppTemplateVersion` of an `AppTemplate` with `runtime="local"`. Every workspace-app query that reads `collections` or `pages` filters to `runtime="web"`. Approvals are shared too (kind `local_app.release`). Installs aren't, because a local app belongs to one person on one computer.
+The catalog: an approved version is an `AppTemplateVersion` of an `AppTemplate` with `runtime="local"`. Every workspace-app query that reads `collections` or `pages` filters to `runtime="web"`. Approvals are shared too (kind `local_app.release`, `apps/local_apps/release_kind.py`). Installs aren't, because a local app belongs to one person on one computer.
 
 ## Publishing
 
-**Right now no approval is needed** (`LOCAL_APPS_REQUIRE_APPROVAL` is off, while the framework is being practised on). A submission from anyone who can write content in any workspace is released at once and shown as unreviewed, and it reaches people at their next Start. An app's key stays with the workspace that first released it, so only that workspace's people can change an app others already run. Everything below about approval applies once that setting is on.
+`LOCAL_APPS_REQUIRE_APPROVAL` (`config/settings/base.py`, default off) decides whether a submission waits for approval. Off, a submission from anyone who can write content in any workspace is released at once by `services.submit`, shown as unreviewed, and reaches people at their next Start. An app's key stays with the workspace that first released it (`services.submit`), so only that workspace's people can change an app others already run. Steps 2 to 4 apply with the setting on.
 
 1. `canopy-runner app pack` makes a deterministic zip; `app submit` (or `POST /api/local-apps/submissions/`) sends it. The server never runs it: `package.read` checks limits, paths and the manifest, and `package.facts` lists what reaches the network or starts processes.
-2. Submitting files the approval. Its snapshot names the sha256. The review page (`/w/<ws>/apps/personal/review/<id>`) shows the diff from the last release. Approving needs a superuser who didn't submit it. A lone superuser can't submit, since nobody could approve, so an agent or another person does.
-3. Approving creates the immutable catalog version, and the app lists for everyone.
-4. Revoking (`POST …/submissions/<id>/revoke`) refuses Start and Canopy calls at once, and running copies stop at their next heartbeat.
+2. Submitting files the approval. Its snapshot names the sha256, so what is approved is what ships. The review page (`/w/<ws>/apps/personal/review/<id>`) shows the diff from the last release. Approving needs a superuser who didn't submit it (`LocalAppRelease.may_approve`). A lone superuser can't submit, since nobody could approve, so an agent or another person does.
+3. Approving creates the immutable catalog version (`services.release`), and the app lists for everyone.
+4. Revoking (`POST …/submissions/<id>/revoke`, superuser) refuses Start and Canopy calls at once, and running copies stop at their next heartbeat (`services.stop_wanted`).
 
 ## Updates
 
-At each Start, the runner runs the newest good version if its **trust surface** (`trust.py`: notice, disclosure, canopy, source, entry, platforms) is what the person accepted. If that changed, they stay on what they accepted until they accept the differences, unless it's been revoked.
+At each Start, the runner runs the newest good version if its **trust surface** (`trust.py::_FIELDS`: notice, disclosure, canopy, source, entry, platforms) is what the person accepted. If that changed, they stay on what they accepted until they accept the differences, unless it's been revoked (`services.resolve`).
 
 ## Who and what
 
-- Any signed-in person can see and install one, for themselves. There's no workspace switch. The agent they choose decides which workspace its sessions land in, and it can be in any workspace they're in.
-- Only a person's own laptop runner (`kind=emdash`, their `owner`). `private` isn't the test, because most laptops also serve fleet work.
-- A web page can install, configure and stop an app, never start one.
+- Any signed-in person can see and install one, for themselves. There's no workspace switch. The agent they choose decides which workspace its sessions land in, and it can be in any workspace they're in (`services._usable_agent`).
+- Only a person's own laptop runner (`kind=emdash`, their `owner`) runs one. `private` isn't the test, because most laptops also serve fleet work.
+- A web page can install, configure and stop an app, never start one. Install, configure and accept refuse an agent acting for the person (`api.py::_the_person_themself`).
 
 ## How a person sees it
 
-Start opens a **start screen** in the menu bar app (SwiftUI): what the app works with, its numbered steps, its notice, and what it reads and sends behind a disclosure. A failed check shows there with its fix and a Try again button, instead of Start. While it runs, a small **status window** floats top-right and has no close button, only Stop, so a live feed can't be lost track of. It shows the current step, how much has gone to the agent, a three-part track (waiting, listening, done) and Open chat. When the run ends it says how, and can be closed. It reads `~/.canopy/apps/<key>/run.json` every second, without a process or the network.
+The menu bar app (`runner/menubar/Sources/main.swift`) shows a start screen on Start and a status window while a run goes; it reads `~/.canopy/apps/<key>/run.json` every second, with no process or network. Every word on both comes from the manifest's optional `presentation` (`apps/local_apps/manifest.py::_presentation`: `uses`, `steps`, `states`). It's copy, so it isn't part of the trust surface: rewording it asks nobody to accept again. `CanopyRunner --render-app-previews <dir>` draws every screen, in light and dark, to PNG for review.
 
-Every word on both comes from the manifest's optional `presentation`: `uses` (what it works with, such as Superwhisper), up to four `steps` (`{agent}` is filled with the agent the person chose), and `states`, a sentence for each state, step event or stop reason ("headline\nline under it"). It's copy, so it isn't part of the trust surface: rewording it asks nobody to accept again. The app's page on the website shows the same `uses` and steps. `CanopyRunner --render-app-previews <dir>` draws every screen, in light and dark, to PNG for review.
-
-A runner only runs a manifest whose keys it knows, so a version that adds a new key is published only once runners that know the key have shipped.
+A runner only runs a manifest whose keys it knows (`runner/canopy_runner/canopy_runner/local_apps/manifest.py::KNOWN`), so a version that adds a new key is published only once runners that know the key have shipped.
 
 ## How a run acts as the person
 
-The app holds no credential. The host calls `/api/harness/runners/{runner}/local-apps/…`, under the runner protocol's existing path, so `runner_auth` gained no new route. Each call is allowed by an installation the person made while signed in. The agent comes from that row, a `sessions.send` reaches only sessions the run opened and still asks the session ACL, and only ops the manifest declares work. Each heartbeat and Canopy call re-checks the version and `turn_context.resolve_turn_context`, including that the person is still in the agent's workspace, so losing access stops a running copy. These runner routes aren't MCP tools, and an agent acting for a person can't install, configure or accept. Runs store numeric counts and ids, never anything said.
+The app holds no credential. The host calls `/api/harness/runners/{runner}/local-apps/…`, under the runner protocol's existing path, so `runner_auth` needs no route of its own. Each call is allowed by an installation the person made while signed in. The agent comes from that row, a `sessions.send` reaches only sessions the run opened and still asks the session ACL, and only ops the manifest declares work. Each heartbeat and Canopy call re-checks the version and that the person may still use the agent (`services.stop_wanted`, `turn_context.for_asker`), so losing access stops a running copy. These runner routes aren't MCP tools (`apps/mcp/api_tools.py`), and an agent acting for a person can't install, configure or accept. Runs store numeric counts and ids, never anything said (`services._counts`).
 
 ## What it doesn't protect against
 

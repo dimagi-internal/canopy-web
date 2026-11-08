@@ -1,146 +1,96 @@
 # Workspace apps
 
-A **workspace app** is a self-contained application a workspace installs from canopy's app store,
-switches on or off, customizes, and can serve publicly (a careers page). The first is **Hiring**
-(`apps/workspace_apps/bundled/hiring/`), an applicant tracker meant to replace the ATS Dimagi uses today.
+A **workspace app** is a self-contained application a workspace installs from canopy's
+app store, switches on or off, customizes, and can serve publicly (a careers page). The
+bundled one is **Hiring**, an applicant tracker (`apps/workspace_apps/bundled/hiring/`).
+`workspace_apps` is a product app (it imports the dynamic-view sandbox; tier in
+`ARCHITECTURE.md`). Start reading at `apps/workspace_apps/models.py` (module docstring),
+`manifest.py`, `overlay.py`, `services.py` and `api.py`.
 
-The design follows what the research found across Shopify, Salesforce, SAP, Power Platform, Odoo
-and Figma: platforms whose customers customize *and* keep receiving updates give every part one
-owner in advance, keep the customer's changes as **data over declared anchors**, and never let a
-change edit the vendor's artifact in place.
+**An app is a manifest, never server code.** Installing or changing one, even one a
+workspace wrote, runs nothing on the server. Customizations are **data over declared
+anchors** (an overlay), never an edit of the vendor's artifact, so a template update
+keeps arriving.
 
-## Three layers
+## Three layers (`models.py`)
 
 | Layer | Model | Who changes it |
 |---|---|---|
-| **Template** — what an app is | `AppTemplate` + immutable `AppTemplateVersion` (a manifest). canopy's own are synced from `bundled/<key>/` (bump `version` to ship); a workspace's own app is a template it owns. | canopy (PRs), or the workspace for its own apps |
-| **Installation** — the app in one workspace | `AppInstallation`: a template + the live `AppVersion`. Never a copy of the template. | admins (`integrations`): install, on/off, public, remove |
-| **Version** — the workspace's changes | `AppVersion`: the template version it runs on + an **overlay** (keyed ops). Drafts, the published one, the ones it superseded — append-only. | maintainers: admins, or a member granted the app's `maintainer` role (the head of HR) |
+| Template: what an app is | `AppTemplate` + immutable `AppTemplateVersion` (a manifest). canopy's own are synced from `bundled/<key>/` (bump `version` to ship); a workspace's own app is a template it owns | canopy (PRs), or the workspace for its own apps |
+| Installation: the app in one workspace | `AppInstallation`: a template + the live `AppVersion`. Never a copy of the template | admins (`integrations`) |
+| Version: the workspace's changes | `AppVersion`: the template version it runs on + an **overlay** (keyed ops). Drafts, the published one, superseded ones; append-only | maintainers (`access.may_maintain`) |
 
-What runs is `compose(template manifest, overlay)` (`overlay.py`), validated again
-(`manifest.py`). A template update is the same overlay over the newer version.
+What runs is `overlay.compose(template manifest, overlay)`, validated again by
+`manifest.py`. A template update is the same overlay over the newer version. Who may do
+what: `access.py` (manage = `integrations`, maintain = managers or a member granted the
+app's `maintainer` role, grant = `members.manage`).
 
-## The manifest (an app is data, never server code)
+## The manifest (`manifest.py`)
 
-`roles` (each a **workspace permission** via `permissions.can`, or grant-only), `collections`
-(typed fields incl. `file`; `read` role; optional `public` projection), `actions` (the only writes;
-`effects` the platform performs — email to an address on the record, worded by settings),
-`pages` (sandboxed JSX, with named `slots`), `settings`, `fixtures` (sample records for test
-copies) and `scenarios` (plain-language checks). Installing one runs nothing on the server.
+Its module docstring lists what an app can declare: `roles` (each a **workspace
+permission** via `permissions.can`, or grant-only; no workspace role is named, pinned by
+`tests/test_roles_named_only_in_workspaces.py`), `collections`, `actions` (the ONLY
+writes), `pages`, `settings`, `fixtures`, `scenarios`, `links`, `retention`, and the
+guards on actions (`when` is a 409 on a record in the wrong state, `actor_field`,
+`params`, `then`, `bulk`) and on fields (`read`: absent from queries, history, emails and
+links). Record-level access is `scope.py`. An optional top-level `connections` declaration
+(same shape as a dynamic view's, composed through overlays unchanged) lets member-only
+pages call Salesforce through canopy-web; public pages never do. A shared agent connection
+is approved per app on the agent's Accounts tab ([`vault-connections.md`](vault-connections.md) § Calls from screens).
 
-A manifest may also carry a top-level `connections` declaration, the same shape as a dynamic view's (`[{provider, as: "viewer"|"shared", agent?, reads, writes}]`, validated by `manifest.py`, composed through overlays unchanged). Member-only pages may call Salesforce through canopy-web within it; public pages never do. A shared agent connection is approved per app on the agent's Accounts tab ([`vault-connections.md`](vault-connections.md) § Calls from screens).
-
-What an app can say without code, each enforced in `services.act` / `services.query`:
-
-| Primitive | What it does | Hiring uses it for |
-|---|---|---|
-| `when` on an action | applies only to a record in that state (else 409) | reject only an active candidate; send only an approved offer |
-| `actor_field` (+ `override_role`) | only the person the record names may run it | only the named approver approves |
-| `params` | values the action uses but never stores | the wording of one rejection email |
-| `then` | records the app writes after the action, `unless` some record still matches, `if_target` its state | stage history; the last approval opens the job; mark hired closes the opening |
-| `bulk` | one action over up to 200 records, each alone, emails rendered per record | bulk reject with per-candidate names |
-| field `read` | readable by that role only — absent from queries, history, emails, links | voluntary self-ID (compliance); private notes |
-| `links` + role `link` | a signed private link to ONE record; its holder reads declared fields and runs only the link's actions on it | a candidate picks an interview time; accepts an offer |
-| effect `ics`, `to_field: "ref.email"`, `link` | a calendar invite, an address one ref away, the record's private link | interview invites; offer emails |
-| `public.feed` | schema.org JobPosting JSON-LD (in the page head) and an XML feed, from public fields only | Google for Jobs, LinkedIn/Indeed XML |
-| collection `scope` (`scope.py`) | record-level access for a member's session: a record's `team` fields name who works on it, a root's `private_field` hides it from everyone off its team, a child follows its `via` parent (its TEAM when `team_only_setting` is on), `shared_by` lets another record's people see it; `bypass` roles see all | a job's candidates seen by its hiring team; confidential jobs; an interviewer sees the candidate their interview names |
-| collection `read_also` | more roles that may read the whole collection | compliance reads applications for self-ID totals |
-| effect `delay_param` | hold the email back N hours (`AppScheduledEmail`, sent by a 10-minute tick); cancelled if the record no longer matches what the action left it as | a rejection sent tomorrow, not the minute someone clicked |
-| then `link_back` | a create step writes the new record's id back onto the action's record | a referral links to the application it became |
-| effect `name`, `audience` | how the store names an email and who gets it (else the action's label and its `to_field`) | "Not moving forward · to the applicant" |
-| `setup` | a maintainer's first-run list on top of the app; each step's `check` is read off the live app (`setting` changed from its default, `role_granted`, `records` ≥ min, `public`) or ticked by hand (`manual`); `go` opens a page or Customize | Hiring: name your recruiters, open a first job, turn on the careers page |
-| `retention` | on a clock (`ticks`, twice a day): anonymize or delete records matching a `where` after N days (or a setting), skipping a `hold_field`, deleting `cascade` children and files | rejected candidates by region; expired talent-pool consent |
-
-A workspace's own actions (overlay `add_action`) may not declare `then` or be link actions: both
-act beyond the caller, so only a template declares them. Admins also get, for every app, a
-retention preview and run, and a data-subject export by email (Customize → Privacy).
+Do not let a workspace declare what acts beyond the caller: overlay `add_action` refuses
+`then` and link actions (`overlay.py`, `add_action` branch); only a template declares them.
 
 ## The overlay (`overlay.py`)
 
-The workspace **adds** in its own namespace (`x_` fields/collections/actions/roles, `x-` pages) so
-a template addition can never collide, and changes a template element only through narrow routes:
-relabel / help / hide / require (never un-require), add options to lists the template marks
-`extensible` (between `fixed_first` and `fixed_last`), switch an action off, add its own fields to
-an action's input, fill a declared **slot**, set a setting. `fork_page` replaces a page and is
-shown as "no longer receives template updates". Every op records the person's words (`intent`).
+The module docstring holds the rules. The ones to keep: the workspace **adds** only in
+its own namespace (`x_` fields/collections/actions/roles, `x-` pages) so a template
+addition can never collide; it changes a template element only through narrow openings
+(never un-require; options only into lists the template marks `extensible`); `fork_page`
+is a fork and is shown as one; ops apply one at a time, validated after each, and one whose
+anchor is gone is **quarantined** with its reason, never dropped, never breaking the app.
+Template pages draw what the workspace adds without knowing it (`FieldInputs` /
+`FieldValues` in `frontend/src/dynamicViews/frame/kit.tsx`, and `Slot`).
 
-Ops apply one at a time, validated after each. One whose anchor is gone or that the template made
-invalid is **quarantined** with its reason — never dropped, never breaking the app.
+## The life cycle (`services.py`, routes in `api.py`)
 
-Template pages draw what the workspace adds without knowing it: `FieldInputs` / `FieldValues`
-render `x_` fields from the composed data model, and `Slot` draws slot fills, each in its own
-error boundary.
+1. **Draft** starts as the live app with a **test copy** seeded from `fixtures`: never
+   live data, nothing is emailed, the maintainer holds every app role.
+2. **Change** into the same draft by an agent the maintainer lets onto THIS draft
+   (`AppVersion.helpers`: read the guide, add/remove ops, open the test copy, run checks;
+   never publish, discard, roll back or start a draft; publishing or discarding ends
+   the access), by the person's own MCP client (`get_workspace_app_guide` →
+   `start_workspace_app_draft` → `add_workspace_app_change` → `check_workspace_app_draft`,
+   under the person's own rights), or by the page's own forms.
+3. **Check**: the scenarios run on a scratch copy; the workspace can add its own.
+4. **Publish** (`services.publish`) is refused while anything is quarantined or a check
+   fails. A change to what the public sees or who can do what needs a workspace admin:
+   the workspace's own changes judged op by op (`overlay.is_risky`), a template UPDATE by
+   comparing the two template versions (`template_diff.changes`).
+5. **Restore** (`services.rollback`): an earlier version becomes live again as a new
+   version; overlays only add, so it reads today's records.
 
-## The life cycle (for someone who is not a developer)
-
-1. **Draft** (`POST …/draft`): starts as the live app, with a **test copy** seeded from `fixtures` —
-   never live data. On the test copy the maintainer holds every app role, and nothing is emailed.
-2. **Change**, three ways, all into the same draft:
-   - **an agent**: the Customize page lists the agents the maintainer can see whose own login is a
-     member of the app's workspace (`…/helpers`), lets the chosen one onto THIS draft
-     (`…/draft/helpers` → `AppVersion.helpers`: read the guide, add/remove ops, open the test copy,
-     run checks — never publish, discard, roll back or start a draft; publishing or discarding
-     closes the draft and the access with it), and opens a chat with it in its home workspace;
-   - **the person's own Claude** (or any MCP client): canopy's MCP server (`/api/mcp/`, OAuth sign-in)
-     serves every route as a tool as that person, so `get_workspace_app_guide` →
-     `start_workspace_app_draft` → `add_workspace_app_change` → `check_workspace_app_draft` is the
-     same draft, under the person's own rights. The Customize page shows the address and a prompt;
-   - **the page's own forms** (add a question, add a stage, settings and email wording).
-   Each change is reviewed as a plain-English line with its intent; a refused one says why.
-3. **Try it**: every page of the draft, public ones as a visitor, on the test copy.
-4. **Check**: the scenarios run on a scratch copy; the workspace can add its own.
-5. **Publish**: refused while anything is quarantined or a check fails. A change to what the
-   public sees or who can do what needs a workspace admin — the workspace's own changes judged op
-   by op (`overlay.is_risky`), and a template UPDATE judged by comparing the two template versions
-   (`template_diff.changes`: roles and who holds them, who reads a collection, field or record,
-   public and link pages, public forms and fields, private links, action roles, email recipients,
-   retention). The review lists each finding in plain words, or says the update changes none.
-6. **Restore**: any earlier version becomes live again, as a new version. Overlays only add, so an
-   earlier version reads today's records.
-
-**Template updates** arrive as "update available" and are taken as a draft (`upgrade=true`): the
-same overlay over the new version, the changelog, quarantined ops to look at, test copy, checks,
-publish.
+A template update is taken as a draft (`upgrade=true`), then the same steps.
 
 ## Reused, not rebuilt
 
-- **Access**: app roles are workspace permissions; managing is `integrations`, granting is
-  `members.manage`; every route declares `@gate`. No workspace role is named.
-- **Pages**: the dynamic-view sandbox (opaque origin, `connect-src 'none'`, no `allow-forms`),
-  compiler, kit and protocol. An app page gets an `app` prop; a plain view still refuses writes.
-- **Public pages**: a scoped path (`/w/<ws>/app/<key>/`), `auth=None` routes that 404 alike, a
-  honeypot, a DB-counted per-address limit. Files use the chat-attachment bucket.
-- **Agents**: changes are made through canopy's own chat and MCP tools — canopy-web holds no model key.
+- **Access**: every route declares `@gate`.
+- **Pages**: the dynamic-view sandbox (`apps/dynamic_views/frame.py`: opaque origin,
+  `connect-src 'none'`, no `allow-forms`), compiler, kit and protocol. An app page gets an
+  `app` prop; a plain view still refuses writes.
+- **Public pages**: scoped path `/w/<ws>/app/<key>/`, `auth=None` routes that 404 alike
+  when the app is off or not public, a honeypot (`api.py`), a DB-counted per-address
+  limit (`services._rate_limit`). Files use the chat-attachment bucket.
+- **Agents**: changes go through canopy's own chat and MCP tools; canopy-web holds no
+  model key.
+- **Email**: sent only when `WORKSPACE_APPS_SEND_EMAIL` is on (off by default); scheduled
+  and retention ticks are registered in `apps.py`.
 
 ## Security, said plainly
 
-- A **visitor** reads only public projections of enabled, public apps, creates only through
-  public actions (declared, typed, size-limited inputs; refs only to allowed records; files only
-  for a public form's file field; rate-limited) and gets back `{id}`.
+- A **visitor** reads only public projections of enabled, public apps, creates only
+  through public actions (declared, typed, size-limited inputs; refs only to allowed
+  records; files only for a public form's file field; rate-limited) and gets back `{id}`.
 - **Test copies** are separate spaces of records; nothing in one reaches live or sends email.
-- An **app author or agent** cannot run server code, write access rules, or read what its viewers
-  could not; page code can see what its page shows.
-
-## Before the switch
-
-Hiring 2.0 covers an ATS's daily work, built from public ATS research (Hal's research report has the
-checklist): requisitions with approvals and openings, pay ranges, the application
-portal at its canopy link (`/w/<ws>/app/<key>/careers`; no custom domain), privacy notices and
-self-ID, an application-review queue, the pipeline with bulk actions, interview plans and kits,
-scorecards, pick-a-time links with calendar invites, offers with approvals and an accept link,
-referrals, prospects, templates, reports and retention, plus an importer for the outgoing ATS's export API
-(`manage.py import_ats`). 2.1 adds per-job access (a hiring team sees only its jobs' candidates;
-confidential jobs hidden from everyone off their team), recruiter as an admin-or-named role,
-held-back rejection emails, reject-from-all-jobs and bulk cancel. Still to do: duplicate merge,
-Google Calendar free/busy and Meet links,
-Gmail-threaded email, Slack nudges, e-signature, a hire webhook to the HR system, SSO-driven
-interviewer groups, legal sign-off on the retention defaults, and turning on `WORKSPACE_APPS_SEND_EMAIL` with an SES sender.
-
-## Open decisions
-
-- **Tier**: `workspace_apps` is product (it imports the dynamic-view sandbox). Move the sandbox
-  down first if apps become framework.
-- **Publishing to the store**: a workspace's own template is unlisted; listing it for other
-  workspaces (and Ashby-style promotion of common overlays into a template) is next.
-- **Intent replay**: on a quarantined slot fill, re-asking the agent with the recorded intent is the
-  untested hypothesis from the research — measure before automating it.
+- An **app author or agent** cannot run server code, write access rules, or read what its
+  viewers could not; page code can see what its page shows.

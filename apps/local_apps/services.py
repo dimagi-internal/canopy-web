@@ -392,8 +392,9 @@ def start_run(inst: LocalAppInstallation, version: str) -> LocalAppRun:
 
 def stop_wanted(run: LocalAppRun) -> str:
     """Why this run must stop, or "" if it may go on. Read at each heartbeat and each
-    Canopy call, so a decision made after Start reaches running copies: revoking, the
-    and the person losing their access."""
+    Canopy call, so a decision made after Start reaches running copies: revoking the
+    version, a Stop pressed on the website, and the person losing the right to use the
+    chosen agent (`_usable_agent`)."""
     if run.finished_at:
         return "finished"
     if run.version.revoked_at:
