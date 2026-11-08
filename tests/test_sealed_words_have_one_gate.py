@@ -7,7 +7,7 @@ another AI's route — fails here, so a new reader is closed until it asks the g
 Writers, the fork that copies a conversation whole, and the one-time re-seal of rows
 from before keys were per conversation are named below.
 
-docs/architecture/tenancy.md § Sensitive conversations.
+docs/architecture/tenancy-sensitive-conversations.md § Sensitive conversations.
 """
 from __future__ import annotations
 

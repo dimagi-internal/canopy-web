@@ -25,7 +25,7 @@ same way, not as an archive (spec
   durable row keeps a size bucket (`size_bucket`) and a type family (`family`); no log
   line names a file. The runner learns the name from the one download.
 
-docs/architecture/tenancy.md § Sensitive conversations ("Files").
+docs/architecture/tenancy-sensitive-conversations.md § Sensitive conversations ("Files").
 """
 from __future__ import annotations
 

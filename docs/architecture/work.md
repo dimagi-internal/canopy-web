@@ -1,6 +1,6 @@
 # Work: tasks and projects
 
-Tasks and projects belong to a **workspace**, not to an agent. Design record: `docs/superpowers/specs/2026-10-24-workspace-tasks-and-projects-design.md`; every route: `api-surface.md` (Agents).
+Tasks and projects belong to a **workspace**, not to an agent. Design record: `docs/superpowers/specs/2026-10-24-workspace-tasks-and-projects-design.md`; every route: `api-agent-projects-and-tasks.md`.
 
 ## The nouns
 

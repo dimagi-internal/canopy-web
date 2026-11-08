@@ -8,7 +8,7 @@ the CLI, the claim, turn mode), [runner-flags-and-schedules.md](runner-flags-and
 identity and credentials a turn is handed, keyless sign-in, the runner software) and
 [runner-fleets.md](runner-fleets.md) (fleets, credential sets, readiness). Who may *edit* each of these is in
 [`access.md`](access.md) (→ "Runner roles", "Turn mode"); the routes are in
-[`api-surface.md`](api-surface.md) (→ Harness, Agents). Code: `apps/harness/claim.py`
+[`api-runners.md`](api-runners.md), [`api-turns-and-routing.md`](api-turns-and-routing.md) and [`api-agents.md`](api-agents.md). Code: `apps/harness/claim.py`
 (the claim) and `apps/harness/claim_reach.py` (its read-only explanations: `turn_reach`,
 `unclaimable_queued_turns`), `apps/harness/routing.py` (every routing predicate, re-exported
 from `routing_orders`, `routing_machine`, `routing_serving` and `routing_projects` — the claim,

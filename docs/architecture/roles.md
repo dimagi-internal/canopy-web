@@ -19,7 +19,7 @@ There are six tiers. Each contains the one below it.
 The membership roles are a total order — `WorkspaceMembership.ROLE_RANK`
 (`apps/workspaces/models.py`) is `{viewer: 0, editor: 1, admin: 2, owner: 3, superuser: 4}`.
 
-**Agent roles and workspace roles share one engine, not one vocabulary.** Agent roles are rows a workspace defines (`AgentRole`, [access.md § Configurable roles](access.md#configurable-roles)); workspace roles (viewer / editor / admin / owner) stay fixed in code.
+**Agent roles and workspace roles share one engine, not one vocabulary.** Agent roles are rows a workspace defines (`AgentRole`, [access-agent-roles-and-access-list.md § Configurable roles](access-agent-roles-and-access-list.md#configurable-roles)); workspace roles (viewer / editor / admin / owner) stay fixed in code.
 `apps/common/rolesets.py` (`RoleSet`) holds the mechanism both use: a vocabulary of permissions, a
 table of named roles, an implication rule closed when the table is built, `allows(role,
 permission)`, `holds(permissions, permission)` and rank. `apps/agents/roles.py` declares agent
@@ -45,7 +45,7 @@ about who may call it, made when it is written, not discovered by an audit. A wr
 make must also give its reason (`viewer_write="..."`). Hand-written MCP tools, which are not
 routes, declare theirs in `route_gates.HAND_TOOL_GATES`. A route that changes the agent itself
 declares `@gate("agent-edit")` and asks `gates.agent_for_edit` (→ `access.may_edit_agent`): the agent's own
-`agent_edit` permission, not the workspace's `agent.work` (`access.md` § Agent roles).
+`agent_edit` permission, not the workspace's `agent.work` (`access-agent-roles-and-access-list.md` § Agent roles).
 
 A workspace admin manages members only **strictly below themselves** (`permissions.may_manage_member`):
 they invite, re-role and remove viewers and editors, see invite links only for those roles,
@@ -209,7 +209,7 @@ Beside `PUBLIC_PATH_PREFIXES`, the login middleware's artifact exemptions (`Logi
 the scoped viewers (`_SCOPED_VIEWER`), the per-artifact read APIs (`_is_artifact_api`) and
 the retired flat addresses (`_is_flat_artifact`, which serve only the "links now include the
 workspace" 404). The API layer enforces the share token underneath; which pages these are:
-[pages.md § Scoped public viewers](pages.md#scoped-public-viewers-anonymous-with-a-token).
+[pages-public-and-personal.md § Scoped public viewers](pages-public-and-personal.md#scoped-public-viewers-anonymous-with-a-token).
 
 ## How you get into a workspace
 

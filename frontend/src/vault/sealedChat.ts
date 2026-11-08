@@ -187,7 +187,7 @@ export const UNCONFIRMED_SELF =
  *    reason, the key it actually holds is checked against it, and a mismatch is shown
  *    naming those chats (`trust.rememberSelf`, `useSealedConversation.warning`). So a
  *    substituted key is DETECTED at that unlock, not prevented
- *    (tenancy.md § Sensitive conversations).
+ *    (tenancy-sensitive-conversations.md § Sensitive conversations).
  */
 export async function offerForNewChat(me: MyVaultKey): Promise<ConversationKeyOffer> {
   const thumb = await jkt(me.public_jwk as Jwk)

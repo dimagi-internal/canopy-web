@@ -626,7 +626,7 @@ def request_is_panel_browser(request) -> bool:
     Not a proof: a header a host's backend could forge. It keeps what only the
     person's browser needs (`sealed_key.keyset`, the person's vault seals) out of
     every ordinary server-to-server call; the trust boundary is in
-    docs/architecture/tenancy.md § Sensitive conversations."""
+    docs/architecture/tenancy-sensitive-conversations.md § Sensitive conversations."""
     if not getattr(request, "delegated_app", None):
         return True
     return (request.headers.get("Sec-Fetch-Site") or "").lower() == "same-origin"

@@ -19,7 +19,7 @@ explicitly added, asks (`access.may_pull`). Adding someone is the session owner'
 conversation is with (`Agent.owner`, not its agent admins), once in it, may bring someone
 new in — a person or an agent — but owns nothing, reads nothing new, and changes or
 removes nobody; never a contact's or a sensitive one (`access.can_add_people`). Sensitive conversations stay sealed to
-their own people (`tenancy.md` § Sensitive conversations). The rule is
+their own people (`tenancy-sensitive-conversations.md` § Sensitive conversations). The rule is
 `apps/canopy_sessions/access.py`; enforcement detail is `tenancy.md` § The
 chat-session ACL.
 

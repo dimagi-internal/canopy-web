@@ -1,6 +1,6 @@
 /**
  * A file in a private (sensitive) conversation, sealed to its people in this browser
- * (apps/canopy_sessions/private_attachments.py; docs/architecture/tenancy.md §
+ * (apps/canopy_sessions/private_attachments.py; docs/architecture/tenancy-sensitive-conversations.md §
  * Sensitive conversations, "Files").
  *
  * The agent's copy is uploaded in clear for one turn and deleted once its box has

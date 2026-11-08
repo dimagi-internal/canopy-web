@@ -321,7 +321,7 @@ profile: read mode or a host site), `turn_mode` (`{mode, basis}`), and:
   unless a slash command named it, and is null
   for a DM; `thread_ts` is null for a DM; `permalink` falls back to the web-client
   link. With `turn_id`, the agent may act on that conversation: see "Agents and
-  their own conversation" in `api-surface.md` (`start_new_slack_thread`).
+  their own conversation" in `api-channels.md` (`start_new_slack_thread`).
 
 Readers accept both spellings: `relationship: caller` means `contact`, `profile:
 restricted` means `confined` (`normalize_relationship`, `normalize_profile`; the

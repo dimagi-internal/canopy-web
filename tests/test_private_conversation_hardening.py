@@ -3,7 +3,7 @@ real entry point: forking metadata, becoming private without a key, the unrun-tu
 deadline, turns linked by `canopy_session`, files from before, key copies, a private
 parent, drafts and events racing the switch, and forks made before it.
 
-docs/architecture/tenancy.md § Sensitive conversations. The browser half (a changed
+docs/architecture/tenancy-sensitive-conversations.md § Sensitive conversations. The browser half (a changed
 vault key stops a new chat; a changed person's key needs its fingerprint typed) is in
 `frontend/src/vault/*.test.ts(x)`; the Slack "Run on cloud" refusal is in
 `tests/test_slack.py`.

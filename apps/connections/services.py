@@ -53,7 +53,7 @@ connection belongs to no workspace (`Event.workspace` is NOT NULL by design),
 so the same record is a log line. Operational records
 (`provider_error`, `revoke_failed`: canopy's problem, not the owner's history)
 are log lines for every owner. A log line is `connections.<verb> key=value …`
-(`docs/architecture/vault.md` § Connection audit). Never a token, a code, a
+(`docs/architecture/vault-connections.md` § Connection audit). Never a token, a code, a
 state or a verifier.
 """
 from __future__ import annotations

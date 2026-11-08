@@ -5,7 +5,7 @@ views (refused at authorize, refused for a missing refresh token, a person's and
 an agent's sealed to their owner), sharing and unsharing, disconnects. Then
 every log record (any logger) and every Event is checked:
 
-- each kind is in the documented vocabulary (`docs/architecture/vault.md`
+- each kind is in the documented vocabulary (`docs/architecture/vault-connections.md`
   § Connection audit), and a connections log line parses back
   (`services.parse_log_line`);
 - levels: INFO for normal, WARNING for reconnect_required / provider_error /

@@ -6,7 +6,7 @@ browser calls, the send, the runner's download route, `close_turn`, the deadline
 sweep, the history routes. The test stands in for the browser where a browser seals
 or opens (`_seal`, `_open`) — never app code.
 
-docs/architecture/tenancy.md § Sensitive conversations ("Files").
+docs/architecture/tenancy-sensitive-conversations.md § Sensitive conversations ("Files").
 """
 from __future__ import annotations
 

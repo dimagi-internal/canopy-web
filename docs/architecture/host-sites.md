@@ -66,7 +66,7 @@ sends can set or change it. The Session Context reports it as `site` (`published
 
 ## What a turn there may do
 
-The Turn Context resolver (`turn_context.resolve_turn_context`) decides, in the order access.md § How it is
+The Turn Context resolver (`turn_context.resolve_turn_context`) decides, in the order access-turn-context.md § How it is
 resolved gives. For a conversation on a site:
 
 | Asker | Profile | Access |
@@ -109,7 +109,7 @@ host's MCP server with DPoP, as the sender. There is no fallback to the agent's 
 
 ## What the host sees
 
-`GET /api/sites/agents` (signed request, signed answer; [api-surface.md](api-surface.md)) lists the
+`GET /api/sites/agents` (signed request, signed answer; [api-workspaces.md](api-workspaces.md)) lists the
 agents the site may offer, each with its entries for the site (`capabilities[]`: `name`, `description`,
 `handles_sensitive`, `sensitive_set_by` / `_at`), its runners, `ready` and `problems`.
 `sensitive_set_by` / `_at` are the last save of **any** of the agent's read mode or host sites, not
@@ -126,7 +126,7 @@ touch neither record.
 short form, so `sites:`, `site_tools` / `site_call` / `site_read`, `/api/sites/agents` and
 `canopy_sdk.site_agents` keep their names.
 
-Stored or on the wire, so not renamed (access.md § Read mode and host sites): the `AppCredential`
+Stored or on the wire, so not renamed (access-agent-roles-and-access-list.md § Read mode and host sites): the `AppCredential`
 model, the `Agent.interface` column and its `capabilities` key, the entry key, `Turn.capability`, `AgentGrant.capability`,
 `use:<key>`, `data: sensitive`, `metadata["embed_app"]`, the envelope's `capability` and
 `granted_by: capability:<key>`, and the site-agents API's `capabilities` / `AgentCapability`

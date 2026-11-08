@@ -2,7 +2,7 @@
 real entry point: who may open its socket, send into it, fork it, read its page,
 ship its rows, join it, and what its info, push and key read say.
 
-docs/architecture/tenancy.md § Sensitive conversations. One test (or two) per route
+docs/architecture/tenancy-sensitive-conversations.md § Sensitive conversations. One test (or two) per route
 an adversarial audit found open; `tests/test_sensitive_read_routes.py` holds the
 read routes that were already shut.
 """

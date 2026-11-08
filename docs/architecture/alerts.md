@@ -108,7 +108,7 @@ Per-source notes:
   fix: the debugger's (silent) while it works it, `pending_deploy` (still the
   debugger's, quiet) while a fix commit is not yet on every runner it hit, the
   handed-to person's after `hand_off` or a recurrence where the fix runs.
-  Details in `apps/harness/auto_debug.py` and [`api-surface.md`](api-surface.md).
+  Details in `apps/harness/auto_debug.py` and [`api-turns-and-routing.md`](api-turns-and-routing.md).
 - **A turn that cannot do its work is aborted, not finished.** `POST
   /api/harness/turns/{id}/abort` (`apps/harness/turn_abort.py`) ends it FAILED
   with the reason, which enters this same lifecycle, and stops the box still
@@ -150,7 +150,7 @@ Home must not become a list people learn to ignore. Each rule is code or a test:
 organisation), `POST /api/me/alerts/{id}/act` `{action}` (409
 `action-not-offered`, or `action-failed` when the handler refused), `POST /api/me/alerts/{id}/undismiss`, `GET
 /api/me/alerts/{id}/history`. MCP gets them as `list_alerts`, `act_on_alert`, …
-→ [`api-surface.md`](api-surface.md).
+→ [`api-people-and-attention.md`](api-people-and-attention.md).
 
 ## Screens
 
