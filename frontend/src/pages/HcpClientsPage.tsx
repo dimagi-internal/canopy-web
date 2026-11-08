@@ -1,9 +1,16 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 
-import { MY_CATEGORIES, listHcpClients, registerHcpClient, updateHcpClient } from '../api/people'
+import { MY_CATEGORIES, listHcpClients, listHcpScopes, registerHcpClient, updateHcpClient } from '../api/people'
 import type { HcpClientRow } from '../api/people'
 
-const ACTIONS = ['read', 'write'] as const
+/** A scope as people read it: the category's plain label (when this page knows one)
+ *  and the action. The scope string itself is always shown beside it, because that
+ *  is what is registered. */
+function scopeLabel(scope: string): string {
+  const [, category, action] = scope.split(':')
+  const known = MY_CATEGORIES.find((c) => c.value === category)
+  return `${known ? known.label : category} — ${action}`
+}
 
 /** The HCP service's client registry (apps/contacts/hcp_clients_api.py): the apps
  *  canopy does not operate that may ask people, on a consent screen, for access to
@@ -11,7 +18,12 @@ const ACTIONS = ['read', 'write'] as const
  *  refuses everyone else, and this page says so. */
 export function HcpClientsPage() {
   const [clients, setClients] = useState<HcpClientRow[] | null>(null)
+  // The scopes the service holds, read from the service (never listed here).
+  const [held, setHeld] = useState<string[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // A failed change shows beside the form, so the list stays on screen.
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [editing, setEditing] = useState<{ id: string; scopes: Set<string> } | null>(null)
   const [secret, setSecret] = useState<{ name: string; value: string } | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [name, setName] = useState('')
@@ -27,6 +39,11 @@ export function HcpClientsPage() {
       .catch((e: Error) => setError(e.message))
   }, [])
   useEffect(load, [load])
+  useEffect(() => {
+    listHcpScopes()
+      .then(setHeld)
+      .catch((e: Error) => setError(e.message))
+  }, [])
 
   const toggleScope = (s: string) =>
     setScopes((prev) => {
@@ -36,9 +53,37 @@ export function HcpClientsPage() {
       return next
     })
 
+  const toggleEditing = (s: string) =>
+    setEditing((cur) => {
+      if (!cur) return cur
+      const next = new Set(cur.scopes)
+      if (next.has(s)) next.delete(s)
+      else next.add(s)
+      return { ...cur, scopes: next }
+    })
+
+  const onSaveScopes = async (c: HcpClientRow) => {
+    if (!editing || editing.id !== c.client_id) return
+    setBusy(c.client_id)
+    setActionError(null)
+    try {
+      await updateHcpClient(c.client_id, {
+        allowed_scopes: Array.from(editing.scopes).sort(),
+        rotate_webhook_secret: false,
+      })
+      setEditing(null)
+      load()
+    } catch (err) {
+      setActionError((err as Error).message)
+    } finally {
+      setBusy(null)
+    }
+  }
+
   const onRegister = async (e: FormEvent) => {
     e.preventDefault()
     setBusy('register')
+    setActionError(null)
     try {
       const made = await registerHcpClient({
         name: name.trim(),
@@ -58,7 +103,7 @@ export function HcpClientsPage() {
       setScopes(new Set())
       load()
     } catch (err) {
-      setError((err as Error).message)
+      setActionError((err as Error).message)
     } finally {
       setBusy(null)
     }
@@ -68,18 +113,19 @@ export function HcpClientsPage() {
     const disabling = c.disabled_at === null
     if (disabling && !confirm(`Disable ${c.name}? Every token it holds stops working at once.`)) return
     setBusy(c.client_id)
+    setActionError(null)
     try {
       await updateHcpClient(c.client_id, { disabled: disabling, rotate_webhook_secret: false })
       load()
     } catch (err) {
-      setError((err as Error).message)
+      setActionError((err as Error).message)
     } finally {
       setBusy(null)
     }
   }
 
   if (error) return <div className="mx-auto max-w-4xl px-4 py-8 text-destructive">{error}</div>
-  if (clients === null) return <div className="p-6 text-muted-foreground">Loading…</div>
+  if (clients === null || held === null) return <div className="p-6 text-muted-foreground">Loading…</div>
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 px-4 py-8">
@@ -105,6 +151,12 @@ export function HcpClientsPage() {
         </div>
       )}
 
+      {actionError && (
+        <div role="alert" className="rounded-lg border border-destructive px-4 py-3 text-sm text-destructive">
+          {actionError}
+        </div>
+      )}
+
       {clients.length === 0 ? (
         <p className="text-sm text-muted-foreground">No clients registered.</p>
       ) : (
@@ -125,14 +177,63 @@ export function HcpClientsPage() {
                   Returns to {c.redirect_uris.join(', ')}
                 </div>
                 <div className="mt-0.5 text-xs text-muted-foreground">May ask for {c.allowed_scopes.join(' ')}</div>
+                {editing?.id === c.client_id && (
+                  <fieldset className="mt-2 rounded-md border border-border px-3 py-2" aria-label={`Scopes for ${c.name}`}>
+                    <legend className="px-1 text-xs text-muted-foreground">The most {c.name} may ask for</legend>
+                    <div className="grid gap-1 sm:grid-cols-2">
+                      {Array.from(new Set([...held, ...c.allowed_scopes])).sort().map((s) => (
+                        <label key={s} className="flex items-center gap-2 text-sm">
+                          <input type="checkbox" checked={editing.scopes.has(s)} onChange={() => toggleEditing(s)} />
+                          <span>
+                            {scopeLabel(s)} <code className="text-xs text-muted-foreground">{s}</code>
+                            {held.includes(s) ? null : (
+                              <span className="ml-1 text-xs text-destructive">the service no longer holds this</span>
+                            )}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Narrowing this does not change access people already gave; it limits what the app can ask for next.
+                    </p>
+                    <div className="mt-2 flex gap-3">
+                      <button
+                        className="text-sm font-medium text-primary hover:underline disabled:opacity-50"
+                        disabled={
+                          busy !== null ||
+                          editing.scopes.size === 0 ||
+                          [...editing.scopes].some((s) => !held.includes(s))
+                        }
+                        onClick={() => onSaveScopes(c)}
+                      >
+                        Save scopes
+                      </button>
+                      <button className="text-sm text-muted-foreground hover:underline" onClick={() => setEditing(null)}>
+                        Cancel
+                      </button>
+                    </div>
+                  </fieldset>
+                )}
               </div>
-              <button
-                className="shrink-0 text-sm text-primary hover:underline disabled:opacity-50"
-                disabled={busy !== null}
-                onClick={() => onToggleDisabled(c)}
-              >
-                {c.disabled_at ? 'Re-enable' : 'Disable'}
-              </button>
+              <div className="flex shrink-0 flex-col items-start gap-1">
+                <button
+                  className="text-sm text-primary hover:underline disabled:opacity-50"
+                  disabled={busy !== null}
+                  onClick={() => onToggleDisabled(c)}
+                >
+                  {c.disabled_at ? 'Re-enable' : 'Disable'}
+                </button>
+                <button
+                  className="text-sm text-primary hover:underline disabled:opacity-50"
+                  disabled={busy !== null}
+                  onClick={() => {
+                    setActionError(null)
+                    setEditing({ id: c.client_id, scopes: new Set(c.allowed_scopes) })
+                  }}
+                >
+                  Edit scopes
+                </button>
+              </div>
             </li>
           ))}
         </ul>
@@ -167,17 +268,14 @@ export function HcpClientsPage() {
         <fieldset className="text-sm">
           <legend className="text-muted-foreground">The most it may ask for</legend>
           <div className="mt-1 grid gap-1 sm:grid-cols-2">
-            {MY_CATEGORIES.map((cat) =>
-              ACTIONS.map((a) => {
-                const s = `hcp:${cat.value}:${a}`
-                return (
-                  <label key={s} className="flex items-center gap-2">
-                    <input type="checkbox" checked={scopes.has(s)} onChange={() => toggleScope(s)} />
-                    {cat.label} — {a}
-                  </label>
-                )
-              }),
-            )}
+            {held.map((s) => (
+              <label key={s} className="flex items-center gap-2">
+                <input type="checkbox" checked={scopes.has(s)} onChange={() => toggleScope(s)} />
+                <span>
+                  {scopeLabel(s)} <code className="text-xs text-muted-foreground">{s}</code>
+                </span>
+              </label>
+            ))}
           </div>
         </fieldset>
         <input

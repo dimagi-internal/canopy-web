@@ -1,0 +1,44 @@
+name: HCP spec probe (weekly)
+
+# Does the Human Context Protocol spec site publish the JSON Schema (conformance
+# 2.1.1, the one open Core MUST in docs/architecture/hcp-conformance.md), or a draft
+# newer than the one canopy implements? scripts/hcp_spec_probe.py answers from
+# https://hcp.me and always exits 0: a site that is down or has changed shape must
+# never fail anyone's work, so this is its own workflow, not part of ci.yml or the
+# contract nightly. The only write is one issue per kind of news (fixed title prefix
+# "HCP spec:"), commented on instead of duplicated.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"   # Mondays 06:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  probe:
+    name: HCP spec probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Probe hcp.me
+        id: probe
+        run: python3 scripts/hcp_spec_probe.py --github-output "$GITHUB_OUTPUT" --body-file /tmp/hcp-spec-body.md | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Open or update the issue
+        if: steps.probe.outputs.news == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: ${{ steps.probe.outputs.title }}
+        run: |
+          N=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$TITLE\" in:title" \
+                --json number,title --jq "map(select(.title == \"$TITLE\")) | .[0].number // empty")
+          if [ -n "$N" ]; then
+            gh issue comment "$N" --repo "$GITHUB_REPOSITORY" --body-file /tmp/hcp-spec-body.md
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file /tmp/hcp-spec-body.md
+          fi

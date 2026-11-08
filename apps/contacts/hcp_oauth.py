@@ -1,8 +1,9 @@
 """The HCP service: OAuth 2.0 for clients canopy does not operate (HCP 5.2.1).
 
-canopy's own agents reach a person's HCP instance as FIRST-PARTY clients (the
-grant per agent × channel × host in `hcp.grant_for`). This module is the other
-way in: an application someone else runs asks the person, through a standard
+canopy's own agents reach a person's HCP instance as FIRST-PARTY clients (one
+grant per agent, given in a session: `hcp.grant_for`, `hcp.issue_agent_grant`).
+This module is the other way in: an application someone else runs asks the
+person, through a standard
 authorization-code flow, for access to some categories of their instance. That
 is what makes canopy's `authorization_profile` "oauth2" and the service eligible
 for HCP v1 Interop. The design record, every judgment call, and what "public"
@@ -110,7 +111,9 @@ def may_authorize(user) -> tuple[bool, str]:
     email = (getattr(user, "email", "") or "").lower()
     domain = email.rsplit("@", 1)[-1] if "@" in email else ""
     allowed = allowed_domains()
-    if allowed and domain not in allowed:
+    # An empty list is a mis-set environment, not "no restriction": internal means
+    # closed, so with nothing to match against nobody authorizes.
+    if not allowed or domain not in allowed:
         return False, ("This service is open to Dimagi accounts only for now; "
                        f"{email or 'your account'} cannot authorize an app yet.")
     return True, ""

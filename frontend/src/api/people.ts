@@ -1,5 +1,6 @@
 import { apiV2 } from './client.v2'
 import type { components } from './generated'
+import { apiUrl } from './base'
 import { ApiError, ensureOk, unwrap } from './problem'
 
 export type PersonMe = components['schemas']['PersonMeOut']
@@ -255,8 +256,9 @@ export async function listMyAudit(
 
 // --- your own entries (HCP 3.2 / 3.3, as the person) -----------------------------
 
-/** The categories you can file something about yourself under (canopy holds work
- *  context only — PersonFact.CATEGORIES). */
+/** The categories you can file something about yourself under: the ones the HCP
+ *  service holds (`hcp.HELD_CATEGORIES`; `tests/test_hcp_oauth_security.py` fails if
+ *  this list and the service disagree). */
 export const MY_CATEGORIES = [
   { value: 'general_preferences', label: 'How I like to work' },
   { value: 'work_context', label: 'My work and role' },
@@ -348,6 +350,18 @@ export async function updateHcpClient(
   })
   if (!response.ok) throw registryError(response.status, error, 'Failed to update the client')
   return data as unknown as HcpClientRow
+}
+
+/** Every scope the HCP service holds, `hcp:{category}:{read|write}`, as the service
+ *  itself publishes them (RFC 8414 metadata, `scopes_supported`). The registry page
+ *  offers exactly these, so it can never offer a scope the service would refuse. */
+export async function listHcpScopes(): Promise<string[]> {
+  const res = await fetch(apiUrl('/api/hcp/.well-known/oauth-authorization-server'), {
+    credentials: 'same-origin',
+  })
+  if (!res.ok) throw new ApiError(res.status, 'Failed to load the scopes the HCP service holds', null)
+  const body = (await res.json()) as { scopes_supported?: string[] }
+  return body.scopes_supported ?? []
 }
 
 export type SearchPreview = components['schemas']['SearchPreviewOut']
