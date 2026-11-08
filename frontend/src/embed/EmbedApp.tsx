@@ -13,6 +13,7 @@ import type { ChatSessionDetail, JoinRequest } from '@/api/chat'
 import { PrivateInterstitial, type InterstitialApi } from '@/components/chat/PrivateConversationGate'
 import { formDataSafeFetch } from './panelFiles'
 import { createPageGrant, type PageGrant } from './pageGrant'
+import { mayReloadAgents, workspaceOfPage } from './followWorkspace'
 import { type Phase, type EmbedAgent } from './types'
 import { declarePage, sessionBase } from './session'
 import { Centered } from './panelBits'
@@ -71,6 +72,23 @@ export function EmbedApp({ link, app }: Props) {
   /** Captured once per session, at open — a snapshot, not a subscription (v2
    *  spec §8). Held so the first send can carry it to the agent. */
   const pendingContext = useRef<string | null>(null)
+  /** The workspace the host page is in now, and the one the agent list was
+   *  loaded for (followWorkspace.ts): the panel offers the agents of the
+   *  workspace on screen, and outlives navigation. */
+  const pageWorkspace = useRef('')
+  const listedWorkspace = useRef<string | null>(null)
+  const phaseRef = useRef(phase)
+  phaseRef.current = phase
+
+  /** Keep a principal's agents as the panel's list. Named once, here, for every
+   *  place the panel says who it is: an agent registered with its slug as its
+   *  name reads as a word, not an id. */
+  const takeAgents = (who: Principal): EmbedAgent[] => {
+    const agents = (who.agents as EmbedAgent[]).map((a) => ({ ...a, name: agentLabel(a) }))
+    agentsRef.current = agents
+    setAgentCount(agents.length)
+    return agents
+  }
 
   // The client's one host-specific dependency is inverted into a callback, and
   // in here that callback is a postMessage round trip: the frame has no cookies
@@ -114,6 +132,7 @@ export function EmbedApp({ link, app }: Props) {
         // start.
         try {
           const context = await link.requestContext()
+          pageWorkspace.current = workspaceOfPage(context)
           pendingContext.current = buildPageContextBlock(context)
         } catch {
           // A host that cannot answer is a host that lends no context. Not
@@ -128,11 +147,9 @@ export function EmbedApp({ link, app }: Props) {
         const who = await resolvePrincipal((path) => client.rest.json(path))
         if (cancelled) return
         setPrincipal(who)
-        // Named once, here, for every place the panel says who it is: an agent
-        // registered with its slug as its name reads as a word, not an id.
-        const agents = (who.agents as EmbedAgent[]).map((a) => ({ ...a, name: agentLabel(a) }))
-        agentsRef.current = agents
-        setAgentCount(agents.length)
+        const agents = takeAgents(who)
+        // The list just loaded is for the workspace on screen now.
+        listedWorkspace.current = pageWorkspace.current
 
         if (agents.length === 0) {
           // A contact is offered no agent that acts on this site (they cannot give
@@ -170,6 +187,41 @@ export function EmbedApp({ link, app }: Props) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [link])
+
+  // Follow the page into another workspace. Opened on a dimagi page and then
+  // taken to a family page, the panel kept offering dimagi's agents until a
+  // reload. The token names the page's workspace (`widget/grantPage.ts`), so a
+  // fresh token and a fresh list are all it takes — but only while no
+  // conversation is on screen; one in progress is left alone, and the list
+  // catches up when the person goes back to the start.
+  const [pageMoved, setPageMoved] = useState(0)
+  useEffect(() => link.onPageStateChanged((state) => {
+    const ws = workspaceOfPage(state)
+    if (ws && ws !== pageWorkspace.current) {
+      pageWorkspace.current = ws
+      setPageMoved((n) => n + 1)
+    }
+  }), [link])
+  useEffect(() => {
+    if (!mayReloadAgents(phase.kind) || principalRef.current?.kind !== 'user') return
+    if (listedWorkspace.current === null || listedWorkspace.current === pageWorkspace.current) return
+    const had = listedWorkspace.current
+    listedWorkspace.current = pageWorkspace.current
+    let cancelled = false
+    client.invalidateToken()
+    resolvePrincipal((path) => client.rest.json(path))
+      .then((who) => {
+        if (cancelled || !mayReloadAgents(phaseRef.current.kind)) return
+        const agents = takeAgents(who)
+        if (agents.length === 0) return
+        const preselected = pickInitialAgent(agents, initRef.current?.agent)
+        setPhase(preselected ? { kind: 'ready', agent: preselected } : { kind: 'choosing', agents })
+      })
+      // A list that cannot be refreshed keeps the one it had (and is tried
+      // again on the next move or the next return to the start).
+      .catch(() => { listedWorkspace.current = had })
+    return () => { cancelled = true }
+  }, [pageMoved, phase.kind, client])
 
   /** Create the session and send the first message, in that order.
    *
