@@ -1,9 +1,7 @@
 """canopy-web fires due schedules itself: an asyncio task in every web process.
 
-A schedule used to fire only when a laptop runner evaluated its cron and POSTed
-the due slot (`runner/canopy_runner/canopy_runner/schedules.py`), so a
-workspace whose agents run only on fleet cloud boxes — or whose laptop was shut
-— never fired a schedule at all. This clock evaluates every enabled schedule on
+A schedule fires whether or not a laptop runner is online, so a workspace whose
+agents run only on fleet cloud boxes still fires. This clock evaluates every enabled schedule on
 the server, with the same slot math (`canopy_cron.due_slot`) from the same
 anchor (`schedule_turns.fire_after_of`), and calls the same
 `schedule_turns.fire_schedule`. A laptop runner that still fires is harmless:

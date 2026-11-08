@@ -16,7 +16,7 @@ from .models import (
 from .routing_machine import _MACHINE_AGENT_RUNNERS, prime_machine_runners, serves_refusal
 from .routing_orders import agents_following_runner, inherited_orders, runner_tenant_slugs, runner_tenant_slugs_of
 
-# ---- which agents a box runs: ONE rule (canopy-web#1563) ----------------------
+# ---- which agents a box runs: ONE rule ---------------------------------------
 #
 # "Could this box ever claim a turn of this agent?" — the claim's own STATIC gates,
 # with the clock and the queue taken out: the box is not retired, the agent is in
@@ -28,11 +28,10 @@ from .routing_orders import agents_following_runner, inherited_orders, runner_te
 #
 # The vault accepts a box's device proof by this rule (plus a box holding a live
 # turn of the agent, and the owner's own laptop: `device_keys.runner_serves_agent`),
-# and a box prepares exactly these agents (`GET /runners/{id}/agents`). Before it,
-# the vault counted disabled rows and ignored enrollment and the hold check, and a
-# box's refresh walked every agent its token could list — so a box that could
-# never claim fizzy asked for fizzy's vault every 30 minutes and its owner was
-# emailed each refusal (2026-10-17).
+# and a box prepares exactly these agents (`GET /runners/{id}/agents`). A reader that
+# counted disabled rows, ignored enrollment or the hold check, or walked every agent
+# a token can list would make a box ask for the vault of an agent it can never claim,
+# and email its owner each refusal.
 
 def runner_routes_agent(runner: Runner, agent, facts: ServingFacts | None = None) -> bool:
     """Could `runner` ever claim a turn of `agent`? See the block above. `facts`

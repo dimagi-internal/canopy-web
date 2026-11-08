@@ -2,7 +2,7 @@
 
     GET /plugins/marketplace.json  -> `catalog(user)`: marketplace `canopy-agents`
 
-ONE CATALOG PER PERSON, NOT PER WORKSPACE (Jonathan, 2026-10-14). It covers every
+ONE CATALOG PER PERSON, NOT PER WORKSPACE. It covers every
 agent with a github.com repo in every workspace the caller is a member of, at
 any role, across all their organisations, so the install name does not depend
 on which workspace an agent lives in, and survives the agent moving.

@@ -1,15 +1,11 @@
 """Why is this turn still queued? — said on the turn, in words, not inferred from silence.
 
-The failure this exists for (2026-10-30): a dispatch pinned to an `online, ready`
-laptop sat queued for five hours while every status surface said a live runner was
-about to take it. They were all reading the runner's HEARTBEAT, and a heartbeat is
-not a claim: the daemon that heartbeats and the app that takes turns can be different
-things, and one can be asleep while the other reports in. The server could not tell
-the two apart because it only stored the heartbeat.
-
-So two facts are now recorded and written onto the turn's own timeline, as `waiting`
-events (a kind of their own, so nothing that reacts to `status` rows — Slack, the
-chat panel — reacts to these):
+A heartbeat is not a claim: the daemon that heartbeats and the app that takes turns can
+be different things, and one can be asleep while the other reports in, so a status
+surface reading only the heartbeat says a live runner is about to take a turn nobody
+is claiming. Two facts are therefore recorded and written onto the turn's own
+timeline, as `waiting` events (a kind of their own, so nothing that reacts to
+`status` rows — Slack, the chat panel — reacts to these):
 
 - `claim_next_turn` notes WHY a box passed a candidate over (`claim._note_skips`);
 - `note_waiting_turns` (a periodic sweep) writes one plain sentence per turn that has

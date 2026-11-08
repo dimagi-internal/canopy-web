@@ -25,10 +25,9 @@ This fires when the agent changes something, *and* when a scheduled job does,
 *and* when your own fleet does, *and* when the same page is open in another tab.
 Without it, the agent can delete rows you are still displaying.
 
-The notification carries the resource URI and nothing else. That is MCP's
-`notifications/resources/updated` shape: you re-read through the path you
-already use, where your authorization already applies. A diff would be a second
-source of truth for data you already know how to load.
+The notification carries the resource URI and nothing else (MCP's
+`notifications/resources/updated` shape): you re-read through the path you
+already use, where your authorization already applies.
 
 ---
 
@@ -59,10 +58,9 @@ its title would be inventing where it happened.
 
 ## 5c. A page that chooses its own agent
 
-A site may offer more than one agent and want a different one on some pages —
-connect-labs keeps ACE on the marketplace and puts `labsdata`, a read-only data
-agent that runs only on sensitive-data runners, on the pages over real visit data. The
-page chooses; the rest of the site keeps its default.
+A site may offer more than one agent and want a different one on some pages, for
+example a read-only data agent that runs only on sensitive-data runners on the pages
+over real data. The page chooses; the rest of the site keeps its default.
 
 With the Python SDK (`dimagi-canopy` ≥ 0.11):
 
@@ -93,32 +91,18 @@ What canopy does with it:
   the token starts or sends into carries them, and routing runs it only on a
   runner that meets them.
 
-A token without `canopy_agent` behaves exactly as before: any agent the site
-offers. Hosts not on the SDK add the claim to their own assertion — see
+A token without `canopy_agent` may use any agent the site offers. Hosts not on the SDK add the claim to their own assertion — see
 `sdk/python/README.md` § Host grant contract v1.
 
 ### Which agent the panel opens on
 
-When more than one agent is on offer, the panel opens on the first of these that
-names one of them:
-
-1. **The page's choice** — a bound token (above). It is the only agent listed.
-2. **The visitor's own default** — set from the panel ("Make this my default",
-   `PUT /api/embed/default-agent`) or in canopy (`PUT /api/people/me/default-agent/`).
-   One per person, for every site and canopy's own pages.
-3. **The site's default** — "Opens on" on the host sites page
-   (`default_agent` on `PATCH /api/workspaces/{slug}/host-sites/{id}`).
-4. **The agent you named** — `agent` in `canopy.init`, which the SDK fills from
-   `AGENT_SLUG`.
-5. **The only agent**, else the picker.
-
-canopy decides 1–3 and marks the winner `default: true` in `GET /api/embed/agents`
-(and `GET /api/contact/me`, where a contact has no default of their own); each
-counts only when the agent is on that visitor's list, so a default never grants
-an agent. The `agent` you send is therefore a fallback, not a choice: to make a
-page open on an agent whatever the visitor prefers, choose it with
-`panel_context(agent=...)` so the token is bound. With several agents on offer,
-the panel's header names the agent as a switch back to the picker.
+The order is the docstring of `apps/embedding/defaults.py` (the page's bound token, the
+visitor's own default, the site's default) and `frontend/src/embed/pickAgent.ts` (the
+`agent` in `canopy.init`, the only agent, else the picker). canopy marks the winner
+`default: true` in `GET /api/embed/agents` (and `GET /api/contact/me`); each counts only
+when the agent is on that visitor's list, so a default never grants an agent. The `agent`
+you send is therefore a fallback, not a choice: to make a page open on an agent whatever
+the visitor prefers, choose it with `panel_context(agent=...)` so the token is bound.
 
 ## 5d. Choosing your agents from canopy's site agents API
 
@@ -135,34 +119,23 @@ site_agents.refresh()               # "re-read now" from your own settings page
 
 `GET /api/sites/agents`, signed with your own key, answers with a JWS signed by
 canopy's client key (the `Canopy-Execution` key): exactly the agents this
-workspace allows on your site, each with its host sites for your site
-(`handles_sensitive` and who set it), which runner flags its runners carry and whether one
-is ready now, `ready`, `url` (the agent's page in canopy), `problems` — plain
-sentences naming where in canopy to fix each — and `problem_links`
-(`[{text, url}]`, SDK `SiteAgent.problem_links`): each problem with the URL of
-the canopy page that fixes it, to render as a link. The `site` block carries
-`settings_url` (SDK `SiteAgents.site_settings_url`): your host site's own
-card in canopy, where its owner allows agents, changes keys and tests it. Never
-build a canopy URL yourself. `runner_flags` lists every flag canopy knows;
-`version` changes exactly when any of that does, so record it with each settings
-save. Cached for 5 minutes (per `WORKSPACE`/`AGENT_SLUG`, so changing either takes
-effect at once); when canopy cannot be reached the last good copy is served
-marked `stale` for up to 24 hours, then `None`.
+workspace allows on your site, each with readiness, `problems` and `problem_links`
+(each problem with the canopy page that fixes it, to render as a link), plus the
+`site` block's `settings_url`. The shape is `SiteAgents` / `SiteAgent` in
+`sdk/python/src/canopy_sdk/site_agents.py`. **Never build a canopy URL yourself**; render
+the ones canopy gives. `version` changes exactly when the answer does, so record it with
+each settings save. Cached `FRESH_SECONDS` (per `WORKSPACE`/`AGENT_SLUG`); when canopy
+cannot be reached the last good copy is served marked `stale` for up to `STALE_SECONDS`,
+then `None` (`canopy_sdk/django/site_agents.py`).
 
 **When you get nothing, say why.** `last_error()` is the last refresh's failure,
 cleared by the next success: a `SiteAgentsError` with a `code`, a `message` safe
 to show your operator, and canopy's HTTP `status` when it answered.
 
-| `code` | Meaning | Fix |
-| --- | --- | --- |
-| `not_configured` | `SIGNING_KEY`, `CANOPY_BASE_URL` or `APP_NAME` is missing or unusable | your settings |
-| `unreachable` | canopy could not be reached (network, DNS, TLS) | retry; check `CANOPY_BASE_URL` |
-| `unknown_issuer` | no host site named `APP_NAME` in the workspace you named | register it, or fix `WORKSPACE` / `APP_NAME` |
-| `ambiguous_issuer` | several workspaces have a site by that name and you named none | set `WORKSPACE` |
-| `workspace_mismatch` | `WORKSPACE` and the agent you sent name different workspaces | fix one (a moved agent) |
-| `bad_signature` | the keys canopy holds for the site do not verify yours | the site's JWKS URL in canopy, or your key |
-| `rate_limited` | too many requests | wait |
-| `refused` | canopy refused without naming a code | `status` and `message` |
+The codes (`not_configured`, `unreachable`, `unknown_issuer`, `ambiguous_issuer`,
+`workspace_mismatch`, `bad_signature`, `rate_limited`, `refused`) and their messages are
+`SiteAgentsError` in `sdk/python/src/canopy_sdk/site_agents.py`; the README section
+"The site agents API and the site's needs" says how to fix each.
 
 Tell canopy what you need back by setting `CANOPY_HOST["SITE_NEEDS"]`: the SDK
 serves it, signed, at `canopy/site.json` beside `canopy/jwks.json`, and canopy's
@@ -187,12 +160,9 @@ owner for reference, but never enforces them or tells an agent. Agents never nee
 know your pages — they declare only `sites:` and `data: sensitive`; you enforce your
 own page scopes.
 
-The same document carries a **`site` block** — your own facts, filled by the SDK
-from settings you already have: `origins` (`CANOPY_HOST["ORIGINS"]`, else the
-origin of `ISSUER`, else the address canopy fetched it from), `jwks_url`
-(`JWKS_URL`, else the SDK's `jwks.json` route), `issuer` and `mcp_resource`
-(`ISSUER` and `RESOURCE`, while the grant is on). canopy's owner adopts them with
-"Fill from the site" ([§1](embedding-a-canopy-agent.md#1-register-your-app-in-canopy)) — never automatically. Mount
+The same document carries a **`site` block** (your origins, JWKS URL, issuer and MCP
+resource, filled by the SDK from settings you already have: `canopy_sdk/site.py`). canopy's
+owner adopts them with "Fill from the site" ([§1](embedding-a-canopy-agent.md#1-register-your-app-in-canopy)) — never automatically. Mount
 `canopy_sdk.django.views.site_document` at `/.well-known/canopy-site.json` as well,
 so your address alone finds it. Details: `sdk/python/README.md` § The site agents
 API and the site's needs.

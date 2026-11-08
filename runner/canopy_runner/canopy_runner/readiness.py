@@ -19,21 +19,13 @@ _MARKER = "not-ready"
 
 # How long a failure keeps a runner out of routing.
 #
-# The marker used to latch FOREVER: `mark_ok` is only ever called after a turn
-# executes, and `claim_next_turn` will not give a not-ready runner a turn — so one
-# failure removed a box from the fleet permanently, and the only way back was a
-# human deleting a file. Nothing surfaced it either; the runner keeps heartbeating
-# and reads ONLINE the whole time.
-#
-# Observed 2026-08-01: a laptop was shut down mid-turn, the POST that was in
-# flight failed with a DNS error, and the box came back online-but-unroutable with
-# `runner execute crashed: … nodename nor servname provided`. A network blip
-# during shutdown says nothing about whether the box can run anything.
-#
-# Expiring instead of latching turns permanent exile into retry-with-backoff. A
-# genuinely broken runner (logged out — invisible to the CDP probe) simply fails
-# its next turn and marks itself again, which is the behaviour you want; a
-# transiently broken one heals on its own.
+# The marker EXPIRES rather than latches: `mark_ok` is only called after a turn
+# executes, and `claim_next_turn` gives a not-ready runner no turn, so a latched
+# marker would exile a box that keeps heartbeating ONLINE until a human deleted
+# the file. A transient failure (a network blip during shutdown says nothing about
+# whether the box can run anything) heals on its own; a genuinely broken runner
+# (logged out, invisible to the CDP probe) fails its next turn and marks itself
+# again, so expiry is retry-with-backoff.
 MARKER_TTL_SECONDS = 900
 
 

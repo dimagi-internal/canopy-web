@@ -33,6 +33,15 @@ records the platform writes after it (a stage-change log row; a job opening once
 no approval is pending). A field may be readable by one role only (``read``): a
 candidate's voluntary demographic answers, an offer's salary.
 
+Also declared here: ``bulk`` (one non-create action over up to ``MAX_BULK`` records
+in `services.py`, each handled alone), collection ``read_also`` (more roles that may
+read it whole), collection ``scope`` (record-level access, `scope.py`), effect
+``delay_param`` (hold an email back N hours; `AppScheduledEmail`, sent by a tick),
+``then`` ``link_back``, ``public.feed`` (JobPosting JSON-LD and an XML feed from
+public fields only) and ``setup`` (a maintainer's first-run checklist, at most 12
+steps). A workspace's own actions (overlay ``add_action``) may not declare ``then``
+or be link actions: both act beyond the caller, so only a template declares them.
+
 A template's manifest is the base; a workspace's changes are an overlay on it
 (`overlay.py`), and what runs is the two composed — validated here again, so a
 composition that breaks a rule is refused like a hand-written one.

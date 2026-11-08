@@ -11,38 +11,39 @@ Where canopy-web runs, how a change gets from a PR to production, and the AWS/IA
 
 ### The vector extension
 
-KB vectors (`apps/agents/kb_vectors.py`, dormant: `KB_VECTORS` is off, so nothing uses them) need pgvector ≥ 0.8 (iterative index scans) in the `canopy_web` database. `vector` is not a trusted extension, so canopy-web's own role (`canopy_web`, not `rds_superuser`) cannot create it, and migration `agents/0064` only runs `CREATE EXTENSION IF NOT EXISTS vector` — a no-op once it exists. On `labs-jj-postgres` (PostgreSQL 18.6, pgvector 0.8.2) it was created once by the RDS master user `connectadmin` (password: Secrets Manager `labs-jj-db-password`), from inside the canopy-web task over ECS Exec since the RDS is not public. To redo it on a new database: connect as the master user to `canopy_web` and run `CREATE EXTENSION IF NOT EXISTS vector;`, then check with `SELECT extversion FROM pg_extension WHERE extname = 'vector'`. CI's PostgreSQL job and `docker compose` use the `pgvector/pgvector:pg18` image, where the superuser creates it in the migration. On a PostgreSQL without pgvector installed, migration 0064 fails at the `halfvec` column. Upgrading the instance to a new PostgreSQL major (a rehearsed, timed procedure, including `ALTER EXTENSION vector UPDATE`): [`docs/runbooks/postgres-major-upgrade.md`](../runbooks/postgres-major-upgrade.md).
+KB vectors (`apps/agents/kb_vectors.py`) are off unless `KB_VECTORS` is set. When on they need pgvector ≥ 0.8 (iterative index scans) in the `canopy_web` database. `vector` is not a trusted extension, so canopy-web's own role (`canopy_web`, not `rds_superuser`) cannot create it, and migration `agents/0064_kb_passages.py` only runs `CREATE EXTENSION IF NOT EXISTS vector`, a no-op once it exists (it fails at the `halfvec` column on a PostgreSQL without pgvector). To create it on a new database: connect as the RDS master user (password in Secrets Manager `labs-jj-db-password`) from inside the canopy-web task over ECS Exec, since the RDS is not public, and run `CREATE EXTENSION IF NOT EXISTS vector;`; check with `SELECT extversion FROM pg_extension WHERE extname = 'vector'`. CI's PostgreSQL job and `docker compose` use the `pgvector/pgvector:pg18` image, where the superuser creates it in the migration. Upgrading the instance to a new PostgreSQL major: [`docs/runbooks/postgres-major-upgrade.md`](../runbooks/postgres-major-upgrade.md).
 
 ### The old address still serves machines
 
-The old address `https://labs.connect.dimagi.com/canopy/` (now `https://canopy.dimagi.com/`) still reaches the same container through the ALB's `/canopy/*` rule. `config/asgi_prefix.py` strips the prefix (`CANOPY_STRIP_PREFIX`, read in `config/asgi.py`) and `apps/common/legacy_prefix.py` decides:
+The old address `https://labs.connect.dimagi.com/canopy/` (moved to `https://canopy.dimagi.com/`) still reaches the same container through the ALB's `/canopy/*` rule. `config/asgi_prefix.py` strips the prefix (`CANOPY_STRIP_PREFIX`, read in `config/asgi.py`) and `apps/common/legacy_prefix.py` decides:
 
 - **Machine traffic** (API, WebSockets, OAuth, well-known, health) is served in place — runners, the canopy plugin, MCP clients, Slack, Gmail push and ace-web hold the old address and do not follow redirects reliably. Don't turn these into redirects.
 - **Browser pages** (GET/HEAD outside machine prefixes) are 302'd to `canopy.dimagi.com`.
-- Docs must not send a reader to the old address: `tests/test_old_address_in_docs.py` fails on a markdown line naming `labs.connect.dimagi.com/canopy` that does not also name `canopy.dimagi.com`.
+- Docs must name `https://canopy.dimagi.com/`: `tests/test_old_address_in_docs.py` fails on a markdown line naming `labs.connect.dimagi.com/canopy` that does not also name `canopy.dimagi.com`.
 
 ### Connection providers
 
-No environment or secret settings: providers (Salesforce, Google) are set up by a workspace admin in Settings → Connections, who registers the callback shown there (`https://canopy.dimagi.com/auth/connections/<provider>/<workspace>/callback/`) with the provider; the client secret is stored encrypted in the database and is the only connection secret canopy-web holds ([`vault-connections.md`](vault-connections.md) § OAuth connections are sealed to their owner). Cloud boxes open and refresh connections with the canopy CLI, so each box needs a CLI at or above `CONNECTIONS_ZK_MIN_CLI` (`runner/ec2/cloud_runner.py`); an older one logs one `connections.stage_failed` and stages nothing. Release order: the CLI first (boxes pick it up), then canopy-web. A new CLI against an older canopy-web gets 404 from the material route, which it treats as not connected (a quiet exit 3), so connections stop working on boxes from the CLI merge until the web deploy: do the two close together. A deploy does not carry over connections made earlier, which were server-held: the migration deletes them, and each person reconnects once and shares on the confirmation screen (`/w/<workspace>/connections/<id>/share`). The material route's `ambiguous` answer tells people to pass `--workspace`, which the canopy CLI supports.
+No environment or secret settings: a workspace admin sets providers (Salesforce, Google) up in Settings → Connections and registers the callback shown there (`https://canopy.dimagi.com/auth/connections/<provider>/<workspace>/callback/`) with the provider; the client secret is stored encrypted in the database and is the only connection secret canopy-web holds ([`vault-connections.md`](vault-connections.md) § OAuth connections are sealed to their owner).
 
-Refreshing now happens on the box, so an egress-locked runner (`RUNNER_EGRESS`, or a sensitive-data box) reaches the provider itself. Its lock must admit the hosts its connections use: `login.salesforce.com` (or `test.salesforce.com`) and the org's My Domain host for Salesforce, `oauth2.googleapis.com` for Google. They are deliberately not in `EGRESS_BASE_HOSTS`, which every locked runner admits whether or not it holds a connection, and canopy-web does not add them for you: add them to the box's `RUNNER_EGRESS_ALLOW` or the runner's egress setting. Without them the stage fails as `connections.stage_failed` and the turn runs without a token, and that holder's revoke fails too: it keeps heartbeating, so it stays a revoker, and connecting the account again is refused as `revoking` until the 7-day sweep (`keeper.REVOKE_GRACE`).
+- Cloud boxes open and refresh connections with the canopy CLI, so each box needs a CLI at or above `CONNECTIONS_ZK_MIN_CLI` (`runner/ec2/cloud_runner.py`); an older one logs one `connections.stage_failed` and stages nothing. Release the CLI first (boxes pick it up), then canopy-web. A new CLI against an older canopy-web gets 404 from the material route and treats it as not connected, so do the two close together.
+- Refreshing happens on the box, so an egress-locked runner (`RUNNER_EGRESS`, or a sensitive-data box) reaches the provider itself and its lock must admit the hosts the connection uses: `login.salesforce.com` (or `test.salesforce.com`) and the org's My Domain host for Salesforce, `oauth2.googleapis.com` for Google. They are deliberately not in `EGRESS_BASE_HOSTS` (every locked runner admits that, whether or not it holds a connection) and canopy-web does not add them: add them to the box's `RUNNER_EGRESS_ALLOW` or the runner's egress setting. Without them the stage fails as `connections.stage_failed`, the turn runs without a token, and that holder's revoke fails too: it keeps heartbeating, stays a revoker, and connecting the account again is refused as `revoking` until the sweep (`keeper.REVOKE_GRACE` in `apps/connections/keeper.py`).
 
 ### canopy-web can use a connection
 
-Per-connection switch "canopy-web can use this" ([`vault-connections.md`](vault-connections.md) § OAuth connections are sealed to their owner). Three pieces of deployment, rolled out in this order:
+The per-connection switch "canopy-web can use this" ([`vault-connections.md`](vault-connections.md) § OAuth connections are sealed to their owner) takes three pieces of deployment, in this order:
 
-1. **The key's stack**, `deploy/aws/canopy-web-connections-key.cfn.yaml`: a KMS key (`ECC_NIST_P256`, `KEY_AGREEMENT`, alias `alias/canopy-web-connections`) whose policy gives `canopy-web-task-role` only `kms:DeriveSharedSecret` and `kms:GetPublicKey`. Deployed by hand with a labs admin login, like the role stack, and only with the owner's approval. **The hold on this stack is lifted:** screens and apps now call Salesforce through canopy-web ([`vault-connections.md`](vault-connections.md) § Calls from screens), so the key stack may go ahead whenever those screens are wanted. The rollout order below is unchanged, and nothing deploys without the owner's approval. Once step 2 sets the key, **new Salesforce connections that set a key seal to canopy-web by default** (the provider's `server_use_default`), so each person or agent connecting afterwards is lending canopy-web their account unless they turn that off; connections made before stay as they are. Its `KeyAlias` output is the next step's value. The role stack grants no `kms:`; the key's policy names the role.
-2. **canopy-web**: set the `ConnectionsServerKmsKey` parameter of `canopy-web.cfn.yaml` to that alias and deploy. It reaches the task as the environment variable `CONNECTIONS_SERVER_KMS_KEY` (empty, the default, means canopy-web uses no connection and every connection behaves as switched off). New Salesforce connections seal to canopy-web from then on.
-3. **Confirm the cloud boxes run canopy CLI at or above 0.2.838** (`CONNECTIONS_ZK_MIN_CLI` in `runner/ec2/cloud_runner.py`). An older CLI refuses any statement carrying `canopy_web`. Then set the `ConnectionsServerStatements` parameter to `true` and deploy: it reaches the task as `CONNECTIONS_SERVER_STATEMENTS` (default `false`; `config/settings/base.py`). While false, a share that omits canopy-web turns the switch off, and a connection with the switch on cannot also be shared with machines; the Share screen says so (`ShareServerOut.statements_enabled`).
+1. **The key's stack**, `deploy/aws/canopy-web-connections-key.cfn.yaml`: a KMS key (`ECC_NIST_P256`, `KEY_AGREEMENT`, alias `alias/canopy-web-connections`) whose policy gives `canopy-web-task-role` only `kms:DeriveSharedSecret` and `kms:GetPublicKey`. Deployed by hand with a labs admin login, like the role stack, and only with the owner's approval. Once step 2 sets the key, **new connections whose provider has `server_use_default` (Salesforce; not Google) seal to canopy-web by default** (`apps/connections/providers/base.py`), so each person or agent connecting is lending canopy-web their account unless they turn that off; existing connections stay as they are. Its `KeyAlias` output is the next step's value. The role stack grants no `kms:`; the key's policy names the role.
+2. **canopy-web**: set the `ConnectionsServerKmsKey` parameter of `canopy-web.cfn.yaml` to that alias and deploy. It reaches the task as `CONNECTIONS_SERVER_KMS_KEY` (empty, the default, means canopy-web uses no connection and every connection behaves as switched off).
+3. **Confirm the cloud boxes run a canopy CLI at or above `CONNECTIONS_ZK_MIN_CLI`**: an older CLI refuses any statement carrying `canopy_web`. Then set `ConnectionsServerStatements` to `true` and deploy: it reaches the task as `CONNECTIONS_SERVER_STATEMENTS` (default `false`, `config/settings/base.py`). While false, a share that omits canopy-web turns the switch off, and a connection with the switch on cannot also be shared with machines (`apps/connections/sharing.py`, `ShareServerOut.statements_enabled`).
 
-Read the settings from the running task's environment (ECS Exec, `printenv CONNECTIONS_SERVER_KMS_KEY CONNECTIONS_SERVER_STATEMENTS`) or the task definition; `GET /api/connections/{id}/share` shows `server.available` (key readable now) and `server.statements_enabled`.
+Read the settings from the running task's environment (ECS Exec) or the task definition; `GET /api/connections/{id}/share` shows `server.available` (key readable now) and `server.statements_enabled`.
 
 - **Roll back the image, not the setting.** With the key unset, a rotated token a machine writes back no longer includes canopy-web, so canopy-web drops out of that envelope until the owner's next share. A named canopy-web entry already in an envelope is kept, not stripped, while the key is unset.
 - **Cut canopy-web off at once:** remove the task role's grant from the key's policy (redeploy the key stack without it). Every open and derive then fails; nothing in the database changes. KMS use is in CloudTrail.
 
 ### Protocol identity is pinned by host sites
 
-canopy's protocol identity — CIMD client_id, assertion audience, own issuer, MCP resource — is `CANOPY_IDENTITY_BASE_URL` (`https://canopy.dimagi.com`). ace-web's and connect-labs' `CANOPY_CLIENT_ID` / `CANOPY_BASE_URL` pin it, so changing it is a coordinated change with every host site. `CANOPY_FORMER_BASE_URLS` names the old address so the Slack sync can recognise and move the commands and webhooks it registered there.
+canopy's protocol identity — CIMD client_id, assertion audience, own issuer, MCP resource — is `CANOPY_IDENTITY_BASE_URL` (`https://canopy.dimagi.com`, `config/settings/connectlabs.py`). ace-web's and connect-labs' `CANOPY_CLIENT_ID` / `CANOPY_BASE_URL` pin it, so changing it is a coordinated change with every host site. `CANOPY_FORMER_BASE_URLS` lists the old address so the Slack sync can recognise the commands and webhooks registered there and move them.
 
 ## Deploying
 
@@ -53,56 +54,28 @@ gh workflow run "Deploy to Labs (AWS)" --ref main                          # mig
 gh workflow run "Deploy to Labs (AWS)" --ref main -f skip_migrations=true  # EMERGENCY ONLY
 ```
 
-The workflow hard-fails on any ref other than `main`, and deploys main's tip as of when the run starts, not the dispatch-time sha — so a dispatch that waited behind another rollout ships everything merged meanwhile, and a queued deploy can never roll prod backwards. Dispatching the commit already serving ends green with build and deploy skipped; `-f force=true` rolls it again (e.g. to pick up a changed secret).
+The workflow hard-fails on any ref other than `main`, and deploys main's tip as of when the run starts, not the dispatch-time sha — so a dispatch that waited behind another rollout ships everything merged meanwhile, and a queued deploy can never roll prod backwards. Dispatching the commit already serving ends green with build and deploy skipped; `-f force=true` rolls it again (e.g. to pick up a changed secret). The `guard` job in the workflow holds all of this.
 
 Pipeline: build → push to ECR (`labs-jj-canopy-web`) → **migrate** on a throwaway task def → create a CloudFormation change set (`aws cloudformation deploy --no-execute-changeset --parameter-overrides ImageTag=<sha>`) → **preflight** → `aws cloudformation execute-change-set`, which registers the real task definition and rolls the ECS service.
 
 ### Rolling out plain jobs to the cloud boxes
 
-**Not run on a real box yet.** The job broker, the `canopy-job` user, the sandbox and the network
-rules are tested against stubs (a fake iptables, a fake `systemd-run`, a job run as the test
-user); nothing has started a real unit. Until the self check below has passed on a real box, do not
-rely on jobs, and do not turn one on for anything that matters. Needs Jonathan's approval, like any
-deploy or fleet change.
+A plain job (a command from a repo's `.canopy/jobs.yaml`, run with no model) is sandboxed by a root broker on the box (`runner/ec2/job_broker.py`; the design is in `runner/ec2/README.md` § Plain jobs). The tests run it against stubs, so **do not rely on jobs on a box until `job_self_check.sh` has printed no FAIL on that box**, and treat turning jobs on like any deploy or fleet change: with the owner's approval.
 
-1. **Deploy canopy-web** as above (the schedule and claim changes, which also stop an older box
-   being given a job: a box that doesn't report `jobs` is never offered one).
-2. **Roll the new runner bytes to the boxes.** Run `update_runner.sh` on a box (or let its timer
-   find the deployed sha, which now includes `job_broker.py` and `job_self_check.sh`), or use the fleet's own flow
-   (`runner-fleets.md`). Then run `python3 /opt/canopy-runner/cloud_runner.py --setup-runners` as
-   root: it makes the `canopy-job` user, `/var/lib/canopy-jobs`, the lock, the `CANOPY-JOB` iptables
-   chain and the `canopy-job-broker` service. (The boot service and an idle update re-run it, but
-   do it once by hand so you can see it finish.) A sensitive-data box gets none of it and takes no
-   jobs.
-3. **Run the self check on one box, as root:**
-   `sudo bash /opt/canopy-runner/job-broker/job_self_check.sh` (`--setup-runners` puts it beside the
-   broker, at the runner's sha). It starts real units through the
-   broker and prints one PASS or FAIL per thing a job must not reach (the home directories, every
-   token path, a sibling job's token, the metadata address, localhost and the box's own addresses,
-   each proxy port, the brokers' sockets, the memory and task limits, the environment, a background
-   process outliving the job). **Every line must print PASS, or SKIP for a path or feature that
-   doesn't exist on that box.** A SKIP names what is absent (a missing path such as a broker's
-   socket, "IPv6 localhost: this box has none", "IMDSv6: not answering even for root here", or a locked
-   runner that already stops jobs); read each one and confirm it really is absent. **Any FAIL means
-   don't rely on jobs on that box**: leave them off and fix it first. The script ends with
-   "All checks passed, N skipped." (exit 0) or "N check(s) FAILED" (exit 1); fewer verdicts than it
-   expects, or a client that crashed, is a FAIL.
-4. **Only then rely on jobs.** A runner asks the broker again every few minutes and tells
-   canopy-web when the answer changes, so a box starts reporting `jobs` within 5 minutes of
-   `--setup-runners`, with no restart. The schedule screen's "Waiting for a cloud machine that can
-   run jobs." clears when a job is claimed.
+1. Deploy canopy-web as above. A box that doesn't report `jobs` is never offered one.
+2. Roll the runner bytes to the box (`update_runner.sh`, its timer, or the fleet flow in `runner-fleets.md`), then run `python3 /opt/canopy-runner/cloud_runner.py --setup-runners` as root once by hand: it makes the `canopy-job` user, `/var/lib/canopy-jobs`, the lock, the `CANOPY-JOB` iptables chain and the `canopy-job-broker` service. A sensitive-data box gets none of it and takes no jobs.
+3. Run `sudo bash /opt/canopy-runner/job-broker/job_self_check.sh` as root. It starts real units through the broker and prints one PASS, FAIL or SKIP per thing a job must not reach. **Every line must be PASS, or SKIP for something absent on that box; read each SKIP and confirm it really is absent. Any FAIL means leave jobs off on that box and fix it first.** Fewer verdicts than the script expects, or a crashed client, is a FAIL (exit 1).
+4. Only then rely on jobs: a runner asks the broker again every few minutes and reports `jobs` to canopy-web when the answer changes, with no restart.
 
-Rolling back: schedules with a job can be paused from Triggers; a box whose `canopy-job-broker`
-is stopped stops reporting `jobs` within 5 minutes and takes none after that.
+To roll back, pause schedules with a job from Triggers; a box whose `canopy-job-broker` is stopped stops reporting `jobs` and takes none after that.
 
 ### CloudFormation owns the task definition and service
 
 - One writer per resource: the pipeline only passes `ImageTag`; CFN registers the task definition and rolls the service. Never register task-definition revisions or call `ecs update-service` outside CFN — the stack's `ImageTag` would go stale and the next plain `cloudformation deploy` would silently roll prod back.
 - CFN resolves intrinsics (`!Ref`, `!Sub`) itself; don't add a step that reads the template outside CloudFormation.
 - **The migration seam.** CFN rolls `Service` and its `TaskDefinition` atomically, so migrations run first on a throwaway task def built from the LIVE one with only the image swapped. Its env is therefore one deploy stale: if a deploy both changes an env var and ships a migration that reads it, deploy twice.
-- Migrations are idempotent (`migrate --noinput`) and run before cutover, on every deploy whose diff from the live image touches a `migrations/` file, `pyproject.toml` or `uv.lock` (otherwise the ~1 min migrate task is skipped; an unknown live sha or `force` migrates). Write them the obvious way — destructive migrations are fine, and a brief window of errors during a deploy is accepted; don't split a one-line migration into expand/contract PRs.
+- Migrations are idempotent (`migrate --noinput`) and run before cutover, on every deploy whose diff from the live image touches a `migrations/` file, `pyproject.toml` or `uv.lock` (otherwise the migrate task is skipped; an unknown live sha or `force` migrates). Write them the obvious way — destructive migrations are fine, and a brief window of errors during a deploy is accepted; don't split a one-line migration into expand/contract PRs.
 - **The pipeline does that split for drops.** The window hurts when the old task reads a column a migration just dropped: on a hot table, 30-40% of requests fail for about 3.5 minutes. So a deploy whose migration diff has a `RemoveField` or `DeleteModel` runs `migrate_for_rollout`, which applies everything except a tail of pure drops and makes those columns nullable; a plain `migrate` applies the drops after a successful rollout. If anything held back is more than a drop (an `AddField` or `RunPython` behind it, or a rename), new code might need it before cutover, so it falls back to a plain `migrate` and the window stays.
-- CFN's own overhead is ~10s; the ~6min deploy is the ECS rollout.
 
 ### Preflight
 
@@ -110,13 +83,7 @@ is stopped stops reporting `jobs` within 5 minutes and takes none after that.
 
 ### Deploys are not ordered by commit
 
-The workflow's `concurrency` group serialises runs (never cancelled mid-flight), but a newer pending deploy cancels an older pending one, and a run whose sha is no longer main's tip fails as stale. After merging, confirm what shipped rather than assuming your run landed:
-
-```bash
-gh run list --workflow="Deploy to Labs (AWS)" --limit 3 --json headSha,conclusion
-```
-
-and check the feature is live (e.g. a new endpoint appears in `https://canopy.dimagi.com/api/openapi.json`).
+The workflow's `concurrency` group (`deploy-labs-canopy-web`) serialises runs and never cancels one mid-flight, but a newer pending run replaces an older pending one, and every run deploys main's tip as of when it starts. After merging, confirm what shipped rather than assuming your run landed: `gh run list --workflow="Deploy to Labs (AWS)" --limit 3 --json headSha,conclusion`, then check the feature is live (e.g. a new endpoint in `https://canopy.dimagi.com/api/openapi.json`).
 
 ## AWS IAM
 
@@ -124,17 +91,16 @@ and check the feature is live (e.g. a new endpoint appears in `https://canopy.di
 
 - Each deployment has its own GitHub OIDC role — `github-actions-{canopy-web,ace-web,connect-labs}-deploy` — generated by `deploy/aws/deploy_roles.py`, trusting exactly one repo and scoped to its own stack, secrets prefix, ECR repo, target group and log groups. The workflow assumes it through the `AWS_ROLE_ARN` secret.
 - `deploy_roles.py` is applied **by hand** (`aws iam put-role-policy` / `update-assume-role-policy`); an edit there is not live until someone runs them. It includes the preflight's own grants (`iam:SimulatePrincipalPolicy`, `cloudformation:ListChangeSets`).
-- The old shared `github-actions-labs-deploy` role still exists and grants nothing, so a stray consumer fails with a named AccessDenied. Don't re-grant it.
+- Don't grant anything to the legacy shared `github-actions-labs-deploy` role: a stray consumer should fail with a named AccessDenied.
 - **canopy-web's role must trust the IMMUTABLE OIDC subject, main only:** `repo:dimagi-internal@272902307/canopy-web@1193139337:ref:refs/heads/main`. The name-based form silently fails `AssumeRoleWithWebIdentity`. ace-web and connect-labs use the name-based form. Check with `gh api repos/dimagi-internal/<repo>/actions/oidc/customization/sub`.
-- Outstanding work (moving hand-applied grants into a bootstrap stack): `docs/superpowers/specs/2026-09-09-labs-iac-status.md`; design: `docs/superpowers/specs/2026-09-09-labs-infrastructure-as-code-design.md`.
 
 ### The shared task-execution role is scoped
 
-`labs-jj-ecs-task-execution-role` is shared by every container in every labs app. It reads secrets only through scoped inline policies on four prefixes — `labs-jj-*`, `canopy-web/*`, `ace-web/*`, `labs/*` (`labs/SENTRY_DSN` is the one `labs-jj-*` does not match; connect-labs' Sentry needs it) — plus three named umami ARNs. Don't attach the AWS-managed `SecretsManagerReadWrite` (or any `secretsmanager:*` on `*`) to it — that lets any container read, overwrite or delete every secret in the account. The unprefixed legacy secrets stay as they are (no rename API, they span four apps, and ace-web/connect-labs reference pre-existing ARNs rather than declaring secrets in CFN).
+`labs-jj-ecs-task-execution-role` is shared by every container in every labs app. It reads secrets only through scoped inline policies on four prefixes — `labs-jj-*`, `canopy-web/*`, `ace-web/*`, `labs/*` (`labs/SENTRY_DSN` is the one `labs-jj-*` does not match; connect-labs' Sentry needs it) — plus three named umami ARNs. Don't attach the AWS-managed `SecretsManagerReadWrite` (or any `secretsmanager:*` on `*`) to it — that lets any container read, overwrite or delete every secret in the account. Unprefixed secrets outside those four prefixes are referenced by ARN by ace-web and connect-labs; don't rename them.
 
 ### canopy-web's own task role
 
-canopy-web runs as `canopy-web-task-role` (`deploy/aws/canopy-web-task-role.cfn.yaml`), canopy-web's alone. Don't put canopy's grants back on `labs-jj-ecs-task-role`: every labs container shares it, so connect-labs and ace-web could then send as canopy.dimagi.com, read inbound mail, and drive any agent's cloud capability. Every grant keeps one owner: the role stack owns the role, ECS Exec (`ssmmessages`) and an identity grant on the attachments bucket; `canopy-email` (`canopy-ses-send`) and `canopy-mail` (`canopy-mail`) attach their policies through `TaskRoleName`, a comma-separated list; each capability stack attaches `BrokerPolicy` through `BrokerRoleName`; each runner fleet's stack (`runner/ec2/fleet.cfn.yaml`) attaches `ScalerPolicy` — size and protect that one group — through `CanopyTaskRoleName`; the attachments bucket policy and the vault KMS key's policy (`alias/canopy-web-vault`, created only with `EnableVaultKms=true`; no code reads it any more — agent values are zero-knowledge — so leave it off) name the canopy-web stack's `TaskRoleArn`. The code's AWS calls are exactly those (`apps/common/email.py`, `apps/mail/ses.py`, `apps/canopy_sessions/attachment_storage.py`, `apps/capabilities/aws.py`, `apps/harness/fleets.py`); secrets and logs are the execution role's. `tests/test_task_role_stack.py` pins the stacks and the deploy role's `PassOwnTaskRoleToEcs`.
+canopy-web runs as `canopy-web-task-role` (`deploy/aws/canopy-web-task-role.cfn.yaml`), canopy-web's alone. Don't put canopy's grants back on `labs-jj-ecs-task-role`: every labs container shares it, so connect-labs and ace-web could then send as canopy.dimagi.com, read inbound mail, and drive any agent's cloud capability. Every grant keeps one owner: the role stack owns the role, ECS Exec (`ssmmessages`) and an identity grant on the attachments bucket; `canopy-email` (`canopy-ses-send`) and `canopy-mail` (`canopy-mail`) attach their policies through `TaskRoleName`, a comma-separated list; each capability stack attaches `BrokerPolicy` through `BrokerRoleName`; each runner fleet's stack (`runner/ec2/fleet.cfn.yaml`) attaches `ScalerPolicy` — size and protect that one group — through `CanopyTaskRoleName`; the attachments bucket policy names the canopy-web stack's `TaskRoleArn`. The role also holds `bedrock:InvokeModel` for embeddings (`apps/contacts/embeddings.py`). The code's AWS calls are exactly those (`apps/common/email.py`, `apps/mail/ses.py`, `apps/canopy_sessions/attachment_storage.py`, `apps/capabilities/aws.py`, `apps/harness/fleets.py`, `apps/contacts/embeddings.py`); secrets and logs are the execution role's. `tests/test_task_role_stack.py` pins the stacks and the deploy role's `PassOwnTaskRoleToEcs`.
 
 The shared role holds none of canopy's grants, and canopy-web's deploy role cannot pass it to canopy-web (`PassSharedTaskRolesToEcs` omits it). Verify the role from inside the running task over ECS Exec (`aws ecs execute-command`, needs a labs admin login): a notification email arrives (SES send); a workspace mail domain receives and an agent replies (inbound bucket + tenant send); a chat attachment uploads and downloads; a capability lease reaches `ready`, execs and releases.
 
@@ -144,7 +110,7 @@ A grant canopy needs goes into the role stack, or into the owning stack's `TaskR
 
 CI (`.github/workflows/ci.yml`) runs on every PR, in the merge queue, and on push to `main`. Required checks: **Backend tests** (which also verifies `frontend/src/api/generated.ts` is fresh and the `dimagi-canopy` SDK version bump) and **Frontend build** (which also enforces the `canopy-ui`/`canopy-client` version bump).
 
-The full suites run once, in the merge queue, sharded so no job sets the wait alone: `Backend pytest` ×3, `Frontend tests` ×2, the PostgreSQL and runner suites under xdist. On a PR the two required checks are gates over the quick PR-only jobs: `PR fast checks` (ruff, migrations in sync, `generated.ts`, the import ratchets, and the backend test files the PR changed) and `PR frontend checks` (`tsc -b` and `vitest related` on the PR's changed frontend files; the whole vitest suite when `package.json`, the lockfile or a vite/ts config changed). A queue failure ejects the PR and rebuilds every entry behind it, so whatever a PR can fail on its own belongs in these jobs.
+The full suites run once, in the merge queue, sharded so no job sets the wait alone (`.github/workflows/ci.yml` lists the jobs). On a PR the two required checks are gates over the quick PR-only jobs: `PR fast checks` (ruff, migrations in sync, `generated.ts`, the import ratchets, and the backend test files the PR changed) and `PR frontend checks` (`tsc -b` and `vitest related` on the PR's changed frontend files; the whole vitest suite when `package.json`, the lockfile or a vite/ts config changed). A queue failure ejects the PR and rebuilds every entry behind it, so whatever a PR can fail on its own belongs in these jobs.
 
 ### Every PR: arm auto-merge, no strategy flag
 
@@ -160,6 +126,6 @@ gh pr view <n> --json autoMergeRequest          # confirm it took (non-null)
 
 All protection lives in the `main protection` **ruleset**: requires a PR, both CI checks, the merge queue, and blocks deletion/force-push. There is no classic branch protection — don't add any (two sources of `strict` contradict, and the stricter silently wins).
 
-- Merge queue parameters: `SQUASH`, `ALLGREEN` grouping, up to 5 entries, no minimum wait (`min_entries_to_merge_wait_minutes: 0`) — a PR lands once its queue run is green.
+- Merge queue parameters: `SQUASH`, `ALLGREEN` grouping, up to 5 entries, no minimum wait — a PR lands once its queue run is green.
 - `strict_required_status_checks_policy` is **off** on purpose: the queue already re-tests the merged result. Don't turn it back on.
 - A `merge_queue` rule requires an organisation-owned repo (a personal-account repo rejects the rule type with a bare 422).

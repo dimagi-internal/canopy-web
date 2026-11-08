@@ -35,10 +35,8 @@ that stays broken is one row with a count) and on recovery, and pushes the
 site's workspace owners on the transition — never on every failed run.
 
 **When it runs.** On demand only — Test connection on a host site
-(`POST …/host-sites/{id}/test`). It ran every 30 minutes per site off the
-runner reports until 2026-09-29; Jonathan wanted it on demand, and every probe
-mints a real grant and makes real calls at a host, which is not free to do on a
-clock nobody asked for.
+(`POST …/host-sites/{id}/test`), never on a clock: every probe mints a real grant
+and makes real calls at a host.
 """
 from __future__ import annotations
 

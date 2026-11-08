@@ -2,7 +2,7 @@
 
 One writer for `Activity`, so every producer stamps the same who / where / what /
 when and analytics is one indexed read (`apps/events/analytics.py`). A producer
-never builds an `Activity` row itself (`tests/test_activity_has_one_writer.py`).
+never builds an `Activity` row itself (`apps/workspaces/tests/test_workspace_health_and_analytics.py::test_activity_has_one_writer`).
 
 Recording a fact must never be able to undo the action it describes: `emit` runs
 in its own savepoint and swallows its own failure (logged), so a bad fact cannot

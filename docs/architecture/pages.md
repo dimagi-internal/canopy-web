@@ -2,7 +2,10 @@
 
 Every browser-facing address canopy-web serves. The SPA route table is
 `frontend/src/router.tsx` (`routeTable`); server-side pages are in
-`config/urls.py`. API routes are in [`api-surface.md`](api-surface.md).
+`config/urls.py`. What each page is for is its descriptor in
+`frontend/src/guide/surfaces.ts`; what it shows is its component. API routes are
+in [`api-surface.md`](api-surface.md). This doc holds only the rules every page
+shares.
 
 ## Rules for every page
 
@@ -11,7 +14,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
   `/w/:workspace` carries ITS REASON — a page's `flat` in
   `frontend/src/guide/surfaces.ts`, a redirect's entry in `guide/coverage.ts`
   `NOT_PAGES` — checked by `frontend/src/routeTenancy.test.ts`; a flat route
-  holding tenant data (a "FOLLOW-UP") fails it.
+  holding tenant data fails it.
 - **One URL per artifact, nothing forwarded.** The flat `/walkthrough/…`,
   `/review/…`, `/share/…`, `/storyboard/…`, `/narrative/…`, `/ddd-release/…`
   and the pre-tenancy `/w/<uuid>/…` are a plain server 404, reachable signed
@@ -25,13 +28,11 @@ Every browser-facing address canopy-web serves. The SPA route table is
   (`tests/test_api_urls_are_workspace_scoped.py`). `manage.py
   rewrite_flat_links` (`apps/walkthroughs/flat_links.py`) rewrites a stored
   flat link to its scoped address.
-- **Anonymous visitors reach only the scoped viewers**: `/w/<ws>/{walkthrough,
-  review,share,storyboard,narrative,ddd-release}/…` plus the walkthrough
-  content stream (`apps/common/middleware.py::_SCOPED_VIEWER` — the trailing
-  slash keeps the plural list pages `/walkthroughs`, `/storyboards` behind
-  login), the plugin catalog (self-enforced 401; old per-workspace URLs 410), and the flat-artifact 404.
-  Every other `/w/` path is the authed tenant shell. Each viewer passes `ws` so
-  the API 404s a row from another workspace.
+- **Anonymous visitors reach only the scoped viewers** (`_SCOPED_VIEWER` in
+  `apps/common/middleware.py`, listed in
+  [pages-public-and-personal.md](pages-public-and-personal.md#scoped-public-viewers-anonymous-with-a-token)),
+  the plugin catalog (self-enforced 401; the old per-workspace URLs answer 410), and the
+  flat-artifact 404. Every other `/w/` path is the authed tenant shell.
 - **One registry of pages: `frontend/src/guide/surfaces.ts`.** Every route is
   a descriptor there or a non-page (redirect, catch-all) in `guide/coverage.ts`
   `NOT_PAGES` with its reason; `guide/coverage.test.ts` fails on either missing.
@@ -61,38 +62,28 @@ Every browser-facing address canopy-web serves. The SPA route table is
   server-side) or embeds one of its read-only pieces (the fleet map shows
   `RunnerFacts`) — it never rebuilds the object's controls. An object page in
   the agent rail (Agent settings) renders `ObjectTabs` inside the rail's section.
-- **Retired pages redirect, keeping query and hash** where a link may carry
-  one (`SettingsRedirect`, `KeepQueryRedirect`, `CredentialsRedirect`). Retired
-  ARTIFACT addresses do not — see above.
+- **A moved page redirects, keeping query and hash** where a link may carry
+  one (`SettingsRedirect`, `KeepQueryRedirect`, `CredentialsRedirect` in
+  `router.tsx`). Flat ARTIFACT addresses do not redirect — see above.
 - A header workspace switcher appears when you belong to more than one
   workspace. A user with no workspace sees `FirstRunPage` instead of a blank
   redirect.
 
 ## The pages, by area
 
-- [pages-workspace-work.md](pages-workspace-work.md) — The tenant-scoped (`/w/:workspace/…`) pages for work: header and navigation, tasks, triage, projects, views, apps, MCP, approvals and knowledge bases.
-- [pages-workspace-agents.md](pages-workspace-agents.md) — The tenant-scoped pages for agents: the agents table, creating an agent and the agent workspace with its sub-routes.
-- [pages-workspace-settings-and-ops.md](pages-workspace-settings-and-ops.md) — The tenant-scoped pages for workspace settings, sessions and chat, huddles, threads, schedules, activity, runner invitations, members, sign-offs, health, analytics and network, shareouts, walkthroughs, storyboards and DDD.
-- [pages-public-and-personal.md](pages-public-and-personal.md) — The anonymous token-scoped viewers, and the root pages: the public site, getting started, pairing, connections, act-as, home, supervisor, IDE, personal settings, people and invites.
+- [pages-workspace-work.md](pages-workspace-work.md) — tenant pages for work: header, tasks, projects, views, apps, approvals.
+- [pages-workspace-agents.md](pages-workspace-agents.md) — tenant pages for agents: the table, creation and the agent workspace.
+- [pages-workspace-settings-and-ops.md](pages-workspace-settings-and-ops.md) — workspace settings, sessions and chat, health and the gated ops pages.
+- [pages-public-and-personal.md](pages-public-and-personal.md) — anonymous token-scoped viewers and the root (personal, global, pre-tenant) pages.
 
 ## Server pages (not the SPA)
 
-`config/urls.py`; the SPA catch-all (`spa_view`) excludes `api/`, `admin/`,
-`accounts/`, `health/`, `static/`, `auth/`, `assets/`, `oauth/`, `.well-known/`.
-
-- `/api/` — REST (Ninja); `/api/docs/` Scalar, `/api/redoc/` Redoc.
-- `/admin/` — Django admin. `/accounts/` — allauth. `/health/` — health check.
-- `/auth/cli/authorize/`, `/auth/github/{start,callback}/`,
-  `/auth/slack/{install,callback,link}/` — browser legs of sign-in/connect flows.
-- `/oauth/*`, `/.well-known/*`, `/api/hcp/oauth/*` — OAuth/HCP documents and
-  endpoints ([`mcp-surface.md`](mcp-surface.md), [`hcp-service.md`](hcp-service.md),
-  [host grant contract](../../sdk/python/README.md#host-grant-contract-v1)).
-- `/embed/chat`, `/embed/widget.js` — the one framable page and the widget
-  loader ([`embedding-a-canopy-agent.md`](embedding-a-canopy-agent.md)).
-- `/w/<ws>/walkthrough/<id>/content`, `/w/<ws>/marketplace.json`,
-  `/w/<ws>/plugins/…` (410) — see above.
-- `/plugins/marketplace.json` — your agent catalog for Claude Code, marketplace
-  `canopy-agents` (`apps/plugins`, bearer canopy token, 401 never a sign-in
-  redirect). [`plugin-marketplace.md`](plugin-marketplace.md).
-- `assets/` is deliberately NOT served by the SPA catch-all: a missing hashed
-  bundle must 404, not return `index.html` as `200 text/html`.
+The list is `config/urls.py`. The SPA catch-all (`spa_view`) excludes `api/`,
+`admin/`, `accounts/`, `health/`, `static/`, `auth/`, `assets/`, `oauth/` and
+`.well-known/`; `assets/` is deliberately NOT served by the catch-all, because a
+missing hashed bundle must 404, not return `index.html` as `200 text/html`.
+Related docs: OAuth/HCP endpoints [`mcp-surface.md`](mcp-surface.md),
+[`hcp-service.md`](hcp-service.md); the framable `/embed/chat` page
+[`embedding-a-canopy-agent.md`](embedding-a-canopy-agent.md);
+`/plugins/marketplace.json` (bearer canopy token, a 401 and never a sign-in
+redirect, `apps/plugins`) [`plugin-marketplace.md`](plugin-marketplace.md).

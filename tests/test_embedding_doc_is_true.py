@@ -204,7 +204,7 @@ def test_the_self_embed_section_asks_for_nothing(doc):
     section = " ".join(
         _guide_text().split("## 11. Reference: canopy embedding its own pages")[-1].split()
     )
-    assert "Show this panel on canopy's own pages" in section
+    assert "Also show the agent panel on canopy's own pages" in section
     assert "not a special one" in section
     # A field table is exactly what this section exists not to have.
     assert "| **Name** |" not in section
@@ -321,14 +321,6 @@ def test_the_documented_read_tool_is_actually_served(doc):
 
     assert "current_page" in doc
     assert "current_page" in {t.name for t in asyncio.run(mcp._list_tools())}
-
-
-def test_the_doc_does_not_still_claim_context_is_a_snapshot(doc):
-    """§9 listed "Context is a snapshot" as a known limit. It was fixed, and a
-    limits list that names a solved problem sends host teams designing around
-    something that no longer exists."""
-    limits = doc[doc.index("## 9. Reference: known limits"):]
-    assert "~~**Context is a snapshot.**~~" in limits, "the correction was dropped"
 
 
 def test_the_documented_agui_socket_contract_is_the_real_one(doc):

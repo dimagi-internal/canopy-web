@@ -9,11 +9,9 @@ someone does, every turn on that credential fails — so this is `blocking`.
 
 The title names the credential the way a PERSON named it — the token's name on
 the runner's credential list (`claude_token_label` in the status view), a
-login's account — never the box's slot name. cloud-ec2-2, 2026-10-22: the token
-labelled "hal" was signed out and every surface called it "subscription-1".
+login's account — never the box's slot name (not "subscription-1").
 
-Two actions, the only two that fix it (Jonathan, 2026-10-22: "remove token or
-replace token"): `replace` links to the runner's credentials, and the alert
+Two actions, the only two that fix it: `replace` links to the runner's credentials, and the alert
 closes when the box re-probes the new value; `remove` drops the entry here.
 `remove` is offered only where removing is allowed — never the runner's last
 token or API key (`runners.LAST_FALLBACK_REFUSAL`) — so the alert never shows a

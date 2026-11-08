@@ -13,9 +13,8 @@ httpx client's transport is Django's own ASGI handler, called directly (no
 socket, no loopback URL to configure). Who is asking travels in the ASGI SCOPE
 (`MCP_PRINCIPAL_SCOPE_KEY`), which `BearerTokenAuthMiddleware` resolves to
 `request.user` — a key no network request can carry, because only this
-transport builds the scope. That is the difference from the OpenAPI-derived
-server deleted in May 2026, which looped back over HTTP to localhost with ONE
-shared bearer, so every tool ran as the same identity.
+transport builds the scope. A loopback over HTTP with one shared bearer
+would run every tool as the same identity, which is why this transport exists.
 
 **Exposure is the default.** A tool is exactly as powerful as the caller's
 token already is against REST, so leaving a route out is never a security

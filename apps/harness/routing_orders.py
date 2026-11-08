@@ -179,7 +179,7 @@ def inherited_orders(agent_ids) -> dict:
     own, whose workspace (or nearest ancestor) has one.
 
     The order is followed live, never copied: replacing a cloud box means
-    editing one workspace's list, not every agent (2026-10-03).
+    editing one workspace's list, not every agent.
 
     Three kinds of listed runner are dropped for an agent rather than kept — kept,
     each would read as an available better rank and stall the agent behind a box
@@ -693,36 +693,33 @@ def runner_target_q(runner: Runner, exclude_slugs: list[str] | None = None,
 
 
 def runner_tenant_slugs(runner: Runner) -> set[str]:
-    """THE tenant a runner may act for — the workspaces of the human who PAIRED
+    """THE tenant a runner may act for: the workspaces of the human who PAIRED
     it, never the Runner.workspace FK.
 
-    One definition, called by every runner-scoped predicate, because this rule
-    diverging across call sites is a production outage and not a nicety: claim
-    routing once scoped to the FK while `_runner_schedule_qs` derived from
-    `owner`, so a runner could SEE and FIRE a schedule whose turn it could
-    never CLAIM. One laptop runner deliberately serves a fleet spanning
-    workspaces, so that stopped 4 of 5 production agents from executing at all
-    and their turns sat QUEUED forever (2026-07-25).
+    One definition, called by every runner-scoped predicate (claim routing and
+    `_runner_schedule_qs` both), because if call sites disagree a runner can SEE
+    and FIRE a schedule whose turn it can never CLAIM, and the turn sits QUEUED
+    forever. One laptop runner deliberately serves a fleet spanning workspaces,
+    so scoping by the FK would starve every workspace but its own.
 
-    The FK records where a runner LIVES; `owner` records who it may work
-    FOR. `owner` is server-assigned from `request.user` at pairing, so
-    unlike the caller-supplied `capabilities` hint it is not attacker-
-    controlled. A NULL `owner` fails closed (empty set → `__in=set()`
-    matches nothing): an orphaned runner has no identity to derive a tenant
-    from, and inferring one from the FK would be an escalation.
+    The FK records where a runner LIVES; `owner` records who it may work FOR.
+    `owner` is server-assigned from `request.user` at pairing, so unlike the
+    caller-supplied `capabilities` hint it is not attacker-controlled. A NULL
+    `owner` fails closed (empty set, so `__in=set()` matches nothing): an orphaned
+    runner has no identity to derive a tenant from, and inferring one from the FK
+    would be an escalation.
 
-    And only the workspaces where that human may RUN work (`AGENT_WORK`,
-    editor and above): a box claims other people's prompts, so a VIEWER's box
-    serves nothing there — before 2026-10-02 a viewer could pair a session-
-    capable box and receive the workspace's unbound chat sends.
+    Only the workspaces where that human may RUN work (`AGENT_WORK`, editor and
+    above): a box claims other people's prompts, so a VIEWER's box serves nothing
+    there.
 
     And only the workspaces the box is ENROLLED in, or that sit below one it is
-    enrolled in (`RunnerEnrollment`, `covered_slugs`, 2026-10-11): the owner's memberships say where a box MAY work, enrollment
-    says where it DOES. Without it a box served every workspace its owner could
-    work in, so becoming owner of a separate tree (a family workspace) put every
-    Dimagi box on that tree's repo turns and unbound chats, and back. The two
-    INTERSECT — enrollment never grants more than membership, and a demoted or
-    departed owner's box stops serving at once, enrolled or not.
+    enrolled in (`RunnerEnrollment`, `covered_slugs`): the owner's memberships say
+    where a box MAY work, enrollment says where it DOES. Without it, owning a
+    separate tree (a family workspace) would put every Dimagi box on that tree's
+    repo turns and unbound chats, and back. The two INTERSECT: enrollment never
+    grants more than membership, and a demoted or departed owner's box stops
+    serving at once, enrolled or not.
     """
     return runner_tenant_slugs_of([runner])[runner.pk]
 
@@ -750,9 +747,8 @@ def runner_tenant_slugs_of(runners) -> dict:
 
 def covered_slugs(runner: Runner) -> set[str]:
     """The workspaces this runner's enrollments REACH: each enrolled workspace
-    and every workspace below it in the tree (2026-10-11, owner decision). So a
-    division created under `dimagi` after the box enrolled there is served with
-    no re-enrolling — while a separate ROOT (`marshellis`) is never below
+    and every workspace below it in the tree. So a division created under
+    `dimagi` after the box enrolled there is served with no re-enrolling, while a separate ROOT (`marshellis`) is never below
     anything the Dimagi boxes are enrolled in, and stays unserved. Coverage is
     still intersected with the owner's `agent.work` in `runner_tenant_slugs`,
     workspace by workspace: reaching a division does not make its owner an

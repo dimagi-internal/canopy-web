@@ -20,16 +20,14 @@ def runner_may_hold_agent(runner, agent, *, standings=None) -> bool:
     resolve, and the routing writes that point work at a box.
 
     The agent's OWN canopy login (`Agent.user`) is NOT a holder: pairing a box
-    as an agent has been refused since #1049, so a box owned by an agent login
-    is a pre-#1049 leftover, and the agent's own login is no admin of it.
+    as an agent is refused, and the agent's own login is no admin of it.
 
     Fails closed on a runner with no owner.
 
     A sensitive-data box (`is_sensitive_data_box`) is dedicated: it holds only an
     agent with a host site that handles sensitive data, whoever owns it — so no
     other agent's full profile, secrets or GitHub identity ever shares a box with a
-    sensitive conversation (spec
-    2026-10-22-sensitive-data-agents §1, "A dedicated box").
+    sensitive conversation.
 
     `standings` (`access.Standings` holding the runner's owner and the agent)
     answers the admin question from one read, for a caller asking many pairs."""

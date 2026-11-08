@@ -1,16 +1,11 @@
 """The canopy-web FastMCP server instance.
 
-Auth model — per-user **Personal Access Token** (the house pattern, matching
-connect-labs):
-
-  * `CanopyPATVerifier` resolves a per-user PAT to the Django user; tools run
-    AS that user. It replaces the old single shared `CANOPY_MCP_BEARER`.
-
-The MCP surface is intended only for people who can already log into
-canopy-web — and PAT enforces exactly that, because minting a PAT *requires*
-logging in (the `canopy-web-pat-mint` browser flow). So no separate OAuth
-flow is needed to gate access: logging in is how you get a token. (This also
-matches connect-labs, which is PAT-only.)
+Every tool runs AS a person; there is no shared server bearer (a tool run under
+one identity would hand every caller that identity's reach). `CanopyPATVerifier`
+(`auth.py`) resolves each credential the server accepts — a PAT, an OAuth access
+token (an ordinary PAT tied to an `OAuthGrant`, `apps/oauth_server/mcp_oauth.py`),
+a confined turn's caller token, an act-as-you token, or a DPoP-proved host-grant
+token — and the middleware below narrows which tools each one lists.
 
 Tools are registered as a side effect of importing `apps.mcp.tools`.
 
