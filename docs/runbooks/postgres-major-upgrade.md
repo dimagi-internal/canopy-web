@@ -268,13 +268,13 @@ Each app's **current production image** was run against the upgraded copy
 parameter group for 18 adds `client_connection_check_interval=60000`,
 `io_method=sync` and `allow_alter_system=0`; `rds.force_ssl=1` is unchanged.
 
-**After the cutover**, so local and CI match production again (canopy-web's are
-done):
+**After the cutover**, so local and CI match production again (all done for 18):
 
 - **canopy-web**:
   - `pgvector/pgvector:pg16` → `pgvector/pgvector:pg18` in `.github/workflows/ci.yml` (the service image, the `pgc` pg_dump/pg_restore image, and the second service at the end), `.github/workflows/pg-nightly.yml`, `.github/workflows/contract-nightly.yml` and `docker-compose.yml`.
   - Bump the migrated-test-DB cache key `pg-testdb-v2-` → `pg-testdb-v3-` in `ci.yml`, because a pg16 dump must not be restored by the pg18 client path or the other way round. `pg-nightly.yml`'s key already includes the image id.
   - Update the comment above the cache step and the "PostgreSQL 16.13, pgvector 0.8.1" line in `docs/architecture/deploy.md`.
-- **connect-labs**: CI runs `postgis/postgis:17-3.5` (mirrored by `mirror-ci-images.yml`); production is 18 with PostGIS 3.6.3, so move it to the 18 / PostGIS 3.6 tag and mirror it.
+- **connect-labs**: move the postgis tag (`18-3.6` for this upgrade) in `mirror-ci-images.yml`, both service images in `ci.yml`, the test-DB cache key in `.github/actions/setup-pytest/action.yml`, and `docker-compose.yml`. Run `gh workflow run mirror-ci-images.yml --ref <branch>` on the PR branch first, so the new tag is in GHCR before the PR's own CI pulls it.
 - **ace-web**: `docker-compose.yml` `postgres:16` → `postgres:18` (local only).
+- **Every `docker-compose.yml`: move the data volume too.** From 18 the official image (and pgvector's and postgis's, built on it) keeps its data under `/var/lib/postgresql/18/docker` and refuses to start with a volume at the old `/var/lib/postgresql/data`, or with an older major's data anywhere under `/var/lib/postgresql`. Mount a NEW named volume at `/var/lib/postgresql`; the old volume's local data is not carried over (dump it first if you want it).
 - **umami**: nothing.
