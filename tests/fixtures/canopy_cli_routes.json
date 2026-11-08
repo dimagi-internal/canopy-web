@@ -1,1352 +1,1313 @@
 {
-  "calls": [
-    {
-      "method": "GET",
-      "path": "/api/agent-runs/",
-      "where": [
-        "scripts/ddd/prior_runs.py:56",
-        "scripts/ddd/resolve_narrative.py:105",
-        "scripts/ddd/run_store.py:227",
-        "scripts/ddd/run_store.py:356"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/agent-runs/",
-      "where": [
-        "scripts/ddd/run_store.py:308"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/agent-runs/{}/",
-      "where": [
-        "scripts/ddd/run_store.py:315"
-      ]
-    },
-    {
-      "method": "PUT",
-      "path": "/api/agent-runs/{}/state/",
-      "where": [
-        "scripts/ddd/run_store.py:337",
-        "scripts/ddd/run_store.py:342"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/agents/",
-      "where": [
-        "scripts/ddd/run_store.py:245",
-        "src/orchestrator/agent_client.py:391",
-        "src/orchestrator/agent_instance.py:100"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/agents/",
-      "where": [
-        "src/orchestrator/agent_client.py:170"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/agents/{}/",
-      "where": [
-        "src/orchestrator/agent_client.py:173",
-        "src/orchestrator/agent_coverage.py:327",
-        "src/orchestrator/agent_health.py:186",
-        "src/orchestrator/agent_landscape.py:38",
-        "src/orchestrator/agent_use.py:160",
-        "src/orchestrator/canopy_web.py:905",
-        "src/orchestrator/cred_resolve.py:263"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/agents/{}/actions/",
-      "where": [
-        "src/orchestrator/agent_client.py:350"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/agents/{}/actions/{}/applied",
-      "where": [
-        "src/orchestrator/agent_client.py:354"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/agents/{}/aws-credentials",
-      "where": [
-        "src/orchestrator/aws_cli.py:366"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/agents/{}/bootstrap-report",
-      "where": [
-        "src/orchestrator/agent_prepare.py:559"
-      ]
-    },
-    {
-      "method": "PUT",
-      "path": "/api/agents/{}/credentials",
-      "where": [
-        "src/orchestrator/vault_zk_cli.py:394"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/agents/{}/credentials/access",
-      "where": [
-        "src/orchestrator/agent_dispatch.py:626",
-        "src/orchestrator/cred_cli.py:261"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/agents/{}/credentials/resolve",
-      "where": [
-        "src/orchestrator/cred_resolve.py:153"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/agents/{}/credentials/status",
-      "where": [
-        "src/orchestrator/vault_cli.py:45"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/agents/{}/host-sites",
-      "where": [
-        "src/orchestrator/agent_client.py:250"
-      ]
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/agents/{}/host-sites/{}",
-      "where": [
-        "src/orchestrator/agent_client.py:258"
-      ]
-    },
-    {
-      "method": "PUT",
-      "path": "/api/agents/{}/host-sites/{}",
-      "where": [
-        "src/orchestrator/agent_client.py:254"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/agents/{}/licenses",
-      "where": [
-        "src/orchestrator/agent_dispatch.py:619",
-        "src/orchestrator/agent_use.py:383",
-        "src/orchestrator/cred_cli.py:338"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/agents/{}/move",
-      "where": [
-        "src/orchestrator/agent_client.py:179"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/agents/{}/projects/",
-      "where": [
-        "src/orchestrator/agent_client.py:295"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/agents/{}/projects/",
-      "where": [
-        "scripts/ddd/run_store.py:256",
-        "src/orchestrator/agent_client.py:303"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/agents/{}/projects/propose/",
-      "where": [
-        "src/orchestrator/huddle_cli.py:1800"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/agents/{}/projects/{}",
-      "where": [
-        "src/orchestrator/huddle_cli.py:731"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/agents/{}/projects/{}/",
-      "where": [
-        "src/orchestrator/agent_client.py:300",
-        "src/orchestrator/kb_cli.py:89"
-      ]
-    },
-    {
-      "method": "PATCH",
-      "path": "/api/agents/{}/projects/{}/",
-      "where": [
-        "src/orchestrator/agent_client.py:308"
-      ]
-    },
-    {
-      "method": "PUT",
-      "path": "/api/agents/{}/projects/{}/backings/agents/{}/",
-      "where": [
-        "src/orchestrator/huddle_cli.py:1829"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/agents/{}/projects/{}/checkins/{}",
-      "where": [
-        "src/orchestrator/checkin_cli.py:110"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/agents/{}/projects/{}/tasks/propose/",
-      "where": [
-        "src/orchestrator/checkin_cli.py:235"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/agents/{}/projects/{}/tasks/{}/backings/",
-      "where": [
-        "src/orchestrator/huddle_cli.py:755"
-      ]
-    },
-    {
-      "method": "PUT",
-      "path": "/api/agents/{}/projects/{}/tasks/{}/backings/agents/{}/",
-      "where": [
-        "src/orchestrator/checkin_cli.py:256"
-      ]
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/agents/{}/read-mode",
-      "where": [
-        "src/orchestrator/agent_client.py:246"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/agents/{}/read-mode",
-      "where": [
-        "src/orchestrator/agent_client.py:238"
-      ]
-    },
-    {
-      "method": "PUT",
-      "path": "/api/agents/{}/read-mode",
-      "where": [
-        "src/orchestrator/agent_client.py:242"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/agents/{}/runs/{}/steps/{}/verdict",
-      "where": [
-        "src/orchestrator/agent_client.py:370"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/agents/{}/runtime",
-      "where": [
-        "src/orchestrator/agent_prepare.py:155"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/agents/{}/secret-requests/{}",
-      "where": [
-        "src/orchestrator/vault_zk_cli.py:729"
-      ]
-    },
-    {
-      "method": "PUT",
-      "path": "/api/agents/{}/secret-requests/{}/value",
-      "where": [
-        "src/orchestrator/vault_zk_cli.py:750"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/agents/{}/setup",
-      "where": [
-        "src/orchestrator/agent_client.py:344"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/agents/{}/skills/",
-      "where": [
-        "src/orchestrator/agent_landscape.py:65"
-      ]
-    },
-    {
-      "method": "PUT",
-      "path": "/api/agents/{}/skills/",
-      "where": [
-        "src/orchestrator/agent_client.py:234"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/agents/{}/syncs/",
-      "where": [
-        "src/orchestrator/agent_client.py:332"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/agents/{}/syncs/",
-      "where": [
-        "src/orchestrator/agent_client.py:200"
-      ]
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/agents/{}/syncs/{}/",
-      "where": [
-        "src/orchestrator/agent_client.py:338"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/agents/{}/tasks/",
-      "where": [
-        "src/orchestrator/agent_client.py:284",
-        "src/orchestrator/agent_health.py:189"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/agents/{}/tasks/",
-      "where": [
-        "src/orchestrator/agent_client.py:275"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/agents/{}/tasks/{}/",
-      "where": [
-        "src/orchestrator/agent_client.py:288"
-      ]
-    },
-    {
-      "method": "PATCH",
-      "path": "/api/agents/{}/tasks/{}/",
-      "where": [
-        "src/orchestrator/agent_client.py:360"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/agents/{}/turns/",
-      "where": [
-        "src/orchestrator/agent_client.py:317",
-        "src/orchestrator/session_sources.py:395"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/agents/{}/turns/",
-      "where": [
-        "src/orchestrator/agent_client.py:231"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/agents/{}/vault/members",
-      "where": [
-        "src/orchestrator/agent_use.py:364"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/canopy-sessions/",
-      "where": [
-        "src/orchestrator/runner_cli.py:105"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/canopy-sessions/search",
-      "where": [
-        "src/orchestrator/project_history.py:225"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/canopy-sessions/{}",
-      "where": [
-        "src/orchestrator/session_sources.py:442"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/canopy-sessions/{}/export",
-      "where": [
-        "src/orchestrator/runner_cli.py:357"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/canopy-sessions/{}/human-inputs",
-      "where": [
-        "src/orchestrator/project_history.py:242"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/canopy-sessions/{}/messages",
-      "where": [
-        "src/orchestrator/project_history.py:858"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/canopy-sessions/{}/send",
-      "where": [
-        "src/orchestrator/agent_cli.py:2181"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/canopy-sessions/{}/stop",
-      "where": [
-        "src/orchestrator/runner_cli.py:287"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/canopy-sessions/{}/transfer",
-      "where": [
-        "src/orchestrator/runner_cli.py:294"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/checkins/runs/{}",
-      "where": [
-        "src/orchestrator/checkin_cli.py:152"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/checkins/runs/{}/finished",
-      "where": [
-        "src/orchestrator/checkin_cli.py:205"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/ddd/narratives/{}/",
-      "where": [
-        "scripts/ddd/review.py:176"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/ddd/runs/{}/",
-      "where": [
-        "src/orchestrator/project_history.py:1138"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/feedback/{}/resolve",
-      "where": [
-        "scripts/ddd/feedback_round.py:111"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/harness/local-turns/",
-      "where": [
-        "src/orchestrator/local_cli.py:312"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/harness/local-turns/{}/renew",
-      "where": [
-        "src/orchestrator/local_cli.py:355"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/harness/runners/",
-      "where": [
-        "src/orchestrator/agent_cli.py:2014",
-        "src/orchestrator/project_cli.py:47",
-        "src/orchestrator/runner_cli.py:80",
-        "src/orchestrator/runner_pin.py:47"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/harness/runners/{}/credential/resolve",
-      "where": [
-        "src/orchestrator/cred_resolve.py:217"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/harness/runners/{}/credential/status",
-      "where": [
-        "src/orchestrator/runner_cli.py:438"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/harness/runners/{}/pause",
-      "where": [
-        "src/orchestrator/runner_cli.py:185"
-      ]
-    },
-    {
-      "method": "PUT",
-      "path": "/api/harness/runners/{}/private",
-      "where": [
-        "src/orchestrator/local_cli.py:211"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/harness/runners/{}/sign-in-request",
-      "where": [
-        "src/orchestrator/aws_cli.py:154"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/harness/runners/{}/sign-in-requests/{}/result",
-      "where": [
-        "src/orchestrator/aws_cli.py:173"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/harness/runners/{}/turns/{}/agent-token",
-      "where": [
-        "src/orchestrator/turn_agent_token.py:110"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/harness/runners/{}/unpause",
-      "where": [
-        "src/orchestrator/runner_cli.py:217"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/harness/runners/{}/vault-keeper",
-      "where": [
-        "src/orchestrator/vault_keeper.py:333"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/harness/runners/{}/vault-keeper/connections",
-      "where": [
-        "src/orchestrator/connections/keep.py:76"
-      ]
-    },
-    {
-      "method": "PUT",
-      "path": "/api/harness/runners/{}/vault/values",
-      "where": [
-        "src/orchestrator/cred_resolve.py:243"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/harness/turns/",
-      "where": [
-        "src/orchestrator/agent_cli.py:2267",
-        "src/orchestrator/agent_email.py:2200",
-        "src/orchestrator/agent_health.py:192",
-        "src/orchestrator/agent_landscape.py:69",
-        "src/orchestrator/cli.py:1554",
-        "src/orchestrator/huddle_cli.py:257",
-        "src/orchestrator/project_cli.py:347"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/harness/turns/",
-      "where": [
-        "src/orchestrator/agent_cli.py:2064",
-        "src/orchestrator/huddle_cli.py:1033",
-        "src/orchestrator/huddle_cli.py:1043",
-        "src/orchestrator/project_cli.py:206",
-        "src/orchestrator/thread_cli.py:126",
-        "src/orchestrator/thread_cli.py:135"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/harness/turns/{}",
-      "where": [
-        "src/orchestrator/agent_dispatch.py:665",
-        "src/orchestrator/runner_pin.py:70"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/harness/turns/{}/abort",
-      "where": [
-        "src/orchestrator/turn_cli.py:65"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/harness/turns/{}/events",
-      "where": [
-        "src/orchestrator/agent_cli.py:2247"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/harness/turns/{}/finish",
-      "where": [
-        "src/orchestrator/local_cli.py:573"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/harness/turns/{}/transcript",
-      "where": [
-        "src/orchestrator/session_sources.py:437"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/harness/turns/{}/transcript",
-      "where": [
-        "src/orchestrator/local_cli.py:504"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/huddle-groups/runs/{}",
-      "where": [
-        "src/orchestrator/checkin_cli.py:157"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/huddle-groups/runs/{}/finished",
-      "where": [
-        "src/orchestrator/checkin_cli.py:211"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/huddle-groups/{}",
-      "where": [
-        "src/orchestrator/checkin_cli.py:121"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/huddles/",
-      "where": [
-        "src/orchestrator/huddle_cli.py:154"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/huddles/{}",
-      "where": [
-        "src/orchestrator/huddle_cli.py:147",
-        "src/orchestrator/huddle_cli.py:776"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/issues/",
-      "where": [
-        "src/orchestrator/issue_origin.py:183"
-      ]
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/issues/{}/{}/",
-      "where": [
-        "src/orchestrator/issue_origin.py:202"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/issues/{}/{}/",
-      "where": [
-        "src/orchestrator/issue_origin.py:193"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/mail/resolve",
-      "where": [
-        "src/orchestrator/agent_email.py:2710",
-        "src/orchestrator/agent_email.py:2764"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/mail/send/{}",
-      "where": [
-        "src/orchestrator/agent_email.py:2869"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/mail/threads/{}",
-      "where": [
-        "src/orchestrator/agent_email.py:2963"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/mail/threads/{}/{}",
-      "where": [
-        "src/orchestrator/agent_email.py:2894"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/mail/threads/{}/{}/reply",
-      "where": [
-        "src/orchestrator/agent_email.py:2869"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/mail/threads/{}/{}/state",
-      "where": [
-        "src/orchestrator/agent_email.py:2883"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/me/",
-      "where": [
-        "src/orchestrator/agent_cli.py:2147",
-        "src/orchestrator/agent_dispatch.py:614",
-        "src/orchestrator/agent_use.py:149",
-        "src/orchestrator/canopy_web.py:560",
-        "src/orchestrator/cred_cli.py:335"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/me/act-as-requests/",
-      "where": [
-        "src/orchestrator/act_as_cli.py:301"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/me/act-as-requests/",
-      "where": [
-        "src/orchestrator/act_as_cli.py:475"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/me/act-as-requests/{}",
-      "where": [
-        "src/orchestrator/act_as_cli.py:373"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/me/act-as-requests/{}/stop",
-      "where": [
-        "src/orchestrator/act_as_cli.py:560"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/me/agents/",
-      "where": [
-        "src/orchestrator/workspace_cli.py:323"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/people/lookup/",
-      "where": [
-        "src/orchestrator/people_cli.py:108"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/people/me/",
-      "where": [
-        "src/orchestrator/people_cli.py:182",
-        "src/orchestrator/people_cli.py:83"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/people/{}/",
-      "where": [
-        "src/orchestrator/people_cli.py:185"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/people/{}/conversations/",
-      "where": [
-        "src/orchestrator/people_cli.py:243"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/people/{}/facts/",
-      "where": [
-        "src/orchestrator/people_cli.py:217"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/people/{}/facts/{}/retract/",
-      "where": [
-        "src/orchestrator/people_cli.py:231"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/private-runners/",
-      "where": [
-        "src/orchestrator/local_cli.py:158"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/projects/",
-      "where": [
-        "scripts/ddd/run_store.py:243"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/reviews/",
-      "where": [
-        "scripts/ddd/review.py:137"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/reviews/{}/",
-      "where": [
-        "scripts/ddd/review.py:156",
-        "src/orchestrator/project_history.py:1118"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/reviews/{}/submit/",
-      "where": [
-        "scripts/ddd/review.py:285"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/runner-device-key-requests/",
-      "where": [
-        "src/orchestrator/device_key.py:1119"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/runner-device-keys/",
-      "where": [
-        "src/orchestrator/device_key.py:1132"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/runner-device-keys/",
-      "where": [
-        "src/orchestrator/device_key.py:1082"
-      ]
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/runner-device-keys/{}",
-      "where": [
-        "src/orchestrator/vault_cli.py:184"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/runner-sessions/",
-      "where": [
-        "src/orchestrator/vault_cli.py:233",
-        "src/orchestrator/vault_cli.py:238"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/sessions/upload",
-      "where": [
-        "src/orchestrator/session_upload.py:108"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/shareouts/",
-      "where": [
-        "src/orchestrator/shareout.py:109"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/slack-config/{}",
-      "where": [
-        "src/orchestrator/slack_ingest_cli.py:251",
-        "src/orchestrator/slack_ingest_cli.py:265"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/slack-config/{}/channel-ingest/allowed",
-      "where": [
-        "src/orchestrator/slack_ingest_cli.py:242"
-      ]
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/slack-config/{}/channel-ingest/allowed/{}",
-      "where": [
-        "src/orchestrator/slack_ingest_cli.py:270"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/slack-ingests/",
-      "where": [
-        "src/orchestrator/slack_ingest_cli.py:206"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/slack-ingests/",
-      "where": [
-        "src/orchestrator/slack_ingest_cli.py:101"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/slack-ingests/{}",
-      "where": [
-        "src/orchestrator/slack_ingest_cli.py:117",
-        "src/orchestrator/slack_ingest_cli.py:133",
-        "src/orchestrator/slack_ingest_cli.py:171"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/slack-ingests/{}/read-mark",
-      "where": [
-        "src/orchestrator/slack_ingest_cli.py:187"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/slack-ingests/{}/revoke",
-      "where": [
-        "src/orchestrator/slack_ingest_cli.py:195"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/slack-ingests/{}/transcript",
-      "where": [
-        "src/orchestrator/slack_ingest_cli.py:176"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/storyboards/",
-      "where": [
-        "scripts/ddd/demo_set.py:28"
-      ]
-    },
-    {
-      "method": "PATCH",
-      "path": "/api/storyboards/{}",
-      "where": [
-        "scripts/ddd/demo_set.py:33"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/storyboards/{}/rounds/{}",
-      "where": [
-        "scripts/ddd/feedback_round.py:57"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/storyboards/{}/rounds/{}/consume",
-      "where": [
-        "scripts/ddd/feedback_round.py:112"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/threads/",
-      "where": [
-        "src/orchestrator/thread_cli.py:74"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/threads/",
-      "where": [
-        "src/orchestrator/thread_cli.py:86"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/threads/{}",
-      "where": [
-        "src/orchestrator/thread_cli.py:66"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/threads/{}/close",
-      "where": [
-        "src/orchestrator/thread_cli.py:90"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/vault/keyset",
-      "where": [
-        "src/orchestrator/vault_zk_cli.py:270"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/vaults/{}/attachments",
-      "where": [
-        "src/orchestrator/vault_zk_cli.py:1073"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/vaults/{}/members",
-      "where": [
-        "src/orchestrator/vault_zk_cli.py:1084"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/workspace-projects/{}/{}/",
-      "where": [
-        "src/orchestrator/kb_cli.py:86"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/workspace-projects/{}/{}/kb/file",
-      "where": [
-        "src/orchestrator/kb_cli.py:325",
-        "src/orchestrator/kb_remote.py:136"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/workspace-projects/{}/{}/kb/objects/have",
-      "where": [
-        "src/orchestrator/kb_remote.py:63"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/workspace-projects/{}/{}/kb/objects/links",
-      "where": [
-        "src/orchestrator/kb_remote.py:69"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/workspace-projects/{}/{}/kb/originals",
-      "where": [
-        "src/orchestrator/kb_cli.py:249",
-        "src/orchestrator/kb_remote.py:102"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/workspace-projects/{}/{}/kb/publish",
-      "where": [
-        "src/orchestrator/kb_remote.py:175"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/workspace-projects/{}/{}/kb/upload",
-      "where": [
-        "src/orchestrator/kb_remote.py:162"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/workspace-projects/{}/{}/kb/versions",
-      "where": [
-        "src/orchestrator/kb_remote.py:114"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/workspace-projects/{}/{}/kb/{}",
-      "where": [
-        "src/orchestrator/kb_remote.py:88"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/workspaces/",
-      "where": [
-        "src/orchestrator/agent_landscape.py:40",
-        "src/orchestrator/canopy_web.py:937",
-        "src/orchestrator/project_cli.py:56",
-        "src/orchestrator/workspace_cli.py:92"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/workspaces/{}/agent-topology",
-      "where": [
-        "src/orchestrator/agent_landscape.py:57"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/workspaces/{}/vaults",
-      "where": [
-        "src/orchestrator/vault_zk_cli.py:1052"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/workspaces/{}/vaults",
-      "where": [
-        "src/orchestrator/vault_zk_cli.py:1062"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/{}/",
-      "where": [
-        "src/orchestrator/canopy_web.py:781"
-      ]
-    }
-  ],
-  "unresolved": [
-    {
-      "method": "GET",
-      "expr": "path",
-      "where": "src/orchestrator/act_as_cli.py:633"
-    },
-    {
-      "method": "GET",
-      "expr": "path",
-      "where": "src/orchestrator/checkin_cli.py:177"
-    },
-    {
-      "method": "GET",
-      "expr": "self.paths.material",
-      "where": "src/orchestrator/connections/access.py:238"
-    },
-    {
-      "method": "POST",
-      "expr": "self._path(self.paths.lease, read)",
-      "where": "src/orchestrator/connections/access.py:293"
-    },
-    {
-      "method": "POST",
-      "expr": "self._path(self.paths.lease, read)",
-      "where": "src/orchestrator/connections/access.py:315"
-    },
-    {
-      "method": "DELETE",
-      "expr": "f'{self._path(self.paths.lease, read)}/{lease.id}'",
-      "where": "src/orchestrator/connections/access.py:335"
-    },
-    {
-      "method": "POST",
-      "expr": "reconnect",
-      "where": "src/orchestrator/connections/access.py:349"
-    },
-    {
-      "method": "POST",
-      "expr": "reconnect",
-      "where": "src/orchestrator/connections/access.py:354"
-    },
-    {
-      "method": "PUT",
-      "expr": "self._path(self.paths.sealed, read)",
-      "where": "src/orchestrator/connections/access.py:441"
-    },
-    {
-      "method": "PUT",
-      "expr": "path",
-      "where": "src/orchestrator/connections/keep.py:153"
-    },
-    {
-      "method": "POST",
-      "expr": "path",
-      "where": "src/orchestrator/connections/keep.py:212"
-    },
-    {
-      "method": "GET",
-      "expr": "url",
-      "where": "src/orchestrator/cred_resolve.py:93"
-    },
-    {
-      "method": "GET",
-      "expr": "self._user_url(email)",
-      "where": "src/orchestrator/google_account.py:139"
-    },
-    {
-      "method": "PATCH",
-      "expr": "self._user_url(email)",
-      "where": "src/orchestrator/google_account.py:158"
-    },
-    {
-      "method": "POST",
-      "expr": "f'{base}/upload'",
-      "where": "src/orchestrator/kb_cli.py:297"
-    },
-    {
-      "method": "POST",
-      "expr": "f'{base}/publish'",
-      "where": "src/orchestrator/kb_cli.py:306"
-    },
-    {
-      "method": "PUT",
-      "expr": "u['url']",
-      "where": "src/orchestrator/kb_remote.py:104"
-    },
-    {
-      "method": "GET",
-      "expr": "link['url']",
-      "where": "src/orchestrator/kb_remote.py:73"
-    },
-    {
-      "method": "PUT",
-      "expr": "u['url']",
-      "where": "src/orchestrator/kb_remote.py:90"
-    },
-    {
-      "method": "GET",
-      "expr": "path",
-      "where": "src/orchestrator/project_history.py:989"
-    },
-    {
-      "method": "GET",
-      "expr": "path",
-      "where": "src/orchestrator/secret_cli.py:120"
-    },
-    {
-      "method": "PUT",
-      "expr": "path",
-      "where": "src/orchestrator/vault_keeper.py:206"
-    },
-    {
-      "method": "POST",
-      "expr": "work.get('grant_path') or f\"{work['_base']}/{work['agent']}/wraps\"",
-      "where": "src/orchestrator/vault_keeper.py:234"
-    },
-    {
-      "method": "PUT",
-      "expr": "work['reseal_path']",
-      "where": "src/orchestrator/vault_keeper.py:303"
-    },
-    {
-      "method": "GET",
-      "expr": "self.base",
-      "where": "src/orchestrator/vault_zk_cli.py:174"
-    },
-    {
-      "method": "POST",
-      "expr": "f'{v.base}/enable'",
-      "where": "src/orchestrator/vault_zk_cli.py:379"
-    },
-    {
-      "method": "PUT",
-      "expr": "f'{v.base}/values'",
-      "where": "src/orchestrator/vault_zk_cli.py:401"
-    },
-    {
-      "method": "POST",
-      "expr": "f'{v.base}/wraps'",
-      "where": "src/orchestrator/vault_zk_cli.py:419"
-    },
-    {
-      "method": "POST",
-      "expr": "f'{v.base}/rotate'",
-      "where": "src/orchestrator/vault_zk_cli.py:461"
-    },
-    {
-      "method": "PUT",
-      "expr": "f'{v.base}/values'",
-      "where": "src/orchestrator/vault_zk_cli.py:499"
-    },
-    {
-      "method": "GET",
-      "expr": "path",
-      "where": "src/orchestrator/vault_zk_cli.py:738"
-    },
-    {
-      "method": "PUT",
-      "expr": "f'{v.base}/values'",
-      "where": "src/orchestrator/vault_zk_cli.py:753"
-    },
-    {
-      "method": "GET",
-      "expr": "url",
-      "where": "src/orchestrator/workspace_cli.py:105"
-    }
-  ],
-  "allowed_missing": [
-    {
-      "method": "GET",
-      "path": "/api/huddle-groups/runs/{}",
-      "reason": "dead fallback in checkin_cli.get_run, tried only after /api/checkins/runs/{id} 404s; removed by canopy-web#1800. Same cleanup."
-    },
-    {
-      "method": "GET",
-      "path": "/api/huddle-groups/{}",
-      "reason": "dead fallback in checkin_cli.normalize for a work-group run; canopy-web#1800 removed the /api/huddle-groups aliases, so no run names a `group` any more. Remove it with tests/test_huddle_group.py."
-    },
-    {
-      "method": "POST",
-      "path": "/api/huddle-groups/runs/{}/finished",
-      "reason": "dead fallback in checkin_cli.finish_run, tried only when /api/checkins/runs/{id}/finished is missing; removed by canopy-web#1800. Same cleanup."
-    }
-  ]
+ "source": {
+  "repo": "dimagi-internal/canopy",
+  "commit": "3c5406faf02863ce021e7b68bb06726707e01d2f"
+ },
+ "calls": [
+  {
+   "method": "GET",
+   "path": "/api/agent-runs/",
+   "where": [
+    "scripts/ddd/prior_runs.py:56",
+    "scripts/ddd/resolve_narrative.py:105",
+    "scripts/ddd/run_store.py:227",
+    "scripts/ddd/run_store.py:356"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/agent-runs/",
+   "where": [
+    "scripts/ddd/run_store.py:308"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/agent-runs/{}/",
+   "where": [
+    "scripts/ddd/run_store.py:315"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/agent-runs/{}/state/",
+   "where": [
+    "scripts/ddd/run_store.py:337",
+    "scripts/ddd/run_store.py:342"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/agents/",
+   "where": [
+    "scripts/ddd/run_store.py:245",
+    "src/orchestrator/agent_client.py:391",
+    "src/orchestrator/agent_instance.py:100"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/agents/",
+   "where": [
+    "src/orchestrator/agent_client.py:170"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/agents/{}/",
+   "where": [
+    "src/orchestrator/agent_client.py:173",
+    "src/orchestrator/agent_coverage.py:327",
+    "src/orchestrator/agent_health.py:186",
+    "src/orchestrator/agent_landscape.py:38",
+    "src/orchestrator/agent_use.py:160",
+    "src/orchestrator/canopy_web.py:905",
+    "src/orchestrator/cred_resolve.py:263"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/agents/{}/actions/",
+   "where": [
+    "src/orchestrator/agent_client.py:350"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/agents/{}/actions/{}/applied",
+   "where": [
+    "src/orchestrator/agent_client.py:354"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/agents/{}/aws-credentials",
+   "where": [
+    "src/orchestrator/aws_cli.py:384"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/agents/{}/bootstrap-report",
+   "where": [
+    "src/orchestrator/agent_prepare.py:559"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/agents/{}/credentials",
+   "where": [
+    "src/orchestrator/vault_zk_cli.py:394"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/agents/{}/credentials/access",
+   "where": [
+    "src/orchestrator/agent_dispatch.py:626",
+    "src/orchestrator/cred_cli.py:261"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/agents/{}/credentials/resolve",
+   "where": [
+    "src/orchestrator/cred_resolve.py:153"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/agents/{}/credentials/status",
+   "where": [
+    "src/orchestrator/vault_cli.py:45"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/agents/{}/host-sites",
+   "where": [
+    "src/orchestrator/agent_client.py:250"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/agents/{}/host-sites/{}",
+   "where": [
+    "src/orchestrator/agent_client.py:258"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/agents/{}/host-sites/{}",
+   "where": [
+    "src/orchestrator/agent_client.py:254"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/agents/{}/licenses",
+   "where": [
+    "src/orchestrator/agent_dispatch.py:619",
+    "src/orchestrator/agent_use.py:383",
+    "src/orchestrator/cred_cli.py:338"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/agents/{}/move",
+   "where": [
+    "src/orchestrator/agent_client.py:179"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/agents/{}/projects/",
+   "where": [
+    "src/orchestrator/agent_client.py:295"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/agents/{}/projects/",
+   "where": [
+    "scripts/ddd/run_store.py:256",
+    "src/orchestrator/agent_client.py:303"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/agents/{}/projects/propose/",
+   "where": [
+    "src/orchestrator/huddle_cli.py:1763"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/agents/{}/projects/{}",
+   "where": [
+    "src/orchestrator/huddle_cli.py:726"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/agents/{}/projects/{}/",
+   "where": [
+    "src/orchestrator/agent_client.py:300",
+    "src/orchestrator/kb_cli.py:89"
+   ]
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/agents/{}/projects/{}/",
+   "where": [
+    "src/orchestrator/agent_client.py:308"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/agents/{}/projects/{}/backings/agents/{}/",
+   "where": [
+    "src/orchestrator/huddle_cli.py:1792"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/agents/{}/projects/{}/checkins/{}",
+   "where": [
+    "src/orchestrator/checkin_cli.py:101"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/agents/{}/projects/{}/tasks/propose/",
+   "where": [
+    "src/orchestrator/checkin_cli.py:173"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/agents/{}/projects/{}/tasks/{}/backings/",
+   "where": [
+    "src/orchestrator/huddle_cli.py:750"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/agents/{}/projects/{}/tasks/{}/backings/agents/{}/",
+   "where": [
+    "src/orchestrator/checkin_cli.py:194"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/agents/{}/read-mode",
+   "where": [
+    "src/orchestrator/agent_client.py:246"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/agents/{}/read-mode",
+   "where": [
+    "src/orchestrator/agent_client.py:238"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/agents/{}/read-mode",
+   "where": [
+    "src/orchestrator/agent_client.py:242"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/agents/{}/runs/{}/steps/{}/verdict",
+   "where": [
+    "src/orchestrator/agent_client.py:370"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/agents/{}/runtime",
+   "where": [
+    "src/orchestrator/agent_prepare.py:155"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/agents/{}/secret-requests/{}",
+   "where": [
+    "src/orchestrator/vault_zk_cli.py:729"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/agents/{}/secret-requests/{}/value",
+   "where": [
+    "src/orchestrator/vault_zk_cli.py:750"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/agents/{}/setup",
+   "where": [
+    "src/orchestrator/agent_client.py:344"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/agents/{}/skills/",
+   "where": [
+    "src/orchestrator/agent_landscape.py:65"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/agents/{}/skills/",
+   "where": [
+    "src/orchestrator/agent_client.py:234"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/agents/{}/syncs/",
+   "where": [
+    "src/orchestrator/agent_client.py:332"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/agents/{}/syncs/",
+   "where": [
+    "src/orchestrator/agent_client.py:200"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/agents/{}/syncs/{}/",
+   "where": [
+    "src/orchestrator/agent_client.py:338"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/agents/{}/tasks/",
+   "where": [
+    "src/orchestrator/agent_client.py:284",
+    "src/orchestrator/agent_health.py:189"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/agents/{}/tasks/",
+   "where": [
+    "src/orchestrator/agent_client.py:275"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/agents/{}/tasks/{}/",
+   "where": [
+    "src/orchestrator/agent_client.py:288"
+   ]
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/agents/{}/tasks/{}/",
+   "where": [
+    "src/orchestrator/agent_client.py:360"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/agents/{}/turns/",
+   "where": [
+    "src/orchestrator/agent_client.py:317",
+    "src/orchestrator/session_sources.py:395"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/agents/{}/turns/",
+   "where": [
+    "src/orchestrator/agent_client.py:231"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/agents/{}/vault/members",
+   "where": [
+    "src/orchestrator/agent_use.py:364"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/canopy-sessions/",
+   "where": [
+    "src/orchestrator/runner_cli.py:105"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/canopy-sessions/search",
+   "where": [
+    "src/orchestrator/project_history.py:225"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/canopy-sessions/{}",
+   "where": [
+    "src/orchestrator/session_sources.py:442"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/canopy-sessions/{}/export",
+   "where": [
+    "src/orchestrator/runner_cli.py:357"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/canopy-sessions/{}/human-inputs",
+   "where": [
+    "src/orchestrator/project_history.py:242"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/canopy-sessions/{}/messages",
+   "where": [
+    "src/orchestrator/project_history.py:858"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/canopy-sessions/{}/send",
+   "where": [
+    "src/orchestrator/agent_cli.py:2181"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/canopy-sessions/{}/stop",
+   "where": [
+    "src/orchestrator/runner_cli.py:287"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/canopy-sessions/{}/transfer",
+   "where": [
+    "src/orchestrator/runner_cli.py:294"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/checkins/runs/{}",
+   "where": [
+    "src/orchestrator/checkin_cli.py:130"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/checkins/runs/{}/finished",
+   "where": [
+    "src/orchestrator/checkin_cli.py:149"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/ddd/narratives/{}/",
+   "where": [
+    "scripts/ddd/review.py:176"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/ddd/runs/{}/",
+   "where": [
+    "src/orchestrator/project_history.py:1138"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/feedback/{}/resolve",
+   "where": [
+    "scripts/ddd/feedback_round.py:111"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/harness/local-turns/",
+   "where": [
+    "src/orchestrator/local_cli.py:312"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/harness/local-turns/{}/renew",
+   "where": [
+    "src/orchestrator/local_cli.py:355"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/harness/runners/",
+   "where": [
+    "src/orchestrator/agent_cli.py:2014",
+    "src/orchestrator/project_cli.py:47",
+    "src/orchestrator/runner_cli.py:80",
+    "src/orchestrator/runner_pin.py:47"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/harness/runners/{}/credential/resolve",
+   "where": [
+    "src/orchestrator/cred_resolve.py:217"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/harness/runners/{}/credential/status",
+   "where": [
+    "src/orchestrator/runner_cli.py:438"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/harness/runners/{}/pause",
+   "where": [
+    "src/orchestrator/runner_cli.py:185"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/harness/runners/{}/private",
+   "where": [
+    "src/orchestrator/local_cli.py:211"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/harness/runners/{}/sign-in-request",
+   "where": [
+    "src/orchestrator/aws_cli.py:154"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/harness/runners/{}/sign-in-requests/{}/result",
+   "where": [
+    "src/orchestrator/aws_cli.py:173"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/harness/runners/{}/turns/{}/agent-token",
+   "where": [
+    "src/orchestrator/turn_agent_token.py:110"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/harness/runners/{}/unpause",
+   "where": [
+    "src/orchestrator/runner_cli.py:217"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/harness/runners/{}/vault-keeper",
+   "where": [
+    "src/orchestrator/vault_keeper.py:333"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/harness/runners/{}/vault-keeper/connections",
+   "where": [
+    "src/orchestrator/connections/keep.py:76"
+   ]
+  },
+  {
+   "method": "PUT",
+   "path": "/api/harness/runners/{}/vault/values",
+   "where": [
+    "src/orchestrator/cred_resolve.py:243"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/harness/turns/",
+   "where": [
+    "src/orchestrator/agent_cli.py:2267",
+    "src/orchestrator/agent_email.py:2200",
+    "src/orchestrator/agent_health.py:192",
+    "src/orchestrator/agent_landscape.py:69",
+    "src/orchestrator/cli.py:1553",
+    "src/orchestrator/huddle_cli.py:257",
+    "src/orchestrator/project_cli.py:347"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/harness/turns/",
+   "where": [
+    "src/orchestrator/agent_cli.py:2064",
+    "src/orchestrator/huddle_cli.py:1002",
+    "src/orchestrator/huddle_cli.py:1012",
+    "src/orchestrator/project_cli.py:206",
+    "src/orchestrator/thread_cli.py:126",
+    "src/orchestrator/thread_cli.py:135"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/harness/turns/{}",
+   "where": [
+    "src/orchestrator/agent_dispatch.py:665",
+    "src/orchestrator/runner_pin.py:70"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/harness/turns/{}/abort",
+   "where": [
+    "src/orchestrator/turn_cli.py:65"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/harness/turns/{}/events",
+   "where": [
+    "src/orchestrator/agent_cli.py:2247"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/harness/turns/{}/finish",
+   "where": [
+    "src/orchestrator/local_cli.py:573"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/harness/turns/{}/transcript",
+   "where": [
+    "src/orchestrator/session_sources.py:437"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/harness/turns/{}/transcript",
+   "where": [
+    "src/orchestrator/local_cli.py:504"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/huddles/",
+   "where": [
+    "src/orchestrator/huddle_cli.py:154"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/huddles/{}",
+   "where": [
+    "src/orchestrator/huddle_cli.py:147"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/issues/",
+   "where": [
+    "src/orchestrator/issue_origin.py:183"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/issues/{}/{}/",
+   "where": [
+    "src/orchestrator/issue_origin.py:202"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/issues/{}/{}/",
+   "where": [
+    "src/orchestrator/issue_origin.py:193"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/mail/resolve",
+   "where": [
+    "src/orchestrator/agent_email.py:2710",
+    "src/orchestrator/agent_email.py:2764"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/mail/send/{}",
+   "where": [
+    "src/orchestrator/agent_email.py:2869"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/mail/threads/{}",
+   "where": [
+    "src/orchestrator/agent_email.py:2963"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/mail/threads/{}/{}",
+   "where": [
+    "src/orchestrator/agent_email.py:2894"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/mail/threads/{}/{}/reply",
+   "where": [
+    "src/orchestrator/agent_email.py:2869"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/mail/threads/{}/{}/state",
+   "where": [
+    "src/orchestrator/agent_email.py:2883"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/me/",
+   "where": [
+    "src/orchestrator/agent_cli.py:2147",
+    "src/orchestrator/agent_dispatch.py:614",
+    "src/orchestrator/agent_use.py:149",
+    "src/orchestrator/canopy_web.py:560",
+    "src/orchestrator/cred_cli.py:335"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/me/act-as-requests/",
+   "where": [
+    "src/orchestrator/act_as_cli.py:301"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/me/act-as-requests/",
+   "where": [
+    "src/orchestrator/act_as_cli.py:475"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/me/act-as-requests/{}",
+   "where": [
+    "src/orchestrator/act_as_cli.py:373"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/me/act-as-requests/{}/stop",
+   "where": [
+    "src/orchestrator/act_as_cli.py:560"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/me/agents/",
+   "where": [
+    "src/orchestrator/workspace_cli.py:323"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/people/lookup/",
+   "where": [
+    "src/orchestrator/people_cli.py:108"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/people/me/",
+   "where": [
+    "src/orchestrator/people_cli.py:182",
+    "src/orchestrator/people_cli.py:83"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/people/{}/",
+   "where": [
+    "src/orchestrator/people_cli.py:185"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/people/{}/conversations/",
+   "where": [
+    "src/orchestrator/people_cli.py:243"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/people/{}/facts/",
+   "where": [
+    "src/orchestrator/people_cli.py:217"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/people/{}/facts/{}/retract/",
+   "where": [
+    "src/orchestrator/people_cli.py:231"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/private-runners/",
+   "where": [
+    "src/orchestrator/local_cli.py:158"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/projects/",
+   "where": [
+    "scripts/ddd/run_store.py:243"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/reviews/",
+   "where": [
+    "scripts/ddd/review.py:137"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/reviews/{}/",
+   "where": [
+    "scripts/ddd/review.py:156",
+    "src/orchestrator/project_history.py:1118"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/reviews/{}/submit/",
+   "where": [
+    "scripts/ddd/review.py:285"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/runner-device-key-requests/",
+   "where": [
+    "src/orchestrator/device_key.py:1138"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/runner-device-keys/",
+   "where": [
+    "src/orchestrator/device_key.py:1151"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/runner-device-keys/",
+   "where": [
+    "src/orchestrator/device_key.py:1101"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/runner-device-keys/{}",
+   "where": [
+    "src/orchestrator/vault_cli.py:184"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/runner-sessions/",
+   "where": [
+    "src/orchestrator/vault_cli.py:233",
+    "src/orchestrator/vault_cli.py:238"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/sessions/upload",
+   "where": [
+    "src/orchestrator/session_upload.py:108"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/shareouts/",
+   "where": [
+    "src/orchestrator/shareout.py:109"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/slack-config/{}",
+   "where": [
+    "src/orchestrator/slack_ingest_cli.py:251",
+    "src/orchestrator/slack_ingest_cli.py:265"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/slack-config/{}/channel-ingest/allowed",
+   "where": [
+    "src/orchestrator/slack_ingest_cli.py:242"
+   ]
+  },
+  {
+   "method": "DELETE",
+   "path": "/api/slack-config/{}/channel-ingest/allowed/{}",
+   "where": [
+    "src/orchestrator/slack_ingest_cli.py:270"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/slack-ingests/",
+   "where": [
+    "src/orchestrator/slack_ingest_cli.py:206"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/slack-ingests/",
+   "where": [
+    "src/orchestrator/slack_ingest_cli.py:101"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/slack-ingests/{}",
+   "where": [
+    "src/orchestrator/slack_ingest_cli.py:117",
+    "src/orchestrator/slack_ingest_cli.py:133",
+    "src/orchestrator/slack_ingest_cli.py:171"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/slack-ingests/{}/read-mark",
+   "where": [
+    "src/orchestrator/slack_ingest_cli.py:187"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/slack-ingests/{}/revoke",
+   "where": [
+    "src/orchestrator/slack_ingest_cli.py:195"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/slack-ingests/{}/transcript",
+   "where": [
+    "src/orchestrator/slack_ingest_cli.py:176"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/storyboards/",
+   "where": [
+    "scripts/ddd/demo_set.py:28"
+   ]
+  },
+  {
+   "method": "PATCH",
+   "path": "/api/storyboards/{}",
+   "where": [
+    "scripts/ddd/demo_set.py:33"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/storyboards/{}/rounds/{}",
+   "where": [
+    "scripts/ddd/feedback_round.py:57"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/storyboards/{}/rounds/{}/consume",
+   "where": [
+    "scripts/ddd/feedback_round.py:112"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/threads/",
+   "where": [
+    "src/orchestrator/thread_cli.py:74"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/threads/",
+   "where": [
+    "src/orchestrator/thread_cli.py:86"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/threads/{}",
+   "where": [
+    "src/orchestrator/thread_cli.py:66"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/threads/{}/close",
+   "where": [
+    "src/orchestrator/thread_cli.py:90"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/vault/keyset",
+   "where": [
+    "src/orchestrator/vault_zk_cli.py:270"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/vaults/{}/attachments",
+   "where": [
+    "src/orchestrator/vault_zk_cli.py:1073"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/vaults/{}/members",
+   "where": [
+    "src/orchestrator/vault_zk_cli.py:1084"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/workspace-projects/{}/{}/",
+   "where": [
+    "src/orchestrator/kb_cli.py:86"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/workspace-projects/{}/{}/kb/file",
+   "where": [
+    "src/orchestrator/kb_cli.py:325",
+    "src/orchestrator/kb_remote.py:136"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/workspace-projects/{}/{}/kb/objects/have",
+   "where": [
+    "src/orchestrator/kb_remote.py:63"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/workspace-projects/{}/{}/kb/objects/links",
+   "where": [
+    "src/orchestrator/kb_remote.py:69"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/workspace-projects/{}/{}/kb/originals",
+   "where": [
+    "src/orchestrator/kb_cli.py:249",
+    "src/orchestrator/kb_remote.py:102"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/workspace-projects/{}/{}/kb/publish",
+   "where": [
+    "src/orchestrator/kb_remote.py:175"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/workspace-projects/{}/{}/kb/upload",
+   "where": [
+    "src/orchestrator/kb_remote.py:162"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/workspace-projects/{}/{}/kb/versions",
+   "where": [
+    "src/orchestrator/kb_remote.py:114"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/workspace-projects/{}/{}/kb/{}",
+   "where": [
+    "src/orchestrator/kb_remote.py:88"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/workspaces/",
+   "where": [
+    "src/orchestrator/agent_landscape.py:40",
+    "src/orchestrator/canopy_web.py:937",
+    "src/orchestrator/project_cli.py:56",
+    "src/orchestrator/workspace_cli.py:92"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/workspaces/{}/agent-topology",
+   "where": [
+    "src/orchestrator/agent_landscape.py:57"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/workspaces/{}/vaults",
+   "where": [
+    "src/orchestrator/vault_zk_cli.py:1052"
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/workspaces/{}/vaults",
+   "where": [
+    "src/orchestrator/vault_zk_cli.py:1062"
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/{}/",
+   "where": [
+    "src/orchestrator/canopy_web.py:781"
+   ]
+  }
+ ],
+ "unresolved": [
+  {
+   "method": "GET",
+   "expr": "path",
+   "where": "src/orchestrator/act_as_cli.py:633"
+  },
+  {
+   "method": "GET",
+   "expr": "self.paths.material",
+   "where": "src/orchestrator/connections/access.py:238"
+  },
+  {
+   "method": "POST",
+   "expr": "self._path(self.paths.lease, read)",
+   "where": "src/orchestrator/connections/access.py:293"
+  },
+  {
+   "method": "POST",
+   "expr": "self._path(self.paths.lease, read)",
+   "where": "src/orchestrator/connections/access.py:315"
+  },
+  {
+   "method": "DELETE",
+   "expr": "f'{self._path(self.paths.lease, read)}/{lease.id}'",
+   "where": "src/orchestrator/connections/access.py:335"
+  },
+  {
+   "method": "POST",
+   "expr": "reconnect",
+   "where": "src/orchestrator/connections/access.py:349"
+  },
+  {
+   "method": "POST",
+   "expr": "reconnect",
+   "where": "src/orchestrator/connections/access.py:354"
+  },
+  {
+   "method": "PUT",
+   "expr": "self._path(self.paths.sealed, read)",
+   "where": "src/orchestrator/connections/access.py:441"
+  },
+  {
+   "method": "PUT",
+   "expr": "path",
+   "where": "src/orchestrator/connections/keep.py:153"
+  },
+  {
+   "method": "POST",
+   "expr": "path",
+   "where": "src/orchestrator/connections/keep.py:212"
+  },
+  {
+   "method": "GET",
+   "expr": "url",
+   "where": "src/orchestrator/cred_resolve.py:93"
+  },
+  {
+   "method": "GET",
+   "expr": "self._user_url(email)",
+   "where": "src/orchestrator/google_account.py:139"
+  },
+  {
+   "method": "PATCH",
+   "expr": "self._user_url(email)",
+   "where": "src/orchestrator/google_account.py:158"
+  },
+  {
+   "method": "POST",
+   "expr": "f'{base}/upload'",
+   "where": "src/orchestrator/kb_cli.py:297"
+  },
+  {
+   "method": "POST",
+   "expr": "f'{base}/publish'",
+   "where": "src/orchestrator/kb_cli.py:306"
+  },
+  {
+   "method": "PUT",
+   "expr": "u['url']",
+   "where": "src/orchestrator/kb_remote.py:104"
+  },
+  {
+   "method": "GET",
+   "expr": "link['url']",
+   "where": "src/orchestrator/kb_remote.py:73"
+  },
+  {
+   "method": "PUT",
+   "expr": "u['url']",
+   "where": "src/orchestrator/kb_remote.py:90"
+  },
+  {
+   "method": "GET",
+   "expr": "path",
+   "where": "src/orchestrator/project_history.py:989"
+  },
+  {
+   "method": "GET",
+   "expr": "path",
+   "where": "src/orchestrator/secret_cli.py:120"
+  },
+  {
+   "method": "PUT",
+   "expr": "path",
+   "where": "src/orchestrator/vault_keeper.py:206"
+  },
+  {
+   "method": "POST",
+   "expr": "work.get('grant_path') or f\"{work['_base']}/{work['agent']}/wraps\"",
+   "where": "src/orchestrator/vault_keeper.py:234"
+  },
+  {
+   "method": "PUT",
+   "expr": "work['reseal_path']",
+   "where": "src/orchestrator/vault_keeper.py:303"
+  },
+  {
+   "method": "GET",
+   "expr": "self.base",
+   "where": "src/orchestrator/vault_zk_cli.py:174"
+  },
+  {
+   "method": "POST",
+   "expr": "f'{v.base}/enable'",
+   "where": "src/orchestrator/vault_zk_cli.py:379"
+  },
+  {
+   "method": "PUT",
+   "expr": "f'{v.base}/values'",
+   "where": "src/orchestrator/vault_zk_cli.py:401"
+  },
+  {
+   "method": "POST",
+   "expr": "f'{v.base}/wraps'",
+   "where": "src/orchestrator/vault_zk_cli.py:419"
+  },
+  {
+   "method": "POST",
+   "expr": "f'{v.base}/rotate'",
+   "where": "src/orchestrator/vault_zk_cli.py:461"
+  },
+  {
+   "method": "PUT",
+   "expr": "f'{v.base}/values'",
+   "where": "src/orchestrator/vault_zk_cli.py:499"
+  },
+  {
+   "method": "GET",
+   "expr": "path",
+   "where": "src/orchestrator/vault_zk_cli.py:738"
+  },
+  {
+   "method": "PUT",
+   "expr": "f'{v.base}/values'",
+   "where": "src/orchestrator/vault_zk_cli.py:753"
+  },
+  {
+   "method": "GET",
+   "expr": "url",
+   "where": "src/orchestrator/workspace_cli.py:105"
+  }
+ ],
+ "allowed_missing": []
 }
