@@ -1,7 +1,6 @@
 /**
  * Who a sealed value may go to — decided HERE, not by canopy-web.
  *
- * Spec: docs/superpowers/specs/2026-10-19-give-an-agent-a-secret-design.md §4.
  * `GET …/vault/zk/recipients` is the server's claim about who may read an
  * agent. A writer who sealed to it as-is would hand any key a compromised
  * database inserted every value written afterwards. So a recipient is sealed to

@@ -1,8 +1,7 @@
 """Pairing invitations — a new cloud box pairs holding no long-lived secret.
 
 A cloud box used to carry a shared person's PAT whose only job was to get it
-through pairing; when it expired, nothing said so. Now (spec
-`docs/superpowers/specs/2026-10-19-cloud-runner-standup-friction-design.md` #9):
+through pairing; when it expired, nothing said so. Now:
 
 * `POST /api/harness/runner-invitations/` `{name, workspace, role_arn, ecdh_public_jwk?}`
   — the operator (`up.sh`, with their own token) invites ONE box, by the name it

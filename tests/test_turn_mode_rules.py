@@ -10,7 +10,6 @@ The security-relevant test is the unverified one: an `auto` that names a person
 applies only to a message that proves it came from them. Routing on a forged
 From: picks a box; auto on one would let the forger drive an unreviewed agent.
 
-Spec: docs/superpowers/specs/2026-09-23-per-rule-turn-mode-design.md
 """
 from __future__ import annotations
 

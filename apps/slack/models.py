@@ -1,8 +1,7 @@
 """Slack as a way in to canopy agents.
 
 Framework tier: a transport, agent-agnostic, like ``inbound``. A Slack thread
-becomes a ``canopy_sessions.Session`` exactly as an email thread does; see
-``docs/superpowers/specs/2026-09-18-slack-front-door-design.md``.
+becomes a ``canopy_sessions.Session`` exactly as an email thread does.
 
 Two rows, and deliberately nothing that grants anything:
 
@@ -30,8 +29,7 @@ class SlackInstallation(models.Model):
     bot_token_enc = models.TextField()
     # No tenant here: one Slack can serve several canopy workspaces, each
     # through a `SlackWorkspaceLink`. The tenant of any message is decided by
-    # what it is about (its thread's session, or the agent it names) — see
-    # docs/superpowers/specs/2026-09-22-slack-multi-tenant-design.md.
+    # what it is about (its thread's session, or the agent it names)
     installed_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
         related_name="+",

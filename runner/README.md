@@ -6,7 +6,7 @@ the web image (see `.dockerignore`); the server never imports it.
 
 | dir | what it is |
 |---|---|
-| `canopy_runner/` | The **laptop runner** — the emdash-coupled daemon installed as a `uv` tool (never run from a checkout). Install/update: `runner/canopy_runner/scripts/install-runner.sh`. See `docs/superpowers/specs/2026-07-28-runner-as-installed-package-design.md`. |
+| `canopy_runner/` | The **laptop runner** — the emdash-coupled daemon installed as a `uv` tool (never run from a checkout). Install/update: `runner/canopy_runner/scripts/install-runner.sh`. |
 | `ec2/` | The **cloud runner** — a stdlib-only single file (`cloud_runner.py`) delivered to the EC2 box via Secrets Manager (`up.sh` publishes it), plus its CloudFormation template and agent-fleet bootstrap. |
 | `canopy_acp/` | Django-free [Agent Client Protocol](https://github.com/agentclientprotocol) client — the cloud runner's ACP executor (`RUNNER_EXECUTOR=acp`). |
 | `menubar/` | Native macOS menu-bar control surface for the laptop runner (Swift/AppKit). |

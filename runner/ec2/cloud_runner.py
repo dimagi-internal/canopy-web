@@ -3825,8 +3825,7 @@ def _boot_time() -> float:
 
 
 def fleet_ready_main(*, run=subprocess.run, imds=None, boot_time=None) -> int:
-    """ROOT, every minute on a FLEET member (`RUNNER_FLEET_GROUP` in box.env; spec
-    2026-10-24-runner-fleets-design.md): once every runner has finished a bootstrap
+    """ROOT, every minute on a FLEET member (`RUNNER_FLEET_GROUP` in box.env): once every runner has finished a bootstrap
     since this boot, complete the group's launch lifecycle hook. Until then AWS
     holds the instance where it is — a member warming up is not stopped into the
     warm pool half-installed, and one leaving the pool is not put in service before
@@ -4516,8 +4515,7 @@ def _post_transcript_batch(turn_id: str, attempt_id: str, seq: int, lines: list[
 # RUNNER_EXECUTOR. A new way of driving a CLI is a new subclass registered in
 # `_EXECUTORS`, never another `if RUNNER_EXECUTOR == ...` branch. Codex goes
 # here as `CodexAppServerExecutor` (`codex app-server` over stdio, its protocol
-# driver a `canopy_codex` package off the clone the way `canopy_acp` is ACP's —
-# docs/superpowers/specs/2026-10-26-multi-cli-agents-design.md §5); so would an
+# driver a `canopy_codex` package off the clone the way `canopy_acp` is ACP's; so would an
 # Agent SDK executor.
 #
 # The executors live in this file, not a module beside it: the box runs
@@ -4659,14 +4657,13 @@ def _executor() -> TurnExecutor:
 #
 # Adopted HERE and not on the laptop because the cloud box has no emdash to
 # supervise it: a canopy-spawned ACP session on a laptop would be invisible to
-# emdash, which costs the jump-in that makes the laptop worth running. See
-# docs/superpowers/specs/2026-07-27-acp-adoption-design.md.
+# emdash, which costs the jump-in that makes the laptop worth running.
 #
 # Default OFF. `claude -p` is the proven path and stays the default until this
 # has run real turns on a real box; flip with RUNNER_EXECUTOR=acp.
 RUNNER_EXECUTOR = os.environ.get("RUNNER_EXECUTOR", DEFAULT_EXECUTOR).strip().lower()
 
-# ── Sensitive-data mode (docs/superpowers/specs/2026-10-22-sensitive-data-agents-design.md §1) ──
+# ── Sensitive-data mode ──
 # `RUNNER_DATA_MODE=sensitive_data`: every model call this box makes goes to ONE
 # credential, the bundle's API-key slot, which holds the ZDR API key (an Anthropic
 # organisation with zero data retention). Box logins and subscriptions are never
@@ -6286,7 +6283,7 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
     `_post_transcript_batch` / TRANSCRIPT_FLUSH_*. This is IN ADDITION to the
     reduced TurnEvents `emit` carries for the live UI — the transcript is the
     durable, re-derivable artifact (cost/structure), the ledger stays the live
-    stream (docs/superpowers/specs/2026-07-26-run-execution-convergence-design.md).
+    stream.
 
     `cli_session_id` is the CLI's own session id, captured from the first event
     that carries one (normally `system`/`init`, fired before any other output) —
@@ -6527,8 +6524,7 @@ _AGENT_TOKEN_KEEP_SECONDS = 24 * 3600
 def _agent_token_env(runner_id: str, turn: dict) -> dict:
     """This turn's OWN canopy login as its agent, from canopy-web — or nothing, and
     the agent acts with its stored `canopy-pat` exactly as before (phase 1 of the
-    turn-scoped agent token: canopy-web docs/superpowers/specs/
-    2026-10-21-turn-scoped-agent-token-design.md).
+    turn-scoped agent token).
 
     Asked with this box's runner token (a PAT is refused by design), only for a
     full-profile agent turn — a confined turn never gets here. The token, which
@@ -9421,9 +9417,8 @@ def _default_adopted() -> bool:
     return (_LOGINS_ROOT / _DEFAULT_ADOPTED_MARKER).exists()
 
 
-#: A token or API key whose value lives in a vault serving this runner (canopy-web spec
-#: 2026-10-23-runner-claude-credentials-in-the-vault-design.md) is read from there, with
-#: this box's own device key: `canopy vault runner-credentials` asks canopy-web for the
+#: A token or API key whose value lives in a vault serving this runner
+#: is read from there, with this box's own device key: `canopy vault runner-credentials` asks canopy-web for the
 #: ciphertext and opens it here. What it opened is kept until the bundle changes or an
 #: hour passes, so the five-minute bundle re-read is not a vault read (each is logged).
 VAULT_REREAD_SECONDS = int(os.environ.get("VAULT_REREAD_SECONDS", "3600"))
@@ -9760,7 +9755,7 @@ def _is_bare_acp_refusal(text: str) -> bool:
 #: from the stream, not the text: on 2026-10-26 an invalid setup-token ended its
 #: turn with "Failed to authenticate. API Error: 401 OAuth access token is
 #: invalid.", which no text marker matched, so the box neither failed over nor
-#: alerted (docs/superpowers/specs/2026-10-26-claude-code-audit.md, finding 1).
+#: alerted.
 _DEAD_ERRORS = frozenset({"authentication_failed", "oauth_org_not_allowed",
                           "account_on_hold"})
 #: The categories that mean the credential is out of usage until its reset.
@@ -14768,8 +14763,8 @@ def _start_turn(runner_id: str, turn: dict) -> bool:
 
 # ── the vault keeper ────────────────────────────────────────────────────────
 # A box that holds an agent's vault key passes it on to whoever canopy-web says is
-# waiting and this box trusts (`canopy vault zk keep`; canopy-web spec
-# 2026-10-22-vault-access-follows-canopy-access-design.md §1), so a new vault member
+# waiting and this box trusts (`canopy vault zk keep`),
+# so a new vault member
 # or an approved machine gets the key without anyone being asked. Background,
 # fail-open, at most every KEEP_INTERVAL_SECONDS; `VAULT_KEEP=0` turns it off.
 

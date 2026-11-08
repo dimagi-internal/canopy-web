@@ -346,4 +346,3 @@ def filter_tasks(qs, *, user=None, project: str = "", status: str = "", waiting:
 
 
 # ---- Agent credentials (per-agent secret store, encrypted at rest) ----------
-# Spec: docs/superpowers/specs/2026-09-05-agent-credentials-design.md

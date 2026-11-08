@@ -2,7 +2,6 @@
 keeps, that purged chat history cannot be written back by a runner re-ship,
 and that nothing happens until it is switched on.
 
-Spec: docs/superpowers/specs/2026-10-05-content-retention-design.md.
 """
 from __future__ import annotations
 

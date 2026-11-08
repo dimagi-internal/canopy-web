@@ -771,7 +771,6 @@ redemption code (`tests/test_sdk_round_trip.py`), so the two sides cannot drift.
 
 ## Host grant contract v1
 
-Design: canopy-web `docs/superpowers/specs/2026-09-26-embedded-caller-delegation-design.md`.
 This section pins the WIRE CONTRACT so both sides can be built in parallel.
 Principle: **the host (which signed the user in) issues the grant; canopy only redeems.**
 Canopy never holds a key a host trusts to assert a user. Every value below is a

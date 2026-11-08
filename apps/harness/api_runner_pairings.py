@@ -1,7 +1,6 @@
 """Laptop pairing by browser — a downloaded runner pairs with no PAT, ever.
 
-The installed box makes its device key first, then (spec
-`docs/superpowers/specs/2026-10-19-runner-installers-design.md`, "Pairing API"):
+The installed box makes its device key first, then:
 
 * `POST /api/harness/runner-pairings/` — anonymous, with a DPoP proof of that
   key: opens a pairing and gets a `user_code` and the `/pair/<code>` page to

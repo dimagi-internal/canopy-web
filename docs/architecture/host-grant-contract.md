@@ -19,4 +19,3 @@ MCP as the visitor with `Authorization: DPoP` and a `Canopy-Actor` header. A hos
 installs the SDK from a release tag; the current pin is in the SDK README's install
 section.
 
-Design: `docs/superpowers/specs/2026-09-26-embedded-caller-delegation-design.md`.

@@ -4,7 +4,7 @@ Adding a sixth agent used to mean editing CloudFormation. The roster was pinned 
 THREE places — the `AgentSlugs` CFN parameter, `AGENT_SLUGS` in the box's
 runner.env, and this script's own default — so "create a new agent" required
 access to the stack, which is the friction the Agent Runtime Registry
-(docs/superpowers/specs/2026-07-20-agent-runtime-registry-design.md) exists to
+exists to
 remove. canopy-web already serves the answer at `GET /api/agents/{slug}/runtime`
 ("what a runner needs from canopy-web to run this agent"); nothing consumed it.
 

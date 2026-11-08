@@ -1,6 +1,6 @@
 # Local apps
 
-A local app is a `manifest.json` plus a program, run as its own process on a person's computer. The design is `docs/superpowers/specs/2026-11-03-local-apps-design.md`. This folder is source only: an app reaches people by being submitted and approved, not by being here.
+A local app is a `manifest.json` plus a program, run as its own process on a person's computer. This folder is source only: an app reaches people by being submitted and approved, not by being here.
 
 **Write one.** Read JSON lines on stdin, write JSON lines on stdout, standard library only. You get `{"type":"start","settings":{...},"run_id":"..."}` first and must stop promptly on `{"type":"stop"}`, or the host kills you after 5 seconds. Say what's happening with `status` and `event`, and call Canopy with `canopy.call` for an op your manifest declares. You hold no credential and get only `PATH`, `HOME`, `LANG` and `TMPDIR`.
 

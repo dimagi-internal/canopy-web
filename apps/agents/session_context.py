@@ -1,6 +1,6 @@
 """Session Context: the durable facts of a conversation, whoever is asking.
 
-Design: `docs/superpowers/specs/2026-11-05-turn-context-design.md` § 3.1. One half of what
+One half of what
 `turn_context.resolve_turn_context` reads, and a frozen read-model over rows that already exist: no
 table, no write, nothing about the asker.
 

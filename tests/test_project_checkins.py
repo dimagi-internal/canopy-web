@@ -1,5 +1,5 @@
 # ruff: noqa: F811 — fixtures are imported from the Slack test modules and requested by name.
-"""Project check-ins (spec 2026-10-17-project-check-ins-design.md).
+"""Project check-ins.
 
 Driven through the real REST routes and the real signed interactions webhook,
 with Slack faked at the `requests` boundary (tests/test_slack.py). Pinned: the

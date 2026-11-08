@@ -1,4 +1,4 @@
-"""Vault membership is first-class (spec 2026-10-22-vault-access-follows-canopy-access-design.md).
+"""Vault membership is first-class.
 
 A vault's members are its direct members plus its links; an agent's vault starts
 linked to the agent. A machine may hold a vault's key only while the person it

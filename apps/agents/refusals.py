@@ -1,6 +1,6 @@
 """Why a turn is not run, and how to fix it: the closed set of refusal codes and the one place their words are written.
 
-Design: `docs/superpowers/specs/2026-11-05-turn-context-design.md` § 7. The owner's principle: if someone can reach a
+The owner's principle: if someone can reach a
 session but the Turn Context would not let them take a turn, canopy says why and how to fix it. So every refusal is
 `{code, why, how_to_fix, who_can_fix}`:
 

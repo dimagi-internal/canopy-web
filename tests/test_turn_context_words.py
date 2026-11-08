@@ -2,7 +2,7 @@
 
 `door` and `ask` (as the name of read mode) were a second vocabulary for the same things, and the
 agent sense of `capability` (one entry of an agent's published document) is now a host site, read
-mode or a profile (`docs/superpowers/specs/2026-11-05-turn-context-design.md` § 2, § 9). The frontend's
+mode or a profile. The frontend's
 half is `frontend/src/turnContextWords.test.ts`.
 
 Guarded here, the text canopy-web writes for a person or an AI to read:

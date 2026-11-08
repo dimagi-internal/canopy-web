@@ -2,7 +2,6 @@
 the agent's owner or an admin (browser or token), audited like any setting, refused when structurally false; and a phi
 profile, and any turn in a sensitive conversation, is confined for everyone.
 
-Spec: docs/superpowers/specs/2026-10-22-sensitive-data-agents-design.md §5.
 """
 from __future__ import annotations
 

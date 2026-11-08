@@ -236,8 +236,7 @@ def run_schedule_now(request: HttpRequest, slug: str, schedule_id: int) -> Statu
     return Status(202, ScheduleOut(**ss.serialize_schedule(schedule)))
 
 
-# ---- triggers: every kind on one list (docs/superpowers/specs/2026-10-27-agent-
-# triggers-design.md). The /schedules/ routes above are the cron subset the runner,
+# ---- triggers: every kind on one list. The /schedules/ routes above are the cron subset the runner,
 # the calendar and existing tools drive; these are the agent's whole list. Both call
 # the same services, so they cannot drift. Each write is gated in
 # `schedule_services._check_may_set_up` (`triggers.may_set_up`): `agent.work` for a

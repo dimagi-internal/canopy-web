@@ -51,7 +51,6 @@
 # behind, and stays bricked until a human notices. An independent timer means
 # shipping a fix is enough to rescue the box.
 #
-# See docs/superpowers/specs/2026-07-30-cloud-runner-auto-update-design.md.
 set -uo pipefail
 
 RUNNER_HOME="${RUNNER_HOME:-/opt/canopy-runner}"

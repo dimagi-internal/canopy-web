@@ -9,8 +9,8 @@ import {
 import { RUN_STATUS } from './checkinModel'
 import { slotTime, andList, CheckinForm } from './CheckinParts'
 
-// A PROJECT'S CHECK-INS — its recurring meetings (spec
-// 2026-10-17-project-check-ins-design.md §4). The panel lists each check-in's
+// A PROJECT'S CHECK-INS — its recurring meetings.
+// The panel lists each check-in's
 // name, cadence, lead, channel and agents, with Edit, Delete and Run now for
 // whoever may change them (the project's owner, a workspace owner or admin);
 // the timeline lists every run, newest first, with who took part, what was

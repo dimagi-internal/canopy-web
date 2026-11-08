@@ -3,7 +3,7 @@ import { ensureOk, unwrap } from "./problem";
 import type { components } from "./generated";
 
 /** An agent's trigger: a schedule (`cron`) or alarm mail from a bound sender
- * (`inbound_mail`). docs/superpowers/specs/2026-10-27-agent-triggers-design.md */
+ * (`inbound_mail`). */
 export type Trigger = components["schemas"]["TriggerOut"];
 export type TriggerIn = components["schemas"]["TriggerIn"];
 export type TriggerPatch = components["schemas"]["TriggerPatch"];

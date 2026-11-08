@@ -5,8 +5,7 @@ runner: it pairs with canopy-web, claims harness `Turn`s whose target is in its
 capabilities, runs `claude -p` on the turn's prompt, streams the assistant/tool
 output into the `TurnEvent` ledger, and finishes the turn. As of the
 **cloud-agent-bootstrap** milestone it is agent-ready — a real third standby, not
-just a `canopy-web` repo runner — see
-`docs/superpowers/specs/2026-07-25-cloud-agent-bootstrap-design.md`. As of
+just a `canopy-web` repo runner. As of
 **run-convergence PR2** it also posts the raw transcript for every turn and CAN
 (opt-in, off by default — see below) become session-capable and `--resume` a
 claude CLI session across turns — see "Session-capable, transcript-posting,
@@ -471,8 +470,7 @@ the agent's Settings → External accounts → GitHub). Each turn asks canopy-we
 (`POST /api/harness/runners/{id}/turns/{id}/github-token`) and it lives only in
 that turn's environment; bootstrap uses the same token for that agent's private
 clones. `bootstrap_agents.sh` reads each agent's own
-`gog-token` from its Canopy vault. See
-`docs/superpowers/specs/2026-07-25-cloud-agent-bootstrap-design.md`.
+`gog-token` from its Canopy vault.
 
 ## Gmail token re-staging
 
@@ -625,8 +623,7 @@ Either, when convenient:
 
 ## Sensitive-data mode (`RunnerDataMode=sensitive_data`): a box that may hold a host's sensitive data
 
-A box in sensitive-data mode is the only kind canopy routes a sensitive conversation to
-(spec `docs/superpowers/specs/2026-10-22-sensitive-data-agents-design.md`). In it:
+A box in sensitive-data mode is the only kind canopy routes a sensitive conversation to. In it:
 
 - **One credential.** Claude runs only on the bundle's **API-key slot**, which must hold
   the ZDR API key: a key from an Anthropic organisation with zero data retention. Box
@@ -975,8 +972,7 @@ A new box runs several runners from its first boot: `./up.sh --name <box> --work
 
 **Ship a `cloud_runner.py` change by merging it and deploying canopy-web.** Within
 30 minutes the box installs it and restarts itself. Same rules as the laptop
-runner, and the same reasons — see
-`docs/superpowers/specs/2026-07-30-cloud-runner-auto-update-design.md`.
+runner, and the same reasons
 
 How it works: `canopy-runner-update.timer` runs `update_runner.sh` every 30
 minutes as the service user. It asks the control plane for **its own row's
@@ -1135,8 +1131,7 @@ running would either suppress a real update or trigger a needless one.
 ## Runner fleets: capacity that scales itself
 
 A fleet is an Auto Scaling group of interchangeable runners that canopy-web grows and
-shrinks with the work waiting (`docs/architecture/runner-fleets.md` § Runner fleets; spec
-`docs/superpowers/specs/2026-10-24-runner-fleets-design.md`). Members keep nothing the
+shrinks with the work waiting (`docs/architecture/runner-fleets.md` § Runner fleets). Members keep nothing the
 fleet needs:
 - their identity is their instance, proven to AWS;
 - their vault key is the fleet's KMS key;

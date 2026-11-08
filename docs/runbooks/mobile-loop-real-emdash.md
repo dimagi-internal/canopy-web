@@ -13,8 +13,8 @@ This runbook (L3) closes the one remaining gap: the physical CDP drive into a re
 
 ## Preconditions
 
-- **Daemon code is current.** The runner is an INSTALLED package, not a checkout (#512) —
-  a `git pull` in `~/emdash-projects/canopy-web` no longer changes what the daemon runs.
+- **Daemon code is current.** The runner is an INSTALLED package, not a checkout —
+  a `git pull` in `~/emdash-projects/canopy-web` does not change what the daemon runs.
   Update it with the installer, which builds a snapshot of `origin/main`:
   ```
   runner/canopy_runner/scripts/install-runner.sh
@@ -67,7 +67,7 @@ This runbook (L3) closes the one remaining gap: the physical CDP drive into a re
 
 - The turn is one-shot; nothing recurring was started. If you dispatched but decide not to
   run it: `POST /api/harness/turns/<id>/cancel`.
-- To stop the runner claiming repo turns again, you can no longer edit its capabilities —
+- To stop the runner claiming repo turns again, you cannot edit its capabilities —
   the list is reported, so it would come straight back on the next heartbeat. Close the
   project in emdash (it stops being reported), or pause the runner entirely via the
   menu-bar app / the pause sentinel, which stops it claiming anything.

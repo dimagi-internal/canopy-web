@@ -12,7 +12,7 @@ deploys. The other eleven had simply never changed, so nobody found out.
 
 This asks the question up front, against the change set CloudFormation is about
 to execute, and names the missing action instead of leaving a 403 in a rollout
-log. See docs/superpowers/specs/2026-09-09-labs-infrastructure-as-code-design.md
+log.
 
 The preflight itself calls two actions the CI role does not (yet) have —
 iam:SimulatePrincipalPolicy and cloudformation:ListChangeSets both come back
@@ -238,7 +238,6 @@ def render(findings: list[Finding]) -> str:
         "only the CloudFormation change set was refused. Either grant the action",
         "to the deploy role, or apply this change from the bootstrap stack with",
         "admin credentials.",
-        "See docs/superpowers/specs/2026-09-09-labs-infrastructure-as-code-design.md",
     ]
     return "\n".join(lines)
 

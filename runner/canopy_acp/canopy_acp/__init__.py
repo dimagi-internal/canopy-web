@@ -3,8 +3,7 @@
 ACP is the open standard canopy hand-rolled: emdash drives Claude through
 `@agentclientprotocol/claude-agent-acp` wrapping `@anthropic-ai/claude-agent-sdk`,
 and the protocol already specifies tool-call lifecycle, streamed reply text,
-thinking, usage and rate limits. See
-`docs/superpowers/specs/2026-07-27-acp-adoption-design.md`.
+thinking, usage and rate limits.
 
 Same precedent as `canopy_cron` and `canopy_transcript`: shared by the server
 and the runners so a behaviour can't exist in two versions.

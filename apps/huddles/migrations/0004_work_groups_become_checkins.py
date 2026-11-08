@@ -1,4 +1,4 @@
-"""Every work group becomes a project's check-in (spec 2026-10-17-project-check-ins-design.md §7).
+"""Every work group becomes a project's check-in.
 
 * A single-mode group already has its project: it becomes that project's check-in.
 * A multi-mode group gets a new ACTIVE project on its leader agent — the group's

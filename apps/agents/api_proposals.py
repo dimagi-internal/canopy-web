@@ -13,7 +13,7 @@ the HTTP shape (each route is also an MCP tool):
   that agent's own login or by the project's agent (`canopy huddle file` writes
   members' round-3 co-signs with the lead's token).
 * `POST …/projects/{ref}/tasks/propose/` — a check-in's proposed TASK in the
-  project (spec 2026-10-17-project-check-ins-design.md §3), and the same backing
+  project, and the same backing
   routes one level down: `…/projects/{ref}/tasks/{task}/backings/…`.
 
 Starting or declining the project is NOT here: it is the decision card's approve

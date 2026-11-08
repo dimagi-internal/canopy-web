@@ -69,7 +69,7 @@ and the two fixed roles, strongest first:
 ### Configurable roles
 
 **The roles a line can give are rows, defined by the people who run a workspace**
-(`docs/superpowers/specs/2026-11-04-configurable-roles-design.md`; the Roles page, Settings → Agent
+(the Roles page, Settings → Agent
 roles; `GET|POST /api/workspaces/{slug}/agent-roles`, `PATCH|DELETE …/{key}`, `POST …/{key}/reset`).
 
 * A role is a key (immutable, stored on its lines and sent in the envelope), a name, a sentence and a

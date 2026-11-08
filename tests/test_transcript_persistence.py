@@ -1,6 +1,5 @@
 """Persist a runner session's transcript (durable, restart-proof live view).
 
-Spec: docs/superpowers/specs/2026-07-24-persist-runner-session-transcript-design.md.
 For an origin=runner session the laptop transcript is the single source of truth:
 every Message.turn_index is the transcript record ordinal, so the live stream
 (forward) and backfill (older) are the SAME rows by identity — idempotent

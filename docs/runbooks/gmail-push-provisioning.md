@@ -34,9 +34,8 @@ canopy-web cannot know the answer and the page does not guess one — the projec
 field is a placeholder you must replace. Find the right project by arming once
 and reading the error, which names it.
 
-This cost a full provisioning cycle on 2026-07-31: everything was created in
-`connect-labs` (where canopy-web runs), the subscriptions verified, and every
-`users.watch` failed — mail kept arriving by poll with no push row to explain it.
+If the topic is created in the wrong project (e.g. `connect-labs`, where canopy-web runs), every
+`users.watch` fails and mail keeps arriving by poll with no push row to explain it.
 
 Consequence worth knowing before you start: **one topic per (project, workspace)
 pair.** A workspace holding mailboxes whose clients live in different projects
@@ -47,16 +46,14 @@ needs a topic each, which the per-workspace `watch_topic` cannot express. Making
 agent's mailbox uses the fleet's one Google app in `canopy-494811` — two
 interchangeable clients, `canopy` (a laptop's `gog login`) and `canopy-web`
 (canopy-web's "Connect Google mailbox" button) — which is the only reason one topic
-per workspace suffices — `echo` and `ace` were moved off
-clients in the retired `openclaw-assistant-20260224`, a project nobody here can
-reach, so there was no topic to create for them.
+per workspace suffices. A mailbox whose client lives in a project nobody here can
+reach has no topic to create.
 
 Re-granting a mailbox today is simplest in the browser: the agent's Settings →
 Credentials → **Connect Google mailbox** (one of the agent's online runners mints the
 token and stores it encrypted in the agent's vault — canopy-web never sees it; boxes import
 the newer of it and the vault copy on their next bootstrap, and the runner discovers
-which client holds it — no `runner.json` edit). The terminal path below is what `echo`
-and `ace` went through on 2026-07-31 and still works:
+which client holds it — no `runner.json` edit). The terminal path below also works:
 
 ```bash
 # 1. Re-grant. HUMAN STEP — the consent cannot be automated: the password is
@@ -129,10 +126,10 @@ quickest confirmation that an agent is actually on push.
 `users.watch` must be called AS the mailbox. A service account can only do that
 with **domain-wide delegation**, and `dimagi-ai.com` is a *secondary domain
 inside the dimagi.com Workspace org* (`C018tavmm`) rather than its own tenant —
-established when `dimagi-associate.com` was added to login (PR #151): an Internal
-consent screen let `dimagi.com` and `dimagi-ai.com` both sign in, while
-`dimagi-associate.com`, a genuinely separate org, was blocked before the callback
-returned. DWD is granted per Workspace account and cannot be scoped to a domain,
+as the login consent screen shows: an Internal
+consent screen lets `dimagi.com` and `dimagi-ai.com` both sign in, while
+`dimagi-associate.com`, a genuinely separate org, is blocked before the callback
+returns. DWD is granted per Workspace account and cannot be scoped to a domain,
 an OU, or a user list, so granting it would cover every `dimagi.com` mailbox.
 
 The runner already holds a per-mailbox OAuth grant for exactly the agent

@@ -1,5 +1,5 @@
 """/api/agents/{slug}/secret-requests and the recipients/endorsements a person's browser seals against —
-giving an agent a secret (`docs/superpowers/specs/2026-10-19-give-an-agent-a-secret-design.md`).
+giving an agent a secret.
 """
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ from .vault_gates import zk_admin
 router = Router(auth=session_auth, tags=["agents"])
 
 # ---- give an agent a secret: requests, recipients, endorsements ---------------------
-# Spec: docs/superpowers/specs/2026-10-19-give-an-agent-a-secret-design.md. The
+# The
 # agent asks; a person's browser seals the value (zks1) to recipients endorsed by
 # a key it trusts, and sends ciphertext only. No route here returns a value.
 

@@ -28,7 +28,6 @@ heartbeat. A heartbeat from this second process would stamp the runner ONLINE an
 overwrite the provenance the real daemon reports — the updater would be forging
 liveness for a daemon that might be dead.
 
-See docs/superpowers/specs/2026-07-28-runner-as-installed-package-design.md.
 """
 from __future__ import annotations
 

@@ -84,7 +84,7 @@
 
 ### Walkthrough sharing — deferred (V2)
 
-**What:** Items deferred from the V1 walkthrough sharing slice (spec `docs/superpowers/specs/2026-05-26-walkthrough-sharing-design.md`):
+**What:** Items deferred from the V1 walkthrough sharing slice:
 - View analytics (who viewed, when, where from)
 - Multi-link / per-audience tokens (promote `share_token` to its own table)
 - Comments / reactions on walkthroughs
@@ -101,8 +101,8 @@
 
 ### Agent execution control plane — deferred from Phase 0
 
-**What:** Items deferred from the `apps/harness` / `runner/canopy_runner` Phase 0 slice (spec `docs/superpowers/specs/2026-07-05-agent-execution-control-plane-design.md`):
-- Per-runner PAT binding + workspace FK scoping on the harness `Runner`/`Turn` models (spec §5.1/§9) — any authenticated PAT can currently act as any runner.
+**What:** Items deferred from the `apps/harness` / `runner/canopy_runner` Phase 0 slice:
+- Per-runner PAT binding + workspace FK scoping on the harness `Runner`/`Turn` models — any authenticated PAT can currently act as any runner.
 - A board-command → automatic `Turn` enqueue hook — Phase 0's only trigger is a manual `POST /api/harness/turns/`.
 
 **Effort:** S-M each.
@@ -111,7 +111,7 @@
 
 ### Agents on Codex — remaining plans and deferred notes
 
-**What:** canopy-web can route a turn to Codex (spec `docs/superpowers/specs/2026-10-26-multi-cli-agents-design.md`, Plan 1 shipped), but no runner runs one yet. Left:
+**What:** canopy-web can route a turn to Codex (the executor axis is in place), but no runner runs one yet. Left:
 - **Plan 2, cloud runner Codex executor.** Starts with the live probe (a ChatGPT-signed-in `codex` on a box). Also covers Codex logins on `RunnerLogin`, an "add OpenAI key" UI, and runner copy that still says "Claude is not signed in".
 - **Plan 3, canopy plugin:** guards and caller context read Codex hook payloads; the factory's `skills/turn` and persona fallback (`AGENTS.md`).
 - **Plan 4, laptop headless runner on Codex.**
@@ -123,7 +123,14 @@
 
 ### Claude Code: use the CLI's first-party mechanisms
 
-**What:** The rest of the audit in `docs/superpowers/specs/2026-10-26-claude-code-audit.md` (findings 1 and 3 are done): replace the paid "Reply with OK" probe (finding 2), then the others in the audit's suggested order. Still open from finding 1: route away from a credential near its cap using `rate_limit_event` utilization, delete the text matchers' duplicate copies in `packages/canopy_transcript`, and check whether the laptop's transcript records carry `error`.
+**What:** Use what the `claude` CLI offers first-party instead of canopy's own parsing. Open items, in suggested order:
+- Replace the paid "Reply with OK" credential probe with zero-cost signals (the `rate_limit_event` on every real turn keeps a credential's state current).
+- Background tasks in one-shot turns: drop the deny-hook.
+- Use `claude agents --json` to list live sessions and their state.
+- Load each agent's plugin from the turn's own checkout (`--plugin-dir`) instead of the auto-updated cache, and on cloud boxes put guards and denies in `managed-settings.json` (decide the plugin-locking split together: a managed `enabledPlugins` lock blocks a `--plugin-dir` copy of the same name).
+- Use Claude Code's OS sandbox for confined turns that grant Bash; ask a human without screen-scraping or keystrokes.
+- Spikes: one Agent SDK executor instead of `claude -p` parsing plus an ACP adapter; on the laptop, `claude --bg` + `claude attach` versus driving emdash over CDP.
+- Still open from structured-error reading: route away from a credential near its cap using `rate_limit_event` utilization, delete the text matchers' duplicate copies in `packages/canopy_transcript`, and check whether the laptop's transcript records carry `error`.
 
 **Priority:** P2
 **Depends on:** None

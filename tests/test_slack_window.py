@@ -2,9 +2,7 @@
 """The channel window — `@canopy hal --history 10 <ask>`.
 
 Driven through the real signed events webhook, with Slack faked at the `requests`
-boundary as in test_slack.py. What is pinned is the spec's list of guarantees
-(docs/superpowers/specs/2026-09-18-slack-front-door-design.md § "Feeding it
-context from several threads"): only on request, only the channel the request
+boundary as in test_slack.py. What is pinned is the list of guarantees: only on request, only the channel the request
 came from, the window capped server-side, no token in the turn, an audit row.
 """
 from __future__ import annotations

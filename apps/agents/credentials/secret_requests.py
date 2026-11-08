@@ -1,6 +1,5 @@
 """An agent asks for a declared secret; a person answers with ciphertext.
 
-Spec: docs/superpowers/specs/2026-10-19-give-an-agent-a-secret-design.md.
 
 The agent's session calls `request_agent_secret` (a route, so an MCP tool too)
 and the chat shows a seal card under that tool call. The card seals the value in

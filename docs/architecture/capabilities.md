@@ -4,8 +4,8 @@ A **capability** is a machine an agent leases from canopy-web for exactly as lon
 needs it: "give me my `android-emulator`", get a fresh EC2 instance booted from the
 agent's own image, drive it, release it, and it is terminated. A capability of kind
 `pool` leases a **named slot** instead — an exclusive checkout of one of a few fixed
-things (a test account, a seat), with no machine and no AWS call (§6). Design record:
-`docs/superpowers/specs/2026-10-14-cloud-capabilities-design.md`. Code: `apps/capabilities`
+things (a test account, a seat), with no machine and no AWS call (§6).
+Code: `apps/capabilities`
 (framework tier), `canopy_sdk.ondemand.EphemeralInstance`,
 `canopy_runtime.schema.CapabilityManifest`.
 

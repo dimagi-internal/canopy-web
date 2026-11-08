@@ -422,11 +422,5 @@ token).
 ## What is about to change
 
 `Agent` currently carries **both** an `owner` (a person) and a `workspace` (a tenant), which
-is why "who owns this agent" has two answers. The agreed direction is that an agent's
-**definition is shared** across tenants — one `echo`, and improving echo improves it
-everywhere — while what you own is an **instance** of it. Forking produces a different agent,
-not a detached instance.
+is why "who owns this agent" has two answers.
 
-When that lands, roles attach to the instance and this document's tiers get one meaning each
-instead of two. The design, the 60-call-site tenancy risk it carries, and the phasing are in
-`docs/superpowers/specs/2026-09-12-agent-instances-and-the-acl-design.md`.

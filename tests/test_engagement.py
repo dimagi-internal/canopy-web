@@ -1,5 +1,4 @@
-"""Engagement events — what people actually do with projects and huddles
-(spec 2026-10-16-work-group-huddles-design.md §7).
+"""Engagement events — what people actually do with projects and huddles.
 
 Pinned here:
 

@@ -1,5 +1,4 @@
-"""Proposed tasks — what a project's check-in produces (spec
-2026-10-17-project-check-ins-design.md §3).
+"""Proposed tasks — what a project's check-in produces.
 
 Pinned here:
 

@@ -1,5 +1,4 @@
-"""The keeper: a runner that holds an agent's vault key passes it on, with nobody asked
-(spec 2026-10-22-vault-access-follows-canopy-access-design.md §1).
+"""The keeper: a runner that holds an agent's vault key passes it on, with nobody asked.
 
 Under zero-knowledge only a holder of the vault key can give a copy to someone new.
 A runner that holds one (its device wrap at the current kv) is a holder, and it is

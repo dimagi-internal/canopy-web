@@ -6,7 +6,7 @@ or a live task parked on a person. A task is a real row, so one receiver covers
 everything — no per-producer hops, no Drive-backed staleness (the old gap when
 run gates were projected from a RunStore), and nothing to keep in sync. The
 schedule nag is an ask on a task too, so its raise/dismiss flows through here
-for free. See 2026-07-21-supervisor-inbox-items-only-design.md.
+for free.
 """
 from __future__ import annotations
 

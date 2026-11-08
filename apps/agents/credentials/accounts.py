@@ -21,7 +21,6 @@ is never "settled" into the vault key either: generic value writes refuse its na
 (`refuse_delegated_names`), and it leaves canopy-web only in a resolve's `delegated`
 field, to a runner read proved by one of those machines (`resolve_payload`).
 
-Spec: docs/superpowers/specs/2026-10-26-delegated-credentials-in-the-vault-design.md
 """
 from __future__ import annotations
 

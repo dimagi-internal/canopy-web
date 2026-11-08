@@ -1,4 +1,4 @@
-"""Huddles are DERIVED, never stored (canopy docs/superpowers/specs/2026-10-06-huddle-design.md).
+"""Huddles are DERIVED, never stored.
 
 A huddle is a team of agents syncing, led by one of them, in rounds. Everything it
 consists of already lives here:

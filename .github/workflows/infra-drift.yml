@@ -25,8 +25,7 @@ name: Infra drift
 #       back to a stack scope.
 #
 # They are still HAND-MADE on the shared role and tracked nowhere. Moving them
-# into the canopy-web bootstrap stack is the outstanding work -- see
-# docs/superpowers/specs/2026-09-09-labs-iac-status.md.
+# into the canopy-web bootstrap stack is the outstanding work.
 
 on:
   schedule:

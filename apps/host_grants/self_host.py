@@ -92,7 +92,7 @@ log = logging.getLogger(__name__)
 SCOPE_TOOLS: dict[str, tuple[str, ...]] = {
     "tasks:read": ("list_fleet_tasks",),
     "skills:read": ("skill_history", "skill_revision_diff"),
-    # /ide close review (spec 2026-10-16-ide-close-review-design.md). The one
+    # /ide close review. The one
     # write, `close_proposed_sessions`, is app-only: the agent proposes, and only
     # the review View's button — the person's click — closes.
     "sessions:close": ("propose_session_closes", "close_proposed_sessions"),

@@ -1,5 +1,5 @@
 """wire.sh never holds a Claude credential: it gives the new box a vault and says where
-its owner signs it in (canopy-web spec 2026-10-23-runner-claude-credentials-in-the-vault-design.md).
+its owner signs it in.
 
 It used to copy a live box's whole bundle — tokens and API key, in plaintext, through
 this script — and fall back to a months-old Secrets Manager token. A box's credentials

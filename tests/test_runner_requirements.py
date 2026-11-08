@@ -1,5 +1,5 @@
 """Runner requirements: the vocabulary, a runner's declared flags, and reading a
-session's requirements. Spec: docs/superpowers/specs/2026-09-30-sensitive-runners-design.md"""
+session's requirements."""
 from __future__ import annotations
 
 import pytest

@@ -29,7 +29,6 @@ be forgotten. One receiver per resource cannot be, and `apps/push/signals.py`
 already proves the shape: one row, one receiver, `transaction.on_commit` to
 coalesce a batch into a single notification.
 
-See `docs/superpowers/specs/2026-09-16-page-invalidation-design.md`.
 """
 
 from __future__ import annotations

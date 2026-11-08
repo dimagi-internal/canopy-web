@@ -27,7 +27,7 @@ import { giveAccess } from './agentKeyOps'
 
 type Jwk = { x?: string; y?: string }
 
-// ---- endorsements (zk-v1 §7; spec 2026-10-19-give-an-agent-a-secret-design.md §4) ----
+// ---- endorsements (zk-v1 §7) ----
 //
 // Whenever a person wraps the vault key to someone, they also sign "this key may
 // read this agent" — so a writer who holds no vault key can check who a sealed
@@ -128,8 +128,7 @@ export async function approveAndGrant(keyId: string, agents: string[], prompt: U
       // I could not hand this agent's vault key over myself (I hold no copy of
       // it yet). Still vouch for the machine with my own key: a keeper — a
       // runner that holds the vault key — wraps only to endorsed machines, so
-      // this is what lets it pass the key on without anyone being asked
-      // (spec 2026-10-22-vault-access-follows-canopy-access-design.md §1).
+      // this is what lets it pass the key on without anyone being asked.
       await endorseMachine(slug, key, me!)
     }
   }
@@ -141,8 +140,8 @@ export type VouchAgent = { slug: string; agent_id: string }
 /**
  * Sign "this machine — mine — may read this agent" for each agent whose vault I am a
  * member of without managing it (`zk_vouch_agents`). A keeper (a box that holds the
- * vault key and works for a manager) then passes the key on with nobody asked
- * (spec 2026-10-22-vault-access-follows-canopy-access-design.md §1). Returns the
+ * vault key and works for a manager) then passes the key on with nobody asked.
+ * Returns the
  * slugs it signed for.
  */
 export async function vouchForMyMachine(key: RunnerDeviceKeyOut, agents: readonly VouchAgent[], me: Unlocked): Promise<string[]> {

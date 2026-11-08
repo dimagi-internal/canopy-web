@@ -21,8 +21,7 @@ import { errorText } from '../../api/problem'
 
 // A PROPOSAL, as people act on it — a proposed PROJECT or a check-in's proposed
 // TASK. The one card the project page and the huddle page both render, so a
-// person backs, comments and decides in whichever place they found it (spec
-// 2026-10-17-project-check-ins-design.md).
+// person backs, comments and decides in whichever place they found it.
 //
 // What it is (name, done-when, why, plan, partners), then the decision — Start /
 // Decline for whoever may decide (`may_decide`), a plain "waiting on …" line for

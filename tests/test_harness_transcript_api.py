@@ -4,9 +4,6 @@ store: POST/GET /api/harness/turns/{turn_id}/transcript.
 Reuses `turn_or_404` for tenancy exactly as every other turn route does — a
 transcript is strictly more sensitive than a turn's status, so it gets no
 bespoke gate of its own (that's how the session-turn tenancy leak happened).
-
-See .superpowers/sdd/2026-07-26-run-convergence-canopy-side/task-2-brief.md
-and the security-review fix round (task-2-report.md) for F1-F8.
 """
 from __future__ import annotations
 

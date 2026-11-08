@@ -14,8 +14,7 @@ WRITER changed.
 The absent-vs-empty distinction carries the whole safety property, and it is the
 `replace_reported_sessions` lesson with a bigger blast radius: a runner that cannot
 read emdash must OMIT the field, because reporting [] would blank the stored list
-and make every repo turn on that runner unclaimable. See
-`docs/superpowers/specs/2026-07-28-observed-runner-projects-design.md`.
+and make every repo turn on that runner unclaimable.
 """
 from __future__ import annotations
 

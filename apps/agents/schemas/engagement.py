@@ -98,4 +98,4 @@ class AgentRosterRowOut(StrictModel):
 
 
 # ---- the workspace's work: one task by key, and the planning around it ----
-# (design 2026-10-24-workspace-tasks-and-projects-design.md)
+#

@@ -4,8 +4,7 @@ import { createWorkspaceVault, listWorkspaceVaults, type WorkspaceVaultOut } fro
 import { vaultHref } from '@/lib/scopedLinks'
 import { Td, Th, Tr } from '@/components/DataTable'
 
-// A workspace's own vaults (spec 2026-10-22-vault-access-follows-canopy-access-design.md
-// §4): shared secrets its agents read, layered under each agent's own, and a runner's own
+// A workspace's own vaults: shared secrets its agents read, layered under each agent's own, and a runner's own
 // Claude credentials. One row each here; everything about one vault — its key, what it
 // serves, members, secrets — is on its own page (pages/vault/VaultPage.tsx).
 

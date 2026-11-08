@@ -49,7 +49,6 @@ emdash, which would cost the jump-in that makes the laptop worth running. The
 laptop gains only the ACP *wire shape*, by translating its hook/transcript
 output.
 
-Design: `docs/superpowers/specs/2026-07-27-acp-adoption-design.md`.
 
 ## Tests
 

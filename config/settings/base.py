@@ -757,7 +757,6 @@ CANOPY_VAULT_READ_BURST_LIMIT = env.int("CANOPY_VAULT_READ_BURST_LIMIT", default
 # content past its RetentionRule's keep_days, at most hourly. Off means nothing
 # is purged automatically; `manage.py retention_sweep` still dry-runs, and
 # `--apply` still purges on purpose. No rules also means nothing is purged.
-# See docs/superpowers/specs/2026-10-05-content-retention-design.md.
 CANOPY_RETENTION_ENFORCE = env.bool("CANOPY_RETENTION_ENFORCE", default=False)
 # A SENSITIVE conversation (one that requires sensitive-data runners, apps/harness/sensitivity.py)
 # is purged after this many days WHATEVER CANOPY_RETENTION_ENFORCE says, by the same

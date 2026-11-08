@@ -13,7 +13,7 @@ platform, so a manifest can never describe a half-built release — unless the p
 job says --allow-partial because a platform's build or smoke test failed: then the
 manifest names only the platforms that passed (at least one), and canopy-web serves
 nothing for the others at that sha (`runner_releases.artifact` answers None). The schema is the
-contract in docs/superpowers/specs/2026-10-19-runner-installers-design.md § Releases.
+contract of this module.
 """
 from __future__ import annotations
 

@@ -24,7 +24,6 @@ class VaultEntryAccount(models.Model):
       canopy gives it no expiry of its own; `provider_expires_at` is what the provider
       said, shown as information.
 
-    Spec: docs/superpowers/specs/2026-10-26-delegated-credentials-in-the-vault-design.md
     """
 
     AGENT = "agent"
@@ -81,7 +80,6 @@ class VaultEntryAccount(models.Model):
 class AgentCredential(VaultEntryAccount):
     """One named secret for one agent, as ciphertext canopy-web cannot open.
 
-    Spec: docs/superpowers/specs/2026-09-05-agent-credentials-design.md
 
     canopy-web is the agent secret store, so standing up an agent does not
     require a vault someone must be granted elsewhere.
@@ -276,7 +274,7 @@ class AgentVaultWrap(models.Model):
 
 class AgentVaultEndorsement(models.Model):
     """A person's signature saying "this public key may read this agent" (zk-v1
-    §7; spec 2026-10-19-give-an-agent-a-secret-design.md §4).
+    §7).
 
     The publicly checkable twin of a wrap: made in the endorser's browser when
     they wrap the vault key to a recipient (or confirm it), and checked by a
@@ -312,8 +310,7 @@ class AgentVaultEndorsement(models.Model):
 
 
 class Vault(models.Model):
-    """A vault: a named set of secrets with its OWN membership (spec
-    2026-10-22-vault-access-follows-canopy-access-design.md).
+    """A vault: a named set of secrets with its OWN membership.
 
     Membership is first-class: who may open a vault is its `VaultMember` rows
     (people added by name) plus its `VaultLink` rows (rules that stand for a set
@@ -425,8 +422,7 @@ class VaultAttachment(models.Model):
     (`project`; no list is stored, so joining the project gives the vault and leaving
     it takes it away) — a turn of an agent reads every vault attached to it, layered
     under its own (`workspace_vaults.layers_for`) — or one cloud RUNNER, whose own
-    Claude credentials it holds (`workspace_vaults.runner_layers`; spec
-    2026-10-23-runner-claude-credentials-in-the-vault-design.md)."""
+    Claude credentials it holds (`workspace_vaults.runner_layers`)."""
 
     vault = models.ForeignKey("Vault", on_delete=models.CASCADE, related_name="attachments")
     agent = models.ForeignKey(Agent, on_delete=models.CASCADE, null=True, blank=True,
@@ -530,8 +526,8 @@ class VaultLink(models.Model):
 
 
 class AgentSecretRequest(models.Model):
-    """An agent asking for one of its declared secrets (spec
-    2026-10-19-give-an-agent-a-secret-design.md). A request carries NO value,
+    """An agent asking for one of its declared secrets.
+   A request carries NO value,
     ever: it is what the chat's seal card answers. The answer is a `zks1` value
     sealed in the answerer's browser, stored through `zk.set_values`.
 

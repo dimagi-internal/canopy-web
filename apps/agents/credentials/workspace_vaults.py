@@ -1,5 +1,4 @@
-"""Workspace vaults: shared secrets a workspace keeps for its agents (spec
-2026-10-22-vault-access-follows-canopy-access-design.md §4).
+"""Workspace vaults: shared secrets a workspace keeps for its agents.
 
 A workspace may hold any number of vaults (Jonathan, 2026-10-22). Each is always
 zero-knowledge, in the same formats as an agent's vault (docs/vault/zk-v1/
@@ -18,8 +17,8 @@ for either with the same code, and a copy made for one can never open the other.
   person is a member AND that serves an agent the vault is attached to — or that is a
   RUNNER the vault is attached to, inside one isolation boundary (below).
 
-A vault attached to a cloud runner holds that box's own Claude credentials (spec
-2026-10-23-runner-claude-credentials-in-the-vault-design.md): the box opens it with its
+A vault attached to a cloud runner holds that box's own Claude credentials:
+the box opens it with its
 own device key, through `GET /api/harness/runners/{id}/credential/resolve`. Several
 runners may share one vault only inside one **isolation boundary** (`isolation_boundary`):
 the same owner, serving the same tree or agent, the same sensitive-data standing.

@@ -106,8 +106,7 @@ def oauth_callback(request: HttpRequest) -> HttpResponse:
     # One Slack serves many canopy workspaces. Connecting another one ADDS a
     # link beside the ones already there — it moves nobody's messages and
     # grants this workspace nothing of theirs — so it takes only this
-    # workspace's owner plus Slack's own install consent (decided 2026-09-22;
-    # spec 2026-09-22-slack-multi-tenant-design.md). It used to refuse unless
+    # workspace's owner plus Slack's own install consent. It used to refuse unless
     # the caller owned the workspace the Slack was already connected to.
     with transaction.atomic():
         inst = SlackInstallation.objects.select_for_update().filter(team_id=team_id).first() \

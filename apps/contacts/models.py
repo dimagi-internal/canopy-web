@@ -460,8 +460,7 @@ class Contact(models.Model):
 
 # --- the fleet brain (canopy#804): what agents know about a person --------------
 #
-# Design: hal `docs/proposals/2026-10-07-caller-context-brain.md` §3, approved by
-# Jonathan 2026-10-07. Two layers:
+# Two layers:
 #
 #   1. history — turns and messages, which already exist, keyed by initiator;
 #   2. FACTS — `PersonFact`, append-only, small, one sentence each, recorded by

@@ -1,6 +1,6 @@
 """The resolver answers exactly as `access.decide` did, for everyone, everywhere.
 
-This project changes no one's access (`docs/superpowers/specs/2026-11-05-turn-context-design.md`), so
+The Turn Context changes no one's access, so
 this file is the proof. It first ran green against the real `decide`, in the commit before that was
 deleted; `tests/legacy_decide.py` is that code, unchanged. It walks every combination `tests/test_access_matrix.py` and
 `tests/fixtures/answering_interfaces.json` name: relationship, role, verified, named host site, site,

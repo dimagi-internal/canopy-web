@@ -1,8 +1,7 @@
 // The words a person reads say read mode, host site and profile, never door, ask or capability.
 //
 // `door` and `ask` (as the name of read mode) were a second vocabulary for the same things, and the
-// agent sense of `capability` is now a host site, read mode or a profile
-// (docs/superpowers/specs/2026-11-05-turn-context-design.md § 2, § 9). The server's half, and the
+// agent sense of `capability` is now a host site, read mode or a profile. The server's half, and the
 // API's field names, are `tests/test_turn_context_words.py`.
 //
 // Guarded: every piece of text the frontend can show — JSX text, a string given to a JSX attribute

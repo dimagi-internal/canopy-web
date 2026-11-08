@@ -18,7 +18,7 @@ Framework tier, generic over its producer (`source` + `kind` strings). Where an 
 - No mutation route. Retention: 30 days untouched (anchored on `last_seen_at`), pruned daily by the `events.prune` tick; `manage.py prune_events` by hand.
 
 ## Timeline (`apps/timeline`)
-- `GET /api/timeline/` — Team activity timeline: cursor-paginated aggregation over other apps via a string registry; link-out only. Spec: `docs/superpowers/specs/2026-06-19-team-activity-timeline-design.md`.
+- `GET /api/timeline/` — Team activity timeline: cursor-paginated aggregation over other apps via a string registry; link-out only.
 
 ## Beta requests (`apps/beta_requests`) — the public site's request-access form
 - `POST /api/beta-requests` — Anonymous (`auth=None`, allowlisted). `{email, reason, website}`; `website` is a honeypot (answered `ok`, nothing kept). The row is written first; the email to `CANOPY_BETA_REQUESTS_TO` (Reply-To the requester) is best-effort, outcome in `notify_result` (`sent`/`not_configured`/`failed`/`skipped`). A repeat within 24h is kept but not re-mailed; 5 per client address per hour (counted from the table); the response is identical for first and repeat requests. Grants nothing and creates no user.
@@ -29,7 +29,7 @@ Framework tier, generic over its producer (`source` + `kind` strings). Where an 
 ## System (`apps/system`)
 - `GET /api/system/overview` — Capability catalog: the canopy plugin's skills/agents/commands, read live from the plugin.
 - `GET /api/system/{kind}/{name}` — One capability's detail (drives the `/system` Workflows view).
-- `GET /api/system/public-stats` — Anonymous (`auth=None` **and** listed in `apps/common/middleware.py` `PUBLIC_PATH_PREFIXES`; `tests/test_public_routes_reachable.py` pins the latter). Five aggregate integers (agents, skills, runners online, turns executed, published demo packages) for the public explainer; integers only, shape closed by type in `tests/test_public_stats.py`, cached 60s. Accepted residual: the counters reveal fleet activity, and `demos_published` counts all tenants and visibilities. Spec: `docs/superpowers/specs/2026-09-12-opening-canopy-to-other-people-design.md`.
+- `GET /api/system/public-stats` — Anonymous (`auth=None` **and** listed in `apps/common/middleware.py` `PUBLIC_PATH_PREFIXES`; `tests/test_public_routes_reachable.py` pins the latter). Five aggregate integers (agents, skills, runners online, turns executed, published demo packages) for the public explainer; integers only, shape closed by type in `tests/test_public_stats.py`, cached 60s. Accepted residual: the counters reveal fleet activity, and `demos_published` counts all tenants and visibilities.
 
 ## MCP (`apps/mcp`, mounted at `/api/mcp/`)
 A FastMCP 4.x Streamable-HTTP app mounted in `config/asgi.py`, not a Ninja router. Every REST route above is a tool (generated from the OpenAPI schema, dispatched in-process as the caller); clients sign in with OAuth or a per-user PAT (`CanopyPATVerifier`); every call writes an `MCPAuditLog` row (readable at `GET /api/events/mcp-calls`) and writes are rate-limited. Hand-written tools exist only for what is not a route. Full surface, exclusions and auth: `docs/architecture/mcp-surface.md`.

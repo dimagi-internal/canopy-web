@@ -1,6 +1,6 @@
 """The default read profile, pinned EXACTLY.
 
-Read mode (spec 2026-11-03-agent-read-mode-and-doors-design.md) gives every agent a confined profile
+Read mode gives every agent a confined profile
 built in code. A change here widens or narrows every agent at once, so this test spells the whole
 thing out: a diff to it needs a person's review, and `READ_PROFILE_VERSION` must be bumped with it.
 """

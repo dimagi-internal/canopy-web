@@ -21,7 +21,6 @@ Kinds:
 - `delegated`: a person's account lent to the agent (their GitHub). The agent's on a
   box; in a direct session it is the person's own, so the lent copy never travels.
 
-Spec: docs/superpowers/specs/2026-10-29-two-axes-three-credentials-design.md
 """
 from __future__ import annotations
 

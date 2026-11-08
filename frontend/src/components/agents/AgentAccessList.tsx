@@ -23,8 +23,7 @@ import { Td, Tr } from '@/components/DataTable'
 
 // WHO HAS WHICH ROLE ON THIS AGENT — one list.
 //
-// An agent has ONE access list of (who, role) lines (docs/superpowers/specs/
-// 2026-10-30-agent-roles-and-access-list-design.md, roles in 2026-11-02-agent-permissions-and-roles-design.md).
+// An agent has ONE access list of (who, role) lines.
 // Roles: read only < read & write < editor < agent admin < owner; a line may instead open one
 // host site. This agent's own lines are changed here by its agent admins; lines
 // inherited from a workspace are read-only (changed on the workspace); the owner and the

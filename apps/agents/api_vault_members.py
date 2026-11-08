@@ -29,7 +29,7 @@ from .vault_gates import agent_vault
 
 router = Router(auth=session_auth, tags=["agents"])
 
-# ---- vault membership (spec 2026-10-22-vault-access-follows-canopy-access-design.md) ------
+# ---- vault membership ------
 # Membership is the vault's own (direct members + links); writes are for its
 # managers, and from a browser need a passkey step-up like every vault write.
 

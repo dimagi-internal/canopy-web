@@ -1,8 +1,7 @@
 /**
  * Everything the History page derives from the payload, with no React in it.
  *
- * Ported from the approved prototype (docs/superpowers/specs/
- * 2026-09-18-agent-skill-history-design.md). The page shows counts, dates and
+ * The page shows counts, dates and
  * commit messages only — nothing here produces a characterisation.
  */
 import type { SkillHistoryOut } from '@/api/agents'

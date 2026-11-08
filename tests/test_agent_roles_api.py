@@ -1,6 +1,5 @@
 """The roles of a workspace over HTTP: who may define them, what they may say, and what stays safe.
 
-`docs/superpowers/specs/2026-11-04-configurable-roles-design.md`.
 """
 from __future__ import annotations
 

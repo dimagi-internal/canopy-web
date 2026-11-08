@@ -1,6 +1,6 @@
 """`turn_context.resolve_turn_context` gives everyone but the owner, the admins and canopy exactly what their line says.
 
-`docs/superpowers/specs/2026-10-30-agent-roles-and-access-list-design.md`: an agent's access list
+An agent's access list
 is the only way in beyond its owner and admins, every decision says which role it put the asker in
 and why, and a line can only use a profile the agent actually has.
 """

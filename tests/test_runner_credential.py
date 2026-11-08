@@ -1,6 +1,5 @@
 """A cloud runner's Claude credential list: one ordered list of logins, tokens and API
-keys, whose token and API-key VALUES live only in a vault serving the runner (spec
-2026-10-23-runner-claude-credentials-in-the-vault-design.md, step 3).
+keys, whose token and API-key VALUES live only in a vault serving the runner.
 
 canopy-web keeps the list — names, kinds, order — and never a value: nothing takes a
 plaintext token or key, and the bundle the box reads names each value's vault secret

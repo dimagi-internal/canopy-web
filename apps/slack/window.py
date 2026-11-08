@@ -4,8 +4,7 @@ A conversation in Slack is usually spread over several threads in one channel,
 and the agent was mentioned in only one of them. This reads the recent past of
 the channel the request came FROM and hands it to the agent as quoted material,
 so `--history 10 pick this up` starts a session that already knows what was
-said. Design: `docs/superpowers/specs/2026-09-18-slack-front-door-design.md`
-§ "Feeding it context from several threads" — its guarantees are this module's:
+said. Its guarantees are this module's:
 
 1. **Only on request — and the request is a flag, not a phrase.** `--history`
    with a unit and a number (`--min 30`, `--msgs 5`, `--threads 3`), a bare number of minutes or

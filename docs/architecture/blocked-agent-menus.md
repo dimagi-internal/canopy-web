@@ -1,6 +1,6 @@
 # Blocked agents: how a dialog reaches a phone and an answer gets back
 
-When an agent stops and waits on a human (an `AskUserQuestion`, a permission prompt, a trust gate), canopy turns that dialog into a **menu** a phone, the chat page or Slack can show and answer. This doc covers where the menu comes from, how it is stored and served, how a tap becomes a keystroke, and the fail-closed rules at each step. The full evidence chain behind these rules is `docs/superpowers/specs/2026-08-01-clicking-does-nothing-incident.md`; the transcript-reader design is `docs/superpowers/specs/2026-07-31-blocked-agent-dialog-from-the-transcript-design.md`.
+When an agent stops and waits on a human (an `AskUserQuestion`, a permission prompt, a trust gate), canopy turns that dialog into a **menu** a phone, the chat page or Slack can show and answer. This doc covers where the menu comes from, how it is stored and served, how a tap becomes a keystroke, and the fail-closed rules at each step.
 
 ## What you will actually meet
 

@@ -48,7 +48,6 @@ cd frontend && npm run build  # frontend type check + build
 
 - [`CLAUDE.md`](CLAUDE.md) — the current-state index loaded into every AI session: how to run, test and ship, the invariants, and which `docs/architecture/` doc covers each subject.
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — the framework/product tier boundary and per-app table.
-- [`docs/superpowers/specs/`](docs/superpowers/specs/) — dated design specs (the "why" record for every major feature).
 - [`docs/architecture/mcp-surface.md`](docs/architecture/mcp-surface.md) — the MCP server surface.
 
 Deployed at `https://canopy.dimagi.com/` — the root is the public product site; the app (`/app`) needs a sign-in. Every page: [`docs/architecture/pages.md`](docs/architecture/pages.md).

@@ -1,5 +1,5 @@
 """Runner fleets: interchangeable cloud runners that canopy-web grows and shrinks
-with the work waiting for them (spec `docs/superpowers/specs/2026-10-24-runner-fleets-design.md`).
+with the work waiting for them.
 
 A fleet is ONE EC2 Auto Scaling group. A person approves it once — its
 `RunnerInvitation`, from a browser behind a passkey; no token can — and from then

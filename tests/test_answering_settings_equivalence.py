@@ -1,6 +1,6 @@
 """The real code answers exactly as `tests/legacy_interface.py` does, for every agent shape.
 
-`docs/superpowers/specs/2026-11-04-agent-settings-replace-the-interface-design.md` § 6. Both read
+ Both read
 `Agent.interface`, and the plain settings keep it as the storage, so this holds in every phase: it is
 what checks the new forms' writer, and the deletion of `pages` and of the combined ceiling of several
 entries on one site, against today. The fixture holds no document either applied to, as production

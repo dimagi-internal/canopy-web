@@ -5,7 +5,7 @@
 ;   /DSha12=<first 12 of the runner sha>   /DAppVersion=1.0.<committed_at>
 ;   /DOutputDir=<where the .exe goes>
 ;
-; Layout (docs/superpowers/specs/2026-10-19-runner-installers-design.md):
+; Layout:
 ;   %LOCALAPPDATA%\Programs\Canopy Runner\versions\<sha12>\   one complete runtime per release
 ;   %LOCALAPPDATA%\Programs\Canopy Runner\current            junction -> versions\<sha12>
 ; The Scheduled Tasks `canopy-runner setup` registers run current\bin\..., so an update

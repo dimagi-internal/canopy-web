@@ -1,6 +1,5 @@
 """Endorsements — who vouches that a key may read an agent (zk-v1 §7).
 
-Spec: docs/superpowers/specs/2026-10-19-give-an-agent-a-secret-design.md §4.
 
 A `zks1` value is sealed to public keys canopy-web names. A writer who trusts
 that list is trusting the server, so a forged key row would read every value

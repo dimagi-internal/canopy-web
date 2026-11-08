@@ -2,7 +2,6 @@
 the boundary: canopy stores less, purges on its own clock, and never re-exposes or
 re-processes it. One test per surface.
 
-Spec: docs/superpowers/specs/2026-10-22-sensitive-data-agents-design.md §4.
 """
 from __future__ import annotations
 

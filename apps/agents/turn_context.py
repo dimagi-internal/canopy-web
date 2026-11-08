@@ -1,7 +1,7 @@
 """THE rule: what one turn may do, resolved from who is asking, the agent and the conversation.
 
-Every word is defined in `docs/architecture/access.md` and the design is
-`docs/superpowers/specs/2026-11-05-turn-context-design.md`. Every entry point that makes an agent do
+Every word is defined in `docs/architecture/access.md` 
+Every entry point that makes an agent do
 work calls `resolve_turn_context`, directly or through `for_turn` / `for_asker`, and everything
 downstream reads the `TurnContext` it returns, so no two of them can disagree.
 

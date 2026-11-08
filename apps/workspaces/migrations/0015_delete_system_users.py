@@ -1,4 +1,4 @@
-"""Retire system accounts, step 1 (docs/superpowers/specs/2026-10-27-agent-triggers-design.md).
+"""Retire system accounts, step 1.
 
 `harness/0125` has already made each one into the inbound-mail triggers it amounted
 to and moved its turns onto them. Here its login-less user is deleted — taking its

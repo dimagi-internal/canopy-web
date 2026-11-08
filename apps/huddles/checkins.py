@@ -1,5 +1,4 @@
-"""Project check-ins: a project's recurring meeting (spec
-docs/superpowers/specs/2026-10-17-project-check-ins-design.md).
+"""Project check-ins: a project's recurring meeting.
 
 The life of one run (`CheckinRun`):
 

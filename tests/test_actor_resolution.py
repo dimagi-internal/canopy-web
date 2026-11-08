@@ -8,7 +8,6 @@ production and both of which the obvious implementation gets wrong:
   - a `canopy_web_chat` / `ace_web` turn has no `origin_ref["from"]` at all, so
     its actor is `enqueued_by`.
 
-Spec: docs/superpowers/specs/2026-09-05-actor-aware-runner-routing-design.md
 """
 from __future__ import annotations
 

@@ -1,5 +1,4 @@
-"""Huddles — a team of agents syncs, led by one of them (canopy
-docs/superpowers/specs/2026-10-06-huddle-design.md). canopy-web stores NOTHING new
+"""Huddles — a team of agents syncs, led by one of them. canopy-web stores NOTHING new
 for a huddle: it is derived from tagged turns, close-out reports and board tasks.
 These tests pin the tags going in (close-out `origin_ref`, turn filters) and the
 derived view coming out (`/api/huddles/`)."""

@@ -1,6 +1,6 @@
 """An agent's two plain settings, read mode and host sites, as views of `Agent.interface`.
 
-`docs/superpowers/specs/2026-11-04-agent-settings-replace-the-interface-design.md` § 3. Nothing about
+Nothing about
 storage moves and no reader changes: this reads the same document everything else reads and edits it
 through the one writer, `store`. An edit validates only the entry it changes, with the server's own
 parser, and leaves every other entry as it was saved.

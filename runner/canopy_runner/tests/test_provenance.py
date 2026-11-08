@@ -1,6 +1,5 @@
 """What this runner reports about the code it is executing.
 
-Spec: docs/superpowers/specs/2026-07-28-runner-as-installed-package-design.md
 """
 from types import SimpleNamespace
 

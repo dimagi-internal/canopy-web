@@ -102,9 +102,6 @@ Two visibilities: `private` (signed-in workspace members) and `link`.
   (`frontend/src/lib/uploadedContentSandbox.ts`). **Never add `allow-same-origin`**: beside
   `allow-scripts` on a same-origin URL it is no sandbox, and a deck's script would run as the
   viewer against the cookie-authenticated API.
-- Specs: `docs/superpowers/specs/2026-07-13-walkthrough-share-token-revival-design.md`
-  (walkthroughs), `docs/superpowers/specs/2026-06-08-tokenless-narrative-visibility-design.md`
-  (reviews).
 
 ## Rolling sessions
 
@@ -146,7 +143,6 @@ Built and **off** unless `CANOPY_RETENTION_ENFORCE=true`.
   (30) by the same heartbeat sweep **whatever `CANOPY_RETENTION_ENFORCE` says**
   (`retention.services._sweep_sensitive`, a forced rule tallied as `#0`); a shorter
   workspace rule still wins when enforcement is on.
-- Spec: `docs/superpowers/specs/2026-10-05-content-retention-design.md`.
 
 ## Deleting your own session's content
 

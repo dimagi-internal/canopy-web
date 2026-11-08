@@ -1,5 +1,4 @@
-"""Workspace vaults over REST (`credentials/workspace_vaults.py`; spec
-2026-10-22-vault-access-follows-canopy-access-design.md §4).
+"""Workspace vaults over REST (`credentials/workspace_vaults.py`).
 
 `/api/workspaces/{slug}/vaults` lists and makes them; `/api/vaults/{vault_id}/…` is one
 vault: its members, what it serves, and its zero-knowledge state and writes. The `zk`

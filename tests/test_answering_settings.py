@@ -1,6 +1,6 @@
 """Read mode and host sites over HTTP: the plain settings over `Agent.interface`.
 
-`docs/superpowers/specs/2026-11-04-agent-settings-replace-the-interface-design.md` § 3. Driven through
+ Driven through
 the routes, as the form, the CLI and an MCP tool reach them.
 """
 from __future__ import annotations

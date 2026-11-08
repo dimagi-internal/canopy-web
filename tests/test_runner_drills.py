@@ -1,6 +1,4 @@
 """Readiness drills — pinned doctor turns, report callback, per-pair outcomes.
-
-See docs/superpowers/specs/2026-07-24-directed-runner-routing-design.md (Task 7).
 """
 from __future__ import annotations
 

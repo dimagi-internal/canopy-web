@@ -1,6 +1,6 @@
 """The access list over HTTP: `/api/agents/{slug}/access-list` and a workspace's defaults.
 
-See `docs/superpowers/specs/2026-10-30-agent-roles-and-access-list-design.md`. Any member may
+Any member may
 READ an agent's list (like its roster); an agent admin changes it. A workspace's default lines
 — the ones every agent in it and below inherits — are changed by a workspace admin, except that
 a default that gives the whole agent (`editor`) is the workspace owner's call.

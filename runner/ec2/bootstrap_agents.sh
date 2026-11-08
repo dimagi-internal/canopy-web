@@ -22,8 +22,7 @@
 # every lesson they recorded — moved into canopy's agent_prepare.py and its tests, after a
 # standby drill (cloud-ec2-prep) matched this box's readiness agent for agent.
 #
-# Steps below mirror docs/superpowers/specs/2026-07-25-cloud-agent-bootstrap-design.md
-# §1. Each step is OK-skipped when already satisfied. Deliberately NOT `set -e`:
+# Steps below each OK-skip when already satisfied. Each step is OK-skipped when already satisfied. Deliberately NOT `set -e`:
 # one agent's failure must not take down the other four (step 5) — the runner still
 # comes up and serves whichever agents bootstrapped clean; a readiness drill is the
 # per-agent verdict, not this script's exit code.
@@ -68,7 +67,6 @@ gog_config_dir() {
 # fallback rather than the source. Register an agent in canopy-web and the next
 # bootstrap picks it up — no stack change, no SSH.
 #
-# Spec: docs/superpowers/specs/2026-07-20-agent-runtime-registry-design.md
 #
 # EVERY failure path here yields an EMPTY registry, never a non-zero exit: under
 # `set -e` an unreachable canopy-web would otherwise abort bootstrap and strand a

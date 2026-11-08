@@ -756,7 +756,6 @@ class TurnAgentToken(models.Model):
     replaces the agent's stored, never-expiring `canopy-pat` for runner turns. A laptop
     turn finishes as soon as its session exists, so there the login is SESSION-scoped
     instead (`session`): it lives while that session is live on the runner.
-    Spec: docs/superpowers/specs/2026-10-21-turn-scoped-agent-token-design.md.
     """
 
     turn = models.ForeignKey(Turn, on_delete=models.CASCADE, related_name="agent_tokens")

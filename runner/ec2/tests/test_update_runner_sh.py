@@ -11,7 +11,6 @@ busy-marker must NOT read as busy (that box is the one auto-update exists to
 rescue), and either sha being empty must read as unknown (installing an empty sha
 would be a reinstall loop against a target that does not exist).
 
-See docs/superpowers/specs/2026-07-30-cloud-runner-auto-update-design.md.
 """
 from __future__ import annotations
 

@@ -1,8 +1,8 @@
 """Link every access-list line that names a role to that role's row.
 
 `AgentGrant.role_def` is the row of the line's role in the catalog of its own tree: an agent's
-line takes the agent's workspace root, a workspace default its workspace's root
-(`docs/superpowers/specs/2026-11-04-configurable-roles-design.md`, section 6). The seeded rows carry
+line takes the agent's workspace root, a workspace default its workspace's root.
+The seeded rows carry
 the permissions the code table always gave, so what a line grants does not move. A role string that
 is not one of the built-ins (`0118` and `0119` removed every other) aborts the migration naming the
 line rather than guessing. Every tree's links are kept in the settings audit (`SettingChange`,

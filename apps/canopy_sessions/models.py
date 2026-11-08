@@ -5,7 +5,6 @@ session); the assistant's output lands in the TurnEvent ledger and is projected
 here as Message rows. Framework tier, agent-agnostic: `metadata` carries opaque
 product linkage (e.g. ace-web's opp_slug) the framework never interprets.
 
-See docs/superpowers/specs/2026-07-16-sp2-unified-execution-spine-design.md.
 """
 from __future__ import annotations
 

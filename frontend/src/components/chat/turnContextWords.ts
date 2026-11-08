@@ -7,7 +7,6 @@
  * place, and the raw value stays one click away under "Raw". Anything this file
  * does not know is shown as the server sent it rather than hidden.
  *
- * Design: docs/superpowers/specs/2026-11-05-turn-context-design.md § 5.
  */
 import type { TurnContextView } from "@/api/chat";
 

@@ -1,6 +1,6 @@
 """Defining, editing, resetting and deleting the roles of a workspace's catalog.
 
-The rules (`docs/superpowers/specs/2026-11-04-configurable-roles-design.md`, sections 3, 4 and 10),
+The rules,
 all by permission and never by a role's name:
 
 * A key is a slug, unique along a workspace chain (an ancestor's role is visible below and cannot be

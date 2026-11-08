@@ -2,8 +2,7 @@
 
 register() with no workspace → default workspace + creator membership (so Echo's
 unchanged client keeps working); a domain teammate who has NOT explicitly
-joined (2026-09-12: auto-join is gone — self-join replaces it, see
-docs/superpowers/specs/2026-09-12-agent-instances-and-the-acl-design.md) gets
+joined (auto-join is gone — self-join replaces it) gets
 the same 404 and empty list an outsider does.
 """
 from __future__ import annotations

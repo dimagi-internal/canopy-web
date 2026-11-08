@@ -1,4 +1,4 @@
-// Who a sealed value goes to (spec 2026-10-19-give-an-agent-a-secret-design.md §4):
+// Who a sealed value goes to:
 // only recipients endorsed by a key this browser trusts. Each case is an attack
 // a compromised canopy-web could try with the recipients list.
 import { describe, expect, it } from 'vitest'

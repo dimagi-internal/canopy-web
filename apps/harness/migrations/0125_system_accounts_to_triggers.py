@@ -1,6 +1,6 @@
 """Convert every workspace system account into the agent triggers it amounted to.
 
-docs/superpowers/specs/2026-10-27-agent-triggers-design.md § C8. For each
+For each
 `SystemAccount`, with each of its `SystemSender` bindings:
 
 * the agents = every agent whose turns it initiated (`Turn.agent`, or the session's

@@ -9,7 +9,7 @@ cloud machine or pool slot (`apps/capabilities`, `docs/architecture/capabilities
 (`apps/storyboards/models.py`).
 
 Who may use which profile is NOT here: it is the agent's access list
-(`apps/agents/grants.py`, `docs/superpowers/specs/2026-10-30-agent-roles-and-access-list-design.md`).
+(`apps/agents/grants.py`).
 This says only what each profile IS — its tools, paths and sites — and never who may use
 it (a profile no longer carries a `role:`). THE rule that decides who gets which is
 `apps/agents/turn_context.resolve_turn_context`; every term is defined in `docs/architecture/access.md`.

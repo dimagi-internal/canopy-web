@@ -15,7 +15,7 @@ Routes for the demo and review surfaces: walkthroughs, narrative reviews, DDD ru
 - `POST /api/walkthroughs/{wid}/rotate-token` (uploader or workspace owner) — re-mints the token, killing shared links.
 - `GET /w/<workspace>/walkthrough/<id>/content` — bare streaming view (`apps/walkthroughs/streaming.py`), Range-aware. Session auth OR (`link` AND correct `?t=`). Another workspace's walkthrough 404s; registered `<str:wid>` so a malformed id 404s rather than hitting the SPA. Every `content_url` / `video_url` the API returns is this path.
 - **No flat artifact addresses** — which prefixes 404 and why: [pages.md § Rules for every page](pages.md#rules-for-every-page). `tests/test_api_urls_are_workspace_scoped.py` fails on any artifact URL field not under `/w/<workspace>/`.
-- Settings: `WALKTHROUGHS_ENABLED` (default on; off → the API and content stream 404), `CANOPY_DRIVE_SA_KEY_JSON` (empty → uploads/streams 503 `drive-not-configured`), `CANOPY_DRIVE_ROOT_FOLDER_ID` (`walkthroughs/<uuid>/` subfolders go under it), `WALKTHROUGH_MAX_UPLOAD_BYTES` (default 75 MB). Spec: `docs/superpowers/specs/2026-07-13-walkthrough-share-token-revival-design.md`.
+- Settings: `WALKTHROUGHS_ENABLED` (default on; off → the API and content stream 404), `CANOPY_DRIVE_SA_KEY_JSON` (empty → uploads/streams 503 `drive-not-configured`), `CANOPY_DRIVE_ROOT_FOLDER_ID` (`walkthroughs/<uuid>/` subfolders go under it), `WALKTHROUGH_MAX_UPLOAD_BYTES` (default 75 MB).
 
 ## Reviews (`apps/reviews`) — DDD narrative review surface
 - `GET /api/reviews/` list (the `/ddd` dashboard) · `POST /api/reviews/` create (DDD orchestrator) · `DELETE /api/reviews/{rid}/`.

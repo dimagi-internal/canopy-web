@@ -1,5 +1,5 @@
 {
- "provenance": "Reconstructed from section 4 of docs/superpowers/specs/2026-11-04-agent-settings-replace-the-interface-design.md and frontend/src/components/agents/aceInterface.fixture.json, NOT read from production: the shape of each agent is the spec's (which capabilities, sites, ceilings, logins, tool and command counts), but the exact tool and command strings of echo, eva, hal, oolong, trellis and labsdata, and each agent's workspace among the ones the spec names for the eleven with nothing published, are stand-ins. Replace `agents` with a read of get_interface for each agent to make it a live capture.",
+ "provenance": "Reconstructed from the settings design and frontend/src/components/agents/aceInterface.fixture.json, NOT read from production: the shape of each agent is the design's (which capabilities, sites, ceilings, logins, tool and command counts), but the exact tool and command strings of echo, eva, hal, oolong, trellis and labsdata, and each agent's workspace among the ones the design names for the eleven with nothing published, are stand-ins. Replace `agents` with a read of get_interface for each agent to make it a live capture.",
  "agents": [
   {
    "slug": "ada",

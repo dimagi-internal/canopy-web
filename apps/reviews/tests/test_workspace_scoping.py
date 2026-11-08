@@ -2,9 +2,7 @@
 
 Mirrors apps/agents/tests/test_workspace_scoping.py: create with no workspace →
 default workspace + creator membership (so the unchanged orchestrator keeps
-working); a domain teammate who has NOT explicitly joined (2026-09-12:
-auto-join is gone — self-join replaces it, see
-docs/superpowers/specs/2026-09-12-agent-instances-and-the-acl-design.md)
+working); a domain teammate who has NOT explicitly joined (auto-join is gone — self-join replaces it)
 does not see it in the list, same as an outsider.
 
 PLUS the visibility invariant that scoping must NOT break: an anonymous caller

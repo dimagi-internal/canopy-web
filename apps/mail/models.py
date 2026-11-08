@@ -1,8 +1,7 @@
 """Workspace email domains: a workspace's own domain, run through Amazon SES.
 
 PRODUCT tier and removable: nothing in a framework app imports this module.
-Removing the app drops these tables and nothing else notices. See
-docs/superpowers/specs/2026-10-12-workspace-email-domains-design.md.
+Removing the app drops these tables and nothing else notices.
 """
 from __future__ import annotations
 

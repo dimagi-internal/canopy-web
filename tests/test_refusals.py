@@ -1,6 +1,6 @@
 """Stage 4 of the Turn Context: every refusal says why and how to fix it, from one closed set of codes.
 
-Design: `docs/superpowers/specs/2026-11-05-turn-context-design.md` § 7. One test per code, each reached the way a real
+One test per code, each reached the way a real
 person reaches it (the rule, a route, the mail channel), then the set itself: closed, every code worded, no banned word.
 """
 from __future__ import annotations

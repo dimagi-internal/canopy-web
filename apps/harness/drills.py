@@ -22,8 +22,7 @@ from .models import (
 # ---------------------------------------------------------------------------
 # Readiness drills — a hard-pinned, read-only doctor turn per (runner, agent),
 # resolved by the drilled agent's own report callback (proving it can reach
-# the control plane) or by the turn failing outright. See
-# docs/superpowers/specs/2026-07-24-directed-runner-routing-design.md.
+# the control plane) or by the turn failing outright.
 # ---------------------------------------------------------------------------
 
 DRILL_PROMPT = """READINESS CHECK — READ-ONLY. You are the agent "{agent_slug}".
