@@ -98,8 +98,9 @@
 "apps/contacts/hcp/sensitive.py" = ["PLC0415"]  # 4
 "apps/contacts/hcp_api.py" = ["PLC0415"]  # 4
 "apps/contacts/hcp_collections.py" = ["PLC0415"]  # 1
-"apps/contacts/hcp_oauth.py" = ["PLC0415"]  # 7
+"apps/contacts/hcp_oauth.py" = ["PLC0415"]  # 3
 "apps/contacts/hcp_oauth_views.py" = ["PLC0415"]  # 4
+"apps/contacts/hcp_webhooks.py" = ["PLC0415"]  # 4
 "apps/contacts/management/commands/mirror_contact_notes.py" = ["PLC0415"]  # 1
 "apps/contacts/management/commands/people_coverage.py" = ["PLC0415"]  # 1
 "apps/contacts/people.py" = ["PLC0415"]  # 17
