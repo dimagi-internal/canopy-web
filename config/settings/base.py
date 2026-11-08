@@ -166,6 +166,8 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "allauth.account.middleware.AccountMiddleware",
     "apps.common.middleware.LoginRequiredMiddleware",
+    # Last, so a caller who is not signed in still gets the 401 first.
+    "apps.api.nul_guard.RefuseNulInJsonMiddleware",  # no NUL anywhere in a JSON body (see module)
 ]
 
 ROOT_URLCONF = "config.urls"

@@ -23,6 +23,8 @@ from apps.agent_runs.api import _run_id_or_404
 from apps.agents.models import Agent
 from apps.agent_runs.documents import MAX_ITERATIONS, RunDocStateIn, _state_iteration
 from apps.api.api import api
+from apps.api.errors import UNSTORABLE_TITLE
+from apps.api.nul_guard import holds_nul
 from apps.api.openapi_doc import NO_NUL_PATTERN
 from apps.api.renderers import OrjsonRenderer
 from apps.common.pg_datetime import OffsetSafeDatetimeDumper
@@ -228,10 +230,10 @@ def test_request_text_is_documented_nul_free_and_refusals_as_problem_json():
     # A declared refusal is documented in the media type it is sent as.
     walkthrough = schema["paths"]["/api/walkthroughs/"]["post"]["responses"]
     assert list(walkthrough["422"]["content"]) == ["application/problem+json"]
-    # An operation that takes free-form JSON declares the database's 400...
-    assert "400" in schema["paths"]["/api/events/"]["post"]["responses"]
-    # ...and one that takes none does not.
-    assert "400" not in schema["paths"]["/api/tokens/"]["post"]["responses"]
+    # Free-form JSON's NUL is refused when the body is read (nul_guard), not declared per route.
+    assert "400" not in schema["paths"]["/api/events/"]["post"]["responses"]
+    # ...while a route's own declared 400 stays.
+    assert "400" in schema["paths"]["/api/embed/ws-ticket"]["post"]["responses"]
 
 
 # --- round 5 (#2598): routes the fuzz reached once it could create an agent --------
@@ -275,3 +277,40 @@ def test_a_run_given_one_step_key_twice_is_a_422_not_a_500(client):
     body = {"label": "r", "steps": [{"key": "a"}, {"key": "a"}]}
     r = client.post("/api/w/fuzz/agents/fuzz-agent/runs/", data=json.dumps(body), content_type="application/json")
     assert r.status_code == 422, r.content
+
+
+# --- NUL anywhere in a JSON body is refused when the body is read (apps/api/nul_guard.py) ---
+
+
+@pytest.mark.parametrize("payload", [
+    {"items": [{"source": "s", "payload": {"deep": [{"x": "a\u0000b"}]}}]},  # a value, deep
+    {"items": [{"source": "s", "payload": {"k\u0000": 1}}]},                # a key
+    {"items": [{"source": "s\u0000"}]},                                     # a top-level string
+])
+def test_a_nul_anywhere_in_a_json_body_is_the_unstorable_400(client, payload):
+    r = client.post("/api/events/", data=json.dumps(payload), content_type="application/json")
+    assert r.status_code == 400, r.content
+    assert r["Content-Type"].startswith("application/problem+json")
+    body = r.json()
+    assert body["title"] == UNSTORABLE_TITLE and body["status"] == 400
+    assert body["instance"] == "/api/events/"
+
+
+def test_an_escaped_backslash_before_u0000_is_not_a_nul(client):
+    # The JSON text `\\u0000` is a backslash then "u0000": no NUL, so the request goes on.
+    body = '{"items": [{"source": "s", "summary": "\\\\u0000"}]}'
+    r = client.post("/api/events/", data=body, content_type="application/json")
+    assert r.status_code != 400 or r.json().get("title") != UNSTORABLE_TITLE, r.content
+
+
+def test_a_multipart_upload_with_nul_bytes_is_not_read_by_the_guard(client):
+    _member_of_fuzz()
+    raw = b'{"type": "user", "message": {"content": "hi"}}\n' + b"\x00\x01binary\x00"
+    r = client.post("/api/w/fuzz/sessions/upload", {"file": SimpleUploadedFile("t.jsonl", raw)})
+    assert not (r.status_code == 400 and r.json().get("title") == UNSTORABLE_TITLE), r.content
+
+
+def test_holds_nul_walks_values_and_keys_at_any_depth():
+    assert holds_nul({"a": [1, {"b": ["\x00"]}]})
+    assert holds_nul([{"\x00": None}])
+    assert not holds_nul({"a": [1, 2.5, True, None, {"b": "ok"}]})

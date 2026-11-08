@@ -109,5 +109,9 @@ TYPE_RATE_LIMIT = "https://canopy-web.dimagi.com/problems/rate-limit"
 TYPE_UPSTREAM = "https://canopy-web.dimagi.com/problems/upstream"
 TYPE_INTERNAL = "https://canopy-web.dimagi.com/problems/internal"
 TYPE_PAYLOAD_TOO_LARGE = "https://canopy-web.dimagi.com/problems/payload-too-large"
+
+#: The 400 for a value the database cannot store (`api._on_out_of_range`, `nul_guard`).
+UNSTORABLE_TITLE = "Value cannot be stored"
+UNSTORABLE_DETAIL = "A value in the request is out of range, or holds a character the database refuses."
 TYPE_DRIVE_NOT_CONFIGURED = "https://canopy-web.dimagi.com/problems/drive-not-configured"
 TYPE_DRIVE_UPLOAD_FAILED = "https://canopy-web.dimagi.com/problems/drive-upload-failed"
