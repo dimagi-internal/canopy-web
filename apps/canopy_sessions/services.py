@@ -293,7 +293,7 @@ def add_runner_requirements(session: Session, reqs, *, refuse_keyless: bool = Fa
 
 def _withhold_what_it_kept(session: Session) -> None:
     """A conversation that just became sensitive, held to what a sensitive one keeps
-    (docs/architecture/tenancy.md § Sensitive conversations) for everything it kept
+    (docs/architecture/tenancy-sensitive-conversations.md § Sensitive conversations) for everything it kept
     before: an ended turn's prompt wiped and its note withheld (a live turn keeps
     its prompt until it ends, `turn_close.close_turn`); every stored event reduced to
     its metadata and a tool's result to its call; no raw transcript; the binding's

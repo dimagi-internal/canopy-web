@@ -141,7 +141,7 @@ headless); `claude-desktop` and `emdash` run Claude Code only.
   Claude Code types `prompt` as it is; a CLI that loads skills but not commands invokes
   the skill `plugin:skill` — rather than parsing Claude's syntax itself.
 - **A conversation can change CLI only by a transfer** that names one
-  (`docs/architecture/chat-sessions.md` § A transfer carries the work): a fresh start in
+  (`docs/architecture/chat-sessions-recording-and-transfer.md` § A transfer carries the work): a fresh start in
   the new CLI from the handoff, never a resume.
 
 Spec: `docs/superpowers/specs/2026-10-26-multi-cli-agents-design.md`.
@@ -180,7 +180,7 @@ In order, each a hard stop:
    with every box that reports it cannot run the agent removed (`cannot_serve`) —
    and, for an unbound project chat, `routing.project_session_allows` (below).
 5. **The Turn Context is asked again**, from today's facts (`turn_context.at_claim`, with the enqueue's own question
-   kept in `origin_ref.queued_for`; access.md § Two moments). Refused: the turn is closed `cancelled`, never claimed,
+   kept in `origin_ref.queued_for`; access-turn-context.md § Two moments). Refused: the turn is closed `cancelled`, never claimed,
    its note the refusal plus `refusals.CHANGED_WHILE_QUEUED`. Otherwise the new stamp is written to `Turn.capability`
    before the payload is built, and a box that cannot confine the new answer passes it over.
 6. Turn mode decided and stamped (`turn_mode.for_turn`), an admission `auto` rule

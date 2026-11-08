@@ -518,7 +518,7 @@ def private_refusal(session: Session | None, *, agent: Agent | None = None) -> O
     """A private (sensitive) conversation takes nothing from Slack: its words are
     sealed to its own people, a Slack reply comes from whoever is in the channel,
     and adding them would make them one of its people with no owner's act and no
-    key (docs/architecture/tenancy.md § Sensitive conversations). Said plainly, with
+    key (docs/architecture/tenancy-sensitive-conversations.md § Sensitive conversations). Said plainly, with
     where to go instead. None for an ordinary conversation."""
     if session is None or not sensitivity.is_sensitive(session):
         return None

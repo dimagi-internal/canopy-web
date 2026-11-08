@@ -113,7 +113,7 @@ def arrive(agent, origin_ref, *, initiator=None, session=None, authserv_id=None,
                 bound = session_sync.email_thread_session(
                     agent, thread_id, str((origin_ref or {}).get("subject") or ""))
                 # A private (sensitive) conversation takes nothing from outside its
-                # people (docs/architecture/tenancy.md § Sensitive conversations):
+                # people (docs/architecture/tenancy-sensitive-conversations.md § Sensitive conversations):
                 # the mail runs as the agent's own turn, beside it, not in it.
                 if not sensitivity.is_sensitive(bound):
                     session = bound

@@ -3,7 +3,7 @@ words could reach a reader the gate would refuse — an MCP tool, a session mint
 from a token, an owner who signs as someone else, a push, a renamed tab — is
 closed, one test per route.
 
-docs/architecture/tenancy.md § Sensitive conversations.
+docs/architecture/tenancy-sensitive-conversations.md § Sensitive conversations.
 """
 from __future__ import annotations
 

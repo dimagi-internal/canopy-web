@@ -3,7 +3,7 @@ its own directory, readable by it alone, gone when it ends.
 
 canopy-web serves each file once, to the box holding the turn, and names it only in
 that download (apps/canopy_sessions/private_attachments.py). docs/architecture/
-tenancy.md § Sensitive conversations ("Files").
+tenancy-sensitive-conversations.md § Sensitive conversations ("Files").
 """
 from __future__ import annotations
 

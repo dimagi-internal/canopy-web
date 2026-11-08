@@ -16,7 +16,7 @@ Not here: IMAP, composing HTML, custom folders or labels, shared inboxes, replyi
 2. Backend: delete `apps/mail/` (its daily tick and mailbox registrations go with it); the `"apps.mail"` line in `INSTALLED_APPS` and the `# --- Mail domains (apps/mail) ---` `MAIL_*` block in `config/settings/base.py`; the `mail_router` import and `api.add_router("/mail", …)` lines in `apps/api/api.py`; `"/api/mail/ses/"` in `apps/common/middleware.py`'s public prefixes; `"mail"` in `PRODUCT` in `tests/test_architecture_boundary.py` and its row in `ARCHITECTURE.md`. `enqueue_turn`'s server-only `authserv_id` kwarg is generic and may stay.
 3. Tests: `tests/test_mail_*.py`, `tests/fixtures/mail/`, and the `mail_dns` block in the root `conftest.py`.
 4. Frontend: `src/api/mail.ts`; `src/components/mail/`; `src/pages/MailInboxPage.tsx` (+ test); `src/pages/WorkspaceEmailPage.tsx` (+ test); `src/pages/agents/AgentMailSection.tsx` (+ test); the Mail tab in `src/components/agents/AgentLeftNav.tsx`; the `email` and agent `mail` entries in `src/router.tsx`; the Email section in `src/pages/WorkspaceSettingsPage.tsx`; both descriptors in `src/guide/surfaces.ts` (the agent one with `group: 'Agent workspace'`) and the agent-rail count in `src/guide/grouping.test.ts`; then regenerate `src/api/generated.ts`.
-5. Docs: this file, the runbook, the mail lines in `CLAUDE.md` (Key URLs settings list, "Where to read"), the Mail section of `api-surface.md`, and the Email/Mail entries in `pages.md`.
+5. Docs: this file, the runbook, the mail lines in `CLAUDE.md` (Key URLs settings list, "Where to read"), the Mail section of `api-channels.md`, and the Email/Mail entries in `pages.md`.
 6. Deploy: remove the `Mail*` parameters and `MAIL_*` env lines from `deploy/aws/canopy-web.cfn.yaml` (`MailEnabled=false` and the stack/bucket teardown are runbook steps 2–3).
 
 The canopy CLI's SES backend (canopy repo) may stay: `GET /api/mail/resolve` 404s and it falls back to Gmail.
@@ -79,4 +79,4 @@ An agent's addresses and its Google login are separate facts. `Agent.email` is i
 
 ## REST
 
-`/api/mail/…`, listed in `docs/architecture/api-surface.md` (so MCP tools for free). The canopy CLI's `email` verbs ask `GET /api/mail/resolve` which backend holds a mailbox (`?address=`) or a turn's thread (`?thread=`) and fall back to Gmail on 404.
+`/api/mail/…`, listed in `docs/architecture/api-channels.md` (so MCP tools for free). The canopy CLI's `email` verbs ask `GET /api/mail/resolve` which backend holds a mailbox (`?address=`) or a turn's thread (`?thread=`) and fall back to Gmail on 404.
