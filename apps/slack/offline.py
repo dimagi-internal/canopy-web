@@ -36,7 +36,7 @@ from apps.harness import runner_requirements as rr
 from apps.harness import sensitivity
 
 from . import client, location, relay
-from .branch import thread_parent
+from .branch import not_here, thread_parent
 from .services import (
     BLOCKED,
     EMPTY,
@@ -89,10 +89,12 @@ def is_offline(text: str) -> tuple[bool, str]:
     return first.lower().rstrip(":,.!") == OFFLINE_WORD, rest.strip()
 
 
-def handle(installation, inbound: Inbound, ask: str) -> Outcome:
-    """`@canopy offline <ask>`, typed in a channel thread."""
-    parent = thread_parent(installation, inbound)
+def handle(installation, inbound: Inbound, ask: str, agent=None) -> Outcome:
+    """`@canopy offline <ask>` (or `@canopy <agent> offline <ask>`), typed in a channel thread."""
+    parent = thread_parent(installation, inbound, agent)
     if parent is None:
+        if agent is not None and inbound.thread_ts and not inbound.is_dm:
+            return Outcome(EMPTY, not_here(agent, "take offline"), agent=agent)
         return Outcome(EMPTY, NOT_IN_A_THREAD)
     principal, refusal = resolve_principal(installation, inbound.slack_user_id, parent.agent.workspace_id)
     if refusal is not None:

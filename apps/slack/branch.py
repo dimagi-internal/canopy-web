@@ -58,21 +58,34 @@ def is_branch(text: str) -> tuple[bool, str]:
     return first.lower().rstrip(":,.!") == BRANCH_WORD, rest.strip()
 
 
-def thread_parent(installation, inbound: Inbound) -> Session | None:
+def thread_parent(installation, inbound: Inbound, agent=None) -> Session | None:
     """The live agent conversation in the channel thread this message is in, or None
-    (a DM, a top-level message, a thread no agent is in)."""
+    (a DM, a top-level message, a thread no agent is in). `agent` — named in the
+    message (`@canopy ace branch`) — picks that agent's conversation; unnamed, the
+    thread's latest one."""
     if inbound.is_dm or not inbound.thread_ts:
         return None
     key = thread_key(inbound.team_id, inbound.channel_id, inbound.anchor)
-    return (tenant_sessions(installation).select_related("agent")
-            .filter(agent__isnull=False, **{f"metadata__{SLACK_THREAD_KEY}": key})
-            .exclude(status=Session.ARCHIVED).order_by("-created_at").first())
+    sessions = (tenant_sessions(installation).select_related("agent")
+                .filter(agent__isnull=False, **{f"metadata__{SLACK_THREAD_KEY}": key})
+                .exclude(status=Session.ARCHIVED))
+    if agent is not None:
+        sessions = sessions.filter(agent=agent)
+    return sessions.order_by("-created_at").first()
 
 
-def handle(installation, inbound: Inbound, ask: str) -> Outcome:
+def not_here(agent, word: str) -> str:
+    """Said when `@canopy <agent> <word>` names an agent with no conversation in the thread."""
+    return (f"`{agent.slug}` has no conversation in this thread to {word}. Use `@canopy {word}` "
+            "inside a thread an agent is already in.")
+
+
+def handle(installation, inbound: Inbound, ask: str, agent=None) -> Outcome:
     key = thread_key(inbound.team_id, inbound.channel_id, inbound.anchor)
-    parent = thread_parent(installation, inbound)
+    parent = thread_parent(installation, inbound, agent)
     if parent is None:
+        if agent is not None and inbound.thread_ts and not inbound.is_dm:
+            return Outcome(EMPTY, not_here(agent, BRANCH_WORD), agent=agent)
         return Outcome(EMPTY, NOT_IN_A_THREAD)
     # A branch carries a private conversation's key and history on: never from Slack.
     refused = private_refusal(parent)

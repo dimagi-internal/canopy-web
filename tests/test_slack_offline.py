@@ -17,6 +17,7 @@ from django.test import Client
 
 from apps.canopy_sessions import lineage
 from apps.canopy_sessions import services as session_services
+from apps.agents.models import Agent
 from apps.canopy_sessions.models import Message, Session
 from apps.harness.models import Turn
 from apps.slack import offline, services
@@ -139,6 +140,52 @@ def test_someone_outside_the_conversation_may_not_take_it_offline(slack, linked,
     mention("offline mine", user=BOB, ts="1700000080.000100", thread_ts=ROOT_TS)
     assert Session.objects.count() == 1
     assert "can take it offline" in slack.said("chat.postEphemeral")[-1]["text"]
+
+
+# ---- naming the agent: `@canopy ace offline` ----------------------------------------
+
+@pytest.fixture
+def ace(ws):
+    agent = Agent.objects.create(slug="ace", name="Ace", workspace=ws, slack_enabled=True)
+    editors_run(agent)
+    return agent
+
+
+def _two_agents_in_a_thread(slack, ace) -> tuple[Session, Session]:
+    mention("ace build the EOI rubric", ts=ROOT_TS)
+    mention("hal and the timeline?", ts="1700000060.000100", thread_ts=ROOT_TS)
+    return Session.objects.get(agent=ace), Session.objects.get(agent__slug="hal")
+
+
+def test_naming_the_agent_takes_its_conversation_offline_not_the_latest(slack, linked, hal, ace):
+    ace_talk, hal_talk = _two_agents_in_a_thread(slack, ace)
+    assert hal_talk.created_at >= ace_talk.created_at       # bare `offline` would pick hal's
+    slack.ts_seq = [DM_TS]
+
+    mention("ace offline the EOI rubric", ts="1700000080.000100", thread_ts=ROOT_TS)
+
+    child = Session.objects.get(parent_session__isnull=False)
+    assert child.parent_session == ace_talk and child.agent == ace
+    assert "the EOI rubric" in Turn.objects.get(chat_session=child).prompt
+
+
+def test_naming_the_agent_branches_its_conversation(slack, linked, hal, ace):
+    ace_talk, _hal_talk = _two_agents_in_a_thread(slack, ace)
+    mention("ace branch my way", ts="1700000080.000100", thread_ts=ROOT_TS)
+    assert Session.objects.get(parent_session__isnull=False).parent_session == ace_talk
+
+
+def test_naming_an_agent_not_in_the_thread_says_so(slack, linked, hal, ace):
+    _channel_conversation(slack)                             # hal's thread; ace is not in it
+    mention("ace offline mine", ts="1700000080.000100", thread_ts=ROOT_TS)
+    assert not Session.objects.filter(parent_session__isnull=False).exists()
+    assert "`ace` has no conversation in this thread" in slack.said("chat.postEphemeral")[-1]["text"]
+
+
+def test_outside_a_thread_naming_an_agent_just_asks_it(slack, linked, hal):
+    mention("hal branch out the tests into their own module", ts=ROOT_TS)
+    turn = Turn.objects.get()
+    assert turn.prompt == "branch out the tests into their own module"
 
 
 # ---- the agent takes it offline when asked in words --------------------------------

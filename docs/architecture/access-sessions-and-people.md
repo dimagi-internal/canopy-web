@@ -194,6 +194,11 @@ Slack behaviours live here (`apps/slack/`, pinned in `tests/test_slack.py`).
   /api/canopy-sessions/slack/offline` (`take_session_offline`) with its `turn_id`
   takes it offline for THAT turn's person, never one it names. When they say so,
   the child reports back (below).
+* **Naming the agent picks its conversation**: `@canopy <agent> branch|offline <ask>`
+  acts on that agent's conversation in the thread; unnamed, it is the thread's
+  latest one. An agent with no conversation in the thread is told so. Outside a
+  channel thread a named agent is just asked (`@canopy hal branch out the tests`
+  starts a conversation).
 
 **Lineage: dispatch, branch, fork — and reporting back** (`apps/canopy_sessions/lineage.py`).
 Every child session records its parent the same way (`parent_session`,
