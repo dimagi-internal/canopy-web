@@ -28,6 +28,8 @@ from .schemas import (
 
 router = Router(auth=session_auth, tags=["agents"])
 
+# The credential rotated is `pat_rotation.CANOPY_PAT_REF`; `canopy-pat` in the route
+# texts below names that same login.
 @router.get("/{slug}/pat-rotation", response=PatRotationOut,
             summary="This agent's canopy-pat rotation: setting, next due, history")
 @gate("agent-admin")

@@ -193,7 +193,7 @@ def get_runner_credential_status(request: HttpRequest, runner_id: uuid.UUID):
 
 @router.get("/runners/{runner_id}/credential", response=RunnerCredentialOut,
             summary="Fetch this runner's credential bundle (the runner, via its PAT)")
-@gate("runner")  # plaintext to the owner's token
+@gate("runner")  # the box's own list, never a value: those are opened from its vault (…/credential/resolve)
 def get_runner_credential(request: HttpRequest, runner_id: uuid.UUID) -> RunnerCredentialOut:
     """A cloud runner fetches its own secrets to stage into its environment. Returns
     the actual token values over HTTPS, gated to the runner's owner (owner ==
