@@ -20,8 +20,8 @@ conversation is with (`Agent.owner`, not its agent admins), once in it, may brin
 new in — a person or an agent — but owns nothing, reads nothing new, and changes or
 removes nobody; never a contact's or a sensitive one (`access.can_add_people`). Sensitive conversations stay sealed to
 their own people (`tenancy-sensitive-conversations.md` § Sensitive conversations). The rule is
-`apps/canopy_sessions/access.py`; enforcement detail is `tenancy.md` § The
-chat-session ACL.
+`apps/canopy_sessions/access.py`; the ACL's gotchas are in
+`tenancy-session-access-and-retention.md` § The chat-session ACL (CI-enforced).
 
 | Where it happened | Who sees it (read + write unless noted) | Who may pull from the machine |
 |---|---|---|
@@ -36,23 +36,20 @@ chat-session ACL.
 | **One session, asked from its page** | + the coach the person asked (`SessionReviewAsk`), as the person, with a token pinned to that session, only inside the chat the ask opened, never a sensitive one, never one whose words its person deleted | no — it reads what is already uploaded |
 
 **Every session says who can see it.** `GET /api/canopy-sessions/{id}` carries `audience`
-(`{label, extras, count}`, `apps/canopy_sessions/audience.py`) — e.g. "Only you", "You and 2
-people you added", "Everyone on this email thread (4)", "Members of #channel", "Hal's admins
-(the agent's own work)", plus extras like "The Supply project team" or "Trellis may review
-(coaching)". It is built from the same leg pieces as the ACL, and
+(`apps/canopy_sessions/audience.py`), built from the same legs as the ACL.
 `tests/test_session_audience.py` holds its readers equal to `access.can_read` for every
-session shape. The chat page and the embedded panel show it as one line at the top.
+session shape, so a leg changed in `access.py` fails it until `audience.py` follows.
 
 The email and Slack rows describe the entry points those channels open (participant rows
 written when a person is on the thread or in the channel); the session ACL itself
 only honours the rows.
 
-**Every change to who can see a session is an event.** A participant row added,
-re-roled or removed, a Slack thread bound or detached, a move between workspaces, a
-person's project sharing or a coach's grant, and a session becoming sensitive each
-write one `session.*` event to the workspace's log, ids only, naming who did it and
-under which turn — so a workspace admin can say what happened to a session without reading it
-(`chat-sessions.md` § A session's lifecycle is in the event log).
+**Every change to who can see a session is an event.** A participant change, a Slack
+thread bound or detached, a move between workspaces, a person's project sharing or a coach's
+grant, and a session becoming sensitive each write one `session.*` event to the workspace's
+log, ids only, naming who did it and under which turn, so a workspace admin can say what
+happened to a session without reading it (`apps/canopy_sessions/lifecycle.py`,
+`chat-sessions.md` § A session's lifecycle is in the event log).
 
 ## The weekly coaching pass
 
@@ -64,13 +61,13 @@ for a live grantor (`turn_gates.check_reads_for`). The stamp is the server's (`t
 
 * it reads that person's own sessions, its own conversation and its own turn (`access.reach_of`), not
   another grantor's, a channel it was given, or the agent's other work, and its roster is that person;
-* it writes mail only to that person's account address (`mail.api._check_scoped_recipients`);
-* it gets no GitHub identity (`delegations.github_token_for_turn`, a 409 at the runner's route);
+* it writes mail only to that person's account address (`apps/mail/api.py::_check_scoped_recipients`);
+* it gets no GitHub identity (`delegations.github_refusal`, a 409 at the runner's route in `harness/api_runners_credentials.py`);
 * anything it starts carries the same scope (`dispatch_stamp`), and naming another person is refused.
 
 The envelope's `reads_for` names the person to the turn, which is who its scripts treat as asking.
 
-A dispatch with no scope, from an older plugin, is still a turn nobody asked for: it reads nothing.
+A dispatch with no scope is still a turn nobody asked for: it reads nothing (`access._review_grant_q`).
 It keeps the full profile, because it must run the mail and ledger scripts. So the box's other
 credentials and its ledger file are still in its hands, and the ledger's limits are the script's.
 
@@ -90,12 +87,12 @@ refused. `turn_context.resolve_turn_context` decides this; nothing is started as
 may have written to steer whoever reads it, so the turn holds:
 
 * no agent login (`turn_agent_tokens.refusal`), no GitHub identity (`github_token_for_turn`), and on
-  a cloud runner no agent `.env`, no vault and no mail credentials (`_confined_env`);
+  a cloud runner no agent `.env`, no vault and no mail credentials (`runner/ec2/cloud_runner.py::_confined_env`);
 * a confined caller token that lists only `who_is_asking` and `read_asked_session`, refused on REST
   (`_authenticate_caller_token`), so no send, task, dispatch or write exists for it;
 * a profile with no Bash and no Write, which `profile_guard` and the native deny rules hold on the
   box. Those two are the box's: on a laptop every session is the same OS user
-  (access-confinement-and-act-as.md § Known limit).
+  (`access-confinement-and-act-as.md`, Known limit).
 
 **The read** (`GET /api/canopy-sessions/asked-review/messages`, tool `read_asked_session`) takes no
 session id. Only the turn's caller token gets through. It finds the live ask its conversation was
@@ -111,7 +108,7 @@ audit.
 `control.stop_session`: a queued turn ends at once, a running one gets `cancel_requested` in its
 ledger, which the lease sweep honours if the runner is gone, and bound work with no turn gets
 `RunnerBinding.pending_interrupt`. None of that depends on a socket frame. **It cannot take back what
-the turn has already read**, nor what it has already said in that chat, and the panel says so.
+the turn has already read**, nor what it has already said in that chat.
 Expiry refuses the next read and stops nothing, since a turn does not run for 7 days.
 
 **A successful injection** can still make the reply wrong or misleading, and can quote this session
@@ -150,147 +147,39 @@ or an agent's login, and never into a sensitive conversation.
 * **Slack: everyone in the channel, full access — as in Slack** (`apps/slack/audience.py`) —
   every linked canopy member (`SlackUserLink`, or auto-linked by verified email) in the
   conversation the session lives in (channel members; a DM's or group DM's people) is an
-  editor, synced from `conversations.members` (cached 5 min) on each inbound message and
-  by a 10-minute sweep of sessions active in the last 14 days; one the channel brought in
-  (`SlackAudienceMember`) leaves when they leave the channel, never on an answer Slack did
-  not give. Contacts and guests see it in Slack only.
+  editor, synced on each inbound message and by a periodic sweep (cadence and cache in
+  `apps/slack/audience.py`); one the channel brought in (`SlackAudienceMember`) leaves
+  when they leave the channel, never on an answer Slack did not give. Contacts and guests
+  see it in Slack only. The one agent login ever added is a channel's review agent
+  (`SlackChannelIngestAllow.review_sessions`), as a VIEWER. Never into a sensitive
+  conversation (`participants.may_join_implicitly`).
 
 ## Slack threads
 
-Who may write into a Slack thread's conversation is an access decision, so two
-Slack behaviours live here (`apps/slack/`, pinned in `tests/test_slack.py`).
+Who may write into a Slack thread's conversation is an access decision, so these Slack behaviours live here (`apps/slack/`, pinned in `tests/test_slack.py`).
 
-* **A confined reply in someone else's thread gets a thread of its own**
-  (`services._fork_confined`). When a message in an existing thread would run
-  confined — asked of a probe turn through `turn_context.for_turn`, so it cannot
-  disagree with the real stamp — and the thread's session is not the sender's,
-  canopy posts a new top-level message, opens a session keyed to THAT thread
-  (owned by the sender, `metadata.slack_forked_from` / `slack_forked_session`,
-  seeded with the thread they were reading), and links it from the original
-  thread. Sharing the owner's session would queue behind the owner's turn
-  (`routing.blocking_turn`) and answer in their thread from a `cx-` session
-  nobody can find. One fork per (thread, person); writing in the original thread
-  again continues it.
-* **`@canopy branch <ask>` splits a conversation into a new thread**
-  (`apps/slack/branch.py`). Inside a thread with an agent session, anyone who may
-  write into that conversation (its owner or an editor — a member in the
-  channel is one — or an agent admin) gets a new top-level message, a
-  child `Session` (`parent_session`, `parent_claude_session` from the parent
-  binding's `transcript_id`, `metadata.slack_branched_from`) keyed to the new
-  thread, and a first turn seeded with the parent conversation, condensed by
-  `canopy_sessions.exports.build_branch_seed` (tool output dropped, capped at
-  `BRANCH_SEED_CHARS` = 30k, keeping the first ask and the end). The original
-  thread gets a link and carries on; branch as often as you like. The seed is a
-  prompt, not a Claude fork — emdash creates tasks through its UI and cannot pass
-  `--fork-session`. A viewer cannot branch (they could not write into it), and a
-  confined reply never branches (it forks, above).
-* **`@canopy offline <ask>` takes the work out of the channel**
-  (`apps/slack/offline.py`). The same people who may branch, in a channel thread,
-  get a new thread in THEIR direct messages with canopy, holding a child session
-  (relation `branch`, `metadata.slack_offline_from`) seeded like a branch, whose
-  only person is them — the channel's other people do not come along. The same
-  session is open in canopy (the web chat, the IDE). The channel thread gets one
-  line and stays live. The agent does the same when asked in words: `POST
-  /api/canopy-sessions/slack/offline` (`take_session_offline`) with its `turn_id`
-  takes it offline for THAT turn's person, never one it names. When they say so,
-  the child reports back (below).
-* **Naming the agent picks its conversation**: `@canopy <agent> branch|offline <ask>`
-  acts on that agent's conversation in the thread; unnamed, it is the thread's
-  latest one. An agent with no conversation in the thread is told so. Outside a
-  channel thread a named agent is just asked (`@canopy hal branch out the tests`
-  starts a conversation).
+* **A confined reply in someone else's thread gets a thread of its own** (`services._fork_confined`). When a message in an existing thread would run confined (asked of a probe turn through `turn_context.for_turn`, so it cannot disagree with the real stamp) and the thread's session is not the sender's, canopy opens a session keyed to a NEW top-level thread, owned by the sender and seeded with the thread they were reading, and links it from the original. Sharing the owner's session would queue behind the owner's turn (`routing_orders.blocking_turn`) and answer in their thread from a session nobody can find. One fork per (thread, person).
+* **`@canopy branch <ask>` and `@canopy offline <ask>`** (`apps/slack/branch.py`, `apps/slack/offline.py`) split a conversation into a child session (`Session.relation` `branch`). Who may: anyone who may write into the conversation (`access.can_write`) or an admin of its agent; a viewer cannot, and a confined reply never branches (it forks, above). Offline puts the child in the requester's own DMs with canopy and **its only person is them**: the channel's other people do not come along. The agent may do the same in words (`POST /api/canopy-sessions/slack/offline`, `take_session_offline`), for THAT turn's person, never one it names. Neither takes a sensitive conversation (`slack.services.private_refusal`; the offline route answers 403).
+* **Naming the agent picks its conversation:** `@canopy <agent> branch|offline <ask>` acts on that agent's conversation in the thread; unnamed, it is the thread's latest one.
 
-**Lineage: dispatch, branch, fork — and reporting back** (`apps/canopy_sessions/lineage.py`).
-Every child session records its parent the same way (`parent_session`,
-`parent_turn`, `provenance`) and says how it stands to it in `Session.relation`:
-`dispatch` (its own prompt; the default for any session born with a parent),
-`branch` (the parent's conversation, condensed, `lineage.context_prompt`) or
-`fork` (an exact transcript copy, `placement.fork_session`). Only a dispatch
-starts with the parent's people (`services._inherit_participants`); a branch or
-fork says who is in it itself. Any child may report its outcome back: `POST
-/api/canopy-sessions/lineage/report-back` (`report_back_to_parent`; an agent
-names its child by `turn_id`) sends a turn to the parent, asked by the child's
-person, who must be able to write there; the parent's agent posts it wherever the
-parent lives and its conversation keeps it. Each report is listed on the child's
-`metadata.reports_back`.
+**Lineage: dispatch, branch, fork, and reporting back** (`apps/canopy_sessions/lineage.py`, module docstring). Every child session records its parent the same way and says how it stands to it in `Session.relation`. **Only a dispatch starts with the parent's people** (`lineage.inherits_people`, `services._inherit_participants`); a branch or fork says who is in it itself. Any child may report its outcome back (`POST /api/canopy-sessions/lineage/report-back`, `lineage_api.report_back_to_parent`; an agent names its child by `turn_id`): it is a turn in the parent asked by the child's person, who must be able to write there.
 
 ## What agents know about a person (the fleet brain)
 
-`apps/contacts/people.py` + `people_api.py` (`/api/people/…`). One
-`Person` per human — a member (`Person.user`, joined to their correspondent row by
-a VERIFIED address only) or a contact (`services.person_for(user=…|contact=…)`).
+`apps/contacts/people.py` + `people_api.py` (`/api/people/…`). One `Person` per human: a member (`Person.user`, joined to their correspondent row by a VERIFIED address only) or a contact (`services.person_for(user=…|contact=…)`).
 
-* **What may be kept: work context only.** `PersonFact.kind` is closed —
-  `role | project | instance | preference | correction | terminology` — by a DB
-  CHECK constraint as well as the API (anything else is a 400). No health,
-  personal life, performance judgements or sentiment. Facts are append-only:
-  superseded (same person, same workspace) or retracted, never edited.
-* **Per workspace (v1).** A fact is written in one workspace and served
-  only there — the envelope carries the facts of the turn's agent's workspace
-  and no other. Reading or writing needs membership of that workspace (an agent's
-  login is a member), AND the person must be someone that workspace deals with
-  (`people.known_in`: a member, a contact, an initiator of a turn there, or the
-  subject of a fact there) — otherwise 404, so an id or an address confirms
-  nothing across tenants.
-* **Raw conversations stay private.** The people API's one read of turn content
-  is `GET /api/people/{id}/conversations/?agent=<slug>`: the turns
-  that person started with THAT agent, for that agent's OWN login only. An agent admin
-  of the agent may call it but sees only turns the turn ACL already shows them.
-  No other agent, and no plain member, can read them. A fact's `source_turn` is
-  a link, readable only by whoever can already read the turn.
-* **The person decides what agents get — per session, per agent.** Two switches,
-  record (gates writes) and use (gates reads), each canopy-level `available` +
-  `default` with a per-session override; they are policy, never a grant — an agent is
-  served only under a grant the person gave THAT agent, and only for people the
-  `HCP_PEOPLE` rollout gate names. Switches, grants, the envelope's `hcp` block and
-  the rollout gate: [`hcp-service.md`](hcp-service.md) § "The person's record/use
-  switches", § "canopy's own agents: grants per agent, only by the person's act" and
-  § "Who has memory at all — the rollout gate".
-* **The subject sees everything.** `GET /api/people/me/` (the page
-  `/people/me/`): every live fact in every workspace, and the last
-  50 reads. Every read — the envelope's and the API's — is a `PersonAccess` row.
-* **Who may retract**: the person, whoever asserted it (the user, or the asserting
-  agent's login), or a workspace admin (`members.manage`).
-* **Who writes: the session that learned it.** The agent records a fact in the
-  turn where the person said it (HCP `addPreference`, `turn` = that turn), prompted
-  by the envelope's person block and canopy's turn checklist. There is no
-  follow-up digest turn and no stored per-person digest — don't add a second pass
-  over a transcript; the session doing the work has the context.
-* **Retention** (`apps/retention`) scrubs turn content, not facts; a
-  fact whose source turn was scrubbed keeps its statement.
+* **What may be kept: work context only.** `PersonFact.kind` is closed (`PersonFact.KINDS`), by a DB CHECK constraint (`person_fact_kind_is_work_context`) as well as `people.record_fact` (anything else is a 400). No health, personal life, performance judgements or sentiment. Facts are append-only: superseded (same person, same workspace) or retracted, never edited.
+* **Per workspace.** A fact is written in one workspace and served only there: the envelope carries the facts of the turn's agent's workspace and no other. Reading or writing needs membership of that workspace (an agent's login is a member), AND the person must be someone that workspace deals with (`people.known_in`), otherwise 404, so an id or an address confirms nothing across tenants.
+* **Raw conversations stay private.** The people API's one read of turn content is `GET /api/people/{id}/conversations/?agent=<slug>` (`people_api.py::list_person_conversations`): the turns that person started with THAT agent, for that agent's OWN login. An admin of the agent may call it but sees only turns `turn_access.can_read_turn_content` already shows them. No other agent, and no plain member, can read them. A fact's `source_turn` is a link, readable only by whoever can already read the turn.
+* **The person decides what agents get, per session and per agent.** The record and use switches are policy, never a grant: an agent is served only under a grant the person gave THAT agent, and only for people the `HCP_PEOPLE` rollout gate names. Switches, grants, the envelope's `hcp` block and the rollout gate: [`hcp-service.md`](hcp-service.md) § "The person's record/use switches", § "canopy's own agents: grants per agent, only by the person's act" and § "Who has memory at all — the rollout gate".
+* **The subject sees everything.** `GET /api/people/me/` (the page `/people/me/`) shows every live fact in every workspace and the recent reads. Every read, the envelope's and the API's, is a `PersonAccess` row (`people.log_access`).
+* **Who may retract** (`people.retract`): the person, whoever asserted it (the user, or the asserting agent's login), or a workspace admin (`members.manage`).
+* **Who writes: the session that learned it.** The agent records a fact in the turn where the person said it (HCP `addPreference`, `turn` = that turn), prompted by the envelope's person block and canopy's turn checklist. Do not add a second pass over a transcript: the session doing the work has the context.
+* **Retention** (`apps/retention`) scrubs turn content, not facts; a fact whose source turn was scrubbed keeps its statement.
 
 ### Project participants, coverage, and contact notes
 
-* **Project participants.** `AgentProject.participants` (through
-  `ProjectParticipant`: `role` free text ≤ 80, `source` fact | turn | manual | summary |
-  review | backing | reply | checkin,
-  `created_at`; one row per project and person, the FIRST source wins). Filled
-  automatically (`apps/agents/participants.py`): any fact filed against a project
-  makes its subject a participant (`people.record_fact`), and a task in a project
-  whose `raised_by` turn a HUMAN started makes that human one (task create, patch,
-  `set_task_project`). Served only inside the agent's workspace: on the project
-  detail (`participants`: id, display_name, email, role, source, since — same gate
-  as the project), at `GET /api/people/{id}/projects/?workspace=` (same gates as
-  `GET /api/people/{id}/`, logged), and in the envelope `person.projects` (id,
-  ext_id, name, agent — at most 5, most recently active first, archived left out;
-  additive, envelope stays v3). Backfill: migration `agents/0041` (facts) and
-  `manage.py backfill_project_participants` (facts and task raisers).
-* **Coverage — a dead brain must be loud.** `GET /api/people/coverage/?workspace=
-  &days=7` and `manage.py people_coverage --workspace <slug> [--days N] [--json]`
-  (exit 1 when unhealthy), both from `apps/contacts/coverage.py`. Per agent:
-  human-started turns, how many were handed a NON-EMPTY person block (≥ 1 live
-  fact), facts the agent recorded IN-SESSION (asserted by it, sourced from one of
-  those human turns), and how many people. "Non-empty"
-  is recorded when the envelope is BUILT, as `PersonAccess.had_context` on the
-  envelope read — not re-derived later from facts that have since changed.
-  **Rule:** `healthy` = with ≥ 10 human turns, ≥ 1 fact recorded in-session; the
-  workspace is healthy when every agent is. Counts only, no person named. Members of the
-  workspace; an agent admin who is not a member (an inherited owner) sees only the
-  agents they administer; anyone else 404.
-* **`Contact.notes` is mirrored into a fact.** Each non-empty `notes` is ONE live
-  `role` fact (declared, asserted by nobody, statement = the first 500 characters
-  flattened to one line), marked `PersonFact.source_contact`. `PATCH
-  /api/contacts/{id}/` with `notes` supersedes the previous mirror (clearing the
-  notes retracts it), so the brain is the one place agents read. The `notes`
-  field is kept. Backfill: migration `contacts/0011` (historical models,
-  idempotent) and `manage.py mirror_contact_notes`.
+* **Project participants** (`ProjectParticipant`, `apps/agents/participants.py`). One row per project and person, the FIRST source wins. Filled automatically: any fact filed against a project makes its subject a participant (`people.record_fact`), and a task in a project whose `raised_by` turn a HUMAN started makes that human one. Served only inside the agent's workspace, on the same gates as the person (`GET /api/people/{id}/projects/?workspace=` is logged) and in the envelope's `person.projects`.
+* **Coverage: a dead brain must be loud** (`apps/contacts/coverage.py` module docstring; `GET /api/people/coverage/?workspace=`, `manage.py people_coverage`, exit 1 when unhealthy). Per agent it counts human-started turns, how many were handed a NON-EMPTY person block (recorded when the envelope is BUILT, as `PersonAccess.had_context`, not re-derived from facts that have since changed), and facts the agent recorded in-session. `healthy` is the rule in that docstring. Counts only, no person named. Members of the workspace read it; an agent admin who is not a member (an inherited owner) sees only the agents they administer; anyone else 404.
+* **`Contact.notes` is mirrored into a fact** (`people.py::NOTES_KIND`): each non-empty `notes` is ONE live declared `role` fact, marked `PersonFact.source_contact`. `PATCH /api/contacts/{id}/` with `notes` supersedes the previous mirror (clearing the notes retracts it), so the brain is the one place agents read. The `notes` field is kept.
+

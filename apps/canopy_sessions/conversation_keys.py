@@ -1,5 +1,5 @@
 """A sensitive conversation's key: canopy-web can WRITE the conversation and never read
-it back (spec 2026-10-23-sensitive-conversations-sealed-to-their-people §2).
+it back.
 
 **The key pair.** When a session becomes sensitive it gets a P-256 ECDH key pair
 (`ensure_key`). The public half is `SessionKey.public_jwk`; the private half is wrapped
@@ -9,12 +9,12 @@ anything sealed to it afterwards.
 
 **Sealing** (`seal_words`): each stored message's words go into an ECIES envelope —
 `apps/common/ecdh_es.py`, the vault's own `wrapEcdhEs` — with the conversation's public
-key as recipient and `canopy-chat/v1/message|<conversation>|<turn_index>` as HKDF info
-and AES-GCM associated data:
+key as recipient and `message_info` (`canopy-chat/v1/message|<conversation>|<turn_index>|<role>`)
+as HKDF info and AES-GCM associated data:
 
-    cc1: + b64u(JSON {"c": conversation, "i": turn_index, "alg": "ecdh-es", "epk", "n", "ct"})
+    cc1: + b64u(JSON {"c": conversation, "i": turn_index, "r": role, "alg": "ecdh-es", "epk", "n", "ct"})
 
-where `ct` opens to JSON `{"plaintext", "content"}`. `c` and `i` say what the envelope
+where `ct` opens to JSON `{"plaintext", "content"}`. `c`, `i` and `r` say what the envelope
 was bound to when it was sealed (a fork carries the same envelope at a new index).
 
 **Wraps**: `{"alg": "ecdh-es", "epk", "n", "ct"}` of the 32-byte private scalar, info
@@ -22,7 +22,7 @@ was bound to when it was sealed (a fork carries the same envelope at a new index
 starter's is made here; anyone added later gets one from a browser already in the
 conversation, which unwraps its own and wraps it again (`add_wrap` checks the shape).
 
-Byte compatibility with the browser (`frontend/src/chat/sealedChat.ts`) is pinned by
+Byte compatibility with the browser (`frontend/src/vault/sealedChat.ts`) is pinned by
 `docs/vault/chat-v1/chat_v1_vectors.json`, which `vectors()` produces and both
 `tests/test_conversation_keys.py` and `sealedChat.test.ts` check.
 """
@@ -62,7 +62,7 @@ class CannotHold(ValueError):
 def message_info(conversation, index: int, role: str | None = None) -> str:
     """The HKDF info and AES-GCM associated data of one message's envelope. Since the
     role is bound too (`r` in the envelope), a stored row cannot be served as another
-    speaker's; an envelope without `r` predates that and binds conversation and index."""
+    speaker's; an envelope without `r` binds conversation and index only."""
     base = f"canopy-chat/v1/message|{conversation}|{index}"
     return f"{base}|{role}" if role else base
 
