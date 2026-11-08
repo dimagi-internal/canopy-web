@@ -462,11 +462,11 @@ THE predicate; every surface below asks it, one test each in
     private scalar — is checked against it; a mismatch is a warning naming those chats on the
     sealed-conversation banner (`useSealedConversation.warning`), the pin becomes the key
     they hold, and the disproven key stops any later chat here (the panel and the chat page
-    say why and keep what was typed). **The trade-off (owner decision, 2026-11-05):** a key
+    say why and keep what was typed). **The trade-off (the owner's decision):** a key
     substituted by a write to the database, with no login or passkey, is DETECTED at the
     next unlock in that browser, not prevented, so a chat that turns private before then
-    could be read by whoever holds that key. Refusing instead stopped every browser but
-    one, for everyone who replaced their key, with no way to tell the two apart. With storage
+    could be read by whoever holds that key. Refusing would stop every browser but
+    one for anyone who replaced their key, with no way to tell the two apart. With storage
     blocked nothing is remembered, so each start trusts anew and nothing is checked.
     canopy-web keeps it (`SessionKey.public_jwk`, a `SessionKeyWrap`) even
     while the chat is ordinary, so if it becomes sensitive its words are sealed to a key

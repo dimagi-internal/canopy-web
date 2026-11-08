@@ -118,7 +118,7 @@ touch neither record.
 
 ## Names that stay
 
-"Connected site" and "connected app" are retired (2026-11-06): the page, the routes
+"Connected site" and "connected app" are retired words: the page, the routes
 (`/api/workspaces/{slug}/host-sites`, `/api/agents/{slug}/host-sites`), the MCP tools
 (`list_host_sites`, `register_host_site`, `update_host_site`, `test_host_site`, `revoke_host_site`,
 `host_site_needs`; the agent's `list_agent_host_sites`, `put_agent_host_site`,

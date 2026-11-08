@@ -81,9 +81,8 @@ resolver has one input shape.
 exists now**, so it is always empty and being in a session raises nobody's access: a person in one answers
 by their own line on the access list, like anyone else.
 
-The one kind there was, `session_writer` (a participant with role owner or editor in a session the agent's
-owner or an admin started held the whole agent there), was removed on 2026-11-06 at the owner's decision.
-Someone it let in now needs a line: `read_only` for read mode, `read_write` or `editor` for the whole agent.
+Being a participant in a session never lets someone in: they need a line, `read_only` for read mode,
+`read_write` or `editor` for the whole agent.
 
 The seam stays. Adding a kind is one builder in `session_context.py` and one test; the resolver already
 applies a grant: the whole agent, with permissions that stop at `write`.
@@ -723,8 +722,8 @@ host-site lines name them), `permissions` (everything their lines grant) and `so
 (why): `owner`, `admin`, `system`, `session` or `list:<line>`. `basis` is the single word for the
 same thing: `owner`, `admin`, `system`, `session:<role>`, `grant:<line>` (row 2),
 `capability:<name>` (row 3, a wire value naming the read-mode or host-site profile) or `refused`
-(row 4). `session` and `session:<role>` come only from a session grant, and none exists now; a turn
-recorded before 2026-11-06 may still say them. The refusal says who can add the asker, and with which role ("Refusals").
+(row 4). `session` and `session:<role>` come only from a session grant, and none exists, so only an
+old recorded turn can carry them. The refusal says who can add the asker, and with which role ("Refusals").
 
 * **Over the table: the sensitive-data rule** (`turn_context._sensitive_rule`, spec
   `2026-10-22-sensitive-data-agents` §5). A host site that handles sensitive data (`data: sensitive`,
