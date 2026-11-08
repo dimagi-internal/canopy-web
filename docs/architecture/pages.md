@@ -47,7 +47,9 @@ Every browser-facing address canopy-web serves. The SPA route table is
   `flat` if it is not under `/w/:workspace`, and `home` or `group` if no menu
   links it). Every route gets an error boundary
   automatically (`guarded()` in `router.tsx`); a route needing a different one
-  sets its own `errorElement`.
+  sets its own `errorElement`. A label or control you name in a descriptor
+  goes in double quotes (“Keep a copy in canopy”), and `guide/labels.test.tsx`
+  fails unless the page's source contains it, so new descriptors are covered.
 - **One editor per object.** A core object people configure — an agent, a
   workspace's settings, a runner, a vault — has ONE page at ONE address, built
   from the shared kit in `frontend/src/components/objectPage/`: `ObjectPage`

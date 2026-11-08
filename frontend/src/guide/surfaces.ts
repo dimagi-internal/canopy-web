@@ -12,6 +12,10 @@
  * coverage.ts's NOT_PAGES instead, with its own reason.
  *
  * `path` MUST match the route path in router.tsx character for character.
+ *
+ * Quote a UI label or control name you mention in double quotes (“Keep a copy
+ * in canopy”): labels.test.tsx fails unless the described page's source
+ * contains it. Unquoted words are description and are not checked.
  */
 export interface SurfaceDescriptor {
   /** Exactly the route path from routeTable. */
@@ -151,8 +155,8 @@ export const SURFACES: SurfaceDescriptor[] = [
     home: '/home',
     flat: 'personal/global: the fleet turn log across your workspaces (tenant twin: /w/:workspace/activity)',
     title: 'Activity (all workspaces)',
-    audience: 'Anyone checking "did that actually run"',
-    what: 'A read-only log of the last 20 triggered harness turns across your workspaces — time, agent, trigger, runner, status — with filters and a per-turn event-ledger drill-down. The "what DID fire" counterpart to Schedules ("what WILL fire").',
+    audience: 'Anyone checking whether something actually ran',
+    what: 'A read-only log of the last 20 triggered harness turns across your workspaces — time, agent, trigger, runner, status — with filters and a per-turn event-ledger drill-down. The what-DID-fire counterpart to Schedules (what WILL fire).',
     needsFirst: 'A turn triggered by a schedule, an inbound event, or a manual run.',
     actions: ['Filter by agent, trigger or status', 'Expand a turn to see its raw event ledger'],
   },
@@ -742,7 +746,7 @@ export const SURFACES: SurfaceDescriptor[] = [
   {
     path: '/w/:workspace/activity',
     title: 'Activity',
-    audience: 'Anyone checking "did that actually run"',
+    audience: 'Anyone checking whether something actually ran',
     what: 'The same logs as /activity, scoped to this workspace: the last 20 triggered turns (time, agent, trigger, runner, status, with a per-turn event-ledger drill-down), plus Event log and MCP calls tabs.',
     needsFirst: 'A turn triggered by a schedule, an inbound event, or a manual run.',
     actions: ['Filter by agent, trigger or status', 'Expand a turn to see its raw event ledger'],

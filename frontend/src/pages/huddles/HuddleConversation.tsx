@@ -22,15 +22,18 @@ import {
 } from './plainWords'
 
 /**
- * The conversation, to READ: "By agent" is one member's thread with the leader
- * as a chat transcript — what the leader asked, what the member said back, and
- * what teammates said about the member's proposals; "By proposal" follows each
+ * The conversation, to READ, in three views behind the "How to read this
+ * huddle" switcher. "Story" (the default) is HuddleStory. "Full conversation"
+ * has two readings: "By agent" is one member's thread with the leader as a chat
+ * transcript — what the leader asked, what the member said back, and what
+ * teammates said about the member's proposals — and "By idea" follows each
  * proposal from pitch to critique to the partners' answers to what it became.
- * "Map" is the rounds × members grid with its co-sign arcs, unchanged.
+ * "Diagram" is HuddleSequence, the rounds × members grid with its co-sign arcs.
  *
- * The view and the selected member live in the URL (`?view=` / `?with=`), so a
- * link opens the same thread. Full text everywhere: a long bubble is clipped
- * to about thirteen lines with "show more", never cut with an ellipsis.
+ * The view and the selected member live in the URL (`?view=` is story, agent,
+ * proposal or map; `?with=` names the member in "By agent"), so a link opens
+ * the same thread. Full text everywhere: a long bubble is clipped to about
+ * thirteen lines with "show more", never cut with an ellipsis.
  */
 
 /** The three ways to read a huddle. "Full conversation" is two views (by
