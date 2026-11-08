@@ -81,10 +81,11 @@ def list_agent_host_sites(request: HttpRequest, slug: str):
     return _sites_out(agent_for_read(request, slug))
 
 
-@router.put("/{slug}/host-sites/{site}", response=AgentHostSitesOut,
+@router.put("/{slug}/host-sites/{site}", response={200: AgentHostSitesOut, **refusals(422)},
             summary="Add or change one host site: only the fields sent change. dry_run checks without saving")
 @gate("agent-admin", setting=True)
 def put_agent_host_site(request: HttpRequest, slug: str, site: str, payload: AgentHostSiteIn):
+    """A field of the wrong shape (an empty or over-long `bash` entry, a malformed path) is a 422."""
     agent = agent_for_admin(request, slug)
     locked, before, after = _run(profile_settings.set_site, agent, site, _changed(payload), by=request.user,
                                  dry_run=payload.dry_run)

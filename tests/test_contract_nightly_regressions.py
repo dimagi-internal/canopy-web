@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 import typing
 import uuid
 
@@ -17,7 +18,7 @@ from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, override_settings
 from ninja.errors import HttpError
-from pydantic import ValidationError
+from pydantic import Field, ValidationError
 
 from apps.agent_runs.api import _run_id_or_404
 from apps.agents.models import Agent
@@ -28,7 +29,7 @@ from apps.api.nul_guard import holds_nul
 from apps.api.openapi_doc import NO_NUL_PATTERN
 from apps.api.renderers import OrjsonRenderer
 from apps.common.pg_datetime import OffsetSafeDatetimeDumper
-from apps.common.schemas import TRIMMED_PATTERN
+from apps.common.schemas import TRIMMED_PATTERN, StrictModel
 from apps.embedding.jwks import JwksError, _refuse_private
 from apps.harness.models import Runner
 from apps.harness.schemas.runners import RunnerIn
@@ -314,3 +315,20 @@ def test_holds_nul_walks_values_and_keys_at_any_depth():
     assert holds_nul({"a": [1, {"b": ["\x00"]}]})
     assert holds_nul([{"\x00": None}])
     assert not holds_nul({"a": [1, 2.5, True, None, {"b": "ok"}]})
+
+
+@pytest.mark.parametrize("value", ["a\x1f", "\x1fa", "﻿a", "b\x9b'Y\x1f"])
+def test_the_trimmed_pattern_admits_what_pydantic_keeps(value):
+    # pydantic strips Unicode White_Space (Rust), not Python's wider str.strip set:
+    # U+001C-U+001F and U+FEFF survive, so a stored value may begin or end with one
+    # and the response schema (the same model) must still admit it.
+    class Kept(StrictModel):
+        s: str = Field(min_length=1)
+
+    stored = Kept(s=value).s
+    assert re.match(TRIMMED_PATTERN, stored), repr(stored)
+
+
+@pytest.mark.parametrize("value", [" a", "a\x85", "\xa0a", "a　"])
+def test_the_trimmed_pattern_refuses_what_pydantic_strips(value):
+    assert not re.match(TRIMMED_PATTERN, value)

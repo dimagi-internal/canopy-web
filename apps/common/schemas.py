@@ -15,9 +15,13 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
 #: A string already trimmed: non-blank, no whitespace at either end, no NUL.
-#: "Whitespace" is what Python's `str.strip` removes, which is wider than a JSON
-#: Schema (ECMA) `\s`: it also takes the separators U+001C-U+001F and U+0085.
-_EDGE = r"[^\s\x00\x1c-\x1f\x85]"
+#: "Whitespace" is exactly what pydantic's `str_strip_whitespace` removes: Unicode
+#: White_Space (it strips in Rust, not with Python's `str.strip`, so U+001C-U+001F
+#: are kept). That differs from a JSON Schema (ECMA) `\s` both ways — U+0085 is
+#: White_Space, U+FEFF is not — so the class is spelled out. The same model
+#: describes what is read back, so the pattern must match every stored value too.
+_WHITE_SPACE = r"\t\n\x0b\x0c\r \x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000"
+_EDGE = rf"[^{_WHITE_SPACE}\x00]"
 TRIMMED_PATTERN = rf"^{_EDGE}([^\x00]*{_EDGE})?$"
 
 
