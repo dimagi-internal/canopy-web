@@ -87,6 +87,14 @@ def test_the_regional_device_page_is_accepted(owner, runner, sent):
     assert _post(owner, runner, {"url": url}).status_code == 200
 
 
+def test_the_regional_signin_aws_device_page_is_accepted(owner, runner, sent):
+    # What AWS CLI 2.34 prints for an sso-session profile: the code rides in request_uri.
+    url = ("https://us-east-1.signin.aws/platform/authorize?request_uri=urn%3Aietf%3Aparams"
+           "%3Aoauth%3Arequest_uri%3AFAKE123&identitystore_id=d-0000000000")
+    assert _post(owner, runner, {"url": url}).status_code == 200
+    assert len(sent) == 1
+
+
 @pytest.mark.parametrize("url", [
     "https://evil.example.com/?user_code=ABCD-EFGH",
     "http://commcare-connect.awsapps.com/start/#/device",       # not https
@@ -94,6 +102,10 @@ def test_the_regional_device_page_is_accepted(owner, runner, sent):
     "https://user:pw@commcare-connect.awsapps.com/start/",      # userinfo
     "https://commcare-connect.awsapps.com:8443/start/",         # port
     "https://signin.aws.amazon.com/",                          # AWS, but not a device page
+    "https://us-east-1.signin.aws/console",                    # signin.aws, not the device path
+    "https://us-east-1.signin.aws.evil.com/platform/authorize",  # suffix trick
+    "https://signin.aws/platform/authorize",                   # no region
+    "https://evil-1.signin.aws.example/platform/authorize",    # not the .aws TLD
     "javascript:alert(1)",
 ])
 def test_nothing_but_an_aws_device_page_reaches_a_phone(owner, runner, sent, url):

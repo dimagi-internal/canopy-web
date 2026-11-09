@@ -51,6 +51,12 @@ _AWS_DEVICE_HOSTS = (
     re.compile(r"^[a-z0-9][a-z0-9-]*\.awsapps\.com$"),
     re.compile(r"^device\.sso\.[a-z0-9-]+\.amazonaws\.com$"),
 )
+# The regional sign-in page newer AWS CLIs print instead
+# (`<region>.signin.aws/platform/authorize?request_uri=…`, the code carried inside
+# `request_uri`). The host serves other AWS sign-in pages too, so only its
+# device-authorization path is accepted.
+_AWS_SIGNIN_HOST = re.compile(r"^[a-z]{2}(?:-[a-z]+)+-\d\.signin\.aws$")
+_AWS_SIGNIN_PATH = "/platform/authorize"
 
 PROVIDERS = ("aws",)
 # AWS device codes expire after about ten minutes.
@@ -73,7 +79,10 @@ def validate_url(provider: str, url: str) -> str:
     if parsed.username or parsed.password or parsed.port not in (None, 443):
         raise SignInRequestError("a sign-in URL must not carry credentials or a port")
     host = parsed.hostname.lower()
-    if not any(p.match(host) for p in _AWS_DEVICE_HOSTS):
+    if _AWS_SIGNIN_HOST.match(host):
+        if parsed.path != _AWS_SIGNIN_PATH:
+            raise SignInRequestError(f"{host}{parsed.path} is not an AWS device-authorization page")
+    elif not any(p.match(host) for p in _AWS_DEVICE_HOSTS):
         raise SignInRequestError(f"{host} is not an AWS sign-in host")
     return url
 
