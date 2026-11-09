@@ -1,14 +1,13 @@
 // Is the composer holding a HUMAN's text in front of the message we just typed?
 //
 // open-send reads the composer before it types and hands a non-empty one back as a
-// `collision`, so the human is asked before anything of theirs is touched. On
-// 2026-10-23 (turn 64cada76, failure investigation 2) that read came back EMPTY while
-// Jonathan's half-typed "okay great, let" sat in ACE's composer — the same read
-// finds it today, so the miss was the frame, not the rule. The chat message was
-// typed onto the end of his draft; the post-Enter recheck saw "not ours", stopped
-// quietly, and the sidecar reported `sent`. Nothing landed and no dialog came up.
+// `collision`, so the human is asked before anything of theirs is touched. A
+// read can come back EMPTY while a person's half-typed "okay great, let" sits in the
+// composer — a miss of the frame, not of the rule. The chat message is then
+// typed onto the end of the draft; the post-Enter recheck sees "not ours", stops
+// quietly, and the sidecar reports `sent`. Nothing lands and no dialog comes up.
 //
-// So the sidecar now looks AFTER typing and BEFORE Enter as well. insertText puts
+// So the sidecar looks AFTER typing and BEFORE Enter as well. insertText puts
 // our message at the cursor, which is the end of whatever is already there, so a
 // human's draft shows up as a PREFIX. These rules decide that from the rendered
 // line. Pure (no playwright) so they run under plain node in tests.

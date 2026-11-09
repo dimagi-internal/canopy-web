@@ -3,8 +3,8 @@
 **Read this first: the transcript is the WEAKER half, and the section below is
 kept only because it explains the design.** `pending_question` cannot see a live
 dialog. Claude Code writes the `AskUserQuestion` `tool_use` record when the ask
-is ANSWERED, not when it is made — measured 2026-08-01 across 60 transcripts on
-a live box: 39 such records, every one already answered, zero pending, while two
+is ANSWERED, not when it is made — across 60 transcripts on
+a live box, 39 such records were all already answered and none pending, while two
 sessions sat blocked on visible dialogs with nothing in their files. So it
 reports dialogs that are over and never one that is waiting, and it fails
 silently, because `None` also means "nothing is blocked".
@@ -15,14 +15,13 @@ arrives at the only moment that is useful. `pending_question` is consulted secon
 (it still wins on a session whose hooks were never installed) and would become
 correct on its own the day Claude Code flushes that record eagerly.
 
-**Why the transcript at all.** The menu used to exist in exactly one place —
-the rendered terminal — so seeing it meant driving emdash over CDP, and CDP's
-`openTask` CLICKS the task and steals focus. #495 wired that onto the
-`Notification` hook; #510 had to rip it back out (it yanked emdash to whatever
-agent had just asked, mid-typing) and left the read to be triggered "on demand".
-Nothing ever triggered it, so from 2026-07-28 a menu could reach a phone only by
-a chat send failing against it. Meanwhile `ace`'s `spark` session sat blocked on
-an `AskUserQuestion` for 52 minutes with the phone showing nothing.
+**Why the transcript at all.** The menu exists in exactly one place —
+the rendered terminal — so seeing it means driving emdash over CDP, and CDP's
+`openTask` CLICKS the task and steals focus. Driving it from the `Notification`
+hook yanks emdash to whatever agent just asked, mid-typing, so the read is not
+triggered from there and is left "on demand". Nothing triggers it, so a menu can
+reach a phone only by a chat send failing against it, and a session can sit blocked
+on an `AskUserQuestion` for 52 minutes with the phone showing nothing.
 
 But the fleet's dialog is not a permission prompt. Sessions run
 `⏵⏵ bypass permissions on`, so what actually blocks an agent is
@@ -226,8 +225,8 @@ def menu_from_hook(payload) -> dict | None:
 
     **Why this exists, when the transcript already parses the same tool input.**
     It does not get the chance. Claude Code writes the `tool_use` record for a
-    dialog only once the dialog is ANSWERED — measured 2026-08-01 across 60
-    transcripts on a live box: 39 `AskUserQuestion` records, every one of them
+    dialog only once the dialog is ANSWERED — across 60
+    transcripts on a live box, 39 `AskUserQuestion` records, every one of them
     already answered, and zero pending, while two sessions sat visibly blocked
     with nothing in their files at all. So `pending_question` can report a
     question that is over and never one that is waiting, which is the exact
@@ -324,9 +323,9 @@ def marker_from_hook(payload) -> dict | None:
     and so arrives whole. The other things that stop an agent — a permission
     prompt, a trust gate — are drawn by Claude Code with no tool call behind
     them, so the only place they exist is the rendered terminal, and reading that
-    means driving CDP, which CLICKS the task and steals focus (#510 was reverted
-    for exactly that). The result was that those dialogs reached a phone only if
-    somebody happened to be watching the session at the instant they appeared.
+    means driving CDP, which CLICKS the task and steals focus, which is why
+    that read is not wired to the hook. Without a marker, those dialogs reach a phone
+    only if somebody happens to be watching the session at the instant they appear.
 
     A `Notification` needs neither: it says a human is wanted, and its `message`
     says roughly why. That is strictly more than nothing, and it is honest about
@@ -376,9 +375,9 @@ def turn_ended_in_api_error(payload) -> bool:
     idle notification arrives, is read as a mid-turn block, and the chat surface
     locks itself behind a dialog that does not exist.
 
-    Measured 2026-08-17 on `ace`'s `spark`: a 500 at 23:08:15Z, an idle
-    `Notification` at 23:09:15Z, and a "Waiting on you" nobody could answer or
-    type past — because there was nothing on the screen to answer.
+    Example: a 500 at 23:08:15Z, an idle
+    `Notification` at 23:09:15Z, and a "Waiting on you" nobody can answer or
+    type past — because there is nothing on the screen to answer.
 
     So the transcript is consulted for the one fact no hook reports: did the last
     thing the conversation said turn out to be an API error? `isApiErrorMessage`
@@ -444,8 +443,8 @@ def turn_ended_without_stop(payload) -> bool:
     """Whether this session's turn is already over, though no `Stop` hook said so.
 
     An API error is one such ending (`turn_ended_in_api_error`); a hook answering
-    `continue: false` is another. credential_guard ended Ada's debug turn 05590519
-    that way on 2026-11-03, a call the model had already started landed after the
+    `continue: false` is another. When credential_guard ends a turn
+    that way, a call the model had already started lands after the
     stop, and the idle `Notification` a minute later read as a mid-turn block. So
     the last thing said proves nothing there. `turn_duration` does: Claude Code
     writes it as a turn ends, and a turn in progress has none after its own prompt.

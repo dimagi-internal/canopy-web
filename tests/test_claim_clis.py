@@ -1,5 +1,5 @@
 """The claim picks a turn's agent CLI with `clis.choose`, records it on the turn and
-its conversation, and sends it to the runner; coverage and `turn_reach` agree
+its conversation, and sends it to the runner; coverage and `turn_reach` agree.
 """
 from __future__ import annotations
 

@@ -176,9 +176,9 @@ export default defineConfig({
         // file that must be current, because it is the only thing that says which
         // asset hashes to load; serving it from cache means a fresh visit renders
         // the PREVIOUS deploy, and only a hard refresh (which bypasses the SW
-        // entirely) reaches the new one. #711 changed WHEN a new SW is adopted
-        // but not WHERE the HTML comes from, so the staleness survived it — and
-        // it is also the first step of the white-page race #711 describes: the
+        // entirely) reaches the new one. Changing WHEN a new SW is adopted
+        // does not change WHERE the HTML comes from, so the staleness survives it — and
+        // it is also the first step of the white-page race: the
         // page can only ask for asset hashes that have been deleted if it was
         // handed a stale shell to begin with.
         //
@@ -190,7 +190,7 @@ export default defineConfig({
         // network so a bad connection degrades to the cached shell rather than a
         // spinner.
         //
-        // Which navigations the SW handles at all is unchanged (issue #345's
+        // Which navigations the SW handles at all is unchanged (the
         // fail-safe rule): allowlisted SPA prefixes minus denylisted server
         // routes, so a NEW server route still can't be silently swallowed. The
         // rule and both lists live in — and are unit-tested in —

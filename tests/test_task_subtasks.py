@@ -1,4 +1,4 @@
-"""Tasks get subtasks and a Drive folder, instead of subprojects .
+"""Tasks get subtasks and a Drive folder, instead of subprojects.
 
 A big piece of work inside a product area is tasks plus subtasks: one board
 per product area. A subtask lives in its parent's project,

@@ -156,7 +156,7 @@ export function sourceText(source: string): string {
   if (source === "owner") return "being the agent's owner";
   if (source === "admin") return "being an admin of the agent";
   if (source === "system") return "being canopy itself";
-  // A recorded turn may carry this source.
+  // Only a turn recorded while the session-writer rule existed carries this source.
   if (source === "session") return "being in this session";
   if (source.startsWith("list:")) return "the agent's access list";
   return source;

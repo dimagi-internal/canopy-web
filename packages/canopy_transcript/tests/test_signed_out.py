@@ -8,7 +8,7 @@ from canopy_transcript.signed_out import (
 )
 
 #: What Claude Code writes when the box has no sign-in: a synthetic assistant
-#: record flagged as an API error (acedimagi-mbp-cdp, 2026-10-22).
+#: record flagged as an API error (seen on a laptop runner).
 SIGNED_OUT = {
     "type": "assistant", "uuid": "u-1", "isApiErrorMessage": True,
     "message": {"model": "<synthetic>", "role": "assistant",

@@ -12,7 +12,7 @@ dependencies = [
     "croniter>=6.0,<7.0",
     # zoneinfo reads the OS's zone database, and Windows has none: without tzdata
     # `ZoneInfo("America/New_York")` raises there and every schedule on a Windows
-    # runner failed (found by the Windows CI, canopy-web#2202).
+    # runner fails (the Windows CI catches it).
     "tzdata; sys_platform == 'win32'",
 ]
 

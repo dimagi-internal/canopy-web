@@ -1,4 +1,4 @@
-"""The owner line a caller's session leaves (canopy-web#1416)."""
+"""The owner line a caller's session leaves."""
 from __future__ import annotations
 
 import json

@@ -112,7 +112,7 @@ class Decision:
     status: str = "ai-default"  # ai-default | overridden
     notes: str = ""
     override_reasoning: str = ""
-    # v4 (ACE PRs #554/#555/#556). evidence_basis: stated | inferred |
+    # v4 fields. evidence_basis: stated | inferred |
     # conflicting. conflict_signals: each competing source reading, populated
     # (>=2) only when conflicting. Legacy rows default evidence_basis="stated".
     evidence_basis: str = "stated"

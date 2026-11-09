@@ -241,9 +241,8 @@ _QA_RESULT_PATH_RE = re.compile(r"^[^/]+/(?P<qa_skill>[^/]+?-qa)_result\.ya?ml$"
 
 # The un-suffixed verdict is a skill's FULL evaluation; `-shallow` / `-quick`
 # are one-dimension smoke passes beside it. Ranking the plain file 0 let the
-# smoke win: ACE's app-screenshot-capture showed its shallow ux_smoke ("25")
-# over its 4-dimension 9.2 on spark-facilitator (dimagi-internal/ace#2563,
-# dimagi-internal/ace-web#838 — same fix in ace-web's own copy).
+# smoke win: ACE's app-screenshot-capture would show its shallow ux_smoke ("25")
+# over its 4-dimension 9.2. ace-web ranks its own copy the same way.
 _VARIANT_RANK = {"-deep": 5, "-monitor": 4, "-shallow": 2, "-quick": 1}
 _FULL_RANK = 3
 

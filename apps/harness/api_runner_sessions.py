@@ -3,7 +3,7 @@
 The box proves itself with an APPROVED `RunnerDeviceKey` and gets a
 `RunnerAccessToken` back (an hour long, runner protocol only). No person's PAT
 is involved, so nothing on the box outlives the hour and nothing a person
-revokes in Settings → Tokens can strand a runner (2026-10-17, cloud-ec2-2).
+revokes in Settings → Tokens can strand a runner.
 
 Anonymous at the way in (`auth=None`, and `/api/runner-sessions/` is public in
 `apps/common/middleware.py`): the proof IS the authority, and it is checked

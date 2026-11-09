@@ -4,9 +4,8 @@ asks its owner for a device key.
 A box enrolls its device key with its owner's PAT (`/api/runner-device-keys/`), and
 from then on signs in with the key (`/api/runner-sessions/`). A box that never got as
 far as a key and whose PAT is then revoked is stranded: it cannot heartbeat, cannot
-enroll, and so never puts an approve link in front of anyone. On 2026-10-17 a token
-cleanup revoked every PAT the haldimagi and jj laptop runners had, before either had
-a key.
+enroll, and so never puts an approve link in front of anyone. A token cleanup that
+revokes every PAT of a runner enrolled before it had a key leaves exactly that box.
 
 This route lets such a box ask, and only ask: it creates a PENDING key — which nothing
 accepts until a person approves it in a browser behind a passkey — and tells the

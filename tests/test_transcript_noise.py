@@ -33,7 +33,7 @@ pytestmark = pytest.mark.django_db
         "   <task-notification> leading whitespace still counts",
         # A Skill invocation: the harness injects the skill body as a user record.
         "Base directory for this skill: /Users/jj/.claude/plugins/cache/superpowers/…",
-        # Reading an image, and a blocking Stop hook's feedback .
+        # Reading an image, and a blocking Stop hook's feedback.
         "[Image: original 1440x3214, displayed at 896x2000. Multiply coordinates by 1.61 to map to original image.]",
         "Stop hook feedback:\nYou ended by OFFERING to do something rather than doing it",
     ],

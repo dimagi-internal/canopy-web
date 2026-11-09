@@ -3,8 +3,8 @@
 `chunk_rows` exists because the session stream + backfill had NO bound and went
 in one request against Django's DATA_UPLOAD_MAX_MEMORY_SIZE (2.5 MB) — raised as
 RequestDataTooBig BEFORE the view runs, so an unhandled 500, no partial write,
-and a runner that retries forever. Measured over 193 local transcripts
-(2026-07-31) one full-history payload is already 2.57 MB.
+and a runner that retries forever. Over 193 local transcripts
+one full-history payload is already 2.57 MB.
 """
 import json
 

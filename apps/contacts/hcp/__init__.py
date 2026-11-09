@@ -11,7 +11,7 @@ Spec: "Human Context Protocol (HCP) v1 — Draft Reference Specification",
 * **An entry is the people brain's `PersonFact` chain** (`entry_id` shared by
   every version). The brain was built two days before this spec arrived and is
   reshaped to it rather than duplicated beside it.
-* **A grant is only ever the person's act** (Jonathan, 2026-10-09; 4.1.6). For
+* **A grant is only ever the person's act** (the owner's decision; 4.1.6). For
   canopy's own agents the client is the agent, granted in a session's UI "for
   this session" or "always" (`issue_agent_grant`); the person's settings are
   policy that bounds it. Nothing is presumed. OAuth apps consent on the HCP

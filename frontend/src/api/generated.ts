@@ -12929,12 +12929,11 @@ export interface paths {
         /**
          * Which credential slots are set (masked — booleans, never values)
          * @description The operator's read: which slots are filled, without putting a secret on a
-         *     screen. Separate from the GET below, which returns REAL VALUES for the runner
-         *     to consume.
+         *     screen. Separate from the GET below, which returns the credential list (no
+         *     values) for the runner to stage its credentials from.
          *
-         *     Exists because the only way to read this used to be a no-op POST — and that
-         *     WROTE, bumping `updated_at`/`updated_by` and destroying the one signal that
-         *     says when a credential was last actually rotated.
+         *     A read must not write: a no-op POST would bump `updated_at`/`updated_by` and
+         *     destroy the one signal that says when a credential was last actually rotated.
          */
         readonly get: operations["get_runner_credential_status"];
         readonly put?: never;
@@ -31994,14 +31993,14 @@ export interface components {
          * AgentCredentialAccessOut
          * @description Whether the CALLER may resolve this agent's secrets — never the values.
          *
-         *         The cheap check `canopy cred` makes before deciding how to resolve
-         *     . `may_resolve` mirrors GET /credentials/resolve exactly, minus
-         *         its bearer requirement (that is a property of the request, not of the
-         *         caller): `via` is `runner` when the caller pairs a live runner this agent
-         *         routes to, `admin` when they are the agent's owner or an admin, `license`
-         *         when they hold an active license to use it directly and name their own open
-         *         direct turn in `X-Canopy-Turn-Id`, and null when none holds — then `reason`
-         *         names the access to ask for.
+         *     The cheap check `canopy cred` makes before deciding how to resolve.
+         *     `may_resolve` mirrors GET /credentials/resolve exactly, minus
+         *     its bearer requirement (that is a property of the request, not of the
+         *     caller): `via` is `runner` when the caller pairs a live runner this agent
+         *     routes to, `admin` when they are the agent's owner or an admin, `license`
+         *     when they hold an active license to use it directly and name their own open
+         *     direct turn in `X-Canopy-Turn-Id`, and null when none holds — then `reason`
+         *     names the access to ask for.
          */
         readonly AgentCredentialAccessOut: {
             /** Agent */

@@ -31,15 +31,14 @@ name: Publish canopy-client
 # │ or an auth error — which is the correct failure, not a bug to work      │
 # │ around by adding a long-lived token.                                    │
 # │                                                                         │
-# │ STATUS 2026-09-18: 0.1.0 was published by hand (option b's first half), │
-# │ so the package exists. Whether its Trusted Publisher is configured is   │
-# │ answered by this workflow's first run for 0.2.0.                       │
+# │ The package exists (option b's first half is done), so a failure at     │
+# │ the publish step now means its Trusted Publisher is not configured.     │
 # └─────────────────────────────────────────────────────────────────────────┘
 #
 # **A release is a version bump reaching main**, exactly as for canopy-ui —
-# see the header of publish-canopy-ui.yml for why the old "merge, then push a
-# tag" step was removed (it was skipped, and canopy-ui 0.10.0 sat unpublished
-# while ace-web, which consumes BOTH packages, stayed behind). CI already
+# see the header of publish-canopy-ui.yml for why there is no "merge, then push a
+# tag" step (it gets skipped, and ace-web, which consumes BOTH packages, stays
+# behind). CI already
 # refuses a src change that does not move the version.
 #
 # Idempotent: the check job asks npm whether this version exists, and the

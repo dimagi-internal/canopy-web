@@ -367,9 +367,9 @@ Resources:
             # node 22, and the version is load-bearing rather than "latest LTS".
             # @agentclientprotocol/claude-agent-acp declares `engines: {node: >=22}`
             # from 0.63.0 onward, so on node 20 npm does not fail — it silently
-            # RESOLVES DOWN. Measured 2026-09-09: `npm i -g` on this box installed
-            # 0.49.0 while the registry's latest was 0.75.1, twenty-six versions
-            # back, and the ACP executor then ran without `session/prompt` steering
+            # RESOLVES DOWN. On node 20, `npm i -g` installs
+            # an old release (0.49.0 while the registry's latest was 0.75.1),
+            # and the ACP executor then runs without `session/prompt` steering
             # because 0.49.0 predates it. Nothing reported a problem: the install
             # succeeded, the executor worked, and only the absent capability in
             # `initialize` gave it away.

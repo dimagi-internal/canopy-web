@@ -60,7 +60,7 @@ def cells_hash(body: bytes) -> str:
     """A workbook's content: per sheet (in workbook order), every cell's reference, type,
     value (shared strings resolved), formula and number format, its hyperlinks, and every
     note. Google re-exports an unchanged Sheet with its shared-string and style tables
-    renumbered (measured 2026-10-23: 21 of 40 GiveWell sheets on one day), which changes
+    renumbered (21 of 40 GiveWell sheets in one measurement), which changes
     every byte and nothing a reader shows. "x2:" + sha256, or "" when unreadable."""
     import xml.etree.ElementTree as ET
     try:

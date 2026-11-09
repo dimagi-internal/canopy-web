@@ -31,9 +31,9 @@ Parameters:
     Type: String
     Default: arn:aws:iam::858923557655:role/labs-jj-ecs-task-execution-role
   # canopy-web's own role, canopy-web-task-role (canopy-web-task-role.cfn.yaml),
-  # not the shared labs-jj-ecs-task-role every labs app runs as. Cut over
-  # 2026-10-15 (docs/architecture/deploy.md § canopy-web's own task role); the
-  # deploy role can no longer pass the shared task role.
+  # not the shared labs-jj-ecs-task-role every labs app runs as
+  # (docs/architecture/deploy.md § canopy-web's own task role); the deploy role
+  # cannot pass the shared task role.
   TaskRoleArn:
     Type: String
     Default: arn:aws:iam::858923557655:role/canopy-web-task-role
@@ -243,8 +243,6 @@ Resources:
   # Born "PLACEHOLDER", which the app reads as UNCONFIGURED: both /oauth
   # documents answer 503 and arrivals carrying an id_jag are served without a
   # host grant, until somebody puts real keys here.
-  # (Replaces canopy-web/onbehalf-signing-key — the canopy-minted on-behalf-of
-  # assertion, deleted 2026-09-26 before it was ever enabled.)
   OauthClientKey:
     Type: AWS::SecretsManager::Secret
     Properties:
@@ -289,11 +287,11 @@ Resources:
   #     alongside ace's /ace/* at prio 20 and the connect-labs default) ---
   # CHANGING ANYTHING BELOW NEEDS IAM THE DEPLOY ROLE MIGHT NOT HAVE. This
   # target group was only ever CREATED by the pipeline, so the first edit to it
-  # (#721, the health-check + drain settings) failed the deploy with a 403:
+  # (the health-check + drain settings) fails the deploy with a 403:
   #   github-actions-labs-deploy is not authorized to perform:
   #   elasticloadbalancing:ModifyTargetGroup on labs-jj-canopy-web-tg
-  # The stack rolled back and prod was fine, but every deploy behind it was
-  # blocked until the grants were added by hand (2026-09-09). The role's inline
+  # The stack rolls back and prod is fine, but every deploy behind it is
+  # blocked until the grants are added by hand. The role's inline
   # GitHubActionsLabsDeployPolicy now allows, for an UPDATE of this resource:
   #
   #   ModifyTargetGroup + ModifyTargetGroupAttributes + DescribeTargetGroupAttributes
@@ -322,13 +320,13 @@ Resources:
       Port: !Ref ContainerPort
       Protocol: HTTP
       TargetType: ip
-      # At the root since 2026-10-06. It was /canopy/health/, the OLD address's
-      # prefix — which would have failed every task the day the old address stops
-      # answering. canopy has served at the root since the move.
+      # At the root, not /canopy/health/: that is the OLD address's prefix, which
+      # would fail every task the day the old address stops answering. canopy
+      # serves at the root.
       HealthCheckPath: /health/
-      # Measured 2026-09-08: a deploy took 12.9 minutes, of which 10.3 was this
-      # ECS rolling replace — the image build was 26 SECONDS. Two ALB defaults
-      # were the whole cost, and neither buys anything at this scale.
+      # Measured: a deploy took 12.9 minutes, of which 10.3 was this ECS rolling
+      # replace — the image build was 26 SECONDS. Two ALB defaults were the whole
+      # cost, and neither buys anything at this scale.
       #
       # 30s x 2 checks meant a healthy new task still waited ~60s to be admitted.
       # /health/ is cheap, and a task that is up answers it immediately.
@@ -358,14 +356,14 @@ Resources:
         - Type: forward
           TargetGroupArn: !Ref TargetGroup
 
-  # canopy.dimagi.com is canopy's own host, served at its root (2026-10-05): the
+  # canopy.dimagi.com is canopy's own host, served at its root: the
   # whole host comes here. Priority 10 puts it ahead of every path rule on the
   # shared listener — /ace/* (20) and /umami (40) carry no host condition, so a
   # later priority would hand canopy.dimagi.com/ace/… to ace-web. The labs rules
   # below (28, 30) stay: the old address keeps serving machine traffic and
   # redirects browsers here (apps/common/legacy_prefix.py). The certificate for
   # the name is on the listener and the DNS record in Cloudflare (not in this
-  # repo; set up 2026-10-05).
+  # repo).
   #
   # APPLIED WITH ADMIN CREDENTIALS, like WellKnownListenerRule below — the deploy
   # role cannot write listener rules.
@@ -373,10 +371,10 @@ Resources:
   # Retain, because the rule was IMPORTED into the stack and an import requires a
   # DeletionPolicy — and this template must match it, or every deploy's change
   # set "modifies" the rule and the preflight refuses it. The import was needed
-  # because a deploy of a commit from BEFORE this rule existed ran after the
-  # admin apply (2026-10-05 22:01): CloudFormation dropped the rule from the
-  # stack, its delete failed (the deploy role cannot delete rules), and the live
-  # rule was orphaned — so the next deploy asked to CREATE it, and was refused.
+  # because a deploy of a commit from BEFORE this rule existed, run after the
+  # admin apply, makes CloudFormation drop the rule from the
+  # stack; its delete fails (the deploy role cannot delete rules), and the live
+  # rule is orphaned — so the next deploy asks to CREATE it, and is refused.
   HostListenerRule:
     Type: AWS::ElasticLoadBalancingV2::ListenerRule
     DeletionPolicy: Retain
@@ -399,7 +397,7 @@ Resources:
   # …/canopy/api/mcp/ at /.well-known/oauth-protected-resource/canopy/api/mcp/.
   # Without this rule the listener's default sends them to connect-labs, which
   # 404s, and no standards client (Claude Code, another MCP client, Test
-  # connection) can discover canopy as a host (2026-09-28). Exact segments, not
+  # connection) can discover canopy as a host. Exact segments, not
   # `canopy*`, so a future /canopy-something app is never swallowed.
   #
   # APPLIED WITH ADMIN CREDENTIALS, not by the pipeline: the per-app deploy roles
@@ -430,8 +428,8 @@ Resources:
     # (no ecs:DeregisterTaskDefinition — see deploy/aws/preflight.py), so the
     # delete failed, CloudFormation retried it twice three minutes apart, and
     # gave up: ~6 of every deploy's ~11 minutes went to a cleanup that never
-    # happened (stack events, 2026-10-02: Service UPDATE_COMPLETE 21:11:53, stack
-    # UPDATE_COMPLETE 21:18:01 after three DELETE_FAILEDs). Retain says what was
+    # happened (stack events: Service UPDATE_COMPLETE, then stack UPDATE_COMPLETE
+    # six minutes later after three DELETE_FAILEDs). Retain says what was
     # already true — old revisions stay, as ECS keeps them anyway — and skips
     # the wait. Deleting them, if ever wanted, is a separate grant + sweep.
     UpdateReplacePolicy: Retain
@@ -468,7 +466,7 @@ Resources:
             # / dimagi-ai.com logins.
             - { Name: AUTH_ALLOWED_EMAIL_DOMAIN, Value: "dimagi.com,dimagi-ai.com,dimagi-associate.com" }
             # Memory (HCP) is on for these canopy addresses only; empty = nobody
-            # (Jonathan, 2026-10-11: "only for me right now"). Contacts on trusted
+            # (only the owner's address for now). Contacts on trusted
             # sites are not offered it until HCP_CONTACT_OPT_IN is true.
             - { Name: HCP_PEOPLE, Value: "jjackson@dimagi.com" }
             - { Name: HCP_CONTACT_OPT_IN, Value: "false" }
@@ -478,10 +476,10 @@ Resources:
             # hcp-service.md § Retrieval; nothing is sent until the project's
             # cache is verified disabled. `manage.py hcp_embed` then fills every
             # vector at once (searches also fill them as they go).
-            # Set up 2026-10-18 in GCP project canopy-494811 (number 270508200508):
+            # Set up in GCP project canopy-494811 (number 270508200508):
             # caching disabled, a service account holding only predict + read the
             # cache setting, and a federation pool only canopy-web-task-role can
-            # use. Not secrets. Turned on 2026-10-18 (only Jonathan's memory so far).
+            # use. Not secrets. On for HCP_PEOPLE only.
             - { Name: HCP_EMBEDDINGS_MODEL, Value: vertex/gemini-embedding-001 }
             # How search scores an entry. Try a value with `manage.py hcp_explain
             # --floor/--weight/--boost` first; guide: docs/architecture/
@@ -497,7 +495,7 @@ Resources:
             # card matches (apps/agents/kb_rerank.py), same service account, US multi-region
             # endpoint (KB_RERANK_LOCATION default `us`, per the BAA's "regional
             # APIs for PHI"). GiveWell KB, 312 questions: top-10 235 -> 259, MRR
-            # 0.502 -> 0.588, ~0.5 s, $0.001/search. Turned on 2026-10-19 (Jonathan).
+            # 0.502 -> 0.588, ~0.5 s, $0.001/search.
             - { Name: KB_RERANK_MODEL, Value: semantic-ranker-default@latest }
             - { Name: AWS_REGION, Value: !Ref "AWS::Region" }
             - { Name: PORT, Value: !Ref ContainerPort }

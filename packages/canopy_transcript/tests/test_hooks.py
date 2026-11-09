@@ -1,7 +1,7 @@
 """Hook payloads -> live rows.
 
 Shapes verified against real PostToolUse payloads captured from a live
-emdash-driven session (2026-07-27).
+emdash-driven session.
 """
 import canopy_transcript as ct
 

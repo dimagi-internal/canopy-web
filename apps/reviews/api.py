@@ -173,7 +173,7 @@ def _pinned_video(w: Walkthrough, member_slugs: set[str]) -> dict:
 
 
 def _pinned_videos(request: HttpRequest, review: ReviewRequest) -> dict:
-    """The hero + per-cut videos pinned to THIS version (canopy-web#1288).
+    """The hero + per-cut videos pinned to THIS version.
 
     Read from the same resolver as the narrative page, so the review link and
     the narrative cannot disagree about which video is which cut. Only videos in

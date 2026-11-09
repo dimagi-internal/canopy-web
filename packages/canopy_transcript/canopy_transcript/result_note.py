@@ -1,11 +1,10 @@
 """The note a runner stores when it finishes a turn, and where to read the rest.
 
-A turn's `result_note` is its final message, kept to `MAX_CHARS`. It used to be a
-bare `text[:2000]`, so a long reply simply stopped mid-sentence with nothing to
-say so. A caller reading it through `canopy agent turns` could not tell a cut
-reply from a short one, and dispatched a follow-up to get the rest, which started
-a new session with no memory of the first (canopy-web#1955: 12 of 17 notes were
-exactly 2,000 characters). A cut note now ends with a marker that says it was cut
+A turn's `result_note` is its final message, kept to `MAX_CHARS`. A bare
+`text[:2000]` would stop a long reply mid-sentence with nothing to say so: a caller
+reading it through `canopy agent turns` could not tell a cut reply from a short one,
+and would dispatch a follow-up to get the rest, which starts a new session with no
+memory of the first. So a cut note ends with a marker that says it was cut
 and links the page that holds the whole reply, within the same cap.
 
 Shared by both runners (cloud_runner, the laptop runner's desktop runtime).
@@ -95,11 +94,10 @@ def _runner_reason(text: str, room: int) -> str:
     """The runner's closing `[runner] …` paragraph, as the tail a cut keeps ("" when
     the reply does not end with one). Cut to `room` if it is longer.
 
-    Failure investigation 21 (turn c4dd7019, ACE in a chat on cloud-ec2-live,
-    2026-10-30): every Claude login on the box hit its cap mid-turn, and the runner
-    appended its "[runner] out of Claude usage" paragraph to ACE's long partial
-    reply. The cut kept the head of the reply and dropped that paragraph, so the
-    failure read as ACE narrating its work, and the debugger had no cause to go on."""
+    Example: every Claude login on the box hits its cap mid-turn, and the runner
+    appends its "[runner] out of Claude usage" paragraph to the agent's long partial
+    reply. A cut that kept the head of the reply and dropped that paragraph would make
+    the failure read as the agent narrating its work, with no cause to go on."""
     at = text.rfind("\n\n" + RUNNER_PREFIX)
     if at < 0 or room <= 0:
         return ""

@@ -170,7 +170,7 @@ def test_nul_bytes_are_stripped_from_tool_payloads():
     """Postgres rejects NUL in text/jsonb, and the server writes a backfill batch
     in ONE transaction — so a single binary tool result (a Read of a compressed
     file) 500s the whole batch and the session's history can never rebuild.
-    Labs 2026-07-26: exactly one row in 683 did this."""
+    On labs, exactly one row in 683 did this."""
     recs = [
         {"type": "user", "message": {"content": [
             {"type": "tool_result", "tool_use_id": "t1",
@@ -269,7 +269,7 @@ def test_index_zero_is_a_real_ordinal_not_a_falsy_marker():
 def test_an_ordinary_nested_mcp_input_is_kept_whole():
     """An MCP Apps View re-reads its tool input from this copy. Labs' coaching call nests
     picture.params.topics seven levels down; at a depth cap of 6 the topics became
-    ["…","…","…"] and the View failed (2026-10-09)."""
+    ["…","…","…"] and the View failed."""
     from canopy_transcript.rows import _tool_input
 
     raw = {
@@ -296,7 +296,7 @@ def test_pathological_nesting_is_still_cut():
 
 
 # --- provenance flags on user rows (record_flags) ---------------------------
-# Shapes copied from live transcripts (2026-10-11), trimmed to the fields that
+# Shapes copied from live transcripts, trimmed to the fields that
 # matter: a typed prompt, a skill body, a ScheduleWakeup fire, a compaction
 # summary, and a subagent's own (sidechain) record.
 
@@ -433,7 +433,7 @@ def test_links_are_bounded_and_a_plain_result_has_none():
 
 
 # --- a message taken mid-turn (queued_command) ------------------------------
-# Shapes from a live transcript (2026-10-26), trimmed: a person's follow-up
+# Shapes from a live transcript, trimmed: a person's follow-up
 # Claude Code handed to the model mid-turn, and a background-task notice that
 # came through the same queue.
 

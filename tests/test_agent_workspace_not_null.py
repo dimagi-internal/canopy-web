@@ -3,8 +3,8 @@
 Six tenancy predicates independently grew a `workspace_id IS NULL` leg that
 reads as ALLOW, because a nullable tenant FK invites
 `if agent.workspace_id and <membership check>` — which short-circuits to
-"ungated" on precisely the row that declares no tenant. Patching one site at a time would leave the recurrence
-as the defect. `agents/0013` removes the state instead of the symptom.
+"ungated" on precisely the row that declares no tenant. Patching one site at a time leaves the recurrence in place, and the
+recurrence is the defect. `agents/0013` removes the state instead of the symptom.
 
 This file is where the regression lives. A per-surface
 "an unhomed agent is invisible here" test (in tests/test_agent_out_workspace.py,

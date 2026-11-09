@@ -1,4 +1,4 @@
-"""/api/vault/keyset — the caller's own zero-knowledge vault key (canopy-web#1550).
+"""/api/vault/keyset — the caller's own zero-knowledge vault key.
 
 A P-256 key pair generated in the browser; canopy-web keeps the PUBLIC half and
 one seal of the private half per PRF-capable passkey (formats:

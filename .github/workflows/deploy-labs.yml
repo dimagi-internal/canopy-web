@@ -21,8 +21,8 @@ name: Deploy to Labs (AWS)
 # Required GitHub secrets (see deploy/aws + Phase 2 of the labs migration):
 #   AWS_ROLE_ARN         — the github-actions-canopy-web-deploy OIDC role
 #                          (deploy/aws/deploy_roles.py), which trusts main only.
-#                          Since this repo was transferred into the org (2026-07-28)
-#                          GitHub mints its OIDC token with an IMMUTABLE subject —
+#                          This repo lives in the org, so GitHub mints its OIDC
+#                          token with an IMMUTABLE subject —
 #                          repo:dimagi-internal@272902307/canopy-web@1193139337:ref:refs/heads/main —
 #                          NOT the name-based repo:dimagi-internal/canopy-web:*.
 #                          The trust policy must allow the immutable form; the
@@ -95,11 +95,10 @@ jobs:
       # BACKWARDS past anything merged while it waited. So deploy what main is
       # NOW: every later job builds and rolls this step's sha, not github.sha.
       #
-      # This used to fail the run instead ("re-dispatch"). With ~20 deploys a
-      # day behind one concurrency group, the run waiting behind a rollout
-      # nearly always found main had moved: 15 of the 28 failed deploys of
-      # 2026-10-12..27 were this refusal, each one a re-dispatch and another
-      # ~8 min before anyone's merge went live. Every dispatch means "make main
+      # It does not fail the run ("re-dispatch"): with ~20 deploys a day behind one
+      # concurrency group, the run waiting behind a rollout nearly always finds main
+      # has moved, and a refusal would cost a re-dispatch and another ~8 min before
+      # anyone's merge went live. Every dispatch means "make main
       # live", so the waiting run doing exactly that is the intent, not a risk.
       - name: Resolve main's tip (deploy that, not the dispatch-time sha)
         id: tip
@@ -173,8 +172,8 @@ jobs:
           # would compare against a sha that has nothing to do with the runner.
           fetch-depth: 0
 
-      # The one quantity both sides of the runner-staleness alert compute (spec
-      # 2026-07-28). Path-scoped on purpose — HEAD moves on every canopy-web
+      # The one quantity both sides of the runner-staleness alert compute (the
+      # runner-code spec). Path-scoped on purpose — HEAD moves on every canopy-web
       # commit, and comparing that would demand a runner reinstall for a CSS change.
       - name: Resolve runner code sha
         id: runner_sha
@@ -196,7 +195,7 @@ jobs:
 
       # The same quantity for the OTHER runner. The cloud box is a different
       # program with its own path, so one sha cannot describe both — served
-      # per-runner-kind by RunnerOut (spec 2026-07-30).
+      # per-runner-kind by RunnerOut.
       #
       # bootstrap_agents.sh is in scope alongside the runner itself: it re-runs on
       # every service start, but nothing ever TRIGGERS a start, so a bootstrap fix
@@ -218,8 +217,7 @@ jobs:
 
       # Vendor the canopy plugin into the build context so apps.system can
       # render the /system catalog. canopy is PUBLIC (dimagi-internal/canopy), so
-      # this needs no credentials — it used to clone via a CANOPY_PLUGIN_TOKEN PAT
-      # back when the repo was private. Clone failure → /system degrades to an
+      # this needs no credentials (no PAT). Clone failure → /system degrades to an
       # empty catalog (the build still succeeds). Mirrors the retired deploy.sh
       # step; the ./canopy dir is picked up by the Dockerfile's `COPY . .`.
       - name: Vendor canopy plugin
@@ -320,7 +318,7 @@ jobs:
           else
             git diff --name-only "$LIVE" "$SHA" -- '*/migrations/*' pyproject.toml uv.lock
             echo "migrate=true" >> "$GITHUB_OUTPUT"
-            # A drop gets the split below (#2447). Everything else, including the
+            # A drop gets the split below. Everything else, including the
             # unknown-live branch above, runs exactly the plain migrate it always did.
             if git diff "$LIVE" "$SHA" -- '*/migrations/*' | grep -qE '^\+.*migrations\.(RemoveField|DeleteModel)\('; then
               echo "::notice::This deploy drops a column or table; holding pure drops until after the rollout."
@@ -411,15 +409,14 @@ jobs:
           # anything is applied.
           #
           # `aws cloudformation deploy` builds a change set and executes it in
-          # one go, which is why the 2026-09-09 failure surfaced as a 403 five
+          # one go, which is why a missing grant surfaces as a 403 five
           # minutes into a rollout. --no-execute-changeset stops after building
           # it, leaving something we can inspect.
           #
           # We keep `deploy` rather than calling create-change-set directly, and
           # that is deliberate: `deploy` carries a stack's existing parameters
-          # forward for us. connect-labs/infra/README.md records a real incident
-          # on 2026-08-18 where hand-rolling the parameter list silently removed
-          # a stack's alarm-email subscription. `deploy` has no
+          # forward for us, whereas hand-rolling the parameter list can silently
+          # remove a stack's alarm-email subscription (connect-labs/infra/README.md). `deploy` has no
           # --change-set-name flag (checked against aws-cli 2.34.10), so the
           # change set is located by comparing the newest one before and after.
           # Safe because the workflow's concurrency group serialises deploys.
@@ -541,7 +538,7 @@ jobs:
 
           if ! aws cloudformation wait stack-update-complete \
                  --stack-name "${{ env.CFN_STACK }}"; then
-              # Kept verbatim from #723: aws prints only "run describe-stack-events"
+              # Kept verbatim: aws prints only "run describe-stack-events"
               # and exits, so the reason lives behind an API call nobody reading
               # the log can make.
               echo "::group::CloudFormation stack events (most recent first)"
@@ -563,7 +560,7 @@ jobs:
 
       - name: Apply the drops held back from before the rollout
         # migrate_for_rollout held these back so the old task kept its columns while
-        # it drained (#2447). Runs only after a rollout that succeeded: a failed one
+        # it drained. Runs only after a rollout that succeeded: a failed one
         # rolls back to code that still reads them. If this step fails, the new code
         # is live and only needs the columns gone eventually, so nothing is broken;
         # the job goes red so someone sees it, and `-f force=true` runs it again.
@@ -592,9 +589,8 @@ jobs:
           echo "Held-back drops applied."
 
       - name: Deploy timeline (where the rollout's time went)
-        # The CloudFormation step has been a flat ~10.4 min on every deploy since
-        # at least 2026-08-13 — and #721's drain/health-check tuning (2026-09-09)
-        # did not move it by a second, so the cost is somewhere nobody has looked.
+        # The CloudFormation step takes a flat ~10.4 min on every deploy, and the
+        # drain/health-check tuning does not move it, so the cost is somewhere nobody has looked.
         # This prints the AWS-side timeline of THIS deploy, relative to the step's
         # start, so the answer is in the Actions log instead of needing someone
         # with AWS access to go and read it. Diagnostic only: never fails the job.

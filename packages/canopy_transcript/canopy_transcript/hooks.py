@@ -43,9 +43,8 @@ FORWARDED_EVENTS = ("PreToolUse", "PostToolUse", "PostToolUseFailure")
 # Turn-boundary events. These carry no chat content — they answer "is the agent
 # working RIGHT NOW", which the tool events cannot: between submitting a prompt
 # and the first tool call, Claude is thinking and emits nothing at all, so the
-# session read as idle for the most interesting part of a turn (reported
-# 2026-07-27: "the fact that it's running is still not being shown before any
-# text is output").
+# session would read as idle for the most interesting part of a turn, with
+# the fact that it is running not shown before any text is output.
 #
 # `last_interacted_at` could not answer this either — it comes from emdash's own
 # DB via the session report, so it lags a report cycle and has a 120s window.

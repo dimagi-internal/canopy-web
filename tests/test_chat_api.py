@@ -486,7 +486,7 @@ def test_send_client_id_over_100_chars_is_truncated(client):
 # test in this file, and any pre-unification session not yet reset) writes its
 # Message directly, which alone publishes nothing beyond `draft.committed` to the
 # sender's own tabs — a peer would not see the line without a reload. So
-# `services._publish_user_message` is, called once from the ledger branch of
+# `services._publish_user_message` is called once from the ledger branch of
 # `send_message` only: the transcript-sourced branch (`_send_transcript_sourced_
 # message`) must NOT also publish it, or the row doubles with the runner's own
 # `post_session_stream` fan-out.

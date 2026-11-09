@@ -157,10 +157,10 @@ def _share_url(request: HttpRequest, board: Storyboard) -> str | None:
 
     Built on CANOPY_PUBLIC_BASE_URL (which carries any deployment prefix), not
     `request.build_absolute_uri`: an MCP tool call reaches this route in-process
-    with no real Host, and that minted `https://localhost/…` (canopy-web#1289).
+    with no real Host, and `request.build_absolute_uri` would mint `https://localhost/…`.
 
-    The page lives under the board's workspace like every other artifact
-    (canopy-web#1337); the flat `/storyboard/<slug>` is a 404.
+    The page lives under the board's workspace like every other artifact;
+    the flat `/storyboard/<slug>` is a 404.
     """
     if not board.share_token:
         return None
@@ -200,7 +200,7 @@ def _replace_acts(board: Storyboard, acts) -> None:
 def _write_decisions(board: Storyboard, payload) -> None:
     """The brief, minus its legacy lists, plus the decision set.
 
-    The three #1501 lists are still accepted for one release and converted to
+    The three legacy brief lists are still accepted and converted to
     rows, so a publisher that has not moved yet keeps working (spec B)."""
     rows = [d.model_dump() for d in payload.decisions] if payload.decisions is not None else None
     if payload.brief is not None:

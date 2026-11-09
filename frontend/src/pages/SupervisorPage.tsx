@@ -59,7 +59,7 @@ const SCREENS = [
 ] as const
 type Screen = (typeof SCREENS)[number]['id']
 
-// The ONE supervisor surface Three consumers will load this
+// The ONE supervisor surface. Three consumers will load this
 // same route: the phone as an installed PWA, the menubar's WKWebView (Phase 5),
 // and a desktop browser. Phone-first layout — a single column that widens.
 //

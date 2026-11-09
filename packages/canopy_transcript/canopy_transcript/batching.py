@@ -5,11 +5,11 @@ The server 422s a single request whose line bytes exceed 1 MiB
 BYTES, not line count: one tool-result line can be enormous on its own.
 
 `chunk_rows` applies the same budget to structured transcript rows (the session
-stream and backfill payloads). Those had NO bound at all and went in one request
+stream and backfill payloads). Without a bound, a payload goes in one request
 against Django's DATA_UPLOAD_MAX_MEMORY_SIZE (2.5 MB) — which is worse than a
 422, because Django raises RequestDataTooBig before the view runs: an unhandled
-500, no partial write, and a runner that retries it forever. Measured over 193
-local transcripts (2026-07-31), one full-history payload is already 2.57 MB.
+500, no partial write, and a runner that retries it forever. Over 193
+local transcripts, one full-history payload is already 2.57 MB.
 """
 from __future__ import annotations
 

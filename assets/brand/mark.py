@@ -2,8 +2,8 @@
 
 The single source of truth for the "low dome": a wide, shallow canopy in three
 separate segments over a row of three — many parts making one cover, over the
-people and agents working beneath it. Chosen 2026-10-05 over three rounds on the
-brand canvas (https://claude.ai/artifact/DgjhaGr3AX1gJejmXDT833, variant "G4").
+people and agents working beneath it. The shape is variant "G4" on the brand canvas
+(https://claude.ai/artifact/DgjhaGr3AX1gJejmXDT833).
 
 Two lessons are baked into the numbers, so tune them knowingly:
 

@@ -61,7 +61,7 @@ def _settings_are_restored():
     the fixture restores the snapshot it took INSIDE the override — so the
     override outlives the test. That left REQUIRE_AUTH on for the rest of an
     xdist worker, and whichever anonymous API test ran next there failed with
-    the login middleware's 401 (tests/test_public_site.py, 2026-10-17). Use one
+    the login middleware's 401 (tests/test_public_site.py). Use one
     mechanism per test: the `settings` fixture.
     """
     from django.conf import settings

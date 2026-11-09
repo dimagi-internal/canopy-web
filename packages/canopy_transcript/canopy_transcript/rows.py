@@ -46,8 +46,8 @@ def assistant_text(content) -> str:
 # no longer a unique key. `turn_index` is a single integer (unique per session,
 # and the sort order), so the ordinal is composite: record * STRIDE + block.
 #
-# Multi-block records are rare but real — 38 in 45,955 across the live fleet
-# (2026-07-26), including ("text","tool_use","tool_use"), i.e. exactly the
+# Multi-block records are rare but real — 38 in 45,955 across the live fleet,
+# including ("text","tool_use","tool_use"), i.e. exactly the
 # parallel-tool-call case this feature exists to show. Keying on the record
 # alone would drop every block after the first, which is the interesting half.
 #
@@ -84,8 +84,8 @@ def scrub(text: str) -> str:
     """Drop NUL bytes. Postgres rejects them outright in text and jsonb columns.
 
     A tool result is raw bytes from whatever the tool touched, so `Read` on a
-    compressed or binary file puts one straight into the stream (found on labs
-    2026-07-26, one row in 683). The write is a single transaction, so ONE such
+    compressed or binary file puts one straight into the stream (one row in 683 on labs).
+    The write is a single transaction, so ONE such
     row 500s the whole batch — the session's history never rebuilds and the
     runner retries it every tick forever. Only NUL is stripped: every other
     control character is legal in Postgres text and is real transcript content.
@@ -102,9 +102,9 @@ def _truncate(text: str, limit: int) -> str:
 
 #: How deep a tool input is kept before a branch becomes "…". The size is already
 #: bounded by TOOL_INPUT_STR_MAX per string and TOOL_INPUT_JSON_MAX overall; depth
-#: only guards against pathological nesting. It was 6, which elided ordinary MCP calls:
-#: an MCP Apps View re-reads its tool input from this copy, and Labs' coaching card got
-#: picture.params.topics as ["…","…","…"] (depth 7) and failed (2026-10-09).
+#: only guards against pathological nesting. A depth of 6 would elide ordinary MCP calls:
+#: an MCP Apps View re-reads its tool input from this copy, and Labs' coaching card gets
+#: picture.params.topics as ["…","…","…"] (depth 7), which it cannot use if elided.
 TOOL_INPUT_MAX_DEPTH = 32
 
 
@@ -171,7 +171,7 @@ def _tool_result_text(content) -> str:
 # --- resource links: a host's address for a result it keeps -----------------------
 #
 # A host's tool may answer with facts plus an MCP `resource_link` naming a result the
-# HOST keeps (spec 2026-10-23-host-held-results); the person's View reads the rows back
+# HOST keeps (the host-held-results design); the person's View reads the rows back
 # through it. The body is cut at TOOL_TEXT_MAX above, and a realistic answer's facts are
 # bigger than that, so a link inside the text (a gateway answer is JSON) or as its own
 # block was lost to the cut. Links are therefore pulled out of the RAW result first and
@@ -253,8 +253,8 @@ def tool_result_content(tool_use_id, is_error: bool, raw) -> dict:
 #: The structural fields Claude Code stamps on a `type: "user"` record that say
 #: whether a PERSON wrote it — kept, under these short names, so the server can
 #: tell a typed prompt from everything else that lands on the human's side of a
-#: transcript. Measured over 9,600 user text records on three accounts
-#: (2026-10-11): a slash command's or skill's injected body is `isMeta` (a skill
+#: transcript. Over 9,600 user text records on three accounts,
+#: a slash command's or skill's injected body is `isMeta` (a skill
 #: body also carries `sourceToolUseID`, the Skill call that loaded it); an
 #: agent's own `ScheduleWakeup`/cron prompt, a peer session's message and the
 #: usage-limit auto-continue are `isMeta` + `promptSource: "system"`; a
@@ -574,8 +574,8 @@ def rows_to_ship(all_rows: list[dict], *, first_held, last_held) -> list[dict]:
     Ships the WHOLE history when the server does not hold the transcript's first
     row, and only what is newer than `last_held` otherwise. The distinction is the
     point: rows can only ever be appended above the high-water mark, so a session
-    whose beginning was never captured cannot repair itself by streaming — labs had
-    one pinned at 8.6% (2026-07-31) that would have stayed there indefinitely.
+    whose beginning was never captured cannot repair itself by streaming — a session
+    pinned at 8.6% would stay there indefinitely.
 
     Erring toward re-shipping is free: the server keys on the transcript ordinal,
     so a row it already holds costs an existence check and no write. Lives here, in

@@ -1,4 +1,4 @@
-"""An unpinned LIST must not mix organisations .
+"""An unpinned LIST must not mix organisations.
 
 Workspaces must be specified — workspace confusion must not be possible. A root
 workspace (`marshellis`, a family) sits beside the `dimagi` tree (dimagi → connect).
