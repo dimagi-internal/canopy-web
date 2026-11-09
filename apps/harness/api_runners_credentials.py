@@ -195,10 +195,16 @@ def get_runner_credential_status(request: HttpRequest, runner_id: uuid.UUID):
             summary="Fetch this runner's credential bundle (the runner, via its PAT)")
 @gate("runner")  # the box's own list, never a value: those are opened from its vault (…/credential/resolve)
 def get_runner_credential(request: HttpRequest, runner_id: uuid.UUID) -> RunnerCredentialOut:
-    """A cloud runner fetches its own secrets to stage into its environment. Returns
-    the actual token values over HTTPS, gated to the runner's owner (owner ==
-    caller) — the same trust boundary that lets that caller claim turns as the
-    runner. Laptop/emdash runners never call this (they use ambient auth)."""
+    """The runner's credential list, for the box to stage its credentials: its
+    logins (`key`, `account`, `cli`), every entry in order (`cascade`: `key`,
+    `kind`, `cli`, and a token's or API key's `vault_secret` name when a vault
+    serving the runner holds the value), whether a vault with a key is open
+    (`vault_open`) and when the list last changed. It holds NO values:
+    canopy-web has none, and the box opens each `vault_secret` with its own
+    device key (`…/credential/resolve`). Entries of another CLI go only to a box
+    whose code reports that CLI. Gated to the runner protocol: the runner's owner (the
+    box calls with its owner's token). A person managing the list reads
+    `…/credential/status` instead."""
     runner = runner_or_404(request, runner_id)
     return RunnerCredentialOut(**harness_runners.get_runner_credential(runner))
 
@@ -421,9 +427,8 @@ def runner_github_readiness(request: HttpRequest, runner_id: uuid.UUID):
 def runner_agents(request: HttpRequest, runner_id: uuid.UUID) -> list[str]:
     """Slugs of the agents this box RUNS (`routing.agents_routed_to`): the
     claim's own static gates, so a box prepares exactly what it can be handed.
-    The box's refresh prepares only these: listing every agent its token could
-    see made it ask for vaults it may not open, and each refusal emailed that
-    agent's owner (canopy-web#1563)."""
+    The box's refresh prepares only these, so it never asks for the vault of an
+    agent it does not run."""
     from . import device_keys
 
     runner = runner_or_404(request, runner_id)

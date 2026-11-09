@@ -78,7 +78,7 @@ def list_private_runners(request: HttpRequest):
 def list_workspace_private_runners(request: HttpRequest, workspace: str):
     """Every private runner a direct turn on one of `workspace`'s agents ran on: whose
     it is, which agents, how many direct turns, and when it was last seen. Shown
-    beside the runners ("aath-mbp — private runner, Aathithya"); a private runner never
+    beside the runners ("<machine> — private runner, <owner>"); a private runner never
     claims work, so it has no status. Members of the workspace (else 404)."""
     from django.db.models import Count, Max
 

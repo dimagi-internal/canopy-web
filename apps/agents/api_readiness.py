@@ -31,13 +31,11 @@ def agent_readiness(request: HttpRequest, slug: str) -> list[BootstrapReportOut]
     """The counterpart to `credentials/status`, and the difference is the point.
 
     `status` answers "is the credential stored here". This answers "could the
-    box USE it" — and on 2026-09-07 those disagreed for a whole day: canopy-web
-    held a valid gog-token while every gmail call on the box failed, because the
-    OAuth client id+secret it needs alongside had not materialized. Nothing
-    outside journald could see that.
+    box USE it" — the two can disagree: canopy-web
+    can hold a valid gog-token while every gmail call on the box fails, because
+    the OAuth client id+secret it needs alongside has not materialized.
 
-    `mailbox_ok` alone repeated the same shape one layer up on 2026-09-08: it
-    was TRUE for a day while every ACE email turn blocked at preflight, because
+    `mailbox_ok` can be true while an email turn blocks at preflight, because
     the box verifies the client whose token AUTHENTICATES while a turn presents
     the client its config DECLARES. Read `turn_ready` for "can this agent run a
     turn"; `mailbox_ok` only says some client works.

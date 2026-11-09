@@ -55,7 +55,7 @@ def start_runner_mint(request: HttpRequest, runner_id: uuid.UUID,
     Two kinds, for two jobs:
     - `box` (the default): a full `claude auth login` the runner keeps for
       itself — the only kind that carries claude.ai connectors. It renews
-      itself, so it can also stop renewing (cloud-ec2-2, 2026-10-15).
+      itself, so it can also stop renewing.
     - `token`: a `claude setup-token` for the credential list — a new token at
       the end, or (`login_key`) a new value for that token. Inference only, but
       good for a year with nothing to renew. `primary`/`secondary` are the old

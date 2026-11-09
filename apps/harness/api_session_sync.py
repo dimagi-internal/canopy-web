@@ -238,25 +238,17 @@ def _is_canopys(runner, binding) -> bool:
 def list_streams(request: HttpRequest, runner_id: uuid.UUID):
     """Every session this runner backs, with what the server already holds of each.
 
-    NOT just the watched ones any more, and that is the point. While this filtered
-    on `stream_desired=True`, transcript rows only ever reached the server for a
-    session someone happened to have open, and only from the moment they opened it
-    — so the durable record was a side effect of being looked at. Measured on labs
-    (2026-07-31) across 12 live sessions: the server held 983 of 6119 rows (16%),
-    with 8 sessions at exactly zero. "Load full session" existed to paper over that
-    by asking the runner at read time, which is why it was both slow and unreliable.
+    Not only the watched ones: the transcript is
+    the durable record, so the runner persists it whether or not anyone has the
+    session open.
 
-    `live` is the old `stream_desired` — it now decides only whether rows FAN OUT
-    to watching clients, never whether they are persisted. Persisting is
-    unconditional because the transcript is the durable source (spec 2026-07-24)
-    and building the rows costs the runner ~29 ms for a 6.5 MB file; there was
-    never a cost argument for keeping it, only the accident that live-view and
-    durability shared one flag.
+    `live` decides only whether rows FAN OUT to watching clients, never whether
+    they are persisted.
 
     `first_index`/`last_index` bound what the server holds, so the runner can tell
     "ship only what is new" from "ship the history I am missing" — a Max alone can
     only ever append above the high-water mark and so can never fill a hole below
-    it, which is how a session ended up stuck at 8.6% with no way to self-heal."""
+    it."""
     runner = runner_or_404(request, runner_id)
     if is_sensitive_data_box(runner):
         # A sensitive-data box keeps its transcripts to itself: nothing to tail.
@@ -550,8 +542,7 @@ def kept_conversations(request: HttpRequest, runner_id: uuid.UUID, payload: Kept
     still open.
 
     A sensitive conversation's box keeps its session between turns, so its next turn
-    resumes it (spec 2026-10-23-sensitive-conversations-sealed-to-their-people §1),
-    until the conversation has been idle a day or is closed. Its turns are confined,
+    resumes it, until the conversation has been idle a day or is closed. Its turns are confined,
     so it has no `RunnerBinding` and `/closes` never names it: the box asks here
     instead, on its sweep. A conversation is open while it exists, is not archived,
     and this runner claimed a confined turn in it; the box forgets every other.
@@ -611,8 +602,8 @@ def list_menu_answers(request: HttpRequest, runner_id: uuid.UUID):
     SURVIVE. A frame published while the runner's control channel is down goes to
     a Channels group with no consumer and is discarded — and because the runner
     still heartbeats over REST it reads ONLINE the whole time, so the API answers
-    `ok:true` and nothing records the loss. Measured on labs 2026-08-01: an answer
-    sent at 10:50 never reached the runner, between reconnects at 10:16 and 10:58.
+    `ok:true` and nothing records the loss.
+ 
 
     Drained on the poll tick the runner already runs, same as `/backfills`.
     """

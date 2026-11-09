@@ -3354,7 +3354,7 @@ export interface paths {
          *       unguessable and never ambient (not a cookie), so no CSRF check is needed;
          *     - a member of the review's workspace saving wording edits WITHOUT deciding.
          *       Before this, a member's only way to keep an edit was "Submit — approve &
-         *       build", which locks the narrative as the build plan (canopy-web#1266). A
+         *       build", which locks the narrative as the build plan. A
          *       session is ambient, so this path is CSRF-checked like /submit/.
          */
         readonly post: operations["suggest_review"];
@@ -5730,7 +5730,8 @@ export interface paths {
         /**
          * Turn Slack access to an agent on or off
          * @description Whether people in this workspace's connected Slack can talk to the agent
-         *     (by mention, DM, `/canopy <slug>` or `/<slug>`). Owner only. Adds or removes
+         *     (by mention, DM, `/canopy <slug>` or `/<slug>`). The agent's owner or an
+         *     admin (`agent-admin`; an editor may not). Adds or removes
          *     the agent's `/<slug>` command in the Slack app when canopy manages it.
          */
         readonly patch: operations["set_slack_enabled"];
@@ -5805,7 +5806,7 @@ export interface paths {
         /**
          * Replace the agent's ordered runner list (index = rank)
          * @description Replace the agent's ORDERED runner list (index = rank) — the single
-         *     routing authority (spec 2026-07-24). Wholesale replace: the matrix UI saves
+         *     routing authority. Wholesale replace: the matrix UI saves
          *     a full row, so there is no partial-update ambiguity.
          *
          *     Accepts either form (exactly one must be provided — 422 otherwise):
@@ -5899,8 +5900,7 @@ export interface paths {
         };
         /**
          * List the agent's per-source routing rules
-         * @description The per-source overrides on top of the default ordered list (spec
-         *     2026-07-27). One rule per source, max — the priority runner, and whether it is
+         * @description The per-source overrides on top of the default ordered list. One rule per source, max — the priority runner, and whether it is
          *     the only one allowed to take that source's work.
          */
         readonly get: operations["list_agent_runner_rules"];
@@ -6633,8 +6633,8 @@ export interface paths {
         };
         /**
          * May the caller resolve this agent's secrets? (never values)
-         * @description The cheap check `canopy cred` makes before fetching anything
-         *     (canopy#850): which backend the agent resolves from, and whether THIS
+         * @description The cheap check `canopy cred` makes before fetching anything:
+         *     which backend the agent resolves from, and whether THIS
          *     caller would be let through `/credentials/resolve` — and as whom.
          *
          *     Session or bearer: it returns no values, so the browser may ask it too.
@@ -6708,12 +6708,11 @@ export interface paths {
          *        - `runner`: pairs a live runner this agent routes to. Mirrors the runner
          *          credential fetch, whose boundary is "the caller who can claim turns as
          *          this runner".
-         *        - `admin`: is the agent's owner or an admin (`Agent.is_admin`) — a human
-         *          resolving for a local Claude Code session (canopy#850). Not a widening
+         *        - `admin`: is the agent's owner or an admin (`Agent.is_admin`) — a human resolving for a local Claude Code session. Not a widening
          *          in substance: an admin can already write every value, swap the vault
          *          key, and put their own box on the agent to read them back.
          *        - `license`: holds an ACTIVE license to use the agent directly and names
-         *          their OWN open direct turn on it in `X-Canopy-Turn-Id` (canopy-web#1704).
+         *          their OWN open direct turn on it in `X-Canopy-Turn-Id`.
          *          The read is logged against that turn and license.
          *        Anyone else — a member, an editor with no direct turn — is refused, and
          *        told which access to ask for. Tighter than workspace membership on purpose.
@@ -6756,7 +6755,7 @@ export interface paths {
         };
         /**
          * Who read this credential's value, from which box and turn
-         * @description The read log (canopy-web#1538), newest first. Never the value. The
+         * @description The read log, newest first. Never the value. The
          *     agent's owner or an admin — the same people who may set the value.
          */
         readonly get: operations["agent_credential_reads"];
@@ -6800,7 +6799,7 @@ export interface paths {
         };
         /**
          * Read-anomaly alerts on this agent's secrets
-         * @description Canopy Vault (canopy-web#1549), newest first: reads with no turn id by
+         * @description Credential alerts, newest first: reads with no turn id by
          *     someone not the owner or an admin, bursts, and
          *     resolves refused for a bad or missing device proof. At most one per kind
          *     per hour (`occurrences` counts the rest). The agent's owner or an admin.
@@ -7288,15 +7287,20 @@ export interface paths {
         readonly head?: never;
         /**
          * Turn automatic canopy-pat rotation on or off
-         * @description Canopy Vault (canopy-web#1549). When on, every `period_days` (default
-         *     30) canopy-web mints a new token for the agent's own canopy login, writes
-         *     it to the agent's `canopy-pat` credential (a runner picks it up at its next
+         * @description `{enabled, period_days}` (default 30, 1-365). This route only records the
+         *     setting: while it is on, canopy-web mints a new token for the agent's own
+         *     canopy login every `period_days` (counted from the last rotation, else from
+         *     when the credential was last written), stores it in the agent's
+         *     `CANOPY_WEB_PAT` credential (a runner picks it up at its next
          *     `canopy cred sync`), keeps the old token valid for 24 h and then revokes it.
-         *     The agent's token expires (the PAT default, 180 days), so `period_days` is
-         *     capped 14 days short of that and the token is always replaced first.
-         *     Turning it on needs the agent to have its own login and a stored
-         *     `canopy-pat`, and — when that login has ever signed in interactively — a
-         *     workspace owner (422/403 otherwise). The owner or an admin.
+         *     The agent's token expires after the PAT default lifetime, so `period_days`
+         *     is silently lowered to 14 days short of that and the token is always
+         *     replaced first. Turning it on is refused (nothing is saved) with 409 when
+         *     nobody holds a key that could read a new token (no approved device or
+         *     member vault key), 422 when the agent has no canopy login of its own or no
+         *     stored `CANOPY_WEB_PAT`, and 403 when that login has ever signed in
+         *     interactively (it may be a person's) unless the caller is a workspace
+         *     owner. Turning it off needs only the gate. The agent's owner or an admin.
          */
         readonly patch: operations["set_pat_rotation"];
         readonly trace?: never;
@@ -7410,13 +7414,11 @@ export interface paths {
          * @description The counterpart to `credentials/status`, and the difference is the point.
          *
          *     `status` answers "is the credential stored here". This answers "could the
-         *     box USE it" — and on 2026-09-07 those disagreed for a whole day: canopy-web
-         *     held a valid gog-token while every gmail call on the box failed, because the
-         *     OAuth client id+secret it needs alongside had not materialized. Nothing
-         *     outside journald could see that.
+         *     box USE it" — the two can disagree: canopy-web
+         *     can hold a valid gog-token while every gmail call on the box fails, because
+         *     the OAuth client id+secret it needs alongside has not materialized.
          *
-         *     `mailbox_ok` alone repeated the same shape one layer up on 2026-09-08: it
-         *     was TRUE for a day while every ACE email turn blocked at preflight, because
+         *     `mailbox_ok` can be true while an email turn blocks at preflight, because
          *     the box verifies the client whose token AUTHENTICATES while a turn presents
          *     the client its config DECLARES. Read `turn_ready` for "can this agent run a
          *     turn"; `mailbox_ok` only says some client works.
@@ -10164,8 +10166,10 @@ export interface paths {
         };
         /**
          * List invites (member-only)
-         * @description Every member sees who has been invited; only an owner gets each invite's
-         *     `token` (it is empty for everyone else).
+         * @description Every member sees who has been invited; an invite's `token` is given only to
+         *     a member who may manage members (admin or owner) and may grant that invite's
+         *     role (an admin does not get an admin's or owner's link), and is empty for
+         *     everyone else.
          */
         readonly get: operations["list_invites"];
         readonly put?: never;
@@ -11865,7 +11869,7 @@ export interface paths {
          * Private runners people use this workspace's agents from
          * @description Every private runner a direct turn on one of `workspace`'s agents ran on: whose
          *     it is, which agents, how many direct turns, and when it was last seen. Shown
-         *     beside the runners ("aath-mbp — private runner, Aathithya"); a private runner never
+         *     beside the runners ("<machine> — private runner, <owner>"); a private runner never
          *     claims work, so it has no status. Members of the workspace (else 404).
          */
         readonly get: operations["list_workspace_private_runners"];
@@ -12953,10 +12957,16 @@ export interface paths {
         };
         /**
          * Fetch this runner's credential bundle (the runner, via its PAT)
-         * @description A cloud runner fetches its own secrets to stage into its environment. Returns
-         *     the actual token values over HTTPS, gated to the runner's owner (owner ==
-         *     caller) — the same trust boundary that lets that caller claim turns as the
-         *     runner. Laptop/emdash runners never call this (they use ambient auth).
+         * @description The runner's credential list, for the box to stage its credentials: its
+         *     logins (`key`, `account`, `cli`), every entry in order (`cascade`: `key`,
+         *     `kind`, `cli`, and a token's or API key's `vault_secret` name when a vault
+         *     serving the runner holds the value), whether a vault with a key is open
+         *     (`vault_open`) and when the list last changed. It holds NO values:
+         *     canopy-web has none, and the box opens each `vault_secret` with its own
+         *     device key (`…/credential/resolve`). Entries of another CLI go only to a box
+         *     whose code reports that CLI. Gated to the runner protocol: the runner's owner (the
+         *     box calls with its owner's token). A person managing the list reads
+         *     `…/credential/status` instead.
          */
         readonly get: operations["get_runner_credential"];
         readonly put?: never;
@@ -13143,9 +13153,8 @@ export interface paths {
          * The agents this runner runs: the ones it should prepare
          * @description Slugs of the agents this box RUNS (`routing.agents_routed_to`): the
          *     claim's own static gates, so a box prepares exactly what it can be handed.
-         *     The box's refresh prepares only these: listing every agent its token could
-         *     see made it ask for vaults it may not open, and each refusal emailed that
-         *     agent's owner (canopy-web#1563).
+         *     The box's refresh prepares only these, so it never asks for the vault of an
+         *     agent it does not run.
          */
         readonly get: operations["runner_agents"];
         readonly put?: never;
@@ -13184,7 +13193,7 @@ export interface paths {
          *     Two kinds, for two jobs:
          *     - `box` (the default): a full `claude auth login` the runner keeps for
          *       itself — the only kind that carries claude.ai connectors. It renews
-         *       itself, so it can also stop renewing (cloud-ec2-2, 2026-10-15).
+         *       itself, so it can also stop renewing.
          *     - `token`: a `claude setup-token` for the credential list — a new token at
          *       the end, or (`login_key`) a new value for that token. Inference only, but
          *       good for a year with nothing to renew. `primary`/`secondary` are the old
@@ -13791,19 +13800,17 @@ export interface paths {
          * Update Runner Capabilities
          * @description Replace a runner's capabilities (owner-gated via _runner_or_404).
          *
-         *     Capabilities are set at pairing and were otherwise immutable — the only way to
-         *     add a capability to an existing runner was to re-pair, which mints a NEW runner
-         *     and orphans the old one's RunnerBindings. This lets a paired runner opt into
-         *     driving new agents in place. capabilities is a routing hint, not a security
+         *     Capabilities are set at pairing; this lets a paired runner opt into driving
+         *     new agents in place, without re-pairing (which would mint a NEW runner and
+         *     orphan the old one's RunnerBindings). capabilities is a routing hint, not a security
          *     boundary (the workspace gates), so replacing it changes what the runner PULLS,
          *     never what it may reach.
          *
-         *     EXCEPT `projects`, which the runner now REPORTS on every heartbeat (spec
-         *     2026-07-28). Accepting a hand-written value would be accepting a ghost edit:
+         *     EXCEPT `projects`, which the runner REPORTS on every heartbeat. Accepting a hand-written value would be accepting a ghost edit:
          *     the next heartbeat overwrites it seconds later, so the caller sees a 200,
          *     believes the repo is declared, and dispatches into a hole. A 422 naming the
          *     real fix is the honest answer. `projects` is also PRESERVED across a write that
-         *     omits it — it belongs to the runner now, so a capabilities PATCH must not drop
+         *     omits it — it belongs to the runner, so a capabilities PATCH must not drop
          *     it as a side effect.
          */
         readonly patch: operations["update_runner_capabilities"];
@@ -13821,16 +13828,16 @@ export interface paths {
         /**
          * Retire Runner
          * @description Retire a runner — a decommission, not a liveness state (see
-         *     Runner.live_status). Idempotent by construction: _runner_or_404 already excludes
-         *     retired runners, so retiring an already-retired runner 404s at lookup rather than
-         *     no-opping here. Reversible via /unretire — but see the caveat below.
+         *     Runner.live_status). Retiring an already-retired runner is a 404 at lookup
+         *     (_runner_or_404 excludes retired runners), not a no-op. Reversible via
+         *     /unretire — but see the caveat below.
          *
          *     Deletes the runner's RunnerAssignment rows in the same transaction. A
          *     retired runner is invisible to _runner_visibility_q, but its stale
          *     assignment rows were NOT — GET /agents/{slug}/runners kept listing them,
          *     and PUT /agents/{slug}/runners round-trips that same list to save any
-         *     unrelated change, so a lingering row 422'd every matrix save with "unknown
-         *     or retired runner id" (a prod incident 2026-07-25). Ranks of the
+         *     unrelated change, so a lingering row would 422 every matrix save with "unknown
+         *     or retired runner id". Ranks of the
          *     survivors need not be compacted — RunnerAssignment.rank is only ever
          *     compared relatively (0 = first choice), never assumed contiguous.
          *
@@ -13861,13 +13868,9 @@ export interface paths {
          * @description Bring a retired runner back, keeping its identity — and therefore every
          *     RunnerBinding, assignment and session that points at it.
          *
-         *     Retirement used to be impossible to undo, which made it a trap rather than a
-         *     decision. `_runner_or_404` 404s a retired runner, so its daemon's heartbeat,
-         *     claim and session-report calls all fail forever once retired; and `pair_runner`
-         *     unconditionally CREATES a row, so the only recovery — re-pairing — minted a new
-         *     id and orphaned the old one's bindings. Retiring a laptop you were logged out of
-         *     therefore silently destroyed its sessions' identity the moment you brought it
-         *     back (labs 2026-07-25: jj-mbp-cdp, 10 sessions).
+         *     A retired runner is 404 to its own daemon's heartbeat, claim and session-report
+         *     calls, and re-pairing would mint a new id and orphan the old one's bindings;
+         *     this is the way back that keeps the identity.
          *
          *     Restores DISCONNECTED, not ONLINE: liveness is observed, never asserted — the
          *     next heartbeat is what makes it online (Runner.live_status). Idempotent for an
@@ -13893,14 +13896,9 @@ export interface paths {
          * Pause Runner
          * @description Stop ROUTING work to this runner, without decommissioning it.
          *
-         *     The remote half of the runner's local `~/.canopy/PAUSED` sentinel, which only
-         *     a human on that machine could ever drop. Jonathan runs the fleet under two
-         *     macOS accounts for token-limit failover (Runner.host), and moving work off a
-         *     rate-limited account means silencing its runner FROM THE OTHER ONE — impossible
-         *     until now, because ~/.canopy there is owned by the other account. The only
-         *     reachable lever was `retire`, which is a decommission: it deletes
-         *     RunnerAssignment rows `unretire` does not restore, and it 404s the daemon's own
-         *     heartbeat and claim calls. This destroys nothing and is reversible by
+         *     The remote half of the runner's local `~/.canopy/PAUSED` sentinel, so work can
+         *     be moved off a box (a rate-limited account, say) from anywhere. Unlike `retire`,
+         *     which is a decommission, this destroys nothing and is reversible by
          *     construction.
          *
          *     ENFORCED SERVER-SIDE, so it does not depend on the runner cooperating or even
@@ -13986,7 +13984,7 @@ export interface paths {
          *     /runners/{id}/pause (see FleetHold). Turns keep enqueuing and wait QUEUED with
          *     their trigger, so `list turns?status=queued` shows what tried to start while
          *     held. Running turns finish normally — stopping them is /fleet-stop. A superuser
-         *     or a named holder (`CANOPY_FLEET_HOLDERS`, i.e. Ada) — it spans every tenant,
+         *     or a named holder (an address in `CANOPY_FLEET_HOLDERS`) — it spans every tenant,
          *     but only stops work. Idempotent — holding again refreshes the note.
          */
         readonly post: operations["hold_fleet"];
@@ -14301,25 +14299,17 @@ export interface paths {
          * List Streams
          * @description Every session this runner backs, with what the server already holds of each.
          *
-         *     NOT just the watched ones any more, and that is the point. While this filtered
-         *     on `stream_desired=True`, transcript rows only ever reached the server for a
-         *     session someone happened to have open, and only from the moment they opened it
-         *     — so the durable record was a side effect of being looked at. Measured on labs
-         *     (2026-07-31) across 12 live sessions: the server held 983 of 6119 rows (16%),
-         *     with 8 sessions at exactly zero. "Load full session" existed to paper over that
-         *     by asking the runner at read time, which is why it was both slow and unreliable.
+         *     Not only the watched ones: the transcript is
+         *     the durable record, so the runner persists it whether or not anyone has the
+         *     session open.
          *
-         *     `live` is the old `stream_desired` — it now decides only whether rows FAN OUT
-         *     to watching clients, never whether they are persisted. Persisting is
-         *     unconditional because the transcript is the durable source (spec 2026-07-24)
-         *     and building the rows costs the runner ~29 ms for a 6.5 MB file; there was
-         *     never a cost argument for keeping it, only the accident that live-view and
-         *     durability shared one flag.
+         *     `live` decides only whether rows FAN OUT to watching clients, never whether
+         *     they are persisted.
          *
          *     `first_index`/`last_index` bound what the server holds, so the runner can tell
          *     "ship only what is new" from "ship the history I am missing" — a Max alone can
          *     only ever append above the high-water mark and so can never fill a hole below
-         *     it, which is how a session ended up stuck at 8.6% with no way to self-heal.
+         *     it.
          */
         readonly get: operations["list_streams"];
         readonly put?: never;
@@ -14525,8 +14515,7 @@ export interface paths {
          *     still open.
          *
          *     A sensitive conversation's box keeps its session between turns, so its next turn
-         *     resumes it (spec 2026-10-23-sensitive-conversations-sealed-to-their-people §1),
-         *     until the conversation has been idle a day or is closed. Its turns are confined,
+         *     resumes it, until the conversation has been idle a day or is closed. Its turns are confined,
          *     so it has no `RunnerBinding` and `/closes` never names it: the box asks here
          *     instead, on its sweep. A conversation is open while it exists, is not archived,
          *     and this runner claimed a confined turn in it; the box forgets every other.
@@ -14579,8 +14568,8 @@ export interface paths {
          *     SURVIVE. A frame published while the runner's control channel is down goes to
          *     a Channels group with no consumer and is discarded — and because the runner
          *     still heartbeats over REST it reads ONLINE the whole time, so the API answers
-         *     `ok:true` and nothing records the loss. Measured on labs 2026-08-01: an answer
-         *     sent at 10:50 never reached the runner, between reconnects at 10:16 and 10:58.
+         *     `ok:true` and nothing records the loss.
+         *
          *
          *     Drained on the poll tick the runner already runs, same as `/backfills`.
          */
@@ -14912,14 +14901,14 @@ export interface paths {
          *
          *     Streams `services.iter_transcript`, which inflates the stored gzip
          *     INCREMENTALLY in bounded chunks rather than decompressing the whole blob
-         *     into memory at once (security review 2026-07-26, F3 — the sibling
+         *     into memory at once (the sibling
          *     `/events` route caps at 500 rows for the same underlying reason).
          *
          *     A PRIOR version of this fix instead served the still-gzipped bytes
          *     directly with `Content-Encoding: gzip`, betting the HTTP client would
          *     inflate transparently — a follow-up review empirically falsified that:
          *     `curl --compressed` and `httpx` both return only the FIRST gzip member
-         *     of Task 1's multi-member on-disk format, silently truncating the
+         *     of the multi-member on-disk format, silently truncating the
          *     transcript with a 200 and no error, and this repo's own runner client
          *     (`runner/canopy_runner`, `urllib.request`) does no content-decoding at
          *     all — it would have treated raw gzip bytes as JSONL. Streaming plaintext
@@ -17257,12 +17246,9 @@ export interface paths {
          * @description Move a session between boxes — cloud -> laptop, or between the two macOS
          *     accounts — carrying its message history across.
          *
-         *     `place` was the closest thing before this and it is not the same operation:
-         *     it re-pins one queued turn and leaves the binding where it was, so the next
-         *     ship still 404s and the next send sticks to the old box. The failure that
-         *     motivated this endpoint was doing the move by hand with `place`/`send` —
-         *     execution DID move, and the session's entire pre-transfer history was deleted
-         *     on the new box's first ship (session 169212e2, 2026-09-12).
+         *     `place` is not the same operation: it re-pins one queued turn and leaves the
+         *     binding where it was, so the next ship still 404s and the next send sticks to
+         *     the old box. A transfer moves the binding and carries the history with it.
          *
          *     WHOSE box it lands on decides whether it moves now (`status: moved`) or asks
          *     (`status: pending`): onto a runner you administer, or between two runners with

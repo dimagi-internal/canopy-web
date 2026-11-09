@@ -335,14 +335,14 @@ def read_turn_transcript(request: HttpRequest, turn_id: uuid.UUID):
 
     Streams `services.iter_transcript`, which inflates the stored gzip
     INCREMENTALLY in bounded chunks rather than decompressing the whole blob
-    into memory at once (security review 2026-07-26, F3 — the sibling
+    into memory at once (the sibling
     `/events` route caps at 500 rows for the same underlying reason).
 
     A PRIOR version of this fix instead served the still-gzipped bytes
     directly with `Content-Encoding: gzip`, betting the HTTP client would
     inflate transparently — a follow-up review empirically falsified that:
     `curl --compressed` and `httpx` both return only the FIRST gzip member
-    of Task 1's multi-member on-disk format, silently truncating the
+    of the multi-member on-disk format, silently truncating the
     transcript with a 200 and no error, and this repo's own runner client
     (`runner/canopy_runner`, `urllib.request`) does no content-decoding at
     all — it would have treated raw gzip bytes as JSONL. Streaming plaintext

@@ -303,7 +303,7 @@ def _route_summary(agent, runners, picks, strict, follows, *, person: str) -> st
 @gate("agent.work", "runner-admin", setting=True)  # every ADDED runner administered + holdable
 def replace_agent_runners(request: HttpRequest, slug: str, payload: AgentRunnersIn) -> list[AgentRunnerOut]:
     """Replace the agent's ORDERED runner list (index = rank) — the single
-    routing authority (spec 2026-07-24). Wholesale replace: the matrix UI saves
+    routing authority. Wholesale replace: the matrix UI saves
     a full row, so there is no partial-update ambiguity.
 
     Accepts either form (exactly one must be provided — 422 otherwise):
@@ -355,8 +355,7 @@ def replace_agent_runners(request: HttpRequest, slug: str, payload: AgentRunners
             summary="List the agent's per-source routing rules")
 @gate("member")
 def list_agent_runner_rules(request: HttpRequest, slug: str) -> list[AgentRunnerRuleOut]:
-    """The per-source overrides on top of the default ordered list (spec
-    2026-07-27). One rule per source, max — the priority runner, and whether it is
+    """The per-source overrides on top of the default ordered list. One rule per source, max — the priority runner, and whether it is
     the only one allowed to take that source's work."""
     from collections import Counter
 
