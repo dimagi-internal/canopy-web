@@ -806,7 +806,7 @@ class AgentCanopyTokenIn(StrictModel):
 
 class AgentCanopyLoginOut(StrictModel):
     """`POST /canopy-login`: the agent's canopy login was made (or reused), its token
-    stored sealed as `canopy-pat`, rotation turned on when it could be. Never the token."""
+    stored sealed in its vault, rotation turned on when it could be. Never the token."""
 
     user_email: str
     created_user: bool
