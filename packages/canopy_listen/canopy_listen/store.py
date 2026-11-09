@@ -22,6 +22,19 @@ def home() -> Path:
     return Path(os.environ.get("CANOPY_LISTEN_HOME") or Path.home() / ".canopy-listen")
 
 
+def socket_path() -> Path:
+    """`canopy-listen serve`'s unix socket. A socket path must be under 104 bytes on macOS, so a
+    home that deep (a test's temp folder) gets a short stand-in named after it."""
+    path = home() / "serve.sock"
+    if len(str(path).encode()) < 100:
+        return path
+    import hashlib
+    import tempfile
+
+    tag = hashlib.sha256(str(home()).encode()).hexdigest()[:12]
+    return Path(tempfile.gettempdir()) / f"canopy-listen-{tag}.sock"
+
+
 def meetings_dir() -> Path:
     return home() / "meetings"
 
@@ -100,6 +113,27 @@ def active() -> str | None:
         return (home() / "active").read_text().strip() or None
     except OSError:
         return None
+
+
+def names(meeting_id: str) -> dict[int, str]:
+    """Speaker names the person gave, by number: names.json beside meeting.json. The recorder
+    owns meeting.json while it runs, so a rename goes here and the recorder merges it."""
+    try:
+        raw = json.loads((meeting_dir(meeting_id) / "names.json").read_text())
+        return {int(k): str(v) for k, v in raw.items()}  # "" means back to "Speaker N"
+    except (OSError, ValueError, AttributeError):
+        return {}
+
+
+def set_name(meeting_id: str, number: int, name: str) -> dict[int, str]:
+    current = names(meeting_id)
+    name = " ".join(str(name).split())[:60]
+    current[int(number)] = name
+    path = meeting_dir(meeting_id) / "names.json"
+    tmp = path.with_suffix(".tmp-names")
+    tmp.write_text(json.dumps({str(k): v for k, v in current.items()}))
+    os.replace(tmp, path)
+    return current
 
 
 def delete(meeting_id: str) -> bool:
