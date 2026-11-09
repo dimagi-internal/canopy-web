@@ -1,7 +1,7 @@
 """A `use:ask` (or `use:read`) access line becomes a `read_only` line.
 
-Read mode is a role now: `read_only` opens it on every agent
-(`docs/superpowers/specs/2026-11-03-agent-read-mode-and-doors-design.md`, Phase 1 change 3). A line that
+Read mode is a role now: `read_only` opens it on every agent.
+A line that
 opened the one capability `ask` meant exactly that, so it is rewritten to the role it was standing in
 for. Nothing else moves: each agent's published `ask` stays its read-mode override under its own name,
 and stored turn stamps and admission rules are never rewritten (`interface.is_read_mode` is the alias).

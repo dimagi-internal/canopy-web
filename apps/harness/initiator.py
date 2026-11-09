@@ -1,7 +1,6 @@
 """Who asked for a turn, and how sure we are — one shape for every channel.
 
-Phase 1 of `docs/superpowers/specs/2026-09-18-who-is-asking-initiator-identity-
-and-access-design.md`. RECORD-ONLY: nothing here changes what a turn may do yet.
+RECORD-ONLY: nothing here changes what a turn may do yet.
 It exists so the rest can: an agent cannot act for someone, and a tool cannot be
 limited to someone, until every turn says who that someone is.
 

@@ -8,7 +8,6 @@ just-in-time at build or runtime.
 It replaced the bare-branch tree on 2026-10-05 (the tree went spindly below 32px).
 Why it looks the way it does — and the two shapes it must not drift back into — is in
 the docstring of [`mark.py`](mark.py) and in
-`docs/superpowers/specs/2026-10-05-public-site-and-mark-design.md`.
 
 ## The one source of truth
 

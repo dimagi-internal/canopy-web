@@ -2,8 +2,7 @@
 
 POST with no workspace → default workspace + creator membership (so the machine
 producers that post shareouts keep working); a domain teammate who has NOT
-explicitly joined (2026-09-12: auto-join is gone — self-join replaces it, see
-docs/superpowers/specs/2026-09-12-agent-instances-and-the-acl-design.md) gets
+explicitly joined (auto-join is gone — self-join replaces it) gets
 an empty list same as an outsider; and the prefixed /api/w/{ws}/shareouts/
 route works for a member.
 

@@ -1,7 +1,6 @@
 """Agent credentials in canopy-web — values write-only, stored only as ciphertext
 canopy-web cannot open (the agent vault is zero-knowledge; tests/test_canopy_vault_zk.py).
 
-Spec: docs/superpowers/specs/2026-09-05-agent-credentials-design.md
 
 The goal this serves, stated by Jonathan on 2026-09-05: *someone could plausibly
 create a completely new agent without direct access to the cloud box.* A vault you

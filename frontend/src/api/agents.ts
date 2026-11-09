@@ -757,7 +757,7 @@ export async function getAgentAccess(slug: string): Promise<AgentAccessOut> {
 }
 
 // THE ACCESS LIST: one list of (who, role) lines per agent, plus the workspace-wide
-// default lines it inherits (docs/superpowers/specs/2026-10-30-agent-roles-and-access-list-design.md).
+// default lines it inherits.
 // A refused line answers 422 with a reason fit to show beside the form (the
 // ApiError message is that `detail`); a duplicate is a 409 the same way.
 export type AccessListOut = Schemas['AccessListOut']

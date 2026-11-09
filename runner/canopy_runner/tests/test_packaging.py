@@ -2,8 +2,7 @@
 
 These build a real wheel rather than asserting on pyproject text: the failure this
 guards is "hatchling silently didn't include X", which is invisible to any amount
-of reading the config. See
-docs/superpowers/specs/2026-07-28-runner-as-installed-package-design.md.
+of reading the config.
 """
 from __future__ import annotations
 

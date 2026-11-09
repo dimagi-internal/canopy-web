@@ -3,8 +3,7 @@
 workspace's task settings, and a project's milestones and updates.
 
 The lists are `api_fleet` (`GET /api/tasks/`, `/api/projects/`); an agent's
-view of the same rows is `api_board`. Design:
-`docs/superpowers/specs/2026-10-24-workspace-tasks-and-projects-design.md`.
+view of the same rows is `api_board`.
 """
 from __future__ import annotations
 

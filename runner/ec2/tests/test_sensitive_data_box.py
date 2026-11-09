@@ -1,6 +1,5 @@
 """A sensitive-data box runs only confined turns.
 
-docs/superpowers/specs/2026-10-22-sensitive-data-agents-design.md §5.
 """
 from __future__ import annotations
 

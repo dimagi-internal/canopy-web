@@ -1,6 +1,6 @@
 // The words the access list is read in. Kept out of the .tsx files so fast refresh keeps working.
 //
-// Vocabulary (docs/superpowers/specs/2026-11-04-configurable-roles-design.md): a role is a named
+// Vocabulary: a role is a named
 // bundle of permissions (read, write, agent_edit, use:<site key>) a workspace defines; read_only,
 // read_write and editor are the built-ins; admin and owner are fixed, never lines. A line gives ONE role or, rarely, ONE host site. Say "agent admin"
 // or "workspace admin", never a bare "admin"; "member", "viewer" and "user" are not agent roles.

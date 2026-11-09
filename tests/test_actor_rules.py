@@ -10,7 +10,6 @@ Precedence: explicit pin -> sticky binding -> (source, actor) -> (source, "")
 claim_next_turn's and are covered in tests/test_source_rules.py and the
 directed-routing suite.
 
-Spec: docs/superpowers/specs/2026-09-05-actor-aware-runner-routing-design.md
 """
 from __future__ import annotations
 

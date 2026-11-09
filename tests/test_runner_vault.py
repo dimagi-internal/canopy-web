@@ -1,5 +1,4 @@
-"""A cloud runner's Claude credentials live in a vault it opens with its own device key
-(spec 2026-10-23-runner-claude-credentials-in-the-vault-design.md).
+"""A cloud runner's Claude credentials live in a vault it opens with its own device key.
 
 The vault is the real one — a workspace vault, zero-knowledge, with first-class
 membership — and the one extension is that it can serve a RUNNER. A box's device key

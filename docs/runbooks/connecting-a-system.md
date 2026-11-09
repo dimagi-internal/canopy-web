@@ -39,7 +39,7 @@ would change, and saves — the same audited update as a hand edit.
 
 **A second workspace** registers the site itself, the same way, with the same
 JWKS URL. Registrations are per workspace — there is no shared row and no
-custodian (2026-09-24) — so the host must then **name the workspace**
+custodian — so the host must then **name the workspace**
 (`CANOPY_HOST["WORKSPACE"]`, signed as `canopy_workspace`), or at least an agent
 when it mints a visitor token (`agent_slug`) and in `canopy.init` (`agent`). A
 name alone is ambiguous once two workspaces hold it, and canopy refuses rather
@@ -54,7 +54,7 @@ that agent is deleted or moved, and the host then shows no agents.
 
 ---
 
-## 2. What is already set up (2026-09-24)
+## 2. What is already set up
 
 | Thing | Where it lives | Reproducible? |
 | --- | --- | --- |
@@ -167,10 +167,9 @@ AWS_PROFILE=labs aws ecs run-task --cluster labs-jj-cluster --task-definition "$
 ```
 
 Everything that script does is also doable from the host sites page. It is
-written down because the ace-web row **predates that page**. There is no longer
-anything to grant about WHO arrives as a user: a workspace member the site signs
-a verified email for always does (the per-site `resolvable_domains` list went on
-2026-09-24).
+written down for the ace-web row, which was set up before that page existed. There is
+nothing to grant about WHO arrives as a user: a workspace member the site signs
+a verified email for always does (there is no per-site `resolvable_domains` list).
 
 ---
 
@@ -215,5 +214,4 @@ with egress limited to an allowlist, keeping nothing after a turn. Two steps, on
    that visitor's conversation runs only on a flagged runner. There is no fallback: with
    no sensitive-data runner online the turn says so and waits.
 
-The host site shows the last requirement the host sent. Spec:
-`docs/superpowers/specs/2026-09-30-zdr-runners-design.md`.
+The host site shows the last requirement the host sent.

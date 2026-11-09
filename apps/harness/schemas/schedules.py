@@ -141,7 +141,7 @@ class ScheduleOut(Schema):
     updated_at: dt.datetime
 
 
-# ---- triggers: every kind (docs/superpowers/specs/2026-10-27-agent-triggers-design.md)
+# ---- triggers: every kind
 
 
 class TriggerIn(Schema):

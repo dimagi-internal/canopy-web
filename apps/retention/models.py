@@ -3,7 +3,7 @@
 A `RetentionRule` says "content matching these filters is dropped after N
 days". `RetentionSweep` records each run: counts only, never content. The
 resolution (which rule governs an item) is `policy.py`; the purge is
-`services.py`. Spec: docs/superpowers/specs/2026-10-05-content-retention-design.md.
+`services.py`.
 """
 from __future__ import annotations
 

@@ -6,9 +6,7 @@ only — and back when `auto_join_workspaces` still existed, it handed out
 endpoint (that mechanism is gone as of the same design's self-join phase —
 see `apps.workspaces.services.join_workspace` — but `editor` is still the
 role a self-join grants, so it remains the role this file's tests exercise).
-The credential/vault writers had no role check at all. See
-`docs/superpowers/specs/2026-09-12-agent-instances-and-the-acl-design.md`,
-whose Phase 0 this implements.
+The credential/vault writers had no role check at all.
 
 Per-endpoint coverage would be one test per line; these pin the TIERS instead:
 - `_agent_for_write` (editor/owner) — reshaping the agent

@@ -8,7 +8,6 @@ lineage that cannot be dropped or shed, a conversation started from a sensitive
 one being sensitive itself, one sealing decision for writers and readers, a
 refused turn's prompt, forced retention down a chain, and drafts.
 
-Spec: docs/superpowers/specs/2026-10-22-sensitive-data-agents-design.md §3–§5.
 """
 from __future__ import annotations
 

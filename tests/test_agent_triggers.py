@@ -1,4 +1,4 @@
-"""Agent triggers — docs/superpowers/specs/2026-10-27-agent-triggers-design.md.
+"""Agent triggers.
 
 A trigger starts a turn on its agent with the authority of the person who set it
 up, never more. These pin:

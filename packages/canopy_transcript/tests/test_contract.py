@@ -85,8 +85,8 @@ def _claude_edge_cases() -> list[dict]:
 DURABLE_PRODUCERS = [
     pytest.param(_claude_recorded, id="claude-code-jsonl-recorded"),
     pytest.param(_claude_edge_cases, id="claude-code-jsonl-edge-cases"),
-    # THE HOOK FOR THE NEXT CLI. Codex's mapper (`canopy_transcript.codex_rows`, spec
-    # docs/superpowers/specs/2026-10-26-multi-cli-agents-design.md §5) replaces this
+    # THE HOOK FOR THE NEXT CLI. Codex's mapper (`canopy_transcript.codex_rows`)
+    # replaces this
     # skip with a callable returning its rows for a recorded `thread/items/list`
     # fixture, and must pass every test below unchanged.
     pytest.param(None, id="codex-app-server-items",

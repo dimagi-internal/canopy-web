@@ -1,6 +1,6 @@
 """/ide close review: an agent proposes sessions to close, a person confirms.
 
-Spec: docs/superpowers/specs/2026-10-16-ide-close-review-design.md. The MCP
+The MCP
 tools (`apps/mcp/tools/close_review.py`) are thin; this module is the rule.
 
 **The agent never closes.** `proposal_rows` only reads. `close` runs only from

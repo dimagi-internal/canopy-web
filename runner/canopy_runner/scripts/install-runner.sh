@@ -22,8 +22,7 @@
 # checkout silently changed the code it ran. Building from `git archive <ref>`
 # into a temp dir means a dirty or branch-switched working tree cannot be
 # installed by accident — installing a branch stays possible, but it is an act
-# rather than a slip. See
-# docs/superpowers/specs/2026-07-28-runner-as-installed-package-design.md.
+# rather than a slip.
 #
 # Building WHEELS (rather than installing the source tree) also sidesteps
 # [tool.uv.sources], which marks the two in-repo path deps `editable = true`.

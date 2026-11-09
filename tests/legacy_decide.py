@@ -1,6 +1,6 @@
 """A frozen copy of `access.decide`, `decide_for_turn` and `Decision` as they were when they were deleted.
 
-`docs/superpowers/specs/2026-11-05-turn-context-design.md`: this project changes no one's access, so the
+This project changes no one's access, so the
 resolver that replaced them is held equal to them, case by case, in `tests/test_turn_context_equivalence.py`.
 That test first ran against the real functions, in the commit before they were deleted; this is the same
 code, moved here unchanged.

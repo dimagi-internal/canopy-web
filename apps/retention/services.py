@@ -3,7 +3,6 @@
 `sweep(apply=False)` is a dry run that only counts. `sweep(apply=True)`
 deletes. `maybe_sweep()` is the off-request clock's entry point, and does nothing unless
 `CANOPY_RETENTION_ENFORCE` is on. What each kind drops, and what it keeps, is
-in the spec (docs/superpowers/specs/2026-10-05-content-retention-design.md);
 the short version:
 
 - a turn keeps its row and loses prompt, result note, report summary, ledger,

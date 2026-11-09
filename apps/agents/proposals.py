@@ -1,6 +1,5 @@
 """Proposed projects — a project an agent puts to people, and what they do with it.
 
-Spec: `docs/superpowers/specs/2026-10-16-work-group-huddles-design.md` (layer 1).
 Nothing here is huddle code: a huddle's survivors land here, and so does a
 project an agent proposes from a chat or its own turn.
 
@@ -20,7 +19,7 @@ A proposal is ordinary rows, so the rest of canopy reads it without knowing:
 
 The three kinds of task are told apart by `origin_ref.kind`, never by title.
 
-A PROPOSED TASK (spec 2026-10-17-project-check-ins-design.md §3) is the same
+A PROPOSED TASK is the same
 idea one level down — what a project's check-in produces: a `suggested` task in
 the project (`origin_ref.kind == "checkin_proposal"`), its plan steps as child
 tasks, a linked task on each partner's board, and backings on the task. Start

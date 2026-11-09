@@ -1,6 +1,6 @@
 """`Turn.resolved_context`: writing down what a turn ran as.
 
-Design: `docs/superpowers/specs/2026-11-05-turn-context-design.md` § 5. Written at each claim, where a lapsed lease's
+Written at each claim, where a lapsed lease's
 re-claim overwrites it so it holds the run that last happened, when a direct session opens, and when a turn is refused
 or rejected before it runs.
 

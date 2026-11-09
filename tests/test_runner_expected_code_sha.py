@@ -5,7 +5,6 @@ A laptop executes `runner/canopy_runner/canopy_runner`; a cloud box executes
 runner would mark every cloud box permanently stale — noise on exactly the rows
 the alert was extended to cover.
 
-See docs/superpowers/specs/2026-07-30-cloud-runner-auto-update-design.md.
 """
 from __future__ import annotations
 

@@ -38,8 +38,7 @@ class GitHubConnection(models.Model):
     refresh and invalidates the old one, so exactly one process may refresh a
     given row — canopy-web, serialized on this row. That is why a runner can
     never hold this credential: two refreshers race and lock each other out. A
-    runner that needs GitHub gets an installation token instead (see
-    `docs/superpowers/specs/2026-09-12-github-backed-agent-creation-design.md`).
+    runner that needs GitHub gets an installation token instead.
 
     SCOPE IS THE INSTALLATION'S, NOT THIS ROW'S. This row records that a person
     authorized canopy; which repositories that reaches is a separate, explicit

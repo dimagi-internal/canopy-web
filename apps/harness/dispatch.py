@@ -5,7 +5,6 @@
 `{agent_slug, prompt, origin}`, and Turn are three spellings of one payload.
 TurnSpec is that payload, named once.
 
-See docs/superpowers/specs/2026-07-15-item-and-turn-design.md.
 """
 from __future__ import annotations
 

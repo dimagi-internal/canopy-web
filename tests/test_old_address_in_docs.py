@@ -10,8 +10,7 @@ This checks the markdown a person or an agent reads for instructions. It allows
 a line that names BOTH addresses — that line is describing the move (CLAUDE.md's
 *Deployment* note does). Code that deliberately handles the old address
 (``apps/common/legacy_prefix.py``, ``CANOPY_FORMER_BASE_URLS``, the tests that
-assert old-address routing) is not markdown and is not checked. Recorded history
-(archived and dated plans/specs) is left as written.
+assert old-address routing) is not markdown and is not checked.
 Pure stdlib; no Django setup.
 """
 from __future__ import annotations
@@ -25,15 +24,12 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 OLD = re.compile(r"labs\.connect\.dimagi\.com/canopy(?![-\w])")
 NEW = "canopy.dimagi.com"
 
-# Dated records of what was planned or decided at the time — not instructions.
-HISTORY = ("docs/archive/", "docs/superpowers/")
-
 
 def _markdown_files() -> list[str]:
     out = subprocess.run(
         ["git", "ls-files", "*.md"], cwd=ROOT, capture_output=True, text=True, check=True,
     ).stdout
-    return [p for p in out.splitlines() if not p.startswith(HISTORY)]
+    return out.splitlines()
 
 
 def test_no_doc_links_the_old_address():

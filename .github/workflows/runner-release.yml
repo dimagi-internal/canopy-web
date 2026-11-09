@@ -5,8 +5,7 @@ name: Runner release
 # uploads them to s3://<attachments bucket>/runner-releases/<runner sha>/ with
 # manifest.json written LAST. canopy-web serves the one whose sha its deployed image
 # names (RUNNER_CODE_SHA), so a release is inert until a deploy points at it.
-# Design: docs/superpowers/specs/2026-10-19-runner-installers-design.md. Local
-# builds and the secrets below: runner/packaging/README.md.
+# Local builds and the secrets below: runner/packaging/README.md.
 #
 # The release is keyed by the RUNNER sha — the last commit touching the runner's
 # code paths, computed exactly as deploy-labs.yml computes RUNNER_CODE_SHA (from

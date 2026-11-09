@@ -3,7 +3,6 @@ the local CONNECT proxy, to an allowlist of hosts; root's CANOPY-EGRESS chain re
 the rest, DNS included. A runner setting of its own — any box may lock — which
 sensitive-data mode requires.
 
-docs/superpowers/specs/2026-10-22-sensitive-data-agents-design.md §1.
 """
 from __future__ import annotations
 

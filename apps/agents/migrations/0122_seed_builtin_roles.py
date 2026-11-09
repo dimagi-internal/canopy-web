@@ -1,6 +1,6 @@
 """Seed the three built-in agent roles on every root workspace.
 
-`AgentRole` rows (`docs/superpowers/specs/2026-11-04-configurable-roles-design.md`): `read_only`,
+`AgentRole` rows: `read_only`,
 `read_write` and `editor` with the permissions they have always had, closed under the dependency
 rule. A child workspace sees them through its chain. It only inserts into the new table; the lines
 are linked to these rows by the next migration, which updates rows other tables reference and so

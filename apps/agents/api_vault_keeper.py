@@ -1,5 +1,5 @@
 """/api/harness/runners/{runner_id}/vault-keeper — the keeper's two calls
-(`credentials/vault_keeper.py`; spec 2026-10-22-vault-access-follows-canopy-access-design.md).
+(`credentials/vault_keeper.py`).
 
 Under the runner's own path, so the box's runner token reaches them
 (`apps/harness/runner_auth.py`), and in the agents app because what they answer is

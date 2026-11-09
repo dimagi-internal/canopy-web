@@ -19,8 +19,7 @@ work, and this package is that work, in one place:
 It exists for the reason `canopy_cron` exists: the laptop runner and the cloud
 runner had independently written the *same functions* (byte-identical project
 dir encoding, two byte-chunkers, two block extractors), and one of them was
-quietly better than the other. See
-`docs/superpowers/specs/2026-07-27-runner-convergence-and-live-observability-design.md`.
+quietly better than the other.
 
 **Django-free and dependency-free by design.** The server imports it for
 `BLOCK_STRIDE` (which it previously documented in a comment rather than

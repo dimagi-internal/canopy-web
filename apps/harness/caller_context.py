@@ -5,8 +5,7 @@ Its vocabulary — `relationship` (owner | admin | member | contact | system),
 in `docs/architecture/access.md`; the decision behind `profile` and `granted_by`
 is `apps/agents/turn_context.resolve_turn_context`.
 
-Phase 1b of `docs/superpowers/specs/2026-09-18-who-is-asking-initiator-identity-
-and-access-design.md` (§5). Phase 1a RECORDED the initiator on every turn; this
+The initiator is RECORDED on every turn (`apps/harness/initiator.py`); this
 DELIVERS it, so the agent answering an email knows who it is answering and how
 sure canopy is, instead of re-deriving that from a `From:` header anyone can
 write.

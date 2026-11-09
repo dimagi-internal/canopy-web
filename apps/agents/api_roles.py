@@ -1,7 +1,7 @@
 """The roles a workspace gives out, over HTTP: `/api/workspaces/{slug}/agent-roles`.
 
-A role is a named bundle of agent permissions an access-list line can hold
-(`docs/superpowers/specs/2026-11-04-configurable-roles-design.md`). Any member reads the roles visible to a
+A role is a named bundle of agent permissions an access-list line can hold.
+Any member reads the roles visible to a
 workspace (its own and those above). A workspace admin defines and edits the ones that cannot drive or
 change an agent; one that does (`write`, which `agent_edit` carries) is the workspace owner's call, as a
 default access line that drives every agent is. Every write is a settings change and takes a passkey

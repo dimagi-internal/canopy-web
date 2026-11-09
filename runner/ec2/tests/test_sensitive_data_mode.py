@@ -1,7 +1,7 @@
 """Sensitive-data mode (`RUNNER_DATA_MODE=sensitive_data`): the ZDR API key as the one
 credential, a locked profile on every turn, and nothing kept that a turn read.
 
-docs/superpowers/specs/2026-10-22-sensitive-data-agents-design.md §1. canopy counts a
+canopy counts a
 person's `sensitive_data` declaration only while the box reports this mode, so what
 the box does in it is the whole promise.
 """

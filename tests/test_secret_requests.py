@@ -1,4 +1,4 @@
-"""Give an agent a secret (spec 2026-10-19-give-an-agent-a-secret-design.md).
+"""Give an agent a secret.
 
 The agent asks for a declared secret; a person's browser seals the value to the
 agent's endorsed readers (`zks1`) and canopy-web stores ciphertext only. Every

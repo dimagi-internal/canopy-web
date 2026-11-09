@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-# A runner FLEET (spec docs/superpowers/specs/2026-10-24-runner-fleets-design.md):
+# A runner FLEET:
 # an EC2 Auto Scaling group of interchangeable canopy cloud runners, a warm pool of
 # stopped, already-bootstrapped instances beside it, and the grant that lets
 # canopy-web size THIS group and nothing else. canopy-web — not a CPU alarm —

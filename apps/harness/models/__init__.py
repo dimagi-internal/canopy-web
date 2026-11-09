@@ -2,8 +2,7 @@
 
 Framework tier. A Turn is the execution envelope for one unit of agent work;
 Runners are executors that dial out (heartbeat + claim); TurnEvents are the
-append-only ledger. See docs/superpowers/specs/2026-07-05-agent-execution-
-control-plane-design.md.
+append-only ledger.
 
 The models live in the submodules; this package re-exports every name so
 `from apps.harness.models import X` keeps working.

@@ -1,6 +1,6 @@
 """/ide close review — two tools and the View they share.
 
-Spec: docs/superpowers/specs/2026-10-16-ide-close-review-design.md. Hand-written
+Hand-written
 rather than routes because a tool that carries an MCP Apps View has no REST
 shape; the rule itself is `apps.canopy_sessions.close_review`.
 

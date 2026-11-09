@@ -1,6 +1,6 @@
 """What one turn really gets, by name and kind, never a value: `TurnContext.credentials`.
 
-Design: `docs/superpowers/specs/2026-11-05-turn-context-design.md` § 3.3, stage 3. `authority.py` is a
+`authority.py` is a
 static table by kind and can't say this alone: what a turn gets also depends on
 `turn_agent_tokens.refusal`, `delegations.github_refusal` (a review's `reads_for` gets no GitHub
 identity), `caller_tokens.is_caller_scoped` (an editor's whole-agent turn gets a read-only token that

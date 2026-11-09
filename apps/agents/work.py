@@ -2,8 +2,7 @@
 milestones, project updates and saved views.
 
 `services` keeps the task and project writers; this module holds what they
-share and the planning objects around them (design
-`docs/superpowers/specs/2026-10-24-workspace-tasks-and-projects-design.md`).
+share and the planning objects around them.
 """
 from __future__ import annotations
 

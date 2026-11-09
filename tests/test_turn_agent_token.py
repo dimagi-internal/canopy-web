@@ -1,6 +1,6 @@
 """A turn-scoped agent login: issued only to the runner holding the turn, dead after it.
 
-Spec: docs/superpowers/specs/2026-10-21-turn-scoped-agent-token-design.md. The token
+The token
 replaces the agent's stored, never-expiring `canopy-pat` for runner turns.
 """
 from __future__ import annotations

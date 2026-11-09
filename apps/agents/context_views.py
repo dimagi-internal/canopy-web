@@ -1,6 +1,6 @@
 """The Session Context and Turn Context as JSON: what the context routes serve and `Turn.resolved_context` holds.
 
-Design: `docs/superpowers/specs/2026-11-05-turn-context-design.md` § 5. An allowlist of named fields, built from
+An allowlist of named fields, built from
 the two read-models, neither of which holds the prompt, a transcript, the envelope's `person` block or a
 credential's value (a credential line is a name and a kind), so nothing here can carry them. Tool lists, paths and
 names are configuration, already readable to members. It only reads.

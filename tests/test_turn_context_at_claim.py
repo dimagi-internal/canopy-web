@@ -1,6 +1,6 @@
 """A queued turn runs on the rules as they are when it starts, like any other turn.
 
-Design: `docs/superpowers/specs/2026-11-05-turn-context-design.md` § 3.3 "Two moments" and § 12. The enqueue's
+The enqueue's
 answer is an early one (an immediate refusal, the preview); the claim puts the same question to the rule again
 (`turn_context.at_claim`), stamps `Turn.capability` with what it says and runs on that, or closes the turn as a
 refusal. One test per thing that can change while a turn waits, each through a real enqueue and a real claim.

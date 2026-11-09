@@ -35,7 +35,6 @@ the host-grant chain is in [`sdk/python/README.md` § Host grant contract v1](..
 - `Runner.workspace` (nullable, `PROTECT`) records where a box LIVES, not whom it works for —
   see "Runners and tenancy" below.
 
-Design record: `docs/superpowers/specs/2026-06-30-workspace-multi-tenancy-design.md`.
 
 ## One authorizer for workspace access (CI-enforced)
 
@@ -112,8 +111,6 @@ the rule, its claim/schedule parity test and the routing hint:
   (`apps/slack/commands.py`). Don't relax it to `UniqueConstraint(["workspace", "slug"])`.
   Because it is global, `POST /api/agents/` answers a non-member of an existing agent's
   workspace with 404, never 403 (`roles.md`).
-- Planned direction (shared definition, owned instance): see
-  `docs/superpowers/specs/2026-09-12-agent-instances-and-the-acl-design.md`.
 - **Moving an agent is one operation** (`apps/agents/move.py`, `POST /api/agents/{slug}/move`;
   the upsert's `workspace` goes through it too). Several agent-scoped tables carry their own
   `workspace` FK, so changing `Agent.workspace` alone strands the agent's history in the old

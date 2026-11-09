@@ -39,8 +39,7 @@ Parameters:
       Anthropic organisation with zero data retention), every turn runs under a
       locked permission profile, nothing a turn read is kept on the box, and the
       box reports the mode on every heartbeat so a person's `sensitive_data`
-      declaration is in force. See
-      docs/superpowers/specs/2026-10-22-sensitive-data-agents-design.md.
+      declaration is in force.
       Sensitive-data mode needs RunnerEgress=locked.
   RunnerEgress:
     Type: String

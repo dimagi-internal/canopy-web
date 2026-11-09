@@ -1,5 +1,5 @@
 """Whose authority a credential carries where it is read: the one table
-(`apps/agents/credentials/authority.py`, spec 2026-10-29-two-axes-three-credentials-design.md).
+(`apps/agents/credentials/authority.py`,).
 
 Pins the whole (placement, kind) table, and that a person's own direct turn is a direct
 read whoever they are: an agent admin or a runner owner is held to the same answer as

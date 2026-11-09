@@ -2,8 +2,7 @@
 
 A Host site's MCP server may attach a View (a `ui://` HTML resource) to a
 tool. canopy renders that View sandboxed in its chat, and the View's own calls go
-back to the site AS WHOEVER IS LOOKING AT IT. Design and owner decisions:
-`docs/superpowers/specs/2026-10-08-mcp-apps-host-design.md`. The standard is
+back to the site AS WHOEVER IS LOOKING AT IT. The standard is
 `specification/2026-01-26/apps.mdx` in `modelcontextprotocol/ext-apps`.
 
 This module is the pure half — no network, no request:

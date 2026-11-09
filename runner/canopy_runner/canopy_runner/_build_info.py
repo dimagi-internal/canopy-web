@@ -9,7 +9,6 @@ from git instead.
 SHA is deliberately NOT the repo HEAD: it is the last commit that touched
 `runner/canopy_runner/canopy_runner/`. HEAD moves on every canopy-web commit,
 so comparing it against anything would alert on an unrelated frontend change.
-See docs/superpowers/specs/2026-07-28-runner-as-installed-package-design.md.
 """
 from __future__ import annotations
 

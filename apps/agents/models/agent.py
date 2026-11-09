@@ -315,8 +315,7 @@ class AgentAdmin(models.Model):
 
 
 class AgentRole(models.Model):
-    """A named bundle of agent permissions an access-list line can give
-    (`docs/superpowers/specs/2026-11-04-configurable-roles-design.md`).
+    """A named bundle of agent permissions an access-list line can give.
 
     Defined on a workspace and usable by that workspace and every one below it; a key means one
     thing everywhere it is visible (the service refuses a clash along a chain). The permissions
@@ -760,8 +759,8 @@ class SenderTrust(models.Model):
 class EngagementEvent(models.Model):
     """One thing a person (or an agent) did to a project or a huddle — append-only.
 
-    It exists to LEARN what works in multi-player mode (spec
-    `2026-10-16-work-group-huddles-design.md` §7): does anyone open a proposed
+    It exists to LEARN what works in multi-player mode:
+   does anyone open a proposed
     project, back it, comment on it, decide it — and through which surface. Ada
     reads `GET /api/engagement/summary` weekly and tells Jonathan in plain words
     what people actually do. So the table records acts, never content: `meta` is

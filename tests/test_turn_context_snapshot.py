@@ -1,5 +1,5 @@
 """Stage 2 of the Turn Context: what a turn ran as is written down, the context routes serve it, and the
-envelope reads it. Design: `docs/superpowers/specs/2026-11-05-turn-context-design.md` § 5."""
+envelope reads it."""
 from __future__ import annotations
 
 import contextlib

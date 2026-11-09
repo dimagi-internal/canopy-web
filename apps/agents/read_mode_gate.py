@@ -1,6 +1,6 @@
 """The read-mode gate: which agents would be WIDENED by resolving `read` without a published read mode.
 
-Spec 2026-11-03-agent-read-mode-and-doors-design.md, "Gate, at deploy time". Before read mode
+Before read mode
 resolved on its own, a `read_only` line (or `use:<READ_MODE_STAMP>` / `use:read`) on an agent that published no
 read mode was inert. Now it lets that person in. This lists every such agent, with the lines, so a
 person decides for each (keep, remove, or publish a read mode) before the change is deployed. Run it as

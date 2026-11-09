@@ -1,4 +1,4 @@
-"""Read mode resolves on its own (spec 2026-11-03-agent-read-mode-and-doors-design.md, Phase 1 change 3).
+"""Read mode resolves on its own.
 
 A person whose lines give `read` and not `write` is answered in read mode on EVERY agent: the agent's
 own published read mode when it has one (an override, the whole of it, stamped `READ_MODE_STAMP`), else canopy's default

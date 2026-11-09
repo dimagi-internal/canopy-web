@@ -1,7 +1,7 @@
 """The catalog of agent roles a workspace can give: rows (`AgentRole`), seeded and editable.
 
-A role is defined on a workspace and visible to it and every workspace below
-(`docs/superpowers/specs/2026-11-04-configurable-roles-design.md`). This module is the only thing
+A role is defined on a workspace and visible to it and every workspace below.
+This module is the only thing
 that reads the catalog: the chain a workspace sees, seeding the built-ins, finding a role by key.
 What a LINE grants is read from its role's row with the line (`AgentGrant.permissions`); nothing
 here is on the decision path and nothing is cached across requests.

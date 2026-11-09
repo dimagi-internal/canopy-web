@@ -253,8 +253,7 @@ What `pair` automates, for reference or a non-macOS box:
    This is also the **update** command: re-run it after any runner change. It
    installs a SNAPSHOT of `origin/main` into its own tool venv, so the daemon's
    code cannot be moved by a `git checkout` in your working tree (which is what
-   used to happen — see
-   `docs/superpowers/specs/2026-07-28-runner-as-installed-package-design.md`).
+   used to happen).
    Pass `--ref <branch>` to install something else deliberately, or
    `--no-launchd` to install without touching the running daemon.
 

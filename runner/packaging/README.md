@@ -4,8 +4,7 @@ The downloadable Canopy Runner: a DMG per Mac architecture and a per-user
 installer for Windows. Each bundles its whole runtime (Python, the runner, Node,
 the CDP sidecar's deps, the ACP adapter, and on macOS the menu-bar app and
 `canopy-device-key`), so a person with no developer tools can install a runner and
-pair it from the browser. Design and contracts:
-`docs/superpowers/specs/2026-10-19-runner-installers-design.md`. The developer path
+pair it from the browser. The developer path
 (`runner/canopy_runner/scripts/install-runner.sh` / `.ps1`) is separate and unchanged.
 
 | File | What it does |

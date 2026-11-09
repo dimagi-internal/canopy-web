@@ -1,5 +1,4 @@
-"""A cloud box reads its Claude credentials from its vault, with its own device key
-(canopy-web spec 2026-10-23-runner-claude-credentials-in-the-vault-design.md).
+"""A cloud box reads its Claude credentials from its vault, with its own device key.
 
 The bundle (`GET …/credential`) names, per token or API key, the vault secret that
 holds its value (`vault_secret`) — and holds no value itself. The box opens those with

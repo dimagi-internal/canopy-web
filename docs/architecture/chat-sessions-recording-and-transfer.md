@@ -48,7 +48,6 @@ How a session is recorded and kept (including coaching uploads and a person dele
   the session report ends a session's listing, not its recoverability — reset
   (`POST /api/canopy-sessions/{id}/reset`, `POST /api/canopy-sessions/reset`, see
   `api-chat-and-sessions.md`) is safe for that reason.
-- Spec: `docs/superpowers/specs/2026-07-24-persist-runner-session-transcript-design.md`.
 
 ### Coaching: the person's own runner uploads their sessions in full
 

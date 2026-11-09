@@ -164,8 +164,7 @@ def test_list_is_tenant_scoped_and_hides_offline_runners():
 
 
 def test_list_no_longer_auto_joins_a_domain_matching_user_with_no_membership_row():
-    """Auto-join is gone (2026-09-12: self-join replaces it — see
-    docs/superpowers/specs/2026-09-12-agent-instances-and-the-acl-design.md).
+    """Auto-join is gone (2026-09-12: self-join replaces it).
     A @dimagi.com user who has never explicitly joined `dimagi` (via
     `POST /api/workspaces/dimagi/join`) has NO WorkspaceMembership row, and
     must see an EMPTY list — not the workspace's sessions — even though the

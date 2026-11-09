@@ -7,8 +7,7 @@ neither failed over to its next login nor sent the auth-required alert, and the
 probe called the token `unknown`. The stream says it plainly, though: the
 assistant message carries `error: "authentication_failed"` and the result
 `api_error_status: 401`. The event shapes below are the ones the CLI emitted in
-that live reproduction (docs/superpowers/specs/2026-10-26-claude-code-audit.md,
-finding 1).
+that live reproduction.
 """
 from __future__ import annotations
 

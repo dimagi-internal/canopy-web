@@ -3,7 +3,6 @@
 The runner that holds a turn asks, with its OWN runner token, for a login as the
 turn's agent; it puts it where that turn's session acts as the agent, in place of
 the stored `canopy-pat`. Who gets one and when it dies: `turn_agent_tokens`.
-Spec: docs/superpowers/specs/2026-10-21-turn-scoped-agent-token-design.md.
 """
 from __future__ import annotations
 

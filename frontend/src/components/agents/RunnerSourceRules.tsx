@@ -12,7 +12,7 @@ export type { AgentRunnerRuleOut, RuleTurnMode }
 // on either of mine, never cloud" cannot be said with a single runner — naming the
 // logged-out account parks the queue roughly half the time, and falling through
 // hands the work to whatever sits next in the default order (on a cloud-default
-// agent, cloud). Spec: 2026-09-05-actor-aware-runner-routing-design.md.
+// agent, cloud).
 //
 // `actor: ''` means "any actor" — bit-for-bit the pre-actor source rule — so an
 // existing rule is simply a rule of length one with an empty actor, and renders

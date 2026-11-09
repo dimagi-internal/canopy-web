@@ -156,7 +156,7 @@ PAIRING_APPROVAL_GRACE = dt.timedelta(minutes=10)
 class RunnerFleet(models.Model):
     """A set of interchangeable cloud runners: the instances of ONE EC2 Auto Scaling
     group, which canopy-web grows and shrinks with the work waiting for it
-    (`apps/harness/fleets.py`; spec 2026-10-24-runner-fleets-design.md).
+    (`apps/harness/fleets.py`).
 
     A person approves the fleet ONCE, from a browser behind a passkey (its
     `RunnerInvitation`); no token can. After that an instance joins on its own when

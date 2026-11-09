@@ -1,6 +1,6 @@
 """What the Turn Context promises beyond answering as `decide` did: `tests/test_turn_context_equivalence.py`
 holds that. Here: it writes nothing, `None` never means the whole agent, each stage's own shape, and each
-send block against the route that refuses it. Design: `docs/superpowers/specs/2026-11-05-turn-context-design.md`.
+send block against the route that refuses it.
 """
 from __future__ import annotations
 

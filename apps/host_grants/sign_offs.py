@@ -1,5 +1,5 @@
 """Site sign-offs: a host site asks a person to approve ONE action with their
-passkey (spec `docs/superpowers/specs/2026-10-27-site-sign-offs-design.md`).
+passkey.
 
 The site signs its request with its own key, the one canopy already verifies its
 visitor assertions and site agents requests with. canopy decides who may approve

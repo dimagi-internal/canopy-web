@@ -1,5 +1,4 @@
-"""A cloud runner reading its own Claude credentials out of its vault (spec
-2026-10-23-runner-claude-credentials-in-the-vault-design.md).
+"""A cloud runner reading its own Claude credentials out of its vault.
 
 `GET /api/harness/runners/{id}/credential/resolve` answers with CIPHERTEXT only the
 box's own device key opens: each vault serving the runner

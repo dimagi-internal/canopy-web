@@ -5,7 +5,7 @@ import { usePageState } from '@/widget/usePageState'
 import { listTitle } from '@/components/chat/privateConversation'
 
 /**
- * /ide's half of the close review (spec 2026-10-16-ide-close-review-design.md).
+ * /ide's half of the close review.
  *
  * The agent in the panel reads the sessions on screen through a page action
  * this tab answers — as YOU, with your own session — rather than a server tool:

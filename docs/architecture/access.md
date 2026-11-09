@@ -5,8 +5,6 @@ defined here. Code docstrings point at this page instead of re-defining terms
 (`apps/agents/turn_context.py`, `session_context.py`, `refusals.py`, `grants.py`, `roles.py`,
 `published_profiles.py`, `profile_settings.py`, `apps/harness/caller_context.py`, `apps/harness/turn_mode.py`,
 `apps/workspaces/permissions.py`). Reuse existing words, one meaning per word, no new terms.
-Designs: `docs/superpowers/specs/2026-11-05-turn-context-design.md` (the Turn Context) and
-`docs/superpowers/specs/2026-10-30-agent-roles-and-access-list-design.md` (roles and the access list).
 
 There are two ladders, and they are different questions:
 
@@ -243,8 +241,7 @@ change. The domains themselves are server-set, never client input.
 A **trigger** is an agent's own: something that starts a turn on that agent, with the
 authority of the person who set it up — never more. It is not a member and holds no
 standing of its own. Kinds (`AgentSchedule.kind`, the model keeps its first kind's
-name; `apps/harness/triggers.py`;
-`docs/superpowers/specs/2026-10-27-agent-triggers-design.md`):
+name; `apps/harness/triggers.py`):
 
 * **`cron`** — a schedule: a cadence or one instant (`runner-flags-and-schedules.md` § Scheduled turns).
 * **`inbound_mail`** — aligned mail from a bound sender, such as AWS CloudWatch alarm

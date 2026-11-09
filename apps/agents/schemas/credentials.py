@@ -379,8 +379,7 @@ class AgentCredentialsResolveOut(StrictModel):
     #: The Agent pk as a string — bound into every AAD and HKDF info ("" when not zk).
     agent_id: str = ""
     #: The workspace vaults layered UNDER the agent's own values, in order (a later
-    #: layer wins a name clash; `values` above win over all of them) — spec
-    #: 2026-10-22-vault-access-follows-canopy-access-design.md §4. Each is `zk1:`
+    #: layer wins a name clash; `values` above win over all of them). Each is `zk1:`
     #: ciphertext under that vault's key, bound to its `binding_id`, with this
     #: device's copy of the key — or `wrap: null` and no values when this device may
     #: not open it. Only with a device proof.

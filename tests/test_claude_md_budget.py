@@ -2,8 +2,8 @@
 
 It holds what an agent needs before it knows what it is working on — how to
 run, test and ship, and the invariants nothing may break — each as a rule plus
-a pointer. Detail lives in docs/architecture/<topic>.md; history lives in the
-PR description. Claude Code warns once a CLAUDE.md passes 150k characters.
+a pointer. Detail lives in docs/architecture/<topic>.md and only what the code
+cannot say; history lives in the PR description. Claude Code warns once a CLAUDE.md passes 150k characters.
 Pure stdlib; no Django setup.
 """
 from __future__ import annotations
@@ -52,10 +52,13 @@ def test_topic_docs_stay_readable_whole():
         if len(p.read_text(encoding="utf-8")) > TOPIC_DOC_CEILING and p.name not in TOPIC_DOC_ALLOWLIST
     }
     assert not over, (
-        "split by subject and index it; a topic doc nobody can read whole is not kept true. "
+        "A topic doc over the limit is a smoke alarm, not a target. Before splitting it, read it and check whether it "
+        "restates what the code already says (route lists, field lists, defaults, enum values, UI copy: replace each "
+        "with a one-line pointer to where the code states it) or keeps history (dates, PR numbers, 'used to', "
+        "'replaced': delete it, git has it). Only a doc that is still too big after that is split by subject. "
         f"Over {TOPIC_DOC_CEILING:,} chars: "
         + ", ".join(f"{name} ({size:,})" for name, size in over.items())
-        + ". Move whole sections into docs/architecture/<parent>-<subject>.md (verbatim, one subject per file), "
+        + ". If you split: move whole sections into docs/architecture/<parent>-<subject>.md (verbatim, one subject per file), "
         "list the new file in the parent's index and CLAUDE.md's topic index, then fix every `file.md#anchor` "
         "and `file.md § Heading` reference (tests/test_docs_links_resolve.py finds them)."
     )

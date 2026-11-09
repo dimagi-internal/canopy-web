@@ -1,7 +1,6 @@
 """The fleet brain (canopy#804): what agents know about a person, and who read it.
 
-Design: hal `docs/proposals/2026-10-07-caller-context-brain.md` §1–3, approved by
-Jonathan 2026-10-07 with these calls:
+The design calls:
 
 * Q1 — a person's private conversation with an agent may feed FACTS other agents
   read, work-context kinds only. Raw conversations stay exactly as private as

@@ -1,6 +1,5 @@
 """Auto-update: should this box install a newer runner right now?
 
-Spec: docs/superpowers/specs/2026-07-28-runner-as-installed-package-design.md
 """
 import json
 

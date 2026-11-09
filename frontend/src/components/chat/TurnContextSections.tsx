@@ -28,7 +28,7 @@ import {
 } from "./turnContextWords";
 
 /**
- * The two contexts of the Turn Context design (docs/superpowers/specs/2026-11-05-turn-context-design.md § 5),
+ * The two contexts of the Turn Context design,
  * drawn from what `GET /context` and `GET /turns/{id}/context` serve and nothing else: neither route ever
  * carries a prompt, what canopy knows about a person, or a secret's value, so nothing here can show one.
  */

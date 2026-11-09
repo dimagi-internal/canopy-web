@@ -1,6 +1,6 @@
 # Vaults: who may open an agent's secrets
 
-Design: `docs/superpowers/specs/2026-10-22-vault-access-follows-canopy-access-design.md`. Byte formats: `docs/vault/zk-v1/zk_v1_reference.py`.
+Byte formats: `docs/vault/zk-v1/zk_v1_reference.py`.
 
 ## A vault and its members
 
@@ -99,7 +99,7 @@ A workspace may keep any number of vaults (`Vault`, `kind=workspace`), always ze
 
 ## A runner's own vault
 
-A workspace vault can also serve one **cloud runner** (`VaultAttachment.runner`): it holds that box's long-lived Claude tokens and API keys (spec `docs/superpowers/specs/2026-10-23-runner-claude-credentials-in-the-vault-design.md`). A secret's name comes from its credential-list entry: `claude-token:<key>`, `anthropic-api-key:<key>` (`RunnerLogin.vault_secret_name`).
+A workspace vault can also serve one **cloud runner** (`VaultAttachment.runner`): it holds that box's long-lived Claude tokens and API keys. A secret's name comes from its credential-list entry: `claude-token:<key>`, `anthropic-api-key:<key>` (`RunnerLogin.vault_secret_name`).
 
 - **Making one:** `POST /api/harness/runners/{id}/vault` (runner admin; browser + step-up) gives the runner its OWN vault, `<runner> Claude credentials`, its owner a direct `manage` member, attached to it (`workspace_vaults.create_for_runner`). Sharing is an explicit attach: `POST /api/vaults/{id}/attachments` `{runner}`, by someone who manages the vault and administers the runner.
 - **Isolation boundary** (`workspace_vaults.isolation_boundary`): every runner a vault serves has the same owner, serving the same thing (the agent of a runner that runs one agent, the root of a runner that serves a tree, or — neither declared — the trees it is enrolled in) and the same sensitive-data standing. `attach` refuses another (422 `vault_crosses_isolation`); a box whose boundary changes after attaching stops being served (`serving_runners`, measured against the FIRST attached runner): its copy of the key is handed out to nobody until it is detached or put back. Only live cloud runners with an owner attach.

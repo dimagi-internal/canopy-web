@@ -68,7 +68,7 @@ export async function rotateZk(slug: string, body: { new_kv: number; wraps: ZkWr
     'Could not rotate the vault key')
 }
 
-// ---- give an agent a secret (spec 2026-10-19-give-an-agent-a-secret-design.md) ----
+// ---- give an agent a secret ----
 
 export type ZkRecipientsOut = Schemas['ZkRecipientsOut']
 export type ZkRecipientOut = Schemas['ZkRecipientOut']
@@ -106,7 +106,7 @@ export async function fulfilSecretRequest(slug: string, id: string, body: { kv: 
     params: { path: { slug, request_id: id } }, body }), 'Could not store the value')
 }
 
-// ---- vault membership (spec 2026-10-22-vault-access-follows-canopy-access-design.md) ----
+// ---- vault membership ----
 
 export type VaultMembersOut = Schemas['VaultMembersOut']
 export type VaultMemberOut = Schemas['VaultMemberOut']

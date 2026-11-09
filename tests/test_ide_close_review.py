@@ -1,6 +1,6 @@
 """/ide close review, through canopy's own MCP as a host-grant visitor.
 
-Spec: docs/superpowers/specs/2026-10-16-ide-close-review-design.md. The same
+The same
 in-process round trip `test_self_host.py` drives — the widget mints on /ide,
 canopy grants itself `sessions:close`, and the calls go through the real DPoP
 gate into canopy's own MCP as the visitor.

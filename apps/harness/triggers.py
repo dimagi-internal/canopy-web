@@ -3,7 +3,6 @@
 A trigger is an `AgentSchedule` row (the model keeps its historical name; see its
 docstring): `cron` fires on a cadence (`schedule_turns`), `inbound_mail` fires when
 aligned mail from its bound sender reaches the agent (`channels/email.arrive`).
-docs/superpowers/specs/2026-10-27-agent-triggers-design.md.
 
 **Authority is the creator's, never more.** A trigger has no standing of its own:
 its turn is a SYSTEM turn accountable to the person who set it up, so the access

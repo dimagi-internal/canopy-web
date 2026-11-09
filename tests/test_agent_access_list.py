@@ -1,6 +1,6 @@
 """The agent role ladder and the access list — the foundation (nothing reads it yet).
 
-`docs/superpowers/specs/2026-10-30-agent-roles-and-access-list-design.md`: a role is what a
+A role is what a
 person may do with ONE agent, and the access list says who has which role as `(who, role)`
 lines, where `who` can be a group. The strongest matching line wins.
 """

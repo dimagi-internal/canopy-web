@@ -1,6 +1,6 @@
 """Agent permissions and the named roles made of them — the one table, and the only way to it.
 
-Defined in `docs/superpowers/specs/2026-11-02-agent-permissions-and-roles-design.md`. A
+A
 **permission** is one thing a person may do with ONE agent; a **role** is a named bundle of them.
 This module names every permission and every role, so the rest of the code asks
 `allows(role, WRITE)` / `holds(permissions, WRITE)` and never spells a role set of its own.

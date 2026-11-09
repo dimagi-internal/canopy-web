@@ -7,7 +7,7 @@
 
   Note what is NOT here: PYTHONPATH. The daemon runs an INSTALLED console script
   from its own tool venv, so there is no source tree to point at — which is the
-  whole point (see docs/superpowers/specs/2026-07-28-runner-as-installed-package-design.md).
+  whole point.
   The previous committed version of this file listed one source directory while
   the runner imports three packages, so it could not actually start the runner;
   the live copy had been hand-patched. A generated file cannot drift that way.

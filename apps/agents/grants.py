@@ -1,9 +1,7 @@
 """The access list: who has which role on an agent.
 
 One list per agent says `(who, what)` — see
-`docs/superpowers/specs/2026-10-30-agent-roles-and-access-list-design.md` for the
-vocabulary and `docs/superpowers/specs/2026-11-02-agent-permissions-and-roles-design.md` for
-roles and permissions. `who` is a person, everyone in a workspace (optionally "at least editor"
+`apps/agents/roles.py` for roles and permissions. `who` is a person, everyone in a workspace (optionally "at least editor"
 there, optionally also every workspace below it), or anyone whose address is at a domain. `what`
 is ONE role (`roles.py`) or, rarely, ONE named host site. A person's permissions are the union
 of the lines that name them; this module is the only thing that reads the lines.

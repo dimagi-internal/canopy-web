@@ -1,7 +1,7 @@
 """Agent roles become permission bundles: viewer -> read_only, user -> capability lines.
 
-The ladder `owner > admin > editor > user > viewer` is replaced by named bundles of permissions
-(`docs/superpowers/specs/2026-11-02-agent-permissions-and-roles-design.md`). What an old line meant
+The ladder `owner > admin > editor > user > viewer` is replaced by named bundles of permissions.
+What an old line meant
 is kept, not guessed:
 
     editor lines        -> editor (unchanged)

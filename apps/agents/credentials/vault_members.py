@@ -1,4 +1,4 @@
-"""Who may open a vault: its members (spec 2026-10-22-vault-access-follows-canopy-access-design.md).
+"""Who may open a vault: its members.
 
 A vault's membership is first-class and is the union of two sources, each kept
 with the member so a page can always say WHY someone can open it:

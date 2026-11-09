@@ -1330,4 +1330,4 @@ AgentProjectDetailOut.model_rebuild()
 AgentDetailOut.model_rebuild()
 
 
-# ---- The access list (docs/superpowers/specs/2026-10-30-agent-roles-and-access-list-design.md) ----
+# ---- The access list ----

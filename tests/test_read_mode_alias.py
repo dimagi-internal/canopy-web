@@ -1,6 +1,6 @@
 """`read` and `READ_MODE_STAMP` are one read mode, and `published_profiles.is_read_mode` is the only place that says so.
 
-Spec 2026-11-03-agent-read-mode-and-doors-design.md, Phase 1 step 2: an alias only. Read mode still
+: an alias only. Read mode still
 resolves only through a published profile here; stored data (stamps, rules, lines) behaves as before.
 """
 from __future__ import annotations

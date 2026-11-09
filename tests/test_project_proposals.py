@@ -1,5 +1,4 @@
-"""Proposed projects — multi-player mode for any project an agent proposes
-(spec 2026-10-16-work-group-huddles-design.md, layers 1 and 2).
+"""Proposed projects — multi-player mode for any project an agent proposes.
 
 Pinned here:
 

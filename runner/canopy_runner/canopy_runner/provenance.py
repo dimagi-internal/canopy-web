@@ -9,7 +9,6 @@ field to "" — so the #306 wrong-branch banner would clear itself for a tick
 whenever a lease-renewal or `--drain-one` heartbeat landed between two loop
 ticks. One stamping point removes the whole class.
 
-See docs/superpowers/specs/2026-07-28-runner-as-installed-package-design.md.
 """
 from __future__ import annotations
 

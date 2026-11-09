@@ -41,8 +41,7 @@ may refresh it.
 
 The open question that leaves is whose behalf a given piece of agent work is
 on — obvious for a chat session, `created_by` for a schedule, unclear for
-inbound mail. See
-`docs/superpowers/specs/2026-09-12-github-backed-agent-creation-design.md`.
+inbound mail.
 """
 from __future__ import annotations
 

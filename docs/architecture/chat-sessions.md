@@ -81,7 +81,6 @@ close).
   it onto the turn (`send.send_message(origin_ref=...)`, merged under the
   harness's own keys): a signal hands a receiver only the turn. Worked example:
   Slack's slash-command anchor, `apps/slack/status.py::adoption`.
-- Spec: `docs/superpowers/specs/2026-09-20-unified-turn-status-design.md`.
 
 ## The rest of chat sessions, by subject
 
@@ -181,7 +180,6 @@ close).
   send live; transcript-sourced sessions get this from the streamed rows.
 - `onTakeOver` / `takeOverDraft` are deprecated no-ops in `canopy-ui`'s public API,
   kept because ace-web still passes them.
-- Spec: `docs/superpowers/specs/2026-09-26-per-person-drafts-and-authored-messages-design.md`.
 
 ## Which box takes a chat's first turn
 
@@ -226,8 +224,7 @@ close).
 - The chat's placement banner follows the turn status (above), so a turn queued
   for a retired runner shows it from the server's `waiting_runner`. The session
   list's "runner offline" reads `runner_online` (`runnerEligibility.parkedReason`).
-- Code: `apps/canopy_sessions/staleness.py`. Spec:
-  `docs/superpowers/specs/2026-07-24-directed-runner-routing-design.md`.
+- Code: `apps/canopy_sessions/staleness.py`.
 
 ## A session's lifecycle is in the event log
 
@@ -296,7 +293,6 @@ written — when no runner has reported it within `SESSION_LIVE_WINDOW`
   as a row.
 - `session/load` **replays the whole conversation** as updates; a resumed turn must
   suppress them or it re-appends history to the ledger.
-- Spec: `docs/superpowers/specs/2026-07-27-acp-adoption-design.md`;
   `runner/canopy_acp/README.md`.
 
 ## Push: only about your Feed

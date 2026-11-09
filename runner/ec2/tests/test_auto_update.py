@@ -1,8 +1,7 @@
 """The runner's half of auto-update: what it says it is, and when it is busy.
 
 Two files it shares with runner/ec2/update_runner.sh, and one invariant about how
-they are reported. See
-docs/superpowers/specs/2026-07-30-cloud-runner-auto-update-design.md.
+they are reported.
 """
 from __future__ import annotations
 

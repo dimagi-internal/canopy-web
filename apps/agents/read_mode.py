@@ -16,7 +16,7 @@ def default_interface() -> dict:
 # What a person who holds `read` (and not `write`) gets from an agent that published no read mode of
 # its own: one confined "read mode", built here from the agent and pinned exactly by
 # `tests/test_default_read_profile.py` so a code change that widens every agent at once cannot
-# pass unnoticed. Spec: `docs/superpowers/specs/2026-11-03-agent-read-mode-and-doors-design.md`.
+# pass unnoticed.
 
 #: The two stored names of read mode: `read` (the default, canopy's own profile) and
 #: `READ_MODE_STAMP` (an agent's own published override, and every turn stamped before read mode

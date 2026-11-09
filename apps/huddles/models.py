@@ -1,5 +1,4 @@
-"""Project check-ins — the one stored thing in apps/huddles (spec
-docs/superpowers/specs/2026-10-17-project-check-ins-design.md).
+"""Project check-ins — the one stored thing in apps/huddles.
 
 A HUDDLE stays derived (services.py): turns, close-outs and board tasks. The
 PROJECT is the organizing unit; a check-in is how it meets: a recurring meeting

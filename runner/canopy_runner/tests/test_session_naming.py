@@ -4,7 +4,7 @@ Every assertion here is a name a human reads in the emdash sidebar. The old shap
 (`<agent>-<subject>-<disc>-<MMDD>-<HHMM>`) spent its budget on two things emdash
 already shows — the project group and the created-at column — and fell back to the
 bare origin word (`ace-api-4a4e-0905-0920`) whenever no email subject existed, which
-is most turns. See docs/superpowers/specs for the ladder's rationale.
+is most turns.
 """
 import pytest
 

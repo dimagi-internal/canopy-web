@@ -1192,7 +1192,7 @@ def test_a_box_with_no_copy_is_no_keeper(fleet):
         member_wrap(fleet, user=user, pub=priv.public_key())]}, content_type="application/json")
     assert res.status_code == 403 and res.json()["error"] == "zk_not_a_holder"
 
-# ---- key copies follow vault membership (spec 2026-10-22-vault-access-follows-canopy-access-design.md) --
+# ---- key copies follow vault membership --
 
 def _leave_the_vault(fleet):
     """Make the fleet's owner (the box's person) NOT a member: someone else manages
@@ -1264,7 +1264,7 @@ def test_coming_back_to_the_vault_opens_it_again_with_the_same_copy(fleet):
     assert _resolve(fleet).status_code == 200
 
 
-# ---- workspace vaults (spec 2026-10-22-vault-access-follows-canopy-access-design.md §4) ------
+# ---- workspace vaults ------
 
 def _ws_vault(fleet, name="Shared"):
     res = fleet.client.post("/api/workspaces/connect/vaults", data={"name": name}, content_type="application/json")

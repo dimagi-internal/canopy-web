@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # A runner FLEET: an Auto Scaling group of interchangeable cloud runners that
-# canopy-web grows and shrinks with the work waiting for it (spec
-# docs/superpowers/specs/2026-10-24-runner-fleets-design.md; README "Runner fleets").
+# canopy-web grows and shrinks with the work waiting for it (README "Runner fleets").
 #
 #   aws sso login --profile labs
 #   ./fleet.sh up   --name dimagi --workspace dimagi [--instance-type m7i.xlarge]

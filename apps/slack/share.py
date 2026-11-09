@@ -15,8 +15,7 @@ a channel, in one of two modes:
 The summary is written by the SESSION (the canopy plugin's
 `/canopy:share-to-slack` skill, reached from the terminal or sent by the chat
 page) and arrives here as text. This module decides only whether the share is
-allowed and where it lands. Design:
-`docs/superpowers/specs/2026-09-21-share-session-to-slack-design.md`.
+allowed and where it lands.
 """
 from __future__ import annotations
 

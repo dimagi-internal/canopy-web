@@ -1,6 +1,5 @@
 """The access list over HTTP: who may read it, who may change it, and what a line may say.
 
-`docs/superpowers/specs/2026-10-30-agent-roles-and-access-list-design.md`.
 """
 from __future__ import annotations
 

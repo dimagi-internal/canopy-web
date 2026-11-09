@@ -1,6 +1,5 @@
 """Read the recent message tail of a live emdash session's Claude transcript.
 
-Design: docs/superpowers/specs/2026-07-23-unified-runner-sessions-design.md.
 STDLIB ONLY — the runner is
 Django-free and cannot import apps.session_sharing.parser; this is the runner's
 own minimal tail reader (user/assistant text for the last ~8 messages), not the

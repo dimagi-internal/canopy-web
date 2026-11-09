@@ -6,8 +6,7 @@ never a runner's shared read-only token. `repo_url` is editable by any workspace
 editor and the sync runs with a credential the triggering user does not hold, so
 whatever that credential reaches, an editor can aim this page at. The owner's
 grant is bounded by the repositories the owner chose on GitHub's installation
-screen; the fleet token is not. See
-`docs/superpowers/specs/2026-09-18-agent-skill-history-design.md`.
+screen; the fleet token is not.
 
 Because of that, `repo_url` is validated to be exactly
 `https://github.com/<owner>/<repo>[.git]` before anything else happens —

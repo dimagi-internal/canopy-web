@@ -121,7 +121,6 @@ tool; and beside every delivered prompt — the runner leaves
   escaped session. The guard and the native deny layer are what keep a confined
   session off them.
 
-Spec: `docs/superpowers/specs/2026-09-18-who-is-asking-initiator-identity-and-access-design.md`.
 
 ## Acting on behalf of the person who asked
 

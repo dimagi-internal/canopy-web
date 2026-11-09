@@ -1,7 +1,6 @@
 """A private (sensitive) conversation in a list: what it is and who started it, never
 what it says; and asking to be added to one you can see but are not in.
 
-Spec: docs/superpowers/specs/2026-10-23-sensitive-conversations-sealed-to-their-people-design.md.
 """
 from __future__ import annotations
 

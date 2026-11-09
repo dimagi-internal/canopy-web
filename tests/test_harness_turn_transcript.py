@@ -4,8 +4,6 @@ canopy's TurnEvent ledger is a deliberately reduced live stream. cost/structure
 derivation needs the RAW `claude -p` JSONL, so canopy additionally retains it
 per turn, gzipped, off the hot Turn row (TurnTranscript is a sibling, like
 TurnEvent). canopy must not parse or re-encode the JSONL — store bytes only.
-
-See .superpowers/sdd/2026-07-26-run-convergence-canopy-side/task-1-brief.md.
 """
 from __future__ import annotations
 

@@ -29,7 +29,7 @@ class AgentSchedule(models.Model):
     the concept, the UI and `/api/agents/{slug}/triggers/` say trigger. A trigger's
     turn runs with no more authority than its creator has on the agent, and one
     whose creator lost that right stops firing, loudly (`triggers.refusal`,
-    `alerts.trigger`). docs/superpowers/specs/2026-10-27-agent-triggers-design.md.
+    `alerts.trigger`).
 
     Config lives here (server-side, so it is visible and editable in the Agent
     UI); canopy-web fires it itself (schedule_clock.py, a loop in the web
@@ -40,7 +40,7 @@ class AgentSchedule(models.Model):
 
     The Turn IS the occurrence (origin=cron, origin_ref={schedule_id, slot},
     idempotency_key="sched:<id>:<slot>"); there is deliberately no occurrence
-    table. See docs/superpowers/specs/2026-07-15-agent-scheduled-turns-design.md.
+    table.
 
     An unattended (grace-released) occurrence raises a real Item (kind=review)
     whose `implement` re-runs the schedule's prompt — see

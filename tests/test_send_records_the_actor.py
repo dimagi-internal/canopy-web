@@ -9,7 +9,6 @@ run dispatcher goes through this same path
 That makes this the load-bearing half of the ace-web leg: without it, an
 `ace_web` actor rule can never match anything.
 
-Spec: docs/superpowers/specs/2026-09-05-actor-aware-runner-routing-design.md
 """
 from __future__ import annotations
 

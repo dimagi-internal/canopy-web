@@ -19,7 +19,6 @@ import { PasskeyInBrowserNotice } from '@/auth/PasskeyInBrowserNotice'
  * Give an agent a secret — one field (pasted, or loaded from a file), sealed in
  * THIS browser.
  *
- * Spec: docs/superpowers/specs/2026-10-19-give-an-agent-a-secret-design.md.
  * The value is sealed (`zks1`) to the agent's readers before anything leaves
  * the page, and only to readers vouched for by a key this browser trusts
  * (`@/vault/trust`): the person's own vault key, or someone they pinned. The
