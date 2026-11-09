@@ -20,6 +20,6 @@ Modules:
 from .agent_tasks import AgentTasks
 from .contract import CONTRACT_VERSION
 
-__version__ = "0.29.1"
+__version__ = "0.29.2"
 
 __all__ = ["CONTRACT_VERSION", "AgentTasks", "__version__"]
