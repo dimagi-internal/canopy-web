@@ -81,7 +81,7 @@ def test_an_unknown_sender_degrades_rather_than_guesses():
 
 
 def test_stamping_is_idempotent():
-    """Ada stamps client-side before canopy-web ever sees the prompt (ada#55). Re-stamping must
+    """Ada stamps client-side before canopy-web ever sees the prompt. Re-stamping must
     not double-mark it."""
     once = stamp_dispatched("brief", sender="ada")
     assert stamp_dispatched(once) == once

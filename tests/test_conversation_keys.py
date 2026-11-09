@@ -1,5 +1,5 @@
 """A sensitive conversation is sealed to its people: canopy-web can write it and never
-read it back (spec 2026-10-23-sensitive-conversations-sealed-to-their-people §2).
+read it back.
 
 The tests stand in for the person's browser with the vault private key only they hold
 (`tests/fixtures/sensitive.py::vault_key`); nothing in app code can open what it seals.

@@ -1,9 +1,8 @@
 """A project's session reaches canopy as the person who asked.
 
-A project chat (a repo, no agent) used to get no canopy identity at all: no
-agent, so no agent PAT, and `is_caller_scoped` refused it a caller token. On a
-headless cloud runner the MCP then sent no header, got a 401, and fell back to a
-browser sign-in no one could complete (cloud-ec2-2, 2026-10-22). Projects and
+A project chat (a repo, no agent) has no agent PAT, so without a caller token it
+would have no canopy identity at all. On a headless cloud runner the MCP would then
+send no header, get a 401, and fall back to a browser sign-in no one could complete. Projects and
 agents are both first class: an agent's turn acts as the agent, a project's acts
 as its verified asker — what they can see is what it can see.
 """

@@ -1,6 +1,6 @@
 """THE rule, asked through every entry point — docs/architecture/access.md.
 
-Owner decisions of 2026-10-04: one function (`apps.agents.turn_context.resolve_turn_context`) decides
+One function (`apps.agents.turn_context.resolve_turn_context`) decides
 what a person may make an agent do, and every entry point that makes an agent
 work asks it — the harness API, a canopy-web chat send, Slack intake, email
 intake and the caller envelope. This matrix walks roles × entry points ×

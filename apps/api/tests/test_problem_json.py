@@ -45,7 +45,7 @@ def test_unknown_workspace_slug_with_a_quote_is_valid_json(client):
     client.force_login(u)
     r = client.get('/api/w/a%22b%5C/agents/')
     assert r.status_code == 404
-    body = json.loads(r.content)  # used to be invalid JSON: the slug went in unescaped
+    body = json.loads(r.content)  # must be valid JSON: the slug is escaped
     assert body["title"] == "Not Found"
     assert body["detail"] == "workspace 'a\"b\\' not found"
 

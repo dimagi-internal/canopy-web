@@ -1,4 +1,4 @@
-"""Claim routing keyed on Turn.origin (spec 2026-07-27).
+"""Claim routing keyed on Turn.origin.
 
 Tenancy here is deliberately real rather than stubbed: runner_tenant_slugs derives
 from runner.owner, and a runner whose owner is not in the agent's workspace

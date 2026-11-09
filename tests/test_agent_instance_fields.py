@@ -1,6 +1,6 @@
 """An agent row is an INSTANCE: the agents API names its plugin.
 
-Jonathan, 2026-10-14: a plugin is code; an instance is canopy-web's Agent record
+A plugin is code; an instance is canopy-web's Agent record
 (identity, workspace). A local install is bound to one instance, chosen once at setup.
 
 What these pin:

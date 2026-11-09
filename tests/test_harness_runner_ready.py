@@ -87,7 +87,7 @@ def test_heartbeat_persists_and_serves_code_branch(user, ws):
 def test_heartbeat_persists_and_serves_code_provenance(user, ws):
     """The runner self-reports the version + sha of the code it is EXECUTING, so the
     supervisor can say "that box is behind" rather than only "that checkout is on a
-    branch" (spec 2026-07-28)."""
+    branch"."""
     r = _runner(user, ws)
     c = Client()
     c.force_login(user)

@@ -1,8 +1,7 @@
-"""The interface no longer carries who-may-use-it rules, so it no longer warns about their domains.
+"""The interface carries no who-may-use-it rules, so it warns about no domains.
 
-Until the access list (agent-roles design, 2026-10-30) an interface rule naming a mail domain that
-can never prove its senders (`member@<domain>`, no DMARC and no aligned DKIM) was WARNED about,
-never refused (canopy-web#1280). Those rules are gone: `parse` refuses the retired keys and points
+Access is the access list; an interface rule naming a mail domain (`member@<domain>`) does not exist.
+`parse` refuses the retired keys and points
 at the access list, and read mode and host sites carry neither a `summary` nor `warnings`. What survives
 is the DMARC lookup (`apps.contacts.domain_proof`), which decides whether a sender is proven.
 """

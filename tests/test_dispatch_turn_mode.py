@@ -1,6 +1,6 @@
 """A dispatch may name the MODE its turn runs in (`TurnIn.turn_mode`).
 
-Owner request, 2026-10-04: an agent's admins — human or agent — choose, per
+An agent's admins — human or agent — choose, per
 dispatch, whether the turn runs manual or auto (and, with `runner_id`, on which
 box), instead of standing per-person routing rules. The request is the TOP rung
 of `apps/harness/turn_mode.py`, above every rule and the agent's own switch.

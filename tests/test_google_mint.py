@@ -6,7 +6,7 @@ challenge, relaying Google's single-use code to that runner exactly once, and st
 only the ciphertext the runner sends back. The exchange itself (code + verifier + the
 client secret from the agent's vault) is `canopy vault google-mint`, tested in canopy.
 
-The scope assertions are transcribed from the tokens that actually work: on 2026-09-06
+The scope assertions are transcribed from the tokens that actually work:
 op://Agent-Echo/gog-token and op://Agent-Eva/gog-token both carried exactly
 LIVE_FLEET_SCOPES below.
 """

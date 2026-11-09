@@ -1,10 +1,10 @@
 """What a BOX reports, as distinct from what canopy-web stored.
 
-The distinction is the whole point. On 2026-09-07 canopy-web held a valid
-gog-token for ACE — `credentials/status` would have shown it set, with a green
-tick — while every gmail call on the box failed, because the OAuth client
-id+secret the token is useless without had not materialized. Both true at once,
-and only one of them visible outside journald.
+The distinction is the whole point. canopy-web can hold a valid
+gog-token for an agent — `credentials/status` shows it set, with a green
+tick — while every gmail call on the box fails, because the OAuth client
+id+secret the token is useless without has not materialized. Both are true at
+once, and only one of them is visible outside journald.
 
 So readiness is POSTED by the box, from a call it actually made, and it is
 gated to a caller pairing a live runner the agent routes to: a readiness signal
@@ -57,7 +57,7 @@ DEAD = {
 
 
 def test_a_box_reports_a_dead_mailbox_and_it_is_visible(fleet):
-    """The 2026-09-07 shape: everything stored, nothing working."""
+    """Everything stored, nothing working."""
     assert _post(fleet["user"], DEAD).status_code == 200
     rows = fleet["client"].get("/api/agents/ace/readiness").json()
     assert len(rows) == 1
@@ -114,10 +114,10 @@ def test_an_agent_no_box_has_reported_is_empty_not_healthy(fleet):
 
 # ── The client the TURN uses, vs the client whose token happens to be live ────
 #
-# The 2026-09-08 sequel to the failure this module opens with, one layer up.
-# `mailbox_ok` was TRUE for a full day while every ACE email turn aborted at
-# preflight with `No auth for gmail ace@dimagi-ai.com`. Nothing was broken in a
-# way either half could see: bootstrap verifies the client whose token
+# The failure this module opens with, one layer up: `mailbox_ok` can be TRUE
+# while every ACE email turn aborts at preflight with
+# `No auth for gmail ace@dimagi-ai.com`. Nothing is broken in a
+# way either half can see: bootstrap verifies the client whose token
 # AUTHENTICATES (correctly — an OAuth token only works with the client it was
 # minted for), while `/ace:turn` presents the client `config/agent.json`
 # DECLARES. ACE's token came from a browser mint, so it was bound to
@@ -197,8 +197,7 @@ def test_a_later_report_can_clear_the_alarm(fleet):
 
 def test_env_ok_is_reported_and_unsaid_is_not_an_answer(fleet):
     """`op inject` failing keeps the box's OLD .env — the agent runs, on secrets
-    that may be stale. Four agents sat in that state for two weeks on
-    cloud-ec2-1 (2026-09-22), visible only in journald.
+    that may be stale. That state is visible only in journald.
 
     A report that does not mention it leaves the last real answer standing;
     never-reported is what reads as unknown (see the pair of tests at the end
@@ -221,10 +220,9 @@ def test_a_pass_that_did_not_check_does_not_erase_what_did(fleet):
     """"I did not check" is not an observation, so it must not overwrite one.
 
     The updater's credentials-only pass (every 30 min) does not run `op inject`
-    and so reports no `env_ok`. It upserted the row anyway, writing None over
-    the real answer — so on labs, minutes after a full bootstrap had recorded
-    `env_ok` for all five agents, every one of them read "not checked"
-    (2026-09-24). Same hazard as `turn_ready`, and the same rule as the
+    and so reports no `env_ok`. If it upserted the row anyway it would write None over
+    the real answer, so agents a full bootstrap had recorded `env_ok` for would
+    read "not checked". Same hazard as `turn_ready`, and the same rule as the
     runner's `projects`: absent leaves the stored value alone.
     """
     from apps.agents import services
@@ -244,8 +242,8 @@ def test_a_pass_that_did_not_check_does_not_erase_what_did(fleet):
 
 
 def test_a_dead_mailbox_clears_a_stale_turn_ready(fleet):
-    """A box with no token computes no turn_ready, so the last TRUE used to survive the
-    pass that found the mailbox dead (lex, 2026-10-20). A stored false, which names why,
+    """A box with no token computes no turn_ready, so the last TRUE must not survive the
+    pass that found the mailbox dead. A stored false, which names why,
     stays."""
     from apps.agents import services
 
@@ -275,8 +273,8 @@ def test_a_real_observation_still_flips_it(fleet):
 
 
 def test_a_retired_runners_report_is_left_out(fleet):
-    """2026-10-04: cloud-ec2-test was retired, and its last all-green report kept
-    answering "can this agent run" for echo/eva/ada — a frozen row from a box that
+    """A retired runner's last all-green report must not keep
+    answering "can this agent run": it is a frozen row from a box that
     no longer exists. Retiring the runner hides it; nothing is deleted, so
     unretiring brings it back."""
     _post(fleet["user"], {**DEAD, "mailbox_ok": True, "client_creds_ok": True, "detail": ""})

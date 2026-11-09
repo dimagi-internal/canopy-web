@@ -159,7 +159,7 @@ def test_an_app_whose_only_origins_are_malformed_is_refused():
 def test_the_shell_is_not_the_app_and_pulls_in_no_service_worker():
     """A widget that loaded the SPA shell would register canopy's service
     worker inside a third-party page and drag the whole app in with it — the
-    shape of issue #345, where an iframe rendered the entire SPA inside
+    shape of an iframe rendering the entire SPA inside
     itself."""
     _app()
     body = _get().content.decode()

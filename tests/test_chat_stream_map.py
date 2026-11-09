@@ -94,9 +94,9 @@ def test_error_maps_to_stream_error():
 
 def test_a_user_event_becomes_a_client_frame():
     """Text typed straight into emdash. It reaches no web client any other way —
-    there was no optimistic echo, because no web client sent it. Before this,
-    `stream_map` had no `user` branch at all and the message simply never
-    appeared until a reload (observed 2026-07-27)."""
+    there is no optimistic echo, because no web client sent it. So
+    `stream_map` needs a `user` branch, else the message never
+    appears until a reload."""
     frames = turn_event_to_frames(
         {"kind": "user", "seq": 64, "payload": {"text": "do the thing"}},
         lambda seq: f"seq:{seq}",
@@ -110,7 +110,7 @@ def test_a_user_event_becomes_a_client_frame():
 
 def test_a_web_send_echo_carries_its_client_id():
     """The sender's browser knows its own line by this nonce; without it the
-    echo could only be matched on recent identical words (2026-10-30)."""
+    echo could only be matched on recent identical words."""
     frames = turn_event_to_frames(
         {"kind": "user", "seq": 5, "payload": {"text": "hi", "client_id": "c-1"}}, _rid)
     assert frames[0]["data"]["client_id"] == "c-1"

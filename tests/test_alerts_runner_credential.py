@@ -1,9 +1,9 @@
 """The `runner_credential` alert source: a signed-out runner credential, named by
 the label a person gave it.
 
-cloud-ec2-2, 2026-10-22: the token labelled "hal" (the box's `subscription-1`)
-was signed out, and every surface called it "subscription-1" — a slot name its
-owner never typed and could not map back to anything. The alert names it "hal".
+A signed-out token labelled "hal" (the box's `subscription-1`) is named by its
+label, not by "subscription-1" — a slot name its owner never typed and could not
+map back to anything. The alert names it "hal".
 """
 from __future__ import annotations
 

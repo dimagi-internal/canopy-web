@@ -168,7 +168,7 @@ def _values(monkeypatch, agent, values):
 
 def test_an_owner_without_a_named_box_reads_as_admin(monkeypatch, owner, ws, agent):
     """`caller_runs_agent` makes the owner a `runner` caller, but a request that
-    names no box is the owner's own read (canopy-web#1563)."""
+    names no box is the owner's own read."""
     RunnerAssignment.objects.create(agent=agent, runner=_box(owner, ws), rank=0)
     _values(monkeypatch, agent, {"api-key": "v"})
     assert cr.credential_access(_request(owner), agent) == ("runner", "")

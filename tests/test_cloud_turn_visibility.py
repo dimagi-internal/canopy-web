@@ -2,15 +2,14 @@
 and a cloud session stays open after its turn finishes, until it is closed or its
 runner is retired.
 
-canopy-web#1087 (2026-10-03): an ACE email turn ran on cloud-ec2-1 and finished with
-a reply drafted for approval. Two things hid it:
+An email turn that ran on the cloud runner and finished with a reply drafted for
+approval must not be hidden:
 
-* its session dropped out of `state=active` (and so out of Supervisor) 3 minutes
-  after it STARTED, because the cloud runner never re-reports a session and the
-  runner-origin staleness leg had no observer gate;
-* `GET /api/harness/turns/?agent=ace` filtered on `Turn.agent`, which an email turn
-  never carries — enqueue_turn moves it onto the thread's session — so no ACE email
-  turn had been listed since 2026-09-10, for any caller.
+* its session must not drop out of `state=active` (and so out of Supervisor)
+  minutes after it STARTED; the cloud runner never re-reports a session, so the
+  runner-origin staleness leg needs an observer gate;
+* `GET /api/harness/turns/?agent=ace` must not filter on `Turn.agent`, which an
+  email turn never carries — enqueue_turn moves it onto the thread's session.
 """
 from __future__ import annotations
 
@@ -224,7 +223,7 @@ def _web_chat_on(runner, user, agent, title, *, seen_ago, said_ago=None):
 
 
 def test_a_web_chat_the_cloud_ran_stays_open_until_its_runner_is_retired():
-    """Labs, 2026-10-05: a hal web chat was listed 67 days after its last word, on a
+    """A web chat must not stay listed long after its last word on a
     cloud runner long since gone. Idle is not gone; a retired runner is."""
     user, ws, agent = _ctx()
     cloud = _runner(ws, user, "cloud-ec2-1", reports=False, kind=Runner.CLOUD)
@@ -238,12 +237,12 @@ def test_a_web_chat_the_cloud_ran_stays_open_until_its_runner_is_retired():
     assert idle.status == "active"  # derived, never written
 
 
-# --- #1396: a cloud session that RAN ON ITS OWN closes when its turn is done ------
+# --- a cloud session that RAN ON ITS OWN closes when its turn is done ------
 #
-# 2026-10-11: 56 of Jonathan's 62 "active" sessions were finished auto turns on the
-# cloud (huddle rounds, thread messages, scheduled turns), 0 waiting on him. Nobody
-# waits on an auto turn, so once nothing on it is in flight it is done. Manual and
-# chat-started sessions keep the open-until-closed rule (#1162 / #1277).
+# Finished auto turns on the cloud (huddle rounds, thread messages, scheduled turns)
+# must not crowd the "active" list. Nobody waits on an auto turn, so once nothing on
+# it is in flight it is done. Manual and chat-started sessions keep the
+# open-until-closed rule.
 
 
 def _driven(runner, agent, key, status, *, mode, origin=Turn.ORIGIN_CANOPY_SCHEDULER,
@@ -294,7 +293,7 @@ def test_an_auto_cloud_session_with_a_later_turn_in_flight_stays_listed():
 
 
 def test_a_manual_cloud_turn_that_ends_asking_for_approval_stays_active():
-    """The #1162 regression, pinned: a manual turn ends by asking, and its session
+    """A manual turn ends by asking, and its session
     is exactly the one you need to find."""
     user, ws, agent = _ctx()
     cloud = _cloud(ws, user)
@@ -343,10 +342,9 @@ def test_a_finished_auto_web_chat_the_cloud_ran_closes_too():
 
 
 # The turn knows its session even when the keys disagree. A dispatched huddle round
-# carries its own thread key (`origin_ref.thread_key`), and on cloud-ec2-2 the
-# binding's session_key and the turn's drifted apart, so the key join found no
-# driving turn: the session badged mode "" and the auto-retire leg never fired.
-# 161 finished huddle rounds and dispatches were still "open" on 2026-10-26.
+# carries its own thread key (`origin_ref.thread_key`), and the
+# binding's session_key and the turn's can drift apart, so the key join finds no
+# driving turn: the session would badge mode "" and the auto-retire leg would never fire.
 # `Turn.canopy_session` is the link record-session writes for exactly this turn.
 
 

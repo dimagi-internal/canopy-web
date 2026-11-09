@@ -1,4 +1,4 @@
-"""Passkeys and the step-up they earn (canopy-web#1538).
+"""Passkeys and the step-up they earn.
 
 The ceremony tests drive py_webauthn's REAL verification with a software
 authenticator (`apps.passkeys.testing.SoftAuthenticator`); a few failure paths

@@ -1,5 +1,4 @@
-"""`clis.choose`: the one rule that picks the CLI a turn runs on
-(spec 2026-10-26-multi-cli-agents §1)."""
+"""`clis.choose`: the one rule that picks the CLI a turn runs on."""
 from __future__ import annotations
 
 import pytest

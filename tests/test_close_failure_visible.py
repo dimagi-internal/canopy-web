@@ -1,8 +1,7 @@
 """A failed close is visible in canopy, not only in the runner's log.
 
-2026-10-12: "Close sessions" from the menu bar left three sessions open, and the
-only place the reason existed was ~/.canopy/runner.log in another macOS user's
-home folder. The runner now reports each close's outcome; a failure is recorded
+A "Close sessions" failure must not be known only to the runner's own log
+(~/.canopy/runner.log). The runner reports each close's outcome; a failure is recorded
 on the session (`RunnerBinding.close_error`), shown with it in Supervisor, and
 cleared by a Retry, a later success, or the task no longer being reported.
 """

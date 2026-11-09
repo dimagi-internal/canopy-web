@@ -1,10 +1,9 @@
 """A box's Claude credential alerts land, and reach a person.
 
-cloud-ec2-fork, 2026-10-18: the box posted `claude_auth_required` to the flat
-`POST /api/events/`, its owner was in two workspaces, so there was no default
-workspace to file it in and it 422'd. Recorded or not, nothing but the admin
-event log reads `runner.credential` rows, so nobody would have been told.
-Now an alert posted with a runner token files in the runner's workspace, and
+A box that posts `claude_auth_required` to the flat `POST /api/events/` while its
+owner is in two workspaces has no default workspace to file it in. Nothing but the
+admin event log reads `runner.credential` rows, so nobody would be told.
+So an alert posted with a runner token files in the runner's workspace, and
 the credential alerts mail and push the runner's approvers once a day —
 `claude_auth_required` only where the runner's signed-out probe check has not
 already raised the `runner_credential` alert.

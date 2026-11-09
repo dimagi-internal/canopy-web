@@ -1,6 +1,6 @@
 """The claim picks a turn's agent CLI with `clis.choose`, records it on the turn and
 its conversation, and sends it to the runner; coverage and `turn_reach` agree
-(spec 2026-10-26-multi-cli-agents §1)."""
+"""
 from __future__ import annotations
 
 import pytest
@@ -94,7 +94,7 @@ def test_confined_turn_runs_only_where_its_cli_confines():
                                   report={"claude-code": {"signed_in": True},
                                           "codex": CONFINING})
     # A turn that is really confined: a stamp written over an owner's turn would be put right at the claim, which
-    # asks the rule again (spec 2026-11-05 § 3.3).
+    # asks the rule again.
     reader = User.objects.create_user("reader", "reader@dimagi.com", "pw")
     WorkspaceMembership.objects.create(user=reader, workspace=agent.workspace, role=WorkspaceMembership.VIEWER)
     AgentGrant.objects.create(agent=agent, kind=AgentGrant.PERSON, user=reader, role=roles.READ_ONLY)

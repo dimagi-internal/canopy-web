@@ -173,8 +173,8 @@ def _pat_for(user) -> str:
 # --- the explicit-only runner ---------------------------------------------------
 
 def test_a_disabled_assignment_still_gets_credentials(fleet, monkeypatch):
-    """The explicit-only runner. Jonathan, 2026-09-06: "I don't want it to fire
-    ace commands as a fall back, only if we explicit trigger it."
+    """The explicit-only runner: a runner that must not fire an agent's
+    commands as a fallback, only when explicitly triggered.
 
     `enabled=False` takes a runner out of the automatic rotation, but
     claim_next_turn checks `pinned_runner` BEFORE any assignment lookup, so a
@@ -198,7 +198,7 @@ def test_no_assignment_at_all_is_still_refused(fleet, monkeypatch):
     """Disabling loosens automatic ROUTING, not trust. A runner this agent's work
     can never be directed at — pinned or otherwise — gets nothing as a RUNNER.
 
-    Its pairing human may still resolve as the agent's owner/admin (canopy#850's
+    Its pairing human may still resolve as the agent's owner/admin (the
     admin path) — but that is a different principal, audited as `via: admin`,
     and a non-admin with the same unassigned box is refused outright."""
     from django.utils import timezone

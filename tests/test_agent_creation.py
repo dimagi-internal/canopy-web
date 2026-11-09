@@ -372,8 +372,8 @@ def test_a_mailbox_a_box_has_proved_is_done_without_a_stored_token(editor, ws):
 
 
 def test_a_box_that_cannot_read_the_mailbox_outranks_the_stored_token(editor, ws):
-    """lex, 2026-10-20: canopy-web held its gog-token, cloud-ec2-2 reported it could not
-    find one, and the checklist read "done" off the stored token. The box is the answer."""
+    """canopy-web holds a gog-token, the box reports it could not find one, and the
+    checklist must not read "done" off the stored token. The box is the answer."""
     agent = _agent(ws, editor)
     AgentCredential.objects.create(agent=agent, name="gog-token", value_zk="zk1:t")
     assert _status(agent)["mailbox"] == "done"
@@ -387,9 +387,9 @@ def test_a_box_that_cannot_read_the_mailbox_outranks_the_stored_token(editor, ws
 
 
 def test_a_failure_from_before_the_mailbox_was_connected_is_not_the_answer(editor, ws):
-    """fizzy, 2026-10-22: cloud-ec2-2 reported "No auth" on 15 Oct, Shayoni connected the
-    mailbox on the 22nd, and the row stayed red on the old report. A report older than the
-    stored sign-in is about the sign-in it replaced."""
+    """A box reports "No auth", the mailbox is connected later, and the row must not
+    stay red on the old report. A report older than the stored sign-in is about the
+    sign-in it replaced."""
     from datetime import timedelta
 
     from django.utils import timezone

@@ -1,7 +1,7 @@
 """An agent with no default order of its own follows its workspace's.
 
-Cloud boxes get replaced; with every agent holding its own copy of "jj → hal →
-cloud", each replacement meant editing every agent (2026-10-03). So an agent with
+Cloud boxes get replaced; if every agent held its own copy of "jj → hal →
+cloud", each replacement would mean editing every agent. So an agent with
 no default order follows its workspace's order — or the nearest ancestor's — live,
 and its source rules still come first.
 """
@@ -230,12 +230,12 @@ def test_an_agent_with_its_own_order_is_told_what_it_would_follow(tree):
     c.force_login(jj)
     body = c.get("/api/w/connect/agents/hal/default-order").json()
     assert body["own"] is True and body["workspace"] == "dimagi"
-    # Its own order, not an empty list: empty read as "routes nowhere" (#1233).
+    # Its own order, not an empty list: an empty list reads as "routes nowhere".
     assert [r["runner_id"] for r in body["runners"]] == [str(hal_box.pk)]
 
 
 def test_default_order_echoes_an_own_order_saved_through_put(tree):
-    """#1233: PUT an own order, then default-order must list it, rank for rank."""
+    """PUT an own order, then default-order must list it, rank for rank."""
     jj, dimagi, connect, (jj_box, hal_box, cloud) = tree
     _order(dimagi, jj_box)
     Agent.objects.create(slug="hal", name="Hal", workspace=connect, owner=jj)
@@ -254,8 +254,8 @@ def test_default_order_echoes_an_own_order_saved_through_put(tree):
 
 def test_a_divisions_agent_takes_its_owners_box_from_the_parent_workspace(tree):
     """The fleet's boxes live in `dimagi`, its agents in `connect`. Saving an
-    agent's own list through the tenant URL refused the caller's OWN box because
-    it lived one workspace up (found on labs, 2026-10-03)."""
+    agent's own list through the tenant URL must accept the caller's OWN box even
+    though it lives one workspace up."""
     jj, _dimagi, connect, (_jj_box, _hal_box, cloud) = tree
     Runner.objects.filter(pk=cloud.pk).update(workspace_id="dimagi")
     Agent.objects.create(slug="echo", name="Echo", workspace=connect, owner=jj)

@@ -1,13 +1,11 @@
 """A mail thread's WORK session is the row a person looks for, so it has to list.
 
 Each email thread has an anchor (no binding, no transcript: `harness.mail_anchor`,
-never listed) and a work session the runner runs in (binding, transcript). Before
-this the work session had no link to its turns: an email turn has a `chat_session`
-(the anchor) and no `Turn.agent`, so nothing joined it. And a reply on a closed
-thread ran in the closed work session, which stayed archived.
-
-Session 072bea9c (ace, 2026-11-04): closed at 04:48, then the replies at 04:50 and
-07:39 ran in it while it stayed off the list; only the anchor was revived.
+never listed) and a work session the runner runs in (binding, transcript). The
+work session must link to its turns: an email turn has a `chat_session`
+(the anchor) and no `Turn.agent`, so without that link nothing joins it. And a
+reply on a closed thread runs in the closed work session, which must be revived
+with the anchor, not stay archived off the list.
 """
 from __future__ import annotations
 

@@ -37,7 +37,7 @@ def test_queued_turns_stack_freely():
 
 
 def test_an_agent_can_have_several_executing_turns():
-    """An agent is not a lane (removed 2026-10-30): a 9 h ACE turn held a dispatch 5 h 16 m."""
+    """An agent is not a lane: a long turn must not hold every other dispatch."""
     a = _agent()
     Turn.objects.create(agent=a, origin=Turn.ORIGIN_API, idempotency_key="k1", status=Turn.CLAIMED)
     Turn.objects.create(agent=a, origin=Turn.ORIGIN_API, idempotency_key="k2", status=Turn.RUNNING)

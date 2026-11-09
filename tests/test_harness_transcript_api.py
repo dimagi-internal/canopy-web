@@ -85,8 +85,7 @@ def _get(client, turn_id, url_prefix=""):
 
 
 def _body(response) -> bytes:
-    """The route now streams a StreamingHttpResponse (security review
-    2026-07-26, F3 revised) — it has no `.content`, only `.streaming_content`
+    """The route streams a StreamingHttpResponse — it has no `.content`, only `.streaming_content`
     (a one-shot iterator of chunks). Tests just concatenate it; there is no
     decoding step because the wire format is plain JSONL bytes, full stop."""
     return b"".join(response.streaming_content)
@@ -106,7 +105,7 @@ def test_append_then_read_back_exactly(owner_client, agent):
     read = _get(owner_client, turn_id)
     assert read.status_code == 200
     assert read["Content-Type"] == "application/x-ndjson"
-    # Plaintext on the wire (security review 2026-07-26, F3 revised): no
+    # Plaintext on the wire: no
     # Content-Encoding, no client-side inflation required — _body(read) IS
     # the transcript, not a compressed blob a caller must know to decode.
     assert "Content-Encoding" not in read

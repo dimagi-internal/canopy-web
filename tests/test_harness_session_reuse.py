@@ -228,7 +228,7 @@ def test_record_binds_its_own_project_session_by_uuid():
     assert RunnerBinding.objects.get(session=chat).session_key == "t-1"
 
 
-# ---- #309: never reuse a session that is mid-turn ----------------------------
+# ---- never reuse a session that is mid-turn ----------------------------
 def _live_runner(ws, name="laptop", host="jj@air"):
     from django.utils import timezone
 

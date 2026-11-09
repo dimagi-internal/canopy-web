@@ -1,11 +1,11 @@
 """Each tenant registers a connected system itself — no shared row, no custodian.
 
-A site used to be one shared row: one tenant ("the custodian") maintained its
-name, keys and origins, and every other tenant held a grant to it (#944, #955).
-That arbitration existed only because the row was shared. Once keys became a
-URL (#929), what two tenants would have to agree on is where a host publishes
+A site is not one shared row with a tenant ("the custodian") maintaining its
+name, keys and origins and every other tenant holding a grant to it: that
+arbitration would exist only because the row was shared. Since keys are a
+URL, what two tenants would have to agree on is where a host publishes
 its JWKS — cheap to copy, and a copy that cannot drift from the keys it points
-at. So each tenant now registers the system on its own (2026-09-24).
+at. So each tenant registers the system on its own.
 
 What this file pins is the consequence: **nothing one tenant does can reach
 another tenant's integration** — not registering a name, not editing keys, not

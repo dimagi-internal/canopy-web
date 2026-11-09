@@ -19,7 +19,7 @@ pytestmark = pytest.mark.django_db
 def client():
     user = User.objects.create_user("jj", "jj@dimagi.com", "pw")
     # Pairing requires a resolvable workspace tenant (a workspace-less runner
-    # heartbeats fine but 404s every session report — found on prod 2026-07-25),
+    # heartbeats fine but 404s every session report),
     # so the baseline caller has exactly one, like every real auto-joined user.
     ws = Workspace.objects.create(slug="dimagi", display_name="Dimagi", created_by=user)
     WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.OWNER)
@@ -31,10 +31,9 @@ def client():
 @pytest.fixture()
 def agent(client):
     # Homed to the same "dimagi" workspace `client`'s user owns (see that
-    # fixture) — a workspace-less agent now 404s at _agent_or_404 (security
-    # review 2026-07-26, F1: that gate fails closed), so every test in this
-    # file that drives the agent through `client` needs it actually homed,
-    # not the old ungated-by-omission default.
+    # fixture) — a workspace-less agent 404s at _agent_or_404 (that gate fails
+    # closed), so every test in this file that drives the agent through
+    # `client` needs it actually homed.
     return Agent.objects.create(slug="echo", name="Echo", workspace_id="dimagi")
 
 
@@ -327,7 +326,7 @@ def test_pair_with_host_and_resolve_record_cycle(client, agent):
 
 
 def test_resolve_session_with_turn_id_refuses_a_working_session(client, agent):
-    """#309 over the wire: `turn_id` reaches the guard and `busy` comes back."""
+    """Over the wire: `turn_id` reaches the guard and `busy` comes back."""
     import uuid
 
     from apps.canopy_sessions.models import RunnerBinding
@@ -486,7 +485,7 @@ def test_enqueue_records_the_human_who_launched_the_turn(client, agent):
     assert Turn.objects.get(idempotency_key="who").enqueued_by.email == "jj@dimagi.com"
 
 
-# --- pairing requires a workspace tenant (2026-07-25 incident) --------------
+# --- pairing requires a workspace tenant --------------
 # A workspace-less runner is half-broken with no signal: heartbeat and claim
 # work (tenancy derives from owner), but POST /runners/{id}/sessions 404s
 # forever, so its sessions silently never appear anywhere.
@@ -582,8 +581,8 @@ def test_the_new_name_wins_when_both_arrive(client, agent):
 
 
 def test_record_session_failure_logs_its_inputs(client, agent, caplog, monkeypatch):
-    """Failure investigation 3 (2026-10-15, turn 282f825e): a record-session 500 left
-    only the generic problem body. The raise must name the thread and runner."""
+    """A record-session 500 must not leave only the generic problem body: the raise
+    names the thread and runner."""
     from apps.harness import session_sync
 
     rid = client.post("/api/harness/runners/",

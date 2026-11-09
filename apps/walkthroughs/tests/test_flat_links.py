@@ -1,4 +1,4 @@
-"""Stored flat links are rewritten to the scoped address (canopy-web#1337).
+"""Stored flat links are rewritten to the scoped address.
 
 The flat addresses are a plain 404 and nothing forwards them, so the links
 already baked into canopy's data — review payloads, task links, the `<video

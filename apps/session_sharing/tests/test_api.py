@@ -60,7 +60,7 @@ def _upload(client, content: bytes, *, ws: str | None = None, **fields):
         "visibility": "link",
         **fields,
     }
-    # A caller in several workspaces names one (canopy-web#1289).
+    # A caller in several workspaces names one.
     path = f"/api/w/{ws}/sessions/upload" if ws else "/api/sessions/upload"
     return client.post(path, data=data, format="multipart")
 
@@ -131,7 +131,7 @@ def test_upload_reports_the_owning_account(auth_client):
     thing a client can say about it is who can read it — and only the server
     knows that. Agents upload under their OWN accounts, so the uploader is
     frequently not the human who asked for the share; a client that guesses
-    prints a false promise (dimagi-internal/canopy#484)."""
+    prints a false promise."""
     private = _upload(auth_client, _transcript("own-1"), visibility="private").json()
     assert private["share_token"] is None
     assert private["owner_email"] == "owner@dimagi.com"
@@ -400,8 +400,8 @@ def test_active_seconds_in_share_payload_and_arc_sum(auth_client):
 
 @pytest.mark.django_db
 def test_link_shares_are_not_listed_to_someone_outside_the_team(auth_client, other):
-    """A list hands out the URL. Every signed-in user used to receive every
-    link-shared transcript and its token — including an invite-admitted partner
+    """A list hands out the URL. Not every signed-in user may receive every
+    link-shared transcript and its token — least of all an invite-admitted partner
     who was never sent any of them."""
     other_client = Client()
     other_client.force_login(other)

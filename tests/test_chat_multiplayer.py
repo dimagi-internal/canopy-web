@@ -120,8 +120,7 @@ def test_peer_drafts_excludes_me_and_empty():
 #
 # The mode is its OWN idempotent frame (`set_visibility`), never a field on
 # the version-guarded `update_draft` — a stale keystroke echo racing a mode
-# change used to be able to downgrade it server-side (canopy-ui#…
-# "hidden->live->hidden" regression).
+# change could downgrade it server-side (a "hidden->live->hidden" regression).
 
 def test_set_visibility_applies_with_no_version_and_does_not_bump_version():
     owner, _other, session = _two()

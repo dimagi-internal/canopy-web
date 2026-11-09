@@ -76,11 +76,10 @@ def test_stranger_cannot_read_someone_elses_turn(owner_client, stranger_client, 
     turn_id = _enqueue(owner_client).json()["id"]
     resp = stranger_client.get(f"/api/harness/turns/{turn_id}")
     assert resp.status_code == 404
-    # Security review 2026-07-26, F4: status-code-only assertions here are
-    # exactly what let the agent-turn branch leak the agent's slug via
-    # _agent_or_404's own 404 message (copied into detail by the shared
-    # HttpError handler) go undetected. turn_or_404 now catches
-    # and re-raises a uniform message — pin the body, not just the code.
+    # Status-code-only assertions would miss the agent-turn branch leaking the
+    # agent's slug via _agent_or_404's own 404 message (copied into detail by
+    # the shared HttpError handler). turn_or_404 catches and re-raises a
+    # uniform message — pin the body, not just the code.
     body = resp.json()
     assert body["title"] == "Not Found"
     assert body["detail"] == "turn not found"
@@ -145,8 +144,8 @@ def test_stranger_cannot_claim_victim_turn_via_own_untenanted_runner(
     point: a claim that both leaks the prompt/origin_ref AND flips the turn to
     CLAIMED is a repeatable denial of service against the victim's real runner.
 
-    Pairing an untenanted runner via the API now 422s (a workspace is required
-    since the 2026-07-25 incident), but LEGACY null-workspace rows still exist
+    Pairing an untenanted runner via the API 422s (a workspace is required),
+    but LEGACY null-workspace rows still exist
     in prod — so mint the row directly and prove the claim path still holds."""
     turn_id = _enqueue(owner_client).json()["id"]
     stranger = User.objects.get(username="stranger")
@@ -210,7 +209,7 @@ def test_tenanted_attacker_cannot_claim_other_workspace_turn(owner_client, agent
 
 
 def test_runner_claims_for_agents_in_any_workspace_its_runner_owner_belongs_to(owner, owner_client, workspace):
-    """The production shape, and the outage this pins closed.
+    """The production shape: one runner, a fleet spanning workspaces.
 
     There is ONE laptop runner but the agent fleet deliberately spans workspaces:
     `eva` is homed to the runner's own workspace, `ace` to a sibling one. The
@@ -224,8 +223,8 @@ def test_runner_claims_for_agents_in_any_workspace_its_runner_owner_belongs_to(o
     for the schedule-sync route. `owner` can already drive `ace` through the UI,
     so claiming for it is no escalation.
 
-    Since 2026-10-11 the box must also be ENROLLED in the sibling: pairing
-    enrolls it only where it paired, and membership alone no longer puts a box
+    The box must also be ENROLLED in the sibling: pairing
+    enrolls it only where it paired, and membership alone does not put a box
     on a workspace's work (a family workspace must not get the Dimagi boxes).
     """
     sibling = Workspace.objects.create(
@@ -311,13 +310,10 @@ def test_list_turns_only_shows_my_tenants_turns(owner_client, stranger_client, a
     assert resp.json() == []  # filtered, not 404 — a list of nothing
 
 
-# The two unhomed-agent tests that used to sit here — `_agent_or_404` 404ing a
-# workspace-less agent (security review 2026-07-26, F1) and `list_turns`
-# excluding its turns (hole B) — are gone with the row they needed:
-# Agent.workspace is NOT NULL as of agents/0013, so the state cannot be
-# constructed. See tests/test_agent_workspace_not_null.py. Their cross-tenant
-# counterparts, which are the half with something left to prove, remain above
-# and below: `test_stranger_enqueueing_for_someone_elses_agent_gets_404` and
+# There is no unhomed-agent test (`_agent_or_404` 404ing a workspace-less
+# agent, `list_turns` excluding its turns): Agent.workspace is NOT NULL, so the
+# state cannot be constructed. See tests/test_agent_workspace_not_null.py. The
+# cross-tenant cases are above and below: `test_stranger_enqueueing_for_someone_elses_agent_gets_404` and
 # `test_list_turns_only_shows_my_tenants_turns`.
 
 

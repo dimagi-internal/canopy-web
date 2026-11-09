@@ -1,4 +1,4 @@
-"""Running as a lower role, and the private runner (canopy-web#1705).
+"""Running as a lower role, and the private runner.
 
 `acts_as` (`editor` / `viewer`) is a property of ONE turn — or of one client's
 requests (`X-Canopy-Acts-As`), which is how a runner puts itself in a lower mode —

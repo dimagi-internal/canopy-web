@@ -42,7 +42,7 @@ def test_user_workspace_slugs_and_is_member(settings):
 
 
 # ──────────────────────────────────────────────────────────────────────
-# F1 (2026-07-26 security review): `ensure_member` returns (membership,
+# F1 (security review): `ensure_member` returns (membership,
 # created) and can record provenance via `provisioned_by_app`, so an
 # app-provisioned grant is attributable and findable — an organic join
 # (no app credential involved) must record no provenance.

@@ -1,15 +1,14 @@
 """Authorization tests for /api/agents/{slug}/runs/... (apps/agent_runs/api.py) —
 a non-member must get 404, never 403, and never a leak that the resource
-exists. Mirrors apps/agents' and apps/harness's posture (see #421).
+exists. Mirrors apps/agents' and apps/harness's posture.
 
-apps/agent_runs/api.py::_get_agent_or_404 carried the same fail-open pattern
-those two sites had before #421 fixed them: `if agent.workspace_id and not
-wsvc.is_member(...)` short-circuits to "allow" whenever `agent.workspace_id`
-is falsy, so an unhomed (workspace=None) agent's entire run surface —
-list/create runs, get a run (label, session_link, steps, artifacts, verdicts,
-decisions, gates), list steps, record a gate/verdict, fork a run — was
-reachable by ANY authenticated user, not just a workspace member. This file
-pins the fix: a non-member of a homed agent still 404s, and a workspace-less
+apps/agent_runs/api.py::_get_agent_or_404 must not use the fail-open pattern
+`if agent.workspace_id and not wsvc.is_member(...)`, which short-circuits to
+"allow" whenever `agent.workspace_id` is falsy and would make an unhomed
+(workspace=None) agent's entire run surface — list/create runs, get a run
+(label, session_link, steps, artifacts, verdicts, decisions, gates), list steps,
+record a gate/verdict, fork a run — reachable by ANY authenticated user, not
+just a workspace member. This file pins that: a non-member of a homed agent still 404s, and a workspace-less
 agent is unresolvable by anyone (not universally visible), while a genuine
 member keeps working."""
 from __future__ import annotations

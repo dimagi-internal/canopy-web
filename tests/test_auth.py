@@ -79,7 +79,7 @@ def test_health_is_public(db):
 
 @override_settings(REQUIRE_AUTH=True, RUNNER_CODE_SHA="a" * 40)
 def test_health_names_the_deployed_runner_version_without_a_token(db):
-    """A runner whose token canopy refuses still learns it is behind (canopy-web#1762)."""
+    """A runner whose token canopy refuses still learns it is behind."""
     resp = Client().get("/health/")
     assert resp.json() == {"status": "ok", "runner_code_sha": "a" * 40}
 
@@ -588,7 +588,7 @@ def test_review_api_create_still_requires_auth(db):
 # callback URL — a restored tab, a back-button press, a reload — lands here
 # by construction. Stock allauth answers with an unstyled dead end that
 # offers no way forward, which is what turned one spent callback into a
-# user reporting the app as broken (labs, 2026-07-26).
+# user reporting the app as broken.
 
 
 # DB-marked as of allauth 65: the error page now lists the configured social

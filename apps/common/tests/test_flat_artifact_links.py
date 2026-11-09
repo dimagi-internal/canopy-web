@@ -1,4 +1,4 @@
-"""Flat artifact links are gone (canopy-web#1337): one URL per artifact, under
+"""Flat artifact links are gone: one URL per artifact, under
 its workspace, and nothing forwarded. A flat or pre-tenancy `/w/<uuid>` link
 answers a plain 404 that says links now include the workspace."""
 from __future__ import annotations

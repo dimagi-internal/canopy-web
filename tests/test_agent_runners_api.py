@@ -1,6 +1,6 @@
 """GET/PUT /api/agents/{slug}/runners — the ordered runner-assignment API that
 backs the routing-matrix UI. RunnerAssignment(agent, runner, rank) is the
-single routing authority for agent turns (spec 2026-07-24)."""
+single routing authority for agent turns."""
 from __future__ import annotations
 
 import json
@@ -130,13 +130,13 @@ def test_put_agent_runners_rejects_retired_runner(client, agent, runner_a):
 
 
 def test_retire_runner_cascades_its_assignment_rows(client, agent, runner_a, runner_b):
-    """Prod incident 2026-07-25: retiring a runner left its RunnerAssignment
-    row behind. GET kept listing it (no status filter on
+    """Retiring a runner must not leave its RunnerAssignment
+    row behind. GET would keep listing it (no status filter on
     agent.runner_assignments), and the matrix UI round-trips a plain GET
     straight back into PUT to save any unrelated change — so the stale row
-    422'd every subsequent save with "unknown or retired runner id" even
+    would 422 every subsequent save with "unknown or retired runner id" even
     though the caller never asked to add the retired runner back. Retiring
-    must delete the row so GET (and a PUT of what GET showed) both come back
+    deletes the row so GET (and a PUT of what GET showed) both come back
     clean."""
     RunnerAssignment.objects.create(agent=agent, runner=runner_a, rank=0)
     RunnerAssignment.objects.create(agent=agent, runner=runner_b, rank=1)
@@ -147,7 +147,7 @@ def test_retire_runner_cascades_its_assignment_rows(client, agent, runner_a, run
     resp = client.post(f"/api/harness/runners/{runner_a.id}/retire")
     assert resp.status_code == 200, resp.content
     # Said, not silent: dropping Alice's route sends her work to another box, and
-    # nothing surfaced that when this was a bare 204 (2026-10-02).
+    # the response lists what was dropped rather than a bare 204.
     assert resp.json()["dropped_routes"] == [
         {"agent": agent.slug, "source": "", "actor": ""},
         {"agent": agent.slug, "source": "slack", "actor": "alice@dimagi.com"},
@@ -280,10 +280,7 @@ def test_agent_runners_is_tenant_gated(client, workspace):
     assert _put(client, "secret-agent", []).status_code == 404
 
 
-# The unhomed-agent counterpart of `test_agent_runners_is_tenant_gated` above
-# (security review 2026-07-26, hole A: `_visible_agent_workspace_ids` included
-# {None}, so ANY authenticated user could read AND write an unhomed agent's
-# routing assignments via `PUT /runners`) is gone with the row it needed:
-# Agent.workspace is NOT NULL as of agents/0013. See
+# There is no unhomed-agent counterpart of `test_agent_runners_is_tenant_gated`
+# above: Agent.workspace is NOT NULL (agents/0013). See
 # tests/test_agent_workspace_not_null.py; the cross-tenant test above is the
 # live half of the same assertion.

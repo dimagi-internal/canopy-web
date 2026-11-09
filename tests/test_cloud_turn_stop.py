@@ -1,13 +1,12 @@
 """A person's stop ends a turn running on a CLOUD runner.
 
-2026-10-17, cloud-ec2-2: Ada stopped a huddle turn twice and closed its session;
-the turn ran 23 more minutes. An agent turn names no session (agent XOR project
-XOR chat_session), so `cancel_session_turns` — which looked only at
-`chat_session` — found nothing; the fallback session interrupt went to a runner
-that had no branch for it; and close archived the row over a live turn.
+An agent turn names no session (agent XOR project XOR chat_session), so
+`cancel_session_turns`, looking only at `chat_session`, would find nothing; the
+fallback session interrupt would go to a runner with no branch for it; and close
+would archive the row over a live turn.
 
 The turn IS tied to its session, by the key the runner stamped on it
-(`stamp_turn_session`) — the key the RunnerBinding carries. Stop now finds it,
+(`stamp_turn_session`) — the key the RunnerBinding carries. Stop finds it,
 records cancel_requested, rings the runner, and re-delivers the stop on every
 heartbeat reply until the runner finishes it CANCELLED.
 """

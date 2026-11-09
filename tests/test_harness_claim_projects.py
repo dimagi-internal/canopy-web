@@ -1,7 +1,7 @@
 """claim_next_turn, widened to repos.
 
-The tenant rule is the delicate part and it has already caused one production
-outage (#227, dc58b1b): tenancy derives from `runner.owner` — the human who
+The tenant rule is the delicate part (getting it wrong is a production
+outage): tenancy derives from `runner.owner` — the human who
 paired the runner — NOT from Runner.workspace, because the fleet deliberately
 spans workspaces behind one laptop runner.
 """
@@ -42,7 +42,7 @@ def _runner(runner_owner, **kw):
 
 def test_a_projects_only_runner_claims_a_project_turn():
     """The early-return `if not slugs` would strand this runner forever: it
-    declares no agents at all, so it used to bail before ever looking."""
+    declares no agents at all, so it would bail before ever looking."""
     jj = _user("jj")
     ws = _ws("canopy", jj)
     runner = _runner(jj)
@@ -185,9 +185,9 @@ def test_an_executing_project_turn_does_not_block_every_agent_turn():
 
 
 def test_an_executing_agent_turn_does_not_block_that_agents_next_turn():
-    """An agent is not a lane. One long-running turn used to hold every other request for the
-    agent queued behind it -- an ACE turn running 9 h kept a pinned dispatch waiting 5h16m
-    (2026-10-30) on a box with room to spare. Turns of one agent run side by side."""
+    """An agent is not a lane: one long-running turn does not hold every other request for the
+    agent queued behind it (a 9 h turn must not keep a pinned dispatch waiting on a box
+    with room to spare). Turns of one agent run side by side."""
     jj = _user("jj")
     ws = _ws("dimagi", jj)
     runner = _runner(jj, workspace=ws)

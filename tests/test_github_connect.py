@@ -91,9 +91,9 @@ def _fake_get(body, status=200):
 def test_connecting_stores_both_tokens_encrypted(client, user, configured):
     """Both halves are held, encrypted, with their expiries.
 
-    The access token used to be deliberately dropped and re-minted on every
-    use — which made every use spend the ROTATING refresh token, so two
-    concurrent uses raced and the loser killed the grant. Caching it (8 hours)
+    The access token is not dropped and re-minted on every
+    use — that would make every use spend the ROTATING refresh token, so two
+    concurrent uses would race and the loser kill the grant. Caching it (8 hours)
     is what makes a refresh rare; see `access_token_for`.
     """
     start = client.get("/auth/github/start/")
@@ -120,11 +120,11 @@ def test_connecting_stores_both_tokens_encrypted(client, user, configured):
 
 
 # --- which GitHub screen a user is sent to ------------------------------------
-# REGRESSION THIS PINS. Connect originally pointed at /login/oauth/authorize,
+# REGRESSION THIS PINS. Connect must not point at /login/oauth/authorize,
 # which asks "may this app act as you?" and shows NO repository picker. The
-# result was a connection holding a valid token with access to zero
-# repositories — reported to the user as success. Measured on labs 2026-09-13:
-# authorized cleanly, `list_installations` returned 0, nothing could be pushed.
+# result is a connection holding a valid token with access to zero
+# repositories — reported to the user as success: it authorizes cleanly,
+# `list_installations` returns 0, nothing can be pushed.
 # The installation flow is the only one that asks about repositories, and it
 # authorizes in the same trip.
 
@@ -557,7 +557,7 @@ def _sequential_get(*bodies):
 
 
 def test_a_scoped_installation_reports_the_repositories_it_reaches(user, configured):
-    """The real shape from labs 2026-09-13: one org, one repo."""
+    """A real shape: one org, one repo."""
     GitHubConnection.objects.create(
         user=user, github_login="jjackson", github_user_id=1,
         refresh_token_enc=encrypt_secret("ghr_1"),

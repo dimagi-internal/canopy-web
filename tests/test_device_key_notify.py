@@ -128,8 +128,8 @@ def test_the_heartbeat_tells_the_box_a_key_waits_until_it_is_approved(box):
 
 
 def test_the_notice_names_the_computer_not_its_kernel(box, django_capture_on_commit_callbacks):
-    """A default label is `host (platform.system())`; "Darwin" read to a Mac owner as a
-    machine they had never heard of (2026-10-21). The notice says "the Mac named …"."""
+    """A default label is `host (platform.system())`; "Darwin" reads to a Mac owner as a
+    machine they have never heard of. The notice says "the Mac named …"."""
     Runner.objects.filter(pk=box["runner"].pk).update(workspace=None)  # private: still mailed
     key = ec.generate_private_key(ec.SECP256R1())
     data = {"runner": str(box["runner"].pk), "public_jwk": _jwk(key), "kind": "secure-enclave",
