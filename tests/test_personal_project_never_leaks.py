@@ -54,7 +54,6 @@ from apps.agents.models import (
     VaultAttachment,
 )
 from apps.api.api import api
-from apps.canopy_sessions.models import ProjectSessionShare
 from apps.contacts.models import PersonFact
 from apps.contacts.services import person_for
 from apps.dynamic_views.models import DynamicView
@@ -178,7 +177,6 @@ def _make_world() -> dict:
     view = DynamicView.objects.create(workspace=ws, project=project, slug=f"{MARK}-view", title=S("view.title"),
                                       description=S("view.description"), code=f"// {S('view.code')}")
     saved = SavedView.objects.create(workspace=ws, owner=lead, name=f"{PUBLIC_MARK}-saved", shared=True)
-    ProjectSessionShare.objects.create(user=lead, project=project)
     vault = Vault.objects.create(workspace=ws, kind=Vault.WORKSPACE, name=f"{PUBLIC_MARK}-vault", created_by=wsadmin)
     VaultAttachment.objects.create(vault=vault, project=project)
     doc = AgentRun.objects.create(agent=lead_agent, project=project, ext_id="guard-doc", subject="guard", label="doc", kind="doc")
@@ -505,9 +503,6 @@ QUERY_ALLOWLIST = {
     ("apps/contacts/people_api.py", "add_person_fact"): "the writer: refuses a personal project",
     ("apps/runs/aggregate.py", "narrative_signals"): "project_out renders a personal project as None",
     ("apps/dynamic_views/api.py", "connection_share_target"): "filtered to workspace projects",
-    ("apps/canopy_sessions/sharing.py", "shared_projects"): "the caller's own live shares, workspace projects only",
-    ("apps/canopy_sessions/access.py", "_project_share_q"): "filtered to workspace projects",
-    ("apps/canopy_sessions/audience.py", "_project_teams"): "filtered to workspace projects",
 }
 
 _READ_RULE = {"project_read_q", "task_read_q", "shared_with_q"}

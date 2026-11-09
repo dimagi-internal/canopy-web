@@ -17950,51 +17950,6 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/me/session-sharing/": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * The projects you still share your laptop sessions with
-         * @description Every project whose team can still read, write and pull your laptop
-         *     sessions in its repo, because you shared them before this was retired.
-         *     Empty for almost everyone: a laptop session is yours alone.
-         */
-        readonly get: operations["list_session_sharing"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/me/session-sharing/{project_id}": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        /**
-         * Stop sharing your laptop sessions with a project's team
-         * @description `shared: false` turns off a share you have: the project's team stops
-         *     seeing your laptop sessions in its repo on the next read. `shared: true` is
-         *     refused (409): sharing all your sessions in a repo with a project's team is
-         *     retired. To share one session with named people, add them on its page.
-         */
-        readonly put: operations["set_session_sharing"];
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
     readonly "/api/me/sessions/": {
         readonly parameters: {
             readonly query?: never;
@@ -48110,52 +48065,6 @@ export interface components {
             readonly value?: string | null;
         };
         /**
-         * ProjectSessionShareOut
-         * @description A project you still share your laptop sessions with (`/api/me/session-sharing/`).
-         */
-        readonly ProjectSessionShareOut: {
-            /**
-             * Project Id
-             * @description The project's id.
-             */
-            readonly project_id: number;
-            /**
-             * Handle
-             * @description The project's handle in its workspace.
-             */
-            readonly handle: string;
-            /** Name */
-            readonly name: string;
-            /**
-             * Workspace
-             * @description The workspace the project belongs to.
-             */
-            readonly workspace: string;
-            /**
-             * Repo
-             * @description The repo the project works in; your laptop sessions in it are what is shared.
-             */
-            readonly repo: string;
-            /**
-             * Shared
-             * @description Your sessions in this repo are visible to the project's team.
-             */
-            readonly shared: boolean;
-            /**
-             * Team Size
-             * @description How many people are on the project's team: its owner and its participants.
-             */
-            readonly team_size: number;
-        };
-        /**
-         * ProjectSessionShareIn
-         * @description `false` stops sharing your laptop sessions with one project's team; `true` is refused (retired).
-         */
-        readonly ProjectSessionShareIn: {
-            /** Shared */
-            readonly shared: boolean;
-        };
-        /**
          * SessionSecretValueOut
          * @description The sealed value, for `canopy secret exec` to open with its device key.
          */
@@ -73133,52 +73042,6 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
-            };
-        };
-    };
-    readonly list_session_sharing: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": readonly components["schemas"]["ProjectSessionShareOut"][];
-                };
-            };
-        };
-    };
-    readonly set_session_sharing: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly project_id: number;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["ProjectSessionShareIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ProjectSessionShareOut"];
-                };
             };
         };
     };

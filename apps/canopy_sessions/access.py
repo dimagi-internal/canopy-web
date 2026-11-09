@@ -14,15 +14,13 @@ someone merely for being in the same workspace:
   a participant removed from the workspace loses the session with it, the
   same as every other tenant surface in canopy. Which workspace that is — the
   filing rule for a new runner session, and moving one — is `filing.py`.
-* **Then one of seven legs** (`visible_session_q`): you created it; you were
+* **Then one of six legs** (`visible_session_q`): you created it; you were
   made a participant; it is a runner-discovered session on a box YOU OWN (a
   laptop session is its owner's alone); it is the own thread of an agent you
   run; you are an agent's own login and its person let that agent review
   their sessions (`SessionReviewGrant`, read-only, never a sensitive one); or
   you administer the runner it sits on (`RunnerAdmin`, read-only, so a box
-  can be emptied — `may_move`); or its box owner shared their laptop sessions
-  in this project's repo with the project's team and you are on it
-  (`ProjectSessionShare`, read + write + pull).
+  can be emptied — `may_move`).
 * **Reach** — a request made with an agent turn's caller token reads as the asker, but
   only as far as `turn_reach` says: that conversation and sessions with that agent, and
   for a one-session review only that conversation and that session (`limit_reach`).
@@ -83,10 +81,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from django.db.models import Exists, OuterRef, Q
+from django.db.models import Q
 from django.utils import timezone
 
-from apps.agents.models import Agent, AgentProject
+from apps.agents.models import Agent
 from apps.harness import runner_requirements as rr
 from apps.harness import runners, sensitivity
 from apps.harness.models import Runner, Turn
@@ -94,7 +92,6 @@ from apps.harness.models import Runner, Turn
 from . import channel_bindings
 from .models import (
     REVIEW_METADATA_KEY,
-    ProjectSessionShare,
     RunnerBinding,
     Session,
     SessionParticipant,
@@ -212,7 +209,7 @@ def visible_session_q(user) -> Q:
     Tenancy is a separate and prior gate (`_visible_slugs`) — this narrows
     inside it and must never be used as the only check.
 
-    Seven ways in, and no eighth:
+    Six ways in, and no seventh:
 
     1. you created it;
     2. you were made a participant — `SessionParticipant` is what "multiplayer"
@@ -250,12 +247,6 @@ def visible_session_q(user) -> Q:
        (`_runner_admin_q`). READ-ONLY (`role_for` gives a viewer) and no pull
        (`may_pull`): it exists so the person trusted with a box can see what is
        on it and move it off (`may_move`, `transfer-all`), not to work in it.
-    7. its box owner shared their laptop sessions in this project's repo with the
-       project's team, and you are on that team (`ProjectSessionShare`,
-       `_project_share_q`): the project's owner or a person taking part in it,
-       never an agent's own login. The person's explicit, revocable choice, per
-       project; you work in it as an editor and may pull. Never a sensitive one,
-       never an agent's own work.
 
     **Known consequence — an orphaned session becomes invisible.**
     `Session.created_by` is `on_delete=SET_NULL`, so deleting a user leaves
@@ -273,33 +264,9 @@ def visible_session_q(user) -> Q:
         | _own_work_q(user)
         | _review_grant_q(user)
         | _runner_admin_q(user)
-        | _project_share_q(user)
     )
     reach = reach_of(user)
     return legs if reach is None else legs & reach.q
-
-
-def _project_share_q(user) -> Q:
-    """Leg 7: laptop sessions their box owner shared with a project team `user` is on."""
-    if not getattr(user, "is_authenticated", False) or Agent.objects.filter(user=user).exists():
-        return Q(pk__in=[])
-    on_team = AgentProject.objects.filter(
-        Q(owner_user=user) | Q(participant_rows__person__user=user),
-        visibility=AgentProject.WORKSPACE).values("pk")
-    shares = (ProjectSessionShare.objects
-              .filter(revoked_at__isnull=True, project__in=on_team)
-              .exclude(project__repo_slug="")
-              .filter(user_id=OuterRef("runner_binding__runner__owner_id"),
-                      project__workspace_id=OuterRef("workspace_id"),
-                      project__repo_slug__iexact=OuterRef("runner_binding__emdash_project")))
-    return _discovered_q() & Q(agent__isnull=True) & _not_sensitive_q() & Q(Exists(shares))
-
-
-def is_project_shared_with(user, session) -> bool:
-    """Leg 7 for one row already in hand."""
-    if session is None or session.origin != Session.ORIGIN_RUNNER or session.created_by_id is not None:
-        return False
-    return Session.objects.filter(pk=session.pk).filter(_project_share_q(user)).exists()
 
 
 def _discovered_q() -> Q:
@@ -529,7 +496,7 @@ def _tenant_slugs(user) -> set:
 
 
 def readable_sessions(user, *, workspace_slugs=None):
-    """Every session `user` may read — the tenant gate AND the seven legs.
+    """Every session `user` may read — the tenant gate AND the six legs.
 
     `workspace_slugs` narrows further (a pinned `/api/w/{ws}/` route); it can
     never widen past the caller's own workspaces.
@@ -586,10 +553,6 @@ def role_for(user, session) -> str | None:
         # Runner-discovered, on YOUR box: your laptop, your conversation. You
         # work in it and decide who else is in it.
         derived = SessionParticipant.OWNER
-    elif is_project_shared_with(user, session):
-        # Its box owner shared their sessions in this project's repo with the
-        # project's team, and you are on it: you work in it with them.
-        derived = SessionParticipant.EDITOR
     elif session.origin == Session.ORIGIN_RUNNER and session.created_by_id is None:
         # Seen through a read-only leg (a coach's review grant, a runner admin,
         # an agent's own login on its own work):

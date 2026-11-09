@@ -49,33 +49,6 @@ export async function getCanopyProjects(): Promise<CanopyProjects> {
   return normalize(data as unknown as Parameters<typeof normalize>[0])
 }
 
-/** A project you still share your laptop sessions with (GET /api/me/session-sharing/). */
-export type SessionShare = {
-  project_id: number
-  handle: string
-  name: string
-  workspace: string
-  repo: string
-  shared: boolean
-  team_size: number
-}
-
-/** The projects whose team you still share your laptop sessions in their repo with. */
-export async function getSessionSharing(): Promise<SessionShare[]> {
-  const res = await apiV2.GET('/api/me/session-sharing/')
-  const data = unwrap(res, 'could not load your session sharing')
-  return [...(data as unknown as SessionShare[])]
-}
-
-/** Stop sharing your laptop sessions in a project's repo with its team (`true` is refused: retired). */
-export async function setSessionSharing(projectId: number, shared: boolean): Promise<SessionShare> {
-  const res = await apiV2.PUT('/api/me/session-sharing/{project_id}', {
-    params: { path: { project_id: projectId } },
-    body: { shared },
-  })
-  return unwrap(res, 'could not change your session sharing') as unknown as SessionShare
-}
-
 export async function setCanopyProjects(
   everything: boolean,
   projects: string[],

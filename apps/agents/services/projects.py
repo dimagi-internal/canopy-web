@@ -431,7 +431,6 @@ def _personal_blockers(project: AgentProject) -> list[str]:
         "it is shared with other workspaces": project.shares.exists(),
         "people have been added to it": project.people.exists(),
         "it has check-ins": project.checkins.exists(),
-        "someone shares their sessions with its team": project.session_shares.filter(revoked_at__isnull=True).exists(),
         "a vault serves it": project.vault_attachments.exists(),
         "it has dynamic views": project.dynamic_views.exists(),
         "run documents are filed under it": project.runs.exists(),
