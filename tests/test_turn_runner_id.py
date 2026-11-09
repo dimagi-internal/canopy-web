@@ -1,4 +1,4 @@
-"""POST /api/harness/turns/ may name the runner (spec 2026-07-27).
+"""POST /api/harness/turns/ may name the runner.
 
 Pinning bypasses assignments and source rules — never the tenant gate, and never
 a runner the caller cannot see. That last part is the whole security surface of

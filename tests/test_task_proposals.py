@@ -238,8 +238,7 @@ def test_the_summary_reports_task_proposals(board):
 
 
 def test_the_project_page_reads_with_a_check_in_participant(board):
-    """2026-10-18: the live project 500'd — a `checkin` participant was not a source
-    the page's schema knew."""
+    """A `checkin` participant is a source the page's schema knows."""
     from apps.agents import participants
     from apps.contacts import services as contacts
 

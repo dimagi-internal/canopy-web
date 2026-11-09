@@ -1,10 +1,9 @@
 """Every Turn and Session records WHAT created it and WHY, and says so in the log.
 
-The incident (2026-10-05): a scratch script in one Claude session posted chat
-messages to an agent with a person's PAT, and the turns it made were
-indistinguishable from that person typing in the web UI — no token id, no
-client, no request id, no parent, and no server log of the creation at all.
-These tests pin each half of the fix through the real entry points.
+A scratch script that posts chat messages to an agent with a person's PAT must
+not make turns indistinguishable from that person typing in the web UI — with no
+token id, client, request id, parent or server log of the creation.
+These tests pin each half through the real entry points.
 """
 from __future__ import annotations
 

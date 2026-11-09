@@ -1,9 +1,8 @@
 """A session a turn starts is named for a person, never by the command it ran.
 
-2026-10-03: ACE's cloud session for an email from Ali was titled
-"/ace:turn --thread 1a0f24bf9b830273" — the cloud runner proposed the prompt's
-first line, which for an email turn is the command — while the email's subject,
-"Latest on workflows", sat on the turn unused.
+An agent's cloud session for an email is not titled "/ace:turn --thread <id>"
+(the prompt's first line, which for an email turn is the command); the email's
+subject, which sits on the turn, names it.
 """
 from __future__ import annotations
 

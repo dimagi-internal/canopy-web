@@ -1,4 +1,4 @@
-"""Tasks are the workspace's (design 2026-10-24): a key per workspace, an assignee
+"""Tasks are the workspace's : a key per workspace, an assignee
 that is a person or an agent, Linear's status categories, a history of every
 change, relations, labels, Triage, saved views, and the agent's old names still
 working."""

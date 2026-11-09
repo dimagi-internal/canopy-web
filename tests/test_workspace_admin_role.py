@@ -1,4 +1,4 @@
-"""The workspace ADMIN role — between editor and owner (2026-10-02).
+"""The workspace ADMIN role — between editor and owner.
 
 An admin RUNS the workspace: reads every log, manages members and invites
 strictly below themselves, and runs the integrations (mailboxes, host-site
@@ -8,7 +8,7 @@ vouches for visitors, and any agent's credentials stay the owner's (or the
 agent's own admins').
 
 Below admin, a turn's content is readable by whoever started it and the
-agent's admins — not by every member, which is what it was.
+agent's admins — not by every member.
 """
 from __future__ import annotations
 

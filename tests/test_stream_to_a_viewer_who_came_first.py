@@ -5,7 +5,7 @@ within a second, and the runner binds the session only when it claims the turn
 a moment later. `attach_session` marks `stream_desired` on the 0->1 viewer edge
 and only on an existing binding, so that edge fired into nothing, the new
 binding started unwatched, and `post_session_stream` persisted the whole reply
-and pushed none of it. Seen on connect-labs, 2026-09-25: "Thinking…" and then
+and pushed none of it. The viewer sees "Thinking…" and then
 neither the question nor the answer.
 """
 from __future__ import annotations

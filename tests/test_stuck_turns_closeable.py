@@ -1,7 +1,7 @@
 """A stuck turn's warning names the real cause and can be closed where it is shown.
 
-Four readiness drills sat six days in the supervisor's "no runner can claim" card
-(2026-10-21): each was pinned to cloud-ec2-1, which had been retired. The card said
+A readiness drill pinned to a retired runner sits in the supervisor's "no runner can
+claim" card. The card must not say
 "no runner routes the agent 'hal'" — sending its owner to fix routing that was fine
 — told them to "cancel the turn" with nothing to press, and nothing ever ended them.
 """

@@ -1,8 +1,7 @@
 """Transfer requests: moving a session onto someone ELSE's runner needs that runner's yes.
 
 A transfer spends the target box's machine and Claude subscription. Once a
-colleague runs an agent on their own laptop (2026-10-02, ACE on a second
-person's box), "can write to this session" stopped being the right question for
+colleague runs an agent on their own laptop, "can write to this session" stopped being the right question for
 "may move it onto that box" — so a move onto a box the requester does not
 administer waits for its administrator, and one onto your own box just happens.
 """

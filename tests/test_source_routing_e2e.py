@@ -45,9 +45,9 @@ def fleet(client):
 
 
 def _rule(client, slug, source, runner, strict, actor=""):
-    """A rule now names an ORDERED LIST of runners (spec 2026-09-05); this helper
-    keeps posting one, so every assertion below is unchanged — which is the point:
-    a one-runner, no-actor rule must behave exactly as it did before actors."""
+    """A rule names an ORDERED LIST of runners; this helper
+    posts one, so a one-runner, no-actor rule must behave exactly as a
+    rule did before actors existed."""
     res = client.put(
         f"/api/agents/{slug}/runner-rules",
         data={"rules": [{
@@ -144,7 +144,7 @@ def test_the_three_rules_coexist_on_one_fleet(fleet):
     assert second is not None and second.origin == Turn.ORIGIN_ACE_WEB
 
 
-# --- actor rules: route by WHO, not just what kind (spec 2026-09-05) ----------
+# --- actor rules: route by WHO, not just what kind ----------
 
 def _rules(client, slug, rules):
     """Several rules at once — the wholesale-replace body the Runners tab sends."""

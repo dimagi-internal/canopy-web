@@ -1,9 +1,9 @@
 """One way to record a chat, whatever surface it started on.
 
 Where a conversation ORIGINATED (a phone composer vs a task discovered in emdash)
-said nothing about where its record should live — but it used to decide it. A
-phone-created chat recorded only what happened inside a Turn, so anything outside
-one was lost forever: text you typed straight into emdash, and text the agent
+says nothing about where its record should live. A
+chat recorded only from what happens inside a Turn would lose anything outside
+one: text you typed straight into emdash, and text the agent
 wrote after handing the floor back (a background job finishing). Both sit in the
 same emdash session, in the same transcript, as everything else.
 

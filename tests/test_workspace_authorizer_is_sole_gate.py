@@ -1,19 +1,17 @@
 """Fitness test: "is this user allowed in this workspace?" is answered in ONE place.
 
-WHY THIS EXISTS, in this repo's own words. `CLAUDE.md` records that while
-`Agent.workspace` was nullable, "**six separate tenancy predicates independently
-grew a `workspace_id IS NULL` leg meaning *allow***", each written by someone
-re-deriving the rule locally. Four were fixed one site at a time (PRs #378,
-#421, #423) before it was clear that the recurrence — not any single site — was
-the defect. `tests/test_claim_schedule_parity.py` exists for the same reason at
+WHY THIS EXISTS: `CLAUDE.md` records that while `Agent.workspace` was nullable,
+"**six separate tenancy predicates independently grew a `workspace_id IS NULL`
+leg meaning *allow***", each written by someone re-deriving the rule locally.
+Fixing them one site at a time does not stop the recurrence; the recurrence — not
+any single site — is the defect. `tests/test_claim_schedule_parity.py` exists for the same reason at
 a different seam: two predicates that had to agree, and did not.
 
 The fix for a rule that keeps being rewritten is not another careful rewrite. It
 is making the rewrite fail the build.
 
-Borrowed from Scout's `tests/test_authorizer_is_sole_gate.py` (dimagi-rad/scout,
-read 2026-09-14), which guards the same seam with the same technique. Scout's
-key observation is the SIGNATURE: a `WorkspaceMembership` read filtered by BOTH a
+The technique (also used by Scout's `tests/test_authorizer_is_sole_gate.py` in
+dimagi-rad/scout) keys on the SIGNATURE: a `WorkspaceMembership` read filtered by BOTH a
 workspace key and a user key is, definitionally, an access decision — nobody
 writes that query for any other reason. So the test does not need to understand
 authorization, only to recognise its shape.

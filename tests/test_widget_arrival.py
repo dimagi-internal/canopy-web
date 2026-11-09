@@ -116,10 +116,10 @@ def test_a_turn_a_resolved_user_starts_says_host_signed(w):
     assert (t.initiator_user_id, t.initiator_assurance) == (w["alice"].pk, "host_signed")
 
 
-# --- An agent's OWN login (Agent.user, #983) arriving through a host. -------
-# Observed 2026-10-01, turn 2727e227: ace-web started an ACE run as
-# ace@dimagi-ai.com — ACE's own login, a member of the workspace — and it came in
-# as a contact, confined to read mode, which refused the run. Agent logins are minted
+# --- An agent's OWN login (Agent.user) arriving through a host. -------
+# A host that starts an agent run as the agent's own login (ace@dimagi-ai.com, a
+# member of the workspace) must not arrive as a contact confined to read mode,
+# which would refuse the run. Agent logins are minted
 # by `create_token --create-user`, so they have no allauth EmailAddress row, and
 # arrival only ever looked there.
 
