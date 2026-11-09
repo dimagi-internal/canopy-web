@@ -65,7 +65,7 @@ def test_describe_names_the_flags_for_people():
     assert rr.describe(frozenset({"sensitive_data"})) == "sensitive-data"
 
 
-# ---- a declaration counts only while the box reports the mode (spec 2026-10-22 §2) ---
+# ---- a declaration counts only while the box reports the mode ---
 
 
 def test_a_declared_sensitive_is_not_in_force_until_the_box_reports_sensitive_mode():

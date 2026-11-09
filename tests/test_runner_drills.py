@@ -128,11 +128,11 @@ def test_redrill_resets_to_pending(django_user_model):
     assert d2.pk == d.pk and d2.outcome == RunnerDrill.OUTCOME_PENDING
 
 
-# --- The drilled agent reports as ITSELF (2026-09-22) -------------------------
+# --- The drilled agent reports as ITSELF -------------------------
 # Agents carry their own canopy login (per-agent PATs, `Agent.user`), and a
-# well-behaved agent refuses to borrow the operator's token. The report gate was
-# runner-OWNER only, so hal's correct report 404'd ("runner not found") and the
-# drill stranded pending while its turn finished DONE — observed on cloud-ec2-1.
+# well-behaved agent refuses to borrow the operator's token. The report gate is not
+# runner-OWNER only: that would 404 the agent's correct report ("runner not found") and
+# strand the drill pending while its turn finished DONE.
 
 
 def _drilled(django_user_model, *, agent_user=None):
@@ -220,9 +220,8 @@ def test_drill_prompt_prefers_the_agents_own_token(django_user_model):
 
 def test_the_signed_report_link_lets_any_login_report_that_run_and_only_that_run(django_user_model):
     """An agent reports through its run's signed link, whichever canopy login it
-    happens to hold. Echo reported as echo@dimagi-ai.com — a login not linked to
-    its agent row — and was 404'd, so a passing check read as a dead box
-    (cloud-ec2-1, 2026-09-26)."""
+    happens to hold. A login not linked to
+    its agent row must not be 404'd, or a passing check reads as a dead box."""
     import re
 
     owner = django_user_model.objects.create_user(username="own", email="own@dimagi.com", password="x")

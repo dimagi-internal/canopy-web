@@ -1,8 +1,8 @@
 """A runner whose token was revoked can still ask for a device key — and only ask.
 
-2026-10-17: a token cleanup revoked every PAT the haldimagi and jj laptop runners
-held, before either had a device key. Restarted, each could neither heartbeat nor
-enroll, so no approve link would ever reach their owner.
+A token cleanup can revoke every PAT a laptop runner holds before it has a device key.
+Restarted, it could neither heartbeat nor enroll, so no approve link would ever reach
+its owner; it can still ask for a key.
 """
 from __future__ import annotations
 

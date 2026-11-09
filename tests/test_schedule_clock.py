@@ -19,7 +19,7 @@ from apps.workspaces.testing import a_workspace
 
 pytestmark = pytest.mark.django_db
 
-# Friday 2026-07-10, 09:00 America/New_York == 13:00Z.
+# A Friday, 09:00 America/New_York == 13:00Z.
 SLOT = dt.datetime(2026, 7, 10, 13, tzinfo=dt.UTC)
 NOW = SLOT + dt.timedelta(minutes=2)
 

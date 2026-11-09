@@ -1,10 +1,9 @@
-"""A runner serves only the workspaces it is ENROLLED in (2026-10-11).
+"""A runner serves only the workspaces it is ENROLLED in.
 
-Before this, a box served every workspace its owner could work in (editor and
-above). The day Jonathan became owner of `marshellis` — his family's own root
-workspace — every Dimagi box he owns (his laptop, cloud-ec2-1) would have
-started claiming its repo turns and unbound chats, and a family box would have
-claimed Dimagi's. The rule now: enrolled AND the owner still editor+ there.
+A box does not serve every workspace its owner could work in (editor and
+above): an owner of a family root workspace alongside Dimagi would otherwise
+have every Dimagi box claim the family's repo turns and unbound chats, and a
+family box claim Dimagi's. The rule: enrolled AND the owner still editor+ there.
 Enrollment never grants more than membership; it only narrows it.
 """
 from __future__ import annotations

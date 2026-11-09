@@ -4,7 +4,7 @@ A conversation whose host requires `sensitive_data` must never be claimed by a r
 lacks the `sensitive_data` flag — not through the default list, a source rule, an actor
 rule, a strict rule, a pin, a bound session, or the 60s cascade grace — and
 there is no fallback. The stuck-turn report and `turn_reach` must agree with
-claiming (spec 2026-09-30).
+claiming.
 """
 from __future__ import annotations
 
@@ -312,7 +312,7 @@ def test_an_offline_sensitive_box_names_sensitive_only_when_a_ordinary_box_is_li
     assert reach.kind == claim.OFFLINE and reach.blocked_by_requirements
 
 
-# ---- inheritance (spec 2026-10-22-sensitive-data-agents §3) ------------------
+# ---- inheritance ------------------
 
 
 def test_a_turn_started_from_a_sensitive_turn_inherits_its_requirement(fleet):

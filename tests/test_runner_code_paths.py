@@ -4,8 +4,8 @@ The server's expectation (deploy-labs.yml), an install's stamp (install-runner.s
 install-runner.ps1) and a source checkout's live answer (provenance.CODE_PATHS)
 are compared as equals. If one names a path the others do not, the shas differ on
 the next commit to that path and the box reads stale forever — or a change ships
-nowhere because nothing marked any box stale, which is how the 2026-10-06 mark sat
-installed on every laptop and visible on none.
+nowhere because nothing marked any box stale (a mark installed on every laptop and
+visible on none).
 """
 from __future__ import annotations
 

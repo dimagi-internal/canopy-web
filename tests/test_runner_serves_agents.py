@@ -1,11 +1,11 @@
 """Which agents a box runs: ONE rule, shared by the claim, the vault and the box's
-own refresh (canopy-web#1563, fizzy 2026-10-17).
+own refresh.
 
-The box's credential refresh used to walk every agent its owner's token could
-list, and the vault accepted a box by a looser rule than claiming used — it
-counted disabled rows and ignored enrollment and the hold check. So a box that
-could never claim fizzy asked for fizzy's vault every 30 minutes, and once fizzy
-became zero-knowledge every refusal emailed Shayoni. Now:
+The box's credential refresh must not walk every agent its owner's token could
+list, and the vault must not accept a box by a looser rule than claiming uses (counting
+disabled rows, ignoring enrollment and the hold check): a box that could never
+claim an agent would ask for its vault every 30 minutes and every refusal would
+email someone. So:
 
 - `routing.runner_routes_agent` is the claim's own static gates;
 - the vault accepts that, a box holding a live turn of the agent, or the owner's

@@ -114,7 +114,7 @@ def test_a_floor_already_past_is_not_a_reason(box):
 
 
 def test_pending_on_an_idle_box_that_cannot_restart_says_why(box):
-    # cloud-ec2-2-marshellis, 2026-10-28: pending, waiting on nothing, for hours.
+    # Pending, waiting on nothing, for hours.
     health = _health()
     health["checks"].append({"name": "refresh", "status": "fail",
                              "detail": "could not restart to refresh: restart failed (exit 1)"})

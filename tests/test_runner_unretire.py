@@ -1,11 +1,9 @@
 """Retirement is reversible.
 
-It used to be one-way: `runner_or_404` 404s a retired runner, so its daemon's
-heartbeat/claim/report calls all fail forever, and `pair_runner` unconditionally
-CREATES a row — so the only recovery minted a NEW runner id and orphaned every
-RunnerBinding, assignment and session pointing at the old one. Retiring a laptop you
-happened to be logged out of therefore destroyed its sessions' identity the moment you
-brought the box back (labs 2026-07-25: jj-mbp-cdp, 10 sessions).
+`runner_or_404` 404s a retired runner, so its daemon's heartbeat/claim/report calls
+all fail, and `pair_runner` unconditionally CREATES a row — so without unretire the
+only recovery would mint a NEW runner id and orphan every RunnerBinding, assignment
+and session pointing at the old one. Unretire brings the same runner back.
 """
 from __future__ import annotations
 

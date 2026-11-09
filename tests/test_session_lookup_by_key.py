@@ -1,9 +1,9 @@
-"""A session can be opened by the key its Open Sessions card shows (#1127).
+"""A session can be opened by the key its Open Sessions card shows.
 
 A cloud runner's `session_key` is a Claude session UUID, and that UUID is the
 card's heading — so an agent handed "read session 1f33…" asked
 `GET /api/canopy-sessions/<that uuid>`, which treated it as the primary key and
-404'd. The by-id read now falls back to the key; the list filters on it too.
+would 404. The by-id read falls back to the key; the list filters on it too.
 
 Neither route widens anything: both read through `access.readable_sessions`, so a
 key finds exactly the sessions the caller could already open by id.

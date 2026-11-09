@@ -164,7 +164,7 @@ def test_week_schedules_includes_final_local_hour_on_fallback_week(owner, agent,
     yet past a fixed 7*24h=168h window — dropped from the response. week_schedules
     over-fetches (8 days) so no local-day fire is ever missed.
 
-    America/New_York, week of Mon 2026-10-26 (fall-back Sun 2026-11-01), daily
+    America/New_York, week of Mon Oct 26 (fall-back Sun Nov 1), daily
     23:30 local: all 7 fires must be returned, not 6 (the last one, Sun 23:30,
     is what a 168h window drops)."""
     ss.create_schedule(
@@ -172,7 +172,7 @@ def test_week_schedules_includes_final_local_hour_on_fallback_week(owner, agent,
         _fields(name="Late daily", cron="30 23 * * *", timezone="America/New_York"),
     )
     # Local-Monday-midnight as the fixed UTC instant the client sends: in late
-    # October NY is EDT (UTC-4), so Mon 2026-10-26 00:00 local = 04:00 UTC.
+    # October NY is EDT (UTC-4), so Mon Oct 26 00:00 local = 04:00 UTC.
     start = dt.datetime(2026, 10, 26, 4, 0, tzinfo=dt.UTC)
 
     rows = ss.week_schedules({ws.slug}, start)
@@ -189,7 +189,7 @@ def test_week_schedules_scoped_to_given_workspaces(owner, agent, ws):
 
 
 def test_week_schedules_never_matches_on_a_null_workspace(agent):
-    """`workspace_ids` used to be allowed to contain `None`, meaning "also match
+    """`workspace_ids` must not be allowed to contain `None`, meaning "also match
     legacy unhomed agents", which week_schedules turned into an OR'd
     `Q(agent__workspace_id__isnull=True)` — leaking every unhomed agent's
     schedule name, prompt, cron and timezone to any authenticated flat-route

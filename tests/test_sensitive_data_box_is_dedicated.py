@@ -1,5 +1,5 @@
 """A sensitive-data box holds only agents with a `data: sensitive` host site — whoever owns it
-(spec 2026-10-22-sensitive-data-agents §1, "A dedicated box").
+("A dedicated box").
 
 The owner of a sensitive-data box is usually an admin of many agents; without this, routing
 could place ACE's full-profile turn, its secrets and its GitHub token on the box

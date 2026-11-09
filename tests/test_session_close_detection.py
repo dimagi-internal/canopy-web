@@ -139,9 +139,9 @@ def test_a_quiet_laptop_never_posts_a_closed_notice(slack, shared, runner, ws):
 
 # ---- a new task that reuses a closed one's NAME --------------------------------
 #
-# 2026-10-05: a new emdash task called `slack` in canopy-web matched the binding of
-# the Sep 21 `slack` session (bound to a Slack thread, closed Sep 22). The report
-# revived it, the new transcript replaced its history, and the thread that had been
+# A new emdash task called `slack` in canopy-web must not match the binding of an
+# older `slack` session (bound to a Slack thread, closed). Otherwise the report
+# revives it, the new transcript replaced its history, and the thread that had been
 # told "closed" was sent "carrying on directly in the agent's session".
 
 def _ship(runner, alice, session_id, transcript_id, text, capture, index=64):

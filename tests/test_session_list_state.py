@@ -99,8 +99,8 @@ def test_a_bound_web_session_goes_stale_when_its_runner_stops_reporting_it():
     """Where a chat STARTED says nothing about whether it is still open. Once a web
     chat has been sent, a runner holds an emdash session for it and reports it every
     ~10s — so absence from that report is the same direct observation it is for a
-    runner-discovered session. Exempting it left labs showing 10 week-old phone chats
-    as live, whose emdash tasks had been deleted days earlier (2026-07-31)."""
+    runner-discovered session. Exempting it would show old phone chats as live
+    after their emdash tasks were deleted."""
     user, ws, c, runner = _ctx()
     _reports_sessions(runner)
     fresh = _bound_web_session(ws, user, runner, "still-open",
@@ -146,7 +146,7 @@ def test_a_web_chat_on_a_runner_that_never_reports_sessions_stays_active():
 def test_a_runner_session_still_ages_out_on_a_never_reporting_runner():
     """The observer gate applies to the NEW web leg only. A runner-DISCOVERED session
     could only have come from a report in the first place, so its existing rule is
-    unchanged — narrowing it would resurrect the 47 zombies of 2026-07-25."""
+    unchanged — narrowing it would resurrect zombie sessions."""
     user, ws, c, runner = _ctx()
     _reports_sessions(runner, yes=False)
     stale = _runner_session(ws, runner, "vanished", SESSION_LIVE_WINDOW + dt.timedelta(minutes=1))

@@ -2,10 +2,10 @@
 
 The runner reports its whole open-task set at least every `session_report_seconds`
 (10s), so "was this binding in a recent report" is a reliable, self-healing liveness
-signal. Everything else was not: emdash DELETES a closed task rather than setting
+signal. Nothing else is: emdash DELETES a closed task rather than setting
 `archived_at`, so `list_recently_archived_tasks` returns [] forever and the written
-closing signal never fires. Depending on it left 47 zombie sessions `active` with
-their runner FK stripped (observed on labs 2026-07-25).
+closing signal never fires. Depending on it leaves zombie sessions `active` with
+their runner FK stripped.
 
 Two invariants together:
   * `RunnerBinding.runner` is durable IDENTITY — which box this session lives on. A
@@ -203,7 +203,7 @@ def test_stickiness_survives_the_liveness_change():
     """Liveness governs what is LISTED, never where a turn runs. Continuing a chat on
     another box means a fresh emdash session with none of the conversation's context,
     so that stays the user's explicit choice (the placement banner) rather than
-    something a staleness timer does silently — spec 2026-07-24.
+    something a staleness timer does silently.
 
     Guards against 'fixing' the stuck-send by quietly relaxing stickiness: the real
     defect was the banner never appearing, not the routing.

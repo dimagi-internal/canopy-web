@@ -73,15 +73,13 @@ def test_backfill_unavailable_when_runner_heartbeat_is_stale():
 
 
 def test_backfill_asks_the_runner_even_when_rows_exist():
-    """Deliberately replaces "ready when rows exist".
+    """The backfill never short-circuits on "rows exist".
 
-    That short-circuit tested `turn_index == 0`, which under the composite
-    ordinal scheme means record 0 / block 0 — a summary or a noise-filtered
-    harness record, both DROPPED rather than renumbered. So it could not fire on
-    a real transcript: verified on labs (2026-07-31), session cf2d5089's oldest
-    index after a COMPLETE backfill was 448, and a second click still answered
-    `requested`. A branch that is always false is a claim the code never honours,
-    and it hid the fact that every click re-shipped the whole transcript.
+    A `turn_index == 0` test cannot fire: under the composite ordinal scheme
+    index 0 means record 0 / block 0 — a summary or a noise-filtered harness
+    record, both DROPPED rather than renumbered. So a session whose oldest index
+    is 448 after a COMPLETE backfill still answers `requested` on a second
+    click. A branch that is always false is a claim the code never honours.
 
     Asking unconditionally is cheap in the way that matters — the write is
     ordinal-keyed, so re-shipping held rows costs one probe and zero inserts.
