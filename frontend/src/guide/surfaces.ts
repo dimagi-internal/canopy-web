@@ -262,6 +262,16 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Approve as your runner', 'Decline'],
   },
   {
+    path: '/listen',
+    group: 'Recording a meeting from your phone',
+    flat: 'personal/global: your phone and your own laptop, in no workspace',
+    title: 'Canopy Listen on your phone',
+    audience: 'Someone recording a meeting on their phone for their laptop to transcribe',
+    what: "Record a meeting on this phone; your own laptop, running Canopy Listen, transcribes it and your agent takes notes. The audio is encrypted on the phone and only that laptop can open it: Canopy carries ciphertext and never stores it. Pair the phone once by scanning the QR code from “Pair a phone” on the laptop's own page. Then the page shows the laptop and whether it is online, a notice to acknowledge before the first recording, and a record button; while recording, a timer, a level meter and the live transcript with each speaker in their own colour (tap one to rename them), “End meeting” to save and “Discard” to throw it away.",
+    needsFirst: 'Canopy Listen running on your laptop, and your laptop online as your runner',
+    actions: ['Pair this phone from the laptop\'s QR code', 'Record a meeting', 'Rename a speaker', 'End and save, or discard', 'Unpair this phone'],
+  },
+  {
     path: '/act-as/:requestId',
     group: 'Letting an agent act as you',
     flat: 'personal/global: a request to act as YOU, from an agent in any of your workspaces',

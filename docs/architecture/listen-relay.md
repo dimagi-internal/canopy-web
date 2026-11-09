@@ -71,25 +71,54 @@ REST, for the signed-in person (session cookie or PAT):
 
 For the runner, authenticated as the existing runner routes are:
 - `GET /api/runner/listen-sessions/pending` → `waiting` sessions for this runner created in
-  the last 2 minutes, each `{session_id, kind, hello}`. This is the fallback when the control
-  socket is down.
+  the last 2 minutes, each `{session_id, runner_id, kind, hello}`. This is the fallback when
+  the control socket is down. A runner's own key reads its own runner's
+  (`apps/harness/runner_auth.py` lets it reach this route and nothing else under listen); a
+  person's token reads the runner named by `?runner_id=`, or all of theirs.
 
 `RunnerConsumer.runner_listen_start` sends the runner
 `{"type": "listen_start", "session_id", "kind", "hello"}`.
 
 WebSocket `/ws/listen/<sid>/?role=phone|laptop`:
 - **Who may connect:** the signed-in user must be the session's owner. The laptop
-  authenticates with the runner's bearer, which resolves to the owner, as `/ws/runner` does.
-  One socket per role; a second is refused with close code 4009.
+  authenticates with the runner's bearer, which resolves to the owner, as `/ws/runner` does;
+  a runner's own key opens only the laptop side of sessions on that runner (the handshake
+  puts its runner on `scope["runner_id"]`, `apps/realtime/channels_auth.py`). Anyone else is
+  refused 4003 before the socket is accepted. One socket per role; a second is accepted and
+  then closed 4009, so the client can read why. Which socket holds a role is on the row
+  (`phone_channel`/`laptop_channel`), refreshed every 10 s; one silent for 30 s has gone
+  (a web process that died never said so).
 - **What gets relayed:** binary messages go to the other role, as they are. A binary
   message is at most 64 KiB, and a role may send at most 60 per second; going over closes
-  that socket with 4008.
+  that socket with 4008. A frame sent while the other role is not connected waits in that
+  socket's memory, at most 10 s and 64 frames, and goes on when the other side arrives, so
+  neither side's first message is lost to who connected first; it is never written down.
+  Text from a client is ignored. Frames cross the channel layer as `bytes` in a
+  `listen.frame` group message, which msgpack (the Redis layer) carries exactly.
 - **What the server sends:** text frames, JSON from the server only:
   `{"type":"peer","role":…,"connected":bool}` whenever the other side connects or
   leaves, and `{"type":"ended","reason":…}`. The server never reads a binary message.
 - **Session states:** both roles connected → `live` (`connected_at`). The session ends
-  when a role has been gone for 60 s once live, when nothing has connected 2 minutes after
-  creation, or at 4 h.
+  when a role has been gone for 60 s once live (`peer_gone`), when it is not live 2 minutes
+  after creation (`not_connected`), or at 4 h (`max_duration`): `apps/listen/services.py::sweep`,
+  a job on the off-request clock every 10 s. Ended rows (state and byte totals) are deleted
+  after 30 days. Connecting to an ended session gets its `ended` notice, then a close.
+
+## The phone (`/listen`)
+
+`frontend/src/pages/ListenPage.tsx` over `frontend/src/listen/`:
+- `store.ts`: the phone's static key (made once, private half non-extractable) and its
+  pairing `{runner_id, laptop_pub, laptop_name}`, in IndexedDB.
+- `pairLink.ts`: the `#pair=` fragment is moved to this tab's sessionStorage and stripped
+  from the address first thing at startup (`main.tsx`), and again on a same-tab hash change.
+- `relay.ts`: one session's socket. No audio before `ready`; until then up to 10 s waits,
+  oldest dropped first. Frames go out in counter order; a dropped socket is reopened once.
+  The pairing frame is sent when the server says the laptop is connected.
+- `audio.ts`: microphone (echo cancellation, noise suppression) → AudioWorklet → box-filter
+  downsample to 16 kHz → int16 LE → 0.5 s chunks. Started inside the tap, as phones require.
+- `controller.ts`: pairing and a meeting as classes the page drives; REST, socket, storage
+  and microphone come in as `ListenDeps`. The notice must be acknowledged once before the
+  first recording, and `start` says `notice_accepted`.
 
 ## Runner (`listen_pipe.py`)
 
