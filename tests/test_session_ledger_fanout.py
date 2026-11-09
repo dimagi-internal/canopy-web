@@ -7,7 +7,8 @@ conversational record to `/session-stream` with its durable composite ordinal.
 Both fan out to the same session group, so every assistant reply arrived twice
 — once as `seq:<ordinal>`, once as `<turn8>:<ledger seq>` — and the client has
 no way to reconcile those (tool rows dedupe on `tool_use_id`, user rows on
-their text, an assistant row on nothing).
+their text, an assistant row on nothing). Observed live 2026-08-27 on the
+`targeting` session: every reply on screen twice, and once on reload.
 
 So the ledger stops fanning chat rows for a session whose transcript is the
 durable source, and keeps fanning turn-lifecycle events, which no transcript
