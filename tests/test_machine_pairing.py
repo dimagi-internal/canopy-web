@@ -234,7 +234,7 @@ def live_box(org):
         status=RunnerDeviceKey.ACTIVE, approved_by=org["user"], approved_at=timezone.now(),
         ecdh_public_jwk=kms, ecdh_jkt=device_keys.thumbprint(kms), ecdh_store="aws-kms",
         ecdh_approved_at=timezone.now(), ecdh_approved_by=org["user"])
-    backfill_machine_ids(Runner, RunnerDeviceKey)  # the migration PR 4 shipped
+    backfill_machine_ids(Runner, RunnerDeviceKey)  # the same backfill the migration runs
     agent = Agent.objects.create(slug="eva", name="Eva", workspace=org["ws"])
     wrap = AgentVaultWrap.objects.create(agent=agent, kv=1, kind=AgentVaultWrap.DEVICE, device_key=key,
                                          wrap={"alg": "ECDH-ES", "epk": {}, "ct": "x"})

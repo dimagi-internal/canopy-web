@@ -1,4 +1,4 @@
-"""The MCP Apps sandbox proxy and the CSP a View runs under (spec 2026-10-08 §7).
+"""The MCP Apps sandbox proxy and the CSP a View runs under.
 
 Owner decision 1: no new DNS — the proxy is a canopy sub-path made OPAQUE by the
 host's `sandbox="allow-scripts"` (no `allow-same-origin`) and by its own

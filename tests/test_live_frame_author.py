@@ -1,7 +1,7 @@
 """The live user frame carries the author too, not just the durable row.
 
-Server-side attribution (apps/canopy_sessions/services.py::persist_transcript_rows,
-2026-09-27) finds an unmarked user row's author from the turn it matches — but
+Server-side attribution (apps/canopy_sessions/services.py::persist_transcript_rows)
+finds an unmarked user row's author from the turn it matches — but
 that happens in the SAME call that also fans the row out live
 (apps/harness/api.py::post_session_stream). Without carrying the result across,
 a watching client would see no author until the next reload, exactly the gap

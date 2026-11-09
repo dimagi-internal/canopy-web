@@ -1,7 +1,7 @@
 """One turn per mail thread at a time, for mail that fires an inbound_mail trigger.
 
-Thread 1a184f500cd30f72 (2026-10-29): one CloudWatch incident enqueued six full Hal
-turns in twelve hours as the thread grew to 14 messages (1, 5, 6, 8, 11, 14).
+One incident thread that grows to 14 messages must not enqueue a full turn per message
+(six full turns in twelve hours otherwise).
 """
 from __future__ import annotations
 

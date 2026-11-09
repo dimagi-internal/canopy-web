@@ -383,8 +383,7 @@ def test_only_workspace_owners_are_pushed(site, ws):
 
 
 def test_nothing_probes_on_a_clock():
-    # It swept every 30 min per site off runner reports until 2026-09-29; it is
-    # on demand now (Test connection). Every probe mints a real grant and calls
+    # A probe is on demand (Test connection). Every probe mints a real grant and calls
     # a real host, so nothing may start one that a person did not ask for.
     with mock.patch.object(live_probe, "probe_and_record") as probe:
         sessions_reported.send(sender=None, runner=mock.Mock(owner_id=None))

@@ -1,12 +1,12 @@
-"""A pinned READ covers the workspaces below the pin (owner decision, Jonathan, 2026-10-12).
+"""A pinned READ covers the workspaces below the pin (the rule below).
 
 "A pinned read of workspace W returns W plus every DESCENDANT of W that the
 caller is a member of (direct or by inherited ownership). Separate roots never
 join. WRITES pinned to W still land in exactly W. By-id unchanged."
 
-Before this, `/api/w/dimagi/agents/` returned only dimagi's agents, so a fleet
-survey pinned to its home (Ada's `list_agents(workspace="dimagi")`) missed every
-agent living in `connect` (echo, hal, ace, jarvis) and clients fanned one read
+Without it, `/api/w/dimagi/agents/` would return only dimagi's agents, so a fleet
+survey pinned to its home (`list_agents(workspace="dimagi")`) would miss every
+agent living in `connect` (echo, hal, ace, jarvis) and clients would fan one read
 out per workspace to put the organisation back together.
 """
 from __future__ import annotations
@@ -115,7 +115,7 @@ def test_a_pinned_read_never_crosses_roots(world):
 
 
 def test_by_id_covers_what_the_pinned_list_shows(world):
-    """2026-10-17: a by-slug gate spans what the pinned LIST spans, so a row the
+    """A by-slug gate spans what the pinned LIST spans, so a row the
     dimagi list shows (echo, in connect) opens under the dimagi pin too."""
     c = _client(world["both"])
     assert c.get("/api/w/connect/agents/echo/").status_code == 200

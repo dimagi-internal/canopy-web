@@ -27,7 +27,7 @@ def user():
 
 @pytest.fixture()
 def workspace(user):
-    # Security review 2026-07-26, hole A: an unhomed agent is now invisible
+    # An unhomed agent is invisible
     # (apps.agents.api._visible_agent_workspace_ids fails closed), so the
     # `agent` fixture below must be homed like a real agent (upsert_agent
     # always homes one) — an unhomed fixture would 404 every per-agent route

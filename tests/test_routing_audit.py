@@ -1,10 +1,9 @@
 """Every routing write leaves a record of who changed what, with the rows before
 and after (`apps/harness/routing_audit.py` → the settings audit, `apps/events/audit.py`).
 
-Origin, 2026-10-12: ACE carried a strict rule sending every API turn ada@
-requested to one cloud box, and nobody could say who had set it. The rows carry
+Why: a strict rule routing every API turn to one cloud box must say who set it. The rows carry
 no author, each save deletes and re-creates them, and only MCP-originated writes
-left even a tool-call line. These tests pin that each routing write path records
+leave even a tool-call line. These tests pin that each routing write path records
 one SettingChange naming the caller with the rows before and after, that a no-op
 save records nothing, and that a refused write records nothing.
 """

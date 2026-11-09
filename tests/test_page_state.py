@@ -2,8 +2,8 @@
 
 The failure this exists to prevent is subtler than the one `test_page_actions`
 covers, and worse for being invisible: an agent acting confidently on a view
-that is no longer on screen. Page context used to be read once, at frame init,
-and pasted onto the first message as prose — so filtering the page after opening
+that is no longer on screen. Page context read once, at frame init,
+and pasted onto the first message as prose would go stale — filtering the page after opening
 the chat left the agent describing, and acting on, a screen that had moved.
 
 So these tests are mostly about FRESHNESS and BOUNDS: that a second declaration

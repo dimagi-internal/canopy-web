@@ -2,8 +2,7 @@
 
 Each inbound email thread gets one anchor Session; each mail is a turn on it, and
 the runner runs the work in its OWN session (a RunnerBinding keyed on the Gmail
-thread id). The anchor has no binding, so before this nothing ever closed it:
-25 alarm anchors sat `active` on 2026-10-29, back to 2026-09-16.
+thread id). The anchor has no binding, so retiring it is a separate job: without it an anchor stays `active` forever.
 """
 from __future__ import annotations
 
@@ -229,7 +228,7 @@ def test_backfill_command(agent, runner, capsys):
 
 def test_one_message_twice_makes_one_anchor(agent):
     """Push and poll discover the same message: one turn, and one session —
-    not a turnless sibling (3ee01ce9 beside afe51b3c, 2026-10-29)."""
+    not a turnless sibling."""
     a = _mail(agent, thread_id="dup", key="email:same")
     b = _mail(agent, thread_id="dup", key="email:same")
     assert a.pk == b.pk

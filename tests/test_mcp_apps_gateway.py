@@ -1,6 +1,6 @@
 """MCP Apps at the gateway: negotiation, the UI tool index, and visibility.
 
-Spec 2026-10-08 §1-2. Driven through the MOUNTED canopy MCP server with a real
+Driven through the MOUNTED canopy MCP server with a real
 caller token, against a real FastMCP host (`tests/mcp_apps_host.py`) reached
 in-process, exactly as `test_site_gateway` drives the gateway.
 """

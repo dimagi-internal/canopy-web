@@ -5,10 +5,10 @@ session driving a chat sees THAT chat's page through the chat key canopy issued
 it (`tests/test_chat_keys.py`); a confined caller's session sees its own
 conversation's through its caller token.
 
-What changed (2026-09-26): an agent's LOGIN used to match every chat the agent
-was in. That answered "which chat?" by inferring from an identity, and answered
-it too broadly — every chat of the agent, not the one being driven. The chat key
-replaced it, so these tests now pin that the login alone sees nothing.
+An agent's LOGIN does not match every chat the agent was in: that would answer
+"which chat?" by inferring from an identity, and too broadly — every chat of
+the agent, not the one being driven. The chat key answers it, so these tests
+pin that the login alone sees nothing.
 
 Every test still makes the caller and the session's creator DIFFERENT people,
 because that is the configuration that ships.

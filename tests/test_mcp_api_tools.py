@@ -162,9 +162,8 @@ def test_credential_routes_are_excluded_or_argued(db):
 def test_routes_a_machine_signs_are_not_tools(db):
     """These routes' credential is a signature made by a site, a cloud service or a box's own
     key, which an MCP call cannot carry, so as a tool each can only be refused. Worse, the
-    refusal reads as the agent's own login failing: 2026-11-04, ACE's Slack turn 9f55abcc on
-    cloud-ec2-live called `get_site_agents`, got 401 `no_assertion`, and credential_guard
-    aborted the turn."""
+    refusal reads as the agent's own login failing: a tool call to `get_site_agents` gets
+    401 `no_assertion`, and credential_guard aborts the turn."""
     from apps.api import route_gates
 
     api.get_openapi_schema()  # binds the routers
@@ -374,7 +373,7 @@ def test_a_request_without_the_scope_key_is_untouched(tenancy):
 
 def test_owner_actions_are_tools_too(db):
     """There are no web-app-only actions: inviting, roles, an agent's
-    interface/credentials/admins, vaults are all MCP tools (2026-10-02).
+    interface/credentials/admins, vaults are all MCP tools.
     `create_token` is the one omission — a tool would put a raw PAT in a chat."""
     tools = _tools()
     for name in ("transfer_owner", "grant_admin", "revoke_admin", "link_canopy_user",
@@ -409,8 +408,8 @@ def test_a_script_prefix_is_not_part_of_a_tool_path():
 
 def test_an_explicit_null_clears_a_field_like_rest_does(tenancy):
     """FastMCP drops `None` arguments, so `patch_task(waiting_on_email=null)`
-    reached the route without the key and the field stayed set, while the same
-    body sent to REST cleared it (ace T24, 2026-10-14). `NullKeepingDirector`
+    reaches the route without the key and the field stays set, while the same
+    body sent to REST clears it. `NullKeepingDirector`
     sends it; an OMITTED field must still be left alone."""
     from apps.agents.models import AgentTask
 

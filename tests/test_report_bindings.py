@@ -196,8 +196,8 @@ def test_same_name_in_two_projects_is_two_sessions():
 
 
 def test_a_name_reused_in_another_project_does_not_inherit_the_first_session():
-    """Labs 2026-08-27: an `ace` task called `issues` claimed the name on 08-14; a
-    connect-labs task of the same name three weeks later was served under it, so the
+    """An `ace` task called `issues` claims the name; a
+    connect-labs task of the same name weeks later must not be served under it, or the
     session reported `project: "ace"` while running `gh ... -R .../connect-labs`."""
     ws, runner = _ws_runner()
 

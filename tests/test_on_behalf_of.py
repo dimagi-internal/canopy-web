@@ -129,7 +129,7 @@ def test_a_chain_of_agents_keeps_the_person(world):
 
 
 def test_a_send_into_another_session_carries_the_person(world):
-    """The route ada used on 2026-10-26: a follow-up into an existing session."""
+    """The route an agent uses: a follow-up into an existing session."""
     target = Session.objects.create(workspace=world["ws"], agent=world["eva"], status=Session.ACTIVE)
     SessionParticipant.objects.create(session=target, user=world["hal"].user,
                                       role=SessionParticipant.EDITOR)

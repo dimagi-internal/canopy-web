@@ -1,7 +1,7 @@
 """A private runner speaks for its owner, so only its owner may extend that trust.
 
 A private runner's token signs in AS its owner: it opens their direct turns and reads
-secrets under their license (canopy-web#1705). So who may put a key on such a box,
+secrets under their license. So who may put a key on such a box,
 which registration the box is, and what a SHARED box's token can do to its owner's
 direct sessions are all decisions that must stay with the owner.
 """

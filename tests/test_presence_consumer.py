@@ -266,12 +266,12 @@ async def test_a_global_page_key_succeeds_with_no_workspace_memberships():
 
 @pytest.mark.asyncio
 async def test_the_bare_word_global_no_longer_skips_the_membership_gate(member_user):
-    """FINDING 1. `global` used to be the sentinel that bypassed the gate,
+    """`global` is not the sentinel that bypasses the gate (the sentinel is `~global`),
     and workspace slugs carry NO reserved-name validation — so any user
     could create a workspace called `global` and every OTHER authenticated
     user could then read (and write themselves into) its roster by asserting
-    `canopy:global:<resource>`. The sentinel moved to `~global`; `global` is
-    now an ordinary tenant name, gated like any other."""
+    `canopy:global:<resource>`. `global` is
+    an ordinary tenant name, gated like any other."""
     from apps.realtime import presence_store
 
     communicator, connected = await _connect(member_user)

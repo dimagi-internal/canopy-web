@@ -39,9 +39,8 @@ def test_drill_unique_per_pair_and_defaults_pending():
 
 
 def test_turn_pinned_runner_degrades_to_normal_routing_on_delete():
-    # Was named "…_and_origin_drill": a drill USED to be an origin value. It is
-    # now an ordinary `api` turn that names its runner, identified by its
-    # RunnerDrill FK — the pin is the only part this test was ever exercising.
+    # An ordinary `api` turn that names its runner (a drill is identified by its
+    # RunnerDrill FK, not an origin value) — the pin is the part under test.
     a, r1 = _agent(), _runner()
     t = Turn.objects.create(
         agent=a, origin=Turn.ORIGIN_API, idempotency_key="k1", pinned_runner=r1

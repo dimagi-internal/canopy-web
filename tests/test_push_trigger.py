@@ -1,7 +1,7 @@
 """Inbox items and the push machinery.
 
 Inbox items (open asks, tasks parked on a person) are NOT on the supervisor
-feed, and you are pushed only about the feed (Jonathan, 2026-10-05) — so an item
+feed, and you are pushed only about the feed — so an item
 never pushes. Its agent's waiting COUNT is still snapshotted, coalesced to one
 recompute per agent per transaction, because the live Inbox badge reads it.
 (That a task change marks its agent dirty at all is pinned in
@@ -188,8 +188,8 @@ def test_a_sent_push_is_logged(user, sub, caplog):
 
 
 # ---- who hears about an agent -------------------------------------------------
-# On labs six of eight agents have owner=None (2026-09-24), so pushing only to
-# agent.owner meant nobody heard. The audience falls back to the agent's
+# Many agents have owner=None, so pushing only to
+# agent.owner would mean nobody hears. The audience falls back to the agent's
 # explicit admins, then the workspace's owners.
 
 

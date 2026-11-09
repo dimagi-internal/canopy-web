@@ -2,9 +2,9 @@
 shares (its runner order) or the chatting person administers.
 
 A project chat is a chat session with no agent, only a repo (`Session.project`).
-Its unbound turns used to go to any session-capable box in the tenant, so a
-teammate's new project chat could land on someone else's laptop. The rules now
-(spec 2026-10-19 #6), applied by the claim and by every reader that mirrors it:
+Its unbound turns do not go to any session-capable box in the tenant (a
+teammate's new project chat could land on someone else's laptop). The rules,
+applied by the claim and by every reader that mirrors it:
 
 1. the box offers the repo in that workspace (`Runner.offers_project_in`);
 2. with an enabled workspace runner order, the order's cascade and grace, among

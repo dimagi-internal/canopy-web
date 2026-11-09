@@ -1,6 +1,6 @@
-"""Nothing on canopy outside a workspace (canopy-web#1289).
+"""Nothing on canopy outside a workspace.
 
-Owner decision (Jonathan, 2026-10-08): every artifact URL lives under
+Every artifact URL lives under
 `/w/<workspace>/…`, a share token still opens one artifact without a login, a
 caller in several workspaces must say which one a write is for, and nobody
 writes into a workspace where they are not an editor — including one that was
@@ -184,8 +184,8 @@ def test_no_write_lands_in_a_workspace_the_caller_is_not_in(write, dimagi, conne
 
 
 def test_a_walkthrough_share_url_is_under_its_workspace_on_the_public_base(dimagi, connect):
-    """It used to read `https://localhost/walkthrough/…`: built from the request's
-    host, which an in-process MCP call does not have."""
+    """It must not read `https://localhost/walkthrough/…` (built from the request's
+    host, which an in-process MCP call does not have)."""
     ace = _agent("ace@dimagi-ai.com", {connect: M.EDITOR})
     body = _upload_walkthrough(ace, HTTP_HOST="localhost").json()
     assert body["workspace"] == "connect"
