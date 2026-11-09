@@ -150,7 +150,7 @@ def test_a_row_says_what_the_document_says_for_ace(w):
 
 @pytest.mark.parametrize("glob", ["*", "mcp__*connect_labs__*", "connect_labs__*", "mcp__*__*"])
 def test_a_site_tool_limit_that_matches_every_tool_is_refused(w, glob):
-    """`mcp__*connect_labs__*` read like a restriction and restricted nothing (ACE's labs row, until 2026-11-06)."""
+    """`mcp__*connect_labs__*` reads like a restriction and restricts nothing."""
     agent = _shaped(w)
     admin = _as(w["admin"])
     # The fixture stores a catch-all already; clear it so the one sent below is a change.

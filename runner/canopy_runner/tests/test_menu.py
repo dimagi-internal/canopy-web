@@ -3,7 +3,7 @@
 Every fixture here was CAPTURED, not written: `claude` driven in a real PTY and
 rendered through a terminal emulator, which is the same character grid xterm
 produces for emdash — so what the runner reads over CDP is what these strings
-contain. Verified by roundtrip on 2026-07-28: the dialog below was detected,
+contain. Verified by roundtrip: the dialog below was detected,
 answered with a keystroke, and the file it asked about was actually deleted.
 """
 import pathlib
@@ -133,7 +133,7 @@ def test_numbered_prose_is_not_a_menu():
 
 
 def test_answering_is_the_number_then_enter():
-    """Roundtrip-verified 2026-07-28: '1' + Enter on the dialog above ran the
+    """Roundtrip-verified: '1' + Enter on the dialog above ran the
     command and deleted the file."""
     assert answer_keys(1) == ["1", "\r"]
     assert answer_keys(3) == ["3", "\r"]
@@ -171,7 +171,7 @@ def test_a_screen_with_no_dialog_still_resolves_to_none():
     assert find_menu_settled(lambda: BUSY, attempts=2, delay=0) is None
 
 
-# The menu that actually appears in the fleet. Captured live 2026-07-28 from an
+# The menu that actually appears in the fleet. Captured live from an
 # emdash session running `⏵⏵ bypass permissions on` — where a PERMISSION dialog
 # can never render, so this is the shape that matters in practice. Note what it
 # does that the permission dialog does not: a description under each option, a
@@ -221,7 +221,7 @@ def test_a_rule_between_options_does_not_truncate_the_menu():
     assert len(find_menu(ASK_USER_QUESTION).options) == 4
 
 
-# Captured live 2026-08-01, over CDP, off a session that had been blocked for
+# Captured live, over CDP, off a session that had been blocked for
 # 1h20m with the phone showing nothing. Six options each carrying a description
 # overflowed the pane, so the footer — the thing the parser required — was never
 # drawn: the frame simply ends on the last option. Verbatim, including the
@@ -249,8 +249,7 @@ How far do you want to take this?
 
 
 def test_a_dialog_whose_footer_fell_off_the_frame_still_parses():
-    """The regression this file exists to prevent, found in production twice on
-    2026-08-01: a real dialog, unanswerable from a phone because the pane was too
+    """The regression this file exists to prevent: a real dialog, unanswerable from a phone because the pane was too
     short to draw the footer the parser demanded."""
     menu = find_menu(FOOTERLESS)
     assert menu is not None
@@ -274,7 +273,7 @@ def test_a_menu_an_agent_QUOTED_is_not_a_menu():
     assert find_menu(quoted) is None
 
 
-# The same bug's other half, captured live 2026-08-01 from a session blocked for
+# The same bug's other half, captured live from a session blocked for
 # 15 minutes. The question ran past the 140-column pane, so the TUI word-wrapped
 # it — and "the last line ending in '?'" is then only its tail. Kept verbatim,
 # trailing space and all: that space IS the wrap, and the parser keys on it.
@@ -323,8 +322,8 @@ def test_a_subject_line_is_never_swallowed_into_the_question():
 # Captured the same way as everything above: `claude` driven in a real PTY with
 # an AskUserQuestion carrying two questions, the first `multiSelect: true`, and
 # the rendered grid taken verbatim at each step. The keystroke semantics these
-# assert were established by pressing the keys and watching the screen, on
-# 2026-08-12 — a number TOGGLES a checkbox, Tab moves tab, and the dialog is not
+# assert were established by pressing the keys and watching the screen:
+# a number TOGGLES a checkbox, Tab moves tab, and the dialog is not
 # submitted until the review tab's own button is pressed.
 
 RULE = "─" * 150
@@ -569,7 +568,7 @@ def test_an_unrecognised_question_presses_nothing():
 
 
 def test_every_control_key_the_driver_emits_is_named_for_the_real_transport():
-    """REGRESSION, 2026-08-12. The answer path is delivered over CDP, where
+    """REGRESSION GUARD. The answer path is delivered over CDP, where
     Playwright NAMES its keys and rejects a raw control character outright
     ("Unknown key: \\t"). The sidecar mapped Enter and Escape but not Tab, so
     answering a TABBED dialog died after its first tab — having already toggled
@@ -599,7 +598,7 @@ def test_every_control_key_the_driver_emits_is_named_for_the_real_transport():
 
 # --- free text ("Type something") -------------------------------------------
 #
-# Recipe established against a live TUI 2026-08-12: pressing this row's number
+# Recipe established against a live TUI: pressing this row's number
 # does NOT answer — it moves the cursor there and opens an edit field (the
 # footer gains "ctrl+g to edit in Vim") — then you type and press Enter. The
 # row's NUMBER is appended by the TUI and is absent from the tool input, so it
@@ -708,7 +707,7 @@ def test_the_text_marker_is_distinguishable_from_a_keypress():
 # --- The question gutter ------------------------------------------------------
 #
 # Newer Claude Code draws a bar down the left of a long AskUserQuestion's prose.
-# Reconstructed from the dialog of 2026-10-08 (screenshot plus the question the
+# Reconstructed from a real dialog (screenshot plus the question the
 # runner cached from that screen, which still carried the bars), wrapped the way
 # the grid wraps it: each continued line runs to the frame width and breaks at a
 # space.
@@ -773,7 +772,7 @@ def test_the_question_gutter_is_not_part_of_the_question():
 
 
 def test_a_guttered_question_is_answered_not_refused():
-    """REGRESSION, 2026-10-08. A Slack tap on option 1 came back `unmodelled` and
+    """REGRESSION GUARD. A Slack tap on option 1 came back `unmodelled` and
     pressed nothing: the screen's question carried the gutter bars, the declared
     one did not, so `question_index` found no match. Any frame width must work —
     the bars land before different words when the pane is resized."""
@@ -800,7 +799,7 @@ def test_a_question_cached_with_its_gutter_still_matches():
     assert question_index(Shown, GUTTER_DECLARED) == 0
 
 
-# Captured 2026-10-17 from an ACE session (bednet): the agent's own numbered list
+# Captured from an ACE session: the agent's own numbered list
 # sits above a two-question AskUserQuestion. Keeping the FIRST "1." run made the
 # prose list the menu, dropped the tab strip, and refused the answer.
 PROSE_LIST_ABOVE_TABBED_ASK = """\
@@ -846,7 +845,7 @@ def test_a_numbered_list_above_the_dialog_does_not_become_its_options():
 
 
 def test_a_question_read_only_by_its_tail_still_matches():
-    """chrome-sales, 2026-10-28: the second question of a 3-question ask wrapped
+    """The second question of a 3-question ask wrapped
     ten columns short of the frame (the next word was "(read-only"), past
     `_WRAP_SLACK`, so the screen read only its last line. A prefix-only match
     found nothing and the driver refused after answering the first tab."""

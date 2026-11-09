@@ -1,16 +1,16 @@
 """Headers every canopy-web script sends, so what it creates says it was a script.
 
-The incident behind this (2026-10-05): a scratch script in one Claude session
-posted chat messages to an agent on a person's PAT, and the turns it made were
-recorded exactly like that person typing in the web UI. canopy-web now records
+A scratch script in a Claude session that posts chat messages to an agent on a
+person's PAT would be recorded exactly like that person typing in the web UI.
+canopy-web records
 the program (`X-Canopy-Client`), its user agent, and the session it ran inside
 (`X-Canopy-Parent-*`) on every turn and session — but only if the caller says.
 Scripts in this repo say.
 
-Also: a script must be HANDED a token (`--token` or `CANOPY_E2E_TOKEN`). It used
-to default to `~/.claude/canopy/workbench-token` — the operator's own PAT — so
-anything it did was indistinguishable from them, and an agent running it acted
-as the human without anyone deciding it should.
+Also: a script must be HANDED a token (`--token` or `CANOPY_E2E_TOKEN`). It must
+not default to `~/.claude/canopy/workbench-token` — the operator's own PAT — or
+anything it did would be indistinguishable from them, and an agent running it
+would act as the human without anyone deciding it should.
 """
 from __future__ import annotations
 

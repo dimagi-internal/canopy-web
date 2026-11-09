@@ -18,14 +18,14 @@ def health_check(request):
     `runner_code_sha` is what a developer-install runner's updater compares itself
     with when canopy refuses its token (runner `update.update_status`): its own row's
     `expected_code_sha` is behind the token, and without this a box whose sign-in had
-    died could never update to the code that recovers it (canopy-web#1762). A commit
+    died could never update to the code that recovers it. A commit
     sha, nothing more — the same thing every heartbeat reply already carries."""
     from apps.harness.runner_releases import deployed_sha
 
     return JsonResponse({"status": "ok", "runner_code_sha": deployed_sha()})
 
 
-# The artifact addresses that no longer exist (canopy-web#1337): the flat
+# The artifact addresses that are gone: the flat
 # viewers and their byte stream, the flat shared-arc pages (`/storyboard/<slug>`,
 # `/narrative/<slug>`, `/ddd-release/<narrative>/<run>`), and the pre-tenancy
 # `/w/<uuid>` walkthrough links. Matched against Django's path (no leading
@@ -58,7 +58,7 @@ retired and are not forwarded.</p>
 
 def flat_artifact_gone(request, *args, **kwargs):
     """A flat artifact link: a plain 404 that says why. Never a redirect — there
-    is one URL per artifact, under its workspace (owner decision, 2026-10-08)."""
+    is one URL per artifact, under its workspace."""
     resp = HttpResponse(_FLAT_ARTIFACT_GONE, status=404, content_type="text/html; charset=utf-8")
     resp["Cache-Control"] = REVALIDATE
     return resp

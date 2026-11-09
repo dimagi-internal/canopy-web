@@ -21,7 +21,7 @@ type LoadError = { status: number | null; message: string }
 
 export function WalkthroughViewerPage() {
   // Mounted only at /w/:workspace/walkthrough/:id — the API confirms the
-  // walkthrough lives there. There is no flat route (canopy-web#1337).
+  // walkthrough lives there. There is no flat route.
   const { id, workspace = '' } = useParams<{ id: string; workspace: string }>()
   const navigate = useNavigate()
   const auth = useAuth()
@@ -109,8 +109,8 @@ export function WalkthroughViewerPage() {
     // actually do next. For someone who simply hasn't signed in yet, that's
     // sign in; the same 404 still applies afterwards if they genuinely lack
     // access, so this leaks nothing they couldn't already infer. Before
-    // canopy-web#516 they got a bare red "Failed to load walkthrough" and
-    // reasonably concluded the link was broken — on a real shareout.
+    // a bare red "Failed to load walkthrough" would read as a broken link on a
+    // real shareout.
     const gated = error.status === 401 || error.status === 403 || error.status === 404
 
     if (gated && auth.status !== 'authenticated') {

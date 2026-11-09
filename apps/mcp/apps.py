@@ -19,7 +19,7 @@ class McpConfig(AppConfig):
     label = "mcp"
 
     def ready(self):
-        # REST takes a caller token only where this server would (canopy-web#1782).
+        # REST takes a caller token only where this server would.
         # Registered rather than imported: `tokens` sits a layer below `mcp`.
         from apps.tokens import middleware  # noqa: PLC0415 — AppConfig.ready() wiring, after the app registry is loaded
 

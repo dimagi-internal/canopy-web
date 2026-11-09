@@ -81,8 +81,8 @@ def test_queued_with_offline_runners_is_waiting_on_one():
 
 
 def test_queued_on_a_signed_out_runner_says_so_instead_of_picking_up():
-    """2026-10-22: acedimagi-mbp-cdp was online with no Claude login. The chat
-    said "Picking this up on acedimagi-mbp-cdp…" and every message came back as
+    """A runner online with no Claude login must not read "Picking this up on
+    acedimagi-mbp-cdp…" when every message would come back as
     "Not logged in · Please run /login"."""
     st = ts.derive(_turn(Turn.QUEUED), reach=_reach("signed_out", [_Runner("acedimagi-mbp-cdp")]))
     assert st.state == ts.SIGNED_OUT
@@ -106,7 +106,7 @@ def test_queued_with_no_reach_computed_falls_to_unrouted_not_a_crash():
     assert st.state == ts.UNROUTED
 
 
-# -- queued behind the turn ahead (canopy-web#1147) ---------------------------
+# -- queued behind the turn ahead ---------------------------
 #
 # A live runner WILL take these, but `claim_next_turn` holds them until the turn
 # ahead ends. "Picking this up" made a follow-up sent mid-turn look lost.
@@ -171,8 +171,8 @@ def test_claimed_is_working_and_names_its_holder():
 
 
 def test_working_carries_when_it_was_taken_and_when_anything_last_came_back():
-    """A box that claims a turn and then goes silent drew "Thinking…" for as long
-    as its lease lived (2026-10-17). The facts ride the status; the client says
+    """A box that claims a turn and then goes silent must not draw "Thinking…" for as long
+    as its lease lives. The facts ride the status; the client says
     "nothing back for 6m" from them."""
     claimed = dt.datetime(2026, 10, 17, 15, 45, tzinfo=dt.timezone.utc)
     t = _turn(Turn.RUNNING, claimed=_Runner("cloud-ec2-2"))
@@ -247,7 +247,7 @@ def test_terminal_states(turn_state, expected):
 
 
 def test_a_failure_carries_its_reason_because_failed_alone_says_nothing_actionable():
-    # 2026-09-27: the chat said a bare "Could not finish." over this exact note.
+    # The chat must not say a bare "Could not finish." over this exact note.
     note = ('Your message was not delivered: the emdash session "idm-talk" has unsent '
             'text sitting in its prompt.')
     done = dt.datetime(2026, 9, 26, 22, 7, tzinfo=dt.timezone.utc)

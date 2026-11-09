@@ -1,9 +1,9 @@
 """Whether a conversation holds a host's sensitive data — THE predicate every storage
-and re-exposure rule asks (spec 2026-10-22-sensitive-data-agents §4).
+and re-exposure rule asks.
 
 A session or turn is SENSITIVE when what it requires of its runner includes
 `sensitive_data` (`runner_requirements`): a host that serves sensitive data requires
-sensitive-data runners for it, and the requirement is never dropped down a chain (§3). A requirement canopy cannot
+sensitive-data runners for it, and the requirement is never dropped down a chain. A requirement canopy cannot
 read counts as sensitive, as it counts as unsatisfiable for routing.
 
 What follows from it, one test per surface (`tests/test_sensitive_storage.py`):
@@ -140,8 +140,7 @@ def strip_result(payload: dict | None, *, session=None, text: str = "", tool: st
     """A tool result as a sensitive conversation stores it: which call, whether it
     failed, and the host's resource links — never what came back.
 
-    A link (`resource_links`) is an address, not data (spec
-    2026-10-23-host-held-results §6): the host keeps the artifact and a View or the
+    A link (`resource_links`) is an address, not data: the host keeps the artifact and a View or the
     agent reads it back from the host as the person. Kept only when the result is the
     SITE's own (`tool`, the producing call's name — `producing_tool` finds it from
     `calls`, the batch's `{call id: name}`, or the stored call — must be the site's
@@ -345,7 +344,7 @@ def claude_session_is_sensitive(claude_session: str) -> bool:
                                                               "parent_session")[:20])
 
 
-# ── metadata, never content (Jonathan, 2026-10-22) ────────────────────────────
+# ── metadata, never content ────────────────────────────
 # Beyond tool results: a sensitive conversation's readable rows keep only what
 # troubleshooting needs. What the person types, what the agent says and a tool's
 # arguments can all carry the host's data (a name typed into a question, a case read back), so
@@ -454,7 +453,7 @@ def withheld_note(note: str) -> str:
 # A sensitive conversation must still be recoverable — a reload, a second tab, a
 # participant joining — so its Messages keep the words in `Message.sealed`, beside
 # metadata-only columns. `sealed` is sealed to the conversation's own public key
-# (`canopy_sessions.conversation_keys`, spec 2026-10-23 §2): canopy-web can write it
+# (`canopy_sessions.conversation_keys`): canopy-web can write it
 # and holds no key that reads it back. `readable` is the one function that hands the
 # ciphertext out, and only to a reader `reads_content` admits — the conversation's
 # own people, whose browsers hold the key.

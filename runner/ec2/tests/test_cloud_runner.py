@@ -112,7 +112,7 @@ def test_pair_or_load_reuse_syncs_capabilities(cloud_runner, monkeypatch, tmp_pa
     assert ("POST", "/runners/existing-rid/heartbeat") in methods_paths
     assert ("PATCH", "/runners/existing-rid") in methods_paths
     patch_body = next(b for m, p, b in calls if p == "/runners/existing-rid")
-    # `projects` is REPORTED on the heartbeat now (spec 2026-07-28), so the server
+    # `projects` is REPORTED on the heartbeat, so the server
     # 422s a PATCH that carries it — sending one would silently lose the agents/
     # sessions sync riding along in the same call.
     assert "projects" not in patch_body["capabilities"]
@@ -1192,11 +1192,10 @@ def test_run_claude_append_not_blocked_by_a_slow_transcript_post(cloud_runner, m
     )
 
 
-# ── concurrent turn execution (2026-07-27 convergence) ──────────────────────
+# ── concurrent turn execution ──────────────────────
 #
-# The runner used to execute turns strictly serially: the claim loop blocked
-# inside run_claude() until `claude -p` exited, so a box serving five agents
-# drained their turns one at a time. These tests pin the property that fixes.
+# The claim loop must not block inside run_claude() until `claude -p` exits, or a
+# box serving five agents drains their turns one at a time. These tests pin that.
 
 
 def _reset_turns(cloud_runner):
@@ -1331,7 +1330,7 @@ class TestInheritedSessionMarkers:
     """A `claude` this runner spawns must not think it is a CHILD of a Claude
     session that happens to have started the runner.
 
-    Measured 2026-07-28: a claude spawned from inside a Claude Code session came
+    A claude spawned from inside a Claude Code session comes
     up in the parent's permission mode (`auto`, self-approving) and reported
     "Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker".
     The transcript is canopy's durable record, so that turn would have run,
@@ -1377,11 +1376,11 @@ class TestInheritedSessionMarkers:
 
 
 # --- exposing the in-repo packages (canopy_transcript / canopy_acp) ----------
-# These used to be `uv pip install --system`'d, which cannot work on this AMI:
+# They are not `uv pip install --system`'d, which cannot work on this AMI:
 # Ubuntu 24.04's system Python is PEP 668 externally-managed (uv refuses) and
-# the box has no pip for the fallback. The failure was swallowed, so
-# canopy_transcript was simply never importable and every session turn the
-# cloud runner executed wrote zero durable rows. Observed live 2026-07-28.
+# the box has no pip for the fallback. A swallowed failure would leave
+# canopy_transcript never importable and every session turn the cloud runner
+# executes writing zero durable rows.
 
 
 def _fake_pkg(tmp_path, name):
@@ -1447,7 +1446,7 @@ def test_install_transcript_core_finds_canopy_acp_beside_the_runners(
 ):
     # canopy_acp lives at runner/canopy_acp in the repo, not packages/ — the
     # bootstrap looked in packages/ and disabled the ACP executor on every boot
-    # (observed live on cloud-ec2-1, 2026-07-31), which defeats the contract
+    # which defeats the contract
     # that flipping RUNNER_EXECUTOR=acp is an env change + restart, no deploy.
     for parent, name in (("packages", "canopy_transcript"), ("runner", "canopy_acp")):
         pkg = tmp_path / parent / name
@@ -1470,7 +1469,7 @@ class _FakeCore:
     """Stands in for canopy_transcript. Only the surface the runner uses."""
 
     # A Path, like the real `resolve_cli_transcript` returns — the runner reads
-    # `.stem` off it to name the conversation these ordinals belong to (#615).
+    # `.stem` off it to name the conversation these ordinals belong to.
     TRANSCRIPT = pathlib.Path("/fake/transcript.jsonl")
 
     def __init__(self, records=None, resolvable=True):
@@ -1561,8 +1560,7 @@ def _ship(cloud_runner, monkeypatch, core, descriptor):
 
     `transcript_id` defaults to the fake transcript's stem — "the markers in this
     descriptor are markers into the file the runner is about to read". Overriding
-    it is how a caller says the server's rows came from a DIFFERENT conversation
-    (issue #615)."""
+    it is how a caller says the server's rows came from a DIFFERENT conversation."""
     posted = []
 
     def api(method, path, body=None):
@@ -1609,7 +1607,7 @@ def test_stream_sync_ships_history_when_the_server_is_missing_the_head(cloud_run
 
 
 def test_stream_sync_discards_markers_from_another_transcript(cloud_runner, monkeypatch):
-    """The laptop's issue-#615 case, on the cloud box: a marker only licenses
+    """On the cloud box as on a laptop: a marker only licenses
     skipping when it names the file being read. A predecessor's high-water mark
     against a shorter successor suppresses the whole conversation, permanently."""
     shipped = _ship(cloud_runner, monkeypatch, _FakeCore(),
@@ -1658,8 +1656,7 @@ def test_stream_sync_follows_an_adopted_transcript_to_its_new_file(cloud_runner,
     into that session copies it into the chat's own cwd (_adopt_resume_transcript)
     and from then on appends THERE. Same CLI session id, so the same stem — the
     tailer must notice the PATH moved, or it keeps reading the abandoned copy and
-    the viewer sees nothing until the turn-end ship (2026-10-05: hal's reply ran
-    16 minutes on cloud-ec2-1 with a frozen session view)."""
+    the viewer sees nothing until the turn-end ship."""
     clone_copy = pathlib.Path("/home/u/.claude/projects/-opt-agents-hal/k.jsonl")
     chat_copy = pathlib.Path("/home/u/.claude/projects/-tmp-sessions-s/k.jsonl")
     core = _FakeCore()
@@ -1804,7 +1801,7 @@ def test_a_failed_steady_state_post_does_not_advance_the_offset(cloud_runner, mo
 
 # ── the ACP adapter has to actually land on PATH ────────────────────────────
 #
-# Measured on cloud-ec2-1, 2026-09-09. Two faults, both already solved for `tsx`
+# Two faults, both already solved for `tsx`
 # in bootstrap_agents.sh's ensure_plugin_runtime a few hundred lines away:
 # a bare `npm install -g` cannot work as the service user (EACCES, exit 243),
 # and the installer never asked whether the adapter was already there — so with
@@ -1862,7 +1859,7 @@ def test_a_missing_node_degrades_without_attempting_npm(cloud_runner, monkeypatc
 # ── a running turn can be stopped ───────────────────────────────────────────
 #
 # A send during a running turn is queued as its own next turn rather than
-# steered into the live one (spec 2026-09-26) — canopy-web no longer publishes
+# steered into the live one — canopy-web does not publish
 # a `runner.interject` frame at all. `stop_turn` (the Escape equivalent) is the
 # one live-turn control that remains.
 
@@ -1934,7 +1931,7 @@ def test_the_turn_unregisters_before_the_connection_closes(cloud_runner, monkeyp
 # This box had no inbox code at all, so canopy-web's `check_inbox` frame reached
 # a runner that could not act on it. Invisible, because the LAPTOPS' 300s timer
 # found the same mail minutes later — push looked slow rather than dead. The
-# server had been saying so since 2026-08-01:
+# server said so:
 #
 #   gmail.push.missed x18 — "the 300s poll found mail that push never rang for"
 #
@@ -1970,7 +1967,7 @@ def test_the_shared_reader_is_exposed_off_the_clone(cloud_runner):
 
 
 def test_the_mailbox_is_the_instances_from_canopy_not_the_repos(cloud_runner, tmp_path, monkeypatch):
-    """canopy-web#984: the repo is the DEFINITION, shared by every instance, so
+    """The repo is the DEFINITION, shared by every instance, so
     its config/agent.json names one address for all of them. The instance's own
     mailbox (Agent.email) comes from canopy; the gog client from the clone."""
     for slug, email, client in (("ace", "ace@dimagi-ai.com", "canopy"),
@@ -2068,15 +2065,14 @@ def test_a_missing_reader_disables_mail_without_taking_the_loop_down(cloud_runne
     cloud_runner._drain_inbox("runner-1")   # must not raise
 
 
-# ── the client is the token's, not the config's (canopy-web#738) ──────────────
+# ── the client is the token's, not the config's ──────────────
 #
 # Every agent declares `gog_client: canopy`, but a token is minted FOR a client
 # and only that client can use it. On the live box echo's token sits under
 # `echo`, so a reader that presents the declaration logged `No auth for gmail
 # echo@dimagi-ai.com` 59 times in five hours — for the one mailbox whose default
 # runner list actually rings this box. bootstrap_agents.sh already says "pick
-# the client whose token AUTHENTICATES"; #661 (reverted the same day) is what
-# trusting the declaration cost. The reader now asks the token.
+# the client whose token AUTHENTICATES". The reader asks the token.
 
 def _gog_home(tmp_path, monkeypatch, *, account_clients=None, credentials=()):
     home = tmp_path / "gogcli"
@@ -2227,8 +2223,7 @@ def test_run_claude_announces_the_session_once_from_its_init_line(cloud_runner, 
 
 
 def test_the_heartbeat_reports_the_mailboxes_the_probe_could_read(cloud_runner, tmp_path, monkeypatch):
-    """The doorbell rings only runners that can read the rung mailbox
-    (canopy-web#1087), so the cloud box reports what `_resolve_mailbox_clients`
+    """The doorbell rings only runners that can read the rung mailbox, so the cloud box reports what `_resolve_mailbox_clients`
     proved — and nothing at all (unknown) before it has looked."""
     _gog_home(tmp_path, monkeypatch)
     monkeypatch.setattr(cloud_runner, "_log", lambda m: None)
@@ -2250,7 +2245,7 @@ def test_the_heartbeat_reports_the_mailboxes_the_probe_could_read(cloud_runner, 
 
 
 def test_a_browser_minted_mailbox_is_read_under_canopy_web(cloud_runner, tmp_path, monkeypatch):
-    """2026-10-04: canopy-web's "Connect Google mailbox" button can only mint under
+    """canopy-web's "Connect Google mailbox" button can only mint under
     `canopy-web`, while every agent declares `canopy`. Both are the fleet's one app,
     so the reader tries the other fleet client next — before gog's map or any
     per-agent client — and uses it."""
@@ -2277,7 +2272,7 @@ def test_every_turn_is_marked_one_shot(cloud_runner):
     assert "ONE_SHOT_TURN_ENV" in inspect.getsource(cloud_runner._run_turn)
 
 
-# ── memory headroom (2026-10-05: two global OOM storms on cloud-ec2-1) ───────
+# ── memory headroom ───────
 # A t3.medium has 3.8 GB and no swap; one turn's ACP adapter alone reached
 # 600-700 MB. Four concurrent turns plus a test suite exhausted the box twice in
 # a day, and every OOM kill took the whole runner down with it.
@@ -2313,9 +2308,8 @@ def test_the_ws_claim_is_skipped_without_headroom(cloud_runner, monkeypatch):
 
 
 def test_a_refused_token_stops_claiming_until_canopy_accepts_it_again(cloud_runner, monkeypatch):
-    """2026-10-17: cloud-ec2-2's PAT was revoked; its open socket still claimed,
-    and every turn it took was lost because events, transcript and finish all
-    got 401. A 401 on ANY call stops claiming; the next accepted call resumes it."""
+    """If a box's PAT is revoked, its open socket still claims, and every turn it
+    takes is lost because events, transcript and finish all get 401. A 401 on ANY call stops claiming; the next accepted call resumes it."""
     import io
     import urllib.error
 
@@ -2466,8 +2460,8 @@ def test_the_exchange_sends_only_the_device_proof(cloud_runner, monkeypatch):
 
 
 # ── the agent bootstrap runs as this box, on a token canopy-web accepts ───────
-# 2026-10-18 02:28: a bootstrap ran inside a 16-minute refusal of the box's token,
-# failing every agent's prepare at once. (That it hands prepare the box's token, not
+# A bootstrap that runs inside a refusal of the box's token fails every agent's
+# prepare at once. (That it hands prepare the box's token, not
 # runner.env's PAT, is test_agents_prepared_by_canopy.py's.)
 
 def test_a_token_too_close_to_expiry_for_the_bootstrap_is_renewed_first(cloud_runner, monkeypatch):

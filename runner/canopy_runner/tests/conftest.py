@@ -23,7 +23,7 @@ def _isolate_host_pin(monkeypatch, tmp_path):
 @pytest.fixture(autouse=True)
 def _no_real_device_key_enrollment(monkeypatch, request):
     """main() enrolls this machine's device key in the background by running the real
-    `canopy vault device --enroll` (Canopy Vault, canopy#946). A test that drives main()
+    `canopy vault device --enroll` (Canopy Vault). A test that drives main()
     must never register the developer's key with a real canopy-web; the module's own
     tests opt out of this stub."""
     if request.module.__name__.endswith("test_device_key"):
@@ -112,8 +112,8 @@ def _fresh_typed_turns():
 def _isolate_user_settings(monkeypatch, tmp_path):
     """Never touch the developer's real ~/.claude/settings.json. A test that starts the
     hook listener installs the canopy hook there, pointed at the test's ephemeral port
-    and nonce; on a runner box that silently re-pointed every live session's hooks at
-    a dead listener until the daemon's next tick noticed (canopy-web#1188)."""
+    and nonce; on a runner box that would silently re-point every live session's hooks
+    at a dead listener until the daemon's next tick noticed."""
     from canopy_runner import hooks
     monkeypatch.setattr(hooks, "user_settings_path", lambda: tmp_path / "claude-settings.json")
 
@@ -132,7 +132,7 @@ def _no_real_composer_reads(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _fresh_startup_watch():
-    """The startup-stall watch (#1190) keeps the sessions canopy created at module
+    """The startup-stall watch keeps the sessions canopy created at module
     level. Each test starts with an empty watch that is not saved to disk. Otherwise
     a CREATE in one test could mark a session in another test as stuck, and a test
     could write to the real ~/.canopy."""

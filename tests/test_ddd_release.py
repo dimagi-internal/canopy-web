@@ -169,7 +169,7 @@ def test_release_member_gets_internal_affordances(db, owner):
 
 @override_settings(REQUIRE_AUTH=True, CANOPY_PUBLIC_BASE_URL="https://canopy.example.org")
 def test_release_page_lives_under_its_workspace(db, owner):
-    """The release page is `/w/<ws>/ddd-release/…` (canopy-web#1337): the API
+    """The release page is `/w/<ws>/ddd-release/…`: the API
     hands out that address, and answers only the page that names the run's own
     workspace — the flat `/ddd-release/…` is a 404."""
     _hero(owner, visibility="private")

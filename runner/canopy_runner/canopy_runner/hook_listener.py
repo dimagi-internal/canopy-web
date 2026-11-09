@@ -54,7 +54,7 @@ class _Server(ThreadingHTTPServer):
     It sets SO_REUSEADDR, which on POSIX only skips TIME_WAIT but on Windows lets a
     second socket bind a port another process is listening on — so a second runner
     silently shared the hook port instead of falling back to a free one, and the two
-    ate each other's hooks (found by the Windows CI, canopy-web#2202). Windows' own
+    ate each other's hooks (found by the Windows CI). Windows' own
     SO_EXCLUSIVEADDRUSE is the POSIX meaning."""
     allow_reuse_address = os.name != "nt"
 
@@ -92,7 +92,7 @@ class HookListener:
         self.nonce = nonce
         # Injected: called with a `Stop` payload and its (project, task) keys —
         # how a caller's session's `For <Agent>'s owner:` line reaches its turn
-        # (canopy-web#1416). Never allowed to slow or fail the hook.
+        # Never allowed to slow or fail the hook.
         self._on_stop = on_stop
         # Injected: called with Claude Code's cap message when ANY session on this
         # box ends on a usage cap. Every session here shares the box's one Claude
@@ -280,7 +280,7 @@ class HookListener:
         transcript cannot: Claude Code writes the `AskUserQuestion` tool_use
         record when the dialog is ANSWERED, so `pending_question` is structurally
         blind to a live one (39 records across 60 transcripts on a live box, all
-        already answered, zero pending — 2026-08-01). The screen reader can, but
+        already answered, zero pending). The screen reader can, but
         only by driving CDP, which clicks the task and steals focus, so it can
         never run on a cadence.
         """
@@ -330,7 +330,7 @@ class HookListener:
             # MID-TURN to ask a human, and a prompt simply sitting idle after a
             # turn ends. Only the first is somebody waiting on you. Treating both
             # as blocked put four merely-idle sessions on the fleet's "waiting on
-            # you" list within minutes of shipping it (labs, 2026-08-01) — and a
+            # you" list within minutes of shipping it — and a
             # badge that counts every idle session is a badge nobody reads.
             #
             # The discriminator is turn STATE, not the message text: an idle
@@ -402,7 +402,7 @@ class HookListener:
                     # and so carries no `questions`, but it is the SAME ask. Drop
                     # the declared list and every retry is refused "none are
                     # held" — one bad match made a dialog unanswerable from the
-                    # web for good (chrome-sales, 2026-10-28).
+                    # web for good.
                     replaced["questions"] = held["questions"]
                 self._pending_menus[key] = replaced
             else:
@@ -483,11 +483,11 @@ class HookListener:
         # at the same default 8787, so whichever runner starts first receives
         # BOTH accounts' hooks — and can only resolve its own emdash sessions,
         # so the other account's hooks are not merely lost but actively eaten as
-        # "unknown-cwd". The loser used to log a warning and run with live events
-        # off forever (2026-07-28 → 07-30: every restart of the second runner,
-        # zero activity events forwarded, and the chat UI's "running" indicator
-        # dead for every session that runner drove). Taking a free port instead
-        # retires the whole collision class.
+        # "unknown-cwd". A loser that only logged a warning would run with live events
+        # off forever (every restart of the second runner forwarding zero activity
+        # events, and the chat UI's "running" indicator dead for every session that
+        # runner drove). Taking a free port instead retires the whole collision
+        # class.
         try:
             self._server = _Server(("127.0.0.1", self.port), _Handler)
         except OSError as exc:

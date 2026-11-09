@@ -1,15 +1,12 @@
 """The canopy CLI on a cloud box must track the marketplace clone.
 
-`reinstall_cli_from_marketplace_clone` was provenance-only: its guard asked
-"does the uv receipt record a directory requirement?", so once the CLI had been
-re-pointed at the clone ONCE it returned early forever and could never update.
-The clone kept advancing (Claude Code pulls the marketplace on SessionStart);
-the CLI did not. A laptop hides this because a human runs /canopy:update — on a
-cloud box nobody does.
-
-Measured 2026-09-09: CLI 0.2.471 against a 0.2.479 clone, and `bin/hal-email`'s
-engine-staleness guard refused every send, so the box could think but could not
-answer anyone. Surfaced by a readiness drill, not by the box.
+`reinstall_cli_from_marketplace_clone` must not be provenance-only ("does the uv
+receipt record a directory requirement?"): once the CLI had been re-pointed at the
+clone ONCE it would return early forever and never update. The clone keeps
+advancing (Claude Code pulls the marketplace on SessionStart); the CLI must follow.
+A laptop hides this because a human runs /canopy:update — on a cloud box nobody
+does, and a CLI behind its clone makes an agent's engine-staleness guard refuse
+every send.
 """
 from __future__ import annotations
 

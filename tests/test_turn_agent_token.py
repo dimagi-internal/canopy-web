@@ -295,7 +295,7 @@ def test_an_agent_turn_whose_session_key_no_longer_names_the_binding_gets_nothin
 
 
 def test_a_laptop_chat_turn_names_its_session_in_origin_ref(agent, operator):
-    """Production, 2026-10-22: a canopy-web chat turn on a laptop records no session key;
+    """A canopy-web chat turn on a laptop records no session key;
     its chat is `origin_ref.chat_session_id`, and that session is bound to the runner."""
     from apps.canopy_sessions.models import RunnerBinding, Session
 

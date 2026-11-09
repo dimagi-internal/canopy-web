@@ -1,4 +1,4 @@
-"""A review link is often someone's first canopy-web page (canopy-web#1266-#1271).
+"""A review link is often someone's first canopy-web page.
 
 Pins the server half of the first-use fixes: the narrative has a name, the page
 learns whether THIS caller may decide, a member can save edits without
@@ -65,7 +65,7 @@ def review(owner):
     return r
 
 
-# --- #1271: a narrative has a name -----------------------------------------------------
+# --- a narrative has a name -----------------------------------------------------
 
 
 def test_long_first_line_is_not_the_title():
@@ -97,7 +97,7 @@ def test_detail_carries_the_title(review):
     assert body["title"] == "Chlorine Dispenser Walkthroughs"
 
 
-# --- #1268: the page learns whether THIS caller may decide ------------------------------
+# --- the page learns whether THIS caller may decide ------------------------------
 
 
 @pytest.mark.django_db
@@ -123,7 +123,7 @@ def test_signed_in_non_member_can_still_suggest_with_the_token(review):
     assert review.suggestions_json[0]["name"] == "sagar@dimagi.com"
 
 
-# --- #1266: a member saves edits without deciding ---------------------------------------
+# --- a member saves edits without deciding ---------------------------------------
 
 
 @pytest.mark.django_db
@@ -156,7 +156,7 @@ def test_non_member_without_token_still_refused(review):
     assert resp.status_code == 403
 
 
-# --- #1269: a suggestion is emailed to ACE, the submitter cc'd ---------------------------
+# --- a suggestion is emailed to ACE, the submitter cc'd ---------------------------
 
 
 @pytest.fixture

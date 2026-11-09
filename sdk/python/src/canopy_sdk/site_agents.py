@@ -1,9 +1,9 @@
 """The site agents API: canopy tells a host site, signed, which agents it
-may show and on what terms (spec ``2026-10-22-canopy-site-agents-api-design`` §1).
+may show and on what terms.
 
-A site used to keep hand-typed copies of canopy's facts — agent slugs, which
-of them handle sensitive data, the runner flags canopy knows — and nothing checked the
-copies until a visitor's call reached the site and an agent silently did not
+Hand-typed copies of canopy's facts on a site — agent slugs, which
+of them handle sensitive data, the runner flags canopy knows — go unchecked until
+a visitor's call reaches the site and an agent silently does not
 appear. This API replaces the copies: the site asks, canopy answers with one
 signed document, and the site's settings are CHOSEN from it.
 

@@ -1,8 +1,8 @@
 """The laptop runner signs in with its device key, not its owner's PAT.
 
-On 2026-10-17 a runner's owner PAT was revoked in a token cleanup and the box
-silently lost every turn it claimed. A runner now buys an hour-long token with a
-proof of its approved device key (`canopy vault runner-session`, canopy-web#1594);
+A runner whose owner PAT is revoked would silently lose every turn it claims, so it
+buys an hour-long token with a proof of its approved device key
+(`canopy vault runner-session`);
 the PAT is only the fallback while no approved key can get one.
 """
 from __future__ import annotations
@@ -161,9 +161,9 @@ class _OfflineCli(_Cli):
 
 
 def test_an_unreachable_canopy_web_is_retried_soon_not_after_the_refusal_back_off():
-    # 2026-11-01: a Mac slept, its token ran out, the exchange failed for want of
-    # DNS — and the runner (no PAT) then 401'd every call for the rest of a 300s
-    # back-off it had taken while offline, logging "waiting for its key to be approved".
+    # A Mac sleeps, its token runs out, the exchange fails for want of
+    # DNS — the runner (no PAT) must not then 401 every call for the rest of a 300s
+    # back-off taken while offline, logging "waiting for its key to be approved".
     cli = _OfflineCli()
     now = {"t": 1000.0}
     cred = RunnerCredential("https://canopy.test/", "", "r1", runner=cli,

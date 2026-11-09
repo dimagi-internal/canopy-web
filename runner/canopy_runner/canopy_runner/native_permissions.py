@@ -8,7 +8,7 @@ language Claude Code enforces itself: permission rules, in the session worktree'
 `.claude/settings.json`.
 
 What actually holds, and why it is shaped this way (verified against
-code.claude.com/docs/en/permissions + permission-modes + settings, 2026-09-26, and
+code.claude.com/docs/en/permissions + permission-modes + settings, and
 against emdash's own launcher):
 
 * **emdash starts fleet sessions in bypass.** It passes
@@ -39,7 +39,7 @@ against emdash's own launcher):
   path against `Edit(…)` rules for EVERY file-changing tool (Write, Edit,
   NotebookEdit) and ignores a `Write(path)` rule outright — it prints "is not matched
   by file permission checks — only Edit(path) rules are" at startup and enforces
-  nothing (#1058; measured on 2.1.287: a `Write(path)` deny let the Write tool write
+  nothing (measured on 2.1.287: a `Write(path)` deny let the Write tool write
   there, an `Edit(path)` deny stopped it). A BARE tool name is different: `Edit` in
   `deny` removes only the tool called Edit, so a profile granting Write but not
   Edit keeps Write, scoped by the `Edit(path)` allows. Writes are scoped by
@@ -444,7 +444,7 @@ def posix_path(path: str) -> str:
     """`path` as Claude Code matches it. On Windows it normalizes a path to POSIX form
     before matching a rule — `C:\\Users\\a` is `/c/Users/a` — so a rule written with
     the drive path never matched, and a confined session's allow AND deny rules were
-    both inert there (found by the Windows CI, canopy-web#2202). Anything that is not
+    both inert there (found by the Windows CI). Anything that is not
     a Windows drive path is returned as is."""
     if path.startswith("\\\\?\\"):  # the long-path prefix realpath can return
         path = path[4:]

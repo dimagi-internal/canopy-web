@@ -1,11 +1,9 @@
 """An agent's canopy login (`Agent.user`) is ALWAYS the account at its own email; one
 user, one instance. An existing account there is linked only when its person accepts.
 
-It was only ever set by migration `agents/0022`, matching on `Agent.email`, so
-echo, ace and eva — created with a blank email — had no link and no way to get
-one. Every "is this caller the agent itself" check then refused the agent's own
-token: its readiness report (404, cloud-ec2-1 2026-09-26), secrets shared in its
-chats, and the page its chats are on.
+An agent created with a blank email and no link to its login would fail every "is
+this caller the agent itself" check, refusing the agent's own token: its readiness
+report (404), secrets shared in its chats, and the page its chats are on.
 """
 from __future__ import annotations
 

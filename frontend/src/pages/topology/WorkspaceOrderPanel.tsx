@@ -14,7 +14,7 @@ import type { FleetMap, MapAgent } from './topologyMap'
 // A workspace's DEFAULT runner order, edited where its effect is visible. Every
 // agent here with no order of its own follows it live — and so does every agent
 // in a workspace below that has no order of its own — so replacing a cloud box
-// is one edit here, not one per agent (2026-10-03). Repo turns route by it too.
+// is one edit here, not one per agent. Repo turns route by it too.
 // Admins and owners (`runners.route`): it reaches agents in every division
 // below too (the server enforces the same).
 export function WorkspaceOrderPanel({

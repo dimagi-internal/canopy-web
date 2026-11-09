@@ -3,7 +3,7 @@
 The caller envelope's `conversation.slack` (apps/harness/caller_context.py) is
 built from this: the channel id and name, the thread's ts and its permalink. An
 agent asked to "post a clean thread in the channel" must not have to ask which
-channel it is in (2026-10-16, an ACE turn).
+channel it is in.
 
 **Read from the session, never fetched while building.** The envelope is built on
 every claim and every `who_is_asking`, so `location_of` makes no Slack call. The

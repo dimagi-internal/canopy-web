@@ -2,7 +2,7 @@
  * The principal's priorities brief, and the fields a brief-era huddle adds to a
  * reply, as plain words (pure — unit-tested in briefWords.test.ts).
  *
- * Since 2026-10-09 a huddle runs on a BRIEF: 3–5 numbered priorities with hard
+ * A huddle runs on a BRIEF: 3–5 numbered priorities with hard
  * dates (canopy `huddle plan --priorities-file`; the anchor carries it, the API
  * hands it back as `priorities_brief`). Members then report `levers` (where they
  * can move a numbered priority) instead of guessing the priorities, and an idea
@@ -16,7 +16,7 @@ export type BriefItem = { n: number; text: string; dates: string; source: string
 
 const ITEM = /^\s*#?(\d+)[.):]\s+(.+?)\s*$/
 
-/** The brief's numbered lines: "2. IDM keynote — hard dates: 2026-10-15 — source: calendar". */
+/** The brief's numbered lines: "2. IDM keynote — hard dates: Oct 15 — source: calendar". */
 export function briefItems(brief: string | null | undefined): BriefItem[] {
   const out: BriefItem[] = []
   for (const line of String(brief ?? '').split('\n')) {

@@ -311,8 +311,7 @@ def _forget_vault_secrets(runner, names: list[str]) -> None:
 
 
 def _vault_secret_names(runner) -> set[str]:
-    """Every secret name the vaults serving `runner` hold (spec 2026-10-23-runner-claude-
-    credentials-in-the-vault-design.md): a list entry whose value is among them is read
+    """Every secret name the vaults serving `runner` hold: a list entry whose value is among them is read
     from there by the box, with its own device key."""
     # cycle: agents.credentials.workspace_vaults imports this module (enrolled_roots)
     from apps.agents.credentials import workspace_vaults  # noqa: PLC0415 — import cycle, above
@@ -494,9 +493,8 @@ def administered_runner_ids(user, runners) -> set:
     administers, in at most one query (none when they own every one)."""
     if not getattr(user, "is_authenticated", False):
         return set()
-    # A runner with NO owner is administered by nobody — it used to be
-    # administered by everyone, a NULL-means-allow leg like the six this repo
-    # has already removed elsewhere.
+    # A runner with NO owner is administered by nobody (never by everyone: a
+    # NULL-means-allow leg is the shape this repo removes from its predicates).
     runners = [r for r in runners if r.owner_id is not None]
     out = {r.pk for r in runners if r.owner_id == user.id}
     rest = [r.pk for r in runners if r.pk not in out]
@@ -674,8 +672,8 @@ def backfill_runner_enrollments(runner_model, enrollment_model, membership_model
     existed), except the `exclude` workspaces and everything below them.
 
     So introducing enrollment changes nothing for the fleet that existed, with
-    one deliberate exception: `marshellis`, a separate root created on
-    2026-10-11 that no existing box should serve. A missing excluded slug is
+    one deliberate exception: `marshellis`, a separate root that no
+    existing box should serve. A missing excluded slug is
     simply nothing to exclude. Idempotent: existing rows are kept.
 
     Takes the model classes so the migration passes its HISTORICAL models and a
@@ -725,9 +723,9 @@ def backfill_runner_enrollments(runner_model, enrollment_model, membership_model
 #:
 #: An authorize URL is not durable. Its PKCE `state` and challenge expire, and
 #: the `claude setup-token` process waiting on the box expires with them — so a
-#: link that LOOKS fine can be unusable. Measured 2026-09-08: a mint started at
-#: 17:56 and completed at 19:04 failed with "setup-token never printed a token",
-#: and the only clue that anything was wrong was the clock. Ten minutes is
+#: link that LOOKS fine can be unusable: a mint left to complete over an hour later
+#: fails with "setup-token never printed a token", and the only clue that anything
+#: is wrong is the clock. Ten minutes is
 #: comfortably longer than the flow takes and comfortably shorter than the point
 #: at which it silently stops working.
 MINT_TTL_SECONDS = 600
@@ -854,8 +852,7 @@ def finish_runner_mint(mint, *, token: str = "", detail: str = "", logged_in: bo
         mint.detail = "signed in; the token is sealed in the runner's vault"
     else:
         # A token is only ever sealed into the runner's vault on the box; one sent here
-        # is refused and never stored (spec 2026-10-23-runner-claude-credentials-in-the-
-        # vault-design.md, step 3). An entry named for this sign-in that never got its
+        # is refused and never stored. An entry named for this sign-in that never got its
         # value goes again, unless the sign-in was for it.
         if entry is not None and vault_key != mint.login_key \
                 and entry.vault_secret_name not in _vault_secret_names(mint.runner):

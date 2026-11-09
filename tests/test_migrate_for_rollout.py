@@ -1,4 +1,4 @@
-"""The deploy holds a tail of pure drops back until after the rollout (#2447)."""
+"""The deploy holds a tail of pure drops back until after the rollout."""
 
 from __future__ import annotations
 

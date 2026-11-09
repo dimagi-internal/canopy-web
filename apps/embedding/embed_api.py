@@ -68,12 +68,10 @@ def _acting_app(request: HttpRequest):
     if app is None:
         raise HttpError(403, "this endpoint answers for an embedding app; present a delegated token")
     if app.revoked_at is not None:
-        # Defence in depth, and no longer the load-bearing check: since
+        # Defence in depth, not the load-bearing check: since
         # `DelegatedToken.lookup` filters on the app's revocation, a revoked
         # app's token does not authenticate anywhere, so this is unreachable
-        # through the normal path. It was the ONLY place that re-checked, which
-        # is what made the gap look closed — every other bearer-authenticated
-        # route kept serving such a token for up to an hour.
+        # through the normal path.
         raise HttpError(403, "this embedding app's credential has been revoked")
     return app
 
@@ -94,7 +92,7 @@ def list_embeddable_agents(request: HttpRequest) -> list[EmbedAgentOut]:
     own preferred agent, else the site's default — each only if it is listed.
     """
     # Rationale (deliberately NOT in the docstring — a route's docstring is its
-    # published OpenAPI description; see #757). Neither condition is sufficient
+    # published OpenAPI description). Neither condition is sufficient
     # alone: the allowlist alone would let a host offer an agent to someone with
     # no access to it, and membership alone is just "every agent you can see",
     # which ignores what the host was permitted to embed. Fails closed: an app
@@ -184,10 +182,9 @@ def set_embed_default_agent(request: HttpRequest, payload: EmbedDefaultAgentIn) 
 def _self_app() -> AppCredential | None:
     """The app whose widget canopy shows on its own pages, or None when off.
 
-    One column on one row, where this used to be a NAME read from
-    `EMBED_SELF_APP` and looked up. The setting made canopy a special case and
-    failed silently in the one way that matters: a name that did not resolve
-    produced no widget and no error, on either side.
+    One column on one row, not a NAME read from a setting and looked up: a
+    setting would make canopy a special case and fail silently when a name did
+    not resolve (no widget and no error, on either side).
     """
     from . import embed_apps
 

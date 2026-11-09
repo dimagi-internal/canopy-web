@@ -6,7 +6,7 @@ import { EmbedApp } from './EmbedApp'
 import type { ActionSpec, HostInit, HostLink } from './hostLink'
 
 /**
- * The start screen's list of earlier conversations, on a host page (#2063).
+ * The start screen's list of earlier conversations, on a host page.
  *
  * Private conversations keep no words to be named by, so the list tells them
  * apart by metadata alone — when each began and on which page — and it offers

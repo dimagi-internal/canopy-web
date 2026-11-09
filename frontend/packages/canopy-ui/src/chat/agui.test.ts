@@ -277,8 +277,8 @@ describe('the socket actually asks for it', () => {
   it('is wired to the hook’s public option', () => {
     const source = hookSource()
 
-    // NOT `expect(source).toContain('protocol=ag-ui')`, which this used to say.
-    // It held the whole time the flag was being dropped by any URL builder that
+    // NOT `expect(source).toContain('protocol=ag-ui')`, which would hold even
+    // while the flag is dropped by any URL builder that
     // ignores its path — i.e. by canopy-web's widget and by ace-web. Whether the
     // flag reaches the socket is asserted where it can be seen, against the URL
     // a socket really opens: `useSessionSocket.protocol.test.tsx`.

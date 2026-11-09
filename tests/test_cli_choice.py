@@ -1,6 +1,5 @@
 """A conversation, a turn or a schedule picks its agent CLI; the agent's list is
-only which CLIs it is set up for, its first the default
-(spec 2026-10-26-multi-cli-agents §1)."""
+only which CLIs it is set up for, its first the default."""
 from __future__ import annotations
 
 import pytest

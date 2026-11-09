@@ -1,5 +1,4 @@
-"""Request an invitation — the way in that replaced self-join (owner decision,
-2026-10-04).
+"""Request an invitation — the way into a workspace.
 
 A person whose login email is at one of a workspace's `access_request_domains`
 may ASK; every admin and owner (inherited owners included) is emailed a deep

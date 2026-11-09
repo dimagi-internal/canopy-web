@@ -2,17 +2,17 @@
 fails if they drift again.
 
 The invariant: **every schedule a runner may SEE and FIRE must produce a turn
-that same runner may CLAIM.** They diverged once and it was a production
-outage, not a nicety. `claim_next_turn` shipped scoped to the `Runner.workspace`
-FK while `_runner_schedule_qs` derived the tenant from `owner`, so a runner
+that same runner may CLAIM.** They must not diverge: a divergence is a production
+outage, not a nicety. If `claim_next_turn` were scoped to the `Runner.workspace`
+FK while `_runner_schedule_qs` derived the tenant from `owner`, a runner
 homed to `alpha` whose owner also belonged to `beta` could sync and fire
 beta's schedules but never claim the resulting turns. One laptop runner serves
-a fleet that deliberately spans workspaces, so 4 of 5 production agents stopped
-executing entirely and their turns sat QUEUED forever (2026-07-25).
+a fleet that deliberately spans workspaces, so agents would stop
+executing entirely and their turns would sit QUEUED forever.
 
 Two layers, deliberately:
 
-* the two predicates are now built from the SAME pair of functions
+* the two predicates are built from the SAME pair of functions
   (`services.runner_tenant_slugs` / `services.agent_tenant_q`), so they cannot
   drift by construction; and
 * this file checks the BEHAVIOUR end to end anyway, because "they call the same
@@ -168,8 +168,7 @@ def test_an_orphaned_runner_can_neither_fire_nor_claim(fleet):
     """NULL `owner` fails closed on BOTH sides — no owner means no identity
     to derive a tenant from, and inferring one from the FK would be an
     escalation (the runner keeps working for a workspace whose owner is gone).
-    Used to be a `.none()` special case on the schedule side and an empty-set
-    fallthrough on the claim side; now one mechanism serves both."""
+    One mechanism serves both sides."""
     runner = fleet["runner"]
     runner.owner = None
     runner.save(update_fields=["owner"])

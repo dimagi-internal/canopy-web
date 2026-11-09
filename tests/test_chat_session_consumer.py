@@ -230,7 +230,7 @@ async def test_old_client_omitting_visibility_keeps_live():
 
 async def test_draft_update_carrying_a_visibility_field_is_ignored():
     """An in-flight 0.14 client may still send `visibility` on `draft.update`
-    (the field that used to change the mode there) — it must be a no-op, not
+    (the field that no longer changes the mode there) — it must be a no-op, not
     an error, and the stored mode must not move."""
     owner, teammate, session = await database_sync_to_async(_seed)()
     a, b = await _connect(session, owner), await _connect(session, teammate)
@@ -672,11 +672,10 @@ async def test_snapshot_falls_back_to_the_binding_tail():
 
 # ── origin derived from the session's owning product ────────────────────────
 # THE path a human actually uses: canopy-ui's chat kit sends `chat.send` and the
-# consumer calls send_message with no origin. #496 threaded origin only through
-# ace-web's SERVER-side run dispatcher, so typing into ace-web's own chat still
-# produced canopy_web_chat and routed like canopy chat — observed live, a
-# "testing" message on an ace-web session went to a laptop runner. Deriving in
-# the REST view alone would have left this path exactly as broken.
+# consumer calls send_message with no origin. Origin derived only in the
+# ace-web SERVER-side run dispatcher or the REST view would leave typing into
+# ace-web's own chat producing canopy_web_chat and routing like canopy chat, to a
+# laptop runner.
 async def test_ws_send_on_an_ace_web_session_is_ace_web_work():
     def _seed_ace_web():
         owner, _teammate, session = _seed()
@@ -899,7 +898,7 @@ async def test_presence_joined_names_the_person_who_joined():
 async def test_a_send_carries_its_text_and_a_resend_is_the_same_turn():
     """A phone resuming from the background can hold a socket that reads OPEN
     but is dead, so a send whose text lived only in an earlier `draft.update`
-    was simply lost (2026-09-23). The send now carries its own text and a
+    would be lost. The send carries its own text and a
     client_id, the receipt echoes that id, and an HTTP resend under the same id
     is the SAME turn, never a second."""
     from django.test import Client
@@ -934,7 +933,7 @@ async def test_a_send_carries_its_text_and_a_resend_is_the_same_turn():
 
 
 async def test_everyone_sees_a_teammates_queued_send():
-    """The queued list (spec 2026-09-26): every watcher sees a send that has
+    """The queued list: every watcher sees a send that has
     not reached the transcript yet, with its author, in send order.
 
     Transcript-sourced (see test_chat_queued.py's own rationale): the
@@ -964,10 +963,10 @@ async def test_everyone_sees_a_teammates_queued_send():
 
 
 async def test_a_ledger_sourced_send_reaches_the_peer_as_chat_user_message():
-    """The gap the two-browser check (spec 2026-09-26) found: a ledger-sourced
+    """A ledger-sourced
     session (the dev-stub default `_seed()` uses — no runner is ever bound)
-    persists the sender's Message directly and, before this fix, published
-    nothing beyond `draft.committed` to the SENDER'S OWN tabs. B never saw A's
+    persists the sender's Message directly, which alone publishes
+    nothing beyond `draft.committed` to the SENDER'S OWN tabs; B would not see A's
     line without a reload. A transcript-sourced session gets this for free
     (`apps.harness.api_session_sync.post_session_stream` fans out every "user" ledger row
     live); `services._publish_user_message` + `consumers.chat_user_message` is

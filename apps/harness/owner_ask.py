@@ -3,12 +3,12 @@
 A confined turn (a caller who is not the agent's owner or an admin) can act on
 nothing, so its procedure ends with one line, `For <Agent>'s owner: <ask>`, and
 promises the caller the request "is noted in this conversation's record on
-canopy-web where the owner reviews it" (canopy-web#1400 item 5). The record a
+canopy-web where the owner reviews it". The record a
 caller's turn leaves is its transcript, and nobody reads the transcript of a
 conversation they were not in. The runner lifts the line out (the laptop from
 the session's `Stop` hook, the cloud box from the finished reply) and sends it
 as an `owner_ask` turn event; this appends it to `result_note`, the one-line
-outcome every view of the turn already shows its owner (canopy-web#1416).
+outcome every view of the turn already shows its owner.
 
 The line is re-parsed here rather than trusted, so an event can only ever add a
 single `For …'s owner:` line, and only to a confined turn.

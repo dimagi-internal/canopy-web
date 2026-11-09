@@ -182,10 +182,10 @@ def test_sweep_finishes_cancel_requested_as_cancelled(canopy):
 def test_a_turn_that_completed_despite_a_cancel_stays_done_and_says_so(canopy, jj):
     """A deaf/poll-only runner can miss the runner.cancel frame and finish DONE.
 
-    This USED to be rewritten DONE -> CANCELLED. It is not any more: the turn carries
+    It is not rewritten DONE -> CANCELLED: the turn carries
     a complete reply, so `cancelled` would file a full answer under a status saying it
     was stopped — and, worse, would store the same thing as a stop that actually
-    worked, which is what made a broken stop button so hard to pin down (#649).
+    worked, which would make a broken stop button hard to pin down.
     The outcome stays truthful; the failed stop is recorded alongside it."""
     from django.utils import timezone
 

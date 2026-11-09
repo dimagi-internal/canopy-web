@@ -2,13 +2,11 @@
 
 A runner claims over REST (`POST /api/harness/runners/{id}/claim`) or over its
 WebSocket control channel (`RunnerConsumer`, the cloud runner's normal path).
-They used to build the answer separately: the REST route serialized
-`ClaimedTurnOut` and minted a confined turn's caller token and a chat's key,
-while the socket sent its own hand-picked subset of the turn — no caller
-envelope, no caller token, no chat key. The runner decides whether to CONFINE a
-turn from that envelope, so a confined turn claimed over the socket arrived
-looking ordinary and ran in the agent's full profile (found 2026-09-26, while a
-chat key failed to reach cloud-ec2-1).
+Both build the answer the same way: the REST route's `ClaimedTurnOut`, a
+confined turn's caller token and a chat's key. A hand-picked subset on the
+socket (no caller envelope, no caller token, no chat key) would be wrong: the
+runner decides whether to CONFINE a turn from that envelope, so a confined turn
+claimed over the socket would look ordinary and run in the agent's full profile.
 
 So both channels call `claim_payload`, and anything a claim must carry is added
 here, once. The credentials are minted per claim and exist only in this answer.
@@ -40,11 +38,9 @@ def issue_credentials(turn):
     else:
         # A FULL turn asked by someone who is not the agent's owner, an admin or
         # canopy (an editor) is not confined, but must still read
-        # canopy as its asker rather than as the runner's owner (who-is-asking
-        # phase 5, canopy-web#1332).
+        # canopy as its asker rather than as the runner's owner.
         # A project's turn (no agent) asked by a verified person reads canopy as
-        # them too: it has no agent to act as (access-confinement-and-act-as.md → "Projects run as the
-        # person who asked").
+        # them too: it has no agent to act as (see access-confinement-and-act-as.md).
         from .caller_tokens import is_caller_scoped, mint
 
         if is_caller_scoped(turn):

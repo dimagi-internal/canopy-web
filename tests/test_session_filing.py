@@ -1,9 +1,8 @@
 """Where a session is filed, and moving it (apps/canopy_sessions/filing.py).
 
-Owner request (Jonathan, 2026-10-11): "I still want all my sessions that I do in
-emdash to be associated with a default I can set, which is Dimagi, and then if I
-belong to more than one workspace, I could move the session's association if I
-want."
+Every emdash session is associated with a default workspace the person can set,
+and a person who belongs to more than one workspace can move a session's
+association.
 """
 from __future__ import annotations
 

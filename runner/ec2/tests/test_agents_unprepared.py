@@ -1,6 +1,6 @@
 """The box reports the agents it tried to set up and could not, so canopy-web
-stops handing it their turns (routing.cannot_serve; fizzy on cloud-ec2-2,
-2026-10-15: a turn ran in a bare scratch dir with no plugin and no credentials)."""
+stops handing it their turns (routing.cannot_serve), rather than a turn running in a
+bare scratch dir with no plugin and no credentials."""
 from __future__ import annotations
 
 

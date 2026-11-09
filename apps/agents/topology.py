@@ -2,7 +2,7 @@
 agent do what.
 
 An agent sends another agent work with its OWN canopy login (`Agent.user`) —
-`canopy agent dispatch`, an MCP call, a chat. Since #986 that login is not the
+`canopy agent dispatch`, an MCP call, a chat. That login is not the
 sending agent to anyone but itself: to agent B it is an ordinary person, and
 gets whatever B gives that person — B's owner or an admin get B whole, a
 member gets what B's published interface lets members reach, someone outside

@@ -2,9 +2,9 @@
 
 A turn dispatched from inside a chat (`canopy agent dispatch`, an agent asked to
 start the work) records its parent on the TURN. The session is made later, by
-the runner, in `record_session` — and used to be a bare runner session: no
-parent, and none of the people of the chat that asked for it, so the work never
-showed under that chat in /ide.
+the runner, in `record_session` — and must not be a bare runner session: it needs its
+parent and the people of the chat that asked for it, or the work never
+shows under that chat in /ide.
 """
 from __future__ import annotations
 

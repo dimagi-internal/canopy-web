@@ -49,7 +49,7 @@ def test_invite_token_and_pending_lifecycle():
         workspace=ws, email="b@x.com", invited_by=u,
         expires_at=timezone.now() + dt.timedelta(days=7),
     )
-    assert inv.role == "viewer"            # default (2026-10-04: was editor)
+    assert inv.role == "viewer"            # default
     assert len(inv.token) >= 40            # auto-generated url-safe token
     assert inv.is_pending() is True
     # revoking ends the pending window

@@ -38,16 +38,14 @@ _ROLE_FOR_KIND = {
 # snapshot so the two can't drift; SCROLLBACK_PAGE_DEFAULT is the "Load earlier"
 # page size (aligned with apps/realtime's cursor-paging conventions).
 #
-# 60, not 20, since tool calls became rows: measured over 19k rows of live
-# transcripts (2026-07-26) ~72% of a session's rows are tool_use/tool_result, so
-# a 20-row tail that used to open on 20 messages of conversation would now open
-# on 5 or 6 — the default view would get THINNER as a direct result of adding
-# detail to it. 3x holds the conversational density roughly where it was.
+# 60, not 20, because tool calls are rows: ~72% of a session's rows are
+# tool_use/tool_result, so a 20-row tail would open on only 5 or 6 messages of
+# conversation. 60 rows holds the conversational density at about 20 messages.
 SESSION_TAIL_DEFAULT = 60
 SCROLLBACK_PAGE_DEFAULT = 50
-# Rows still count tool calls, and an agent's turn can be 50 of them: on labs
-# (2026-10-31) a 60-row tail of an Ada session held 4 of its replies and none of
-# the person's messages — one turn, with no sign of what was asked. So the
+# Rows still count tool calls, and an agent's turn can be 50 of them: a 60-row
+# tail of a tool-heavy session can hold 4 replies and none of the person's
+# messages — one turn, with no sign of what was asked. So the
 # default tail also reaches back to the start of the person's last few messages,
 # up to a ceiling that keeps a tool-heavy session's open from shipping megabytes.
 SESSION_TAIL_ASKS = 3
@@ -135,7 +133,7 @@ _PROGRAM_PROMPT_SOURCES = frozenset({"system"})
 #: LAST-RESORT text shapes, used only for a row with no captured provenance (one
 #: shipped before runners kept `content["record"]`): what the harness writes on
 #: the human's side that no structural signal on the server can identify. Each
-#: was measured against the transcripts' own flags (2026-10-11, 840 sessions).
+#: was checked against the transcripts' own flags.
 #: A compaction summary may open with a preamble
 #: ("<artifact-content-authored-by-others/>"), so it is looked for in a window.
 _COMPACTION_SHAPE = "this session is being continued from a previous conversation"
@@ -600,9 +598,9 @@ def tail_as_messages(session, binding) -> list[TailMessage]:
     """A local runner session's reported tail, as Message-like rows.
 
     Local sessions hold NO `Message` rows until a backfill lands — the recent
-    history lives on `RunnerBinding.tail` (what the retired OpenSessions used to
-    render). Without this the converged ChatPanel opened blank on every discovered
-    session even though the server had the last N messages in hand.
+    history lives on `RunnerBinding.tail`. Without this the ChatPanel would open
+    blank on every discovered session even though the server has the last N
+    messages in hand.
 
     turn_index is NEGATIVE (-n..-1): it orders the tail before any real row and can
     never collide with backfilled rows (which start at 0) or with a live stream's
@@ -612,9 +610,8 @@ def tail_as_messages(session, binding) -> list[TailMessage]:
     path that renders rows the server never inspected — a local session shows this
     tail until its backfill lands, and the runner filters it in the producer, which
     is exactly the arrangement `transcript_noise` exists to warn against. A runner
-    on a lagging checkout shipped a tail containing a skill body and canopy rendered
-    it in the human's own bubble (found 2026-07-30: superpowers/brainstorming, on an
-    ada session). Sharing the prefix list fixes new runners; filtering here is what
+    on a lagging checkout can ship a tail containing a skill body, which would
+    render in the human's own bubble. Sharing the prefix list fixes new runners; filtering here is what
     fixes every runner already in the field.
     """
     if binding is None or not binding.tail:
@@ -712,17 +709,16 @@ def request_backfill(session) -> str:
     bound (signal it, and `backfill_pending` stays true until it ships the last
     chunk); 'unavailable' otherwise (the tail still shows).
 
-    There is deliberately NO 'we already have it' short-circuit any more. It used
-    to return `ready` when a row existed at turn_index 0 — a check that cannot
-    fire in practice: under the composite ordinal scheme (`record * BLOCK_STRIDE
+    There is deliberately NO 'we already have it' short-circuit (returning `ready`
+    when a row exists at turn_index 0): it cannot fire in practice:
+    under the composite ordinal scheme (`record * BLOCK_STRIDE
     + block`) index 0 means record 0 / block 0, and record 0 of a Claude
     transcript is a summary or a noise-filtered harness record, both of which are
-    DROPPED rather than renumbered. Verified on labs (2026-07-31): after a
-    complete backfill, session cf2d5089's oldest index was 448 and a second click
-    still answered `requested`. A condition that is always false is not an
+    DROPPED rather than renumbered. After a complete backfill the oldest index can be well above 0, so
+    such a check would still answer `requested`. A condition that is always false is not an
     optimization, it is a claim the code makes and never honours.
 
-    Asking unconditionally is now cheap in the way that matters: the write is
+    Asking unconditionally is cheap in the way that matters: the write is
     ordinal-keyed, so a re-ship of rows we already hold costs one existence probe
     and zero inserts. `ready` survives in the client's vocabulary
     (`backfillAction`) for old servers.

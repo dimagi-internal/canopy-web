@@ -180,7 +180,7 @@ def test_method_not_allowed(authed_client):
 # instead sets `self.path = scope["path"]` verbatim, and canopy-web's ASGI
 # wrapper has already stripped the prefix from that scope — which is exactly
 # what production does. Written against the WSGI client, every assertion below
-# passes on the unfixed view (measured, 2026-09-01).
+# passes on a view that ignores the stripped prefix.
 
 
 def _asgi_get(path="/auth/cli/authorize/", **overrides):

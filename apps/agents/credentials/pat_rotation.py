@@ -1,5 +1,4 @@
-"""Automatic rotation of an agent's own canopy login (`CANOPY_PAT_REF`; Canopy Vault Phase 1b,
-canopy-web#1549).
+"""Automatic rotation of an agent's own canopy login (`CANOPY_PAT_REF`; Canopy Vault Phase 1b).
 
 Its login is the one secret canopy-web issues itself, so it is the one it
 can rotate without anyone typing anything. An owner or admin opts an agent in
@@ -147,7 +146,7 @@ def _expire_strays(agent, *, keep, now) -> int:
 
     canopy-web cannot read the stored value, so before its first rotation it does not
     know which token that is — and the one an agent was first given (minted by hand,
-    copied to a box, leaked to a licensee: canopy-web#2265) would otherwise live out its
+    copied to a box, leaked to a licensee) would otherwise live out its
     full lifetime. After a rotation the vault holds the one login token the agent should
     use; any other copy is stale. Left alone: turn- and session-scoped tokens (short,
     their own lifetime — apps/harness/turn_agent_tokens.py) and OAuth grants' tokens."""
@@ -191,7 +190,7 @@ def _rotate_locked(agent, *, now, trigger: str, actor, presented_token_id=None):
         # value canopy-web cannot read (zero-knowledge) and has never rotated: nothing
         # names the current token, so retire the one the agent called with — that is
         # the leaked one. Without this, a first self-rotation minted a new token and
-        # left the leaked one live (Hal, 2026-10-24: "nothing revoked").
+        # left the leaked one live.
         old = PersonalToken.objects.filter(pk=presented_token_id, user_id=agent.user_id,
                                            revoked_at__isnull=True).first()
     raw, new = PersonalToken.create_for_user(

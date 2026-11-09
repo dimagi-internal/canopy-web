@@ -7,14 +7,12 @@ so the website streams the reply. This is the piece the normal agent/project pat
 deliberately omits (there the work just continues in the visible emdash session).
 
 Completion is STRUCTURAL, read off the transcript's own end-of-turn marker (see
-`hands_back_to_human`) — NOT "the file went quiet". It was idle-based until
-2026-07-26, on the stated premise that Claude Code writes no turn-done marker; it
-writes one on every assistant record (`message.stop_reason`), and the premise cost
-us every answer worth reading. An agent turn is SILENT for as long as its longest
-tool call — 296s in the session that exposed this — so a 3s quiet window meant the
-first `Bash` call ended the turn: chat showed the agent's opening line, declared it
-done, and dropped the actual answer on the floor. (Labs, 2026-07-26: 11 consecutive
-turns finished in 14-60s having bridged 70-220 chars each — all preambles.)
+`hands_back_to_human`) — NOT "the file went quiet". Claude Code writes a
+turn-done marker on every assistant record (`message.stop_reason`), so an idle
+window is the wrong signal. An agent turn is SILENT for as long as its longest
+tool call (296s in one measured session), so a 3s quiet window would end the turn
+at the first `Bash` call: chat would show the agent's opening line, declare it
+done, and drop the actual answer on the floor.
 
 A turn therefore outlives the runner tick that started it. `LiveBridge` holds that
 state between ticks and `chat_pump.pump_chat_bridges` advances it, so the runner keeps
@@ -26,9 +24,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 # The transcript core lives in canopy_transcript so the cloud runner shares it
-# verbatim (spec 2026-07-27). These re-exports keep existing call sites and
-# tests importing from chat_bridge working — this module is now the emdash
-# BRIDGE state machine, and nothing else.
+# verbatim. These re-exports keep call sites and tests importing from
+# chat_bridge working; this module is the emdash BRIDGE state machine, and
+# nothing else.
 from canopy_transcript import (  # noqa: F401
     BLOCK_STRIDE,
     TOOL_INPUT_JSON_MAX,
@@ -110,7 +108,7 @@ IDLE_TICKS = 180          # ~15 min of a completely silent transcript
 MAX_TICKS = 2880          # ~4 h total, so a wedged bridge can't hold a session forever
 
 #: Reported on the heartbeat as `midturn`: this code delivers a follow-up INTO a
-#: running chat turn (`Rider`, canopy-web#1153). canopy-web hands a rider only to
+#: running chat turn (`Rider`). canopy-web hands a rider only to
 #: a runner reporting it — older code would bridge the same reply twice.
 MIDTURN_VERSION = 1
 
@@ -129,8 +127,8 @@ def received_prompt(rec: dict) -> str | None:
     MODEL, or None if `rec` is not that.
 
     Typed into a busy session, a message is queued (`queue-operation` enqueue)
-    and then taken one of two ways, both measured in this repo's own sessions
-    (2026-10-05, the #1147 incident transcript): mid-turn it is `remove`d from
+    and then taken one of two ways, both measured in this repo's own sessions:
+    mid-turn it is `remove`d from
     the queue and injected as a `queued_command` attachment the model reads at
     its next step; once the turn has ended it is `dequeue`d and arrives as an
     ordinary `user` prompt. The enqueue itself is NOT receipt — the model has
@@ -158,8 +156,8 @@ def received_prompt(rec: dict) -> str | None:
 
 @dataclass
 class Rider:
-    """A follow-up typed into this bridge's session while its turn was running
-    (canopy-web#1153). Its reply is part of this turn's reply, so the turn must
+    """A follow-up typed into this bridge's session while its turn was running.
+    Its reply is part of this turn's reply, so the turn must
     not end until the model has actually RECEIVED it."""
 
     turn_id: str
@@ -245,7 +243,7 @@ class LiveBridge:
         cannot tell it apart from a wedge. Measured cost of not knowing: a turn
         finished `done` after 15 minutes carrying 936 characters of preamble while
         its dialog was still on screen, so the phone showed a completed chat whose
-        answer never came (labs, 2026-08-01). MAX_TICKS still bounds it, so a
+        answer never came. MAX_TICKS still bounds it, so a
         dialog nobody ever answers cannot hold a session open forever.
         """
         self.ticks += 1

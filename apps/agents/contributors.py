@@ -1,12 +1,13 @@
-"""Contributor pages on an agent's project (hal T69), and the board of ideas.
+"""Contributor pages on an agent's project and the board of ideas.
 
 The Connect team builds Supply together with one shared agent. Two questions
 have to have an answer on the page, not in someone's head:
 
 * **Where does each idea stand, and whose was it?** An idea is a task with
-  `kind="idea"` carrying the person's own words (`apps/agents/ideas.py`, hal
-  T82), its work as subtasks. Ideas used to be read off EVERY task, which made
-  the agent's own process work look like the product's ideas.
+  `kind="idea"` carrying the person's own words (`apps/agents/ideas.py`),
+  its work as subtasks. Ideas are read only from `kind="idea"` tasks, never from
+  every task, which would make the agent's own process work look like the
+  product's ideas.
 * **What is this person trying to achieve?** Their CONTRIBUTOR PAGE: an agent's
   summary of their own words, each quote linked to where they said it, beside
   their ideas. Read it before building on (or against) their idea.

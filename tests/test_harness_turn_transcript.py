@@ -272,7 +272,7 @@ def test_line_without_embedded_newline_logs_nothing(caplog):
     assert len(caplog.records) == 0
 
 
-# --- Security review 2026-07-26 fix round -----------------------------------
+# --- Transcript ceilings and safeguards -----------------------------------
 #
 # F2 — a per-turn ceiling (ledger.TRANSCRIPT_TURN_MAX_BYTES), checked inside
 # the same locked transaction as every other append, so a runaway/very-long

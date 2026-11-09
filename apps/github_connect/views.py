@@ -60,8 +60,8 @@ def github_connect_start(request: HttpRequest):
 
     Default: the INSTALLATION flow, which is the only one that asks which
     repositories to grant and (because the app requests user authorization
-    during installation) authorizes in the same trip. This used to send everyone
-    to the bare authorize URL, which produced a connection holding a valid token
+    during installation) authorizes in the same trip. Sending everyone
+    to the bare authorize URL would produce a connection holding a valid token
     and access to zero repositories — reported to the user as success.
 
     The exception is a stale TOKEN on an existing connection: those people are

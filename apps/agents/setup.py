@@ -109,17 +109,16 @@ def _mailbox(agent: Agent, settings: str) -> dict:
                      href=email_page, action="Email settings")
 
     # What the boxes that run its turns found is the answer; the stored token is only
-    # the fallback for an agent no box has checked yet. Before 2026-10-20 either one
-    # alone made this "done", so lex read done while cloud-ec2-2 reported it could not
-    # find the token at all: the checklist said green, the agent could not read mail.
+    # the fallback for an agent no box has checked yet. Either one
+    # alone must not make this "done": a stored token with a box that cannot find it
+    # would read green while the agent cannot read mail.
     # (The token-OR-proved rule itself is right for tokens minted by a laptop
     # `gog login`, which live in the vault rather than here — ada/hal/eva/echo read
-    # "todo" under a token-only rule while cloud-ec2-2 had them working, 2026-10-15.)
+    # "todo" under a token-only rule while a box has them working.)
 
     # A failure reported BEFORE the stored sign-in was last written is about the sign-in it
-    # replaced, so it is not an answer any more (fizzy, 2026-10-22: cloud-ec2-2's 15 Oct "No
-    # auth" kept the row red after Shayoni connected the mailbox on the 22nd and her laptop
-    # was reading it). A box that fails AFTER the sign-in still turns the row red.
+    # replaced, so it is not an answer any more (a box's old "No auth" would keep the row red after
+    # the mailbox was reconnected and a laptop was reading it). A box that fails AFTER the sign-in still turns the row red.
     reports = bootstrap_reports(agent)
     token = AgentCredential.objects.filter(agent=agent, name=GOG_TOKEN_REF).order_by("-updated_at").first()
     has = token is not None
@@ -230,8 +229,8 @@ def runner_takers(agent: Agent, facts=None):
 def request_setup(agent: Agent) -> list[str]:
     """Ask each CLOUD box that would take this agent's turns to re-run its bootstrap,
     which clones and provisions every registered agent — the only time a cloud box
-    learns of a new one. Without this a new agent's turns ran on the box with none
-    of its code (seen on labs 2026-10-14: the turn answered with the fleet's skills).
+    learns of a new one. Without this a new agent's turns would run on the box with none
+    of its code (the turn answers with the fleet's skills).
     Durable (`request_refresh` sets a row the box reads off its heartbeat) and acted
     on at the box's next idle moment. Laptops are not asked: their checkout is a
     person's to make (`repoSetup.ts`)."""

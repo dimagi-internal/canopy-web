@@ -60,7 +60,7 @@ def turn_event_to_frames(evt: dict, resolve_message_id: Callable[[int], str]) ->
         # the author before any reload — and the sender's echo matches on text.
         author, text, _turn = authorship.parse(str(payload.get("text", "")))
         if author is None:
-            # No marker (the common case since 2026-09-27): the durable write
+            # No marker (the common case): the durable write
             # that just ran alongside this frame (persist_transcript_rows)
             # already matched the row to its turn — post_session_stream hands
             # the result back in the payload so a watcher does not have to

@@ -30,7 +30,7 @@ def fleet(client):
     WorkspaceMembership.objects.create(workspace=ws, user=sarvesh, role=WorkspaceMembership.EDITOR)
     WorkspaceMembership.objects.create(workspace=ws, user=ace_user, role=WorkspaceMembership.EDITOR)
     # `user` links the agent's own login. It does NOT make a box paired under
-    # that login the agent's box — pairing as an agent is refused (#1049), and a
+    # that login the agent's box — pairing as an agent is refused, and a
     # box holds the agent only when its OWNER is an agent admin.
     ace = Agent.objects.create(slug="ace", name="ACE", workspace=ws, user=ace_user)
     AgentAdmin.objects.create(agent=ace, user=sarvesh, granted_by=jj)
@@ -177,7 +177,7 @@ def test_a_contact_who_is_not_a_member_can_be_routed(fleet):
 
 
 def test_a_box_owned_by_the_agents_own_login_cannot_hold_the_agent(fleet):
-    """The pre-#1049 shape: a box paired AS the agent. Its owner is the agent's
+    """A box paired AS the agent (a shape that is now refused). Its owner is the agent's
     own login, which is no admin of the agent, so the box may not hold it —
     not even for an operator with a RunnerAdmin grant on it. Routing work onto
     it is refused, and it cannot claim the agent's turns."""

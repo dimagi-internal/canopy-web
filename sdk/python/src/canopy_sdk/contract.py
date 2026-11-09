@@ -190,8 +190,8 @@ DPOP_NONCE_HEADER = "DPoP-Nonce"
 #: trusted for authorization.
 ACTOR_HEADER = "Canopy-Actor"
 #: canopy's signed statement about the call in front of the host: which agent, at
-#: which commit, under which declaration, on which runner, in which conversation
-#: (spec 2026-10-22-sensitive-data-agents-design §6). Unlike ``Canopy-Actor`` it IS
+#: which commit, under which declaration, on which runner, in which conversation.
+#: Unlike ``Canopy-Actor`` it IS
 #: verifiable: ``canopy_sdk.host.verify_execution``.
 EXECUTION_HEADER = "Canopy-Execution"
 EXECUTION_TYP = "canopy-execution+jwt"

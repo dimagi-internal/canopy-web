@@ -82,7 +82,7 @@ describe("shouldShowLoadFull", () => {
     expect(shouldShowLoadFull({ ...base, runnerName: "jj-mbp" })).toBe(true);
   });
 
-  // REGRESSION (labs, 2026-07-31): this gated on `origin === "runner"`, so a
+  // REGRESSION: gating on `origin === "runner"` meant a
   // chat STARTED from the phone never got the control — even bound to an online
   // runner holding all 75 of its transcript rows on disk. Since
   // `transcript_sourced`, where a conversation started says nothing about where
@@ -187,9 +187,9 @@ describe("menuBlocksComposer", () => {
   it("leaves the composer alone for an option-less marker", () => {
     // A `Notification` marker is not a parsed dialog — nothing looked at the
     // screen to produce it, and it may be nothing more than Claude Code's
-    // sixty-second idle nudge. Measured 2026-08-17: an API 500 ended a turn
-    // without firing `Stop`, the next idle notification was recorded as a
-    // block, and the chat locked itself behind a dialog that did not exist,
+    // sixty-second idle nudge. For example, an API 500 ends a turn
+    // without firing `Stop`, the next idle notification is recorded as a
+    // block, and the chat would lock itself behind a dialog that did not exist,
     // leaving a button labelled "Cancel" as the only control on the page.
     //
     // If the marker IS real the send bounces as COMPOSER_NOT_VISIBLE and the

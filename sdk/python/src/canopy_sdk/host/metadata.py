@@ -53,6 +53,6 @@ def protected_resource_metadata(config: HostConfig, base: dict | None = None) ->
     # scopes_supported is left as the host wrote it. An interactive MCP client
     # (Claude Code) registers for exactly this list, and a host's registration
     # typically accepts only its sign-in scopes -- adding the grant's tool scopes
-    # here broke every new sign-in on connect-labs (canopy-web#1157). canopy
+    # here breaks every new sign-in on a host. canopy
     # finds the grant's scopes in the RFC 8414 document above.
     return doc

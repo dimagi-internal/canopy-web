@@ -1,5 +1,4 @@
-"""Which agent CLI a turn may run on, and what a runner reports it has
-(spec 2026-10-26-multi-cli-agents)."""
+"""Which agent CLI a turn may run on, and what a runner reports it has."""
 from __future__ import annotations
 
 import pytest

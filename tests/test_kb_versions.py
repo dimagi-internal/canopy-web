@@ -1,5 +1,5 @@
 """A knowledge base is a version log of whole files its steward built (canopy-web never
-builds one, #1971). Each version carries the curation state it was built from; a
+builds one). Each version carries the curation state it was built from; a
 publish names the version it was made from and loses to one that landed first;
 whats_new reads the file's own history; rollback serves an earlier file and state; and
 a source is a curator's crawler only (no Drive-folder source).
@@ -52,8 +52,8 @@ def _result(world, s3, obj) -> str:
 
 
 def test_canopy_web_never_builds_an_index_nor_keeps_a_refresh_s_state_beside_the_log(world, s3):
-    """#1971: building in the web process ran canopy-web out of memory; the routes that
-    took a delta to build are gone, and so is the builder. The curation pointer and its
+    """Building in the web process would run canopy-web out of memory; there are no routes that
+    take a delta to build, and no builder. The curation pointer and its
     lease went with them: a version carries its own state."""
     c = world["client"]
     assert c.post(f"{KB_URL}/versions", {"state": {"docs": {}, "parts": {}}, "base": 1},

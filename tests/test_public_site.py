@@ -65,7 +65,7 @@ def test_signed_out_root_is_the_site(dists, db):
 
 @pytest.mark.usefixtures("login_required")
 def test_signed_in_root_is_the_site_too(dists, member):
-    """For now `/` is the site for everyone (owner, 2026-10-06), so it can be seen
+    """For now `/` is the site for everyone, so it can be seen
     while signed in; `/app` is the way into the app."""
     c = Client()
     c.force_login(member)

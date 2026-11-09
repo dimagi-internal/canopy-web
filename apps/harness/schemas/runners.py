@@ -321,7 +321,7 @@ class RunnerOut(Schema):
     kind: str
     # The session runtime this (laptop) runner opens NEW sessions in — emdash,
     # claude-desktop or claude-cli. The runner reads it off its own heartbeat response, so this
-    # field is also how a flip reaches the box (canopy-web#1188).
+    # field is also how a flip reaches the box.
     engine: str = "emdash"
     # The OS the box said it runs when it paired (macos, windows, linux); "" unknown.
     platform: str = ""
@@ -426,7 +426,7 @@ class RunnerOut(Schema):
     flags: list[str] = []
     # Its owner's own machine: no fleet work, only what its owner puts on it.
     private: bool = False
-    # The private-runner registration linked to this box (canopy-web#1705): the runner
+    # The private-runner registration linked to this box: the runner
     # writes it to ~/.canopy/private-runner.json, so direct sessions there need no CLI.
     private_runner_id: uuid.UUID | None = None
     # The agents a person dedicated this box to (`Runner.only_agents`): it runs only
@@ -576,9 +576,9 @@ class RunnerOut(Schema):
             return None
         checks = {c["name"]: HealthCheck(**c) for c in obj.health.get("checks") or []}
         # `github.<slug>` is canopy-web's own delegation state, which the box only
-        # asks about at boot. Served from the box's report it stayed red for a
-        # token lent after that boot, under a fresh `health_received_at` (eva,
-        # 2026-10-03). So it is answered here, from the rows, on every read.
+        # asks about at boot. Served from the box's report it would stay red for a
+        # token lent after that boot, under a fresh `health_received_at`.
+        # So it is answered here, from the rows, on every read.
         from apps.agents.credentials import delegations
 
         from ..routing import agents_routed_to
@@ -741,7 +741,7 @@ class HeartbeatIn(Schema):
     # caller turns (services.profile_q, ENVELOPE_VERSION).
     envelope: int = 0
     # 1 = this runner's code delivers a follow-up INTO a conversation's running
-    # turn (`Turn.rides_turn`, canopy-web#1153). Absent (older code) means 0:
+    # turn (`Turn.rides_turn`). Absent (older code) means 0:
     # it is never handed one, because it would bridge the same reply twice.
     midturn: int = 0
     # Which agent CLIs this box has, signed in and confining (`clis.sanitize`):

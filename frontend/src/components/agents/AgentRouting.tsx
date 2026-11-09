@@ -19,16 +19,13 @@ import { TurnModeToggle } from '@/components/agents/TurnModeToggle'
 import { GRID, Cell, RuleRowView } from './AgentRoutingRules'
 import { AddRuleRow } from './AgentRoutingAddRule'
 
-// ONE TABLE for "where does this agent's work run, and how" (spec 2026-09-23).
+// ONE TABLE for "where does this agent's work run, and how".
 //
-// It used to be three controls that each answered part of the question: a Turn
-// mode toggle, a "Default order" chip row, and beneath it an "Except when the
-// work comes from" list whose precedence was explained in a footnote. Once a
-// rule could set the MODE as well as the box, the three stopped being separable
-// — "Beth's email → cloud, auto" is one decision — so they are rows of one table
-// now, in the order they are evaluated: the specific rules first, the agent's
+// A rule can set the MODE as well as the box — "Beth's email → cloud, auto" is
+// one decision — so the turn mode, the default order and the source rules are
+// rows of one table, in the order they are evaluated: the specific rules first, the agent's
 // defaults last as "Everything else". Reading it top to bottom IS the precedence,
-// which is what let the footnote shrink to the two cases the table cannot show.
+// so only the two cases the table cannot show need a footnote.
 //
 // Layout is a CSS grid under a container query rather than a <table>: the same
 // component renders in the Settings page (wide) and in the supervisor's runner
@@ -118,7 +115,7 @@ export function AgentRouting({
     )
     setError(null)
     try {
-      // One rule at a time: only what this edit changed is sent (#1143).
+      // One rule at a time: only what this edit changed is sent.
       const saved = await saveAgentRunnerRules(agentSlug, prev, next, workspace)
       if (seqRef.current !== mySeq) return
       apply(saved)
@@ -148,7 +145,7 @@ export function AgentRouting({
 
   const grouped = groupRules(rules)
   const merged = mergeRules(grouped, agentMode)
-  // Said once, here, rather than under every row it applies to (#1314).
+  // Said once, here, rather than under every row it applies to.
   const namedAuto = merged.some((m) => m.actor && (m.turnMode || m.inherited) === 'auto')
 
   return (
@@ -227,7 +224,7 @@ export function AgentRouting({
         {error && <span className="text-[11px] text-destructive">{error}</span>}
       </div>
 
-      {/* One line, and the detail behind a disclosure (#1314): it was two
+      {/* One line, and the detail behind a disclosure: it was two
           paragraphs under the table, read once and skipped ever after. */}
       <p className="text-[11px] text-muted-foreground" data-testid="routing-footer">
         The first row that matches a turn picks its runners and mode.

@@ -243,8 +243,7 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     if runner.fleet_id is not None and runner.power != Runner.POWER_ON:
         return None
     # A box whose Claude login is gone runs nothing: every turn it took would come
-    # back as the CLI's "Not logged in" (2026-10-22, acedimagi-mbp-cdp answered
-    # three messages that way). Not every not-ready note means that — a box with
+    # back as the CLI's "Not logged in". Not every not-ready note means that — a box with
     # no Claude desktop CLI still runs turns in emdash — so only this one gates.
     # Above the pin, like the pause: a pin cannot make a signed-out box work.
     # Per CLI (`harness.clis`): a box with Codex signed in still takes Codex turns
@@ -299,9 +298,9 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     # load-bearing), shared with `blocking_turn` so the status line's "queued
     # behind the current turn" is this exclusion, not a second guess at it.
     # Only a CONVERSATION is a lane: an agent has none, and any number of its
-    # turns execute at once (each on its own worktree, `cloud_runner`'s #1313).
+    # turns execute at once (each on its own worktree, in `cloud_runner`).
     # A conversation this runner is running is not "busy" to it when it can
-    # deliver the follow-up into that turn (`may_ride`, canopy-web#1153).
+    # deliver the follow-up into that turn (`may_ride`).
     ridable = ridable_sessions(runner)
     busy_sessions = busy_session_ids().exclude(chat_session_id__in=list(ridable))
     # Tenant boundary. capabilities is a caller-supplied routing hint declared at
@@ -311,7 +310,7 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     # The slug set and the agent predicate both come from the SHARED helpers
     # (runner_tenant_slugs / agent_tenant_q, above), which `_runner_schedule_qs`
     # in api.py also calls. That is not tidiness: these two rules diverging is
-    # the 2026-07-25 outage (see runner_tenant_slugs' docstring). Sharing the
+    # an outage (see runner_tenant_slugs' docstring). Sharing the
     # definition is what makes "every schedule this runner may fire produces a
     # turn this runner may claim" hold by construction rather than by two
     # comments agreeing with each other; tests/test_claim_schedule_parity.py
@@ -397,8 +396,8 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     job_busy = None
     trusted: dict[int, bool] = {}
     # Why each candidate this box passed over was passed over, said on the turn
-    # (`_note_skips`) so "queued, no runner has claimed it" never again has to be
-    # debugged from outside (2026-10-30: five silent hours).
+    # (`_note_skips`) so "queued, no runner has claimed it" never has to be
+    # debugged from outside.
     skips: dict = {}
     for turn in candidates:
         # Above the pin on purpose, like profile_q: a pin is a placement, never a
@@ -465,7 +464,7 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
                 skips[turn.pk] = "the workspace's runner order does not offer this repo turn to this box"
                 continue
             # An unbound project chat: a box with its repo, that the workspace's
-            # order shares or the chatting person administers (spec 2026-10-19).
+            # order shares or the chatting person administers.
             if is_project_session_turn(turn) and not project_session_allows(
                     runner, turn, orders, now, admins=admins):
                 skips[turn.pk] = "the workspace's runner order does not offer this project chat to this box"
@@ -482,7 +481,7 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
                                           f"{turn.origin} turns, or a better-ranked runner is still available")
                         continue
         # What it may do is decided HERE, again, from the rules as they are now
-        # (spec 2026-11-05 § 3.3, "Two moments"): a queued turn runs like any turn,
+        # ("two moments"): a queued turn runs like any turn,
         # not on what was true when it was sent. Before the turn's mode and the
         # admission rules, which read it, and before a runner cap below is laid on
         # the initiator, which the enqueue never saw.
@@ -516,7 +515,7 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         # mid-turn cannot flip the posture of work already under way.
         from . import turn_mode as modes
 
-        # A turn started as a lower role (canopy-web#1705) is judged at that role.
+        # A turn started as a lower role is judged at that role.
         turn_cap = role_cap.cap_from((turn.origin_ref or {}).get("acts_as"))
         stamp = ""
         if runner_cap and turn.initiator_user_id and turn.initiator_user_id == runner.owner_id:

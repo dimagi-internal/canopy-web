@@ -186,8 +186,8 @@ describe('Security — its secrets', () => {
 })
 
 describe('External accounts', () => {
-  // ada/echo/eva/hal on 2026-10-04: declared 0, mailbox set — and no button,
-  // so re-minting their mailbox needed a terminal and a hand-written secret.
+  // An agent with declared 0 secrets and a mailbox set still gets the button;
+  // otherwise re-minting its mailbox needs a terminal and a hand-written secret.
   it('puts the unconnected mailbox and its action on one row, first in the list after GitHub', async () => {
     getAgentCredentialStatus.mockResolvedValue([])
     inRouter(<AgentAccountsPanel agent={{ ...AGENT, email: 'echo@dimagi-ai.com' }} />)

@@ -139,7 +139,7 @@ def test_ephemeral_instance_role_reads_and_writes_only_its_own_prefix(ephemeral)
         assert s["Resource"] != {"Sub": "${ArtifactsBucket.Arn}/*"}, s["Sid"]
 
 
-# AmazonSSMManagedInstanceCore v2, as AWS publishes it (2026-10-14).
+# AmazonSSMManagedInstanceCore v2, as AWS publishes it.
 SSM_CORE = {
     "ssm:DescribeAssociation", "ssm:GetDeployablePatchSnapshotForInstance", "ssm:GetDocument",
     "ssm:DescribeDocument", "ssm:GetManifest", "ssm:GetParameter", "ssm:GetParameters",
@@ -213,7 +213,7 @@ def test_broker_policy_is_exactly_the_contract(ephemeral):
     assert st["TagOnLaunchOnly"]["Condition"] == {"StringEquals": {"ec2:CreateAction": "RunInstances"}}
     # The launch template's ImageId is resolve:ssm:, which EC2 resolves AS THE
     # RunInstances caller — without read on exactly that parameter every launch
-    # is SsmAccessDenied (first live lease, 2026-10-14).
+    # is SsmAccessDenied.
     ami = st["ResolveTheAmiParameter"]
     assert set(ami["Action"]) == {"ssm:GetParameters", "ssm:GetParameter"}
     assert ami["Resource"] == {"Sub": "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/canopy/capabilities/${Owner}/${Capability}/ami"}

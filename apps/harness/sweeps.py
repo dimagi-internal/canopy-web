@@ -1,7 +1,7 @@
 """The harness's periodic jobs, run on the off-request clock (apps/common/ticks.py).
 
-They used to ride runner traffic — the queue sweeps every claim poll, the
-scheduled unpause every heartbeat — so they stopped whenever no runner was
+They do not ride runner traffic (the queue sweeps every claim poll, the
+scheduled unpause every heartbeat), which would stop whenever no runner was
 polling. Registered from HarnessConfig.ready().
 """
 from __future__ import annotations

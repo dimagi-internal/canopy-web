@@ -1,4 +1,4 @@
-"""Push the WHOLE queued list to a session's watchers (spec 2026-09-26).
+"""Push the WHOLE queued list to a session's watchers.
 
 Whole, never a delta: a just-connected client has no correct prior to apply
 a delta to (the status_feed rule). Never raises — the list is an enhancement

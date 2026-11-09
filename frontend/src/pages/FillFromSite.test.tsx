@@ -36,7 +36,7 @@ const FOUND: SiteDiscovery = {
 }
 
 /**
- * A Host site used to be a hand-typed copy of facts the site already
+ * A Host site would otherwise be a hand-typed copy of facts the site already
  * publishes. The button reads them from the site's signed site.json — and
  * saves NOTHING until the owner has seen them: a site must not be able to
  * change its own trusted origins by publishing a document.

@@ -1,7 +1,7 @@
 """`/api/contact/hcp/…` — a CONTACT's own HCP, from a site canopy trusts for email.
 
-Jonathan, 2026-10-09: "allow contacts to start building up HCP interactions if they
-opt in from a trusted system like labs where we do trust their e-mail identity."
+A contact may start building up HCP interactions if they opt in from a trusted
+system like labs, where canopy trusts their e-mail identity.
 Design and every judgment call: docs/architecture/hcp-service.md § Contacts.
 
 Two things have to be true at once, and they pull against each other:
@@ -25,7 +25,7 @@ Two things have to be true at once, and they pull against each other:
   superuser decision per site, not a tenant setting.
 
 The opted-in contact holds the same powers a signed-in person has on /people/me
-for themselves — the per-agent session grant and its separate keep act (#1389),
+for themselves — the per-agent session grant and its separate keep act,
 their policy, revoke, export — and nothing more. An address that belongs to a
 canopy account is refused: that person signs in and uses /people/me, and a contact
 must never change an account's settings.

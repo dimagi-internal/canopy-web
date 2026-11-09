@@ -250,7 +250,7 @@ function PresencePanel() {
 }
 
 /**
- * Device keys on the runners you administer (Canopy Vault, canopy-web#1538). A
+ * Device keys on the runners you administer (Canopy Vault). A
  * box registering a key prints `approve_url`, which lands here with
  * `?device_key=<id>`; that row is marked so the approver knows which one.
  */

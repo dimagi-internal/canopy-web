@@ -958,9 +958,9 @@ def exec_status(lease: CapabilityLease, exec_id: str, *, wait_s: int = 0) -> Exe
         if inv is None:
             # SSM's GetCommandInvocation answers InvocationDoesNotExist for a few
             # seconds after SendCommand (eventual consistency). An exec THIS lease
-            # sent that SSM cannot see yet is pending, not missing — the first ACE
-            # turn on a cloud runner polled inside that window and failed
-            # (turn f51078e3, 2026-10-14). Past the grace window it really is lost.
+            # sent that SSM cannot see yet is pending, not missing — a poll
+            # inside that window must not fail the turn. Past the grace window it
+            # really is lost.
             age = (timezone.now() - entry.sent_at).total_seconds()
             if age > INVOCATION_GRACE_S:
                 raise CapabilityError(404, (f"exec {exec_id} on lease {lease.pk} was sent {int(age)}s ago "

@@ -177,8 +177,8 @@ def _limits_nothing(globs) -> str | None:
     """The first tool-limit glob that matches every tool the site offers, or None.
 
     `mcp__*connect_labs__*` reads like a restriction and restricts nothing: the host's tool name is
-    all that is matched (`host_gateway.host_tool_name`), and `*` is every one of them. ACE's labs
-    row carried exactly that until 2026-11-06, which is how a no-op passed for a safety setting.
+    all that is matched (`host_gateway.host_tool_name`), and `*` is every one of them. A row like
+    that is a no-op that passes for a safety setting.
     """
     from apps.host_grants.host_gateway import host_tool_name  # noqa: PLC0415 — host_grants imports agents
 

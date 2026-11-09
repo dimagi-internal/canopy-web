@@ -3,8 +3,8 @@
 `apps/canopy_sessions/feed.py` decides whether a session is on a person's feed;
 the session list stamps it as `feed_status` and every session push sends only
 to someone it is on the feed for. Pinned against the case that motivated it
-(Jonathan, 2026-10-05): a colleague's laptop session showed on his feed and
-buzzed his phone, though it was the colleague's to answer.
+: a colleague's laptop session must not show on
+another person's feed or buzz their phone when it is the colleague's to answer.
 """
 from __future__ import annotations
 
@@ -142,8 +142,8 @@ def test_not_waiting_is_on_nobodys_feed(fleet):
 
 def test_an_agents_cloud_session_is_on_its_owners_feed(fleet, monkeypatch):
     """Nobody sits at a cloud box, so a manual session an agent opened there — a
-    dispatch waiting for approval — is the agent owner's (Jonathan, 2026-10-07).
-    Before, it was NOT_YOURS for everyone and reached no one's feed."""
+    dispatch waiting for approval — is the agent owner's;
+    it is not NOT_YOURS for everyone, reaching no one's feed."""
     agent = fleet["agent"]
     agent.owner = fleet["jj"]
     agent.save(update_fields=["owner"])
@@ -171,7 +171,7 @@ def test_every_session_row_carries_its_turn_mode(fleet):
     assert row["turn_mode"] == "auto"
 
 
-# --- "parked" needs evidence (Jonathan, 2026-10-12) -------------------------
+# --- "parked" needs evidence -------------------------
 #
 # The feed said "4 sessions are waiting on haldimagi-mbp-cdp, which is paused"
 # about four idle emdash tasks on a box he had paused on purpose: no dialog, not

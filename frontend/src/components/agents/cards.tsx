@@ -114,7 +114,7 @@ function formatDateTime(s: string): string {
 export function TurnCard({ turn }: { turn: AgentTurnOut }) {
   const [open, setOpen] = useState(false)
   // The transcript is optional — only render its link when it was uploaded. The
-  // server builds it under the workspace it was shared from (canopy-web#1337).
+  // server builds it under the workspace it was shared from.
   const shareHref = turn.share_url ?? ''
   // Where the turn's actual work lives: the chat it ran in (a laptop runner's
   // emdash session, or a chat turn's own session) — or, for a cloud-runner turn

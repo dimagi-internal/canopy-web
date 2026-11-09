@@ -1,5 +1,4 @@
-"""Agents declare which CLIs they run on; runner credentials name theirs
-(spec 2026-10-26-multi-cli-agents §1–2)."""
+"""Agents declare which CLIs they run on; runner credentials name theirs."""
 from __future__ import annotations
 
 import pytest

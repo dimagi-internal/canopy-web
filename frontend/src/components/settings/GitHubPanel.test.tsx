@@ -99,11 +99,11 @@ describe('GitHubPanel', () => {
   })
 
   it('reports authorized-but-no-repo-access instead of calling it success', async () => {
-    // THE REGRESSION THIS PANEL SHIPPED WITH. Authorizing and installing are
+    // THE CASE THIS PANEL MUST NOT MISREPORT. Authorizing and installing are
     // separate GitHub flows and only the install one asks about repositories,
     // so `connected: true` with an empty installation list means a valid token
-    // that can reach nothing. Measured on labs 2026-09-13: the panel said
-    // "Connected as @jjackson" while nothing could be pushed.
+    // that can reach nothing. The panel must not say
+    // "Connected as @jjackson" while nothing can be pushed.
     asMock.mockResolvedValue(conn({ connected: true, github_login: 'jjackson' }))
     // Empty BOTH times — a settled answer, not the post-install lag the
     // re-check exists for.
@@ -118,7 +118,7 @@ describe('GitHubPanel', () => {
   })
 
   it('names the REPOSITORIES, not just the account', async () => {
-    // The shape measured on labs 2026-09-13: one org, one repo. Reporting only
+    // A real shape: one org, one repo. Reporting only
     // "access granted on dimagi-internal" reads like the whole organisation and
     // OVERSTATES the grant — which is the opposite of useful when the advice
     // above was "pick only the repos you want agents in". If canopy tells
@@ -162,9 +162,9 @@ describe('GitHubPanel', () => {
   })
 
   it('re-checks an empty list once before warning, because GitHub lags after an install', async () => {
-    // Observed on labs 2026-09-13: the "no repository access" warning appeared
-    // and then vanished on its own, because the first read after coming back
-    // from the install screen did not yet list the brand-new installation.
+    // The "no repository access" warning would appear
+    // and then vanish on its own, because the first read after coming back
+    // from the install screen does not yet list the brand-new installation.
     // Believing that momentary empty answer shows an alarming state that is
     // not true.
     asMock.mockResolvedValue(conn({ connected: true, github_login: 'jjackson' }))

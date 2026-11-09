@@ -1,6 +1,5 @@
 /**
- * A sensitive conversation, read in the browser (spec
- * 2026-10-23-sensitive-conversations-sealed-to-their-people §2).
+ * A sensitive conversation, read in the browser.
  *
  * canopy-web seals every stored message's words to the conversation's public key
  * and keeps the private key only WRAPPED to each of its people's vault keys

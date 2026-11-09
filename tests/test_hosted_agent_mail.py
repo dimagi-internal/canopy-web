@@ -1,4 +1,4 @@
-"""Canopy-hosted email for new agents (marshellis.com, 2026-10-18): an agent whose address
+"""Canopy-hosted email for new agents (marshellis.com): an agent whose address
 is on a workspace's verified mail domain is routed when it is created, the setup
 checklist and the runner treat it as working with no Gmail sign-in, and people with a
 verified Google account at such a domain may sign in and ask to join."""

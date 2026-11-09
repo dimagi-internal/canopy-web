@@ -99,7 +99,7 @@ class OnDemandInstance:
     def _wait_ec2_ok(self, timeout_s: int) -> None:
         # Both reachability checks, as ace-web's mobile runner always required: the
         # instance_status_ok waiter alone ignores system status. One shared budget.
-        # A real m8i.xlarge took ~230 s from start to "ok" (2026-10-08), so the
+        # A real m8i.xlarge takes ~230 s from start to "ok", so the
         # default budget is 420 s, not 180.
         deadline = time.monotonic() + timeout_s
         self._wait("instance_status_ok", timeout_s)

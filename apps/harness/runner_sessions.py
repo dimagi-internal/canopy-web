@@ -4,7 +4,7 @@ An admin of a box (`RunnerAdmin`) can already move every session off it
 (`access.may_move`), but `access.visible_session_q` shows them only the sessions a
 runner discovered on its own: a chat a person started from the web is that
 person's conversation, so it never appears. The open count on the runner row
-did, so an admin could see "110 open" and not one of the 110 (2026-10-26).
+did, so an admin could see "110 open" and not one of the 110.
 
 This is the other half: every session `staleness.active` counts on the box, with
 what it takes to understand and tidy it — who started it, how, when it last did

@@ -4,8 +4,7 @@
 someone put beside canopy with `--with` (the knowledge-base engine `canopy-kb`, a reader
 like `openpyxl`) is silently gone after it. The runner reinstalls the CLI whenever it falls
 behind the plugin, so a box that was set up to build knowledge bases lost the engine on the
-next canopy release, and `canopy kb build` failed there days later (2026-10-23, cloud-ec2-2,
-the GiveWell republish of canopy-web#1891). uv's own receipt records every requirement the
+next canopy release, and `canopy kb build` would fail there days later. uv's own receipt records every requirement the
 tool was installed with; this turns all but canopy itself back into `--with` arguments.
 
 Stdlib only, and runnable as a script — the cloud bootstrap (runner/ec2/bootstrap_agents.sh)

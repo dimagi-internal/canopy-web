@@ -7,7 +7,7 @@ import { scopedPath } from '@/lib/scopedLinks'
 import { machineShortName } from './machineText'
 
 /**
- * "Your agents" on the Security card (canopy-web#1550): where each agent that
+ * "Your agents" on the Security card: where each agent that
  * keeps its secrets in canopy-web stands — status only. Keeping them private
  * is not a step anyone takes per agent: a new agent's secrets are sealed to
  * its owner and approved machines as they arrive, and approving a machine

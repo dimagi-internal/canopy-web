@@ -42,11 +42,10 @@ def finish_chat_bridge(cfg: Config, client: Client, bridge, *, status: str, note
     finish can't leave it pumping forever), then tell the server. Best-effort — a
     client hiccup must not wedge the loop.
 
-    Pressing Escape is NOT done here any more; see `cancel_chat_bridge`. It used to
-    be, and a cancel arrived at this function already committed to finishing the turn
-    `cancelled` — so an interrupt that raised was caught, logged at WARNING, and the
-    turn was reported cancelled anyway. The website said "stopped" while the agent
-    kept working, and a test asserted that behaviour."""
+    Pressing Escape is NOT done here; see `cancel_chat_bridge`. A cancel arriving
+    at this function is already committed to finishing the turn `cancelled`, so an
+    interrupt that raised here would be reported cancelled anyway while the agent
+    kept working."""
     chat_bridge.IN_FLIGHT.pop(bridge.turn_id, None)
     CANCELLED_TURNS.discard(bridge.turn_id)
     try:
@@ -136,11 +135,10 @@ def pump_chat_bridges(cfg: Config, client: Client) -> None:
     written since the last tick, and finish the turn once the transcript says it
     handed the floor back (see chat_bridge.hands_back_to_human).
 
-    This is why a chat turn no longer blocks the loop. It used to run inline inside
-    execute_chat_turn, which was only survivable because it gave up after 3 seconds
-    of transcript silence — and giving up after 3s is exactly what truncated every
-    answer that involved a tool call. Pumping it here buys the correct completion
-    rule without holding the tick: the heartbeat, claims and session reports all
+    This is why a chat turn does not block the loop: running it inline inside
+    execute_chat_turn would need a give-up after a few seconds of transcript
+    silence, which truncates every answer that involves a tool call. Pumping it
+    here gives the correct completion rule without holding the tick: the heartbeat, claims and session reports all
     keep running while an agent works.
     """
     for turn_id, bridge in list(chat_bridge.IN_FLIGHT.items()):
@@ -238,5 +236,5 @@ def drain_chat_bridges(cfg: Config, client: Client, *, poll: float = 1.0,
 # Persistent per-key failure counters for the best-effort transcript paths
 # (stream posts, backfill posts). These retry every tick forever by design, so
 # logging each failure would spam and logging none is what actually happened:
-# the NUL-byte bug (2026-07-26) was a hard 500 on every backfill attempt for one
+# a NUL byte in a backfill was a hard 500 on every backfill attempt for one
 # session, invisible in the runner log because the handler logged at DEBUG. A

@@ -1,7 +1,7 @@
 """A failed turn starts a debugger turn — and the brakes that keep it from looping.
 
-See apps/harness/auto_debug.py. Jonathan, 2026-10-07: an ACE Slack turn failed
-("Couldn't confirm your message was delivered…") and nothing looked at it.
+See apps/harness/auto_debug.py. A failed turn (for example an ACE Slack turn that
+ends "Couldn't confirm your message was delivered…") must not go unexamined.
 """
 from __future__ import annotations
 
@@ -102,7 +102,7 @@ def test_a_failed_turn_triggers_the_debugger_with_a_self_contained_prompt(ada, w
                  "c-ace-slack-4795", "Occurrences: 1", NOT_RECEIVED.format(task="c-ace-slack-4795"),
                  f"/w/{ws.slug}/agents/ace/turns", "do NOT call get_turn / read_turn_events"):
         assert fact in body, fact
-    # 7 of 10 debug turns (2026-10-15..23) opened with get_turn on the failed turn.
+    # The prompt carries the facts, so the debug turn need not open with get_turn on the failed turn.
     assert f"/api/harness/turns/{failed.pk}" not in body
 
     # Alert first: the failure IS an alert, held by the debugger — and silent.
@@ -144,9 +144,9 @@ def test_normalization_strips_ids_paths_numbers_and_names():
 
 
 def test_each_undelivered_cause_is_its_own_investigation():
-    """The runner's "Couldn't confirm…" note now ends with WHY recovery gave up
-    (execute._NOT_RECEIVED_CAUSES). Investigation 2 merged four causes under one
-    fingerprint (2026-10-14 → 10-23); the cause sentence must survive normalization."""
+    """The runner's "Couldn't confirm…" note ends with WHY recovery gave up
+    (execute._NOT_RECEIVED_CAUSES). Different causes must not merge under one
+    fingerprint; the cause sentence must survive normalization."""
     base = ("Couldn't confirm your message was delivered. It was typed into the emdash "
             "session \"c-can-you-share-live-urls-to-the-3218\", but it hasn't shown up in "
             "that session's transcript, so it may or may not have arrived. Check the session "
@@ -279,8 +279,7 @@ FIX = "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432"
 
 
 def test_a_clean_fix_closes_the_alert_and_tells_nobody(ada, ws, runner, django_capture_on_commit_callbacks):
-    """Jonathan, 2026-10-23: "in a clean alert -> ada fix -> resolved, I don't
-    want to be notified at all". Failure (b)."""
+    """A clean alert -> ada fix -> resolved path notifies nobody. Failure (b)."""
     with django_capture_on_commit_callbacks(execute=True):
         _fail(_agent(ws, "ace"), runner, "boom")
         inv = FailureInvestigation.objects.get()
@@ -296,8 +295,8 @@ def test_a_clean_fix_closes_the_alert_and_tells_nobody(ada, ws, runner, django_c
 
 def test_a_failure_that_comes_back_after_resolve_goes_to_a_person_with_no_turn(
         ada, ws, runner, django_capture_on_commit_callbacks):
-    """Investigation 10 (2026-10-22): resolved, came back 47 seconds later, and a
-    second debug turn ran two minutes after the first. Failure (a)."""
+    """A resolved investigation that comes back moments later must not start a
+    second debug turn right after the first. Failure (a)."""
     ace = _agent(ws, "ace")
     with django_capture_on_commit_callbacks(execute=True):
         _fail(ace, runner, "boom")
@@ -327,9 +326,9 @@ def _code(runner, sha, committed):
 
 
 def test_a_recurrence_on_a_runner_without_the_fix_only_counts(ada, ws, runner, django_capture_on_commit_callbacks):
-    """#1488, #1504, #1527 and #1965 were resolved "merged, NOT yet deployed", and
-    investigation 2's 10-23 recurrence on runner code without the fix was counted
-    as "the fix did not hold". Failure (c)."""
+    """An investigation resolved "merged, NOT yet deployed" whose failure recurs on
+    runner code without the fix must not be counted as "the fix did not hold".
+    Failure (c)."""
     fixed_at = timezone.now() - dt.timedelta(hours=1)
     _code(runner, "1111111aaaa", fixed_at - dt.timedelta(days=2))   # older than the fix
     ace = _agent(ws, "ace")
@@ -453,9 +452,9 @@ def test_no_two_debug_turns_for_one_failure_inside_30_minutes(ada, ws, runner):
 
 
 def test_the_prompt_carries_the_runner_state_but_nothing_a_person_typed(ada, ws, runner):
-    """Runner state decided 5 of 6 non-delivery causes (2026-10-15..23): a signed-out
-    login probe on cloud-ec2-2 (investigations 5, 10), a usage cap read as auth (9),
-    the code sha for every deploy question. None of it was in the prompt."""
+    """Runner state decides most non-delivery causes: a signed-out login probe, a
+    usage cap read as auth, the code sha for every deploy question. All of it is
+    in the prompt."""
     from apps.harness.models import RunnerLogin
 
     Runner.objects.filter(pk=runner.pk).update(
@@ -610,7 +609,6 @@ def test_an_ordinary_editor_cannot_see_investigations(ada, ws, runner):
 
 def test_a_turn_that_must_stay_on_sensitive_runners_is_never_re_processed(ada, ws, runner):
     # Its note can quote what the turn read, and the debugger runs wherever ada does
-    # (spec 2026-10-22-sensitive-data-agents §4).
     from apps.canopy_sessions.models import Session
 
     ace = _agent(ws, "ace")
@@ -660,9 +658,9 @@ def test_the_prompt_carries_the_delivery_evidence_but_not_the_words(ada, ws, run
 
 
 def test_the_prompt_carries_a_failed_reuse_sends_cdp_error(ada, ws, runner):
-    """Investigation 15 (turn c3717cce, 2026-10-27): "reuse failed on existing session
-    … not spawning a duplicate" names no error; the runner records which one only on
-    its `kind="error"` reuse_send_failed event, which the prompt used to leave out."""
+    """"reuse failed on existing session … not spawning a duplicate" names no error;
+    the runner records which one only on its `kind="error"` reuse_send_failed
+    event, which the prompt carries."""
     ace = _agent(ws, "ace")
     turn = Turn.objects.create(agent=ace, origin="email", idempotency_key="reuse-err",
                                status=Turn.RUNNING, claimed_by=runner, session_key="s-10")
@@ -679,10 +677,9 @@ def test_the_prompt_carries_a_failed_reuse_sends_cdp_error(ada, ws, runner):
 
 
 def test_the_prompt_carries_the_runners_lifecycle_events_but_not_paths_or_stderr(ada, ws, runner):
-    """Investigations 35 and 36 (turns 918a10da and 30df9c8e on cloud-ec2-live,
-    2026-11-06 21:37Z): two turns ended "cancelled (the adapter's own)" a second
-    apart. Whether a new daemon had ADOPTED them across a handoff was on their
-    ledgers, behind the chat ACL, and not in the prompt."""
+    """Two turns that end "cancelled (the adapter's own)" a second apart: whether a
+    new daemon had ADOPTED them across a handoff is on their ledgers, behind the
+    chat ACL, so the prompt carries the lifecycle events."""
     ace = _agent(ws, "ace")
     turn = Turn.objects.create(agent=ace, origin="canopy_web_chat", idempotency_key="lifecycle",
                                status=Turn.RUNNING, claimed_by=runner, session_key="s-11")

@@ -89,7 +89,7 @@ def test_naming_a_session_you_cannot_read_pulls_no_one_in(world):
 def _emdash_session(world):
     """A session started in emdash: runner-discovered, no creator, no participant
     rows — the box owner and the agent's own login read it, and typing into it from
-    the web never writes a row (#926)."""
+    the web never writes a row."""
     import uuid
 
     from apps.canopy_sessions.models import RunnerBinding

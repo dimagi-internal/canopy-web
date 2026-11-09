@@ -12,18 +12,17 @@ what is it about. Everything here serves those two and nothing else.
           to interrupt.
   subject WHAT it is about, from the ladder below.
   disc    four characters of the thread key. Uniqueness, and the reason it cannot
-          be dropped: two DIFFERENT threads with the same subject used to collide
-          onto one name, and the collision was only ever masked by the timestamp
-          that used to follow it (test_execute.py has carried that case since).
+          be dropped: two DIFFERENT threads with the same subject would collide
+          onto one name (test_execute.py carries that case).
 
 WHAT IS DELIBERATELY NOT IN IT. The agent/repo slug: emdash already groups tasks
 under their project, so `ace-` inside a name under `ace` is ten characters that
 say nothing. The `MMDD-HHMM` stamp: emdash shows created-at in its own column and
-sorts by it. Between them they took ~14 of a ~28-character budget, which is why
-subjects arrived truncated mid-word ("...cpu-high-i").
+sorts by it. Between them they would take ~14 of a ~28-character budget, truncating
+subjects mid-word ("...cpu-high-i").
 
-THE LADDER is the substance of this module. The old rule was "email subject, else
-the origin word", and since most turns carry no subject, most names came out as
+THE LADDER is the substance of this module. A rule of "email subject, else
+the origin word" fails because most turns carry no subject, so most names come out as
 the origin word — `ace-api-4a4e-0905-0920`, which says only that something used
 the API. Each rung below is a source of MEANING the turn was already carrying and
 nobody read: the board item's title, the schedule's human name, the slash command
@@ -73,7 +72,7 @@ _BOILERPLATE = re.compile(
     re.IGNORECASE,
 )
 
-# `Re:`, `Fwd:` and friends, which say nothing about the thread and used to eat
+# `Re:`, `Fwd:` and friends, which say nothing about the thread and would eat
 # the front of every email-origin name ("hal-re-bednet-demo-...").
 _REPLY_NOISE = re.compile(r"^(?:re|fwd|fw|aw|sv)\s*[:\-]\s*", re.IGNORECASE)
 

@@ -1,17 +1,17 @@
-"""A cloud turn that ends waiting on a person is on that person's feed (#1165).
+"""A cloud turn that ends waiting on a person is on that person's feed.
 
 The cloud never sets `RunnerBinding.pending_question` (only the laptop's report
 loop does), and its turns always finish `done`. So for a cloud turn, "waiting on
 you" can't come from a dialog. It comes from the feed's other half
 (`apps/canopy_sessions/feed.py`): the agent had the last word and stopped, in a
-session that started MANUAL. #1277 made such a session stay listed, and made a
-cloud session with no creator belong to its agent's owner. This pins the whole
-of #1165's "done when" on the real email-turn path:
+session that started MANUAL. Such a session stays listed, and a
+cloud session with no creator belongs to its agent's owner. This pins the whole
+behaviour on the real email-turn path:
 
 * a manual cloud email turn that finished with a draft is on the owner's feed,
   and the owner is the one pushed when it finishes;
 * it leaves the feed once someone replies;
-* an AUTO cloud turn is never on it, and once done it leaves the active list (#1396).
+* an AUTO cloud turn is never on it, and once done it leaves the active list.
 """
 from __future__ import annotations
 
@@ -105,7 +105,7 @@ def test_it_leaves_the_feed_once_someone_replies(world):
 def test_an_auto_cloud_turn_is_never_on_the_feed(world):
     jj, agent, cloud = world
     session, turn = _email_turn_finished(agent, cloud, mode="auto", said="Replied to Ali.")
-    # Done and nobody waiting, so it is off the active list too (#1396).
+    # Done and nobody waiting, so it is off the active list too.
     assert _row(jj, session) is None
     assert _row(jj, session, state="archived")["feed_status"] == feed.AUTO
     assert push_services._finish_audience(turn) is None

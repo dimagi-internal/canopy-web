@@ -1,8 +1,8 @@
 """A FULL-profile turn asked by a colleague reads canopy as the colleague (who-is-asking phase 5).
 
-canopy-web#1332. ACE's access-list line (every workspace member is an editor) gives a workspace member the agent's
-whole profile, so their turn was not confined and no caller token was minted: the
-session's canopy tools used the runner's PAT and read ACE's private widget chats
+ACE's access-list line (every workspace member is an editor) gives a workspace member the agent's
+whole profile, so their turn is not confined; it still gets a caller token, or the
+session's canopy tools would use the runner's PAT and read ACE's private widget chats
 as the runner's owner. Driven through the real verifier and the MOUNTED server.
 """
 from __future__ import annotations

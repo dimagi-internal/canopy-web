@@ -1,6 +1,6 @@
 """The capability broker's cost and security guards, and its operator surface.
 
-What the 2026-10-14 audit found missing or unproven, each pinned here: the sweep
+What an audit found missing or unproven, each pinned here: the sweep
 off-request (fleet hold, no runner, Redis down, failures as events); leases that
 outlive their agent; a running exec holding its lease awake; per-machine object
 prefixes and the exec document on a 0.9.0 stack; long-poll; the broker tag; the

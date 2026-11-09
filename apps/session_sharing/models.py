@@ -44,7 +44,7 @@ class Session(models.Model):
         related_name="shared_sessions",
     )
     # The workspace it is shared from — its page is /w/<workspace>/share/<token>
-    # (owner decision, 2026-10-08: nothing on canopy outside a workspace). Set at
+    # (nothing on canopy lives outside a workspace). Set at
     # upload from a workspace the uploader is in; `0005` homed the rows that
     # predate it. Nullable only for a row whose owner belongs to no workspace,
     # which the flat /share/<token> link still serves in place.
@@ -238,7 +238,7 @@ class SessionArc(models.Model):
         related_name="shared_session_arcs",
     )
     # The workspace it is shared from — its page is /w/<workspace>/share/<token>
-    # (owner decision, 2026-10-08: nothing on canopy outside a workspace). Set at
+    # (nothing on canopy lives outside a workspace). Set at
     # upload from a workspace the uploader is in; `0005` homed the rows that
     # predate it. Nullable only for a row whose owner belongs to no workspace,
     # which the flat /share/<token> link still serves in place.

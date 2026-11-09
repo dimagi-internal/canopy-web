@@ -15,9 +15,8 @@ WHY THE PROTOCOL EXISTS. The runner hands a dispatched prompt to Claude Code as 
 receiving transcript records it as `origin: human` / `promptSource: typed` — truthfully, from
 the harness's point of view. Nothing downstream can tell an agent's brief from something a
 human typed, and `agent-review`'s corrections lens is its highest-weight signal. Unstamped, an
-agent's own fix briefs come back next cycle as the human shouting at the fleet (canopy #488:
-5 of 6 reported corrections on hal were machine-authored; 2026-08-18 across the fleet: 4 of
-ace's 13, echo's only one, 1 of hal's 2).
+agent's own fix briefs come back next cycle as the human shouting at the fleet (most reported corrections on
+some agents were machine-authored).
 """
 
 import re

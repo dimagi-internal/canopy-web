@@ -10,7 +10,7 @@ export default function App() {
     <ThemeProvider>
       <AuthProvider>
         <RouterProvider router={router} />
-        {/* The passkey prompt behind every `step_up_required` (canopy-web#1538). */}
+        {/* The passkey prompt behind every `step_up_required`. */}
         <StepUpDialog />
         <UpdateBanner />
       </AuthProvider>

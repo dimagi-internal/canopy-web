@@ -109,8 +109,7 @@ export function ConnectionsBanner({ conns }: { conns: AgentConnections }) {
 }
 
 /** Google is two paths today: the agent's mailbox sign-in, and a Connections google
- *  provider. They fold together later (2026-10-31 spec, "Existing Google paths"). Until
- *  then the list shows ONE Google row: the mailbox row when the agent has a mailbox, else
+ *  provider. The list shows ONE Google row: the mailbox row when the agent has a mailbox, else
  *  this provider's. When the mailbox row shows, the provider is hidden unless the agent
  *  already has a Connections google connection, which must stay visible so it can be
  *  disconnected: that one reads "Google (other account)". */

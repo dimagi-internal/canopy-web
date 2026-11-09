@@ -1,4 +1,4 @@
-"""Is the fleet brain alive? Per-agent coverage of the people brain (canopy#804 v1.1).
+"""Is the fleet brain alive? Per-agent coverage of the people brain.
 
 WHY. Every earlier attempt at agent memory died QUIETLY: nothing errored, the
 writes simply stopped (dimagi-brain: 6 writes in 5 weeks), and nobody noticed

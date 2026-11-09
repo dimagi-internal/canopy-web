@@ -1,4 +1,4 @@
-// Server-minted values (`zks1`, sealed to recipients — canopy-web#1550 §6) in the
+// Server-minted values (`zks1`, sealed to recipients) in the
 // browser flows: settling them under the vault key, writing before a vault key
 // exists (kv 0), creating the first vault key from sealed values, and approving
 // a device key + granting it in ONE passkey touch. The REAL crypto module runs;

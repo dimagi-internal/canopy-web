@@ -1,11 +1,9 @@
 """The drill prompt must not forbid the one thing it then requires.
 
-Three of five agents drilled on the rebuilt cloud box (2026-08-12) ran every check,
-passed, and never reported — so the grid read `pending` forever and the box looked
-unreachable when it was fine. hal said why in its turn note: "Drill checks all
-passed, but the final callback needs a flag."
-
-The prompt caused it. Step 2 said "take NO outward action — no emails, no posts,
+An agent that runs every drill check, passes, and never reports leaves the grid
+reading `pending` forever and the box looking unreachable when it is fine. A turn
+note such as "Drill checks all passed, but the final callback needs a flag" is the
+symptom of a self-contradicting prompt: step 2 must not say "take NO outward action — no emails, no posts,
 no board writes, no state mutations anywhere", and step 3 then asked for a POST.
 Every agent in this fleet runs under a hard guardrail that outbound actions need
 human approval, so the honest reading of those two lines together is "stop and

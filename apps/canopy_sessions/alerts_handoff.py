@@ -9,8 +9,8 @@ Two ways that happens, both worth a person's eye:
   could not restore it exactly, or the conversation is sensitive — so that task
   holds the only copy of the work and canopy will not delete it unasked.
 
-Before this a failed close sat in `close_error`, which nothing reads, and the
-person archived the ghosts by hand (2026-10-23: 3 of 11). "Close it anyway"
+A failed close otherwise sits in `close_error`, which nothing reads, and the
+person archives the ghosts by hand. "Close it anyway"
 forces the close; Dismiss is for a task someone already dealt with.
 """
 from __future__ import annotations

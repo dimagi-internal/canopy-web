@@ -1,4 +1,4 @@
-"""A project's knowledge base survives a new address (#2047): everything it stores is
+"""A project's knowledge base survives a new address: everything it stores is
 keyed by the project (`kb_store.root`), not by `<workspace>/<handle>`, so a rename moves
 nothing and its originals, step results and versions are all still found.
 """

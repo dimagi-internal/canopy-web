@@ -470,7 +470,7 @@ def skills_in_group(agent: Agent, group: str) -> list[str]:
 #: How many revisions a caller gets when it does not say. A READING budget, not
 #: a storage one: ACE's commit bodies average ~1.8 KB, so the old default of 300
 #: returned ~640 KB — past what a tool result may carry, and the caller is an
-#: assistant with a context window. Measured 2026-09-20: 80 revisions of
+#: assistant with a context window. Measured: 80 revisions of
 #: `idea-to-pdd` came back as 166 KB and were refused outright.
 DEFAULT_REVISIONS = 25
 #: Hard ceiling a caller can ask for.

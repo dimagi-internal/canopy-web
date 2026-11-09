@@ -1,4 +1,4 @@
-"""A runner whose token canopy stopped accepting reconnects itself from the browser (#1705)."""
+"""A runner whose token canopy stopped accepting reconnects itself from the browser."""
 from pathlib import Path
 
 from canopy_runner import reconnect

@@ -15,7 +15,7 @@ import {
 /** The z-index belongs on the POSITIONER. Base UI's positioner is the placed
  *  element and forms its own stacking context, so a z-index on the popup alone
  *  let the chat's sticky `z-10` bar paint over the menu and swallow the taps
- *  meant for its items (2026-09-23). jsdom cannot compute stacking, so this
+ *  meant for its items. jsdom cannot compute stacking, so this
  *  pins the class that makes it right. */
 describe("DropdownMenuContent", () => {
   it("raises the positioner itself, not only the popup inside it", () => {

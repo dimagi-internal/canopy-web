@@ -5,7 +5,7 @@ heartbeat with it without importing `main` — which imports `client`. That
 direction matters: the alternative was passing these at each call site, and
 there are six, four of which never passed `code_branch` at all. Since
 `services.heartbeat` assigns unconditionally, each of those silently RESET the
-field to "" — so the #306 wrong-branch banner would clear itself for a tick
+field to "" — so the wrong-branch banner would clear itself for a tick
 whenever a lease-renewal or `--drain-one` heartbeat landed between two loop
 ticks. One stamping point removes the whole class.
 
@@ -34,7 +34,7 @@ def version() -> str:
 #: What "the runner's code" means for staleness, repo-relative. Not only the Python
 #: package: the installer, the menu-bar app and the icons it bundles ship to a box
 #: through the same auto-update, and a change to any of them that did not mark the
-#: box stale never reached it (the 2026-10-06 mark sat installed-nowhere-visible).
+#: box stale would never reach it.
 #: The in-repo packages it installs (canopy_cron, canopy_transcript) count too: a
 #: change to the shared transcript core is a runner change.
 #: The SAME list is in .github/workflows/deploy-labs.yml (what the server expects)
@@ -119,11 +119,11 @@ def code_committed_at() -> int:
     """Committer epoch of the commit `code_sha()` names — the ORDER a sha lacks.
 
     A sha is an identity, so `code_sha != expected` can only say DIFFERENT. The
-    supervisor was rendering that as "behind", which is one of three possibilities
-    (older, newer, divergent) asserted as though it were the only one — and on
-    2026-07-29 it told the operator to update the most current box in the fleet,
-    which had been installed from main ahead of the deploy that ships it. An alert
-    that fires on the box you just fixed is one you learn to ignore.
+    supervisor must not render that as "behind", which is one of three possibilities
+    (older, newer, divergent) asserted as though it were the only one — it could tell
+    the operator to update the most current box in the fleet, one installed from main
+    ahead of the deploy that ships it. An alert that fires on the box you just fixed
+    is one you learn to ignore.
 
     A timestamp rather than a version number, for the reason `code_version` is
     documented as decorative: it needs no human to remember it. `--format=%ct` on

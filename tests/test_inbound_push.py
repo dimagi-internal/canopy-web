@@ -201,7 +201,7 @@ def test_a_strict_source_rule_is_honoured(mailbox, agent, runner, user, workspac
 
 def test_unknown_mailbox_is_200_but_logged(push_config, workspace):
     """200 because a 4xx makes Pub/Sub redeliver forever. And the row lands in
-    the URL's workspace — it used to fall back to the DEFAULT workspace, writing
+    the URL's workspace — never the DEFAULT workspace, which would write
     an unregistered address into whichever tenant happened to be default."""
     r = _post()
     assert r.status_code == 200

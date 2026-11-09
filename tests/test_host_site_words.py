@@ -2,7 +2,7 @@
 
 "Connected site" and "connected app" were both words for the first, and "connected app" also for the
 second, while "connection" is a third-party OAuth login (`apps/connections`) and Connect is a product.
-They were retired on 2026-11-06. History keeps them: migrations, dated specs and plans, changelogs.
+They are retired. History keeps them: migrations, dated specs and plans, changelogs.
 Salesforce's own "Connected App" (a Salesforce object) is not ours to rename.
 """
 import re

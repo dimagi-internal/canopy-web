@@ -481,7 +481,7 @@ def is_proposal(project: AgentProject) -> bool:
     return project.status == AgentProject.PROPOSED or decision_card(project) is not None
 
 
-# --- proposed tasks: what a check-in produces (spec 2026-10-17 §3) ----------------
+# --- proposed tasks: what a check-in produces ----------------
 
 
 def is_task_proposal(task: AgentTask) -> bool:

@@ -14,7 +14,7 @@ class ResolveSessionIn(Schema):
     workspace: str = ""  # required with project: the turn's tenant (gates the owner)
     thread_key: str
     # The agent/project turn asking. With it, a session that is mid-turn is never
-    # proposed for reuse (#309). Optional so a runner predating it still works.
+    # proposed for reuse. Optional so a runner predating it still works.
     turn_id: uuid.UUID | None = None
 
 
@@ -146,8 +146,8 @@ class EmdashSessionOut(Schema):
     #: `SessionView.project` carries `emdash_project`, so this stays meaningful
     #: for an agent-owned row whose stored column the XOR necessarily cleared.
     project: str
-    #: Whose work this is. Absent until now, which every consumer doing
-    #: `.get("agent")` read as `agent: null` — indistinguishable from "known to
+    #: Whose work this is. Without it, every consumer doing
+    #: `.get("agent")` would read `agent: null` — indistinguishable from "known to
     #: belong to nobody" — leaving `project` as the only thing to guess from.
     agent: str | None
     status: str

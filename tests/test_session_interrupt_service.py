@@ -205,7 +205,7 @@ def test_a_published_frame_is_reported_as_requested_not_as_cancelled():
     has pressed Escape yet, and it may well fail.
 
     Reporting that as `chat.stream_cancelled` (which the client renders as
-    "cancelled") would be the #649 false green rebuilt on the session path: the UI
+    "cancelled") would be a false green on the session path: the UI
     declaring victory before anything was attempted. The session route says
     `session.stop / requested`, and only the RUNNER — after verifying the terminal
     — may say stopped or failed.
@@ -233,10 +233,10 @@ def test_a_stop_event_fans_out_live_and_is_never_persisted():
 
 
 def test_rest_stop_interrupts_an_agent_session_with_no_open_turn(seeded, monkeypatch):
-    """canopy-web#1226. `POST /canopy-sessions/{id}/stop` (REST, and so the MCP
-    `stop_session_turn` tool) used to cancel turns only — for a delivered agent turn
-    it found nothing, answered {"cancelled": false}, and the agent worked on. It now
-    takes the web UI's route: no open turn, so the session is interrupted."""
+    """`POST /canopy-sessions/{id}/stop` (REST, and so the MCP `stop_session_turn`
+    tool) takes the web UI's route: with no open turn, the session is interrupted
+    (cancelling turns alone would find nothing for a delivered agent turn and the
+    agent would work on)."""
     from django.test import Client
     from apps.realtime import groups
 

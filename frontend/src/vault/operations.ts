@@ -1,5 +1,5 @@
 /**
- * The zero-knowledge vault flows (canopy-web#1550), composed from the crypto
+ * The zero-knowledge vault flows, composed from the crypto
  * module (`./zk`), the passkey PRF ceremony (`./prf`) and the REST calls
  * (`@/api/vault`). Every secret here — the vault key VK, a person's private
  * scalar, a recovery secret, a decrypted value — lives only in local variables

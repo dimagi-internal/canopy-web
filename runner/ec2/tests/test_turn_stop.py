@@ -1,10 +1,6 @@
 """A person's stop reaches a turn running on this box.
 
-2026-10-17, cloud-ec2-2: canopy-web sent `session_interrupt` (and would have sent
-`cancel`); the WS loop had no branch for either, nothing read a heartbeat reply
-for stops, and `stop_turn` was never called. The huddle turn ran 23 more minutes.
-
-Now all three signals — the `cancel` frame, the `session_interrupt` frame and
+All three signals — the `cancel` frame, the `session_interrupt` frame and
 `cancel_turn_ids` on any heartbeat reply — reach `request_stop`, which interrupts
 the executor (ACP `session/cancel`, SIGINT to `claude -p`), escalates if it is
 ignored, and the turn's worker finishes it CANCELLED.

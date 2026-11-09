@@ -1,10 +1,7 @@
 """The counter behind `POST /api/embed/token`'s per-user mint budget.
 
-This file used to test the per-credential budget for `/api/auth/token-exchange`,
-which went with that endpoint (2026-09-22). The mint limiter it sat beside had
-no unit tests of its own, so the tests moved rather than the coverage going to
-zero: it is the same fixed-window counter, and the property that matters is
-that one user's budget is not spent by another's traffic.
+It is a fixed-window counter, and the property that matters is that one
+user's budget is not spent by another's traffic.
 """
 from __future__ import annotations
 

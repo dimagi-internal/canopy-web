@@ -312,8 +312,8 @@ def test_ref_installs_something_else_on_purpose(box):
 # So the --credentials-only pass — whose whole purpose is to pick up a credential
 # set in canopy-web — ran with no GOG_KEYRING_PASSWORD and no CANOPY_TOKEN, saw
 # every mailbox as dead, and re-reported that to the control plane every 30 min
-# (cloud-ec2-1, 2026-09-10 11:59Z: "no gog token anywhere" for ace, seven seconds
-# before the service start read ace's vault AND its canopy-web token).
+# ("no gog token anywhere" for an agent, seconds before the service start reads
+# its vault AND its canopy-web token).
 def test_the_credentials_refresh_sees_the_runners_env(box):
     (box.home / "runner.env").write_text(
         "CANOPY_BASE_URL=https://labs.example/canopy\nCANOPY_TOKEN=tok\n"
@@ -364,10 +364,10 @@ def test_a_moved_box_calls_its_new_address_not_runner_envs(box):
     assert "CANOPY_WEB_API_URL=https://new.example" in lines
 
 
-# 2026-10-17: runner.env's CANOPY_TOKEN (a person's PAT) was revoked. Every
-# expected_sha read came back empty — "unknown", so the box stopped updating — and
-# the refresh's roster read was refused, so only the AGENT_SLUGS fallback was ever
-# refreshed. The box's own runner token (shared by cloud_runner.py) comes first.
+# If runner.env's CANOPY_TOKEN (a person's PAT) is revoked, every expected_sha read
+# comes back empty — "unknown", so the box stops updating — and the refresh's roster
+# read is refused, so only the AGENT_SLUGS fallback is refreshed. The box's own
+# runner token (shared by cloud_runner.py) comes first.
 def _share_token(box, token: str, expires_in: float) -> None:
     (box.home / "runner-token.json").write_text(
         json.dumps({"access_token": token, "expires_at": time.time() + expires_in}))
@@ -419,7 +419,7 @@ def test_an_override_that_is_not_https_is_ignored(box):
 def test_every_run_moves_origin_main_so_the_shim_runs_the_newest_updater(box):
     # fetch_commit fetches the deployed commit BY SHA, which leaves origin/main
     # where it was — and origin/main is what the shim runs. cloud-ec2-2 ran a
-    # day-old updater because of it (2026-10-06).
+    # a stale updater because of it.
     upstream = box.root / "upstream"
     subprocess.run(["git", "clone", "-q", str(box.repo), str(upstream)], check=True)
     _git(upstream, "checkout", "-q", "-B", "main")  # CI's git may default to master
@@ -438,7 +438,7 @@ def test_every_run_moves_origin_main_so_the_shim_runs_the_newest_updater(box):
 # The shim reads update_runner.sh from the clone's origin/main WITHOUT fetching;
 # origin/main only moves when the install path runs, and that only happens when a
 # SHA_PATHS file changes. With update_runner.sh absent from the list, an updater-
-# only change never reached a box (#742: merged, and the next tick still ran the
+# only change never reaches a box (merged, and the next tick still runs the
 # old script). The two lists — here and in deploy-labs.yml — must agree, and both
 # must name the updater.
 def test_the_updater_is_in_both_sha_path_lists_and_they_agree():
@@ -467,10 +467,9 @@ def test_a_change_to_the_updater_alone_moves_the_deployed_sha(box):
 
 # --- the box's own credential (keyless runners) -------------------------------
 #
-# 2026-10-17: the owner's PAT in runner.env was revoked. The daemon carried on
-# with its device-key runner token; this script kept GETting with the PAT, read
-# 401 as `unknown`, and installed nothing for hours while the daemon nudged it
-# every ten minutes (cloud-ec2-2, expected moving, installed stuck at f6da246).
+# If the owner's PAT in runner.env is revoked, the daemon carries on with its
+# device-key runner token; a script that kept GETting with the PAT would read 401 as
+# `unknown` and install nothing while the daemon nudges it every ten minutes.
 KEYLESS_RUNNER = (
     "#!/usr/bin/env python3\n"
     "print('import-time noise that must never read as a token')\n"
@@ -639,8 +638,8 @@ def _restarts(box) -> list[str]:
 
 
 def test_runners_one_busy_runner_does_not_hold_back_an_idle_one(runners_box):
-    # cloud-ec2-2-marshellis, 2026-10-28: idle for hours on a stale canopy because its
-    # neighbour on the machine always had a turn in flight.
+    # An idle runner must not sit for hours on a stale canopy because its
+    # neighbour on the machine always has a turn in flight.
     runners_box.stamp("0" * 40)
     sha = runners_box.seed_repo(GOOD_RUNNER)
     runners_box.expect(sha)
@@ -737,8 +736,8 @@ def test_the_rule_matches_the_runner_the_runners_and_the_broker():
 
 
 def test_an_older_narrower_rule_is_replaced(box):
-    # cloud-ec2-2 got `qr(^canopy-runner)` by hand on 2026-10-16: it misses the
-    # broker, whose restart takes every runner's KMS calls down with it.
+    # A hand-written `qr(^canopy-runner)` misses the broker, whose restart takes
+    # every runner's KMS calls down with it.
     box.needrestart_conf.write_text("$nrconf{override_rc}->{qr(^canopy-runner)} = 0;\n")
     box.run()
     assert NEEDRESTART_RULE in box.needrestart_conf.read_text()
@@ -781,9 +780,8 @@ def test_new_boxes_get_the_same_rule_from_the_template():
 
 # --- what no runner cleans --------------------------------------------------
 # Each runner sweeps only its own files while its `disk` check measures the whole
-# volume. On cloud-ec2-2 (2026-10-26) it warned at 89% while every sweep freed
-# 0 MB: 35 GB in the pre-several-runners user's home, 12 GB of /tmp owned by users no runner
-# may delete. Root's tick is the one place that sees all of it.
+# volume, so it can warn at 89% while every sweep frees 0 MB: space in a
+# single-runner-era user's home, and /tmp owned by users no runner may delete. Root's tick is the one place that sees all of it.
 TMP_RULE = "D /tmp 1777 root root 3d"
 
 

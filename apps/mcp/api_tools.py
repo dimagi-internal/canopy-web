@@ -176,7 +176,7 @@ EXCLUDED: dict[str, str] = {
     "subscribe": _BROWSER,
     "unsubscribe": _BROWSER,
     "attachment_content": _BYTES,
-    # MCP Apps (spec 2026-10-08 §5): a rendered View's plumbing. NOT noise here —
+    # MCP Apps: a rendered View's plumbing. NOT noise here —
     # a security line: as tools, the agent could call app-only tools as its own
     # user, exactly what `visibility: ["app"]` forbids. The routes also refuse a PAT.
     "app_view_resource": _BROWSER,
@@ -191,9 +191,8 @@ EXCLUDED: dict[str, str] = {
     "resources_updated": _HOST,
     # The same for the rest of the site's calls, and two cloud services' webhooks. The
     # signature IS the credential, so as a tool each could only be refused, and that refusal
-    # reads as the agent's own login failing: 2026-11-04, ACE's Slack turn 9f55abcc on
-    # cloud-ec2-live called get_site_agents, got 401 no_assertion, and credential_guard
-    # aborted the turn (investigation 29).
+    # reads as the agent's own login failing: a turn that called get_site_agents would get
+    # 401 no_assertion, and credential_guard would abort it.
     "get_site_agents": _HOST,
     "create_site_sign_off": _HOST,
     "get_site_sign_off": _HOST,

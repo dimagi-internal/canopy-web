@@ -54,8 +54,7 @@ def pair_runner(request: HttpRequest, payload: RunnerIn):
     # its claims run with the owner's memberships and only the owner may grant
     # administration — so pairing with an agent's token makes a box nobody owns:
     # the human at the keyboard can't manage it, and their own work on it is
-    # attributed to the agent. Measured 2026-10-02 (sarveshtewari-mbp-cdp, paired
-    # as ace@dimagi-ai.com). An agent may still ADMINISTER a box through a grant.
+    # attributed to the agent. An agent may still ADMINISTER a box through a grant.
     agent = getattr(request.user, "agent_identity", None)
     if agent is not None:
         raise HttpError(
@@ -76,9 +75,9 @@ def pair_runner(request: HttpRequest, payload: RunnerIn):
         # A runner MUST belong to a workspace: a workspace-less one is
         # half-broken with no signal — heartbeat and claim work (tenancy
         # derives from owner), but every session report 404s, so its
-        # sessions silently never surface (prod incident 2026-07-25: a
-        # multi-workspace owner made user_default_workspace() None and the
-        # runner paired NULL). Fail loud instead of pairing broken.
+        # sessions silently never surface (a
+        # multi-workspace owner makes user_default_workspace() None, and the
+        # runner would pair NULL). Fail loud instead of pairing broken.
         default = wsvc.user_default_workspace(request.user)
         if default is None:
             n = len(wsvc.user_workspace_slugs(request.user))

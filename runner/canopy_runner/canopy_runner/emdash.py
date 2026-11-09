@@ -21,7 +21,7 @@ ARE the list of columns the SQL names, and `READ_SCHEMA` is just their union.
 
 **A row is live only if it is neither archived NOR soft-deleted** — but the three
 tables emdash 1.2 gave `deleted_at` do not use it alike, and the difference decides
-which of these filters is load-bearing (read out of the shipped bundle, 2026-08-28):
+which of these filters is load-bearing (read out of the shipped bundle):
 
   * `projects` ARE soft-deleted: `update(projects).set({deletedAt: ...})`, which emdash
     itself calls "tombstoned". This filter is the one that matters. `list_projects`
@@ -51,8 +51,7 @@ logger = logging.getLogger(__name__)
 # The columns the reads below depend on, split by WHEN emdash grew them.
 #
 # The split exists because the fleet's boxes update independently: two macOS accounts,
-# each with its own auto-updating emdash, were provably at different versions on
-# 2026-08-28. A read that names a 1.2 column unconditionally does not degrade on an
+# each with its own auto-updating emdash, can be at different versions. A read that names a 1.2 column unconditionally does not degrade on an
 # older box — `list_open_sessions` RAISES, and its caller must then skip the session
 # report entirely (reporting an empty list would clear every RunnerBinding). So the
 # SQL is built from what the connected DB actually has; see `_cols`.
@@ -228,8 +227,8 @@ def task_state(db_path: str, name: str) -> str:
     emdash VIRTUALIZES the sidebar, so a task scrolled out of view isn't in the page at
     all — indistinguishable, to a DOM query, from a task that never existed. That false
     negative made the runner spawn a duplicate session and orphan the live one's context
-    (observed 2026-07-15: eva's org-research thread, task provably present and
-    un-archived, reported TASK_NOT_FOUND). sqlite always knows, in one query.
+    (a task provably present and
+    un-archived reported TASK_NOT_FOUND). sqlite always knows, in one query.
 
     "unknown" (missing/unreadable/drifted DB) is deliberately distinct from "absent": a
     read failure must never be mistaken for "gone", or we're back to duplicating live
@@ -259,10 +258,9 @@ def _agent_statuses(conn: sqlite3.Connection) -> dict[str, str]:
     """READ-ONLY: {task_id: agent_status} — emdash's own answer to "is this session
     working right now", which nothing else on this box can give.
 
-    Every other liveness signal here is an INFERENCE from writes: the server used to
-    call a session "running" when its transcript had grown in the last 120s. That
-    misreads both directions of the same silence — a session inside a long tool call
-    writes nothing for minutes and reads as finished (the reported symptom: "it says
+    Every other liveness signal here is an INFERENCE from writes: reading "running" from a
+    transcript that grew in the last 120s misreads both directions of the same
+    silence — a session inside a long tool call writes nothing for minutes and reads as finished (the reported symptom: "it says
     finished, but it's still working when I click in"), while one that just stopped
     keeps reading as running until the window expires. Emdash sets this flag when it
     starts and stops driving the agent, so it answers directly.
@@ -386,12 +384,11 @@ def list_projects(db_path: str) -> list[str]:
     """READ-ONLY: the NAMES of every project emdash holds — the repos this box can
     actually drive.
 
-    This is what `capabilities["projects"]` should have been all along. Declared by
-    hand at pairing, that list drifted the only way that matters: silently, and
-    toward "cannot run". A turn at `canopy` sat QUEUED forever because nobody had
-    typed `canopy` into it, while the repo sat right here in this table (labs,
-    2026-07-28). An agent's slug and a repo's name are the same thing to the runner
-    — both name an emdash project (`execute.py`: `agent_slug or project`) — so this
+    This is what `capabilities["projects"]` is built from. A list declared by hand
+    at pairing drifts the only way that matters: silently, and toward "cannot
+    run" (a turn at `canopy` would sit QUEUED forever because nobody had typed
+    `canopy` into it, while the repo sits right here in this table). An agent's
+    slug and a repo's name are the same thing to the runner — both name an emdash project (`execute.py`: `agent_slug or project`) — so this
     one read answers both halves of "what can this box drive".
 
     Sorted so the reported list is stable: it is compared against the stored one on
@@ -530,7 +527,7 @@ def task_worktree(db_path: str, project: str, task: str) -> str | None:
     except sqlite3.Error as exc:
         # Named, not just swallowed: this None costs a caller's session its native
         # permission layer, and "emdash did not name the worktree" hid a query that
-        # RAISED on every 1.1.x box (2026-10-02). `verify-emdash` checks it too.
+        # RAISED on every 1.1.x box. `verify-emdash` checks it too.
         logger.warning("task_worktree(%s/%s) query failed: %s", project, task, exc)
         return None
     return row["cwd"] if row is not None and row["cwd"] else None

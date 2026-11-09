@@ -1,7 +1,7 @@
 # ruff: noqa: F811 — the fixtures below are imported from test_slack and then requested by name.
 """An agent knows WHERE in Slack its conversation is, and can move it.
 
-Two halves of one gap (2026-10-16): a Slack turn to ACE was asked to "post a new
+Two halves of one gap: a Slack turn to an agent asked to "post a new
 clean thread in the channel" and had to ask which channel it was in. The caller
 envelope named the session but not the Slack channel or thread, and the agent's
 own login could not open the session (`GET /api/canopy-sessions/<id>` 404s: the

@@ -19,7 +19,7 @@ def _fake_run(stdout, returncode=0, stderr=""):
 
 def test_sidecar_output_is_decoded_as_utf8_not_the_locale_code_page(monkeypatch):
     """Node emits UTF-8 on every OS; under Windows' cp1252 default an em dash in a
-    sidecar error came back as "â€”" (2026-10-15)."""
+    sidecar error comes back as "â€”"."""
     seen = {}
 
     def run(cmd, **kwargs):
@@ -184,7 +184,7 @@ def test_host_id_pins_the_first_value_it_computes(monkeypatch, tmp_path):
 
 
 def test_host_id_survives_a_macos_hostname_flap(monkeypatch, tmp_path):
-    """THE bug (proved live 2026-07-15): macOS flaps gethostname() between the Bonjour
+    """THE bug: macOS flaps gethostname() between the Bonjour
     and DHCP names. reusable_by() compares this value by EQUALITY, so every flap
     orphaned every SessionLink recorded under the other name — reuse silently returned
     false and each thread got a fresh cold session, with no error logged anywhere."""
@@ -252,7 +252,7 @@ def test_send_keys_passes_each_key_separately(monkeypatch):
     assert calls["args"]["keys"] == ["3", "\r"]
 
 
-# --- sidecar provisioning (spec 2026-07-28: the runner is installed, so its node
+# --- sidecar provisioning (the runner is installed, so its node
 # deps cannot ship in the wheel and are provisioned per-install) -----------------
 
 
@@ -368,7 +368,7 @@ def test_the_evaluate_sites_use_string_raw():
 # The scan is a pure function over the rendered viewport rows (COMPOSER_FN in
 # emdash_control.mjs), so these fixtures ARE the bug reports: the fresh-session
 # layout below is the measured live state that made readLine() return '' for a
-# composer holding text (canopy-web #521 — composer at row 13 of 38, rows 24-37
+# composer holding text (composer at row 13 of 38, rows 24-37
 # all empty, and the old scan only looked at the last 14 rows).
 
 def _composer_fn_source():
@@ -401,7 +401,7 @@ _STATUS = "  ⏵⏵ bypass permissions on (shift+tab to cycle)"
 
 
 def _fresh_session(*composer_rows):
-    """Measured live 2026-07-29: a fresh session draws its TUI at the TOP of the
+    """Measured live: a fresh session draws its TUI at the TOP of the
     pane — composer around row 13 of 38, everything below the status bar empty."""
     return (["  word: ready. Then do nothing further and wait.", "",
              "⏺ ready", "", "✻ Worked for 3s", "",
@@ -409,7 +409,7 @@ def _fresh_session(*composer_rows):
 
 
 def test_fresh_session_planted_text_is_found():
-    # THE #521 repro: planted text in a fresh session's composer, far above the
+    # THE repro: planted text in a fresh session's composer, far above the
     # bottom of the pane. The old last-14-rows scan returned '' here.
     r = _composer(_fresh_session("❯ hi "))
     assert r == {"found": True, "text": "hi"}
@@ -494,7 +494,7 @@ def test_close_task_reports_an_already_gone_task_as_absent(monkeypatch):
 # with xterm's dim attribute and the block cursor on its FIRST character. Read as
 # bare text it is indistinguishable from a half-typed human thought, so every send
 # into such a session came back `collision` and the message was never delivered
-# (measured live 2026-08-28: three chat turns deferred inside 40 minutes, composer
+# (measured live: three chat turns deferred inside 40 minutes, composer
 # empty in all three). BRIGHT_FN blanks dim runs so `typed` sees only keystrokes.
 
 def _bright_fn_source():
@@ -539,7 +539,7 @@ def _frame(*composer_rows):
 
 
 def test_offered_suggestion_reads_as_empty_typed():
-    # THE repro, span-for-span as measured on a live emdash 2026-08-28: cursor block
+    # THE repro, span-for-span as measured on a live emdash: cursor block
     # parked on the suggestion's first character, every cell after ❯ dim.
     suggestion = {
         "text": "❯ run the concept and visual judges on all three",
@@ -625,7 +625,7 @@ def test_all_dim_structure_falls_back_to_a_collision_not_a_send():
 
 @pytest.mark.skipif(sys.platform == "win32", reason="pwd/os.getuid are POSIX-only")
 def test_host_id_account_comes_from_the_uid_not_logname(monkeypatch, tmp_path):
-    """A session launched with LOGNAME=root must not pin `root@…` (2026-09-28)."""
+    """A session launched with LOGNAME=root must not pin `root@…`."""
     monkeypatch.setattr(cdp_control, "HOST_ID_PATH", tmp_path / "host-id")
     monkeypatch.setattr(cdp_control.socket, "gethostname", lambda: "H")
     monkeypatch.setenv("LOGNAME", "root")

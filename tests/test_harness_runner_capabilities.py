@@ -4,7 +4,7 @@ The only prior way to change a capability was to re-pair, which mints a new
 runner and orphans the old one's RunnerBindings. This lets a runner opt into
 driving new agents in place.
 
-`projects` is NO LONGER one of them (spec 2026-07-28). It is reported by the
+`projects` is NOT one of them. It is reported by the
 runner on every heartbeat from what the box actually has, so a hand-written value
 is a ghost edit — 200 to the caller, overwritten seconds later, and a dispatch
 into a hole. It is refused here and preserved across writes that omit it.

@@ -314,7 +314,7 @@ def upload_walkthrough(
         except ValueError:
             resolved_review_id = None
 
-    # One cut of a recorded narrative (canopy-web#1288): the recipe's cuts[].id,
+    # One cut of a recorded narrative: the recipe's cuts[].id,
     # plus the scene ids it plays (comma-separated). A cut only means something
     # on a narrative version, so it needs the version stamp — without it the
     # video could hang off nothing and would silently never show.
@@ -362,8 +362,8 @@ def upload_walkthrough(
         )
 
     # Resolve the owning workspace (tenant root) — one the uploader is ALREADY
-    # in. This used to `ensure_member` the caller into the org default, making
-    # an upload a way to gain EDITOR of it; see wsvc.creation_workspace.
+    # in. The caller is never `ensure_member`ed into the org default (that would make
+    # an upload a way to gain EDITOR of it); see wsvc.creation_workspace.
     ws = wsvc.creation_workspace(request)
     if ws is None:
         raise ProblemError(
@@ -517,8 +517,8 @@ def list_walkthroughs(
 
     # Scope to the caller's workspace(s): the /w/{ws} prefix pins one workspace;
     # a flat call spans every workspace the caller belongs to. A row with no
-    # workspace is in nobody's scope (it used to be in everybody's on the flat
-    # mount — the NULL-means-allow leg).
+    # workspace is in nobody's scope (no NULL-means-allow leg on the flat
+    # mount).
     qs = Walkthrough.objects.select_related("owner", "agent_project__agent").filter(
         workspace_id__in=wsvc.request_workspace_slugs(request)
     )

@@ -1,4 +1,4 @@
-"""Run one canopy-pat rotation tick by hand (Canopy Vault Phase 1b, canopy-web#1549).
+"""Run one canopy-pat rotation tick by hand (Canopy Vault Phase 1b).
 
 The web process does this on its off-request clock (apps/common/ticks.py);
 this is for an operator: rotate every agent that is due, revoke every old token

@@ -52,7 +52,7 @@ def _edges(body):
 
 
 def test_an_editor_login_reaches_a_confining_agent_whole_but_manual(fleet):
-    # 2026-10-04: a workspace editor is in the editor tier — the whole agent, every
+    # A workspace editor is in the editor tier — the whole agent, every
     # turn manual (docs/architecture/access.md). Still grantable: an admin grant is
     # what lets it ask for auto.
     body = _get(fleet["jj"]).json()

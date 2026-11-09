@@ -1,6 +1,6 @@
 """Workspace vaults: shared secrets a workspace keeps for its agents.
 
-A workspace may hold any number of vaults (Jonathan, 2026-10-22). Each is always
+A workspace may hold any number of vaults. Each is always
 zero-knowledge, in the same formats as an agent's vault (docs/vault/zk-v1/
 zk_v1_reference.py), with the vault's `binding_id` ("vault:<uuid>") in the place an
 agent's id takes in every AAD and HKDF info — so the browser and the canopy CLI encrypt
@@ -308,7 +308,7 @@ class _Facts:
     members, the agents and runners it serves, and the fleet's serving facts. Without it
     every machine holding a copy re-read all of these and asked "does this box serve this
     agent" with a fresh read of the fleet per pair — Shared's page took 19-45 s on labs
-    (2026-11-06), thousands of queries growing with machines x agents. Built per call and
+, thousands of queries growing with machines x agents. Built per call and
     dropped with it: not a cache, nothing to invalidate."""
 
     def __init__(self, vault: Vault) -> None:

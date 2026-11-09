@@ -53,7 +53,7 @@ from schemathesis.specs.openapi.checks import (  # noqa: E402
 
 # Three checks describe things this API does not promise. Left on, they fail
 # almost every endpoint at the first request, so the checks below them never run:
-# 482 of 488 tests failed in 33s on 2026-10-15, and no server error was visible.
+# almost every test fails in seconds, and no server error is visible.
 # - status_code_conformance: the spec does not declare its 401/403/404/422s.
 # - negative_data_rejection: a session cookie is declared as required, so a
 #   request with a PAT and no cookie counts as invalid data wrongly accepted.

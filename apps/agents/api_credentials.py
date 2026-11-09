@@ -54,7 +54,7 @@ router = Router(auth=session_auth, tags=["agents"])
 router = Router(auth=session_auth, tags=["agents"])
 
 
-# ---- Agent credentials (spec 2026-09-05-agent-credentials-design) -----------
+# ---- Agent credentials -----------
 
 @router.put("/{slug}/credentials", response=list[AgentCredentialStatusOut],
             summary="Set named secrets for an agent (write-only)")
@@ -66,7 +66,7 @@ def set_agent_credentials(request: HttpRequest, slug: str, payload: AgentCredent
     fresh passkey step-up (403 `step_up_required` otherwise); a token write —
     `canopy vault import` — does not, and is recorded like every settings change."""
     agent = vault_manager(request, slug)
-    # Step-up only for a person at a browser (canopy-web#1538): a stolen session
+    # Step-up only for a person at a browser: a stolen session
     # cookie is the threat it closes. A PAT write has no browser to ask and is
     # audited as a SettingChange like any other; requiring a passkey there would
     # simply break `canopy vault import`.
@@ -263,7 +263,7 @@ def agent_device_keys(request: HttpRequest, slug: str):
         row = key_out(k, can_manage=may_trust_device_keys(request.user, k.runner))
         row.can_open = agents_key_opens(k, vault)
         if row.can_manage:
-            # Approving it will also wrap these (one passkey touch, canopy-web#1550);
+            # Approving it will also wrap these (one passkey touch);
             # an approved key lists what it still waits on ("Give access").
             row.zk_pending_agents = zk_agents_waiting_on(request.user, k, assume_active=not k.ecdh_ready)
         out.append(row)

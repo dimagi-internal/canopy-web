@@ -313,7 +313,7 @@ def test_an_adder_who_may_edit_the_access_list_is_offered_the_line(w):
 
 
 def test_an_editor_added_to_the_owners_own_session_is_flagged_like_anyone_else(w):
-    # Before 2026-11-06 an editor here was a session writer and never flagged; being in it now gives nothing.
+    # An editor here is flagged like anyone else; being in the session gives nothing.
     rows = _add(w.owner, _chat(w), w.member.email)
     assert rows[w.member.email]["turn_refusal"]["code"] == Code.NOT_ON_ACCESS_LIST
     assert rows[w.member.email]["access_list_agent"] == "agent"

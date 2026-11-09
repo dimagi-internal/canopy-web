@@ -322,16 +322,14 @@ AUTH_ALLOWED_EMAIL_DOMAIN = env("AUTH_ALLOWED_EMAIL_DOMAIN", default="dimagi.com
 
 # --- The HCP service (apps/contacts/hcp_oauth.py, docs/architecture/hcp-service.md) ---
 # Who the Human Context Protocol service serves, in ONE place. "internal" (the
-# default, Jonathan 2026-10-09: "for now we're only going to let it be used
-# internally"): only a person whose address is on AUTH_ALLOWED_EMAIL_DOMAIN may
+# default: for now it is used internally only): only a person whose address is on AUTH_ALLOWED_EMAIL_DOMAIN may
 # authorize a client, and the discovery document says client registration is
 # closed. "public": anyone who can sign in may. Flipping it is the only code change
 # needed later; hcp-service.md lists what must be true operationally first.
 HCP_SERVICE_AUDIENCE = env("HCP_SERVICE_AUDIENCE", default="internal")
 
 # --- Who has memory at all, for now (apps/contacts/hcp/consent.py `rollout_allows`) ---
-# Jonathan, 2026-10-11: memory is on "for only me right now", and he is the only one
-# who sees its UI. HCP_PEOPLE lists the canopy addresses it is on for; EMPTY MEANS
+# Memory is on for a few people only, and only they see its UI. HCP_PEOPLE lists the canopy addresses it is on for; EMPTY MEANS
 # NOBODY (fail closed) — "*" means everyone, and is only for tests and local dev.
 # HCP_CONTACT_OPT_IN decides whether a trusted site's visitors (contacts, no canopy
 # account) are offered memory at all. Outside the rollout everything reads as off
@@ -396,7 +394,7 @@ HCP_PROJECT_BOOST = env.float("HCP_PROJECT_BOOST", default=2.0)
 # Whether LoginRequiredMiddleware enforces auth. Default on; toggle off during rollout.
 REQUIRE_AUTH = env.bool("REQUIRE_AUTH", default=True)
 
-# Passkey step-up (apps/passkeys, canopy-web#1538). Unset, the WebAuthn relying
+# Passkey step-up (apps/passkeys). Unset, the WebAuthn relying
 # party is the host the browser is on (canopy.dimagi.com in production,
 # localhost in dev) and the expected origin is that host's scheme+host. Pin them
 # only if a proxy hides the real host.
@@ -477,7 +475,7 @@ ATTACHMENT_MAX_UPLOAD_BYTES = env.int(
 # or SVG never runs as a page (attachment_storage.serve).
 ATTACHMENT_INLINE_CONTENT_TYPES = ("image/png", "image/jpeg", "image/gif", "image/webp")
 
-# Pinned explicitly (security review 2026-07-26, F8) rather than left to
+# Pinned explicitly (security review, F8) rather than left to
 # Django's own default (2.5MB as of 5.2, but not a documented-stable
 # contract). apps/harness/api.py's TRANSCRIPT_APPEND_MAX_BYTES (1MB per
 # transcript-append request) deliberately sits well under this: a request
@@ -548,7 +546,7 @@ VAPID_SUBJECT = env("VAPID_SUBJECT", default="mailto:jjackson@dimagi.com")
 # No AI backend: canopy-web makes no model calls of its own. Every agent turn,
 # chat reply and review runs on a RUNNER, under that box's Claude login
 # (Supervisor → Runners → the box). The in-process Anthropic SDK / `claude -p`
-# backend that used to live here had no caller left and was removed 2026-09-25.
+# backend does not exist.
 
 # --- Chat execution (apps/canopy_sessions, SP2b) ---
 # When True (dev/test default), a chat "send" runs the stub executor INLINE so the
@@ -557,7 +555,7 @@ VAPID_SUBJECT = env("VAPID_SUBJECT", default="mailto:jjackson@dimagi.com")
 # executes it (real claude). The one knob that flips chat from stub to cloud runner.
 CHAT_STUB_EXECUTOR = env.bool("CHAT_STUB_EXECUTOR", default=True)
 
-# --- Runner code provenance (apps/harness, spec 2026-07-28) ---
+# --- Runner code provenance (apps/harness) ---
 # The sha of the last commit that touched the runner's code — the package, its
 # installer, the menu-bar app and its icons (provenance.CODE_PATHS) —
 # computed by the deploy workflow and baked into the image. A laptop runner reports
@@ -580,8 +578,8 @@ RUNNER_CODE_COMMITTED_AT = env.int("RUNNER_CODE_COMMITTED_AT", default=0)
 # that matches the row's `kind`.
 #
 # bootstrap_agents.sh counts as the cloud runner's code because it re-runs on every
-# service start — but nothing ever triggers a start, so before auto-update a fix to
-# it shipped only when a human restarted the box (spec 2026-07-30).
+# service start — but nothing triggers a start, so without auto-update a fix to
+# it ships only when a human restarts the box.
 RUNNER_CLOUD_CODE_SHA = env("RUNNER_CLOUD_CODE_SHA", default="")
 RUNNER_CLOUD_CODE_COMMITTED_AT = env.int("RUNNER_CLOUD_CODE_COMMITTED_AT", default=0)
 
@@ -698,9 +696,9 @@ CANOPY_IDENTITY_BASE_URL = env("CANOPY_IDENTITY_BASE_URL", default="")
 # Slack sync to recognise what it registered there.
 CANOPY_FORMER_BASE_URLS: list[str] = []
 
-# MCP Apps (SEP-1865; apps/mcp_apps_host/mcp_apps.py, spec 2026-10-08): where canopy's
+# MCP Apps (SEP-1865; apps/mcp_apps_host/mcp_apps.py): where canopy's
 # chat frames the SANDBOX PROXY that hosts a host site's View. A canopy
-# sub-path by default (owner decision 1: no new DNS) — isolated by framing it
+# sub-path by default (no new DNS) — isolated by framing it
 # `sandbox="allow-scripts"` with no `allow-same-origin`, so its origin is opaque.
 # A setting so a dedicated origin later is config only: set an absolute URL and
 # MCP_APPS_HOST_ORIGINS to the canopy origins that frame it.
@@ -731,7 +729,7 @@ TICK_BASE_S = env.float("TICK_BASE_S", default=5)
 # The harness's queue sweeps and scheduled unpauses (apps/harness/sweeps.py).
 HARNESS_QUEUE_SWEEP_TICK_S = env.int("HARNESS_QUEUE_SWEEP_TICK_S", default=15)
 
-# --- Canopy Vault Phase 1b (canopy-web#1549) ---
+# --- Canopy Vault Phase 1b ---
 # Seconds between the canopy-pat rotation's off-request ticks
 # (apps/common/ticks.py, ASGI lifespan; deduplicated fleet-wide). 0 = off.
 CANOPY_PAT_ROTATION_TICK_S = env.int("CANOPY_PAT_ROTATION_TICK_S", default=900)
@@ -760,7 +758,7 @@ CANOPY_VAULT_READ_BURST_LIMIT = env.int("CANOPY_VAULT_READ_BURST_LIMIT", default
 CANOPY_RETENTION_ENFORCE = env.bool("CANOPY_RETENTION_ENFORCE", default=False)
 # A SENSITIVE conversation (one that requires sensitive-data runners, apps/harness/sensitivity.py)
 # is purged after this many days WHATEVER CANOPY_RETENTION_ENFORCE says, by the same
-# heartbeat sweep (spec 2026-10-22-sensitive-data-agents §4). A shorter rule wins.
+# heartbeat sweep . A shorter rule wins.
 CANOPY_SENSITIVE_KEEP_DAYS = env.int("CANOPY_SENSITIVE_KEEP_DAYS", default=30)
 # A sensitive turn's prompt is the person's words in clear, held only so a runner can
 # run it. One still queued or claimed this long after it was asked is closed (MISSED)
@@ -769,7 +767,7 @@ CANOPY_SENSITIVE_TURN_DEADLINE_SECONDS = env.int("CANOPY_SENSITIVE_TURN_DEADLINE
 
 
 # --- Auto-debug: a failed turn starts a debugger turn (apps/harness/auto_debug.py) ---
-# ON by default (Jonathan, 2026-10-07): a turn that ends FAILED immediately
+# ON by default: a turn that ends FAILED immediately
 # enqueues a turn to the agent named by CANOPY_AUTO_DEBUG_AGENT (the fleet
 # conductor) to investigate, learn and fix. Set CANOPY_AUTO_DEBUG=false to stop
 # it outright; with no agent of that slug it does nothing either. The caps are
@@ -783,11 +781,11 @@ CANOPY_AUTO_DEBUG_MAX_PER_HOUR = env.int("CANOPY_AUTO_DEBUG_MAX_PER_HOUR", defau
 CANOPY_AUTO_DEBUG_MAX_PER_DAY = env.int("CANOPY_AUTO_DEBUG_MAX_PER_DAY", default=10)
 CANOPY_AUTO_DEBUG_LOST = env.bool("CANOPY_AUTO_DEBUG_LOST", default=False)
 
-# --- People: no digest turn (removed 2026-10-09) ---
+# --- People: no digest turn ---
 # Facts about a person are recorded IN the session that learned them (the envelope's
-# person block and turn.md tell the agent to `hcp_addPreference`). The per-conversation
-# people-digest turn (canopy#804) and the planned batched sweep are both gone: the
-# session doing the work has the context; a second pass over its transcript does not.
+# person block and turn.md tell the agent to `hcp_addPreference`). There is no per-conversation
+# people-digest turn or batched sweep: the session doing the work has the context;
+# a second pass over its transcript does not.
 
 # --- Outbound email (apps/common/email.py) ---
 # OFF unless CANOPY_EMAIL_ENABLED is set: sending needs a verified SES identity
@@ -901,12 +899,12 @@ else:
     CORS_URLS_REGEX = r"^/api/.*$"
 
 # --- Logging ---
-# There was no LOGGING config at all, so anything our code logged fell through to
+# Without a LOGGING config, anything our code logs falls through to
 # Python's `lastResort` handler: WARNING+ to stderr, with no timestamp, level or
 # logger name. Combined with allauth rendering a failed OAuth callback as HTTP
-# 200, that left the container emitting uvicorn access lines and essentially
-# nothing else — the 2026-07-26 labs auth incident had to be reconstructed from
-# status codes and a repeated query param.
+# 200, that leaves the container emitting uvicorn access lines and essentially
+# nothing else, so an auth incident has to be reconstructed from status codes
+# and a repeated query param.
 #
 # `disable_existing_loggers: False` is load-bearing: uvicorn configures its own
 # loggers (its startup and error lines), and Django applies this dictConfig at

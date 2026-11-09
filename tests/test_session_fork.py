@@ -179,7 +179,6 @@ def test_a_cloud_runner_can_fork_and_a_fork_of_a_fork_shares_the_root_directory(
 
 def test_a_fork_keeps_the_conversations_runner_requirements():
     # The fork holds the same conversation, so it runs on the same runners
-    # (spec 2026-10-22-sensitive-data-agents §3).
     user, ws, runner, c = _ctx()
     s = _session(ws, runner, user)
     s.metadata = {**s.metadata, "runner_requirements": ["sensitive_data"]}

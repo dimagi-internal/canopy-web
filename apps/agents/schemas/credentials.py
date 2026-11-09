@@ -103,7 +103,7 @@ class AgentCredentialStatusOut(StrictModel):
     source: str
     updated_at: dt.datetime | None = None
     updated_by_email: str | None = None
-    # The read log (canopy-web#1538): when a value was last handed out, and how
+    # The read log: when a value was last handed out, and how
     # often. History: GET …/credentials/{name}/reads.
     last_read_at: dt.datetime | None = None
     read_count: int = 0
@@ -143,7 +143,7 @@ class DeviceProofRequiredOut(StrictModel):
 
 
 class AgentCredentialAlertOut(StrictModel):
-    """A read of the agent's secrets that looked wrong (canopy-web#1549). At
+    """A read of the agent's secrets that looked wrong. At
     most one per kind per hour; `occurrences` counts repeats inside it."""
 
     id: int
@@ -217,7 +217,7 @@ class AgentCredentialAccessOut(StrictModel):
     """Whether the CALLER may resolve this agent's secrets — never the values.
 
     The cheap check `canopy cred` makes before deciding how to resolve
-    (canopy#850). `may_resolve` mirrors GET /credentials/resolve exactly, minus
+. `may_resolve` mirrors GET /credentials/resolve exactly, minus
     its bearer requirement (that is a property of the request, not of the
     caller): `via` is `runner` when the caller pairs a live runner this agent
     routes to, `admin` when they are the agent's owner or an admin, `license`
@@ -359,7 +359,7 @@ class AgentCredentialsResolveOut(StrictModel):
     # Not a secret; it rides here because bootstrap already asks this route per
     # agent. It is the instance's, never the repo's — every instance of an
     # agent shares its repo, and deriving the address from the repo or the slug
-    # would point two instances at one inbox (canopy-web#984).
+    # would point two instances at one inbox.
     mailbox: str = ""
     # Where that mailbox lives: "ses" = canopy-hosted (no Gmail sign-in; mail goes through
     # canopy-web), "google" = a Google mailbox the box signs in with gog, "" = none.
@@ -367,7 +367,7 @@ class AgentCredentialsResolveOut(StrictModel):
     # The Google account the box signs in to Drive/Docs/gog as (`Agent.google_identity`):
     # `google_account` when set, else `mailbox` when that is a Google mailbox, else "".
     google_account: str = ""
-    # Zero-knowledge (canopy-web#1550). When `zk`, `values` hold `zk1:`
+    # Zero-knowledge. When `zk`, `values` hold `zk1:`
     # ciphertext under the agent's vault key at version `kv`, and `wrap` is that
     # key wrapped to the proving device's ECDH key (docs/vault/zk-v1/). A value
     # canopy-web minted itself may instead be `zks1:`, sealed to each device's
@@ -410,4 +410,4 @@ class ZkWrapMissingOut(StrictModel):
     device_key: str
 
 
-# ---- zero-knowledge vault (canopy-web#1550; apps/agents/credentials/zk.py) ----------------
+# ---- zero-knowledge vault (apps/agents/credentials/zk.py) ----------------

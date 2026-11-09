@@ -9,10 +9,9 @@ Do not import it from `apps/`, and do not edit it to make that test pass: this f
 difference means the resolver changed what someone may do. Facts that are not the rule (who holds which
 line, what a role grants, who is an admin, what an entry is) are still read from the real code.
 
-One deliberate edit since: on 2026-11-06 the owner removed the `session_writer` rule (a participant with
-role owner or editor in a session the agent's owner or an admin started held the whole agent). Its branch
-is gone from `_decide` and `_stamp` here exactly as it is gone from the resolver, so this stays the rule
-as stated. `tests/test_turn_context_equivalence.py` names the cases that changed.
+The `session_writer` rule (a participant with role owner or editor in a session the agent's owner or an
+admin started held the whole agent) does not exist: its branch is absent from `_decide` and `_stamp` here
+exactly as it is absent from the resolver, so this stays the rule as stated. `tests/test_turn_context_equivalence.py` names the cases that changed.
 """
 from __future__ import annotations
 
@@ -101,8 +100,8 @@ def _list_refusal(agent, *, verified_contact: bool = False) -> str:
            "it, an editor can also change it)")
     if verified_contact:
         # A verified sender nobody listed is, far more often than a stranger, an automated
-        # one someone subscribed on purpose — CloudWatch alarms went unanswered for nine days
-        # this way (canopy-web#1253). Say what fixes it.
+        # one someone subscribed on purpose — CloudWatch alarms go unanswered this way.
+        # Say what fixes it.
         why += ("; if this is an automated sender (alarms, CI, a monitor), an admin of the agent "
                 "can bind its address to an inbound-mail trigger on the agent's Triggers tab")
     return why
@@ -182,7 +181,7 @@ def _sensitive_capability(agent, iface: dict, capability: str | None, turn) -> s
 
 
 def _sensitive_rule(agent, d: Decision, *, capability: str | None, turn) -> Decision:
-    """Spec 2026-10-22-sensitive-data-agents §5, "confined for everyone".
+    """Sensitive-data agents: "confined for everyone".
 
     * in a sensitive-data capability, whoever would have had the agent's FULL profile (owner,
       admin, system, an editor) runs that capability's

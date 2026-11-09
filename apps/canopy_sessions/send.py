@@ -43,7 +43,7 @@ def claim_pending_attachments(session, message=None, user=None) -> list[dict]:
     Swept off the session rather than passed by id, so the WebSocket `chat.send`
     frame needs no new field and REST and WS behave identically. Scoped to
     `uploaded_by=user` because it matches the draft model: everyone composes in
-    their own box (spec 2026-09-26), so an attachment belongs to its uploader's
+    their own box, so an attachment belongs to its uploader's
     next send — never to a teammate who happens to press Send first. With no
     user (a contact send) nothing is claimed: contacts cannot upload, and they
     must not sweep up a member's half-composed attachments.
@@ -126,13 +126,11 @@ def default_origin(session) -> str:
     """The source a turn on this session is, when the caller didn't name one.
 
     A session ace-web created is ace-web work — whoever typed it, over whatever
-    transport. That is the rule, and getting it wrong is what shipped in #496:
-    origin was threaded only through ace-web's SERVER-side run dispatcher, on
-    the reasoning that a human typing "IS a human typing" and therefore chat. So
-    a person typing into ace-web's own chat produced `canopy_web_chat`,
-    indistinguishable from canopy's chat UI, and routed to whatever runs canopy
-    chat rather than to the box that runs ace-web's work. Observed directly:
-    "testing", typed into an ace-web session, went to a laptop runner.
+    transport. That is the rule: if origin
+    were taken from the typist ("a human typing" means chat), a person typing into
+    ace-web's own chat would produce `canopy_web_chat`, indistinguishable from
+    canopy's chat UI, and route to whatever runs canopy chat rather than to the
+    box that runs ace-web's work.
 
     The distinction that matters is not human-vs-programmatic, it is WHICH
     PRODUCT the work belongs to. Deriving it here rather than asking each caller
@@ -217,13 +215,13 @@ def _send_message(
     `_resolve_placement`.
 
     `origin`: which SOURCE of work this send is, the key source-aware routing
-    composes a runner list on (spec 2026-07-27). None means the default — a
+    composes a runner list on. None means the default — a
     human typing in canopy's own chat UI. ace-web passes `ace_web` so its
     delegated runs can be routed (and read) as what they are rather than
     disappearing into the chat source.
 
-    For an origin=runner session the TRANSCRIPT is the sole durable source
-    (spec 2026-07-24): the user's words reach the DB when the runner ships the
+    For an origin=runner session the TRANSCRIPT is the sole durable source:
+    the user's words reach the DB when the runner ships the
     transcript record they became, keyed on its ordinal. Persisting a second
     copy here (keyed _next_index) would collide index spaces and duplicate the
     send, so this path writes no row — the frontend already echoes the message
@@ -353,8 +351,8 @@ def _enqueue_chat_turn(
         idempotency_key=f"chat:{session.id.hex}:{client_id or fallback_key}",
         prompt=text,
         origin_ref=ref,
-        # WHO sent it. Not decoration: this is the actor half of the routing key
-        # (spec 2026-09-05), and it is the ONLY place an `ace_web` or
+        # WHO sent it. Not decoration: this is the actor half of the routing key,
+        # and it is the ONLY place an `ace_web` or
         # `canopy_web_chat` turn can get one — neither carries the
         # `origin_ref["from"]` an email turn is routed by. Left unset, every actor
         # rule on those sources silently matches nothing. `enqueue_turn` ignores an
@@ -596,10 +594,10 @@ def _send_transcript_sourced_message(
     )
     message.pk = f"transient:{uuid.uuid4().hex}"
     message.created_at = timezone.now()
-    # Without a durable row, _next_index no longer advances between sends, so the
-    # old index fallback would collapse DISTINCT no-nonce sends onto one turn —
-    # fall back to a fresh nonce instead (same dedupe strength as before: only a
-    # real client_id makes a retry idempotent).
+    # Without a durable row, _next_index does not advance between sends, so an
+    # index fallback would collapse DISTINCT no-nonce sends onto one turn — fall
+    # back to a fresh nonce instead (only a real client_id makes a retry
+    # idempotent).
     #
     # message=None: this path writes no durable user row, so the attachments'
     # sent_at stamp is the only thing stopping them riding along on every later send.

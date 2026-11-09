@@ -3,8 +3,7 @@
 The runner speaks as its owner, and its owner often cannot read the chat: a
 teammate's chat with an agent is visible to its creator and participants
 (`canopy_sessions/access.py`). Fetching through the chat's own read route
-therefore 404'd every file such a teammate sent — on 2026-10-15 a 29-slide deck
-review arrived as text alone, three times, and the agent could not tell why.
+would 404 every file such a teammate sent, and the agent could not tell why.
 
 What these pin:
 

@@ -35,9 +35,9 @@ def test_parse_page_key_rejects_malformed():
 
 
 def test_parse_page_key_rejects_the_bare_word_global_as_a_workspace():
-    """`global` used to be the sentinel that SKIPPED the membership gate, and
+    """`global` is not the sentinel that SKIPS the membership gate, and
     it is a slug any user can create (workspace slugs have no charset or
-    reserved-name validation). The sentinel is now `~global`, whose leading
+    reserved-name validation). The sentinel is `~global`, whose leading
     `~` cannot match WORKSPACE_RE — so no client-assertable slug can ever
     equal it."""
     assert presence_keys.GLOBAL_SENTINEL == "~global"

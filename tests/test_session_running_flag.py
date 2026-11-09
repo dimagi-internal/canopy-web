@@ -1,11 +1,10 @@
 """"Running" is what the engine says it is, not what its writes imply.
 
-The list badge used to be inferred from activity recency: a session whose transcript
-had grown in the last 120s was "running", anything else rendered as a plain "12m ago".
+The list badge is not inferred from activity recency alone: a session whose transcript
+had grown in the last 120s would be "running" and anything else a plain "12m ago".
 Silence is not idleness, so that reads wrong in both directions — a turn inside a long
-tool call or a subagent writes nothing for minutes and the row says finished (reported
-2026-08-12: "it looks like sessions finished that are still running when I click on
-them"), while a turn that just stopped keeps a live green badge for two more minutes.
+tool call or a subagent writes nothing for minutes and the row would say finished,
+while a turn that just stopped would keep a live green badge for two more minutes.
 
 Emdash already knows: it stamps `agent_status` on a conversation when it starts and
 stops driving the agent. These tests pin that a reported status WINS, that a runner

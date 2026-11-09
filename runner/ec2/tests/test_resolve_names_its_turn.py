@@ -1,6 +1,6 @@
-"""The runner's credential resolve names the turn it is for (Canopy Vault, canopy#946).
+"""The runner's credential resolve names the turn it is for (Canopy Vault).
 
-canopy-web#1538 logs every `/credentials/resolve` read with the caller, the runner and —
+canopy-web logs every `/credentials/resolve` read with the caller, the runner and —
 when sent — `X-Canopy-Turn-Id`. A turn's thread knows its id (`_lineage_env` puts
 CANOPY_TURN_ID in the turn env); a resolve outside a turn sends no header, and an older
 canopy-web simply ignores it."""

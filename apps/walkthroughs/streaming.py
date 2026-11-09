@@ -4,7 +4,7 @@ Preserved as a bare Django view (NOT ported to Ninja) — HTTP Range support
 (for ``<video>`` scrubbing) doesn't fit cleanly into Ninja's contract.
 
 Mounted at /w/<ws>/walkthrough/<wid>/content in config/urls.py — under the
-walkthrough's workspace, like every other artifact URL (canopy-web#1337). There
+walkthrough's workspace, like every other artifact URL. There
 is no flat stream: a walkthrough named under any other workspace 404s.
 """
 from __future__ import annotations
@@ -124,12 +124,11 @@ def walkthrough_content(request, ws, wid):
             # it: `size_bytes` is recorded at upload and the bytes never change
             # (there is no in-place replace — a new cut is a new walkthrough).
             #
-            # This used to be a `download(start=0, end=0)` head request, which
-            # meant EVERY range the <video> element asked for cost two
-            # sequential Drive round-trips instead of one. Measured against
-            # prod: ~1.93s TTFB with the probe, ~1.37s without — ~0.55s of pure
-            # latency added to the initial load and to every single seek. A
-            # scrub is several ranges, so it compounded.
+            # No `download(start=0, end=0)` head request is made: it would
+            # make EVERY range the <video> element asks for cost two sequential
+            # Drive round-trips instead of one (measured ~0.55s of pure latency on
+            # the initial load and on every seek; a scrub is several ranges, so it
+            # compounds).
             #
             # Falls back to the probe when size_bytes is missing (rows that
             # predate the field), so nothing that worked stops working.

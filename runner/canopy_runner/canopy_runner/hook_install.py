@@ -3,7 +3,7 @@
 User level (`~/.claude/settings.json`), deliberately, for two reasons:
 
 1. **One install covers every session on the machine** — every emdash worktree
-   and every `claude -p` — with no per-session setup. Verified 2026-07-27: a
+   and every `claude -p` — with no per-session setup. Verified: a
    single user-level hook captured events from two concurrent sessions in
    different worktrees at once.
 2. **emdash owns the project-level file.** Its worktrees carry a

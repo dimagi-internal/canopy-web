@@ -30,8 +30,8 @@ FEATURES = ("record", "use")
 
 # --- who has memory at all, for now: the rollout gate ---------------------------------
 #
-# Jonathan, 2026-10-11: memory is on "for only me right now", and he is the only one who
-# sees its UI. `settings.HCP_PEOPLE` lists the canopy addresses it is on for (empty =
+# Memory is on only for a small set of people, and only they see its UI.
+# `settings.HCP_PEOPLE` lists the canopy addresses it is on for (empty =
 # nobody; "*" = everyone, for tests and local dev); `settings.HCP_CONTACT_OPT_IN` decides
 # whether a trusted site's visitors are offered it. Outside the rollout every switch
 # reads as off (`memory_state`), so no agent reads or records, and every way to turn

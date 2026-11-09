@@ -1,5 +1,4 @@
-"""Secrets off disk: each turn's env on tmpfs, gone when the turn ends (spec
-2026-10-19-runner-isolation-runners §4, §5, §6; plan Task 6.3).
+"""Secrets off disk: each turn's env on tmpfs, gone when the turn ends.
 
 * Review Focus 4: the turn's env file is gone after a turn that finished, raised,
   timed out or was stopped — and leftovers are swept at start.

@@ -29,7 +29,7 @@ export function EventLedger({ turnId }: { turnId: string }) {
           </span>
           <span className="font-medium text-foreground">{e.kind}</span>
           {e.kind === "unproven_member" && (
-            // Logged by canopy, not the runner (canopy-web#1265): a member's mail
+            // Logged by canopy, not the runner: a member's mail
             // that could not be tied to them. Informational; it grants nothing.
             <span className="text-foreground-secondary">
               {String(e.payload?.email ?? "")}: {String(e.payload?.note ?? "")}

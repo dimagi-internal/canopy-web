@@ -1,9 +1,8 @@
 """An ACP turn has no time limit, like `claude -p`.
 
-A 5400s wall-clock deadline killed ACE's full `/ace:run bednet-check-2-visit`
-on cloud-ec2-2 while it was still logging tool calls every few seconds in
-Phase 2 (turn 09d9322a, 2026-10-18, failure investigation 8). A stuck turn is
-ended by a stop (tests/test_turn_stop.py), not by a clock.
+A wall-clock deadline would kill a long turn that is still logging tool calls
+every few seconds. A stuck turn is ended by a stop (tests/test_turn_stop.py), not
+by a clock.
 """
 from __future__ import annotations
 

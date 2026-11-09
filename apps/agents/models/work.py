@@ -112,7 +112,7 @@ class AgentProject(models.Model):
     meeting_instructions = models.TextField(blank=True, default="")
     links = models.JSONField(default=list, blank=True)
     #: Where its knowledge base's objects are stored (`kb_store.root`): fixed for good,
-    #: so a new handle or workspace moves nothing (#2047). Blank: `kb-projects/<pk>/`.
+    #: so a new handle or workspace moves nothing. Blank: `kb-projects/<pk>/`.
     #: A project made before then keeps the address-keyed root it stored under.
     storage_root = models.CharField(max_length=200, blank=True, default="")
     #: The page that proposed this project — a huddle, a thread — the same idea
@@ -127,7 +127,7 @@ class AgentProject(models.Model):
     #: task shows "spawned → this project"; this one shows "from <task> in <project>".
     spawned_from = models.ForeignKey("agents.AgentTask", null=True, blank=True, on_delete=models.SET_NULL,
                                      related_name="spawned_projects")
-    #: The PEOPLE this work involves (fleet brain v1.1, canopy#804) — not the
+    #: The PEOPLE this work involves (fleet brain v1.1) — not the
     #: owner (one human who owns the outcome) but everyone canopy has seen take
     #: part: the subject of a fact filed against the project, or the human whose
     #: conversation raised one of its tasks. Filled automatically
@@ -382,7 +382,7 @@ class ProjectShare(models.Model):
 
 
 class ProjectService(models.Model):
-    """Something a project serves to its workspace (design 2026-10-24, "What a
+    """Something a project serves to its workspace ("What a
     project serves"). A project is the workspace's and spans its agents and
     people, so it is where what they share hangs: its people may use it, its
     lead agent (or an editor) keeps it current, and the workspace directory
@@ -455,7 +455,7 @@ class ProjectService(models.Model):
 
 
 class ProjectParticipant(models.Model):
-    """A person taking part in an agent's project (fleet brain v1.1, canopy#804).
+    """A person taking part in an agent's project (fleet brain v1.1).
 
     One row per (project, person). `source` says how canopy learned it, and the
     FIRST answer is kept: a later fact or turn about someone already linked
@@ -597,13 +597,13 @@ class AgentTask(models.Model):
     """A task: one step of work, owned by a workspace and addressed by its KEY
     (`DIM-142`) — the workspace's prefix (`TaskSettings`) and its number there.
 
-    **Assigned to a person or an agent** (decision 2026-10-24), never both: the
+    **Assigned to a person or an agent** never both: the
     agent doing it (`agent`) or the person (`assignee_user`), or nobody yet. An
     agent assignee is who an approval starts a turn for; a person assignee is
     who "My tasks" lists it for.
 
-    **`ext_id` is an agent's alias** ("T12"): tasks were once numbered per agent
-    and the fleet still names them so, through `/api/agents/{slug}/tasks/T12/`
+    **`ext_id` is an agent's alias** ("T12"): tasks are numbered per agent
+    and the fleet names them so, through `/api/agents/{slug}/tasks/T12/`
     and the canopy CLI (which numbers them on the client). The alias belongs to
     the agent that filed it (`created_by_agent`) and survives reassignment. A
     task filed anywhere else has none.
@@ -667,8 +667,7 @@ class AgentTask(models.Model):
         "agents.AgentProject", null=True, blank=True, on_delete=models.SET_NULL,
         related_name="tasks",
     )
-    #: The task this one is a step of. Subtasks, not subprojects (T72,
-    #: Jonathan 2026-10-09): a product area is ONE project board, and a big
+    #: The task this one is a step of. Subtasks, not subprojects (a product area is ONE project board, and a big
     #: piece of work inside it breaks down into child tasks rather than a new
     #: project per piece. Same workspace and project as the parent, no cycles,
     #: at most `MAX_TASK_DEPTH` levels — all enforced in `services.set_parent`,
@@ -678,13 +677,13 @@ class AgentTask(models.Model):
         "self", null=True, blank=True, on_delete=models.SET_NULL,
         related_name="subtasks",
     )
-    #: WHAT this task is (hal T82, Jonathan 2026-10-12). `work` — the agent's
+    #: WHAT this task is. `work` — the agent's
     #: own work, and every task that says nothing. `idea` — a PERSON's want
     #: about the product, carrying their own words (at least one human-why
     #: quote, enforced in `services`); the work toward it is its subtasks.
-    #: Explicit, never inferred: T69 read every task as an idea, and the agent's
-    #: process work (a docs round-up, a screen review) counted as the product's
-    #: shipped ideas.
+    #: Explicit, never inferred: reading every task as an idea would count the agent's
+    #: process work (a docs round-up, a screen review) as the product's shipped
+    #: ideas.
     WORK, IDEA = "work", "idea"
     KIND_CHOICES = [(WORK, "Work"), (IDEA, "Idea")]
     kind = models.CharField(max_length=8, choices=KIND_CHOICES, default=WORK)

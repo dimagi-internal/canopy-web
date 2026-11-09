@@ -2,8 +2,8 @@
 consent link and its signed state. The token half — exchanging Google's code for a
 refresh token — runs on one of the agent's runners (`google_mint.py`), never here.
 
-The goal this serves, stated by Jonathan on 2026-09-05: *someone could plausibly
-create a completely new agent without direct access to the cloud box.*
+The goal this serves, *someone could plausibly create a completely new agent without direct access to
+the cloud box.*
 
 WHY THE `canopy-web` CLIENT, NOT THE `canopy` ONE — the constraint that shapes
 everything below. **A refresh token is minted FOR an OAuth client and works only
@@ -28,8 +28,8 @@ from django.core import signing
 from .. import mailbox
 
 # What to ASK Google for. The authority is what agents DECLARE they need, not
-# what the incumbent tokens happen to carry — a distinction that cost a wrong
-# reading on 2026-09-06.
+# what the incumbent tokens happen to carry — a distinction that has
+# already cost a wrong reading.
 #
 # The live tokens (Echo's and Eva's) carry gmail, docs, drive,
 # forms and sheets, so a first version requested exactly those, reasoning that a

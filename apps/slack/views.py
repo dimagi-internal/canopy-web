@@ -57,8 +57,8 @@ def _tell(installation, inbound: services.Inbound, text: str) -> None:
     Threaded ONLY when they wrote inside a thread. For a top-level message,
     threading under that message is invisible: an ephemeral reply leaves no
     "1 reply" marker, so the note exists only for someone who opens a thread
-    they have no reason to open. That is how the first live mention on labs
-    (2026-09-19) got its "link your account" reply and looked like silence.
+    they have no reason to open. That is how a first mention gets its
+    "link your account" reply and looks like silence.
     """
     if installation is None:
         return
@@ -129,8 +129,8 @@ def _retry_refused_edit(installation, edit: services.Inbound) -> bool:
 
     `@canopy what's my email?` with several agents on is refused for naming
     none, and the obvious fix is to edit `hal` in. Slack sends that as
-    `message_changed`, which used to be dropped, so the corrected ask went
-    nowhere while looking sent (canopy-support, 2026-10-08). Only an edit of the
+    `message_changed`, and an unhandled edit would leave the corrected ask
+    going nowhere while looking sent. Only an edit of the
     exact message canopy refused, still mentioning the bot, is retried — and the
     refusal is consumed atomically, so a second edit of a message that did go
     through can never ask the agent twice. A retry refused again re-records the

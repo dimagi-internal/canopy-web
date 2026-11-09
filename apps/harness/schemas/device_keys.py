@@ -34,11 +34,11 @@ class RunnerDeviceKeyIn(Schema):
     """Register the PUBLIC half of a key the runner holds. Re-posting the same
     key (same RFC 7638 thumbprint) is idempotent.
 
-    `kind: "aws-iam"` (an EC2 box's instance role, canopy-web#1549) sends
+    `kind: "aws-iam"` (an EC2 box's instance role) sends
     `role_arn` and `proof` (an `X-Canopy-Aws-Proof` value whose htu is this
     URL) instead of `public_jwk`; the proof's signer must BE `role_arn`.
 
-    `ecdh_public_jwk` (zero-knowledge vault, canopy-web#1550) is a SEPARATE
+    `ecdh_public_jwk` (zero-knowledge vault) is a SEPARATE
     P-256 public key the box does ECDH with, for every kind including
     `aws-iam`. Sending a new or different one for an `active` key sends it
     back to `pending` — a person approves again."""
@@ -65,7 +65,7 @@ class DeviceKeyAgentOut(Schema):
 class DeviceKeyVouchOut(Schema):
     """An agent whose vault the caller is a member of but does not manage, that
     their own machine waits on: they sign for the machine (an endorsement) and a
-    keeper hands it the vault key (spec 2026-10-22 vault-access-follows-canopy-access §1)."""
+    keeper hands it the vault key."""
 
     slug: str
     agent_id: str
@@ -96,11 +96,11 @@ class RunnerDeviceKeyOut(Schema):
     label: str = ""
     #: `aws-iam` only: the instance role the box proves itself as.
     role_arn: str = ""
-    #: The ECDH key vault keys are wrapped to (canopy-web#1550); "" / {} if none.
+    #: The ECDH key vault keys are wrapped to; "" / {} if none.
     ecdh_jkt: str = ""
     ecdh_public_jwk: dict[str, Any] = {}
     #: Pending AGAIN after an approval — its ECDH (encryption) key was added
-    #: or changed (canopy-web#1550), not a new box.
+    #: or changed, not a new box.
     reapproval: bool = False
     #: Active and signing in, but its new ECDH key waits for approval: it
     #: cannot read zero-knowledge agents until a person approves it.

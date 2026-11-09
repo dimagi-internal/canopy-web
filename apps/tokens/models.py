@@ -50,8 +50,8 @@ class PersonalToken(models.Model):
     #: WHAT last used it — the caller's User-Agent, or its X-Canopy-Client when it
     #: sent no User-Agent ("canopy-cloud-runner host=ip-172-31-41-219"). Shown
     #: beside Last used so a token a runner lives on cannot pass for an unused
-    #: one: a date alone got a cloud box's token revoked in a cleanup
-    #: (2026-10-17). Display only; never authorizes anything.
+    #: one: a date alone could get a cloud box's token revoked in a cleanup.
+    #: Display only; never authorizes anything.
     last_used_client = models.CharField(max_length=200, blank=True, default="")
     revoked_at = models.DateTimeField(null=True, blank=True)
     #: Set when an MCP client's OAuth login minted this token
@@ -206,13 +206,10 @@ class AppCredential(models.Model):
     an existing user who is a member of this workspace, or a contact
     (`contacts.services.resolve_arrival`).
 
-    It used to hold a second, much larger power: `/api/auth/token-exchange`
-    traded a SHARED SECRET plus an email address for a token, and created the
-    canopy user — and a workspace membership — as a side effect. The whole
-    cluster went on 2026-09-22 (`allowed_delegation_domains`,
-    `provision_workspace`, `provision_role`). A signature proves the claim
-    without canopy holding anything that could make one, and arrival never
-    creates an account, so nothing was left for those fields to mean.
+    It holds no secret and cannot create users: a SHARED SECRET plus an email
+    address is never traded for a token, and arrival never creates an account or
+    a workspace membership. A signature proves the claim without canopy holding
+    anything that could make one.
     `WorkspaceMembership.provisioned_by_app` stays: it records how existing
     rows came to be, and erasing that would erase real provenance.
     """
@@ -220,32 +217,26 @@ class AppCredential(models.Model):
     #: What the site calls itself: its `iss`, and the `?app=` of its embed
     #: shell. Unique WITHIN a tenant, not across canopy — see `workspace`.
     name = models.CharField(max_length=100)
-    #: No secret. A site used to carry one (`token_hash`), shown once at
-    #: registration with a rotate button — but it authenticated nothing after
-    #: `/api/auth/token-exchange` went (2026-09-22): a site proves itself by
-    #: SIGNING, against keys it publishes, so canopy holds nothing that could
-    #: impersonate it. A secret that opens nothing still reads as a credential
-    #: to protect and rotate, so it was removed rather than left idle
-    #: (2026-09-24).
+    #: No secret: a site proves itself by SIGNING, against keys it publishes, so
+    #: canopy holds nothing that could impersonate it. A secret that opens
+    #: nothing would still read as a credential to protect and rotate.
     #: The ONE tenant this registration belongs to. Every fact on the row —
     #: name, keys, origins, agents — is that tenant's own.
     #:
-    #: A site used to be one shared row with a "custodian" workspace
-    #: maintaining its keys and origins, plus a grant per tenant (#944). That
-    #: arbitrated a shared row nobody needed once keys became a URL (#929): the
-    #: thing two tenants would have had to agree on is now just where the host
-    #: publishes its JWKS, and copying a URL costs nothing. So each tenant
-    #: registers the system itself (2026-09-24, Jonathan: "full tenant level,
-    #: no custodian"). No custody, no transfer, no tenant able to edit — or end
-    #: — another's integration.
+    #: A site is not one shared row with a "custodian" workspace maintaining its
+    #: keys and origins: keys are a URL, so the thing two tenants would have had to
+    #: agree on is just where the host publishes its JWKS, and copying a URL costs
+    #: nothing. So each tenant registers the system itself, at full tenant level.
+    #: No custody, no transfer, no tenant able to edit — or end — another's
+    #: integration.
     #:
     #: The price is that a name no longer identifies one system across canopy:
     #: two tenants may each have a `connect-labs`. Every lookup by name is
     #: therefore scoped by tenant (`embed_apps.resolve_site`), and the tenant
     #: comes from the agent a host names.
     #:
-    #: `CASCADE` is now correct, where it was a bug under custody: the row is
-    #: nobody's but this tenant's, so it goes with the tenant.
+    #: `CASCADE` is correct: the row is nobody's but this tenant's, so it goes
+    #: with the tenant.
     workspace = models.ForeignKey(
         "workspaces.Workspace",
         on_delete=models.CASCADE,
@@ -319,9 +310,8 @@ class AppCredential(models.Model):
     #: that already has it rather than an IntegrityError.
     show_on_canopy_pages = models.BooleanField(default=False)
     #: canopy TRUSTS this site's signed `email_verified: true` as the visitor's
-    #: identity for HCP (Jonathan, 2026-10-09: "allow contacts to start building
-    #: up HCP … from a trusted system like labs where we do trust their e-mail
-    #: identity"). Off by default, and only a canopy superuser may set it: the
+    #: identity for HCP (contacts can start building up HCP
+    #: from a trusted system like labs where we do trust their e-mail identity). Off by default, and only a canopy superuser may set it: the
     #: email-keyed `Person` it lets a contact join is canopy-wide, not this
     #: tenant's, so a tenant owner trusting their own site would let that site
     #: claim any address in every tenant. Grants nothing by itself — the
@@ -896,7 +886,7 @@ def _sign_off_id() -> str:
 
 class SiteSignOff(models.Model):
     """A host site asking a person to approve ONE action with their passkey
-    (`apps/host_grants/sign_offs.py`; spec `2026-10-27-site-sign-offs-design`).
+    (`apps/host_grants/sign_offs.py`).
 
     The site signs the request; who may approve is canopy's answer
     (`sign_offs.approvers_for`), asked again when someone decides. An approval is a

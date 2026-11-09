@@ -5,8 +5,8 @@ runner's runtime to `claude-desktop` on canopy-web (Supervisor → the runner �
 Session runtime), new sessions open in the Claude desktop app's Code tab instead:
 a sidebar session per thread, in its own git worktree, with the app's own
 needs-input flags and diffs. The runner reads the setting off every heartbeat
-response, so a flip needs no restart. Design and the focus investigation:
-canopy-web#1188.
+response, so a flip needs no restart. Design and the focus findings are in
+the canopy-web desktop-session design doc.
 
 WHICH BACKEND A TURN GETS
   - A thread whose session is a desktop session continues there, whatever the
@@ -18,7 +18,7 @@ WHICH BACKEND A TURN GETS
   - A caller's confined turn always goes to emdash: confinement is enforced on the
     emdash path (profile files + native deny rules), and this backend has none.
 
-HOW A DESKTOP SESSION IS DRIVEN (each step proven on a background macOS user, #1188)
+HOW A DESKTOP SESSION IS DRIVEN (each step proven on a background macOS user)
   1. `git worktree add` from the project's checkout (the repo emdash already
      registers for that project, so the runner reports and routes exactly the
      same projects either way), at the project's base ref.
@@ -38,13 +38,13 @@ HOW A DESKTOP SESSION IS DRIVEN (each step proven on a background macOS user, #1
 THE DEEP LINK ACTIVATES CLAUDE.APP in its macOS session, even with `open -g`,
 NSWorkspace `activates = false`, or the app hidden: its open-url handler calls
 show() + focus() for every claude:// link it handles, and no query parameter
-skips that (Focus round 2, #1188). So `open_session` opens through
+skips that (Focus round 2). So `open_session` opens through
 `desktop_quiet_open.js`, which gives focus straight back to the app the person
 was in and re-hides Claude: Claude holds the front ~60ms per NEW session or wake.
 That is a mitigation, not a fix: a keystroke typed in that window can land in
 Claude. Follow-ups into a live session open no URL at all. Where the app's
 `start_session` gate is on and a live canopy session can host it, a new session
-opens with no URL either (`start_in_app`, canopy-web#1238); waking a stopped
+opens with no URL either (`start_in_app`); waking a stopped
 session still takes the deep link.
 
 THE `claude-cli` RUNTIME is this backend with the app taken out (headless.py): a new
@@ -119,8 +119,8 @@ SEED_PROMPT = "This session was prepared by canopy. Reply with exactly: ready"
 def drop_seed(rows: list[dict]) -> list[dict]:
     """Conversational rows without the seed exchange (SEED_PROMPT and the `ready`
     reply after it). The seed is the headless turn that made the session id; it is
-    in the CLI transcript, so every session view opened with it (found live after
-    #1218, which kept it out of TURN transcripts only). Matches the exact prompt
+    in the CLI transcript, so every session view opened with it (it is kept out of
+    TURN transcripts separately). Matches the exact prompt
     this module writes, so it can never drop a real message."""
     out, skip_reply = [], False
     for r in rows:
@@ -256,7 +256,7 @@ def close(cfg, sid: str) -> str:
     is always kept: emdash's delete is a human's explicit act in emdash, this one
     is a tap on a phone, and committed-or-kept is the line that tap cannot cross.
     The session stays in the app's own sidebar — the app offers no way to archive
-    it from outside — but it no longer runs, is reported, or takes turns."""
+    it from outside — but it does not run, is not reported, and takes no turns."""
     entry = _index(cfg).get(sid)
     if not entry or entry.get("closed_at"):
         return "absent"
@@ -439,7 +439,7 @@ def make_worktree(cfg, repo: Path, base_ref: str, name: str) -> Path:
     branches = _git(repo, "branch", "--list", f"canopy-desktop/{slug}", check=False)
     if wt.exists() or branches:
         # The same name twice (same prompt, same thread key) must not crash the
-        # turn on `worktree add`: a new session gets its own place (found in #1188).
+        # turn on `worktree add`: a new session gets its own place.
         slug = f"{slug}-{uuid.uuid4().hex[:6]}"
         wt = wt.with_name(slug)
     wt.parent.mkdir(parents=True, exist_ok=True)
@@ -487,8 +487,9 @@ def worktree_settings(allow: list[str], existing: dict | None = None, *, model: 
 # (it spawns Claude Code itself); this runtime shells out to the CLI to seed a
 # session and to install the mod, so it resolves the binary explicitly instead of
 # trusting PATH. Found the hard way: the first live turn on haldimagi crashed with
-# FileNotFoundError: 'claude' (canopy-web#1188), though every test from a shell
-# had passed — a shell's PATH has ~/.local/bin.
+# FileNotFoundError: 'claude': a shell's PATH has
+# ~/.local/bin, so a test run from a shell passes while the runner crashes with
+# FileNotFoundError: 'claude'.
 
 def claude_app_dir(home: Path | None = None) -> Path:
     """The Claude app's own userData folder on this box (macOS or Windows)."""
@@ -624,7 +625,7 @@ def ensure_app() -> bool:
     return False
 
 
-# ── the app's server-side feature gates (canopy-web#1238) ───────────────────
+# ── the app's server-side feature gates ───────────────────
 #
 # Two of the app's GrowthBook features decide how this backend should work, and
 # neither is a local setting:
@@ -637,7 +638,7 @@ def ensure_app() -> bool:
 # The app caches the features it last fetched for this account in
 # `<userData>/fcache`: an 8-byte magic header, then gzipped JSON
 # `{timestamp, mode, orgUuid, features: {<id>: {value, on, source, ...}}}`.
-# Reading it is what turns "recheck #1238" from unpacking the app bundle and
+# Reading it is what turns rechecking the gates from unpacking the app bundle and
 # probing from a mod into one `canopy-runner runtime`.
 
 FCACHE_MAGIC = bytes([67, 76, 70, 2, 0, 154, 183, 226])
@@ -679,7 +680,7 @@ def app_features(path: Path | None = None) -> dict | None:
 
 
 def describe_app_features(features: dict | None) -> str:
-    """One line for `canopy-runner runtime`: the two gates #1238 watches."""
+    """One line for `canopy-runner runtime`: the two gates the desktop backend watches."""
     if features is None:
         return "Claude desktop gates: unknown (no readable feature cache on this account)"
     when = time.strftime("%Y-%m-%d %H:%M", time.localtime(features["fetched_at"]))
@@ -692,7 +693,7 @@ def describe_app_features(features: dict | None) -> str:
     return f"Claude desktop gates (fetched {when}): start_session {start}; idle timeout {idle_txt}"
 
 
-# ── starting a session with no deep link (canopy-web#1238) ──────────────────
+# ── starting a session with no deep link ──────────────────
 #
 # OFF unless CANOPY_DESKTOP_START_SESSION=1. The idea: with the app's
 # `start_session` gate on, the runner asks the mod in a live session it already
@@ -700,7 +701,7 @@ def describe_app_features(features: dict | None) -> str:
 # session in the folder the runner prepared, in the background, with no claude://
 # link. The folder's `seeded` reads "start" until the new session's mod claims it.
 #
-# Tried live on jj (2026-10-21, Claude 2.42304): the app refuses it by design —
+# Tried live: the app refuses it by design —
 # "Start sessions only on the user's own words to you here; this turn runs an
 # automated event, another session's message, or the task another session gave
 # you." Only `initiation: "own_initiative"` is allowed, which shows a card for a
@@ -805,7 +806,7 @@ def open_session(sid: str) -> None:
 
     The app raises itself for every claude:// link (its open-url handler calls
     show() + focus(); `open -g` and NSWorkspace `activates = false` are both
-    overridden — canopy-web#1188, Focus round 2), so on an account a person is
+    overridden), so on an account a person is
     using this would steal their focus. The helper undoes it within ~60ms. Plain
     `open -g` stays as the fallback: a session that opens with a flicker beats one
     that never opens.
@@ -905,8 +906,8 @@ def stop(cfg, session_key: str, wait: float = STOP_WAIT_SECONDS) -> dict:
         return {"action": "idle", "reason": "the session's process is not running"}
     # Kill the running turn's shells FIRST, then abort. The other order leaves the
     # command backgrounded by the abort, and killing a BACKGROUND task makes Claude
-    # Code notify the model, which starts a new turn and runs the work again (found
-    # live, #1188). Killed while still a foreground tool call, the call just fails.
+    # Code notify the model, which starts a new turn and runs the work again.
+    # Killed while still a foreground tool call, the call just fails.
     killed = 0
     turn_started = _running_turn_started(channel)
     if turn_started is not None:
@@ -940,8 +941,7 @@ def _running_turn_started(channel: Path) -> int | None:
 # ── the shells a stopped turn leaves behind ─────────────────────────────────
 #
 # Aborting a turn does NOT kill the Bash command it was running: Claude Code
-# backgrounds it, and it runs on after the stop (a 120s sleep outlived a stop,
-# found live in #1188). Its own TaskStop tool, called by the mod with the
+# backgrounds it, and it runs on after the stop (a 120s sleep outlives a stop). Its own TaskStop tool, called by the mod with the
 # backgrounded task's id, reported success and left the process running — so the
 # runner ends it directly. Claude Code runs every Bash command as
 # `/bin/zsh -c source ~/.claude/shell-snapshots/…`, a descendant of the session's
@@ -1103,7 +1103,7 @@ def open_sessions(cfg) -> list[dict]:
     """Desktop sessions for the runner's session report, in the same row shape as
     `emdash.list_open_sessions`. Without this the report only ever named emdash
     tasks, so canopy-web read every desktop session as stale and listed it as
-    ARCHIVED within minutes of creating it (found live, #1188). A session whose
+    ARCHIVED within minutes of creating it. A session whose
     worktree is gone is left out — the report's absence is how canopy-web learns
     a session closed."""
     import datetime as dt
@@ -1257,7 +1257,7 @@ class TurnRun:
             logger.warning("status event failed for turn=%s", self.id, exc_info=True)
 
     def finish(self, ok: bool, note: str, sid: str = "") -> None:
-        # Capped, and a cut note says so and links the whole reply (#1955).
+        # Capped, and a cut note says so and links the whole reply.
         note = cap(note or "", turn_url(getattr(self.cfg, "base_url", ""), self.turn))
         if ok:
             self.client.finish(self.id, note, status="done", emdash_task_id=sid)
@@ -1337,8 +1337,8 @@ class TurnRun:
             sid = started or seed_session(self.cfg, wt, name,
                                           model=claude_model.for_turn(self.turn))
             # The turn's record starts AFTER the seed's "Reply with exactly: ready"
-            # exchange — shipping it made a turn's transcript the seed and nothing
-            # else (found live, #1188).
+            # exchange — shipping it would make a turn's transcript the seed and
+            # nothing else.
             seeded = transcript_path(sid)
             offset = seeded.stat().st_size if seeded else 0
             (channel / "task.txt").write_text(prompt, encoding="utf-8")

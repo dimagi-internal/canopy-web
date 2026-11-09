@@ -67,7 +67,7 @@ def post_reply(token: str, *, channel: str, thread_ts: str, text: str, persona: 
     """Post an agent's Markdown so Slack renders it as Markdown. Returns the last ts.
 
     A `markdown` block renders standard Markdown — tables, headings, nested
-    lists — which `mrkdwn` cannot: a table arrived as rows of pipes (2026-10-09).
+    lists — which `mrkdwn` cannot: a table arrives as rows of pipes.
     `text` still carries the `mrkdwn` form, which is what notifications and
     screen readers show. A block Slack refuses goes out the old way instead, so a
     rendering choice never costs the reply.
@@ -173,8 +173,7 @@ def _app_view_line(row, turn=None) -> str:
     """A tool result with an MCP Apps View, as Slack can carry it: the result's
     own text (a host MUST make it meaningful without the UI) and a link to the
     session in canopy, where the View renders. Never a button — Slack cannot
-    present the viewer's own grant, so the click that acts happens in canopy
-    (spec 2026-10-08 §9). Every other tool result stays out of the thread."""
+    present the viewer's own grant, so the click that acts happens in canopy. Every other tool result stays out of the thread."""
     from apps.mcp_apps_host import mcp_apps_views
 
     from .services import session_url
@@ -197,7 +196,7 @@ def relay(turn, rows) -> int:
     if not getattr(turn, "chat_session_id", None):
         return 0
     if sensitivity.is_sensitive(turn):
-        return 0  # never mirrored (spec 2026-10-22-sensitive-data-agents §4)
+        return 0  # never mirrored (the sensitive-data rule)
     dest = turn_destination(turn)
     if dest is None:
         return 0
@@ -468,7 +467,7 @@ def relay_after_turn(session, replies) -> int:
     someone may type straight into the session on its box (emdash); that is not
     a Turn, so nothing else would ever carry the reply. A conversation that
     lives in a Slack thread keeps the thread in step either way: the agent's
-    replies are posted, whoever asked and wherever (owner decision, 2026-10-05).
+    replies are posted, whoever asked and wherever.
     What was TYPED in emdash is not posted — `notify_elsewhere` says once that
     the conversation is also happening there.
 

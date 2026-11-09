@@ -35,8 +35,8 @@ describe('sessionCache', () => {
   })
 
   it('leaves out your own sends still waiting to be confirmed', () => {
-    // Nothing in a later socket can confirm them, so a restored copy said
-    // "Sending…" forever under the reply it got (2026-10-30).
+    // Nothing in a later socket can confirm them, so a restored copy would say
+    // "Sending…" forever under the reply it got.
     const waiting = [
       ...msgs,
       { id: 'local:1', turn_index: 2, role: 'user', plaintext: 'again', status: 'pending' },

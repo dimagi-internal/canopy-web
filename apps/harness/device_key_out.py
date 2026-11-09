@@ -60,11 +60,10 @@ def zk_agents_to_vouch_for(user, key: RunnerDeviceKey, *, assume_active: bool = 
     a zero-knowledge WORKSPACE vault waiting on it accepts their signature under
     (`workspace_vouch`).
 
-    A member cannot wrap the key (only its managers grant), but the spec has their
-    approval sign the machine (2026-10-22 vault-access-follows-canopy-access §1): a
-    keeper then wraps to it, with nobody else asked. Without this, a member who approved
-    their own box was told nothing and the agent's owner got a "no vault-key wrap" alert
-    (DIM-W154, 2026-10-29). The agents `zk_agents_waiting_on` lists are left out: their
+    A member cannot wrap the key (only its managers grant), but their
+    approval signs the machine: a keeper then wraps to it, with nobody else asked.
+    Without this, a member who approved their own box would be told nothing and the
+    agent's owner would get a "no vault-key wrap" alert. The agents `zk_agents_waiting_on` lists are left out: their
     manager grants directly."""
     if not key.ecdh_jkt or key.status == RunnerDeviceKey.REVOKED or not (assume_active or key.ecdh_ready):
         return []

@@ -1,6 +1,6 @@
 """First-party grants are per agent and only ever the person's act (HCP 4.1.4,
-4.1.6) — Jonathan, 2026-10-09: "each agent session / entry should obtain the grant
-explicitly or due to previous granting to this agent."
+4.1.6): each agent session / entry obtains the grant
+explicitly or due to previous granting to this agent.
 
 * Policy (`Person.hcp_*_available/default`) issues nothing; it bounds what a grant
   may carry and what a session offers.
@@ -306,8 +306,8 @@ def _point(user, grant, collection_id, confirm=None):
 
 
 def test_an_agent_in_another_division_reads_org_wide_but_not_personal(org):
-    """Jonathan, 2026-10-11: an agent serving me in another division "should have
-    my Dimagi-wide context" — derived from the agent's organisation, never ticked."""
+    """An agent serving a person in another division has
+    their Dimagi-wide context — derived from the agent's organisation, never ticked."""
     session = _session(org["lili"], org["hal"])
     turn = _turn(org["hal"], org["lili"], session, "t1")
     shown = _as(org["lili"]).get(f"/api/people/me/sessions/{session.pk}/agent-memory/").json()

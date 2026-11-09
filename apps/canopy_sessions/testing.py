@@ -1,13 +1,12 @@
 """Test-support helpers for chat authorship. Imported by tests only; nothing in
 the running app imports this module.
 
-`authorship.mark` was deleted 2026-09-27 (canopy no longer writes the marker —
-attribution moved server-side, see `authorship.py`'s module docstring). Rows
-recorded before that change, and any transcript backfilled from the days
-around it, still carry the marker, so `authorship.parse` keeps reading it
-forever. Tests that exercise that back-compat path need a way to build a
-realistic marked string without the production function that used to build
-one — this is that builder, kept here rather than copy-pasted per test module.
+canopy does not write the authorship marker (attribution is server-side, see
+`authorship.py`'s module docstring). Rows recorded earlier, and any transcript
+backfilled from that period, still carry the marker, so `authorship.parse` keeps
+reading it forever. Tests that exercise that back-compat path need a way to build
+a realistic marked string without a production function — this is that builder,
+kept here rather than copy-pasted per test module.
 """
 from __future__ import annotations
 
@@ -21,7 +20,7 @@ def _escape(name: str) -> str:
 
 def legacy_marker(text: str, *, name: str, turn_id, user_id: int | None = None,
                    contact_id: int | None = None) -> str:
-    """The exact string the old `authorship.mark` used to produce."""
+    """The exact marker string a legacy chat-send prompt carried."""
     if (user_id is None) == (contact_id is None):
         raise ValueError("exactly one of user_id / contact_id")
     who = f"user={int(user_id)}" if user_id is not None else f"contact={int(contact_id)}"

@@ -156,7 +156,7 @@ export function sourceText(source: string): string {
   if (source === "owner") return "being the agent's owner";
   if (source === "admin") return "being an admin of the agent";
   if (source === "system") return "being canopy itself";
-  // A turn recorded before 2026-11-06, when being in an admin's session could give the whole agent.
+  // A recorded turn may carry this source.
   if (source === "session") return "being in this session";
   if (source.startsWith("list:")) return "the agent's access list";
   return source;

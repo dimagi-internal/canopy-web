@@ -6,7 +6,7 @@ import { ApiError, ensureOk, unwrap } from './problem'
 export type PersonMe = components['schemas']['PersonMeOut']
 export type PersonFactDetail = components['schemas']['PersonFactDetailOut']
 
-/** Everything canopy holds about the signed-in user (fleet brain, canopy#804). */
+/** Everything canopy holds about the signed-in user. */
 export async function getMyPerson(): Promise<PersonMe> {
   const res = await apiV2.GET('/api/people/me/')
   const data = unwrap(res, 'Failed to load what agents know about you')

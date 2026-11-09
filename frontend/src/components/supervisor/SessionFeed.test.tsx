@@ -227,8 +227,8 @@ describe('SessionFeed', () => {
 
   it('shows no banner for idle sessions on a paused runner', async () => {
     // The server does not park them (no dialog, nothing queued): feed_status is ''.
-    // Four of these once read "4 sessions are waiting on …, which is paused"
-    // about a box its owner had paused on purpose (2026-10-12).
+    // They must not read "4 sessions are waiting on …, which is paused"
+    // about a box its owner paused on purpose.
     listSessions.mockResolvedValue([
       s('i1', { runner_online: false, runner_status: 'paused', runner_name: 'jj-mbp-cdp', feed_status: '' }),
       s('i2', { runner_online: false, runner_status: 'paused', runner_name: 'jj-mbp-cdp', feed_status: '' }),

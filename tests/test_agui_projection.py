@@ -139,7 +139,7 @@ def test_a_message_typed_into_emdash_arrives_as_a_user_chunk():
 def test_a_user_message_carries_its_author():
     """A transcript-sourced session's durable row carries no user beyond the
     runner's own login, so this metadata is canopy's only chance to say WHO
-    typed it (spec 2026-09-26)."""
+    typed it."""
     [event] = agui.project(
         {"event": "chat.user_message",
          "data": {"message_id": "u1", "plaintext": "hello",
@@ -293,7 +293,7 @@ def test_a_menu_with_no_observed_at_admits_it_does_not_know():
 def test_every_question_reaches_the_response_schema_not_only_the_first():
     """The TUI draws questions as TABS and will not submit until each has an
     answer, so a surface rendering only the first cannot complete the ask no
-    matter which button is pressed (eva, 2026-08-12)."""
+    matter which button is pressed."""
     [event] = agui.project({"event": "session.menu", "data": {"menu": MENU}},
                            thread_id="t1", run_id="r1")
 

@@ -16,8 +16,8 @@ it spends real tokens because a real agent does real work.
 **Why this is a script and not a pytest.** Everything under `tests/*_e2e.py` runs
 in-process with both ends faked — a captured screen in, a keystroke list out.
 That is the right shape for seam coverage, and it is exactly what passed while
-the live chain was broken: on 2026-08-01 several fixes shipped green and were
-still wrong in production. Every one was found by driving the real thing.
+the live chain was broken: fixes can ship green and still be wrong in production.
+Each is found by driving the real thing.
 
 So this drives the real thing: real canopy-web, real runner, real agent, real
 tokens. It spawns a session and spends an agent turn per step.
@@ -52,9 +52,8 @@ Exit code is 0 only if every selected step passed.
   rebuild_from_transcript reset drops those rows and re-derives them
   close_session           the session ends and stays ended
 
-`answer_from_the_web` is the point of the whole file. Every check run during the
-2026-08-01 incident stopped one clause short of it — a menu appeared, or a tap
-was accepted — and neither says the key reached the terminal. Only the agent
+`answer_from_the_web` is the point of the whole file. A weaker check stops one
+clause short of it — a menu appeared, or a tap was accepted — and neither says the key reached the terminal. Only the agent
 acting on the answer says that.
 
 Deliberately NOT here: a dialog answered at the KEYBOARD while the phone still
@@ -198,7 +197,7 @@ def create_session(ctx):
 def send_and_reply(ctx):
     """The core loop. A marker the agent must echo makes this exact — "some
     assistant text arrived" would pass on a preamble, which is how a broken
-    bridge looked healthy for eleven turns on 2026-07-26."""
+    bridge looks healthy for many turns."""
     marker = f"E2E-REPLY-{ctx['nonce']}"
     ctx["api"]("POST", f"/canopy-sessions/{ctx['session_id']}/send", {
         "text": f"Reply with exactly this token and nothing else: {marker}",

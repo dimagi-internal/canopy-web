@@ -1,13 +1,13 @@
-"""A runner ADMIN may route agents' work onto the box (owner decision 2026-10-05).
+"""A runner ADMIN may route agents' work onto the box.
 
-`PUT /api/agents/{slug}/runners` and `PUT /api/agents/{slug}/runner-rules` used
-to accept only runners the caller OWNED, so the fleet's conductor (an agent login
+`PUT /api/agents/{slug}/runners` and `PUT /api/agents/{slug}/runner-rules` do not
+accept only runners the caller OWNED, or the fleet's conductor (an agent login
 holding RunnerAdmin grants on every box, but pairing none of them) could not
 rebuild a routing it was asked to fix. The runner side asks "owns it, or
-administers it" of every runner a write ADDS (`_runners_for_routing`, #1144);
-the agent side is unchanged — editor tier to route, agent admin for
-`turn_mode: auto` — and the box must still be able to hold the agent
-(`runner_may_hold_agent`). This file pins the owner's decision end to end, for
+administers it" of every runner a write ADDS (`_runners_for_routing`);
+the agent side is editor tier to route, agent admin for
+`turn_mode: auto`; the box must still be able to hold the agent
+(`runner_may_hold_agent`). This file pins the rule end to end, for
 the default list as well as the rules, and that administering a box is still
 not BEING it.
 """
@@ -92,7 +92,7 @@ def test_runner_admin_rule_naming_an_unadministered_box_is_403(world):
 
 def test_an_auto_rule_still_needs_the_agents_admin(world):
     """Administering the BOX says nothing about the AGENT: `auto` is the agent
-    admins' to set (#1106), runner admin or not."""
+    admins' to set, runner admin or not."""
     world["client"].force_login(world["ada"])
     r = _put_rules(world["client"], "echo", world["cloud"], turn_mode="auto")
     assert r.status_code == 403, r.content

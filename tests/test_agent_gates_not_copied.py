@@ -1,11 +1,11 @@
 """No module reaches into `apps.agents.api` for a private helper.
 
 "Resolve an agent by slug, gate it by tenancy, else 404" lives in ONE place,
-`apps/agents/gates.py`. It used to be hand-copied into each api module (because
-"api modules must not depend on each other") while other modules imported the
+`apps/agents/gates.py`. Hand-copying it into each api module (because
+"api modules must not depend on each other") while other modules import the
 private `_get_agent_or_404` / `_agent_for_admin` / … from `apps.agents.api`
-anyway — and the copies drifted. A private name imported from another module is
-the first step of that again, so it fails here: ask `apps.agents.gates`, or make
+anyway makes the copies drift. A private name imported from another module is
+the first step of that, so it fails here: ask `apps.agents.gates`, or make
 the helper public where it belongs.
 
 Tests are exempt: a unit test may poke at a module's internals.

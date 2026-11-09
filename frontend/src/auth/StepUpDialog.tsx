@@ -10,7 +10,7 @@ import { defaultLabel, webauthnSupported } from './webauthn'
 const GESTURE_REFUSAL_MS = 1500
 
 /**
- * The prompt behind every passkey step-up (canopy-web#1538). Mounted once at
+ * The prompt behind every passkey step-up. Mounted once at
  * the app root; `stepUp.ts`'s middleware calls it when a request comes back
  * `step_up_required`, and retries that request when it resolves. A person with
  * a passkey goes straight to the browser's passkey sheet; this dialog appears

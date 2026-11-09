@@ -28,11 +28,9 @@ def _runner_frame(runner: Runner) -> dict:
 def supervisor_snapshot(user) -> dict:
     slugs = set(wsvc.user_workspace_slugs(user))
 
-    # Membership is the whole rule. This used to also admit `a.workspace_id is
-    # None` ("legacy unhomed agents"), which pushed an unhomed agent's slug and
-    # open-item count to EVERY connected supervisor socket regardless of tenant —
-    # the same allow-on-NULL leg the REST surfaces were fixed for. Unrepresentable
-    # since agents/0013 made Agent.workspace NOT NULL.
+    # Membership is the whole rule. There is no allow-on-NULL leg for unhomed agents
+    # (it would push their slug and open-item count to EVERY connected supervisor
+    # socket regardless of tenant); agents/0013 made Agent.workspace NOT NULL.
     agents = [a for a in agent_services.list_agents() if a.workspace_id in slugs]
     # Waiting = whatever needs a human on that agent, through the one predicate
     # (`agents.services.waiting_q`): open asks, plus live tasks parked on a person.

@@ -117,8 +117,8 @@ def _confined_note(turn: Turn, agent: str) -> str:
 
     A confined turn runs in its own session, apart from any the thread's owner is
     in. A reply that would have been confined in SOMEONE ELSE'S thread is moved to
-    a Slack thread of its own (`services._fork_confined`), so this line no longer
-    has to warn that it "does not reach the session above" — it only says why the
+    a Slack thread of its own (`services._fork_confined`), so this line does not
+    have to warn that it "does not reach the session above" — it only says why the
     agent is answering questions and not acting.
     """
     if turn.initiator_user_id:
@@ -154,7 +154,7 @@ def render(turn: Turn, *, reach=None, cloud=None) -> tuple[str, list | None]:
     button = None
     if st.state == ts.QUEUED_BEHIND and st.behind == "session":
         # Not "picking this up": the claim will not take it until the turn
-        # ahead ends, and a follow-up that says so looked lost (#1147).
+        # ahead ends, and a follow-up that says so looks lost.
         line = (f":hourglass: Queued — {agent} is still finishing the previous message in this "
                 f"thread on {_runner_names(st.runners)}, and this one runs next.")
     elif st.state == ts.QUEUED_BEHIND:
@@ -189,7 +189,7 @@ def render(turn: Turn, *, reach=None, cloud=None) -> tuple[str, list | None]:
     elif st.state == ts.UNROUTED and (no_chat := _routed_but_not_session_capable(turn)):
         # The commonest UNROUTED on a fresh laptop is not routing at all: the box IS
         # routed, it just never declared `sessions`, so no chat turn can reach it.
-        # Saying "no runner is set up" sent the first person to hit it (2026-10-02)
+        # Saying "no runner is set up" would send the person
         # chasing token identity and routes instead.
         line = (f":warning: Queued — {agent} is routed to {_runner_names(no_chat)}, but "
                 f"{'that runner is' if len(no_chat) == 1 else 'those runners are'} not set up "
@@ -402,10 +402,8 @@ def adoption(turn: Turn) -> tuple[str, str]:
     message's own words, kept above the status on every later edit.
 
     Read off the TURN, not passed in, because the line is posted from a signal
-    that holds nothing but the turn. It used to be passed in by the one caller
-    that had the request in hand, which was also why only that caller could
-    post first: any other path that won the race claimed the row without the
-    anchor and posted a second message beside it.
+    that holds nothing but the turn. Any path may therefore post first: none
+    claims the row without the anchor and posts a second message beside it.
     """
     ref = (turn.origin_ref or {}).get(ORIGIN_REF_KEY) or {}
     return str(ref.get("adopt_ts") or ""), str(ref.get("prefix") or "")
@@ -566,15 +564,12 @@ def on_status(turn: Turn) -> None:
     `status` row after that — so a Slack thread and a chat page learn about an
     ask at the same moment, from the same event.
 
-    Origin-agnostic on purpose. It used to post only for turns that did NOT come
-    from Slack, because a Slack turn was posted by an explicit call in
-    `services._send` that alone knew the anchor to adopt — and posting here first
-    would have lost it. That left the case this now covers: somebody continues a
-    Slack-born conversation from canopy-web or a phone while its runner is
-    OFFLINE. Nothing ever claims the turn, so no `status` row lands, so the
-    thread heard nothing at all — the exact silence this module exists to end.
-    Now the anchor rides on the turn (`adoption`), any path may post first, and
-    the row's unique constraint makes the rest no-ops.
+    Origin-agnostic on purpose, including a Slack-born conversation continued from
+    canopy-web or a phone while its runner is OFFLINE: nothing ever claims such a
+    turn, so no `status` row lands, and the thread would hear nothing at all —
+    the exact silence this module exists to end. The anchor rides on the turn
+    (`adoption`), any path may post first, and the row's unique constraint makes
+    the rest no-ops.
     """
     if SlackTurnPost.objects.filter(turn_id=turn.pk).exists():
         refresh(turn)

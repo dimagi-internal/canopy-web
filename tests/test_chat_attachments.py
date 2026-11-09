@@ -338,7 +338,7 @@ def test_a_runner_session_stamps_sent_at_without_a_message():
 
 
 def test_a_send_claims_only_the_senders_pending_attachments():
-    """Each person composes in their own box (spec 2026-09-26), so A's send must
+    """Each person composes in their own box, so A's send must
     not carry the attachment B has put in B's half-written message."""
     from apps.canopy_sessions import send
 

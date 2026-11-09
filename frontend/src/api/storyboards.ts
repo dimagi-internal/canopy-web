@@ -134,7 +134,7 @@ export async function getStoryboard(
   ws?: string | null,
 ): Promise<Storyboard> {
   // `ws`: the workspace the page's URL names — the API 404s a board that does
-  // not live there (canopy-web#1337).
+  // not live there.
   const res = await apiV2.GET('/api/storyboards/{slug}', {
     params: { path: { slug }, query: shareQuery(token, { ws }) },
   })

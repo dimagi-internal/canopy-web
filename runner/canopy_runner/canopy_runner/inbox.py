@@ -37,22 +37,15 @@ _ALARM_SUBJECT = re.compile(r'^\s*(ALARM|OK):\s*"([^"]+)"')
 #: subject is indistinguishable from a real recovery — same `OK: "<name>" in <region>`
 #: shape, same SNS sender. Only the body separates them.
 #:
-#: So every monitoring PR that adds an alerting alarm used to dispatch a full agent
-#: session on a non-event. Measured on hal twice in two days —
-#: `labs-jj-web-cpu-high-actionable` (2026-09-06, connect-labs#1463) and
-#: `labs-jj-web-worker-kill-rate-actionable` (2026-09-07, connect-labs#1537, emailed
-#: 8 minutes after that PR merged). See #688.
+#: So every monitoring change that adds an alerting alarm would otherwise dispatch a full
+#: agent session on a non-event.
 #:
-#: #688 keyed on `N/A -> OK` and recorded the reason: "a real recovery always names a
-#: concrete prior state (`ALARM -> OK`, `INSUFFICIENT_DATA -> OK`), while a creation has
-#: no prior state at all." The second half of that is false, and #712 is the counterexample:
-#: creation has TWO spellings, and which one you get is a timing accident. An alarm created
-#: while its evaluation window already has datapoints evaluates immediately and says
-#: `N/A -> OK`; one created a few minutes ahead of its data lands in `INSUFFICIENT_DATA`
-#: first and says `INSUFFICIENT_DATA -> OK` for the very same non-event.
-#: (`labs-jj-rds-free-storage-low`, created 2026-09-09 00:15:09Z by a CloudFormation change
-#: set, emailed `INSUFFICIENT_DATA -> OK` at 00:27:33Z with 83.7 GB free against a 20 GB
-#: threshold. It had never been in ALARM. A full hal turn was dispatched on it.)
+#: Keying on `N/A -> OK` alone is not enough: creation has TWO spellings, and which one
+#: you get is a timing accident. An alarm created while its evaluation window already has
+#: datapoints evaluates immediately and says `N/A -> OK`; one created a few minutes ahead
+#: of its data lands in `INSUFFICIENT_DATA` first and says `INSUFFICIENT_DATA -> OK` for
+#: the very same non-event (an alarm that was never in ALARM, with plenty of headroom
+#: against its threshold).
 #:
 #: Nothing in the body distinguishes that from a genuine metric-went-dark-and-came-back —
 #: both carry a threshold-crossed reason. So do not try to detect *creation*. Detect what
@@ -61,7 +54,7 @@ _ALARM_SUBJECT = re.compile(r'^\s*(ALARM|OK):\s*"([^"]+)"')
 #:
 #: The apparent counterexample — ALARM -> INSUFFICIENT_DATA -> OK, where a real incident's
 #: recovery reports `INSUFFICIENT_DATA -> OK` — never reaches this check: `_alarm_incident_is_owned`
-#: (#670) coalesces that `OK:` into its `ALARM:` turn first. And if a runner restart lost that
+#: coalesces that `OK:` into its `ALARM:` turn first. And if a runner restart lost that
 #: memory, the `ALARM:` thread is still unread and enqueues on its own, which is the right owner.
 _OK_PRIOR_STATE = re.compile(r"^\s*-?\s*State Change:\s*(\S+)\s*->\s*OK\s*$",
                              re.MULTILINE)
@@ -98,7 +91,7 @@ def _alarm_incident_is_owned(box: str, key: tuple[str, str], alarming: set[str],
     state, name = key
     last = _alarm_enqueued.get((box, name))
     if state == "OK":
-        # #670's rule (its `ALARM:` is unread in this same batch) OR the same alarm fired
+        # The `ALARM:` is unread in this same batch OR the same alarm fired
         # recently enough that this is plainly its recovery.
         return name in alarming or (last is not None and now - last < OK_PAIRING_WINDOW_S)
     # A repeat `ALARM:` inside the window is the same incident re-notifying. The FIRST one
@@ -107,7 +100,7 @@ def _alarm_incident_is_owned(box: str, key: tuple[str, str], alarming: set[str],
 
 
 #: A no-reply sender address. Kept for `is_automated`, which predates the table; the
-#: decision in `check_inbox` is `inbox_rules.classify`'s (canopy#679).
+#: decision in `check_inbox` is `inbox_rules.classify`'s.
 _NOREPLY_ADDRESS = re.compile(
     r"(?:^|[<\s\"])(?:noreply|no-reply|donotreply|do-not-reply|mailer-daemon|postmaster)@",
     re.I)
@@ -119,7 +112,7 @@ def is_automated(headers: dict) -> bool:
     RFC 3834 `Auto-Submitted` (anything but `no`), `Precedence: bulk|list|junk|auto_reply`,
     `X-Autoreply`, or a no-reply `From:`. These are the signals canopy's own
     `agent_email._automation_of` reads; the runner is the layer that can act on them before a
-    session exists, where a Gmail filter cannot match headers at all (canopy#653).
+    session exists, where a Gmail filter cannot match headers at all.
     """
     auto_submitted = (headers.get("auto-submitted") or "").strip().lower()
     precedence = (headers.get("precedence") or "").strip().lower()
@@ -182,7 +175,7 @@ class ThreadFacts(NamedTuple):
     #: The newest message's Gmail id: the message this turn is FOR. Goes into the
     #: turn's `origin_ref`, and from there into the caller envelope.
     message_id: str | None = None
-    #: The inbound-email table's row for this thread (canopy#679, `inbox_rules`): the
+    #: The inbound-email table's row for this thread (`inbox_rules`): the
     #: newest message's, unless an earlier UNREAD inbound message in the same thread would
     #: wake — then that one's, so a trailing auto-reply can never archive a person's
     #: unanswered mail. `None` is "unknown" — fail open, enqueue.
@@ -222,10 +215,9 @@ def thread_facts(mailbox: str, gog_client: str, thread_id: str, *,
     """ONE `gog gmail thread get`, every fact the enqueue decision needs.
 
     This subprocess is the expensive call in this module, and it already returns the
-    whole message — headers AND body. It used to be spent on the `From` header alone
-    and the rest discarded, which is why the alarm-creation check in #688 was believed
-    to cost a body read it does not: the read is already paid for, only the parse is
-    new. Keep it that way — anything else the hot path needs from a thread belongs
+    whole message — headers AND body. The alarm-creation check reads the body from this
+    same fetch, so it costs no extra read: the read is already paid for, only the parse
+    is new. Keep it that way — anything else the hot path needs from a thread belongs
     here, not in a second fetch.
     """
     try:
@@ -292,8 +284,8 @@ def thread_verdict(msgs: list[dict], mailbox: str) -> "inbox_rules.Verdict":
 def archive_thread(mailbox: str, gog_client: str, thread_id: str, label: str, *,
                    runner=subprocess.run) -> str | None:
     """Archive, mark read and label a thread with its table row. Returns ``None`` on
-    success, else the error — the caller then falls back to skipping it unread, which is
-    the pre-#679 behaviour, so a missing label or a gog failure costs a stale unread
+    success, else the error — the caller then falls back to skipping it unread, so a
+    missing label or a gog failure costs a stale unread
     thread, never a lost message."""
     try:
         r = runner(["gog", "gmail", "thread", "modify", thread_id, "--remove=INBOX,UNREAD",
@@ -321,9 +313,9 @@ def newest_sender(mailbox: str, gog_client: str, thread_id: str, *,
 #: redundant round of work, never a duplicate turn.
 #:
 #: It exists purely to stop paying for what we already know. `newest_sender()` is
-#: a `gog gmail thread get` SUBPROCESS, and it used to run for every unread thread
-#: on every poll — before the idempotency check — then POST an enqueue the server
-#: deduped anyway. With four unread threads sitting in two mailboxes that was
+#: a `gog gmail thread get` SUBPROCESS; without this it would run for every unread
+#: thread on every poll — before the idempotency check — then POST an enqueue the
+#: server dedupes anyway. With four unread threads sitting in two mailboxes that is
 #: eight subprocess round-trips every five minutes, forever, all concluding
 #: "already tracked".
 _seen_state: dict[tuple[str, str], int] = {}
@@ -336,10 +328,9 @@ _seen_state: dict[tuple[str, str], int] = {}
 #: subject they all land on ONE thread with a bumped `messageCount` — which is a new
 #: idempotency key, so each one enqueued another turn.
 #:
-#: Measured on hal, 2026-09-07: `labs-jj-web-cpu-high-actionable` transitioned to ALARM at
-#: 12:23:56, 12:29:21 and 12:34:21 UTC for a single incident, dispatching THREE turns onto
-#: one thread. The third had nothing left to find — the first had already diagnosed it,
-#: shipped the fix and closed the storm out.
+#: Without the window, one incident that flips to ALARM three times dispatches THREE turns
+#: onto one thread, and the third has nothing left to find: the first already diagnosed
+#: it, shipped the fix and closed the storm out.
 #:
 #: 15 minutes covers the observed re-fire spacing (~5 min) with margin. It is deliberately
 #: NOT open-ended: a genuinely sustained incident re-notifies after the window, which is
@@ -353,10 +344,10 @@ ALARM_REPEAT_WINDOW_S = 15 * 60
 #: explicit that the `OK:` turn's whole job is to discover it should stand down. So the
 #: only question is "did this alarm recently fire", and a generous answer is the safe one.
 #:
-#: #670 answered it with "is the `ALARM:` in THIS batch", which holds only while both are
-#: unread in the same poll. On 2026-09-07 the `OK:` landed 24 minutes after its `ALARM:`,
-#: by which time the `ALARM:` thread had been read and closed out — so the batch was empty
-#: of it, the `OK:` enqueued a turn, and that session spent 65 events reading the turn
+#: "Is the `ALARM:` in THIS batch" holds only while both are unread in the same poll. An
+#: `OK:` can land well after its `ALARM:` (24 minutes has happened), by which time the
+#: `ALARM:` thread has been read and closed out — the batch is empty of it, the `OK:`
+#: would enqueue a turn, and that session would spend its time reading the turn
 #: procedure before stalling with nothing to do.
 OK_PAIRING_WINDOW_S = 2 * 60 * 60
 
@@ -365,26 +356,21 @@ OK_PAIRING_WINDOW_S = 2 * 60 * 60
 #: window and then genuinely re-notifies, rather than being suppressed forever by its own
 #: repeats.
 #:
-#: PERSISTED, unlike `_seen_state` — and the difference is the whole point (#714). This
-#: used to say "process-local for the same reason as `_seen_state`: losing it on restart
-#: costs one redundant turn." Half of that inheritance was wrong. `_seen_state` is cheap
-#: to lose because *the server is the authority on idempotency* — that is its docstring's
-#: actual argument, and it holds. But the enqueue key is `email-<agent>-<thread>-<count>`:
-#: **nothing anywhere is keyed on the alarm NAME**, so when this dict is lost, nothing
-#: else in the system knows the incident already has an owner.
+#: PERSISTED, unlike `_seen_state` — and the difference is the whole point.
+#: `_seen_state` is cheap to lose because *the server is the authority on idempotency*.
+#: But the enqueue key is `email-<agent>-<thread>-<count>`: **nothing anywhere is keyed
+#: on the alarm NAME**, so when this dict is lost, nothing else in the system knows the
+#: incident already has an owner.
 #:
-#: And "one redundant turn" assumed restarts are rare and random. The runner SELF-UPDATES,
-#: so they are routine and scheduled, and the blast radius is every alarm storm in flight
-#: at that moment. Measured 2026-09-09: `labs-jj-web-cpu-high-actionable`'s `OK:` thread
-#: had been correctly suppressed for 50 minutes (its `ALARM:` owner had diagnosed the
-#: alarm, merged a fix and marked the storm read twice). An upgrade restart landed at
-#: 00:52:50Z; **23 seconds later** the first poll enqueued that thread as a fresh hal
-#: session whose entire job was to rediscover it should stand down — exactly the outcome
-#: #670 exists to prevent. Its `messageCount` had bumped after the owner's last sweep, so
-#: the server key was novel and server-side dedup could not help either.
+#: And losing it is not a rare, random cost. The runner SELF-UPDATES, so restarts are
+#: routine and scheduled, and the blast radius is every alarm storm in flight at that
+#: moment: right after a restart the first poll would enqueue a suppressed `OK:` thread
+#: as a fresh session whose entire job is to rediscover it should stand down, and when
+#: its `messageCount` has bumped after the owner's last sweep the server key is novel,
+#: so server-side dedup cannot help either.
 #:
 #: Loading stays fail-OPEN in every direction: a missing, unreadable, malformed or
-#: partially-corrupt file yields an empty dict, i.e. precisely today's behaviour. Entries
+#: partially-corrupt file yields an empty dict, i.e. the behaviour without persistence. Entries
 #: older than the longest window are dropped on load, so the file is self-limiting and a
 #: long downtime cannot resurrect stale ownership.
 _alarm_enqueued: dict[tuple[str, str], float] = {}
@@ -449,10 +435,10 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
     "skipped": [ids whose newest message is the agent's own reply],
     "coalesced": [SNS alarm ids folded into an existing incident's turn — an `OK:`
     recovery, or an `ALARM:` re-firing inside ALARM_REPEAT_WINDOW_S],
-    "archived": [ids whose table row (canopy#679 `inbox_rules`) is an archive row, now
+    "archived": [ids whose table row (`inbox_rules`) is an archive row, now
     archived + marked read + labelled with it — no person is waiting, so no session],
     "automated": [archive-row ids whose labelled archive FAILED, left unread and skipped —
-    the pre-#679 behaviour, and the fallback; see "archive_errors"],
+    the fallback; see "archive_errors"],
     "rows": {thread id: table row, for every thread this call classified},
     "archive_errors": {thread id: the gog error behind an "automated" fallback},
     "ok_without_alarm": [SNS `OK:` ids whose body recovers from something other than
@@ -476,9 +462,9 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
     that needs the body, so a `sender_of`-injected call behaves exactly as before.
 
     `alarm_state_path` is where the alarm incident-ownership record (`_alarm_enqueued`)
-    is persisted so an upgrade restart cannot re-dispatch an already-owned `OK:` (#714).
+    is persisted so an upgrade restart cannot re-dispatch an already-owned `OK:`.
     Read once per process and rewritten only when an alarm turn is actually enqueued.
-    Omit it and the record stays purely in memory — exactly the pre-#714 behaviour."""
+    Omit it and the record stays purely in memory."""
     global _alarm_state_path, _alarm_state_loaded
     if alarm_state_path is not None and not _alarm_state_loaded:
         # Once per process: the file is the previous process's memory, not a cache to be
@@ -505,13 +491,12 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
     archive_errors: dict[str, str] = {}
     box = mailbox.lower()
     # ONE INCIDENT, ONE TURN. CloudWatch emits `ALARM:` and `OK:` as two Gmail threads
-    # (the subjects differ), so one alarm transition used to enqueue two turns — and the
+    # (the subjects differ), so without coalescing one alarm transition enqueues two turns — and the
     # `OK:` half can never produce a finding: its `ALARM:` already owns the incident, so
     # the second session's whole job is to discover it should stand down.
     #
-    # Measured on hal, 2026-08-31 -> 09-05: 10 sessions for 5 incidents, the `OK:` halves
-    # burning 3,186 of 7,232 transcript events to conclude "not mine" (one of them 1,362
-    # events, having taken over from a stalled owner and died on a usage limit).
+    # Without it, the `OK:` halves burn a large share of all transcript events to
+    # conclude "not mine".
     #
     # So an `OK:` whose alarm ALSO has an `ALARM:` thread in this batch is coalesced into
     # that turn. Deterministic and free — both threads are already in hand, so this costs
@@ -532,9 +517,9 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
         # Coalesce BEFORE `sender_of`, which is a `gog gmail thread get` subprocess —
         # the same cost-ordering reason the idempotency check sits above.
         #
-        # Two ways one incident still reached us as several turns after #670, both
-        # measured on hal 2026-09-07 and both fixed by remembering WHEN we last enqueued
-        # for an alarm name rather than only looking inside the current batch:
+        # Two ways one incident can still reach us as several turns; both are closed by
+        # remembering WHEN we last enqueued for an alarm name rather than only looking
+        # inside the current batch:
         #
         #   * a re-fired `ALARM:` — the flip lands on the SAME Gmail thread with a bumped
         #     messageCount, which is a new idempotency key, so it enqueued again;
@@ -559,7 +544,7 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
         # the body, and it is deliberately placed AFTER the two cheap guards above and on
         # the SAME fetch as the sender — so it costs no subprocess this path was not
         # already paying for (see `thread_facts`). A real recovery says `ALARM -> OK` and
-        # still fires; an unreadable body says None and still fires. #688, #712.
+        # still fires; an unreadable body says None and still fires.
         if key and key[0] == "OK" and facts.recovers_from_alarm is False:
             ok_without_alarm.append(tid)
             _seen_state[(box, tid)] = count
@@ -571,11 +556,9 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
             # `thread get` on every poll for the next fourteen days.
             _seen_state[(box, tid)] = count
             continue
-        # The inbound-email table (canopy#679): one row per message, wake or archive. An
+        # The inbound-email table: one row per message, wake or archive. An
         # archive row means nobody is waiting — a receipt, a bounce, an auto-reply, a Doc
-        # FYI — and every such session concluded exactly that: 14 of them on one thread of
-        # SES event receipts (ace@ 1a0d0a1632cfde4f, 2026-09-23/24), a full turn on a
-        # colleague's `Auto-Submitted: auto-replied` OOO (canopy#653).
+        # FYI — and a session on such a message can only conclude exactly that.
         #
         # ARCHIVED, not merely skipped: a skipped thread stays unread in the inbox, so it
         # keeps taking one of the `max_threads` slots in `in:inbox is:unread newer_than:14d`

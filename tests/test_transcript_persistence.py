@@ -103,11 +103,10 @@ def test_stream_post_persists_ordinal_rows_and_fans_out_both_roles(monkeypatch):
     ]).json()
     assert body == {"count": 2}
     assert _rows(s) == [(5, "user", "q1"), (7, "assistant", "a1")]
-    # BOTH roles fan out now. User events used to be withheld on the grounds
-    # that "the frontend already echoed them optimistically" — true for text
-    # typed in the web, FALSE for text typed straight into emdash, which no web
-    # client ever saw. That assumption silently dropped your own words from the
-    # phone until a reload (observed 2026-07-27).
+    # BOTH roles fan out. Withholding user events on the grounds that "the frontend
+    # already echoed them optimistically" is true for text typed in the web, FALSE
+    # for text typed straight into emdash, which no web client ever saw; it would
+    # silently drop your own words from the phone until a reload.
     kinds = [m["event"]["kind"] for _g, m in published]
     assert kinds == ["user", "assistant"]
 
@@ -194,14 +193,14 @@ def test_write_backfill_without_ordinals_keeps_the_write_once_contract():
 
 
 def test_request_backfill_always_asks_a_reachable_runner(monkeypatch):
-    """The `turn_index == 0` short-circuit is gone; it could not fire.
+    """There is no `turn_index == 0` short-circuit; it could not fire.
 
     Under the composite ordinal scheme index 0 means record 0 / block 0, and
     record 0 of a Claude transcript is a summary or a noise-filtered harness
     record — both DROPPED rather than renumbered, so no real session has a row
-    there. Verified on labs (2026-07-31): after a COMPLETE backfill, session
-    cf2d5089's oldest index was 448 and a second click still answered
-    `requested`. The branch only ever looked like an optimization.
+    there. After a COMPLETE backfill a session's oldest index can be 448 and a
+    second click must still answer `requested`. The branch only looks like an
+    optimization.
 
     Asking every time is cheap where it counts — the write is ordinal-keyed, so
     re-shipping rows we hold is one existence probe and zero inserts — and the
@@ -429,7 +428,7 @@ def test_a_nul_byte_cannot_take_down_the_whole_batch():
     """Postgres rejects NUL in text/jsonb. The batch is ONE transaction, so an
     unscrubbed byte from a binary tool result (a Read of a compressed file) 500s
     every other row with it — and since the runner retries forever, that
-    session's history could never rebuild. Labs 2026-07-26: one row in 683.
+    session's history could never rebuild.
 
     Scrubbed server-side because the runner's own copy only covers runners that
     have been updated, and this is the single durable write path."""
@@ -452,8 +451,8 @@ def test_a_nul_byte_cannot_take_down_the_whole_batch():
 def test_content_does_not_duplicate_plaintext():
     """The wire payload and the stored row share one shape, but `text` is the
     one key storage doesn't need — plaintext is its own column and nothing on
-    the render path reads content["text"]. Keeping it cost 36% of all stored
-    transcript bytes (20,585 rows measured, 2026-07-26)."""
+    the render path reads content["text"]. Keeping it costs about a third of all stored
+    transcript bytes."""
     _u, _ws, _r, s, _c = _ctx()
     transcript_ingest.persist_transcript_rows(s, [
         {"index": 0, "role": "assistant", "text": "hello", "content": {"text": "hello"}},
@@ -484,11 +483,10 @@ def test_a_text_that_differs_from_plaintext_is_kept():
 def test_persist_rows_costs_a_bounded_number_of_queries():
     """The write must not be O(rows).
 
-    It was: one `get_or_create` per row inside a single transaction. Measured on
-    labs (2026-07-31), a 846-row backfill took ~14.6s end to end while the
-    runner's own share — reading and parsing a 6.5 MB transcript — was 29 ms.
-    The rest was 846 sequential round trips to RDS, and every path funnels
-    through here (live stream, backfill, reset), so the cost is paid constantly.
+    One `get_or_create` per row inside a single transaction would make an
+    846-row backfill cost 846 sequential round trips to the database, and every
+    path funnels through here (live stream, backfill, reset), so the cost would
+    be paid constantly.
 
     Bounded, not exact: the ordinal-scheme check, the existing-index probe, the
     insert batches and the session lock are all legitimate. O(n) is not.

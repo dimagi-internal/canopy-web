@@ -1,10 +1,8 @@
 """`--purge-secrets` must actually purge every secret this stack owns.
 
-Found by reading before destroying, ahead of a deliberate recycle: `down.sh
---purge-secrets` deleted five of the six secrets under `canopy/cloud-runner/`
-and silently left `gog-keyring-password` behind — a secret `secrets.sh` manages,
-`runner.cfn.yaml` grants the instance role read on, and which was live in
-Secrets Manager (last changed 2026-07-26).
+A purge that left behind a secret `secrets.sh` manages (say `gog-keyring-password`,
+which `runner.cfn.yaml` grants the instance role read on) while deleting the
+rest under `canopy/cloud-runner/` would be silent.
 
 That is worse than a leak. The whole point of a purge-then-rebuild is to prove
 the box can be reconstructed from nothing; a surviving secret means the rebuild
@@ -28,10 +26,10 @@ PREFIX = "canopy/cloud-runner/"
 # satisfy itself.
 SOURCES = ["secrets.sh", "up.sh", "wire.sh", "runner.cfn.yaml", "_lib.sh"]
 
-#: The single-value seed format stacks created before 2026-10-04 still read
-#: (canopy-fetch-env baked into their UserData). Nothing current declares them —
-#: up.sh stopped writing them when cloud_runner.py outgrew Secrets Manager's 64 KB
-#: value cap — but a purge must still remove them, or it leaves state behind.
+#: The single-value seed format that older stacks still read (canopy-fetch-env
+#: baked into their UserData). Nothing current declares them — up.sh does not write
+#: them because cloud_runner.py outgrew Secrets Manager's 64 KB value cap — but a
+#: purge must still remove them, or it leaves state behind.
 LEGACY = {"runner-code", "runner-code-sha"}
 
 #: A name ending in "-" is a FAMILY (e.g. the seed's "runner-seed-part-<i>"),

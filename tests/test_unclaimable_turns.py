@@ -151,7 +151,7 @@ def test_a_genuinely_undeclared_target_still_reports_CONFIG():
     assert rows[0]["reason"] == "no runner declares the repo 'ace'"
 
 
-# ── Directed routing (RunnerAssignment) coverage — spec 2026-07-24 ─────────────
+# ── Directed routing (RunnerAssignment) coverage ─────────────
 # The detector shares runner_target_q with claim_next_turn, which now routes
 # agent turns by RunnerAssignment, NOT capabilities.agents. These pin the two
 # sides of that: declared-but-unassigned is a CONFIG problem (claiming would

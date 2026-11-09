@@ -211,7 +211,7 @@ def test_two_tenants_systems_sharing_a_name_but_not_keys_are_two_people():
 
 
 def test_the_same_jwks_url_is_the_same_signer_across_tenants():
-    """The usual shape since #929: each tenant pastes the host's JWKS URL."""
+    """The usual shape: each tenant pastes the host's JWKS URL."""
     owner_a, _wa, _ca = _tenant("alpha", "a@dimagi.com")
     owner_b, _wb, _cb = _tenant("beta", "b@dimagi.com")
     in_a = AppCredential.create_credential(name="ace-web", created_by=owner_a, workspace="alpha")

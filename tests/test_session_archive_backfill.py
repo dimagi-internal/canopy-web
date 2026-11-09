@@ -1,5 +1,5 @@
-"""The 0009 backfill: today's labs list is entirely rows nobody can retire, because
-until now nothing could. Apply the new rule once so the list starts clean."""
+"""The 0009 backfill: rows nobody can retire pile up in the list. Apply the retire rule
+once so the list starts clean."""
 import datetime as dt
 
 import pytest

@@ -6,12 +6,12 @@ drives a GUI over CDP, which is wrong for a headless box. This pairs a cloud run
 claims harness Turns, runs `claude -p` (stream-json) on the turn's prompt, streams
 the assistant/tool output into the TurnEvent ledger, and finishes the turn.
 
-SESSION-CAPABLE, OPT-IN (RC/run-convergence PR2): this runner CAN declare
+SESSION-CAPABLE, OPT-IN: this runner CAN declare
 `capabilities.sessions` (RUNNER_SESSIONS=1; default OFF) to become eligible to claim
 chat/session-targeted Turns — see Runner.session_capable() in apps/harness/models.py.
-It is off by default because this runner has no durable-record path for a chat
-session yet (see the RUNNER_SESSIONS comment at its declaration for the full trace);
-turning it on today means a real conversation's history can be silently lost. Every
+It is off by default for a runner started by hand (runner.cfn.yaml turns it on);
+see the RUNNER_SESSIONS comment at its declaration for the durable-record path a
+session turn depends on. Every
 raw stream-json line the CLI emits is ALSO forwarded verbatim to
 POST /turns/{id}/transcript (batched by bytes; see runner/ec2/README.md), in
 addition to the reduced TurnEvents. And a session turn's CLI session id is captured
@@ -42,7 +42,7 @@ Config comes from the environment (see runner/ec2/README.md):
                      (default: /tmp/canopy-runner-work)
   AGENT_ROOT         where bootstrapped agent clones live (default: /opt/agents);
                      an agent turn with a clone here runs in its OWN worktree of
-                     it, WORK_DIR/agents/<slug>/<turn> (#1141)
+                     it, WORK_DIR/agents/<slug>/<turn>
   RUNNER_SRC_DIR    the runner's OWN canopy-web clone (default:
                      /opt/canopy-runner/src) — the in-repo packages it imports and
                      the bootstrap_agents.sh it runs come from here, never from a
@@ -55,7 +55,7 @@ Config comes from the environment (see runner/ec2/README.md):
                      (default: /opt/canopy-runner) — `build-info.json` says what
                      code is installed, `in-flight` says whether now is a safe
                      moment to replace it. Both are written here and read by
-                     runner/ec2/update_runner.sh; see spec 2026-07-30.
+                     runner/ec2/update_runner.sh.
 `claude` authenticates from CLAUDE_CODE_OAUTH_TOKEN (a dedicated setup-token from
 Secrets Manager, staged into the service env by cloud-init). AGENT_SLUGS /
 AGENT_REPO_ORG / GITHUB_TOKEN are consumed by
@@ -156,30 +156,28 @@ if _csv("RUNNER_AGENTS"):
 # This box can finish an agent's Google sign-in ("Connect Google mailbox") itself, so
 # canopy-web never holds the token (`_drain_google_mint`).
 RUNNER_CAPS["google_mint"] = True
-# The durable-record precondition below is now SATISFIED, and verified end to end
-# on cloud-ec2-1 (2026-07-28): a session turn ships its transcript rows via
+# The durable-record path: a session turn ships its transcript rows via
 # POST /runners/{id}/session-stream -> services.persist_transcript_rows
 # (`_ship_transcript_rows`), lands ordinal-keyed Message rows, and resumes its
 # CLI session on the next turn. RUNNER_SESSIONS therefore defaults ON in
 # runner.cfn.yaml; this env default stays OFF so a runner started by hand,
 # outside the template, opts in deliberately.
 #
-# It took longer to be true than it looked, and both causes were invisible from
-# here — worth recording, because the original note blamed the wrong layer:
-#   * the WS claim frame (apps/realtime/consumers._serialize_turn) omitted
-#     origin_ref, so `_chat_session_id` came back "" and BOTH the stable
-#     per-session cwd and `_ship_transcript_rows` silently no-opped;
-#   * `canopy_transcript` was installed by a method Ubuntu 24.04 refuses
-#     (PEP 668 + no pip), so `_transcript_core()` returned None regardless.
-# The original risk was real: a runner that streams a perfect-looking live reply
-# and then loses the conversation is worse than one that never claims. That was
-# the OBSERVED behaviour here until both were fixed.
+# That path depends on two things, and either failing silently loses the
+# conversation:
+#   * the WS claim frame (apps/realtime/consumers._serialize_turn) must carry
+#     origin_ref, or `_chat_session_id` comes back "" and BOTH the stable
+#     per-session cwd and `_ship_transcript_rows` silently no-op;
+#   * `canopy_transcript` must be installed by a method Ubuntu 24.04 accepts
+#     (PEP 668 + no pip), or `_transcript_core()` returns None regardless.
+# A runner that streams a perfect-looking live reply and then loses the
+# conversation is worse than one that never claims.
 #
-# /runners/{id}/streams + /backfills are implemented too, as of 2026-07-28
+# /runners/{id}/streams + /backfills are implemented too
 # (_sync_session_streams / _drain_backfills), so an attached viewer gets a live
 # transcript tail rather than the reduced TurnEvent stream, and a
-# server-requested backfill rebuilds history. That closes the last gap against
-# runner/canopy_runner for session work.
+# server-requested backfill rebuilds history, matching runner/canopy_runner for
+# session work.
 RUNNER_SESSIONS = _bool_env("RUNNER_SESSIONS", False)
 if RUNNER_SESSIONS:
     RUNNER_CAPS["sessions"] = True
@@ -207,9 +205,9 @@ CANOPY_WEB_REPO_DIR = os.environ.get("CANOPY_WEB_REPO_DIR", "/opt/canopy-web")
 CANOPY_WEB_REPO_URL = os.environ.get("CANOPY_WEB_REPO_URL", "https://github.com/dimagi-internal/canopy-web.git")
 #: The runner's own clone, kept apart from CANOPY_WEB_REPO_DIR on purpose. That
 #: one is reachable by agent turns (it is where anything that wants a canopy-web
-#: checkout finds one), and on 2026-09-22 a turn left it on a local branch: the
-#: next start's `git pull --ff-only` failed, the packages below were never put on
-#: sys.path, and the box ran six hours with no transcripts, no inbox and no ACP
+#: checkout finds one), and a turn can leave it on a local branch: the
+#: next start's `git pull --ff-only` would fail, the packages below would never be put on
+#: sys.path, and the box would run with no transcripts, no inbox and no ACP
 #: while reporting ready. Nothing but this process writes here, and it is reset
 #: to origin/main on every start rather than merged into.
 RUNNER_SRC_DIR = os.environ.get("RUNNER_SRC_DIR", "/opt/canopy-runner/src")
@@ -227,11 +225,11 @@ WS_POLL_TIMEOUT = float(os.environ.get("WS_POLL_TIMEOUT", "3"))
 # POLL_SECONDS (the turn-claim clock): at 15s a watcher sees a streaming reply
 # arrive in 15-second lumps. Costs one small GET /streams per tick when idle.
 STREAM_POLL_SECONDS = float(os.environ.get("STREAM_POLL_SECONDS", "3"))
-# Idle back-off for that clock (#647): once no transcript has grown for
+# Idle back-off for that clock: once no transcript has grown for
 # STREAM_IDLE_AFTER_SECONDS, tail every STREAM_IDLE_POLL_SECONDS instead. A
 # viewer attaching rings the `stream` doorbell, which syncs at once whatever the
 # clock says, and the first growth snaps the clock back to STREAM_POLL_SECONDS.
-# At 3s an idle box asked /streams 1,200 times an hour for nothing.
+# At 3s an idle box would ask /streams 1,200 times an hour for nothing.
 STREAM_IDLE_AFTER_SECONDS = float(os.environ.get("STREAM_IDLE_AFTER_SECONDS", "60"))
 STREAM_IDLE_POLL_SECONDS = float(os.environ.get("STREAM_IDLE_POLL_SECONDS", "15"))
 # How often the lease-renewal thread heartbeats WHILE a turn is executing (both
@@ -250,7 +248,7 @@ SETUP_HOLD_FILE = STATE_FILE.with_name(".canopy-setup-hold")
 SETUP_HOLD_MAX_SECONDS = int(os.environ.get("SETUP_HOLD_MAX_SECONDS", "600"))
 
 # Where this runner's bytes live, and the two files the auto-updater
-# (runner/ec2/update_runner.sh, spec 2026-07-30) shares with it:
+# (runner/ec2/update_runner.sh) shares with it:
 #   build-info.json — what code is installed, stamped by whoever installed it.
 #   in-flight       — how many turns this box is carrying right now.
 #   runner-token.json — this box's current runner token (0600), so the updater
@@ -291,9 +289,8 @@ def _log(msg: str) -> None:
 # (`POST /api/runner-sessions/`, canopy-web apps/harness/api_runner_sessions.py).
 # It lasts an hour and opens the runner protocol only, so no long-lived secret
 # has to live on the box. CANOPY_TOKEN (a person's PAT) is only the fallback for
-# a box whose key is not approved yet — and the reason this exists: on
-# 2026-10-17 that PAT was revoked in a token cleanup and cloud-ec2-2 lost every
-# turn it claimed.
+# a box whose key is not approved yet — and the reason this exists: a
+# revoked PAT would otherwise lose every turn the box claims.
 _RUNNER_TOKEN = {"raw": "", "exp": 0.0, "failed_at": 0.0, "announced": False}
 _RUNNER_TOKEN_LOCK = threading.Lock()
 #: Get the next token this long before the current one runs out.
@@ -356,9 +353,9 @@ def _exchange_device_proof(runner_id: str) -> bool:
 def _share_runner_token(raw: str, exp: float) -> None:
     """Hand the auto-updater (a separate unit, update_runner.sh) this box's token.
 
-    It used to read its expected code with CANOPY_TOKEN from runner.env — a PAT
-    revoked on 2026-10-17, after which every check came back "unknown" and the box
-    stopped updating. 0600 and written atomically; the token opens the runner
+    It reads its expected code with this token, not CANOPY_TOKEN from runner.env (a
+    revoked PAT would make every check come back "unknown" and the box stop
+    updating). 0600 and written atomically; the token opens the runner
     protocol only and lasts an hour. Never raises."""
     try:
         tmp = RUNNER_TOKEN_FILE.with_name(RUNNER_TOKEN_FILE.name + ".tmp")
@@ -466,7 +463,7 @@ def _api(method: str, path: str, body: dict | None = None, *,
     except (OSError, http.client.HTTPException) as exc:
         # The connection died AFTER urlopen handed back a response (or before it
         # parsed one): ConnectionResetError, RemoteDisconnected, a read timeout,
-        # IncompleteRead. None of those are URLError, so they used to escape every
+        # IncompleteRead. None of those are URLError, so they would escape every
         # caller — a turn's finish among them, which then sat EXECUTING until the
         # lease sweep marked finished work LOST. Same answer as "unreachable".
         if not quiet:
@@ -477,7 +474,7 @@ def _api(method: str, path: str, body: dict | None = None, *,
 # canopy-web refusing this box's token (a 401 on any call). While it does, the
 # box must not CLAIM: a claim can still succeed over an already-open socket, and
 # then the turn's events, transcript and finish are all refused and the turn is
-# lost (2026-10-17: cloud-ec2-2 swallowed four after its PAT was revoked).
+# lost (e.g. after a PAT is revoked).
 # Cleared by the next accepted call, so replacing the token recovers on its own.
 _TOKEN_REFUSED_AT = 0.0
 
@@ -805,9 +802,9 @@ def _heartbeat_body(active_turn_ids: list[str], **extra) -> dict:
 
 # ── self-reported health ─────────────────────────────────────────────────────
 # What this box can actually do, one named check each, sent on every heartbeat
-# (Runner.health on the server). The reason it exists: on 2026-09-22 this box
-# read online + ready + code-current while three of its features were off, and
-# the only evidence was journald. A feature that turns itself off must say so
+# (Runner.health on the server). The reason it exists: a box can
+# read online + ready + code-current while some of its features are off, with
+# the only evidence in journald. A feature that turns itself off must say so
 # where an operator looks — the runner page — without anyone opening a shell.
 #
 # Cheap checks (imports, the credential cascade) are recomputed on every beat;
@@ -873,9 +870,9 @@ def _credential_check() -> None:
             _HEALTH.pop("claude.login", None)
 
 
-#: Root-volume thresholds (percent used). cloud-ec2-1 reached 100% on 2026-10-04 —
-#: a plugin cache holding every version it ever installed — and nothing said so
-#: until turns started failing on writes. Overridable for a box with odd mounts.
+#: Root-volume thresholds (percent used). a root volume can reach 100% (a plugin
+#: cache holding every version it ever installed) and nothing says so
+#: until turns start failing on writes. Overridable for a box with odd mounts.
 DISK_WARN_PCT = float(os.environ.get("DISK_WARN_PCT", "80"))
 DISK_FAIL_PCT = float(os.environ.get("DISK_FAIL_PCT", "90"))
 DISK_PATH = os.environ.get("DISK_PATH", "/")
@@ -909,7 +906,7 @@ def _disk_check() -> None:
 #: Where the space is, measured by root's update tick (update_runner.sh
 #: record_disk_usage) while the volume is at warn: a runner cannot read the
 #: other homes, and its sweep reaches only its own files — so a warning whose space
-#: sits elsewhere (cloud-ec2-2, 2026-10-26: 35 GB in the home of the user from before several runners)
+#: sits elsewhere (e.g. 35 GB in the home of a user from before several runners)
 #: says where. Older than two ticks and it is not quoted.
 DISK_USAGE_FILE = pathlib.Path(os.environ.get("DISK_USAGE_FILE", str(RUNNER_HOME / "disk-usage.json")))
 DISK_USAGE_MAX_AGE_SECONDS = 2 * 3600
@@ -938,10 +935,10 @@ def _disk_pct() -> float:
 
 
 # ── disk hygiene: the scratch turns leave behind ────────────────────────────────
-# cloud-ec2-2's root reached 100% on 2026-10-19 (a CLI could not write its
-# session file under /tmp; a turn crashed). Bootstrap's cache prune was not the
-# answer: agents' own scratch clones in /tmp (~3.4 GB, weeks old) and chat-session
-# worktrees under WORK_DIR/sessions were, and nothing ever removed either. So the
+# A full root volume crashes turns (a CLI cannot write its session file under
+# /tmp). Bootstrap's cache prune is not the answer: agents' own scratch clones in
+# /tmp (weeks old) and chat-session worktrees under WORK_DIR/sessions are what
+# fill it, and nothing else removes either. So the
 # runner sweeps them itself, when idle (maybe_sweep_disk) — and keeps, and names,
 # anything holding git work that exists nowhere else.
 
@@ -1315,9 +1312,9 @@ def health_report() -> dict:
 # ONE runner restarts its unit through the scoped sudoers rule the auto-updater
 # uses. A runner sharing its machine (`RUNNER_INSTANCE`, `canopy-runner@<id>`)
 # has no sudo and cannot write /opt/canopy-runner: it exits non-zero instead and
-# its unit's `Restart=on-failure` starts it again. Before 2026-10-28 it tried the
-# sudo path, could not even write its marker, and a requested refresh sat
-# pending on an idle box with nothing on the runner page saying why.
+# its unit's `Restart=on-failure` starts it again. (The sudo path would fail to
+# write its marker, leaving a requested refresh pending on an idle box with nothing
+# on the runner page saying why.)
 #
 # Two triggers: an operator's request (Runner.refresh_pending, read off the
 # heartbeat reply — durable, so a dropped socket costs a beat, not the request),
@@ -1327,8 +1324,8 @@ def health_report() -> dict:
 # A supervised daemon whose turns can all be adopted refreshes MID-TURN: it asks
 # the supervisor for a handoff (SIGHUP), exactly as an update does, and the new
 # daemon re-runs bootstrap and adopts every running turn. Waiting for an idle box
-# meant a busy one never refreshed: cloud-ec2-live sat 45 hours "waiting on busy"
-# (2026-10-28 → 10-30) behind chats and two turns parked on unanswered questions.
+# means a busy one never refreshes: it would sit for days "waiting on busy"
+# behind chats and turns parked on unanswered questions.
 # Only a box with a pinned turn (one a handoff cannot carry) still waits for it.
 
 REFRESH_MAX_AGE_SECONDS = int(os.environ.get("REFRESH_MAX_AGE_SECONDS", str(24 * 3600)))
@@ -1445,7 +1442,7 @@ def _exit_for_refresh() -> None:
     _stop = True
 
 
-#: Addresses canopy has left (it moved to canopy.dimagi.com on 2026-10-05).
+#: Addresses canopy has left (it lives at canopy.dimagi.com).
 FORMER_BASES = frozenset({"https://labs.connect.dimagi.com/canopy"})
 
 
@@ -1501,15 +1498,14 @@ def _claude_cmd(prompt: str, resume_session_id: str | None = None) -> list[str]:
     rather than tidiness. canopy's duplicate/sibling check (`live-turns.sh`)
     enumerates live sessions out of argv — `--session-id|--resume <uuid>` — which
     is the only handle a process has on which session it is. A bare `claude -p`
-    matches neither, so on this box the check found NO sessions, could not even
-    see itself, and exited 2 ("could not enumerate") on every single turn.
+    matches neither, so the check would find NO sessions, could not even
+    see itself, and exit 2 ("could not enumerate") on every single turn.
 
     That is the check behaving correctly — it must never render "I could not
-    look" as "nobody is there" — but it means the fleet's protection against two
-    turns working the same thread simply did not exist on a cloud runner. The
+    look" as "nobody is there" — but it would leave the fleet's protection against two
+    turns working the same thread absent on a cloud runner. The
     fix belongs here, not in the check: make the box visible, rather than teach
-    the check to guess. Found by an ACE turn on cloud-ec2-1, 2026-09-09, which
-    verified it against its own /proc/<pid>/cmdline.
+    the check to guess.
 
     Not set when resuming: `--resume` already names the session, and passing
     both asks the CLI to be two sessions at once.
@@ -1633,7 +1629,7 @@ def pair_or_load() -> str:
             _RUNNER_ID = rid
             # Confirm it still exists (a heartbeat 404 means it was retired).
             # `projects` rides the heartbeat, not the PATCH below: the server
-            # treats that key as REPORTED (spec 2026-07-28) and 422s a hand-written
+            # treats that key as REPORTED and 422s a hand-written
             # one. This box has no emdash to observe, so its configured list IS the
             # observation — but it still has to be reported, or a redeploy that
             # changes RUNNER_PROJECTS would never take effect. Safe to send [] here
@@ -1713,7 +1709,7 @@ def _post_unauthenticated(url: str, body: dict) -> tuple[int, dict | None]:
 
 def pair_by_role() -> str | None:
     """Pair this box by its EC2 instance role and the invitation `up.sh` made for
-    it (spec 2026-10-19 #9) — no PAT. Asks until a person approves the
+    it — no PAT. Asks until a person approves the
     invitation: 202 means waiting, 401 means no approved invitation matches this
     role and name (yet). 201 paired / 200 reattached (a replaced instance of an
     approved role) → the state file is written and the runner id returned. None
@@ -1762,9 +1758,9 @@ def pair_by_role() -> str | None:
 # Session-identity markers Claude Code exports into its own child processes.
 # They must NOT reach a `claude` this runner spawns.
 #
-# Measured 2026-07-28 by spawning `claude` from inside a Claude Code session: the
-# child came up in the PARENT'S permission mode (`auto`, self-approving) and
-# announced "Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION
+# A `claude` spawned from inside a Claude Code session comes up in the
+# PARENT'S permission mode (`auto`, self-approving) and
+# announces "Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION
 # marker". Transcript saving being off is the serious half — the transcript is
 # canopy's DURABLE RECORD, so a turn would run, finish, report success, and
 # leave nothing to persist or reset from.
@@ -2314,7 +2310,7 @@ def _clear_stale_connection_tokens() -> None:
         pass
 
 
-# ── Canopy Vault device proof: this box's IAM role (canopy-web#1549, Phase 1b) ──
+# ── Canopy Vault device proof: this box's IAM role ──
 #
 # An EC2 box has no Secure Enclave; the strongest identity it has is its instance
 # role. As in HashiCorp Vault's AWS auth, it proves the role by SigV4-signing — and
@@ -2422,7 +2418,7 @@ def _signed_get_caller_identity(creds: dict, htu: str = "", *, now: float | None
     """The unsent STS request. With `htu`, the binding headers are signed, plus a fresh
     random X-Canopy-Proof-Jti (``jti=""`` omits it): canopy-web keeps each proof single-
     use, and without a nonce two proofs for one htu in the same second are identical —
-    the second refused as a replay (canopy's device_key_aws.JTI_HEADER, 2026-10-17)."""
+    the second refused as a replay (canopy's device_key_aws.JTI_HEADER)."""
     t = time.time() if now is None else now
     headers = {"Content-Type": _STS_CONTENT_TYPE, "Host": _STS_HOST}
     if htu:
@@ -2503,7 +2499,7 @@ def _write_device_key_cache(role_arn: str, status: dict) -> None:
 
 
 def _ecdh_public_key() -> dict:
-    """This box's ECDH key for the zero-knowledge vault (canopy-web#1550), made by the
+    """This box's ECDH key for the zero-knowledge vault, made by the
     canopy CLI — this file stays stdlib-only, and making a P-256 key needs a crypto
     library. The private half is in AWS KMS when the box's `<stack>-ecdh` stack made
     it one (canopy's device_key_kms; kind "aws-kms"), else canopy's 0600
@@ -2807,7 +2803,7 @@ def imds_rules(run=subprocess.run) -> list[str]:
     return changed
 
 
-# ── Egress lock (spec 2026-10-22-sensitive-data-agents §1, "Egress locked") ──
+# ── Egress lock ("Egress locked" sensitive-data agents) ──
 #
 # A locked runner's processes — the runner itself, Claude, every tool — reach the
 # network only through the box's CONNECT proxy, on that runner's own loopback port,
@@ -3298,7 +3294,7 @@ def setup_jobs(box: dict, *, locked: bool, run=subprocess.run, chown=os.chown, u
         return False
     try:
         if run(["id", "-u", JOB_USER], capture_output=True).returncode != 0:
-            # No home. It used to be the jobs root, where a planted user-site ran in the next helper.
+            # No home: a jobs-root home would let a planted user-site run in the next helper.
             res = run(["useradd", "--system", "--no-create-home", "--home-dir", "/nonexistent",
                        "--shell", "/usr/sbin/nologin", "--comment", "canopy plain jobs", JOB_USER],
                       capture_output=True)
@@ -3968,7 +3964,7 @@ def _gog_runner(slug: str):
 
 # ── secrets off disk: each turn's env on tmpfs, gone when it ends (spec §4) ──
 #: The canopy CLI that reads `CANOPY_AGENT_ENV_FILE` first and can resolve in memory
-#: (`cred env --print-json/--out`, prepare's off-disk mode): canopy PR #999.
+#: (`cred env --print-json/--out`, prepare's off-disk mode).
 OFF_DISK_MIN_CLI = (0, 2, 736)
 _CLI_VERSION: dict = {"at": 0.0, "v": None}
 CLI_VERSION_TTL_SECONDS = 600.0
@@ -4098,7 +4094,7 @@ def _turn_values(slug: str, *, now: float | None = None, outside_turn: bool = Fa
     owner to that turn's `acts_as` when they started it (an owner testing an agent as an
     editor): the cap makes them no admin of the agent and the resolve a 403 "does not
     run <agent>", so a box whose owner chats with their own agent could never read the
-    delegation it refreshes the clone with (trellis on cloud-ec2-live, 2026-11-04)."""
+    delegation it refreshes the clone with (e.g. trellis on a live cloud box)."""
     now = time.time() if now is None else now
     with _TURN_VALUES_LOCK:
         hit = _TURN_VALUES.get(slug)
@@ -4289,10 +4285,10 @@ def _probe_agent_vault(slug: str) -> None:
     if now - _VAULT_PROBE_AT.get(slug, -1e18) < _VAULT_PROBE_TTL_SECONDS:
         return
     _VAULT_PROBE_AT[slug] = now
-    # The turn this resolve is for, so canopy-web's read log names it (Canopy Vault,
-    # canopy#946). Known when called from a turn's thread; an older canopy-web ignores it.
+    # The turn this resolve is for, so canopy-web's read log names it (Canopy Vault).
+    # Known when called from a turn's thread; an older canopy-web ignores it.
     turn_id = str((getattr(_TURN_ENV, "extra", None) or {}).get("CANOPY_TURN_ID") or "")
-    # And this box's IAM-role device proof (canopy-web#1549) — required by canopy-web
+    # And this box's IAM-role device proof — required by canopy-web
     # for every zero-knowledge agent.
     proof = _aws_proof_headers(f"{BASE_URL}/api/agents/{slug}/credentials/resolve")
     if not proof:
@@ -4300,15 +4296,15 @@ def _probe_agent_vault(slug: str) -> None:
         # root's) or a box with no role. The probe then learns nothing: a zero-knowledge
         # vault always needs a proof. And for a device-bound agent it is refused and
         # emails the agent's owner a "no device proof" vault alert naming them, since a
-        # runner token signs in as its owner (trellis on cloud-ec2-live, 2026-10-30:
-        # two alerts per chat turn). The canopy CLI's own resolve signs with the
+        # runner token signs in as its owner (two alerts per chat
+        # turn). The canopy CLI's own resolve signs with the
         # runner's key and reports a vault it cannot open (`env.<slug>`).
         return
     try:
         status, payload = _api("GET", f"/{slug}/credentials/resolve", prefix="/api/agents",
                                headers={"X-Canopy-Turn-Id": turn_id, **proof})
         if status == 409 and isinstance(payload, dict) and payload.get("error") == "zk_wrap_missing":
-            # A zero-knowledge agent (canopy-web#1550) whose vault key was never wrapped to
+            # A zero-knowledge agent whose vault key was never wrapped to
             # this box's ECDH key: nothing here can read its values until an admin grants it.
             _log(f"{slug}: zero-knowledge vault — this box has no wrap of its key; ask an "
                  f"admin to grant this runner's device ('Grant pending' on {slug}'s page)")
@@ -4373,7 +4369,7 @@ def _agent_env(slug: str | None) -> dict:
     # gives a plugin's MCP `headersHelper`, and runs that helper from the plugin's
     # own directory, so the canopy-web helper could neither read the agent's PAT
     # nor find the agent by walking up from cwd — it sent no auth header and the
-    # session had no canopy-web MCP at all (cloud-ec2-1, 2026-09-22). A slug is
+    # session would have no canopy-web MCP at all. A slug is
     # not a secret; the helper reads the PAT from ~/.<slug>/.env itself.
     env["CANOPY_AGENT"] = slug
     # Raise the agent's `zk.<slug>` health check (a vault this box cannot open).
@@ -4418,8 +4414,7 @@ def _agent_env(slug: str | None) -> dict:
             continue  # its own login at the site this page turn is held on (`page_site`)
         value = value.strip().strip('"').strip("'")
         # An agent .env provisioned before canopy moved names its OLD address;
-        # left alone it would send every CLI call this turn makes there
-        # (observed 2026-10-06, after this box itself had moved).
+        # left alone it would send every CLI call this turn makes there.
         if key in ("CANOPY_WEB_API_URL", "CANOPY_BASE_URL") and value.rstrip("/") in FORMER_BASES:
             value = BASE_URL
         env[key] = value
@@ -4472,7 +4467,7 @@ def _post_transcript_batch(turn_id: str, attempt_id: str, seq: int, lines: list[
     it, which would drop the fresh attempt's transcript rather than the
     intended duplicate."""
     if SENSITIVE_DATA_MODE:
-        # A sensitive-data box keeps its transcripts to itself (spec 2026-10-22 §4): canopy-web
+        # A sensitive-data box keeps its transcripts to itself: canopy-web
         # drops a sensitive turn's anyway, and the bytes are better never sent.
         return False
     if not lines:
@@ -4976,7 +4971,7 @@ def _sensitive_data_settings_file(turn: dict, confined_path: str | None, *, cwd=
 
 def _sensitive_data_mcp_config(turn: dict) -> str:
     """Write this sensitive-data turn's MCP config and return the path: canopy-web's
-    server alone (spec 2026-10-22-sensitive-data-agents §1), passed with
+    server alone, passed with
     `--strict-mcp-config` so no other server loads.
 
     It reproduces what the canopy plugin's own server does for a confined session:
@@ -5087,7 +5082,7 @@ def _sensitive_data_forget_turn(turn_id: str, cwd: pathlib.Path | None, session_
 
 
 # ── a sensitive conversation keeps its own Claude session between turns ───────
-# (spec 2026-10-23-sensitive-conversations-sealed-to-their-people §1). Every turn of
+# Every turn of
 # a sensitive conversation is confined to the same profile for the same people,
 # so the rule that a confined turn is never resumed (which keeps a staff turn's
 # context out of a partner's on an email thread) protects nothing inside one. The
@@ -5352,9 +5347,8 @@ def sensitive_data_sweep_leftovers() -> int:
         _log(f"sensitive-data mode: removed {len(found)} leftover(s) from before this start")
     return len(found)
 
-# No time limit on an ACP turn, like `claude -p`. A wall-clock deadline (5400s)
-# killed ACE's full `/ace:run bednet-check-2-visit` on cloud-ec2-2 while it was
-# still working (turn 09d9322a, 2026-10-18, failure investigation 8), and an
+# No time limit on an ACP turn, like `claude -p`. A wall-clock deadline would
+# kill a long full-lifecycle run while it was still working, and an
 # idle limit would kill a long quiet tool call the same way. Agent turns run for
 # hours. A turn that really is stuck is ended by a stop (`request_stop` cancels
 # the ACP session, then closes it if ignored), and an adapter that dies ends
@@ -5362,17 +5356,16 @@ def sensitive_data_sweep_leftovers() -> int:
 # Starting (or resuming) the ACP session — Claude Code booting with the agent's
 # plugins + MCP servers — is NOT the turn. canopy_acp defaults it to 120s, and
 # eva's environment sometimes takes 112-125s (one slow MCP server at startup), so
-# a fresh box's first eva drill timed out while ada's took ~2s (2026-10-04,
-# cloud-ec2-test). Generous by default; override per box via runner.env.
+# a fresh box's first eva drill can time out while ada's takes ~2s.
+# Generous by default; override per box via runner.env.
 ACP_SESSION_START_TIMEOUT_SECONDS = float(
     os.environ.get("ACP_SESSION_START_TIMEOUT_SECONDS", "300"))
 
 #: What each lazily-imported in-repo package loaded as: only a SUCCESS is kept.
-#: A failure used to be cached too, for the life of the process — and a call made
-#: before bootstrap had put the clone's packages on sys.path (the startup
-#: credential probe parsing a cap's reset, cloud-ec2-2) then disabled durable
-#: transcript rows until the next restart. Now a failure is retried on the next
-#: call and logged once per process.
+#: A failure is not cached: a call made before bootstrap has put the clone's
+#: packages on sys.path (the startup credential probe parsing a cap's reset) would
+#: otherwise disable durable transcript rows until the next restart. A failure is
+#: retried on the next call and logged once per process.
 _LAZY_MODULES: dict = {}
 _LAZY_FAILED_LOGGED: set = set()
 _LAZY_LOCK = threading.Lock()
@@ -5717,7 +5710,7 @@ def execute_prompt(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
     """Run a turn, failing over down the Claude credential cascade on a usage cap.
 
     A subscription's weekly cap takes out EVERY agent on this box at once, and an
-    unattended agent has no one to tell — on 2026-08-01 the whole fleet sat dead
+    unattended agent has no one to tell — the whole fleet would sit dead
     on one exhausted login while its drills reported a bare "You've hit your
     weekly limit". So a capped credential is not a turn failure: it is a signal to
     move to the next one and run the turn again.
@@ -5730,12 +5723,11 @@ def execute_prompt(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
     Every retry resumes the CALLER's session, never the failed attempt's: a
     credential is not part of a conversation, and transcripts live in the one
     `projects` directory every login links to (`_prepare_login_dir`), so the next
-    credential can pick it up. A retry that dropped `--resume` started a fresh
+    credential can pick it up. A retry that dropped `--resume` would start a fresh
     conversation, and the moment it announced itself (`_announce_session`) it
-    became the session's resume target. The next turn resumed that near-empty
-    transcript, and canopy-web dropped the session's history when its id changed.
-    That was Hal's session f6e30263 on cloud-ec2-2, 2026-10-19: a weekly cap
-    erased a 1,000-line build conversation. A turn that had no session to resume
+    would become the session's resume target. The next turn would resume that near-empty
+    transcript, and canopy-web would drop the session's history when its id changed.
+    A weekly cap would thereby erase a long build conversation. A turn that had no session to resume
     still retries fresh: that attempt's partial session is never reused.
 
     A credential's own refusal ("You've hit your weekly limit · resets 9pm") is
@@ -5856,8 +5848,7 @@ def _execute_down_the_cascade(prompt: str, turn_id: str, notices: _CredentialNot
             cap_line = cap_line or _fault_line(text, _is_usage_cap)
             _log(f"turn {turn_id[:8]}: {label} is at its usage cap")
         elif not fault and capped_labels and _is_bare_acp_refusal(text):
-            # Investigation 9 (turn 7d230f39, ACE on cloud-ec2-2, 2026-10-18): the
-            # box login capped, then the setup-token answered ACP's bare
+            # The box login capped, then the setup-token answered ACP's bare
             # `auth_required`. Every credential was out of usage, but this was
             # read as "not signed in": a false alert, and a note telling a person
             # to re-mint a token that would reset on its own. ACP gives the same
@@ -5869,9 +5860,9 @@ def _execute_down_the_cascade(prompt: str, turn_id: str, notices: _CredentialNot
             _log(f"turn {turn_id[:8]}: {label} refused the session after a cap — "
                  "counted as capped")
         elif not fault and _is_bare_acp_refusal(text) and _probe_says_capped(label, resets, turn_id):
-            # cloud-ec2-fork, 2026-10-18: ONE setup-token, at its weekly cap,
-            # answered ACP's bare refusal, and with nothing else in the turn to
-            # have capped first, every turn said "not signed in". The refusal
+            # ONE setup-token, at its weekly cap, answers ACP's bare refusal, and
+            # with nothing else in the turn to have capped first, every turn would
+            # say "not signed in". The refusal
             # does not say which it is, so the credential is asked directly.
             capped_labels.append(label)
             cap_line = cap_line or _PROBES.get(label, {}).get("detail", "")
@@ -6349,11 +6340,10 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
 
 # ── GitHub: the agent owner's identity, one turn at a time ──────────────────
 #
-# There is no box-wide GitHub credential. There used to be one — a shared
-# fine-grained PAT exported as GH_TOKEN into this process (so every turn
-# inherited it) and written to a global ~/.git-credentials — which meant every
-# agent pushed as whoever made that token, with whatever it could do, and could
-# not open a pull request (#747). Now each TURN asks canopy-web for its agent
+# There is no box-wide GitHub credential: a shared fine-grained PAT exported as
+# GH_TOKEN into this process (so every turn inherited it) and written to a global
+# ~/.git-credentials would make every agent push as whoever made that token, with
+# whatever it could do, and unable to open a pull request. Each TURN asks canopy-web for its agent
 # owner's token for that agent (delegated in its vault), and it goes into that turn's
 # environment and nowhere else, so two concurrent turns for agents with
 # different owners cannot see each other's.
@@ -6486,7 +6476,7 @@ _SCOPED_KEEP_SECONDS = 7 * 24 * 3600
 def _scoped_token_env(turn: dict) -> dict:
     """A full-profile turn asked by someone who is not the agent's owner, an admin
     or canopy (an editor line on the access list) reaches canopy's MCP as its ASKER, not as
-    this box's PAT (who-is-asking phase 5, canopy-web#1332).
+    this box's PAT (who-is-asking phase 5).
 
     canopy hands such a turn a caller token (`scoped`) with the claim. The MCP
     headers helper cannot read it from the environment — Claude Code strips
@@ -6605,9 +6595,8 @@ def _clear_canopy_needs_auth() -> None:
     `<config>/mcp-needs-auth-cache.json` and, for ~15 minutes, skips connecting
     to it in EVERY session that shares the file — and on a box every login's
     copy is a symlink to the one in `~/.claude`. So a single session that had no
-    canopy credential (a project chat, before project turns acted as their asker)
-    marked canopy-web "needs auth" for every turn after it, agent turns holding a
-    valid PAT included (cloud-ec2-2, 2026-10-22). Each turn brings its own
+    canopy credential would mark canopy-web "needs auth" for every turn after it,
+    agent turns holding a valid PAT included. Each turn brings its own
     credential, so each turn gets a fresh connect. Best effort: a cache we cannot
     rewrite costs one turn its canopy tools, never the turn."""
     path = _login_dir() / "mcp-needs-auth-cache.json"
@@ -7000,9 +6989,8 @@ def _redact_credentials(text: str, env: dict | None) -> str:
 
 def _fetch_clone(clone: pathlib.Path, env: dict | None = None, *, pull: bool = False) -> bool:
     """Bring `clone` up to its origin — `fetch`, or `pull --ff-only` for an agent's own
-    checkout — and RECORD how it went. A failed fetch used to be swallowed (a private
-    repo fetched without a token fails, and a confined turn has none), leaving the
-    clone stale with nothing logged; now it is logged and turns the `clones` health
+    checkout — and RECORD how it went. A failed fetch (a private
+    repo fetched without a token fails, and a confined turn has none) is logged and turns the `clones` health
     check amber once the clone is older than CLONE_STALE_SECONDS."""
     key = str(clone)
     cmd = ["git", "-C", key, *(["pull", "--ff-only", "--quiet"] if pull else ["fetch", "--quiet", "origin"])]
@@ -7146,11 +7134,11 @@ def _ensure_session_worktree(clone: pathlib.Path, path: pathlib.Path,
     path.mkdir(parents=True, exist_ok=True)
 
 
-# ── per-turn worktrees of any repo (#1131) ───────────────────────────────────
-# On 2026-10-05 four turns shared /opt/canopy-web: a stranded commit, a shared
-# stash, branches moving under each other. Nothing gave a turn its own checkout of
-# a repo that is not its agent's, so each one found the box's shared clone with
-# `find /`. Now every such checkout is a worktree of ONE shared clone per repo,
+# ── per-turn worktrees of any repo ───────────────────────────────────────────
+# Turns sharing /opt/canopy-web would see a stranded commit, a shared
+# stash, branches moving under each other. So a turn gets its own checkout of
+# a repo that is not its agent's, rather than finding the box's shared clone with
+# `find /`. Every such checkout is a worktree of ONE shared clone per repo,
 # keyed by the conversation (or the turn), like the emdash worktree a laptop gives.
 
 #: Where a repo name is fetched from. `{repo}` is the bare name (canopy-web).
@@ -8020,10 +8008,9 @@ UNPREPARED_FILE = ".unprepared"
 
 def agents_unprepared() -> list[str] | None:
     """The agents this box TRIED to set up and has no clone of — reported on the
-    heartbeat so canopy-web gives it none of their turns (routing.cannot_serve).
-    Before, such a turn ran in a bare scratch dir with none of the agent's plugin
-    or credentials, and ended having done nothing (fizzy on cloud-ec2-2,
-    2026-10-15). None until anything was tried: "unknown", never "all fine"."""
+    heartbeat so canopy-web gives it none of their turns (routing.cannot_serve);
+    such a turn would run in a bare scratch dir with none of the agent's plugin
+    or credentials, and end having done nothing. None until anything was tried: "unknown", never "all fine"."""
     tried: set[str] = set(_LAZY_BOOTSTRAP_TRIED)
     path = pathlib.Path(AGENT_ROOT) / UNPREPARED_FILE
     known = bool(tried)
@@ -8084,10 +8071,9 @@ def _ensure_agent_clone(slug: str, env: dict | None = None) -> None:
     box-wide prepare is never given the agent's GitHub token.
 
     A box clones agents only when it bootstraps (service start, or a refresh it
-    acts on when idle). An agent created since then had its turns run in a bare
-    scratch dir: none of its skills, hooks or persona, and the turn still reported
-    `done` (labs 2026-10-14: a new agent's first turn answered with the fleet's
-    plugins). canopy-web asks the box to refresh when an agent is registered
+    acts on when idle). An agent created since then would have its turns run in a bare
+    scratch dir: none of its skills, hooks or persona, and the turn still reporting
+    `done` (answering with the fleet's plugins only). canopy-web asks the box to refresh when an agent is registered
     (apps/agents/setup.py::request_setup), but a turn can arrive first. Waiting a
     bootstrap here is slower; running as nobody is wrong. It also stamps
     `_BOOTSTRAPPED_AT`, which discharges that pending refresh."""
@@ -8130,9 +8116,9 @@ def _turn_cwd(turn: dict, turn_id: str, env: dict | None = None) -> pathlib.Path
     'agent turns execute in the agent's clone'). An AGENT turn whose slug has a
     bootstrapped clone under AGENT_ROOT (bootstrap_agents.sh, run once per
     service start — see bootstrap_agent_fleet) runs in its OWN worktree of that
-    clone (WORK_DIR/agents/<slug>/<turn>, `_agent_turn_worktree`, #1141), so it
+    clone (WORK_DIR/agents/<slug>/<turn>, `_agent_turn_worktree`), so it
     sees the agent's real repo — config, skills, state — and two concurrent
-    turns for one agent no longer share a working tree. The clone is `git
+    turns for one agent do not share a working tree. The clone is `git
     pull`ed here at claim; a pull failure logs and the worktree comes from the
     clone as-is (stale beats absent).
 
@@ -8163,8 +8149,7 @@ def _turn_cwd(turn: dict, turn_id: str, env: dict | None = None) -> pathlib.Path
     if slug:
         _ensure_agent_clone(slug, env)
     # A PROJECT turn (a repo, no agent) works in its own worktree of that repo, at
-    # the same path it always had — an empty scratch dir until #1131, which is why
-    # such turns went looking for /opt/canopy-web.
+    # (an empty scratch dir would send such turns looking for /opt/canopy-web).
     project = "" if slug else (turn.get("project") or "")
     if session_id:
         path = pathlib.Path(WORK_DIR) / "sessions" / _safe_session_dirname(session_id)
@@ -8200,10 +8185,10 @@ def _project_worktree(project: str, path: pathlib.Path, env: dict | None) -> Non
         _log(f"warn: no worktree of {project!r} at {path} ({exc}); using a plain directory")
 
 
-# ── per-turn worktrees of an AGENT's repo (#1141) ────────────────────────────
-# An agent turn used to run IN the agent's one clone, AGENT_ROOT/<slug>, so two
-# concurrent turns for the same agent shared a working tree — the same stranded
-# commits and moving branches #1131 fixed for other repos. Each agent turn now
+# ── per-turn worktrees of an AGENT's repo ────────────────────────────────────
+# An agent turn does not run IN the agent's one clone, AGENT_ROOT/<slug>: two
+# concurrent turns for the same agent would share a working tree, with stranded
+# commits and moving branches. Each agent turn
 # gets its own worktree of that clone at WORK_DIR/agents/<slug>/<turn>.
 #
 # What does NOT move: the clone stays where bootstrap put it, pulled at claim,
@@ -8390,7 +8375,7 @@ def _agent_session_transcript(slug: str, cli_session_id: str) -> pathlib.Path | 
 
     The recorded cwd first; then any of this agent's turn worktrees (a record
     lost with WORK_DIR, e.g. on a reboot — the transcripts outlive it); then the
-    shared clone, where every agent turn ran before #1141."""
+    shared clone, where agent turns once ran."""
     if not (slug and cli_session_id) or _safe_session_dirname(slug) != slug:
         return None
     name = f"{cli_session_id}.jsonl"
@@ -8428,8 +8413,8 @@ def sync_runner_src() -> bool:
     stamp (a hand install) tracks origin/main, and says so loudly.
 
     Reset, not merged: this clone belongs to the runner alone, so there is no
-    local work to protect, and `pull --ff-only` is exactly what failed on
-    2026-09-22. The packages are exposed WHENEVER the clone exists — a stale
+    local work to protect, and `pull --ff-only` is exactly what fails on a
+    clone left on a local branch. The packages are exposed WHENEVER the clone exists — a stale
     clone beats a disabled feature — and the outcome lands in the `code_clone`
     health check instead of one journald line."""
     repo_dir = pathlib.Path(RUNNER_SRC_DIR)
@@ -8479,8 +8464,8 @@ def _expose_repo_package(
     Taken from the clone rather than an index so it is always the same commit as
     the rest of this deploy.
 
-    This used to `uv pip install --system` (falling back to `python3 -m pip`).
-    Both are dead on this AMI, and silently so — the failure was swallowed into
+    It does not `uv pip install --system` (or `python3 -m pip`). Both are dead on
+    this AMI, and silently so — the failure would be swallowed into
     one `warn:` line while every dependent feature turned itself off:
 
       * Ubuntu 24.04's system Python is PEP 668 externally-managed, so
@@ -8489,8 +8474,8 @@ def _expose_repo_package(
       * `python3 -m pip` does not exist — the AMI ships no pip, and cloud-init's
         apt list never adds python3-pip.
 
-    Observed 2026-07-28: `canopy_transcript` had never been importable on
-    cloud-ec2-1, so every session turn it ran wrote no durable rows at all.
+    With `canopy_transcript` not importable, every session turn would write no
+    durable rows at all.
 
     `sys.path` rather than a venv or `--target` because these packages are
     stdlib-only BY CONTRACT — canopy_transcript declares `dependencies = []`
@@ -8585,15 +8570,13 @@ def stop_turn(turn_id: str) -> bool:
 
 # ── A person's stop ─────────────────────────────────────────────────────────
 #
-# canopy-web asks a runner to stop a turn three ways, and until 2026-10-17 this
-# runner heard none of them: a `cancel` frame (turn-shaped), a `session_interrupt`
-# frame (session-shaped) and — the durable one — `cancel_turn_ids` on every
-# heartbeat reply. The WS loop had no branch for either frame and nothing read
-# the reply, so `stop_turn` above existed and was never called: Ada stopped a
-# huddle turn on cloud-ec2-2 twice and it ran 23 more minutes, dispatching
-# rounds to Hal after each stop.
+# canopy-web asks a runner to stop a turn three ways: a `cancel` frame
+# (turn-shaped), a `session_interrupt` frame (session-shaped) and — the durable
+# one — `cancel_turn_ids` on every heartbeat reply. The WS loop must branch on
+# both frames and read the reply, or `stop_turn` is never called and a stopped
+# turn keeps running.
 #
-# All three now land on `request_stop`, from whichever thread heard them (the
+# All three land on `request_stop`, from whichever thread heard them (the
 # WS thread, the REST loop, a turn's lease renewer). It must never block: it
 # records the stop, signals the executor, and returns. The turn's own worker
 # notices on its way out and finishes it CANCELLED.
@@ -8758,8 +8741,7 @@ def _install_acp_adapter() -> None:
     `run_acp` falls back to `claude -p` when the adapter is missing, so a failure
     here degrades rather than breaks.
 
-    Two things this got wrong, both measured on cloud-ec2-1 on 2026-09-09, and
-    both already solved a few hundred lines away for `tsx` in
+    Two things to get right, both also handled for `tsx` in
     bootstrap_agents.sh's `ensure_plugin_runtime`:
 
     * **A bare `npm install -g` cannot work here.** This runs as the SERVICE user
@@ -8868,8 +8850,8 @@ def bootstrap_agent_fleet() -> None:
     try:
         # Every agent's prepare reads its credentials and posts its report as this
         # box, so a bootstrap run while canopy-web refuses the box's token fails for
-        # the WHOLE fleet at once (2026-10-18 02:28: 16 minutes refused, and every
-        # agent's prepare inside it). Wait for a token canopy-web accepts first; and
+        # the WHOLE fleet at once (every agent's prepare inside the refused window).
+        # Wait for a token canopy-web accepts first; and
         # if it was refused DURING the pass, run the pass again once it is back.
         _await_signed_in("before the agent bootstrap")
         _run_bootstrap()
@@ -9165,18 +9147,17 @@ def ensure_updater_clone() -> bool:
     """Make sure CANOPY_WEB_REPO_DIR is a clone: the auto-updater reads
     update_runner.sh from it (`git show origin/main:...` in the cloud-init shim).
 
-    Nothing created it once the runner moved to its own clone (RUNNER_SRC_DIR):
-    cloud-init only makes the empty directory, so a box built after that logged
+    The runner has its own clone (RUNNER_SRC_DIR), so nothing else creates this one:
+    cloud-init only makes the empty directory, and a box without the clone would log
     "no update_runner.sh in /opt/canopy-web yet; skipping" on every tick and
-    stayed on its build-day code while looking current enough — cloud-ec2-2,
-    2026-10-05. Only boxes old enough to have the clone could update. Reported as
+    stay on its build-day code while looking current enough. Reported as
     the `updater_clone` check, so a box that cannot update says so."""
     repo = pathlib.Path(CANOPY_WEB_REPO_DIR)
     if (repo / ".git").is_dir():
         # Move origin/main, which is what the shim runs. The updater fetches the
         # deployed commit BY SHA, which never moves origin/main, so a box kept
         # running whatever update_runner.sh main held when it was last fetched by
-        # name — cloud-ec2-2 ran 2026-10-05's for a day, missing #1231. The runner
+        # name — it would run a stale update_runner.sh for a day. The runner
         # restarts on every update, so this keeps the updater current too.
         try:
             subprocess.run(["git", "-C", str(repo), "fetch", "--quiet", "origin", "main"],
@@ -9222,9 +9203,9 @@ def _run_bootstrap() -> None:
     env.setdefault("AGENT_ROOT", AGENT_ROOT)
     # The roster read and every `canopy agent prepare` it runs act AS THIS BOX, as
     # prepare_agent's do — including each agent's readiness report, a WRITE that
-    # canopy does not retry as the box. Inheriting os.environ handed them
-    # runner.env's PAT, revoked on 2026-10-17: the roster came back empty and every
-    # report 401'd. The child cannot renew the token, so it gets one that outlives it.
+    # canopy does not retry as the box. Inheriting os.environ would hand them
+    # runner.env's PAT; once revoked, the roster comes back empty and every
+    # report 401s. The child cannot renew the token, so it gets one that outlives it.
     bearer = _bearer(min_life=BOOTSTRAP_TIMEOUT_SECONDS)
     if bearer:
         env["CANOPY_TOKEN"] = bearer
@@ -9235,8 +9216,8 @@ def _run_bootstrap() -> None:
         rc, tail = _run_teed(cmd, env=env, timeout=BOOTSTRAP_TIMEOUT_SECONDS,
                              on_start=lambda proc: _BOOTSTRAP_PROC.update(proc=proc))
         _log(f"bootstrap_agents.sh exited {rc}")
-        # The last lines carry the reason. "exited 1" alone still sent someone
-        # to journald on 2026-09-22 (`line 1024: ace: unbound variable`), which
+        # The last lines carry the reason. "exited 1" alone sends someone
+        # to journald (e.g. `line 1024: ace: unbound variable`), which
         # is the trip this check exists to save.
         _set_check("bootstrap", *(("ok", "") if rc == 0 else
                    ("fail", f"bootstrap_agents.sh exited {rc}: " + " | ".join(tail))))
@@ -9261,7 +9242,7 @@ _CLAUDE_AUTH_VARS = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
 #: claude.ai connectors (Claude Docs and the rest): a setup-token is
 #: inference-only by design (the CLI says so — "Long-lived tokens … are limited
 #: to inference-only"), so a turn running on one cannot see a connector at all,
-#: however the doc is shared. Read out of `claude` 2.1.300, 2026-10-14: the
+#: however the doc is shared. In `claude` 2.1.300 the
 #: connector loader refuses with "Missing user:mcp_servers scope".
 #:
 #: It is NOT a value in the bundle. The entry carries no env var; selecting it
@@ -9401,8 +9382,7 @@ def box_login_account(path: pathlib.Path | None = None, *, key: str = DEFAULT_LO
 
     This is what the credentials page shows on the sign-in row INSTEAD of a name
     an operator types: the box knows who it signed in as, and a hand-typed label
-    is exactly how a row came to say one account while holding another
-    (2026-10-14). Empty when the CLI has not recorded one.
+    is exactly how a row comes to say one account while holding another. Empty when the CLI has not recorded one.
     """
     try:
         data = json.loads((path or _claude_state_file(key)).read_text())
@@ -9493,7 +9473,7 @@ def _seal_minted(runner_id: str, mint: dict, token: str, mint_id: str) -> None:
     sign-in's own, else a new key this box chooses), seal the token under it, then
     report it; canopy-web calls it done only if its vault holds the value. Anything that
     stops that reports a failed sign-in with why, so nobody is told a token works when
-    it was never kept (cloud-ec2-2, 2026-10-23)."""
+    it was never kept."""
     if not _VAULT_STATE["open"]:
         _log(f"mint {mint_id[:8]}: the runner has no vault this box can seal into — not kept")
         _api("POST", f"/runners/{runner_id}/mint/result", {"detail": NO_VAULT_COPY})
@@ -9661,10 +9641,9 @@ def _reconcile_logins(runner_id: str, cred: dict | None) -> None:
 #:
 #: Anthropic ships session (5-hour), daily and weekly caps and words each one a
 #: little differently — "hit your session limit", "reached your weekly usage
-#: limit" — and adds to the set over time. The original list enumerated the
-#: phrasings it knew, which is precisely how the session cap went unmatched
-#: until 2026-09-08: a turn on cloud-ec2-1 re-queued three times against the
-#: same capped credential and reported a bare failure. So match the shape a cap
+#: limit" — and adds to the set over time. A list enumerating the
+#: phrasings known would miss a new one, and a turn would re-queue repeatedly against the
+#: same capped credential and report a bare failure. So match the shape a cap
 #: message always has — a hit/reached verb, then "limit" close behind — and keep
 #: an explicit list only for the phrasings that never say "limit".
 _USAGE_CAP_RE = re.compile(
@@ -9702,10 +9681,9 @@ _AUTH_REQUIRED_MARKERS = (
     "refresh token expired",
     "invalid api key",
     # The CLI's wording when its stored claude.ai login can no longer refresh.
-    # cloud-ec2-2, 2026-10-15 (turn 9fbe2240, failure investigation 5): echo's
-    # scheduled turn died on exactly this, and none of the markers above matched.
-    # So the box sent no auth-required alert, the turn note never said "not signed
-    # in", and the only trace was a bare "Authentication required".
+    # Without this marker none of the above match: the box sends no auth-required
+    # alert, the turn note never says "not signed in", and the only trace is a
+    # bare "Authentication required".
     "oauth session expired",
 )
 
@@ -9752,10 +9730,10 @@ def _is_bare_acp_refusal(text: str) -> bool:
 
 #: The CLI's own error categories (an assistant message's `error`, a
 #: `system/api_retry`'s `error`) that mean a person has to sign in again. Read
-#: from the stream, not the text: on 2026-10-26 an invalid setup-token ended its
+#: from the stream, not the text: an invalid setup-token ends its
 #: turn with "Failed to authenticate. API Error: 401 OAuth access token is
-#: invalid.", which no text marker matched, so the box neither failed over nor
-#: alerted.
+#: invalid.", which no text marker matches, so the box would neither fail over nor
+#: alert.
 _DEAD_ERRORS = frozenset({"authentication_failed", "oauth_org_not_allowed",
                           "account_on_hold"})
 #: The categories that mean the credential is out of usage until its reset.
@@ -9949,9 +9927,9 @@ def _apply_claude_credential(index: int, *, turn_id: str = "") -> None:
 
 
 # ── the credential probe ─────────────────────────────────────────────────────
-# "Ready" used to mean "a value is stored". On 2026-10-18 cloud-ec2-fork read
-# ready with one setup-token that was at its weekly cap, and every turn it took
-# failed as "not signed in". So each credential is asked one short question with
+# "Ready" cannot mean just "a value is stored": a box with one setup-token at its
+# weekly cap would read ready while every turn it took failed as "not signed in".
+# So each credential is asked one short question with
 # no tools, and what it answers is what the runner page and readiness report.
 #
 # Probes spend real usage, so they run only when a credential is staged or
@@ -10137,10 +10115,10 @@ def _reprobe(labels: list[str]) -> None:
     Readiness forgets the old answer (`_PROBES`); the `claude.probe.<label>`
     CHECK stays in the heartbeat until the new answer overwrites it. canopy-web's
     `runner_credential` alert resolves when the box stops reporting a failing
-    check, and a dropped check reads exactly like a passing one. cloud-ec2-2,
-    2026-10-23: a replaced token's alert resolved five seconds after the save and
-    three before the probe found the new token dead, then reopened a minute
-    later — "it said it worked, then that it didn't"."""
+    check, and a dropped check reads exactly like a passing one. A replaced token's
+    alert would otherwise resolve right after the save, before the probe finds the
+    new token dead, then reopen a minute later — "it said it worked, then that it
+    didn't"."""
     with _PROBES_LOCK:
         for label in labels:
             _PROBES.pop(label, None)
@@ -10486,7 +10464,7 @@ WAITING_FOR_CLAUDE_NOTE = (
 def _beat_while_waiting(runner_id: str) -> None:
     """Heartbeat from the credential wait, as online but NOT ready.
 
-    Silence here read as "stale" on the runner page (cloud-ec2-2, 2026-10-15),
+    Silence here reads as "stale" on the runner page,
     which says the box is down — when it was up and needed one thing, a sign-in.
     Not ready keeps routing off it; the note says what to do.
     """
@@ -10539,8 +10517,7 @@ def fetch_and_stage_credential(runner_id: str, *, probe: bool = True) -> bool:
         _beat_while_waiting(runner_id)
         # The browser sign-in is how a person gives this box a credential, and it
         # is served here too. A box whose only credential was its own login, and
-        # whose login expired, restarts into this loop (cloud-ec2-2, 2026-10-15:
-        # an auto-update restart left it dark for hours); if only the main loop
+        # whose login expired, restarts into this loop (an auto-update restart can leave it dark for hours); if only the main loop
         # drained sign-ins, the one fix would never reach it. A finished sign-in
         # makes `box_login_ready` true, and the next pass stages it.
         _drain_mint(runner_id)
@@ -10551,7 +10528,7 @@ def fetch_and_stage_credential(runner_id: str, *, probe: bool = True) -> bool:
 # ── browser-driven re-authentication (`claude setup-token` under a pty) ─────
 # A cloud runner's subscription token expires often, and when one does the box
 # does not slow down — it stops, and stays stopped until a person signs in again.
-# That used to need a terminal on the box.
+# The sign-in runs from the browser, with no terminal on the box.
 #
 # It cannot be done in canopy-web: `setup-token` runs PKCE with a verifier
 # generated by whoever starts it, so canopy-web cannot exchange a code a browser
@@ -10561,8 +10538,8 @@ def fetch_and_stage_credential(runner_id: str, *, probe: bool = True) -> bool:
 #
 # INLINE, and that is not a style choice: the deploy ships cloud_runner.py as a
 # SINGLE file (up.sh publishes one gzip blob; update_runner.sh copies one path),
-# so a sibling module is never delivered at all. This first shipped as
-# runner/ec2/claude_mint.py in #700 and would have been dead code on every box.
+# so a sibling module (e.g. a separate runner/ec2/claude_mint.py) is never delivered
+# at all and would be dead code on every box.
 #
 # `setup-token` is an Ink TUI: with no tty it prints nothing and waits forever,
 # so it cannot be driven with pipes. It does render the URL on purpose ("Browser
@@ -10583,10 +10560,10 @@ _AUTHORIZE = re.compile(r"https://claude\.com/cai/oauth/authorize\?[^\s\x00-\x1f
 #: The minted credential. The PREFIX IS NOT OURS TO PIN: the token is chosen by
 #: Anthropic's token endpoint and merely displayed by the CLI (`children: S.token`
 #: in the setup-token view), so `\bsk-ant-oat…` made this runner depend on a
-#: taxonomy nobody promised us. On 2026-09-08 a sign-in COMPLETED — the CLI
-#: printed "Long-lived authentication token created successfully!" — and the
-#: runner discarded the credential and reported failure, because it did not
-#: start with `oat`. The human did everything right and was told it had failed.
+#: taxonomy nobody promised us. A sign-in can COMPLETE — the CLI prints
+#: "Long-lived authentication token created successfully!" — and a prefix pin would
+#: discard the credential and report failure because it did not start with `oat`,
+#: telling a human who did everything right that it had failed.
 #:
 #: So the CLI's OWN ANNOUNCEMENT is the anchor, not a guess at the format. Note
 #: the whitespace-tolerance: the TUI positions text with cursor moves rather than
@@ -10676,9 +10653,8 @@ def render_screen(raw: bytes) -> str:
     only the cells that CHANGED, stepping over the rest with `ESC[nC`/`ESC[nG`/
     `ESC[nA` (measured on 2.1.309: a spinner frame is `\\r ESC[1C ESC[1A ✢`). A
     token drawn where the screen already held the same character loses that
-    character to the strip. cloud-ec2-2, from Claude Code 2.1.301 (2026-10-16):
-    every setup-token was stored as `sk-ant-at01-…` — the `o` of `oat01` was
-    already on screen — and every one was dead on its first probe.
+    character to the strip: a setup-token would be stored as `sk-ant-at01-…` (the `o`
+    of `oat01` was already on screen) and be dead on its first probe.
 
     So the token is read off a replayed screen: the cursor moves are applied to
     a grid, which is what the human at a real terminal sees. Rows grow without
@@ -10829,12 +10805,12 @@ def _diagnostic_tail(raw: bytes, limit: int = 600) -> str:
         newest_first.append(ln)
         if sum(len(k) for k in newest_first) > limit:
             break
-    # Trim from the OLD end. This used to join oldest-first and then slice
-    # `[:limit]`, which deletes the NEWEST line — the CLI's verdict, and the
-    # entire reason this function exists. Seen live on 2026-09-08: a tail whose
-    # final segment was the single character "O", the decapitated head of
-    # "OAuth error: Request failed with status code 400". It reads as "the CLI
-    # said nothing", which is the exact wrong conclusion, and it was reached.
+    # Trim from the OLD end. Joining oldest-first and then slicing
+    # `[:limit]` would delete the NEWEST line — the CLI's verdict, and the
+    # entire reason this function exists. A tail whose
+    # final segment is the single character "O", the decapitated head of
+    # "OAuth error: Request failed with status code 400", reads as "the CLI
+    # said nothing", which is the exact wrong conclusion.
     chosen: list[str] = []
     total = 0
     for ln in newest_first:
@@ -10863,12 +10839,11 @@ class MintTimeout(RuntimeError):
 class MintUnreadableToken(MintTimeout):
     """The sign-in SUCCEEDED and we could not read the credential out.
 
-    A different fault from "no token appeared", and collapsing the two is what
-    made 2026-09-08 expensive: a human signed in correctly, Claude issued a
-    year-long token, the runner failed to match its prefix, and the operator was
-    told "setup-token never printed a token". That sentence sent the debugging
-    at the sign-in — which had worked perfectly — instead of at the six-line
-    parser, and cost a second attempt to notice.
+    A different fault from "no token appeared", and collapsing the two is costly: a
+    human signs in correctly, Claude issues a year-long token, the runner fails to
+    match it, and the operator is told "setup-token never printed a token". That
+    sentence sends the debugging at the sign-in — which worked perfectly — instead
+    of at the parser.
 
     Distinguished because the two need OPPOSITE responses: this one is a runner
     bug to fix and never to retry blindly, while a real failure is worth another
@@ -10933,7 +10908,7 @@ class MintSession:
         then burns its full timeout and reports "never printed a token" for what
         is really "never asked".
 
-        Measured on the box (`claude` 2.1.197, 2026-09-08), all three variants
+        Measured on the box (`claude` 2.1.197), all three variants
         against a live `setup-token`:
 
             code + CR, one write   -> silent, no submit      <- the bug
@@ -11036,8 +11011,7 @@ class MintSession:
 
 #: `claude auth login` — the FULL login (`--claudeai` = the subscription, not a
 #: Console API key). Same authorize URL shape as setup-token and the same "Paste
-#: code here if prompted" prompt under a pty (checked against `claude` 2.1.300,
-#: 2026-10-14), so `MintSession` drives it unchanged up to the code; only what
+#: code here if prompted" prompt under a pty (checked against `claude` 2.1.300), so `MintSession` drives it unchanged up to the code; only what
 #: success LOOKS like differs.
 LOGIN_ARGV = ("claude", "auth", "login", "--claudeai")
 _LOGIN_OK = re.compile(r"Login\s*successful", re.I)
@@ -11225,9 +11199,9 @@ def _drain_mint(runner_id: str) -> None:
                     _reprobe([_login_label(key)])
                     return
                 # Ask the token one question BEFORE calling the sign-in a success.
-                # cloud-ec2-2, 2026-10-16 to 10-23: three sign-ins were reported
-                # "signed in; new token stored" and every token was dead on its
-                # first probe seconds later (a misread — see `render_screen`).
+                # A misread token (see `render_screen`) would be reported
+                # "signed in; new token stored" and be dead on its first probe
+                # seconds later.
                 # A dead one is not stored: the person hears it failed, with why.
                 # Capped or unanswered is a real token, and is kept.
                 check = _probe_entry(("minted", _LIST_KINDS["token"][1], token))
@@ -11327,18 +11301,14 @@ def _drain_google_mint(runner_id: str, work: dict) -> None:
 
 # ── inbox (the Gmail doorbell, and the timer that audits it) ───────────────
 #
-# Until now this box had no inbox code at all, so a `check_inbox` frame reached a
-# runner that could not act on it. That was invisible because the LAPTOPS' 300s
-# timer found the same mail a few minutes later and enqueued it — push looked
-# slow rather than dead. canopy-web logged the truth all along:
-#
-#   gmail.push.missed x18, since 2026-08-01
-#   "the 300s poll found mail that push never rang for — push is registered but
-#    not delivering"
+# A `check_inbox` frame needs inbox code on the box; without it the frame reaches a
+# runner that cannot act on it, and the LAPTOPS' 300s timer finds the same mail a few
+# minutes later — push looks slow rather than dead, and canopy-web logs
+# `gmail.push.missed` ("the 300s poll found mail that push never rang for").
 #
 # The box HAS the credentials (`canopy agent prepare` imports each agent's gmail
-# token at bootstrap, and a live `gog gmail search` succeeds here); it
-# only ever lacked the code. So: same modules, same behaviour, same tests.
+# token at bootstrap, and a live `gog gmail search` succeeds here), so it runs
+# the same modules, same behaviour, same tests as the laptops.
 def _import_inbox():
     from canopy_runner import inbox, inbox_due  # noqa: PLC0415
     return (inbox, inbox_due)
@@ -11373,7 +11343,7 @@ class _InboxClient:
         # re-poll of the same unread mail reads as "nothing new", not fresh work.
         return {**(payload or {}), "_created": status == 201}
 
-    # The automatic replies canopy-web could not send (canopy-web#1416), leased
+    # The automatic replies canopy-web could not send, leased
     # to this box for the mailboxes it reads; `canopy_runner.admission_notices`.
     def claim_admission_notices(self, runner_id: str, mailboxes: dict) -> list:
         status, payload = _api("POST", f"/runners/{runner_id}/admission-notices",
@@ -11417,7 +11387,7 @@ def _agent_mailboxes() -> dict:
     repo's. An agent's repo is its DEFINITION, shared by every instance of it
     (apps/agents/definition.py), so its `config/agent.json` names the same
     address for all of them: two ACE instances on two boxes would both poll
-    ace@ and enqueue its mail as their own turns (canopy-web#984). An instance
+    ace@ and enqueue its mail as their own turns. An instance
     with no mailbox recorded in canopy is not polled at all, rather than
     inheriting the definition's.
 
@@ -11440,7 +11410,7 @@ def _agent_mailboxes() -> dict:
             _log(f"inbox {slug}: its repo names {declared}, but this instance's mailbox in "
                  f"canopy-web is {account} — polling {account}")
         # No declaration means the fleet's shared client, never one named after
-        # the agent — that exists for nobody (2026-10-04).
+        # the agent — that exists for nobody.
         client = (data.get("gog_client") or "").strip() or FLEET_GOG_CLIENTS[0]
         boxes[slug] = {"account": account, "client": client}
     return boxes
@@ -11462,7 +11432,7 @@ _MAILBOX_READABLE: dict = {}
 def mailboxes_readable() -> list | None:
     """The addresses this box PROVED it can read, for the heartbeat; None before
     the first probe. The doorbell rings only runners whose list holds the rung
-    address (or that never reported one) — canopy-web#1087."""
+    address (or that never reported one)."""
     if not _MAILBOX_READABLE:
         return None
     return sorted(a.lower() for a, ok in _MAILBOX_READABLE.items() if ok)
@@ -11533,9 +11503,8 @@ def _resolve_mailbox_clients(boxes: dict, probe) -> dict:
     `canopy` client, but on this box echo's live token sits under `echo` (and
     ace's `ace` token is expired, so ace only works under `canopy`). Neither
     config/agent.json nor gog's account_clients map gets both right —
-    bootstrap_agents.sh spells out why, and canopy-web#661 (reverted the same
-    day) is what trusting the declaration cost. The token is the only authority
-    (canopy-web#738).
+    bootstrap_agents.sh spells out why. Trusting the declaration is wrong: the
+    token is the only authority.
     """
     resolved: dict = {}
     for slug, box in boxes.items():
@@ -11636,8 +11605,8 @@ def _drain_inbox(runner_id: str) -> None:
             finally:
                 # Stamp even on failure, or a broken mailbox is retried every tick.
                 _INBOX_STAMPS[slug] = time.time()
-        # The automatic replies canopy-web could not send for these mailboxes
-        # (canopy-web#1416), with the client each was just proved to read with.
+        # The automatic replies canopy-web could not send for these mailboxes,
+        # with the client each was just proved to read with.
         if due:
             try:
                 from canopy_runner import admission_notices  # noqa: PLC0415
@@ -11672,8 +11641,8 @@ def _session_thread_key(turn: dict) -> str:
 def _agent_session_title(turn: dict) -> str:
     """A readable name for an agent turn's session: its email's subject, else its
     schedule's name, else the first line of its prompt with any leading slash
-    command and its flags removed ("/ace:turn --thread 1a0f…" is not a name —
-    it was one on 2026-10-03). "" when nothing readable is left; the server
+    command and its flags removed ("/ace:turn --thread 1a0f…" is not a name).
+    "" when nothing readable is left; the server
     names it then (harness.services.turn_session_title, which also decides)."""
     ref = turn.get("origin_ref") or {}
     for key in ("subject", "schedule_name"):
@@ -11703,12 +11672,11 @@ def _agent_thread_key(turn: dict) -> str:
     - origin_ref names a conversation (`thread_key`, else `thread_id` — an email
       turn's Gmail thread): that key, so every turn on the thread continues ONE
       session (`_session_resume_plan` resumes it, `_adopt_resume_transcript`
-      carries its transcript into the new turn's worktree). Until 2026-10-29 a
-      cloud agent turn always took `<agent>:<turn id>`, and one Hal alarm thread
-      re-dispatched four times opened four cold sessions on cloud-ec2-live while
-      the laptop continued one.
+      carries its transcript into the new turn's worktree). A cloud agent turn
+      that always took `<agent>:<turn id>` would open four cold sessions for one Hal
+      alarm thread re-dispatched four times while the laptop continued one.
     - otherwise (a schedule's fire, a board turn, a dispatch with no key):
-      `<agent>:<turn id>`, one fresh session per turn. That is the #309 guard —
+      `<agent>:<turn id>`, one fresh session per turn. That is the guard that
       a keyless turn must never sink into a shared, live session.
 
     A confined (caller's) turn's key carries `#<profile name>`, as the laptop's
@@ -11743,14 +11711,13 @@ CLAUDE_PROJECTS_HOME = pathlib.Path.home() / ".claude" / "projects"
 def _encode_project_dir(cwd: pathlib.Path) -> str:
     """Claude Code's ~/.claude/projects/<name> encoding: '/', '.' and '_' -> '-'.
 
-    The underscore was missing until 2026-07-27: a cwd containing one resolved
-    to a directory that does not exist, so the session silently had no
-    transcript at all. Verified against 286 live project dirs, none of which
-    contains an underscore. Byte-identical to
+    The underscore matters: a cwd containing one would otherwise resolve
+    to a directory that does not exist, so the session silently has no
+    transcript at all. Byte-identical to
     packages/canopy_transcript/canopy_transcript/paths.py::encode_project_dir —
     keep the two in step (this file ships to the box as a single file, which is
     why the duplication exists). '\\' and ':' are Claude Code's Windows
-    separators (failure investigation 6, 2026-10-16 — see paths.py).
+    separators (see paths.py).
     """
     return (str(cwd).replace("\\", "-").replace(":", "-")
             .replace("/", "-").replace(".", "-").replace("_", "-"))
@@ -11759,8 +11726,8 @@ def _encode_project_dir(cwd: pathlib.Path) -> str:
 def _adopt_resume_transcript(cwd: pathlib.Path, session_id: str, agent_slug: str) -> bool:
     """Make a session started by an AGENT turn resumable from a CHAT turn.
 
-    An agent turn runs in its own worktree of the agent's clone (before #1141,
-    in the clone itself); a reply sent into that turn's chat is a session turn, which runs in the chat's own
+    An agent turn runs in its own worktree of the agent's clone; a reply sent
+    into that turn's chat is a session turn, which runs in the chat's own
     WORK_DIR/sessions/<id>. Claude Code finds a `--resume` / `session/load`
     target by the cwd-derived project directory, so the session the agent turn
     wrote was invisible from there: `_resume_target_exists` said no, and the
@@ -11775,8 +11742,8 @@ def _adopt_resume_transcript(cwd: pathlib.Path, session_id: str, agent_slug: str
         return False
     if not agent_slug or _safe_session_dirname(agent_slug) != agent_slug:
         return False
-    # Looked up, not derived: since #1141 each agent turn ran in its own
-    # worktree (`_agent_session_transcript`), and older ones in the clone.
+    # Looked up, not derived: each agent turn runs in its own
+    # worktree (`_agent_session_transcript`), and older ones ran in the clone.
     src = _agent_session_transcript(agent_slug, session_id)
     dst = CLAUDE_PROJECTS_HOME / _encode_project_dir(cwd) / f"{session_id}.jsonl"
     try:
@@ -11876,7 +11843,7 @@ def _session_resume_plan(runner_id: str, turn: dict) -> str:
         return ""
     body: dict = {"thread_key": thread_key}
     if agent_turn and turn.get("id"):
-        # Lets the server refuse a session another turn is executing in (#309).
+        # Lets the server refuse a session another turn is executing in.
         body["turn_id"] = str(turn["id"])
     if project:
         body["project"] = project
@@ -11956,19 +11923,16 @@ def _record_session_resume(runner_id: str, turn: dict, cli_session_id: str) -> N
 
 
 # ── REST fallback loop (poll) ───────────────────────────────────────────────
-# ── Concurrent turn execution (2026-07-27 convergence) ──────────────────────
+# ── Concurrent turn execution ───────────────────────────────────────────────
 #
-# The runner used to execute turns STRICTLY SERIALLY: the claim loop called
-# run_claude() and blocked inside it until `claude -p` exited, so a box serving
-# five agents drained their turns one at a time. The laptop runner has never
-# worked that way — it registers a chat turn and pumps it across ticks while it
-# keeps heartbeating and claiming.
+# Turns do not execute serially on the claim loop: a box serving five agents
+# would otherwise drain their turns one at a time, blocked inside run_claude()
+# until `claude -p` exits. The laptop runner registers a chat turn and pumps it
+# across ticks while it keeps heartbeating and claiming.
 #
-# It blocked because it derived the session's RECORD from stdout, so it had to
-# sit in the read loop. Now that the transcript carries the durable record
-# (`_ship_transcript_rows`), the read loop is no longer load-bearing for
-# anything but this turn's own completion, and the whole turn can move off the
-# claim path onto its own thread.
+# The session's RECORD is the transcript (`_ship_transcript_rows`), not stdout, so
+# the read loop is load-bearing only for this turn's own completion, and the whole
+# turn runs off the claim path on its own thread.
 #
 # Thread-per-turn rather than the laptop's single-threaded pump, deliberately:
 # run_claude() already runs its own flusher and lease threads and has careful
@@ -11983,9 +11947,9 @@ def _record_session_resume(runner_id: str, turn: dict, cli_session_id: str) -> N
 #
 # MEMORY is the real ceiling, not the turn count. A turn is Claude Code plus its
 # ACP adapter (600-700 MB measured) plus whatever the agent runs — a test suite,
-# an npm build. On 2026-10-05 cloud-ec2-1 (t3.medium: 3.8 GB, no swap) ran out
-# of memory twice with a flat cap of 4, and each kernel OOM kill took every
-# in-flight turn down with it. So the default cap is derived from the box's RAM,
+# an npm build. On a small box (e.g. 3.8 GB, no swap) a flat cap of 4 runs out
+# of memory, and each kernel OOM kill takes every in-flight turn down with it.
+# So the default cap is derived from the box's RAM,
 # and a claim is skipped while available memory is below a floor.
 #: Memory one turn is budgeted at, for deriving the default cap.
 TURN_MEMORY_BUDGET_KB = int(os.environ.get("TURN_MEMORY_BUDGET_KB", str(1536 * 1024)))
@@ -12043,9 +12007,9 @@ def _in_flight_ids() -> list[str]:
 
 # ── the claim gate ──────────────────────────────────────────────────────────
 # The box decides for itself whether to ask for a turn, and none of those
-# reasons is visible to canopy-web: on 2026-10-24 an Eva chat turn sat queued
-# 15 minutes behind cloud-ec2-2 while the server saw an online, ready, idle box,
-# and only journald knew why. So the ONE gate both claim loops ask is also
+# reasons is visible to canopy-web: a chat turn can sit queued
+# behind a box the server sees as online, ready and idle, with only journald
+# knowing why. So the ONE gate both claim loops ask is also
 # reported on every heartbeat, as the `claim` health check.
 
 #: When the current not-claiming streak began (None while claiming).
@@ -12120,8 +12084,8 @@ def _import_transcript():
 def _result_note(text: str, turn: dict) -> str:
     """The `result_note` a finish sends: the reply, capped, and — when the cap cut
     it — ending with a marker that says so and links the page holding the whole
-    reply (canopy_transcript.result_note; canopy-web#1955). A finish must never
-    fail on this: without canopy_transcript it is the old bare cut."""
+    reply (canopy_transcript.result_note). A finish must never
+    fail on this: without canopy_transcript it is a bare cut."""
     try:
         if _transcript_core() is not None:
             from canopy_transcript.result_note import cap, turn_url  # noqa: PLC0415
@@ -12331,7 +12295,7 @@ _LAST_STREAM_ACTIVITY = 0.0
 
 
 def _stream_interval(now: float) -> float:
-    """How long to wait between stream syncs (#647): the live clock while
+    """How long to wait between stream syncs: the live clock while
     transcripts have grown recently, the idle clock once they have not."""
     if now - _LAST_STREAM_ACTIVITY < STREAM_IDLE_AFTER_SECONDS:
         return STREAM_POLL_SECONDS
@@ -12343,7 +12307,7 @@ def _session_transcript_path(session_id: str, session_key: str, project: str = "
 
     Two places a session can have run: a CHAT session in its own stable
     WORK_DIR/sessions/<id> (see _turn_cwd), an AGENT turn's session in that
-    turn's worktree of the agent's clone (or, before #1141, the clone itself) —
+    turn's worktree of the agent's clone (or, for older turns, the clone itself) —
     found by `_agent_session_transcript` from the descriptor's `project`, which
     is the session's emdash_project (the agent's slug). `session_key` is the CLI session
     uuid, so whichever directory holds that file is the one; there is nothing to
@@ -12395,7 +12359,7 @@ def _post_stream_rows(runner_id: str, session_id: str, rows: list,
     for batch in ct.chunk_rows(events) or [[]]:
         status, _ = _api("POST", f"/runners/{runner_id}/session-stream",
                          {"session_id": session_id, "events": batch,
-                          # Which conversation these ordinals belong to (issue #615).
+                          # Which conversation these ordinals belong to.
                           "transcript_id": transcript_id})
         if status != 200:
             return False
@@ -12478,7 +12442,7 @@ def _sync_session_streams(runner_id: str) -> None:
                 reader = ct.TailReader(str(path))
                 records = reader.read_new()
                 # The server's markers are ordinals into the transcript it named;
-                # against any other file they license nothing (issue #615).
+                # against any other file they license nothing.
                 same = bool(st["server_transcript_id"]) and (
                     st["server_transcript_id"] == transcript_id
                 )
@@ -12543,7 +12507,7 @@ def _drain_backfills(runner_id: str) -> None:
                              {"session_id": sid, "messages": batch,
                               "final": i == len(batches) - 1,
                               # Names the conversation, so a rebuild REPLACES a
-                              # predecessor's rows rather than merging (issue #615).
+                              # predecessor's rows rather than merging.
                               "transcript_id": path.stem})
             _log(f"backfill {sid[:8]}: shipped {len(messages)} rows "
                  f"in {len(batches)} chunk(s) -> {st}")
@@ -12916,8 +12880,8 @@ def _confined_prompt_text(turn: dict) -> str:
               or (turn.get("origin_ref") or {}).get("thread_id") or "")
     if _chat_session_id(turn) and not tid:
         # A chat or Slack turn's prompt is the person's own question, delivered as
-        # they typed it — as the laptop runner does. Substituting the entry dropped
-        # the question (labsdata, 2026-10-23: "Nothing was asked yet") and showed
+        # they typed it — as the laptop runner does. Substituting the entry would drop
+        # the question ("Nothing was asked yet") and show
         # the entry command as the person's line. The canopy plugin's prompt hook
         # names the entry as the profile's procedure, so the agent still follows
         # it; the profile confines the session either way.
@@ -13131,7 +13095,7 @@ def profiles_supported(plugin_root: pathlib.Path | None = None) -> int:
 #: Every turn this runner executes is ONE-SHOT: when the model ends its turn the
 #: session closes (ACP `agent.close()`, or `claude -p` exits), so a background task's
 #: completion notification has nobody to wake. canopy's one_shot_turn_guard hook
-#: (canopy #755) blocks background Bash/subagents/waits when this is set — stated
+#: blocks background Bash/subagents/waits when this is set — stated
 #: explicitly here rather than inferred from an unrelated variable.
 ONE_SHOT_TURN_ENV = {"CANOPY_ONE_SHOT_TURN": "1"}
 
@@ -14344,9 +14308,8 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         # cwd's own git pull included — can hand it a credential.
         _TURN_ENV.confined = _confined_profile(turn) if confined else None
         if SENSITIVE_DATA_MODE and not confined:
-            # A sensitive-data box runs only confined turns (spec 2026-10-22-sensitive-
-            # data-agents §5: a profile that handles sensitive data is confined for
-            # everyone). canopy-web decides that; this is the box refusing to trust it
+            # A sensitive-data box runs only confined turns (a profile that handles
+            # sensitive data is confined for everyone). canopy-web decides that; this is the box refusing to trust it
             # blindly.
             note = ("sensitive_data_unconfined: a sensitive-data runner runs only turns confined "
                     "to a profile that handles sensitive data; this turn's envelope is not confined")
@@ -14614,7 +14577,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             _record_session_cwd(cli_session_id, cwd)
         if cli_session_id:
             # Never let bookkeeping cost us the finish below — an exception here
-            # used to strand the turn exactly like a dead socket did (#448).
+            # would strand the turn exactly like a dead socket.
             for step, fn in (("record session resume", _record_session_resume),
                              ("ship transcript rows", None)):
                 if confined and fn is _record_session_resume:
@@ -14631,16 +14594,14 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                         fn(runner_id, turn, cli_session_id)
                 except Exception as exc:  # noqa: BLE001
                     _log(f"warn: could not {step} for {turn_id[:8]}: {exc}")
-        # ALWAYS over REST. #448 fixed turns being orphaned when the WebSocket
-        # died mid-turn and the finish frame raised; the worker never touches the
-        # socket at all, so that failure class is now structurally impossible
-        # here rather than merely handled.
+        # ALWAYS over REST. A turn is orphaned when the WebSocket dies mid-turn and
+        # the finish frame raises; the worker never touches the socket at all, so
+        # that failure class is structurally impossible here rather than merely handled.
         if not job and _killed_by_shutdown(ok, turn_id):   # a job may have written: never again
-            # Left running: canopy-web queues it again for another box. Here, not in
-            # the old WS `_finish_turn`, which nothing called — so #2148's guard never
-            # ran, and turn 2087c077 (canopy-web on demo-0fc9c7b1efb87c5c3, 2026-10-26,
-            # failure investigation 13) was reported failed with "turn ended:
-            # cancelled" as its fleet member terminated.
+            # Left running: canopy-web queues it again for another box. The guard
+            # must live here, in the worker that finishes turns: otherwise a turn is
+            # reported failed with "turn ended: cancelled" as its fleet member
+            # terminates.
             _log(f"stopping: the box is shutting down — leaving turn {turn_id[:8]} to be queued again")
             _lifecycle(turn_id, "left_for_requeue", reason="the box is shutting down",
                        session=cli_session_id)
@@ -14682,7 +14643,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         if confined:
             # AFTER the finish, which writes result_note: a caller's turn hands its
             # `For <Agent>'s owner:` line to the note the owner reads, even when the
-            # reply above it ran past the 2000 characters kept (canopy-web#1416).
+            # reply above it ran past the 2000 characters kept.
             try:
                 from canopy_transcript.owner_ask import find  # noqa: PLC0415
 
@@ -15131,7 +15092,7 @@ def main() -> None:
         enrollment.start()
     else:
         # Canopy Vault: register this box's instance role as its device key
-        # (background, fail-open; logs the approve URL while pending). canopy-web#1549.
+        # (background, fail-open; logs the approve URL while pending).
         enrollment = start_aws_device_key_enrollment(runner_id)
     _retire_shared_github_credentials()
     # (The clone's packages went on sys.path above, before the adoption — and so
@@ -15142,7 +15103,7 @@ def main() -> None:
         return  # stopped before a credential was provisioned
     # Registering the key can change what canopy-web will accept from this box (a
     # new key waits on a person): settle that BEFORE the bootstrap checks the token,
-    # not halfway through it, as on 2026-10-18 02:28.
+    # not halfway through it.
     if beside:
         start_bootstrap_beside_claims(enrollment)
     else:

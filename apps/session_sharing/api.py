@@ -189,8 +189,8 @@ def upload_session(
     finally:
         tmp_path.unlink(missing_ok=True)
 
-    # A sensitive conversation is never shared (spec 2026-10-22-sensitive-data-agents
-    # §4): its transcript is the host's data.
+    # A sensitive conversation is never shared (the sensitive-data rule):
+    # its transcript is the host's data.
     from apps.harness import sensitivity
 
     if sensitivity.claude_session_is_sensitive(parsed.cli_session_id):
@@ -301,8 +301,8 @@ def upload_session(
 # from the repo it runs in), so an owner-only list hides exactly the shares a
 # human asked their agent to make. Link visibility means "anyone with the URL"
 # — but a LIST hands out the URL, so it is limited to TEAMMATES: people who
-# share a workspace with the sharer. It used to be every signed-in user, which
-# includes an invite-admitted partner who had never been sent any of them.
+# share a workspace with the sharer. Every signed-in user is too wide: it would
+# include an invite-admitted partner who was never sent any of them.
 # ---------------------------------------------------------------------------
 
 

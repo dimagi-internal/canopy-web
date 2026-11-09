@@ -293,7 +293,7 @@ def test_read_recent_messages_reads_only_tail_of_large_file(tmp_path):
 
 
 def test_attach_recent_tail_sets_last_active_from_newest_transcript_record(tmp_path):
-    # The live-run case PR #300 fixed: the CC session is what's active, and emdash's
+    # The live-run case: the CC session is what's active, and emdash's
     # own UI timestamp is stale. The newest record IN the transcript is the signal.
     home = tmp_path / "home"
     claude_home = home / ".claude" / "projects"
@@ -310,12 +310,12 @@ def test_attach_recent_tail_sets_last_active_from_newest_transcript_record(tmp_p
 
 
 def test_attach_recent_tail_ignores_a_touched_file_with_no_new_records(tmp_path):
-    # THE BUG (labs 2026-07-25): a live-but-IDLE `claude` process rewrites its own
+    # THE BUG: a live-but-IDLE `claude` process rewrites its own
     # transcript periodically without appending a single conversational record, so
     # the file's mtime keeps advancing while nothing happens. Reading mtime as the
     # activity signal made dormant sessions creep to the top of the phone's list
     # reading "just now" (and, via is_session_running's 120s window, even render as
-    # "running"). Observed skews on the live fleet: mtime 23.4h and 44.7h newer than
+    # "running"). The mtime can be many hours newer than
     # the newest record in the file. Activity is what the transcript SAYS, not when
     # the file was last written.
     import os
@@ -379,9 +379,9 @@ def test_newest_record_time_takes_the_max_not_the_last_line(tmp_path):
 
 
 def test_newest_record_time_ignores_bookkeeping_records(tmp_path):
-    # The parked-session shape measured on the fleet (spark, 2026-08-15): the agent
-    # stopped at 12:00 and the transcript kept growing with a PR link and background
-    # task-queue churn. Counting those made a 27-minute-parked session read as
+    # The parked-session shape: the agent
+    # stops at 12:00 and the transcript keeps growing with a PR link and background
+    # task-queue churn. Counting those would make a 27-minute-parked session read as
     # "just acted" in the chat list, and float to the top of its running-first sort.
     f = tmp_path / "s.jsonl"
     f.write_text("\n".join(json.dumps(x) for x in [

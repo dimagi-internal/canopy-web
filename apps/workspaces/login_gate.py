@@ -39,10 +39,10 @@ def sign_in_domain_workspace(email: str):
     """The workspace that lets people at `email`'s domain sign in, or None: the domain is on
     its `access_request_domains` AND is one of its VERIFIED canopy-hosted mail domains.
 
-    The second half is the proof of control. A domain on the request list alone was never a
+    The second half is the proof of control. A domain on the request list alone is never a
     login grant (anyone can make a Google account at gmail.com), but a workspace whose DKIM
     records verified for the domain controls its DNS, so it decides who holds addresses
-    there — e.g. a family's or a team's free Google Workspace logins (Jonathan, 2026-10-18).
+    there — e.g. a family's or a team's free Google Workspace logins.
     Signing in still grants nothing: the person can only ask to join, approved by an admin
     or at the workspace's auto-approve role. The caller must already have checked the email
     is PROVIDER-verified (`CustomSocialAccountAdapter`)."""

@@ -61,8 +61,9 @@ def ada(fleet):
 
 @pytest.mark.parametrize("status", ["open", "debugger_failed", "held", "pending_deploy"])
 def test_the_agent_stages_are_alerts_the_debugger_holds(fleet, ada, status):
-    """They used to raise nothing (open) or raise as a person's (held,
-    debugger_failed): an alert meant "needs a person" and had no assignee."""
+    """The agent stages are alerts the debugger holds: they must not raise nothing
+    (open) or raise as a person's (held, debugger_failed), since an alert means
+    "needs a person" and has an assignee."""
     runner = Runner.objects.get(name="cloud-ec2-2")
     # pending_deploy only stays so while a runner it hit is known to lack the fix.
     Runner.objects.filter(pk=runner.pk).update(code_sha="aaaaaaa1", code_committed_at=1)

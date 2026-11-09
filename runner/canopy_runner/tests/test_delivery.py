@@ -1,9 +1,8 @@
 """A reuse send is CONFIRMED against the session transcript, or the turn fails.
 
-The incident: turn ffaa56ce (2026-10-02) — `open_and_send` reported `sent`, the
-text never reached Claude Code, and the turn sat RUNNING with no reply and no
-signal. These tests pin that a send nothing in the transcript acknowledges now
-fails the turn with a note the human can act on, and that a send that DID land —
+The incident shape: `open_and_send` reports `sent`, the text never reaches Claude
+Code, and the turn sits RUNNING with no reply and no signal. These tests pin that a
+send nothing in the transcript acknowledges fails the turn with a note the human can act on, and that a send that DID land —
 taken, queued, or rewritten by the TUI — is never reported lost (a false loss makes
 the human resend, which duplicates the message).
 """
@@ -191,7 +190,7 @@ def test_an_agent_turn_send_that_never_lands_fails_instead_of_reporting_reused(m
     assert client.finished is None
 
 
-# ── turn 22662f53 (2026-10-04): two sessions named "editing" ───────────────
+# ── two sessions named "editing" ─────────────────────────────────────────────
 #
 # eva's chat sent "No can leave it.  Are wee good to close out?" to eva's emdash
 # session "editing". ada ALSO had a session named "editing", listed above eva's in

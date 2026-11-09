@@ -3,9 +3,9 @@
 A turn's existence and status are the interaction tier: any member sees that
 the agent ran, when, for which origin, and how it ended, because that is what
 "the board" is. Its CONTENT is a log, and a log is the workspace admin's
-(`permissions.LOGS_READ`) — before 2026-10-02 every member, viewers included,
-read every turn's prompt, transcript and the caller's contact profile, which
-on an agent that answers outside contacts is other people's correspondence.
+(`permissions.LOGS_READ`) — not every member, viewers included: a turn's prompt,
+transcript and the caller's contact profile, on an agent that answers outside
+contacts, are other people's correspondence.
 
 Content is readable by:
 
@@ -164,9 +164,8 @@ def redact(turns, user):
         memo.update({("personal", t.pk): (t.project if t.project_id and t.project.is_personal else None)
                      for t in AgentTask.objects.filter(pk__in=task_ids).select_related("project__agent")})
     # Every chat turn's answer in ONE query, through the same chat ACL
-    # `can_read_turn_content` asks per row. Per row it was a session load and a
-    # read check each — ~3 queries a turn, 2,468 for one page on labs
-    # (SLOW_REQUEST, 2026-10-03).
+    # `can_read_turn_content` asks per row. Per row it costs a session load and a
+    # read check each — ~3 queries a turn, thousands for one page.
     chat_ids = {t.chat_session_id for t in turns if t.chat_session_id}
     if chat_ids and getattr(user, "is_authenticated", False):
         from apps.canopy_sessions import access as session_access

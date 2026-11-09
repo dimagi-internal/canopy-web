@@ -10,10 +10,10 @@ up, never more. These pin:
 * a trigger whose creator lost the right stops firing, loudly (refused + alert);
 * the one Triggers API and its gates; the cron-only surfaces never see mail triggers.
 
-Origin: every CloudWatch alarm to Hal was cancelled at enqueue for nine days
-(2026-09-28 → 10-07): `no-reply@sns.amazonaws.com` was an unlisted contact under
-Hal's ask-only interface. It was then made a "system account" (a fake member);
-it is now Hal's trigger.
+Why a trigger: a CloudWatch alarm mail from `no-reply@sns.amazonaws.com` is an
+unlisted contact under an ask-only interface and would be cancelled at enqueue; a
+"system account" (a fake member) is the wrong fix, so the alarm is the agent's
+trigger.
 """
 from __future__ import annotations
 

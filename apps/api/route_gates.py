@@ -1,13 +1,12 @@
 """Every REST route, and the gate it enforces — declared, so a new one cannot arrive without one.
 
-WHY THIS EXISTS. The ACL audit of 2026-10-02 did not find one bad gate; it found
-the same mistake made route by route. Product surfaces let a `viewer` approve a
+WHY THIS EXISTS. An ACL audit finds not one bad gate but the same mistake made route by route. Product surfaces let a `viewer` approve a
 DDD gate and wipe a whole feed with `{}`; schedules and turns let a viewer
 write a prompt and fire it at the fleet; six tenancy predicates had each grown a
 NULL-means-allow leg. Each was a route whose author never wrote down who may
 call it — the default was simply whatever the helper they reached for happened
 to check, and "any member" is the cheapest helper there is. And since
-2026-09-29 every route is also an MCP tool, so a route's gate is the gate on
+every route is also an MCP tool, so a route's gate is the gate on
 every client holding a token.
 
 So the rule is the one a reviewer cannot skip: **a new route fails CI until it

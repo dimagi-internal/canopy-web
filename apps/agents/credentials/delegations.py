@@ -13,8 +13,8 @@ chat, a project turn) has no GitHub credential at all — unless its repo has a
 
 The caller of a turn (the person who emailed the agent, say) is deliberately NOT
 the principal: an agent's GitHub writes use the identity of whoever lent it
-(its owner, or an admin when the owner has not — Jonathan, 2026-10-21), whoever
-caused them (Jonathan, 2026-09-24). Stopping an agent from doing something bad is the
+(its owner, or an admin when the owner has not), whoever
+caused them. Stopping an agent from doing something bad is the
 agent's own design responsibility — its gating hooks and sender triage — not the
 token layer's. Who asked is RECORDED instead (`requested_by`), so attribution
 shows both the credential and the person who caused the change.
@@ -47,7 +47,7 @@ EXPIRY_WARNING = dt.timedelta(days=14)
 _PROBE_HEAD = "canopy-permission-probe/does-not-exist"
 #: The push probe's twin: asking to create a branch at a commit that cannot
 #: exist. GitHub checks Contents: write before it looks for the commit, so 422
-#: = may push (and nothing is created), 403/404 = may not. Verified 2026-09-26:
+#: = may push (and nothing is created), 403/404 = may not. Verified against GitHub:
 #: 422 on a writable repo, 403 on a repo outside a fine-grained token's
 #: selection, 404 on one the person cannot write at all.
 _PROBE_SHA = "0" * 39 + "1"
@@ -83,7 +83,7 @@ def create_url(agent: Agent) -> str:
     """GitHub's new-token form, filled in for this agent.
 
     GitHub accepts name, description, resource owner, lifetime and permissions
-    as query parameters (changelog 2025-08-26). It does NOT accept a repository
+    as query parameters. It does NOT accept a repository
     selection, so the owner still picks the repos — the UI says which. And the
     resource owner it pre-selects has been reported to fall back to the
     person's own account on submit (community discussion #188111), which is why
@@ -122,7 +122,7 @@ def github_headers(token: str) -> dict:
 
 
 def _parse_expiry(header: str | None) -> dt.datetime | None:
-    # e.g. "2026-10-22 19:54:19 UTC"; absent for a token that never expires.
+    # e.g. "YYYY-MM-DD HH:MM:SS UTC"; absent for a token that never expires.
     if not header:
         return None
     try:

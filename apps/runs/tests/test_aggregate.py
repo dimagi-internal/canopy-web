@@ -54,7 +54,7 @@ def test_build_run_tokenizes_link_visibility_console_embeds():
     """The DDD console embeds artifacts via <iframe src=content_url>. A public
     (visibility=link) artifact must carry ?t=<share_token> so the iframe streams
     even when its workspace differs from the viewer's — parity with the release
-    page (issue #345). Private artifacts stay tokenless (session-member auth)."""
+    page. Private artifacts stay tokenless (session-member auth)."""
     u = make_user()
     rid = "tok-2026-06-02-001"
     pub = make_walkthrough(
@@ -111,7 +111,7 @@ def test_build_run_uses_latest_review_with_narrative():
     run = aggregate.build_run(rid)
     assert run["narrative"]["story"].startswith("A field worker opens the app.")
     assert run["narrative"]["title"] == "A field worker opens the app."
-    # Plain words, not the raw gate id + status (canopy-web#1271).
+    # Plain words, not the raw gate id + status.
     assert run["phase"] == "Narrative agreement · awaiting a decision"
 
 

@@ -112,7 +112,7 @@ def credential_access(request: HttpRequest, agent) -> tuple[str | None, str]:
                 and device_keys.runner_serves_agent(rtok.runner, agent)):
             return "runner", ""
         # A PRIVATE runner reads under its owner's license, for one of their own turns
-        # it holds (canopy-web#1705) — the same principal as their direct sessions.
+        # it holds — the same principal as their direct sessions.
         if license_for_read(request, agent) is not None:
             return "license", ""
         return None, (f"this runner token is {rtok.runner.name}'s, and {rtok.runner.name} "
@@ -121,7 +121,7 @@ def credential_access(request: HttpRequest, agent) -> tuple[str | None, str]:
     # direct session, whoever they are: an owner or admin using the agent in their own
     # Claude Code is read like anyone else, and steps up like anyone else
     # (`authority`). Asked first so being a runner owner or an admin changes nothing.
-    # apps/agents/credentials/licenses.py, canopy-web#1704. No turn, no secrets.
+    # apps/agents/credentials/licenses.py. No turn, no secrets.
     if license_for_read(request, agent) is not None:
         return "license", ""
     if services.caller_runs_agent(request.user, agent):
@@ -234,7 +234,7 @@ def resolve(request: HttpRequest, agent, refs: str | None) -> Resolved | Refusal
     if via is None:
         return Refusal(NO_ACCESS, reason)
 
-    # Device proof (canopy-web#1538 Phase 1a). Verified whenever one is sent, so
+    # Device proof (Phase 1a). Verified whenever one is sent, so
     # the read log can name the box that proved itself; REQUIRED for a zero-knowledge
     # agent (below), which is every agent that holds a value.
     device_key, refused, unrouted = device_key_from_proof(request, agent)
@@ -244,14 +244,14 @@ def resolve(request: HttpRequest, agent, refs: str | None) -> Resolved | Refusal
     if rtok is not None and device_key is not None and device_key.runner_id != rtok.runner_id:
         return Refusal(FOREIGN_DEVICE_PROOF, f"the device proof is {device_key.runner.name}'s, not this "
                                              f"runner token's ({rtok.runner.name})")
-    # Every agent is zero-knowledge, so a read ALWAYS needs one (canopy-web#1550): the wrap handed
+    # Every agent is zero-knowledge, so a read ALWAYS needs one: the wrap handed
     # out is the proving device's, so there is nothing to give without it. Any
     # ciphertext it does hold is useless without a device's own key, and a `zk1`
     # value with no wrap is still the refusal below.
     if device_key is None:
         if unrouted is not None:
             # An APPROVED box that does not run this agent: a routing fact, not a
-            # misused token, so the owner is not emailed (fizzy, canopy-web#1563).
+            # misused token, so the owner is not emailed.
             vault_alerts.unrouted_box_refused(agent, request, runner=unrouted)
             return Refusal(DEVICE_PROOF_REQUIRED, refused, reason="not_routed")
         # Name the box when the request does (its runner token, or an owned
@@ -265,8 +265,8 @@ def resolve(request: HttpRequest, agent, refs: str | None) -> Resolved | Refusal
     zk_wrap = None
     if device_key is not None and not vault_members.device_works_for_a_member(agent, device_key):
         # The machine layer never reads on its own: the person this box works for
-        # must be a member of the agent's vault (spec 2026-10-22-vault-access-
-        # follows-canopy-access-design.md), whatever copies it still holds.
+        # must be a member of the agent's vault (vault access follows
+        # canopy access), whatever copies it still holds.
         return Refusal(NOT_A_VAULT_MEMBER,
                        f"{device_key.runner.name} works for someone who is not a member of "
                        f"{agent.slug}'s vault; a manager of the vault must add them")
@@ -294,7 +294,7 @@ def resolve(request: HttpRequest, agent, refs: str | None) -> Resolved | Refusal
     withheld = [] if runner_read else accounts.withheld_payload(agent)
 
     # A person in a direct session runs the agent's TOOLS, not the agent: never its own
-    # canopy login (which grades as `system` — past the editor's manual cap) — canopy-web#1704.
+    # canopy login (which grades as `system` — past the editor's manual cap).
     hold_back_login = not authority.hands_out(placement, authority.AGENT_ONLY)
     if hold_back_login:
         values = {k: v for k, v in values.items() if k not in AGENT_ONLY_REFS}
@@ -329,13 +329,13 @@ def _classify_read(request: HttpRequest, via: str, *, runner, device_key, rtok) 
     # `X-Canopy-Runner` the caller owns. Pairing a runner is a fact about the
     # caller, not the request, so an owner who also pairs a box and resolves by
     # hand from their own session is an admin read, not a box outside a turn
-    # (canopy-web#1563). Every `runner` caller is an admin already.
+    #. Every `runner` caller is an admin already.
     if via == "runner" and runner is None:
         return "admin"
     # The owner at their OWN laptop: their own token (not the box's runner token),
     # proved by that laptop's approved device key. A zero-knowledge agent always
     # needs the proof, so without this every emdash session the owner opened read
-    # as "a box outside a turn" and emailed them about themselves (2026-10-18).
+    # as "a box outside a turn" and emailed them about themselves.
     # The read log still names the laptop. A cloud box, a bare X-Canopy-Runner, a
     # runner token, or someone else's laptop is still the box reading.
     if (via == "runner" and rtok is None and device_key is not None
@@ -359,7 +359,7 @@ def _record_read(request: HttpRequest, agent, *, via: str, runner, wanted, value
             license=lic)
     except Exception:  # noqa: BLE001 - a log hiccup must not deny a runner its secrets
         logger.exception("credential read log failed for %s", agent.slug)
-    # Never raises (canopy-web#1549): an alert hiccup must not deny a runner either.
+    # Never raises: an alert hiccup must not deny a runner either.
     vault_alerts.after_read(agent, request, via=via, turn_id=turn_id,
                             handed=list(values), runner=runner)
     try:

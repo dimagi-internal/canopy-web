@@ -3,11 +3,11 @@
 **The bug this exists to prevent.** The blocked-agent menu had two producers and
 neither could see a live dialog. The transcript reader is blind by construction:
 Claude Code writes the `AskUserQuestion` tool_use record only when the dialog is
-ANSWERED — measured 2026-08-01 across 60 transcripts on a live box, 39 records,
-every one already answered and not one pending, while two sessions sat visibly
-blocked with nothing in their files. The screen reader can see it, but only by
-driving CDP, which clicks the task and steals focus, so #510 stopped it running
-on a signal and nothing has triggered it since.
+ANSWERED — across 60 transcripts on a live box, every `AskUserQuestion` record
+was already answered and none pending, while two sessions sat visibly blocked
+with nothing in their files. The screen reader can see it, but only by
+driving CDP, which clicks the task and steals focus, so it is never run on a
+signal.
 
 `PreToolUse` closes the gap for free: it fires when the ask STARTS and carries
 the same `tool_input` the transcript would eventually hold.
@@ -485,9 +485,8 @@ def test_a_gone_session_is_told_apart_from_a_dead_box():
 def test_an_idle_prompt_is_not_somebody_waiting_on_you():
     """`Notification` fires both when an agent stops MID-TURN to ask and when a
     prompt simply sits idle after a turn ends. Counting the second put four
-    merely-idle sessions on the fleet's "waiting on you" list within minutes of
-    shipping this (labs, 2026-08-01), and a badge that counts every idle session
-    is a badge nobody reads."""
+    merely-idle sessions on the fleet's "waiting on you" list, and a badge that
+    counts every idle session is a badge nobody reads."""
     hl = listener()
     hl.handle_payload(PROMPT)
     hl.handle_payload({"hook_event_name": "Stop", "cwd": CWD})   # turn over
@@ -511,10 +510,9 @@ def test_a_turn_that_died_on_an_api_error_is_not_in_flight(tmp_path):
 
     Claude Code writes a 500 as an assistant message, appends its `turn_duration`
     row and returns to the prompt — no `Stop` hook, ever. So turn state said
-    in-flight forever, and the ordinary idle notification a minute later was read
-    as an agent asking a question. Measured on `ace`'s `spark`, 2026-08-17: a
-    "Waiting on you" with no options, over a composer that refused to send,
-    against a session that was sitting at an empty prompt.
+    in-flight forever, and the ordinary idle notification a minute later would be read
+    as an agent asking a question: a "Waiting on you" with no options, over a
+    composer that refused to send, against a session sitting at an empty prompt.
     """
     import json
 
@@ -555,8 +553,8 @@ def test_the_api_error_clears_the_turn_rather_than_one_notification(tmp_path):
 
 
 def test_a_turn_a_hook_stopped_is_not_in_flight(tmp_path):
-    """A hook's `continue: false` ends a turn with no `Stop` too. credential_guard aborted Ada's
-    debug turn 05590519 this way (2026-11-03), and the idle notification a minute later put a
+    """A hook's `continue: false` ends a turn with no `Stop` too (credential_guard aborts a
+    turn this way), and the idle notification a minute later must not put a
     "Waiting on you" on a session with nothing on screen."""
     import json
 
@@ -677,9 +675,9 @@ def test_a_cleared_menu_carries_no_error_to_hang_a_note_on():
 
 
 def test_an_unmodelled_tabbed_ask_keeps_its_declared_questions():
-    """chrome-sales, 2026-10-28: a 3-question ask the driver could not match came
-    back UNMODELLED with the one-tab screen, which REPLACED the held menu — and a
-    one-tab screen carries no `questions`. Every retry from the web was then
+    """A 3-question ask the driver could not match comes
+    back UNMODELLED with the one-tab screen, which must not REPLACE the held menu — a
+    one-tab screen carries no `questions`, and every retry from the web would then be
     refused "has 3 questions but none are held", so the dialog could only be
     answered in emdash. The screen is still shown; the declared list survives."""
     from canopy_runner import hooks

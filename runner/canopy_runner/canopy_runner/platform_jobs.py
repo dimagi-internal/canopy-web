@@ -9,10 +9,10 @@ its own osascript/PowerShell split for the same reason). This one was written
 inline against `launchctl`, which made the whole daemon look macOS-only when one
 function was.
 
-Say "nearly": this docstring used to claim everything else WAS neutral, and
-`dialog.py` was osascript-only the whole time it said so — on Windows the human
-was never asked and the message was silently dropped. A confident inventory is
-the thing that stops anyone re-checking, so keep this list honest or drop it.
+Say "nearly": a confident inventory of what is neutral is the thing that stops
+anyone re-checking (`dialog.py` was osascript-only while a claim like that stood,
+so on Windows the human was never asked and the message was silently dropped), so
+keep this list honest or drop it.
 
 So the split lives here rather than as `if sys.platform` scattered at call
 sites: a second OS is a new branch in one function with one test, not an audit.
@@ -57,8 +57,8 @@ def process_account() -> str:
     """The account this process RUNS AS, from the OS, never from the environment.
 
     Not ``getpass.getuser()``: that reads LOGNAME/USER/USERNAME first, and a
-    session launched with LOGNAME=root once pinned a runner to an account that
-    does not exist (#1008). POSIX asks the uid; Windows asks GetUserNameW (what
+    session launched with LOGNAME=root would pin a runner to an account that
+    does not exist. POSIX asks the uid; Windows asks GetUserNameW (what
     ``os.getlogin()`` calls there), which reads the process token. ``pwd`` is
     imported inside the POSIX branch for the same reason ``os.getuid()`` is
     above: it does not exist on Windows, and a module-level import made every
@@ -76,10 +76,9 @@ def app_data_dir(home: Path, *, env=None) -> Path:
     `appData`) and gog (Go's `os.UserConfigDir`) both resolve here.
 
     macOS is `~/Library/Application Support`; Windows is `%APPDATA%` (Roaming).
-    Every other caller wrote the macOS path inline, so on Windows `pair` wrote a
-    runner.json pointing at a database that could not exist and the gmail watch
-    looked for gog credentials in a directory nobody creates (2026-10-15, the first
-    real Windows runner). Non-Windows keeps the macOS layout, unchanged.
+    A caller that wrote the macOS path inline would, on Windows, have `pair` write a
+    runner.json pointing at a database that cannot exist and the gmail watch look for
+    gog credentials in a directory nobody creates. Non-Windows keeps the macOS layout.
     """
     env = os.environ if env is None else env
     if is_windows():

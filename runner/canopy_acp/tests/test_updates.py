@@ -10,7 +10,7 @@ survives a merge rather than what a single update says.
 from canopy_acp import UpdateReducer
 
 
-# The exact sequence observed on 2026-07-27 from claude-agent-acp 0.63.0 for one
+# The exact sequence observed from claude-agent-acp 0.63.0 for one
 # `echo hello-from-acp` Bash call. Kept verbatim — a synthetic approximation
 # would not have caught that `status` is absent from the middle updates.
 BASH_SEQUENCE = [
@@ -152,7 +152,7 @@ def test_a_usage_update_without_rate_limit_meta_leaves_the_last_one_standing():
 
 
 def test_session_title_is_captured():
-    """The agent supplies it — PRs #475-#477 were all deriving it by hand."""
+    """The agent supplies it, so nothing derives it by hand."""
     r = UpdateReducer()
     r.apply({"sessionUpdate": "session_info_update", "title": "Fix the flaky test",
              "updatedAt": "2026-07-28T01:39:27.923Z"})

@@ -11,7 +11,7 @@ const MODES: { mode: TurnMode; label: string; blurb: string }[] = [
 // the one place a human flips it (the agent's own repo publish can't).
 //
 // It is the AGENT'S mode — the "Everything else" row of the routing table — and a
-// routing rule may override it for its own work (spec 2026-09-23). `compact`
+// routing rule may override it for its own work. `compact`
 // is that table cell: no blurb, since the table states what the modes mean once.
 // `onChange` lets the table show what a rule that says nothing inherits.
 export function TurnModeToggle({

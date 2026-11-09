@@ -1,11 +1,10 @@
 """Admission rules: turns that can never complete are rejected before they run.
 
-The incident (canopy-web#1400, turn 506cbfed, 2026-10-10): a DMARC-verified
-contact emailed hal; hal's read mode lists `contact@dimagi.com:verified`, so the
-turn was confined; it resolved manual; a cloud runner claimed it; the read-mode
-procedure drafted a reply and waited for a human yes nobody could give. 32s of
-LLM, no reply, no notice. The seeded workspace rule now rejects that
-combination at the claim: CANCELLED, never claimed, a sender notice and an
+The case: a DMARC-verified contact emails hal; hal's read mode lists
+`contact@dimagi.com:verified`, so the turn is confined; it resolves manual; a cloud
+runner claims it; the read-mode procedure drafts a reply and waits for a human yes
+nobody can give — LLM spend, no reply, no notice. The seeded workspace rule rejects
+that combination at the claim: CANCELLED, never claimed, a sender notice and an
 owner notice recorded, and no debugger turn.
 """
 from __future__ import annotations
@@ -386,7 +385,7 @@ def test_a_pending_gmail_notice_keeps_the_mailbox_the_turn_came_in_on(
     assert notice.status == AdmissionNotice.PENDING and notice.mailbox == "hal.alt@dimagi-ai.com"
 
 
-# --- the runner sends what canopy-web could not (canopy-web#1416) --------------------
+# --- the runner sends what canopy-web could not --------------------
 
 @pytest.fixture
 def pending(fleet, django_capture_on_commit_callbacks):
@@ -669,9 +668,9 @@ def test_an_auto_rule_cannot_be_about_refused_or_unclaimed_turns(fleet):
 
 
 # --- a thread first handled manual on a laptop, then claimed by the cloud ---------
-# canopy-web#1474: the session rung kept every later turn manual and `auto_rule`
-# refused to raise it, so a cloud runner claimed the turn in manual, nobody could
-# approve the reply, and the turn ended `done` having sent nothing.
+# The session rung must not keep every later turn manual with `auto_rule` refusing
+# to raise it: a cloud runner would claim the turn in manual, nobody could approve
+# the reply, and the turn would end `done` having sent nothing.
 
 def _owner_mail(fleet, **kw):
     from allauth.account.models import EmailAddress
@@ -752,8 +751,8 @@ def _rejected_turn(chat_session_id=None):
 
 
 def test_a_rejected_chat_links_to_the_chat_that_holds_the_message():
-    """2026-11-03: the owner was asked to dismiss a rejected chat that neither they nor the
-    agent could read, because the card named the turn and not the conversation."""
+    """The owner must not be asked to dismiss a rejected chat that neither they nor the
+    agent can read, because the card named the turn and not the conversation."""
     from apps.admission import notices
 
     links = notices.fix_links(*_rejected_turn("s-9"))

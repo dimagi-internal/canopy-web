@@ -1,9 +1,8 @@
 """A cloud runner must not fill its own disk — and must say so before it does.
 
-cloud-ec2-1's 20 GB root reached 100% on 2026-10-04: ~/.claude/plugins/cache
-held every plugin version ever installed (33 canopy, 24 ace — about 9 GB) plus
-npm/uv download caches, and nothing reported it until turns failed on writes.
-Three fixes, one test group each: bootstrap prunes the caches (prune_caches.py,
+~/.claude/plugins/cache holds every plugin version ever installed, plus npm/uv
+download caches, and a full disk goes unreported until turns fail on writes.
+Three defences, one test group each: bootstrap prunes the caches (prune_caches.py,
 step 4b), the heartbeat health carries a `disk` check (warn 80%, fail 90%), and
 the template's root volume is a parameter defaulting to 40 GB.
 """

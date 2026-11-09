@@ -66,7 +66,7 @@ def test_only_the_steward_reads_curation(world, s3):
 
 
 def test_a_whole_file_publish_ends_a_delta_left_from_before(world, s3, tmp_path):
-    """A delta canopy-web was to build (before #1971) no longer blocks a publish."""
+    """A leftover delta that canopy-web was to build does not block a publish."""
     kb_fixtures.full(world, s3, tmp_path, _bundle(tmp_path, "v1", ITEMS))
     project = AgentProject.objects.get(handle="givewell-kb")
     stuck = KbVersion.objects.create(project=project, number=2, kind=KbVersion.DELTA, status=KbVersion.BUILDING,

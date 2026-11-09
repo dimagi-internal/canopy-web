@@ -17,7 +17,7 @@ class _Client:
         self._backfills = backfills
         self.shipped = []  # (session_id, messages)
         self.finals = []   # the `final` flag per POST
-        self.transcript_ids = []  # which transcript each POST named (issue #615)
+        self.transcript_ids = []  # which transcript each POST named
 
     def sync_backfills(self, runner_id):
         return self._backfills

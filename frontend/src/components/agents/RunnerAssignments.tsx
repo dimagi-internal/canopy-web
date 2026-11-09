@@ -12,8 +12,7 @@ import { dotClass, dotTitle, type RunnerRow, nextRowsForMove, nextRowsForToggle,
 // toggle, add) computes the full ordered rows list and PUTs it optimistically
 // (local state first, revert on failure) so the row never blocks on a round-trip.
 //
-// There is deliberately NO removal affordance. What used to be "×" (drop the
-// runner from the list) is now a toggle: clicking it flips `enabled` and PUTs
+// There is deliberately NO removal affordance. The "×" is a toggle: clicking it flips `enabled` and PUTs
 // the full rows list. A disabled row stays in the list — rank preserved,
 // rendered greyed — it just never routes (apps/harness/services.py's claim
 // path excludes it entirely). Re-adding an already-listed-but-disabled runner

@@ -1,7 +1,7 @@
 """Keyless runners: a box's approved device key buys its API credential.
 
-On 2026-10-17 cloud-ec2-2 ran on its owner's PAT; the PAT was revoked in a token
-cleanup and the box silently lost every turn it claimed. A runner now proves its
+A box that runs on its owner's PAT silently loses every turn it claims when the PAT
+is revoked. A runner instead proves its
 device key (an EC2 instance role, or a key it holds) at `POST /api/runner-sessions/`
 and gets an hour-long token that opens the runner protocol only.
 """
@@ -217,8 +217,8 @@ def test_runner_auth_covers_the_laptop_runners_calls_and_no_more(method, path, o
 # ---- the readiness a box reports ------------------------------------------------------
 
 def test_a_box_reports_readiness_with_its_own_token_only_for_agents_it_serves(box):
-    """2026-10-17: with the PAT revoked, cloud-ec2-2's every readiness report was a
-    401 — and its own runner token was not allowed to make one at all."""
+    """With the PAT revoked, a box reports readiness with its own runner token
+    (else every report is a 401)."""
     from apps.agents.models import Agent
     from apps.harness.models import RunnerAssignment
 

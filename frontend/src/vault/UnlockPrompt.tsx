@@ -3,7 +3,7 @@ import type { UnlockAsk, UnlockChoice, UnlockPrompt } from './operations'
 import { LOST_PASSPHRASE } from './prf'
 
 /**
- * "Unlock your vault key" — passkey or passphrase (canopy-web#1550). A hook, so
+ * "Unlock your vault key" — passkey or passphrase. A hook, so
  * each surface renders the prompt inline where the person is working:
  * `const { prompt, element } = useUnlockPrompt()`, pass `prompt` to the
  * operation, render `element`. The passphrase never leaves this component's

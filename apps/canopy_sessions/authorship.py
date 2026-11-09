@@ -1,28 +1,17 @@
 """Who said a line, carried THROUGH Claude's transcript.
 
-**Superseded 2026-09-27.** canopy USED to put the author on the delivered
-prompt itself — one marker line canopy prepended at claim, so the answer
-would still be in whatever Claude's transcript recorded. That broke on the
-laptop runner, which types a prompt into emdash as ONE line: the marker's
-trailing `\n` never survived, so a row arrived as
-`[canopy from="…" user=N turn=…]Are you working?` — marker and body glued
-together — and `parse` (which required the marker to be the WHOLE first
-line) rejected it, saving the row with `author=None` and the marker visible
-in the UI.
+The prompt reaches the agent EXACTLY as typed: the agent already learns who is asking
+from canopy's `caller_context` hook (the caller envelope), which never touches the
+prompt. Attribution is server-side (`transcript_ingest.persist_transcript_rows`
+matches an unmarked user row to the earliest unlinked chat-send Turn with the same
+text, in send order) — see that function's docstring.
 
-The user's call: the prompt must reach the agent EXACTLY as typed — it
-already learns who is asking from canopy's `caller_context` hook (the caller
-envelope), which never touches the prompt, so marking it was redundant
-there. Attribution moved server-side (`transcript_ingest.persist_transcript_rows`
-matches an unmarked user row to the earliest unlinked chat-send Turn with
-the same text, in send order) — see that function's docstring.
-
-`mark` and `for_turn` (which wrote the marker) are gone. `parse` stays,
-forever: rows already recorded, and any transcript backfilled from the days
-around this change, still carry the marker. It is now TOLERANT of the
-lost-newline case — the marker is accepted at the very start of the text
-followed by an OPTIONAL `\n` — while the mid-text rule is unchanged: only the
-very start of the text counts, so a person or agent quoting the syntax
+`parse` reads the legacy marker line, `[canopy from="…" user=N turn=…]`, which rows
+already recorded, and any transcript backfilled from older sessions, still carry.
+The laptop runner types a prompt into emdash as ONE line, so the marker's trailing
+`\n` may not survive and marker and body arrive glued together; `parse` therefore
+accepts the marker at the very start of the text followed by an OPTIONAL `\n`.
+Only the very start of the text counts, so a person or agent quoting the syntax
 mid-message is never misattributed.
 """
 from __future__ import annotations

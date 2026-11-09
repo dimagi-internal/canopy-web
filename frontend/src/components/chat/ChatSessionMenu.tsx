@@ -44,22 +44,20 @@ function MenuSection({ children }: { children: React.ReactNode }) {
 /**
  * Everything you can DO to a chat, behind one button.
  *
- * The chat header used to carry five buttons (Every reply, People, Share to
- * Slack, Close session, Reset from transcript). On a phone they took two rows,
- * and before they wrapped they pushed the page 145px sideways. None of them is
+ * The chat header holds none of the actions (Every reply, People, Share to
+ * Slack, Close session, Reset from transcript): on a phone they take two rows
+ * and push the page sideways. None of them is
  * something you do while reading a conversation, so they live here. The header
  * keeps what you read: the title and whether the agent is working.
  *
- * "Load all messages"/"Load full session" joined them for the same reason (Jonathan,
- * 2026-10-05): they used to be a strip PINNED above the transcript whenever the
- * server held more history than was loaded, which is most of the time on an
- * old session — a bar for a control that, once a session is a few days old,
- * you almost never tap. The warning it can also carry (history unavailable —
+ * "Load all messages"/"Load full session" live here for the same reason: a strip PINNED above the transcript
+ * whenever the server holds more history than is loaded would show on most old
+ * sessions — a bar for a control you almost never tap. The warning it can also carry (history unavailable —
  * runner offline) stays inline on the transcript, because that one is a fact
  * about what you're reading, not an action to take.
  *
- * Your memory in this conversation joined them too (Jonathan, 2026-10-19): a
- * chip in the header gave a setting you rarely change top billing. The item
+ * Your memory in this conversation lives here too: a
+ * chip in the header would give a setting you rarely change top billing. The item
  * carries its dots (green working, red not) so the state is one tap away.
  *
  * Session info sits with People: both are about the conversation rather than
@@ -67,8 +65,8 @@ function MenuSection({ children }: { children: React.ReactNode }) {
  * link" sits with them too: the chat's workspace address, which a teammate opens
  * to join live. The link is no grant — People decides who it lets in.
  *
- * Opening or closing every tool call at once lives here too: it was a bar
- * pinned above the transcript that took a row on a phone and was never used.
+ * Opening or closing every tool call at once lives here too: a bar
+ * pinned above the transcript would take a row on a phone and is rarely used.
  *
  * Grouped under headings (see the comment in the menu); the last items, set
  * apart, cannot be undone: Reset replaces the transcript, Close deletes the emdash

@@ -2,11 +2,10 @@
 
 @agentclientprotocol/claude-agent-acp declares `engines: {node: >=22}` from
 0.63.0. On an older node, `npm i -g` does not fail — it resolves DOWN to the
-newest version whose engines still match. Measured 2026-09-09 on cloud-ec2-1:
-node 20.20.2 got adapter 0.49.0 while the registry's latest was 0.75.1, and the
-ACP executor then ran with no steering support, because steering landed after
-0.49.0. Every layer reported success; only the missing capability in
-`initialize` showed it.
+newest version whose engines still match. For example node 20.20.2 gets adapter
+0.49.0 while the registry's latest is 0.75.1, and the ACP executor then runs with
+no steering support, because steering landed after 0.49.0. Every layer reports
+success; only the missing capability in `initialize` shows it.
 
 That is the shape worth pinning: a silent downgrade, not an error.
 """

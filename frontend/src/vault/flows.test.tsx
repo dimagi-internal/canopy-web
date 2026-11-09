@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// The zero-knowledge vault flows through their UI (canopy-web#1550), with the
+// The zero-knowledge vault flows through their UI, with the
 // REAL crypto module and WebAuthn mocked at its one seam (`assertWithPrf`,
 // which `prf.test.ts` covers against navigator.credentials). Each test opens
 // what the UI sent with the keys only the person/device holds — proving the

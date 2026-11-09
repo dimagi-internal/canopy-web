@@ -26,7 +26,7 @@ function DropdownMenuTrigger({
 // context, so a `z-50` on the popup inside it is ranked only against the
 // positioner's own children. The menu then painted UNDER any positioned
 // z-index on the page (the chat's sticky `z-10` tool-call bar) and those items
-// could not be tapped (2026-09-23, the chat session menu on a phone).
+// could not be tapped.
 const POSITIONER_Z = "z-50"
 
 function DropdownMenuContent({

@@ -1,5 +1,4 @@
-"""The site's needs: what a host site asks of canopy's agents, signed
-(spec ``2026-10-22-canopy-site-agents-api-design`` §2) — the other half of the site agents API.
+"""The site's needs: what a host site asks of canopy's agents, signed — the other half of the site agents API.
 
 The site publishes ``site.json`` beside its ``jwks.json`` (the Django host
 serves it at ``canopy/site.json``): its pages and the scopes each grants, what

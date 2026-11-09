@@ -1,7 +1,7 @@
-"""GitHub on the cloud runner is per TURN, never per box (#747).
+"""GitHub on the cloud runner is per TURN, never per box.
 
-The box used to export one shared token as GH_TOKEN into its own environment
-(so every turn inherited it) and write a global ~/.git-credentials. Now each
+The box exports no shared token as GH_TOKEN into its own environment (every turn
+would inherit it) and writes no global ~/.git-credentials. Each
 turn asks canopy-web for ITS agent owner's token and it lives in that turn's
 environment alone. What these pin:
 
@@ -9,7 +9,7 @@ environment alone. What these pin:
 - nothing box-wide leaks in — not this process's GH_TOKEN, not an agent's .env;
 - a turn canopy refuses runs with NO GitHub identity rather than a leftover one;
 - commits carry the owner's identity instead of "Ubuntu <ubuntu@ip-…>";
-- the shared-PAT era's files are removed at start.
+- any box-wide shared-PAT files are removed at start.
 """
 from __future__ import annotations
 

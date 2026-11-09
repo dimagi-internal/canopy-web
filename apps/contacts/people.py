@@ -1,4 +1,4 @@
-"""The fleet brain (canopy#804): what agents know about a person, and who read it.
+"""The fleet brain: what agents know about a person, and who read it.
 
 The design calls:
 
@@ -8,8 +8,7 @@ The design calls:
   limited to the turns ONE agent had with the person, for that agent alone.
 * Q2 — v1 serves facts only inside the workspace they were written in.
 * Q3 — facts are recorded IN the session that learned them, by the agent (HCP
-  `addPreference`); canopy-web makes no model calls. (A separate people-digest
-  turn did this until 2026-10-09; it was removed.)
+  `addPreference`); canopy-web makes no model calls.
 * Q5 — members AND contacts, keyed on `Person` (`services.person_for`).
 
 Every rule a caller could get subtly wrong lives here as a function, so the
@@ -425,7 +424,7 @@ def envelope_block(turn, *, agent, workspace_slug: str | None, reader_user=None)
     None when the asker is not a human. Facts are those of the turn's agent's
     workspace only (Q2).
 
-    **HCP recall.** The block is no longer "the person's profile": it is ONE
+    **HCP recall.** The block is not "the person's profile": it is ONE
     `searchPreferences` the control plane runs for the agent at turn start —
     under the grant for this client (agent, channel, host), with the turn's own
     message as the query — so the agent starts with the few entries relevant to
@@ -538,7 +537,7 @@ def envelope_projects(person: Person, workspace_slug: str | None) -> list[dict]:
 # brain is the one place agents read what canopy knows about a person, so the
 # notes are MIRRORED into a single `role` fact (declared, asserted by nobody),
 # tagged with `source_contact` — the marker that makes this idempotent. The
-# notes field stays; it is simply no longer a second place to look.
+# notes field stays; it is not a second place to look.
 
 #: The `kind` a mirrored note is filed as. Notes are overwhelmingly "who this
 #: person is"; classifying free text would be a model call canopy does not make.

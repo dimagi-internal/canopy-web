@@ -4,12 +4,12 @@ import type { ReactNode } from 'react'
 // workspace's, a runner's, a vault's — so they cannot drift into looking like
 // different products. See ObjectPage for the frame around them.
 
-/** One titled block. The title is a real heading — several of these used to be
- *  their own rail entries, so each still has to read as a destination — and
+/** One titled block. The title is a real heading — several of these stand in for
+ *  what could be their own rail entries, so each has to read as a destination — and
  *  `scroll-mt` keeps an anchor jump from tucking it under the header. The
  *  description is optional: on Settings each setting already carries its own
- *  one line, and a section blurb above it was a second layer saying the same
- *  thing (#1314). */
+ *  one line, and a section blurb above it would be a second layer saying the same
+ *  thing. */
 export function Section({
   id,
   title,
@@ -38,8 +38,8 @@ export function Section({
 
 /** One setting: one line saying what it is, and the control. "Who can change
  *  this" is shown only to someone who CAN'T — they would otherwise discover it
- *  by clicking and reading an error — and is noise to everyone who can
- *  (#1314). `canEdit` is a display hint only; the server still decides. */
+ *  by clicking and reading an error — and is noise to everyone who can.
+ *  `canEdit` is a display hint only; the server still decides. */
 export function Setting({
   title,
   who,

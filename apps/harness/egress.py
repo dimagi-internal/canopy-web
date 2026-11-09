@@ -1,5 +1,4 @@
-"""A runner's egress lock, as a person sets it in canopy-web (spec
-2026-10-22-sensitive-data-agents §1, "Egress locked").
+"""A runner's egress lock, as a person sets it in canopy-web ("Egress locked").
 
 The box enforces it (`runner/ec2/cloud_runner.py`: a loopback proxy per runner plus
 root's `CANOPY-EGRESS` chain). canopy-web holds what a person decided, per runner:

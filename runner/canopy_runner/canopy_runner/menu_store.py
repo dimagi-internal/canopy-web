@@ -14,7 +14,7 @@ stale (answered at the laptop while the runner was down), and that is handled
 where it belongs rather than here: a tap re-reads the real screen, finds no
 dialog, and returns `no_dialog`, which both tells the human and clears the menu.
 Verifying at startup instead would mean a CDP read per restored menu, which
-CLICKS the task and steals focus — the thing #510 was reverted for.
+CLICKS the task and steals focus.
 """
 from __future__ import annotations
 

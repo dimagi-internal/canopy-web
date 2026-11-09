@@ -1,6 +1,6 @@
 """A person's passkeys — the WebAuthn credentials canopy-web asks for a step-up.
 
-Canopy Vault (canopy-web#1538). A passkey is never a way to SIGN IN here (that
+Canopy Vault. A passkey is never a way to SIGN IN here (that
 stays Google OAuth); it is the second factor a person presents, at a browser,
 before the few actions that hand over or change a secret: revealing an agent
 credential, setting one from the browser, approving a runner's device key.
@@ -36,7 +36,7 @@ class Passkey(models.Model):
     backed_up = models.BooleanField(default=False)
     #: The authenticator reported the WebAuthn PRF extension at registration
     #: (`clientExtensionResults.prf.enabled`) — it can seal a vault keyset
-    #: (canopy-web#1550). None: registered before that was asked.
+    #: None: registered before PRF support was recorded.
     prf_enabled = models.BooleanField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     last_used_at = models.DateTimeField(null=True, blank=True)
@@ -49,8 +49,8 @@ class Passkey(models.Model):
 
 
 class UserVaultKeyset(models.Model):
-    """A person's zero-knowledge vault identity (Canopy Vault Phase 2,
-    canopy-web#1550; formats in docs/vault/zk-v1/zk_v1_reference.py §4).
+    """A person's zero-knowledge vault identity (Canopy Vault Phase 2;
+    formats in docs/vault/zk-v1/zk_v1_reference.py §4).
 
     A P-256 ECDH key pair generated in the person's browser. Only the PUBLIC
     half is readable here (`public_jwk`, which other members wrap agents' vault

@@ -1,9 +1,8 @@
-"""REST takes a conversation's scoped caller token — only where MCP would (canopy-web#1782).
+"""REST takes a conversation's scoped caller token — only where MCP would.
 
-A project chat's session acts as the person who asked. Its MCP did, through the
-caller token; its canopy CLI could not, because REST refused `cct_` tokens and a
-scoped session has no PAT to fall back on (`no canopy-web PAT`, cloud-ec2-2,
-2026-10-22). REST now accepts the SCOPED kind as its asker — but only on the routes
+A project chat's session acts as the person who asked. Its MCP acts through the
+caller token; its canopy CLI needs REST to accept `cct_` tokens too, since a
+scoped session has no PAT to fall back on (`no canopy-web PAT`). REST accepts the SCOPED kind as its asker — but only on the routes
 the MCP server serves as tools, so a session acting for someone reaches nothing over
 REST that it could not reach over MCP. Driven through the real middleware stack.
 """

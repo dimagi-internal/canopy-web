@@ -1,12 +1,9 @@
 """`down.sh` leaves nothing behind in canopy-web — and nothing of anyone else's gone.
 
-Until 2026-10-04 teardown deleted the stack and stopped: the runner row stayed,
-with every agent assignment, source rule and workspace-order entry still naming
-a box that no longer existed (the README called that "retired the next time
-wire.sh stands up a replacement" — i.e. never, for a box nobody replaces).
-
-Now it retires the row, which drops those routes server-side, and verifies none
-remain. The guards are the point of these tests:
+Teardown must not delete the stack and stop: the runner row would stay, with
+every agent assignment, source rule and workspace-order entry still naming a box
+that no longer exists. It retires the row, which drops those routes server-side,
+and verifies none remain. The guards are the point of these tests:
   * only rows that went SILENT are retired — a same-name row still heartbeating
     is a different box (a replacement already swapped in) and is left alone;
   * --keep-runner leaves the row, for a recycle where wire.sh must copy its rows;

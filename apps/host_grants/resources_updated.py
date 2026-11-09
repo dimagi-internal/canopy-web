@@ -1,5 +1,4 @@
-"""A host site tells canopy its resources changed (spec
-2026-10-23-host-held-results §3): `POST /api/sites/resources-updated`.
+"""A host site tells canopy its resources changed: `POST /api/sites/resources-updated`.
 
 The site signs the request with its own key — the one canopy already verifies its
 visitor assertions and site agents requests with — so no new secret exists. The

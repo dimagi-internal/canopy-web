@@ -111,8 +111,8 @@ export function useSessionActions({
   // close was relayed to a runner (`closing: true`), the emdash task is still
   // the truth until the runner's next report retires the session, so wait for
   // that and THEN leave. Leaving on the relay alone would claim a result we do
-  // not have yet, and staying put for good left you on a dead chat with no way
-  // back (Jonathan, 2026-09-18: "it should return me to the previous page").
+  // not have yet, and staying put for good leaves you on a dead chat with no way
+  // back: leaving returns you to the previous page.
   // /ide's pane does not wait: its list shows the pending close beside the
   // session that opens next, so the claim is not this page's to make.
   const [closing, setClosing] = useState(false)

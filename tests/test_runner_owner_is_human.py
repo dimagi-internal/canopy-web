@@ -1,9 +1,9 @@
 """A runner is owned by a person, never by an agent's login.
 
 `owner` is a box's identity for life: claims run with the owner's
-memberships, and only the owner may grant administration. On 2026-10-02 a
-teammate's laptop was paired with ACE's token, which produced a box its own
-operator could not manage, and on which their work would be attributed to ACE.
+memberships, and only the owner may grant administration. A
+teammate's laptop paired with an agent's token would be a box its own
+operator could not manage, and on which their work would be attributed to the agent.
 An agent may still ADMINISTER a box, through an explicit grant.
 """
 from __future__ import annotations

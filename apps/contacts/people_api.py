@@ -1,7 +1,6 @@
 """/api/people — what agents know about a person, and the person's own view of it.
 
-The fleet brain v1 (canopy#804; design: hal `docs/proposals/2026-10-07-caller-
-context-brain.md`). The rules, all applied in `apps/contacts/people.py`:
+The fleet brain. The rules, all applied in `apps/contacts/people.py`:
 
 * **Per workspace.** A fact is read and written inside the workspace it
   belongs to, by a member of it (an agent's login is a member). A person a
@@ -134,9 +133,8 @@ def people_me(request: HttpRequest) -> dict:
 
 
 def _uses(person: Person) -> dict:
-    """entry uuid → how often agents were told it, over all time. The page used to
-    count its first 50 audit rows, which said "used 9×" of an entry told in 84
-    conversations."""
+    """entry uuid → how often agents were told it, over all time. Counted over all
+    audit rows, not just the latest 50, which would undercount."""
     from django.db.models import Count, Max, Q
 
     from .models import PersonAuditEvent

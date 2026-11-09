@@ -1,7 +1,6 @@
 """The fleet hold — stop EVERY runner from starting anything, and see what tries.
 
-Asked for on 2026-10-07 when sessions nobody could account for (people-digest turns, since removed)
-kept appearing on a laptop: hold the whole fleet, let turns pile up QUEUED with their
+For sessions nobody can account for that keep appearing on a laptop: hold the whole fleet, let turns pile up QUEUED with their
 triggers, trace them, release. The rules these tests hold:
 
   ONE GATE. `claim_next_turn` refuses every claim while held — pins and rides included — so it
@@ -159,7 +158,7 @@ def test_the_stuck_list_names_the_hold_as_the_reason(settings):
 
 # --- stop everything: a separate one-shot action ------------------------------------
 #
-# Asked for on 2026-10-29: the people who may stop the fleet must be able to stop it
+# The people who may stop the fleet must be able to stop it
 # NOW, not only keep new work from starting. The hold is a toggle; `/fleet-stop` is an
 # action beside it that stops every working session and cancels every executing turn.
 # Superuser only — it cuts people's work off mid-turn, so a named holder (an agent) may not.

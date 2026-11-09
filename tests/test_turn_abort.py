@@ -1,7 +1,7 @@
 """A turn that cannot do its work ends FAILED and is raised as a failure — see
-apps/harness/turn_abort.py. 2026-10-27: ACE turn 599fad3b failed its first Drive
-call on credentials, emailed the outside person who asked about "runner logins",
-and finished `done` with nothing alarmed."""
+apps/harness/turn_abort.py. A turn whose first Drive call fails on credentials
+must not email the outside person who asked and finish `done` with nothing
+alarmed."""
 from __future__ import annotations
 
 import uuid

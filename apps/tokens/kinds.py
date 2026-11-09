@@ -4,9 +4,9 @@ A request is authenticated by exactly one credential, and every entry point reco
 (`request.auth_credential["type"]`, from `BearerTokenAuthMiddleware`, the MCP server
 and the WebSocket handshake; a browser session records none and reads as `session`).
 The questions asked of it — may it mint another credential, may it say it acts on
-someone's behalf, is it a turn speaking for the person who asked — used to be string
-comparisons written where each was needed, so a kind added later was whatever each
-of those comparisons happened to make of it. They read this table now, and
+someone's behalf, is it a turn speaking for the person who asked — are answered from this table, not by string
+comparisons written where each is needed (a kind added later would be whatever each
+of those comparisons happened to make of it);
 `tests/test_token_kinds.py` fails a comparison against a kind's name written
 anywhere else, and a kind an entry point can record that is not here.
 

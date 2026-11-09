@@ -41,7 +41,7 @@ FRAME_SOURCES = [Path(m.__file__).read_text() for m in (consumers, stream_map)]
 #:                       built from the same source" -- nothing built them. Every
 #:                       AG-UI conversation opened empty.
 #:   session.stop        "travelling the other way" -- it travels server->client;
-#:                       it is how you learn whether your stop landed (#649).
+#:                       it is how you learn whether your stop landed.
 #:   session.page_action "an AG-UI client is not the party that executes it" --
 #:                       the widget's frame IS that client, and relays it.
 #:
@@ -216,9 +216,8 @@ async def test_a_frame_with_no_ag_ui_meaning_sends_nothing_rather_than_leaking(c
     AG-UI, where it is not merely useless but unparseable."""
     consumer.agui_mode = True
 
-    # An UNKNOWN frame, not a real one. This test used `session.state` until
-    # 2026-09-18 -- i.e. it asserted that the connect snapshot sends nothing on
-    # an AG-UI socket, which was the bug, passing.
+    # An UNKNOWN frame, not a real one: a real one such as `session.state` would
+    # make this assert that the connect snapshot sends nothing on an AG-UI socket.
     await consumer.send_json({"event": "canopy.no_such_frame", "data": {"x": 1}})
 
     assert consumer.sent == []

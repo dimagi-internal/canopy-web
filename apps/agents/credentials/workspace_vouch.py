@@ -7,12 +7,12 @@ agent's vault. So a machine that runs an agent the vault serves, whose person is
 member of the workspace vault and of that agent's vault, can be let in by its own
 person's passkey, with no admin asked. Before this, Confirm access named only agents
 whose OWN vault waited on the machine, so a box running only a kv-0 agent its person
-owns (DIM-SA-W175 on Shared, 2026-11-05) was offered nothing and waited forever.
+owns (DIM-SA-W175 on Shared) was offered nothing and waited forever.
 
 Read for every key on Settings → Device keys, so it is built to cost a fixed handful of
 queries per request (`facts.once`), not a scan per key and vault: an earlier version
 walked every workspace vault through `why_waiting` for each key and was reverted for
-the load it put on vault reads (canopy-web#2585).
+the load it put on vault reads.
 """
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""The runner sends the automatic replies canopy-web could not (canopy-web#1416).
+"""The runner sends the automatic replies canopy-web could not.
 
 No real mail: gog is a fake that records argv and stdin and answers from a
 scripted thread.

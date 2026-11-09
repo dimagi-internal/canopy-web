@@ -1,4 +1,4 @@
-// Plain words for a machine on Settings > Security (canopy-web#1550).
+// Plain words for a machine on Settings > Security.
 import { describe, expect, it } from 'vitest'
 import { canOpenText, keyPlace, machineDescription, machineShortName } from './machineText'
 

@@ -1,8 +1,8 @@
-"""Which mailboxes a box reads is DISCOVERED, not hand-configured (canopy-web#1087).
+"""Which mailboxes a box reads is DISCOVERED, not hand-configured.
 
 A runner with `"mailboxes": {}` in runner.json — what pairing writes — read no
 mail at all, while the push doorbell kept ringing it for every message. These pin
-the replacement: candidates from canopy-web, tokens from `gog auth tokens list`,
+discovery instead: candidates from canopy-web, tokens from `gog auth tokens list`,
 proof from a one-message search, and runner.json entries kept as overrides.
 
 No test here shells out: every gog call goes through an injected runner.

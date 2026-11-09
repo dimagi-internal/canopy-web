@@ -1,11 +1,10 @@
 """A storyboard entry's cuts, as a reviewer judges them.
 
-A ``style: recorded`` narrative is several short cuts, each its own video
-(canopy-web#1288). The board showed one hero video per narrative, so a reviewer
-of a set of demos could not see — let alone comment on — the cuts the set is
-actually made of, and the per-cut facts a reviewer needs (how long, how many
-words, what is on screen, why it matters to this audience, where the data comes
-from) lived in a companion Google Doc.
+A ``style: recorded`` narrative is several short cuts, each its own video.
+The board must show the cuts a set of demos is actually made of, so a reviewer
+can see and comment on them, with the per-cut facts a reviewer needs (how long,
+how many words, what is on screen, why it matters to this audience, where the
+data comes from).
 
 This joins two sources, and invents nothing:
 

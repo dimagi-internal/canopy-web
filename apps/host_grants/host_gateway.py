@@ -42,11 +42,11 @@ agent owner's word:
   still refuses anything outside the grant.
 
 The page's `backing_tool(s)` are a HINT — carried to the agent in its caller
-context so it knows where to read the rows on screen — and no longer a filter.
-They were one until 2026-09-29, but page state is written by the page's own
-JavaScript, so that filter never bounded a hostile page (the grant's scopes do),
-and it made every host re-list in its page state the tools its own grant had
-already decided — canopy holding the host's tool names twice over.
+context so it knows where to read the rows on screen — not a filter.
+Page state is written by the page's own JavaScript, so a filter on it would never
+bound a hostile page (the grant's scopes do), and it would make every host re-list
+in its page state the tools its own grant had already decided — canopy holding the
+host's tool names twice over.
 """
 from __future__ import annotations
 
@@ -294,7 +294,7 @@ def resolve(turn_id: str, *, reason: str = "") -> SiteContext:
             "runner_requirements",
             f"this conversation must run on a {rr.describe(effective)} runner, and this one is not")
     # A sensitive conversation's data reaches only a host site its interface says
-    # handles sensitive data (`data: sensitive`; spec 2026-10-22-sensitive-data-agents §6).
+    # handles sensitive data (`data: sensitive`).
     if rr.SENSITIVE_DATA in effective and not sensitive_data.handles_sensitive(agent, turn.capability):
         raise GatewayRefusal(
             "undeclared",
@@ -651,7 +651,7 @@ async def _model_may_call(ctx: SiteContext, name: str, client) -> bool:
 
     Visibility is not a security boundary against a direct client — the host
     still authorises every call as the visitor — but a hidden tool must not be
-    callable by name either, or hiding it means nothing (spec 2026-10-08 §2).
+    callable by name either, or hiding it means nothing.
     """
     from apps.mcp_apps_host import mcp_apps
     from apps.tokens.models import AppCredential
@@ -733,8 +733,7 @@ def _is_json_of(block: dict, value) -> bool:
 
 # --- MCP Apps: a View's own calls, as the VIEWER ---------------------------------
 #
-# These serve the browser routes behind a rendered View (spec 2026-10-08 §4-5,
-# `apps/mcp_apps_host/mcp_apps_views.py`), never the agent. `ctx` comes from
+# These serve the browser routes behind a rendered View (`apps/mcp_apps_host/mcp_apps_views.py`), never the agent. `ctx` comes from
 # `mcp_apps_views.resolve_for_viewer`: the grant of whoever CLICKED, not the
 # turn's initiator. Results are returned whole (`content`, `structuredContent`,
 # `isError`) because the View, unlike the agent, renders `structuredContent`.
@@ -914,9 +913,8 @@ class CallOutcome:
 
     The HTTP status outranks the MCP client's own exception: the client turns a
     401 AND a 500 into the same McpError ("-32603 Server returned an error
-    response"), so classifying by the exception made a crashing host read as a
-    host that correctly refused — the live probe's DPoP check passed on it
-    (found 2026-09-28, the first time the probe ran on labs).
+    response"), so classifying by the exception would make a crashing host read as a
+    host that correctly refused — and the live probe's DPoP check would pass on it.
     """
 
     kind: str

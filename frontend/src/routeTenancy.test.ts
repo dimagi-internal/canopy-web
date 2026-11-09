@@ -1,22 +1,19 @@
 // @vitest-environment jsdom
 /**
- * Nothing on canopy outside a workspace (owner decision, 2026-10-08;
- * canopy-web#1289).
+ * Nothing on canopy outside a workspace.
  *
  * Every route that shows tenant data lives under `/w/:workspace`. A route
  * outside it is allowed only WITH ITS REASON — a page's `flat` in the registry
  * (guide/surfaces.ts), a redirect's entry in guide/coverage.ts — so adding a
  * flat page fails this test until someone says why it may be flat, instead of
- * a share link quietly opening from any workspace again (which is how the
- * chlorine narrative sat in `dimagi` for a week with nobody able to tell).
+ * a share link quietly opening from any workspace again.
  *
  * The reasons sort into four kinds:
  *   - personal/global: about YOU, or the fleet across your workspaces;
  *   - pre-tenant: you have no workspace yet (an invite, the first-run form);
  *   - redirect: only sends the browser to a scoped page — never an ARTIFACT
- *     link, which has one address and is not forwarded (canopy-web#1337);
- *   - FOLLOW-UP: tenant data still on a flat public URL. There are none left
- *     (the last three moved in canopy-web#1337's follow-up); a new one fails
+ *     link, which has one address and is not forwarded;
+ *   - FOLLOW-UP: tenant data still on a flat public URL. There are none left; a new one fails
  *     the test below.
  */
 import { describe, expect, it } from 'vitest'
@@ -60,8 +57,7 @@ describe('every route lives under /w/:workspace, or says why not', () => {
   })
 
   it('has no flat artifact viewer, and forwards none', () => {
-    // One URL per artifact, under its workspace (owner decision, 2026-10-08;
-    // canopy-web#1337). A flat /walkthrough/, /review/, /share/, /storyboard/,
+    // One URL per artifact, under its workspace. A flat /walkthrough/, /review/, /share/, /storyboard/,
     // /narrative/ or /ddd-release/ link is a plain server 404 — not a page, and
     // not a redirect to the scoped one.
     const artifact = /^\/(walkthrough|review|share|storyboard|narrative|ddd-release)(\/|$)/

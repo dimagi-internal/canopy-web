@@ -5,7 +5,7 @@ that the REQUESTED agent is one the caller may see. A non-member therefore got
 `200 []` — indistinguishable from "that agent has never run" — where the sibling
 route `/api/agents/<slug>/tasks/` correctly returns 404.
 
-Measured on production 2026-07-28, same base URL, two tokens:
+On the same base URL, with two tokens:
 
     hal PAT   /api/harness/turns/?agent=eva  -> 200, 0 rows
     jjackson  /api/harness/turns/?agent=eva  -> 200, 71 rows

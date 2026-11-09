@@ -71,8 +71,7 @@ def _rows(event=None):
 
 # --- identity handed over -----------------------------------------------------
 #
-# The three token-exchange tests that stood here went with that endpoint
-# (2026-09-22). Its replacement writes the SAME `EXCHANGE` rows from
+# There are no token-exchange tests here. The exchange endpoint writes the SAME `EXCHANGE` rows from
 # `/api/auth/contact-token`, and they are asserted where that endpoint is
 # tested — `tests/test_contact_assertions.py`, which covers the accepted row,
 # each refusal and a throttled attempt. Duplicating them here would be two

@@ -1,9 +1,8 @@
 """Turns no runner will take are rejected and their owner told, not left queued.
 
-The incident (2026-10-12): Ada parked haldimagi-mbp-cdp for a weekly usage limit
-with no resume time. Work only that box could take would have sat QUEUED with
-nobody told, and Supervisor's banner was the only trace of it. The seeded
-`no-runner-paused` rule now rejects such a turn the moment it arrives (or the
+A box parked for a weekly usage limit with no resume time: work only that box can
+take would sit QUEUED with nobody told, and Supervisor's banner the only trace of
+it. The seeded `no-runner-paused` rule rejects such a turn the moment it arrives (or the
 moment the box is paused under it), naming who paused which box, when and why.
 A pause WITH a resume time is a hold: the turn waits, and its status says until
 when. A box that is merely down keeps its work queued for the
@@ -179,9 +178,9 @@ def test_a_reach_rule_cannot_be_an_allow_or_narrowed_by_the_claiming_runner(flee
 
 def test_a_reply_stuck_behind_the_box_its_conversation_lives_on_says_so(
         fleet, django_capture_on_commit_callbacks):
-    """A Slack reply to ACE was rejected naming only a laptop, while ACE's runner
-    order was the cloud; the owner asked "should this have tried on the cloud
-    first?" (2026-10-30). The notice now says the conversation is bound there."""
+    """A Slack reply to ACE must not be rejected naming only a laptop while ACE's
+    runner order is the cloud ("should this have tried on the cloud first?"). The
+    notice says the conversation is bound there."""
     box = fleet["box"]
     cloud = enrolled(Runner.objects.create(
         name="cloud-ec2-live", kind=Runner.CLOUD, owner=fleet["jj"], status=Runner.ONLINE,

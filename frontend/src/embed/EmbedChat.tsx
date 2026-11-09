@@ -101,8 +101,6 @@ export function EmbedChat({
   // AG-UI on the wire. `session.page_action` and `page.invalidate` still reach
   // `onUnknownEvent` exactly as before: they ride AG-UI's CUSTOM event and
   // `fromAgui` unwraps them into the canopy frames this handler already reads.
-  // (Page actions were silently dropped by the AG-UI projection until
-  // 2026-09-18 — flipping this before that fix would have disabled every one.)
   // A contact's socket only LISTENS, so their message goes out over HTTP — the
   // kit's `sendOverHttp`, which keeps their draft local and raises the same
   // pending row and "waiting for a reply" a member's send does. The page
@@ -304,16 +302,15 @@ export function EmbedChat({
           onSend={isContact ? onContactSend : onSend}
           onStop={isContact ? () => undefined : socket.stopChat}
           onUnqueue={isContact ? undefined : socket.unqueueChat}
-          // `socket.awaitingReply` on BOTH paths now. It used to be `sending`
-          // for a contact, which tracked the HTTP request and so cleared the
-          // instant the POST returned — an indicator for ~200ms, then silence
-          // for the actual wait. `noteLocalSend` raises it and only a stream
+          // `socket.awaitingReply` on BOTH paths: `sending` for a contact
+          // would track the HTTP request and clear the instant the POST returned
+          // — an indicator for ~200ms, then silence for the actual wait. `noteLocalSend` raises it and only a stream
           // frame (or the server's settled status) lowers it.
           awaitingReply={socket.awaitingReply}
           onUpdateDraft={socket.updateDraft}
           onDiscard={isContact ? () => socket.updateDraft('') : socket.discardDraft}
-          // The widget has no ⋯ menu (canopy-web#1004) — the composer control
-          // it used to sit on is gone from ChatPage too, so this stays
+          // The widget has no ⋯ menu, and ChatPage has no
+          // composer control for it either, so this stays
           // omitted rather than pointing at a control nobody can reach. The
           // session keeps whatever mode is already stored
           // (readStoredTypingVisibility) or defaults to "live"; nothing here

@@ -1,8 +1,7 @@
 // @vitest-environment jsdom
 //
-// A box's own report of which features work. The bar this has to clear is the
-// 2026-09-22 incident: cloud-ec2-1 read online + ready while transcripts, the
-// inbox and ACP were all off — so a failed check must be impossible to miss, and
+// A box's own report of which features work. The bar this has to clear: a box that reads
+// online + ready while transcripts, the inbox and ACP are all off — so a failed check must be impossible to miss, and
 // "not reported" must never look like "healthy".
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'

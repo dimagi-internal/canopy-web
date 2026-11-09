@@ -1,4 +1,4 @@
-// Canopy Vault (canopy-web#1538 Phase 1a): runner device keys — the machines that can read
+// Canopy Vault: runner device keys — the machines that can read
 // an agent's secrets — and the credential read log. Its own module so the
 // pages that show these can be tested without dragging in ./agents or ./harness.
 import { apiV2 } from './client.v2'
@@ -49,7 +49,7 @@ export async function getCredentialReads(slug: string, name: string): Promise<Ag
   return Array.from(unwrap(res, 'getCredentialReads')) as AgentCredentialReadOut[]
 }
 
-// ---- Canopy Vault Phase 1b (canopy-web#1549): read alerts + canopy-pat rotation ----
+// ---- Canopy Vault Phase 1b: read alerts + canopy-pat rotation ----
 
 export type AgentCredentialAlertOut = Schemas['AgentCredentialAlertOut']
 export type PatRotationOut = Schemas['PatRotationOut']

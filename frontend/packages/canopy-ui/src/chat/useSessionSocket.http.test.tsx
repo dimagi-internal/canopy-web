@@ -94,11 +94,11 @@ describe('sending over HTTP', () => {
   })
 
   it('does not clobber newer typing with a stale failed send', async () => {
-    // 2026-09-26 review: contact sends "hello" (draft clears to null), starts
+    // A contact sends "hello" (draft clears to null), starts
     // typing "world" while the POST is still in flight, "hello"'s request
-    // fails — the restore must not overwrite "world" with "hello". The old
-    // `updateLocalDraft(body)` closed over "hello" at send time and always
-    // won; the fix (`restoreFailedLocalDraft`) only restores when nothing
+    // fails — the restore must not overwrite "world" with "hello". A restore
+    // closing over "hello" at send time would always win;
+    // `restoreFailedLocalDraft` only restores when nothing
     // newer has been typed since (the draft is still null/empty).
     let rejectSend!: (err: Error) => void
     const pending: Promise<unknown> = new Promise((_resolve, reject) => {

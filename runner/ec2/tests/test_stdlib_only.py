@@ -2,9 +2,9 @@
 
 The EC2 box runs cloud_runner.py with its system python3, so a dependency the
 module picks up from canopy-web's environment works in CI and dies on the box.
-This used to be "enforced" by running the suite in a bare env, but runner/ec2
-has no pyproject.toml: `uv run` there walks up to the root project, Django is
-importable, and an accidental `import django` passed CI (#1351). Running the
+Running the suite in a bare env does not enforce it: runner/ec2
+has no pyproject.toml, so `uv run` there walks up to the root project, Django is
+importable, and an accidental `import django` passes CI. Running the
 suite with `--no-project` would not fix it either — the tests themselves need
 canopy_transcript and yaml, so the env has to carry them, and then a top-level
 `import canopy_transcript` passes too.

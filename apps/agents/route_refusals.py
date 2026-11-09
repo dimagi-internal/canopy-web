@@ -13,9 +13,8 @@ def refuse_auto_unless_admin(request: HttpRequest, agent, what: str) -> None:
     routing rule, an actor route or the agent's own switch — is for the agent's
     owner and admins (docs/architecture/access.md). A workspace editor may still
     route the agent's work and set `manual`; lowering autonomy is safe from
-    anyone. Before 2026-10-04 an editor could write `turn_mode: auto` on a rule,
-    which ran every matching turn auto — around the dispatch gate (#1102) that
-    keeps `auto` from them."""
+    anyone. An editor writing `turn_mode: auto` on a rule would run every
+    matching turn auto — around the dispatch gate that keeps `auto` from them."""
     if not agent.is_admin(request.user):
         raise HttpError(
             403,

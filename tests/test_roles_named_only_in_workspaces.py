@@ -4,8 +4,7 @@ It asks `apps/workspaces/permissions.py` for a CAPABILITY instead
 (`perms.can(user, ws, perms.CONTENT_WRITE)`), and the one table there decides
 which roles hold it.
 
-Why this is a fitness test and not a convention: the 2026-10-02 audit found the
-same tier written five ways — `role in {editor, owner}`, `!= OWNER`,
+Why this is a fitness test and not a convention: the same tier was found written five ways — `role in {editor, owner}`, `!= OWNER`,
 `filter(role=OWNER)`, `_require_role(OWNER)`, `has_role_at_least(EDITOR)` — and
 inserting `admin` between editor and owner silently changed what two of them
 meant (one set refused admins every editor action; every `!= OWNER` kept them

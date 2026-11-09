@@ -501,7 +501,7 @@ def _divergences(items) -> list[dict]:
 
 
 def from_legacy_brief(brief: dict, *, taken: set[str] | None = None, prefix: str = "") -> list[dict]:
-    """The old brief lists (#1501) as decision rows (spec B, "Migration from the brief").
+    """The old brief lists as decision rows.
 
     Total over malformed input: it never raises and never drops content it was
     given (the migration strips the lists afterwards)."""

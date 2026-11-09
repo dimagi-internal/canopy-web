@@ -249,21 +249,14 @@ export function EmbedApp({ link, app }: Props) {
       // the screen says now rather than what it said at mount. `provideContext`
       // is the fallback for a host still on the old model.
       //
-      // Until 2026-09-23 only the legacy snapshot rode here, so a host that had
-      // moved to `setPageState` — as the guide tells them to — sent nothing with
-      // the first message and the agent's only route to the page was
-      // `current_page`. That is the path the guide itself says can be
-      // unavailable: MCP servers connect asynchronously, and an agent whose MCP
-      // tools arrive deferred will not go looking for one unprompted. Measured
-      // on connect-labs: asked "what am I looking at?", the agent answered "I
-      // can't see your screen" and made no tool call at all.
-      //
-      // Since 2026-09-26 a DECLARED page state no longer rides in the message at
-      // all: it is declared below, before the turn is queued, and canopy puts a
-      // pointer to it ("they are looking at labs-marketplace://orgs, 21 visible;
-      // read it with current_page") into the session's context through the
-      // caller envelope + the canopy plugin's UserPromptSubmit hook — outside
-      // the person's words. Pasting it here put a JSON dump under every first
+      // A DECLARED page state does not ride in the message: it is declared
+      // below, before the turn is queued, and canopy puts a pointer to it ("they
+      // are looking at labs-marketplace://orgs, 21 visible; read it with
+      // current_page") into the session's context through the caller envelope +
+      // the canopy plugin's UserPromptSubmit hook — outside the person's words.
+      // The agent's only other route to the page is `current_page`, which an
+      // agent whose MCP tools arrive deferred will not go looking for unprompted,
+      // and pasting the state here would put a JSON dump under every first
       // message in the transcript. Only a host still on `provideContext` (no
       // declared state, so nothing for the envelope to point at) keeps the
       // appended block.
@@ -316,8 +309,7 @@ export function EmbedApp({ link, app }: Props) {
       // tries it by hand, and the case it fails is the one that matters most —
       // "close the ones I'm looking at" as the OPENING message.
       //
-      // Both principals declare. Contacts used to be skipped because neither
-      // route was on `/api/contact/`; both are now, so an embedded agent learns
+      // Both principals declare (both routes are on `/api/contact/`), so an embedded agent learns
       // what its visitor is looking at whether or not that visitor happens to
       // hold a canopy account.
       const base = sessionBase(isContact, created.id)

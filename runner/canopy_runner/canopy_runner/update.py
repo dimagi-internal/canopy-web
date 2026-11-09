@@ -222,8 +222,8 @@ def update_status(cfg, client, *, installed_sha: str | None = None,
     A token canopy REFUSES (401/403) is not a flaky network: it repeats every
     cycle, and the fix for it — newer runner code that recovers the sign-in — is
     exactly what this check would install. So that answer falls back to the
-    deployed version the public health check names (canopy-web#1762); before it,
-    jj-mbp-cdp logged `unknown` every 30 minutes for nine hours with a dead token.
+    deployed version the public health check names; without it, a box with a dead
+    token would log `unknown` every 30 minutes indefinitely.
     """
     from . import provenance
 

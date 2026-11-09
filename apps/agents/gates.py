@@ -1,11 +1,11 @@
 """Resolve an agent by slug for THIS request, gated by tenancy — else 404.
 
 The one implementation every API module asks (agents, harness, agent_runs,
-capabilities, threads, mail, huddles…). It used to be hand-copied in each of
-them "because api modules must not depend on each other", and the copies
-drifted: some honoured the `/api/w/{ws}/` pin as exactly that workspace while
-`wsvc.member_scope` (the by-id rule) had moved on to the pin's subtree; one
-let the agent's own login in without membership. This module is not an api
+capabilities, threads, mail, huddles…). It is one shared copy, not one per
+api module ("api modules must not depend on each other"), because copies drift:
+one could honour the `/api/w/{ws}/` pin as exactly that workspace while
+`wsvc.member_scope` (the by-id rule) uses the pin's subtree, or let the agent's
+own login in without membership. This module is not an api
 module — it holds no routes — so importing it couples nobody to anyone's
 router.
 
@@ -153,7 +153,7 @@ def project_or_404(request: HttpRequest, agent: Agent, ref: str):
 
 # ---- tasks and projects: the workspace's, gated by the workspace ----------
 #
-# A task or project belongs to a workspace (design 2026-10-24), so reading one
+# A task or project belongs to a workspace, so reading one
 # is membership THERE (the same scope `agent_for_read` checks), and a key or
 # address outside it is the same 404 as one that does not exist.
 

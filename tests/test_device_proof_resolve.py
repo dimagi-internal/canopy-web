@@ -1,8 +1,8 @@
-"""Canopy Vault Phase 1a (canopy-web#1538): runner device keys, the DPoP device
+"""Canopy Vault Phase 1a: runner device keys, the DPoP device
 proof on `/credentials/resolve`, and the credential read log.
 
 The contract these pin is the one canopy's CLI/runner half builds against
-(canopy#946) — endpoint shapes here are not free to drift.
+(canopy's side) — endpoint shapes here are not free to drift.
 """
 from __future__ import annotations
 
@@ -160,7 +160,7 @@ def test_approve_needs_a_browser_session_not_a_token(fleet):
 
 
 def test_approve_without_a_fresh_passkey_step_up_is_refused(fleet):
-    """A signed-in browser session alone is not enough (canopy-web#1538)."""
+    """A signed-in browser session alone is not enough."""
     body = _register(fleet).json()
     grant_step_up(fleet["client"], seconds=-1)  # expired
     res = _approve(fleet, body["id"])
@@ -310,7 +310,7 @@ def test_an_eddsa_proof_is_refused(fleet):
 def test_a_key_on_a_runner_the_agent_does_not_use_is_refused(fleet):
     """Authorized runner = one that runs the agent (`routing.runner_routes_agent`).
     An approved box that does not is refused as `not_routed`, with no owner alert:
-    routing said no, not the key (fizzy, canopy-web#1563)."""
+    routing said no, not the key."""
     from apps.agents.models import AgentCredentialAlert
 
     other = get_user_model().objects.create_user(username="o", email="o@dimagi.com")
@@ -354,8 +354,8 @@ def _laptop(fleet, owner):
 
 
 def test_the_owner_opening_a_session_on_their_own_laptop_raises_no_alert(fleet):
-    """2026-10-18: a ZK agent always needs a device proof, so every emdash session
-    the owner opened named the laptop and read as "a box outside a turn" — an email
+    """A ZK agent always needs a device proof, so every emdash session
+    the owner opens names the laptop and could read as "a box outside a turn" — an email
     each time. Their own token from their own approved laptop is them."""
     from apps.agents.models import AgentCredentialAlert
 

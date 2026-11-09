@@ -1,4 +1,4 @@
-"""A cloud machine can run several runners (spec 2026-10-19 §3).
+"""A cloud machine can run several runners.
 
 Each runner serves a workspace tree or a single agent, each its own Unix user with
 its own keys. Two refusals keep routing inside that, both declared by the box about

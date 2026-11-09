@@ -1,9 +1,9 @@
 """A caller's (confined) turn holds no credential it does not need.
 
-profile_guard used to be the only thing between a prompt-injected caller session
-and everything the box held: the runner owner's canopy PAT (CANOPY_TOKEN), the
+profile_guard alone is not enough between a prompt-injected caller session
+and everything the box holds: the runner owner's canopy PAT (CANOPY_TOKEN), the
 agent's whole ~/.<slug>/.env (CANOPY_WEB_PAT among it), the
-owner's GitHub token and the chat's key. A confined turn's env is now an
+owner's GitHub token and the chat's key. A confined turn's env is an
 allowlist — Claude's own login, locale/paths/TLS, which agent and turn this is —
 plus gog's keyring password only for a profile whose bash allowlist runs the
 mail path. A full-profile turn is unchanged.

@@ -1,5 +1,5 @@
 /**
- * WebAuthn JSON <-> browser shapes (canopy-web#1538).
+ * WebAuthn JSON <-> browser shapes.
  *
  * The server (py_webauthn) speaks the WebAuthn JSON form: every binary field is
  * base64url. `navigator.credentials.create/get` take and return ArrayBuffers.

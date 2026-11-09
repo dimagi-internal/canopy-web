@@ -6,10 +6,10 @@ import { scopedPath } from '../../lib/scopedLinks'
 import { Td, Tr } from '@/components/DataTable'
 
 // What the box reports about its own features — one row per check, straight
-// from its heartbeat (Runner.health). Exists because "online + ready" said
-// nothing on 2026-09-22 while cloud-ec2-1 wrote no transcripts, read no mail
-// and could not steer a turn: every one of those was a feature that turned
-// itself off with a single journald line. This is where they now show up.
+// from its heartbeat (Runner.health). Exists because "online + ready" says
+// nothing about a box that writes no transcripts, reads no mail
+// or cannot steer a turn: each is a feature that can turn
+// itself off with a single journald line. This is where they show up.
 //
 // No report is not the same as a clean report: a runner that does not send
 // health (a laptop that has not refreshed yet, an older box) renders as "not

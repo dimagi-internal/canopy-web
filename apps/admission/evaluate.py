@@ -29,7 +29,7 @@ no agent and is never evaluated.
   (`sweep_unrunnable`, on the off-request clock, apps/common/ticks.py).
   A claim never matches one: a runner claiming it is the answer.
 
-* **Refusals** (`at_refusal`, canopy-web#1416): canopy refuses two kinds of turn
+* **Refusals** (`at_refusal`): canopy refuses two kinds of turn
   on its own, before any rule — a blocked sender's mail
   (`harness.channels.email.refused_email_turn`) and a person the agent offers
   nothing (`_apply_capability`). Those stay refused whatever the rules say:

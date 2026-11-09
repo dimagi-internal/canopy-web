@@ -1,7 +1,7 @@
 """One workspace vault's log: what changed and who read what, newest first.
 
 Nothing new is recorded here; it reads three records that already exist and were never
-shown on the vault's page (Jonathan, 2026-11-06: "and then logs"):
+shown on the vault's page:
 
 * **changes** — every write route on a vault is `@gate(..., setting=True)`, so the audit
   plumbing (`apps/events/audit.py`) leaves a `SettingChange` row naming who, through what

@@ -1,7 +1,7 @@
 """Agent threads — a bounded, moderated conversation between named fleet agents.
 
-Jonathan, 2026-10-07: agents should talk to each other directly, as "the start of
-a robust approach" to increasingly complicated agent→agent interactions. The first
+Agents talk to each other directly here, the start of a robust approach to
+increasingly complicated agent→agent interactions. The first
 use is a huddle's agreement step: when a teammate is in on an idea only with
 changes, the idea's author and that teammate settle it in a direct thread.
 

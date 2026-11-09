@@ -1,8 +1,8 @@
-"""Every link the API hands out is under its workspace (canopy-web#1337).
+"""Every link the API hands out is under its workspace .
 
-Owner decision (Jonathan, 2026-10-08): one URL per artifact, `/w/<workspace>/…`,
-and no flat form forwarded to it. A flat link went out in an external email
-because the API that minted it still printed one, so this walks the JSON of
+One URL per artifact, `/w/<workspace>/…`, and no flat form forwarded to it. A
+flat link in an external email would come from an API that still prints one, so
+this walks the JSON of
 every artifact-bearing response — as a member, as a guest holding a token, and
 from the create calls a tool prints — and fails on any URL field that is not
 under `/w/<workspace>/`.
@@ -207,7 +207,7 @@ def test_every_create_prints_a_scoped_link():
         assert any(True for _ in _url_fields(body)), body
         assert _unscoped(body) == []
         # Never the request's host: an in-process MCP call has none, and that
-        # minted `https://localhost/…` (canopy-web#1289).
+        # would mint `https://localhost/…`.
         assert "localhost" not in json.dumps(body)
 
 
@@ -233,7 +233,7 @@ def test_a_turns_transcript_link_is_under_the_workspace_it_was_shared_from(seede
 def test_the_shared_arc_and_release_links_are_scoped(seeded):
     """The storyboard's share link (list, mint, re-mint) and the release page's
     own address are `/w/<ws>/…` — the flat /storyboard/ and /ddd-release/ are a
-    plain 404 (canopy-web#1337)."""
+    plain 404."""
     member = _member(seeded["owner"])
     for resp in (member.post("/api/storyboards/arc/share"),
                  member.post("/api/storyboards/arc/rotate-token")):

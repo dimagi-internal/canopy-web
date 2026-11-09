@@ -41,7 +41,7 @@ def test_an_already_absent_task_still_queues_the_signal(monkeypatch):
 
 def test_absent_from_the_sidebar_but_held_by_emdash_is_a_failed_close(monkeypatch):
     """A collapsed project hides its rows, so the sidebar says "absent" for a task
-    emdash still holds (hal's box, 2026-10-12). That close did not happen: report
+    emdash still holds. That close did not happen: report
     it as one, and queue no closing signal the next report would only revive."""
     sessions._PENDING_CLOSED.clear()
     monkeypatch.setattr(close.cdp_control, "close_task",

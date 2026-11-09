@@ -24,9 +24,8 @@ def cr(cloud_runner, monkeypatch):
 # ── the cap the fleet actually hit, and kept hitting ────────────────────────
 
 def test_the_session_cap_is_a_usage_cap(cr):
-    """The 5-hour cap — by far the most frequently hit, and the one the original
-    marker list missed. Observed on cloud-ec2-1 on 2026-09-08, where it re-queued
-    a turn three times against the same capped credential."""
+    """The 5-hour cap — by far the most frequently hit. Unrecognised, it re-queues
+    a turn again and again against the same capped credential."""
     assert cr._is_usage_cap("You've hit your session limit · resets 4:20pm (UTC)")
 
 
@@ -105,10 +104,9 @@ def test_a_limit_mentioned_in_passing_is_not_a_cap(cr):
     "Failed to authenticate: OAuth session expired and could not be refreshed",
 ])
 def test_an_expired_login_under_acp_is_auth_required(cr, text):
-    """cloud-ec2-2, 2026-10-15 (turn 9fbe2240): the box's only claude.ai login
-    could not refresh. The agent's last line was the second string, and the turn
-    failed with the first. Neither matched, so nobody was told the box needed a
-    person, and the note never said so either."""
+    """The box's only claude.ai login could not refresh. The agent's last line is
+    the second string, and the turn fails with the first. Both must match, or nobody
+    is told the box needs a person and the note never says so."""
     assert cr._is_auth_required(text)
     assert not cr._is_usage_cap(text)
 
@@ -157,8 +155,8 @@ def lone(cr, monkeypatch):
 
 
 def test_a_lone_capped_token_over_acp_is_a_cap(lone):
-    """cloud-ec2-fork, 2026-10-18: one setup-token at its weekly cap, and every
-    turn said "not signed in", because nothing else in the turn had capped first."""
+    """One setup-token at its weekly cap must read as a cap, not "not signed in",
+    even when nothing else in the turn had capped first."""
     import time as _time
     cr, seen, with_probe = lone
     with_probe("capped", CAP_LINE, reset=_time.time() + 3600)

@@ -49,7 +49,7 @@ export interface Message {
   /** Who typed this line — a canopy user or a contact. Absent/null on rows
    *  from before authorship was tracked, or on the agent's own messages. */
   author?: MessageAuthor | null;
-  /** MCP Apps: this tool result has a View (spec 2026-10-08 §3). Set by the
+  /** MCP Apps: this tool result has a View. Set by the
    *  server on REST rows, the snapshot and the live frame — never guessed. */
   app?: MessageAppRef | null;
   /** The agent asked for one of its declared secrets here: the host renders a
@@ -182,10 +182,9 @@ export interface Participant {
  *  see. `source` says which, and a client is free to ignore it. */
 /** One question of an `AskUserQuestion`. The TUI draws these as TABS and will
  *  not submit until each has an answer — so a surface that renders only the
- *  first one cannot complete the ask no matter which button is pressed. That
- *  was the bug: a two-question closeout showed one question, and a tap toggled
- *  a checkbox on a dialog that then sat waiting for a Submit nobody could
- *  reach (eva, 2026-08-12). */
+ *  first one cannot complete the ask no matter which button is pressed: a tap
+ *  would toggle a checkbox on a dialog that then waits for a Submit nobody can
+ *  reach. */
 export interface MenuQuestion {
   index: number;
   question: string;
@@ -323,7 +322,7 @@ export interface SessionState {
    *  "blocked" means the agent wants a human: a permission prompt, or an idle
    *  wait for input. It is deliberately coarse — a hook observer cannot tell
    *  those apart — but it is the difference between "still thinking, wait" and
-   *  "it is waiting on YOU", which previously rendered identically. */
+   *  "it is waiting on YOU", which would otherwise render identically. */
   activity?: "working" | "idle" | "blocked";
   /** Whether a stop the human asked for actually landed. A SEPARATE axis from
    *  `activity`, deliberately: a stop that failed leaves the agent `working`,
@@ -332,8 +331,8 @@ export interface SessionState {
    *
    *  "requested" is set the moment the server publishes to the runner — nothing
    *  has pressed Escape yet. Only the runner can say "stopped" or "failed", and
-   *  it only says so after verifying the terminal (see #649: an unverified
-   *  Escape reported as success is what made Stop untrustworthy). */
+   *  it only says so after verifying the terminal (an unverified
+   *  Escape reported as success would make Stop untrustworthy). */
   stopState?: "requested" | "stopped" | "failed";
   /** The dialog the agent is waiting on. Carried in the CONNECT SNAPSHOT, not
    *  only in live frames: `session.activity` is view-only and reaches a client
@@ -455,7 +454,7 @@ export type WsEvent =
   | { event: "session.turn_status"; data: { status: TurnStatus | null } }
   // A human typed into emdash rather than into this page. No client echoed it,
   // so this is the only way it reaches the browser before a reload. `author`
-  // rides here for the same reason it rides the queued list (spec 2026-09-26):
+  // rides here for the same reason it rides the queued list:
   // a transcript-sourced session's durable row carries no user beyond the
   // runner's own login, so this is canopy's only chance to say who typed it.
   // `client_id` is likewise the only way an HTTP send's OPTIMISTIC row (built

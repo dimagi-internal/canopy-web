@@ -216,7 +216,7 @@ def run_browser_pair(config_path: Path, *, base_url: str = pair.DEFAULT_BASE_URL
     `reconnect`: this computer IS a runner (runner.json) whose token canopy-web no
     longer accepts. The pairing names that runner; when its owner approves, the
     runner gets this computer's key back — same runner, same settings — and
-    runner.json keeps everything but the dead token (canopy-web#1705)."""
+    runner.json keeps everything but the dead token."""
     home = home or Path.home()
     config_path = Path(config_path).expanduser()
     existing: dict = {}

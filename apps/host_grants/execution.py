@@ -1,5 +1,4 @@
-"""What canopy states to a host about the call in front of it — `Canopy-Execution`
-(spec 2026-10-22-sensitive-data-agents §6).
+"""What canopy states to a host about the call in front of it — `Canopy-Execution`.
 
 The gateway (`host_gateway`) is the one place that can speak for a call: it runs in
 canopy-web, holds the visitor's DPoP-bound token, and never hands it to a runner.

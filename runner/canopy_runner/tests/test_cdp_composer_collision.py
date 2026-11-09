@@ -1,14 +1,14 @@
 """A human's draft the first composer read missed must still never be sent.
 
-Turn 64cada76 (2026-10-23, failure investigation 2): Jonathan had "okay great, let"
-typed in ACE's composer. open-send's read before typing came back empty, so there
+The failure shape: a human has a draft ("okay great, let") typed in an agent's
+composer. open-send's read before typing came back empty, so there
 was no collision dialog; the chat message was typed onto the end of his draft, the
 post-Enter recheck saw "not ours" and stopped quietly, and the sidecar reported
 `sent`. Recovery then found `composer_holds_other_text` and the turn failed
-undelivered. The same read finds the draft today, so what failed was the frame,
+undelivered. The same read finds the draft later, so what fails is the frame,
 not the rule.
 
-open-send now looks again right before typing, and once more after typing and
+open-send looks again right before typing, and once more after typing and
 BEFORE Enter (`composer_check.mjs`). A draft in front of our message turns the send
 into a `collision`: our text is taken back off the end and the human is asked.
 """

@@ -30,8 +30,7 @@ def append_events(turn: Turn, events: list[dict]) -> int:
     def _stripped(sensitive_now: bool, conversation) -> list[dict]:
         if not (sensitive_now and any(e.get("kind") in sensitivity.RESULT_KINDS for e in events)):
             return events
-        # A sensitive conversation's tool results are never stored (spec
-        # 2026-10-22-sensitive-data-agents §4): the row keeps which call and
+        # A sensitive conversation's tool results are never stored: the row keeps which call and
         # whether it failed, and so does the live frame built from it.
         calls = sensitivity.calls_in(events, kind_key="kind", use="tool_start", payload_key="payload")
         return [{**e, "payload": sensitivity.strip_result(e.get("payload"), session=conversation, calls=calls)}
@@ -100,8 +99,7 @@ def metadata_of(event: dict) -> dict:
     return out
 
 
-# Per-TURN ceiling on retained raw transcript content (security review
-# 2026-07-26, F2). `raw_jsonl_gz` is Postgres `bytea` (1GB hard limit) and
+# Per-TURN ceiling on retained raw transcript content. `raw_jsonl_gz` is Postgres `bytea` (1GB hard limit) and
 # `bytes_raw` a `PositiveIntegerField` (2GB) — an unbounded single turn would
 # eventually hit one of those and raise a raw DB error mid-turn with no
 # upstream signal. 100MB (uncompressed) is generous headroom above even an
@@ -161,7 +159,7 @@ def append_transcript(turn: Turn, raw_lines: list[str], *, batch_id: str = "") -
     """
     from . import sensitivity
 
-    # A sensitive conversation keeps no transcript (spec 2026-10-22-sensitive-data-agents §4),
+    # A sensitive conversation keeps no transcript,
     # and a late flush must not put back what retention or its person removed. The runner
     # still gets its success, so it never retries.
     if sensitivity.is_sensitive(turn) or (
@@ -271,7 +269,7 @@ def read_transcript(turn: Turn) -> bytes:
     server-side, or anything that genuinely needs the whole blob at once).
     The HTTP read route does NOT call this — see `iter_transcript`, which
     streams bounded chunks instead of materializing the whole decompressed
-    blob in a web worker's memory (security review 2026-07-26, F3)."""
+    blob in a web worker's memory."""
     transcript = TurnTranscript.objects.filter(turn=turn).first()
     if transcript is None or not transcript.raw_jsonl_gz:
         return b""
@@ -281,17 +279,15 @@ def read_transcript(turn: Turn) -> bytes:
 def iter_transcript(turn: Turn, *, chunk_size: int = 64 * 1024):
     """Yield a turn's DECOMPRESSED raw JSONL in bounded chunks, inflating
     incrementally rather than materializing the whole decompressed blob at
-    once (security review 2026-07-26, F3; the sibling `/events` route caps
-    at 500 rows for the same underlying reason — nothing about this route
-    may scale with transcript size).
+    once (the sibling `/events` route caps at 500 rows for the same underlying
+    reason — nothing about this route may scale with transcript size).
 
-    An EARLIER version of this fix instead served the STILL-GZIPPED bytes
-    directly with `Content-Encoding: gzip`, betting on the HTTP client to
-    inflate transparently. A follow-up review empirically falsified that:
+    The STILL-GZIPPED bytes are not served with `Content-Encoding: gzip`:
+    that bets on the HTTP client to inflate transparently, and
     `curl --compressed` and `httpx` both return only the FIRST gzip member
-    of a multi-member stream (Task 1's own on-disk format — see
+    of a multi-member stream (the on-disk format — see
     `append_transcript`) — a 200 with silently TRUNCATED content, no error,
-    exactly the corrupted-derivation failure mode F5's idempotency work
+    exactly the corrupted-derivation failure mode the batch-id idempotency
     exists to prevent. Worse, this repo's own runner client
     (`runner/canopy_runner`, `urllib.request`) sends no `Accept-Encoding`
     and does no decoding at all — it would treat raw gzip bytes as JSONL.
@@ -299,7 +295,7 @@ def iter_transcript(turn: Turn, *, chunk_size: int = 64 * 1024):
     caller sees the same bytes `read_transcript` would return, with none of
     read_transcript's all-at-once memory cost.
 
-    `gzip.GzipFile` transparently reassembles Task 1's concatenated
+    `gzip.GzipFile` transparently reassembles the concatenated
     multi-member blob exactly as `gzip.decompress` does — this is just the
     same decompression, read incrementally instead of all at once. Yields
     nothing (an empty generator) when the turn has no transcript."""

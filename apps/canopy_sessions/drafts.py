@@ -1,4 +1,4 @@
-"""Each person's outgoing draft in a session (spec 2026-09-26).
+"""Each person's outgoing draft in a session.
 
 One open draft per (session, author). There is no lock: nobody waits for
 anybody. The optimistic `version` survives only to reconcile one person's own
@@ -64,8 +64,8 @@ def update_draft(session: Session, *, user, expected_version: int, body: str) ->
     conversation: a draft there stays in the person's browser until they send it (the
     composer sends its text with `chat.send`), so canopy-web never holds words it could
     read back — and the keystrokes are not relayed to anyone. Deliberately has no `visibility`
-    parameter any more (canopy-ui#… "hidden->live->hidden" regression): the
-    mode used to ride this frame, so a stale keystroke echo — one that lost a
+    parameter ("hidden->live->hidden"): if the
+    mode rode this frame, a stale keystroke echo — one that lost a
     race against a mode change — could silently downgrade it server-side, and
     the version check that protects BODY conflicts has nothing to do with a
     choice the user makes independently of typing. See `set_visibility`,

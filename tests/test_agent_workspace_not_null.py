@@ -3,19 +3,16 @@
 Six tenancy predicates independently grew a `workspace_id IS NULL` leg that
 reads as ALLOW, because a nullable tenant FK invites
 `if agent.workspace_id and <membership check>` — which short-circuits to
-"ungated" on precisely the row that declares no tenant. Four were fixed one
-site at a time (PRs #378, #421, #423) before it was clear the recurrence was
-the defect. `agents/0013` removes the state instead of the symptom.
+"ungated" on precisely the row that declares no tenant. Patching one site at a time would leave the recurrence
+as the defect. `agents/0013` removes the state instead of the symptom.
 
-This file is where the regression now lives. It SUPERSEDES the per-surface
-"an unhomed agent is invisible here" tests that used to sit in
-tests/test_agent_out_workspace.py, tests/test_agents_turns_api.py,
-tests/test_agent_runners_api.py, tests/test_harness_authz.py,
-tests/test_harness_transcript_api.py and tests/test_schedule_services_crud.py:
-each of them constructed an unhomed agent and asserted one surface refused it,
-which cannot be written any more — and which was always the weaker claim.
-Those files keep their CROSS-TENANT tests, which are the ones with something
-left to prove.
+This file is where the regression lives. A per-surface
+"an unhomed agent is invisible here" test (in tests/test_agent_out_workspace.py,
+tests/test_agents_turns_api.py, tests/test_agent_runners_api.py,
+tests/test_harness_authz.py, tests/test_harness_transcript_api.py or
+tests/test_schedule_services_crud.py) cannot be written, since an unhomed agent
+cannot be constructed, and it would be the weaker claim. Those files keep their
+CROSS-TENANT tests, which are the ones with something left to prove.
 """
 from __future__ import annotations
 

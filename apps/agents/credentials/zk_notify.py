@@ -1,5 +1,5 @@
 """Tell the people who hold an agent's vault key that someone is waiting for it
-(Canopy Vault Phase 2, canopy-web#1550).
+(Canopy Vault Phase 2).
 
 Under zero-knowledge, canopy-web cannot hand the vault key to a newly approved
 device or a new admin — only a person who holds it can, in their browser. So

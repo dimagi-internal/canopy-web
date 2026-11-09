@@ -16,9 +16,9 @@
  * and only has its scheme swapped.
  *
  * Open the socket with `buildSessionWsUrlWithTicket`. A WebSocket handshake
- * cannot carry an `Authorization` header, so the token used to ride as
- * `?token=` — and URLs land in access logs. canopy stopped reading a token from
- * the URL on 2026-10-06; it accepts a one-time ticket there instead.
+ * cannot carry an `Authorization` header, so the token cannot ride as
+ * `?token=` — URLs land in access logs. canopy does not read a token from
+ * the URL; it accepts a one-time ticket there instead.
  */
 
 export interface WsLocation {
@@ -29,7 +29,7 @@ export interface WsLocation {
 /** `location` is injectable so this works in a worker, in a test, and in an
  *  iframe — anywhere `window` may be absent or not the one you mean.
  *
- *  @deprecated canopy no longer reads a token from the socket URL (2026-10-06),
+ *  @deprecated canopy does not read a token from the socket URL,
  *  so a socket opened with this URL is refused. Use
  *  `buildSessionWsUrlWithTicket`, or the client's `sessionSocketTicketUrl`. */
 export function buildSessionWsUrl(

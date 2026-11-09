@@ -2,15 +2,14 @@
 canopy-web cannot open (the agent vault is zero-knowledge; tests/test_canopy_vault_zk.py).
 
 
-The goal this serves, stated by Jonathan on 2026-09-05: *someone could plausibly
-create a completely new agent without direct access to the cloud box.* A vault you
-must be granted was the barrier, so canopy-web is the store.
+The goal this serves: *someone could plausibly create a completely new agent
+without direct access to the cloud box.* A vault you must be granted is the
+barrier, so canopy-web is the store.
 
-The failure that motivated it is not hypothetical: a from-scratch cloud rebuild the
-same day found ACE's mailbox dead since 2026-05-01, under an OAuth client its own
-config warns against, and seeing that required SSH-ing to a box and running
-`gog auth list`. Credentials that live only in a vault and a keyring are
-credentials nobody is watching — which is why `status` matters as much as `set`.
+Without it, seeing that an agent's mailbox is dead (say, under an OAuth client its
+own config warns against) requires SSH-ing to a box and running `gog auth list`.
+Credentials that live only in a vault and a keyring are credentials nobody is
+watching — which is why `status` matters as much as `set`.
 """
 from __future__ import annotations
 
@@ -153,8 +152,8 @@ def test_storing_a_value_declares_it(fleet):
 
 
 def test_the_backfill_declares_what_an_agent_that_declares_nothing_stores(fleet):
-    """Secrets stored before #2093 left Trellis holding three values and declaring
-    none. The backfill declares them; ACE, which declares some and stores an orphan,
+    """Secrets stored before an agent declared its credentials leave it holding three
+    values and declaring none. The backfill declares them; ACE, which declares some and stores an orphan,
     keeps its orphan undeclared."""
     import importlib
 

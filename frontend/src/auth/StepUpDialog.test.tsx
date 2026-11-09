@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Step-up goes straight to the browser's passkey sheet; the "Confirm it's you"
 // dialog is only the fallback for a browser that refuses WebAuthn without a
-// fresh click (canopy-web#1538).
+// fresh click.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 

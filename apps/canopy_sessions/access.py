@@ -45,10 +45,10 @@ The audience per channel is tabled in `docs/architecture/access-sessions-and-peo
 A contact is a different principal with a disjoint predicate
 (`contact_session_q`) and never reaches these helpers.
 
-History — why one module:
+Why one module:
 
-It lives in its own module because the two used to be written by hand at two
-sites and disagreed, in both directions:
+It lives in its own module because the two, written by hand at two
+sites, disagree in both directions:
 
 * **by-id was too loose.** `_session_or_404` gated on workspace membership
   alone, so any co-tenant holding a session UUID could read a conversation the
@@ -62,7 +62,7 @@ sites and disagreed, in both directions:
   workspace member and auto-joined them as an editor, so one socket open turned
   a chat REST hid from you into a durable participant grant — and REST then
   honoured it. It also made the chat page 404 on its first REST read and work
-  on reload (2026-09-23), because the socket, opened in parallel, granted what
+  on reload, because the socket, opened in parallel, granted what
   REST had just refused.
 
 This is the same shape of guard `apps/harness/services.py` uses for
@@ -228,8 +228,8 @@ def visible_session_q(user) -> Q:
        `Agent.is_admin`'s sense: its owner, an owner of its workspace, or an
        explicit `AgentAdmin`. An agent's own work with no creator (an email
        thread, an alarm it picked up) belongs to the people operating that
-       agent. Without this leg such a session was readable by nobody, and a
-       push for it tapped through to a 404 (2026-09-23, a hal alarm thread).
+       agent. Without this leg such a session is readable by nobody, and a
+       push for it taps through to a 404.
        "Owner" alone was not enough: on labs every agent's `owner` is null, so
        it matched no one. The agent's admins, not the whole tenant. The
        agent's OWN login also reads its own work (`_own_work_q`: no creator,
@@ -568,8 +568,8 @@ def role_for(user, session) -> str | None:
     coach's review grant, a runner admin) give a viewer. The second is an explicit
     participant row, which is how someone is made a viewer or an editor of
     somebody else's chat. A row can raise you but never demote what the rule
-    already gives you. Old auto-join rows made an agent's owner a mere "editor"
-    of their own agent's thread, unable to share it (seen on labs 2026-09-23).
+    already gives you. An auto-join row would make an agent's owner a mere "editor"
+    of their own agent's thread, unable to share it.
     """
     if not can_read(user, session):
         return None
@@ -737,8 +737,8 @@ def own_turn_session(user, turn_id):
     it cannot open it, list it, or name it by id (and must not — that would hand
     it every conversation it ever had). But the agent IS having this
     conversation, and moving it to a new Slack thread or detaching it is part of
-    having it (2026-10-16, an ACE turn told to "post a new clean thread" that
-    404'd on its own session). So: named by `turn_id`, and only while that turn
+    having it (an agent told to "post a new clean thread" must not 404 on its
+    own session). So: named by `turn_id`, and only while that turn
     is in flight (claimed, running or waiting on a person), only for the login
     of the agent the turn runs AS, and only inside a workspace that login
     belongs to. Grants nothing to read; the callers decide what acting means

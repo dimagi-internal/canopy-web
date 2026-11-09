@@ -21,8 +21,8 @@
  * `administrator`: minting your OWN access token is something every user
  * does, and filing it under the owner tier told people the opposite.
  *
- * `enforcement` says what the system actually checks for each tier. Since
- * 2026-10-02 every tier is enforced on every surface (a CI test refuses a
+ * `enforcement` says what the system actually checks for each tier. Every
+ * tier is enforced on every surface (a CI test refuses a
  * route that has not declared its gate) — the field stays so the page keeps
  * saying WHAT enforces it, not just that something does.
  */

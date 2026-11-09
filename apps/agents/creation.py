@@ -1,7 +1,7 @@
 """Scaffold a new agent's repository from the browser — the factory, pushed over the GitHub API.
 
 The repo is created with its credential replaced by the one agents actually use: the owner's fine-grained
-token (`apps/agents/credentials/delegations.py`, spec 2026-09-24). The person makes an empty repo
+token (`apps/agents/credentials/delegations.py`). The person makes an empty repo
 and a token scoped to it; this pushes with that token, and the same token is then saved
 as the agent's GitHub delegation — so the push and every later turn use one credential,
 one repository selection, and no app install an org owner must approve.

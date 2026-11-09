@@ -1,5 +1,5 @@
 """`Canopy-Execution`: canopy vouches for each call its gateway makes to a host, and
-the host verifies it with the SDK (spec 2026-10-22-sensitive-data-agents §6).
+the host verifies it with the SDK.
 
 Driven end to end: the MOUNTED canopy MCP server, a real caller token, the gateway,
 a real FastMCP host (`tests/fixtures/site_gateway.py`), and the SDK's `verify_execution` on

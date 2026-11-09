@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// The Security card (canopy-web#1550): one card with You / Your runners /
+// The Security card: one card with You / Your runners /
 // Your agents, and the person's ONE recovery code — made once, used to get back in.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'

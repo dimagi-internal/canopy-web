@@ -36,7 +36,7 @@ class NarrativeRunOut(StrictModel):
 class NarrativeCutOut(StrictModel):
     """One cut of a ``style: recorded`` narrative and the video pinned to it.
 
-    A recorded narrative renders one mp4 per cut (canopy#796); each is uploaded
+    A recorded narrative renders one mp4 per cut; each is uploaded
     with the recipe's ``cuts[].id`` and the scene ids it plays. Ordered by where
     the cut's first scene falls in the narration."""
 

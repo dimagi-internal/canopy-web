@@ -16,11 +16,10 @@
 //   organisation you are in at its top, since a pinned read covers the
 //   workspaces below the pin), one pinned read per pin, and the lists merged. Every read is still pinned, so the
 //   server never answers a cross-organisation query; the page just asks each
-//   workspace in turn (owner decision, Jonathan, 2026-10-11: "everything is
-//   properly tied to workspaces, we just loop over them").
+//   workspace in turn: everything is tied to workspaces, so we loop over them.
 //
-// It used to retry a root page pinned to ONE guessed default (the first
-// membership), which quietly hid every other workspace's agents on /supervisor.
+// Retrying with ONE guessed default (the first membership) would quietly hide
+// every other workspace's agents on /supervisor, so it never does.
 // Merging is a concatenation in workspace order: a root page that shows a
 // time-ordered list sorts it itself. Only requests that would otherwise fail are
 // touched, so single-tree callers see exactly what they did before.
@@ -65,7 +64,7 @@ async function refusedWorkspaces(res: Response): Promise<string[] | null> {
     // The problem body carries its fields under `extras` (apps/api's RFC 7807
     // handler), not at the top level — reading `body.workspaces` found nothing,
     // so a root page looped over zero workspaces and showed the raw refusal.
-    // `pins` (2026-10-12): a pinned read covers the workspaces below the pin, so
+    // `pins`: a pinned read covers the workspaces below the pin, so
     // the server names the fewest pins that cover every membership — usually one
     // per organisation. Looping over every workspace instead would read connect
     // twice (once under dimagi) and double the merged counts.

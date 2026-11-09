@@ -1,4 +1,4 @@
-"""Acting as a LOWER role than you hold — a turn's `acts_as` (canopy-web#1705).
+"""Acting as a LOWER role than you hold — a turn's `acts_as`.
 
 Whoever starts a turn may ask for it to run as an `editor` or a `viewer` (`TurnIn.acts_as`,
 `LocalTurnIn.acts_as`): everything about that turn — whether it may be started, its

@@ -191,7 +191,7 @@ def _up(tmp, canopy, *args, token_text: str | None = "t\n") -> subprocess.Comple
     base = f"http://127.0.0.1:{canopy.server_address[1]}"
     # Each run's key file in its OWN dir: under xdist several tests run up.sh at
     # once with the same stack name, and a shared ./<stack>-key.pem was written,
-    # chmod'ed and deleted by different workers mid-run (a `set -e` exit, 2026-10-17).
+    # chmod'ed and deleted by different workers mid-run (a `set -e` exit).
     keys = tmp / "keys"
     keys.mkdir(exist_ok=True)
     return subprocess.run(
@@ -312,7 +312,7 @@ def test_creates_invitation_and_prints_approve_url(tmp_path, canopy):
 def test_a_new_boxs_invitation_lists_its_one_runner(tmp_path, canopy):
     # A new box runs its runners the --install-runners way (one: tree:<workspace>, named the box) and
     # pairs listing it; an invitation without it is refused at every pairing call
-    # however it is approved (found standing up the first sensitive-data box, 2026-10-22).
+    # however it is approved.
     _fake(tmp_path)
     res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--workspace", "connect")
     assert res.returncode == 0, res.stdout + res.stderr

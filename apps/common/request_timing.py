@@ -1,10 +1,10 @@
 """Log every request that takes longer than a threshold, with what it spent.
 
 Labs serves everything from one uvicorn process, so one slow request stalls the
-ones queued behind it; on 2026-10-03 `/api/me/` — a 0.3s read every page waits
-on — took 1.4s at the median and up to 30s, at 10-20% CPU. The access log says
-which paths were hit and never how long they took, so the request doing the
-stalling could not be named. This names it: route template (never the concrete
+ones queued behind it (a normally fast read every page waits on, such as
+`/api/me/`, then takes seconds). The access log says which paths were hit and
+never how long they took, so the request doing the stalling cannot be named.
+This names it: route template (never the concrete
 path — it can carry a share token; apps/common/log_redact.py), status, wall time, and how
 much of that was the database (count + time), at WARNING so it is greppable in
 CloudWatch (`SLOW_REQUEST`).

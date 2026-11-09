@@ -103,7 +103,7 @@ def test_private_content_404s_anonymous(owner):
 def test_malformed_content_id_is_a_bare_404_not_the_spa(owner):
     # The content route accepts <str:wid>, so a non-UUID id is handled by the
     # view (bare 404) instead of falling through to the SPA catch-all and
-    # painting the whole app inside a failed embed (issue #345). Authed, so this
+    # painting the whole app inside a failed embed. Authed, so this
     # proves the id itself 404s — not the anonymous gate.
     client = Client()
     client.force_login(owner)
@@ -217,7 +217,7 @@ def test_walkthrough_collection_still_gated(db):
 
 @override_settings(REQUIRE_AUTH=True)
 def test_content_is_served_only_under_its_own_workspace(owner):
-    # One address per walkthrough (canopy-web#1337): the bytes under another
+    # One address per walkthrough: the bytes under another
     # workspace 404 exactly like a missing id, and nothing redirects.
     w = _make(owner, visibility="link")
     token = w.ensure_share_token()

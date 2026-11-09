@@ -9,8 +9,7 @@ import {
 import { LoadFailed } from '@/components/vault/LoadFailed'
 import { VaultMembers } from '@/components/vault/VaultMembers'
 
-// Who may open this agent's vault (spec 2026-10-22-vault-access-follows-canopy-
-// access-design.md). Membership is the vault's own: people added by name, plus
+// Who may open this agent's vault. Membership is the vault's own: people added by name, plus
 // a link that makes everyone with full access to the agent a member. Each row
 // says WHY the person is a member, so the page always answers "why can they?".
 // The list itself is the shared `VaultMembers`; this is the agent's data and writes.

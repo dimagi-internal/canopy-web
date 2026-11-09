@@ -1,6 +1,5 @@
 """What a host site asks of canopy's agents (its signed `site.json`), and
-whether each agent canopy allows there meets it (spec connect-labs
-`2026-10-22-canopy-site-agents-api-design` §2).
+whether each agent canopy allows there meets it.
 
 The site publishes `site.json` beside its `jwks.json` (the SDK's host route), so
 canopy needs no new field to find it: `canopy_sdk.site.site_document_url`. It
@@ -314,7 +313,7 @@ def discover(address: str = "", *, app=None) -> Discovery:
                      registered_keys_verify=registered, tried=tuple(tried))
 
 
-# --- the schemes of the site's own resource links (spec 2026-10-23-host-held-results) ----
+# --- the schemes of the site's own resource links ----
 
 
 def resource_schemes_for(session) -> dict[str, int | None]:

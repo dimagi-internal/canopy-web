@@ -255,8 +255,8 @@ def test_the_clone_authenticates_the_way_git_over_https_requires():
     """BASIC, not Bearer.
 
     GitHub's API takes `Bearer <token>`; git-over-HTTPS rejects it as "invalid
-    credentials" and then asks for a username, which is the failure this pins
-    (observed live on labs, 2026-09-19). Every other test in this file rewrites
+    credentials" and then asks for a username, which is the failure this pins.
+    Every other test in this file rewrites
     the GitHub URL to a local repo, so none of them authenticates at all — this
     is the only assertion on the header's form.
     """

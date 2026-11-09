@@ -29,7 +29,7 @@ from .config import Config
 logger = logging.getLogger("canopy_runner")
 
 
-# --- Live hook events (spec 2026-07-27) -------------------------------------
+# --- Live hook events -------------------------------------
 #
 # Claude Code fires a hook per tool call straight to a loopback listener this
 # runner owns. That is the LIVE half of a session's record: the transcript is
@@ -87,11 +87,10 @@ def user_settings_path() -> Path:
     """The account-wide Claude Code settings this runner points its hooks from.
 
     One function, not two inline `Path.home()` literals, so a test suite can
-    redirect it: the runner's own suite used to start a listener on an ephemeral
-    port and write THAT into the developer's real settings.json, which on a runner
-    box re-pointed every live session's hooks at a dead port until the daemon's
-    next tick repaired it (canopy-web#1188: the "hook config no longer pointed"
-    warnings that line up with test runs)."""
+    redirect it: a suite that starts a listener on an ephemeral port and writes
+    THAT into the developer's real settings.json would, on a runner box, re-point
+    every live session's hooks at a dead port until the daemon's next tick
+    repaired it."""
     return Path.home() / ".claude" / "settings.json"
 
 
@@ -106,7 +105,7 @@ def ensure_hook_config(settings_path=None) -> bool:
     ephemeral port and re-points the account's hooks at itself. When that
     instance exits, every hook on the account curls a port nothing is listening
     on — the live-events-off failure the fallback exists to prevent, arriving by
-    a different port. Observed 2026-07-30: runner on :8788, config on :49366,
+    a different port. Example: runner on :8788, config on :49366,
     nothing bound there.
 
     So the config is treated as observed state that converges, not as a fact
@@ -164,7 +163,7 @@ def hook_project_task_keys(cwd: str, *, home: Path | None = None) -> list[tuple[
     attached to — so keying a menu off it would capture one exactly when somebody
     already had the chat open, and lose it in every case that matters. You go and
     look BECAUSE the session stopped; the menu has to be there before you arrive.
-    That is the same shape as the bug #510 left behind, one layer down.
+    Keying off it would repeat the viewer-attached-only mistake one layer down.
 
     Nothing here needs a canopy session id anyway: the report is keyed by
     (project, emdash task), and the worktree path carries both.
@@ -527,8 +526,8 @@ _answer_locks_guard = threading.Lock()
 def _answer_lock(session_key: str) -> threading.Lock:
     """One lock per session, so two deliveries cannot interleave keystrokes.
 
-    Answering used to be a single `send_keys` and was atomic by being tiny.
-    Driving a tabbed dialog is a read-decide-press loop that runs for seconds,
+    A plain answer is a single `send_keys` and atomic by being tiny, but
+    driving a tabbed dialog is a read-decide-press loop that runs for seconds,
     and this system delivers every answer TWICE by design — once on the control
     frame, once from the poll tick that guarantees it survives a dead channel.
     Those run on different threads. Without this, the second delivery can press
@@ -582,8 +581,8 @@ def answer_menu(session_key: str, option, *, selections=None, texts=None,
     except Exception as exc:  # noqa: BLE001
         # NOT_A_CLAUDE_PANE is the one refusal a human can act on themselves, and
         # it is the one that actually bit: with a shell tab selected, every tap on
-        # a real dialog died here for 45 minutes with nothing said (labs,
-        # 2026-08-01). It is deliberately still a refusal — clicking the Claude
+        # a real dialog died here for 45 minutes with nothing said.
+        # It is deliberately still a refusal — clicking the Claude
         # tab for somebody would mean guessing at emdash's tab controls, and the
         # cost of guessing wrong is a digit executed in their shell.
         # A deleted task and an unreachable box both surface as a CDP error and
@@ -629,9 +628,8 @@ def report_signed_out(cfg: Config, client: Client, text: str) -> None:
     """This box's Claude login is gone. Mark it not ready — the server then stops
     giving it turns and tells whoever is waiting why — and, the first time, raise
     the `claude_auth_required` alert that mails and pushes the people who run it
-    (`apps/harness/credential_notify.py`). Until now only cloud boxes raised it; a
-    signed-out laptop kept claiming and answering every message with the CLI's
-    one-liner. Never raises."""
+    (`apps/harness/credential_notify.py`). Without it a signed-out laptop would keep
+    claiming and answering every message with the CLI's one-liner. Never raises."""
     from . import readiness
 
     first = readiness.mark_signed_out(cfg)
@@ -672,7 +670,7 @@ def send_owner_ask(client: Client, payload: dict, keys, *, profile_root=None,
                    background: bool = True) -> None:
     """A caller's session just ended a turn: if its final message carries the
     `For <Agent>'s owner:` line, send it to the turn, whose result note is what
-    the owner reads (canopy-web#1416). Only for a `cx-` session, whose profile
+    the owner reads. Only for a `cx-` session, whose profile
     names the turn it is serving; everything else is not a caller's session.
     Posted off the hook's thread, and best-effort: the note is a convenience,
     the transcript is still the record."""
@@ -730,7 +728,7 @@ def start_hook_listener(cfg: Config, client: Client):
     # its terminal — so wiring it to a hook meant every Notification yanked
     # emdash to whatever agent had just asked for input, mid-typing.
     #
-    # Reported 2026-07-28, twice: focus taken, a few characters typed into the
+    # The failure: focus taken, a few characters typed into the
     # newly-focused prompt, then the message that was meant for that task never
     # arrived. The second half is the collision guard working exactly as designed
     # — `open_and_send` found unsent text, refused to clobber it, and defaulted to

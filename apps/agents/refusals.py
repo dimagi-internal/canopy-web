@@ -177,7 +177,7 @@ def _not_on_access_list(i: _In):
            "write (to use all of it) or editor (to also change it).")
     if i.facts.get("automated"):
         # A proven sender nobody listed is, far more often than a stranger, an automated one someone subscribed
-        # on purpose: CloudWatch alarms went unanswered for nine days this way (canopy-web#1253).
+        # on purpose: CloudWatch alarms went unanswered for nine days this way.
         how += (f" If this is an automated sender (alarms, CI, a monitor), an admin of {i.slug} can instead bind "
                 "its address to an inbound-mail trigger on the agent's Triggers tab.")
     return f"{i.say.you_are} not on {i.slug}'s access list", how, i.admins

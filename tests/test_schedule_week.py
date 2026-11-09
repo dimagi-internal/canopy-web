@@ -60,7 +60,7 @@ def test_personal_flat_spans_all_my_workspaces(setup):
 
 def test_personal_flat_is_refused_across_two_tenant_trees(setup):
     """A caller whose workspaces sit in two organisations must name one: the
-    union would put one org's schedules beside another's (2026-10-11)."""
+    union would put one org's schedules beside another's."""
     Workspace.objects.filter(slug="beta").update(parent=None)
     resp = setup.get(f"/api/agents/schedules/week?start={START}")
     assert resp.status_code == 422, resp.content
@@ -70,7 +70,7 @@ def test_personal_flat_is_refused_across_two_tenant_trees(setup):
 
 
 def test_tenant_pinned_returns_that_workspace_and_those_below(setup):
-    """A pinned read covers the caller's workspaces below the pin (2026-10-12):
+    """A pinned read covers the caller's workspaces below the pin:
     beta sits under alpha, so alpha's week includes it and beta's does not reach up."""
     resp = setup.get(f"/api/w/alpha/agents/schedules/week?start={START}")
     assert resp.status_code == 200, resp.content

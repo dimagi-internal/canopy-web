@@ -1,6 +1,6 @@
 """wire.sh finds the fresh box by what it lacks — a staged credential — not by
-"never heartbeated", which stopped being true when the credential wait started
-heartbeating. A paired-but-unstaged cloud-ec2-fork was never found (2026-10-18).
+"never heartbeated": the credential wait heartbeats, so a paired-but-unstaged box
+would never be found that way.
 """
 from __future__ import annotations
 

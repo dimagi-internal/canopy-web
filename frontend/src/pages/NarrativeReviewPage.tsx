@@ -13,8 +13,8 @@ import { pairNarrationScenes } from '@/components/ddd/narrativeScenePairing'
  * Shows the story and nothing else — no gates, features, provenance,
  * actionability scores or findings. The operator console at
  * /w/:ws/ddd/:narrative keeps all of that and is linked from the foot; this is
- * the front page, not a second-class copy of it (canopy-web#290: "the current
- * DDD review screens are very complicated and something only I understand").
+ * the front page, not a second-class copy of it (the operator console is too
+ * complicated for a reviewer).
  *
  * The narrative reads CLEAN by default — the story as it stands now, with no
  * diff furniture. What changed since the last version is a question you ask,

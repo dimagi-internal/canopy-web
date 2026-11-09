@@ -39,9 +39,9 @@ const state = (o: Partial<SessionState>) =>
 
 describe("a send waiting in the queue", () => {
   it("leaves the finished turn above it folded", () => {
-    // It used to unfold the whole previous turn while the send sat in the
-    // queue and fold it back when a runner took it: the page shrank by that
-    // much at once and could paint blank until scrolled.
+    // Unfolding the whole previous turn while the send sits in the
+    // queue, then folding it back when a runner takes it, would shrink the page by
+    // that much at once and could paint blank until scrolled.
     render(<ChatPanel {...props} awaitingReply
       state={state({ messages: [...finished, send], queued: [inQueue], turn_status: offline })} />);
     expect(screen.getByTestId("queued-row").textContent).toContain("next");

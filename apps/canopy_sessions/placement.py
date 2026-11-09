@@ -193,10 +193,9 @@ def _resolve_placement(session: Session, placement: str | None, user=None):
 # runner opens a fresh one: it arrives with none of the thread above it in
 # context, while the web UI shows it the whole history — which reads, to it, as
 # if it should already know all of this. Saying so plainly is what stops it
-# confidently re-deriving (or redoing) work that already shipped. Proven by hand
-# on 2026-09-12: a transferred session given this preamble plus a git-state brief
-# verified two PRs and a file checksum and then correctly stopped, rather than
-# starting over.
+# confidently re-deriving (or redoing) work that already shipped. Given this preamble plus a
+# git-state brief, a transferred session verifies what shipped and stops, rather
+# than starting over.
 TRANSFER_PREAMBLE = """\
 **This session has been transferred from {source} to {target}.**
 
@@ -541,7 +540,7 @@ def fork_session(*, session: Session, turn_index: int, user) -> Session:
                 # Its history is a cut of a transcript, whatever the executor.
                 services.TRANSCRIPT_SOURCED: True,
                 # The fork holds the same conversation, so the same runners: a fork
-                # never sheds a requirement (spec 2026-10-22-sensitive-data-agents).
+                # never sheds a requirement.
                 **({rr.METADATA_KEY: (session.metadata or {})[rr.METADATA_KEY]}
                    if (session.metadata or {}).get(rr.METADATA_KEY) else {}),
             },

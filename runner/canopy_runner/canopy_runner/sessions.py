@@ -150,9 +150,8 @@ def annotate_engine_staleness(
     normally the BETTER signal — see is_session_running), so a churning session reads
     as finished.
 
-    Measured 2026-08-27 on `hh4`: background Agent dispatched 12:59:34, wake-ups at
-    13:06 and 13:22, transcript still growing at 13:23:33 — emdash saying "completed"
-    and the API saying running=False the whole time. The control case is fine and must
+    Example: a background Agent is dispatched, wakes up twice and the transcript keeps
+    growing — emdash says "completed" and the API says running=False the whole time. The control case is fine and must
     stay fine: through a 200-second SILENT foreground tool call the flag correctly held
     "working", so this only ever looks at flags that already claim the session stopped.
 
@@ -224,10 +223,9 @@ def reported_projects(cfg: Config) -> list[str] | None:
     could not tell this tick.
 
     `capabilities["projects"]` is the allowlist `claim_next_turn` matches repo
-    turns against. It used to be typed by a human at pairing and nothing kept it
-    true, so a turn at `canopy` sat QUEUED forever while the repo sat in emdash's
-    own projects table (labs, 2026-07-28). Now the box answers for itself, every
-    tick, and the list cannot drift.
+    turns against. The box answers for itself, every tick, so the list cannot
+    drift (a list typed by a human at pairing would go stale, and a turn at `canopy`
+    would sit QUEUED forever while the repo sat in emdash's own projects table).
 
     None is NOT []. None means "unreadable — leave the server's list alone"; []
     means "I genuinely have none" and empties it. Collapsing the two would let one
@@ -318,7 +316,7 @@ def maybe_report_sessions(cfg: Config, client: Client, now_fn=time.monotonic) ->
     global _REPORT_NOW
     grew = session_changed(cfg, sessions)
     if grew:
-        activity.note()  # live work in a session: keep the normal cadence (#647)
+        activity.note()  # live work in a session: keep the normal cadence
     changed = grew or bool(_PENDING_CLOSED) or _REPORT_NOW
     _REPORT_NOW = False
     heartbeat = now_fn() - _last_session_report >= cfg.session_report_seconds
@@ -362,7 +360,7 @@ def maybe_report_sessions(cfg: Config, client: Client, now_fn=time.monotonic) ->
         )
         # Last, and only where nothing above found a question: a session canopy
         # created that has not started is stuck at a startup dialog, which neither
-        # a hook nor a transcript can describe (#1190, see startup_watch).
+        # a hook nor a transcript can describe (see startup_watch).
         startup_watch.attach_stall_markers(
             sessions, has_transcript=lambda project, task: _has_transcript(cfg, project, task),
         )

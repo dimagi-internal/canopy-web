@@ -1,4 +1,4 @@
-"""The runner writes its private-runner registration from the heartbeat (canopy-web#1705)."""
+"""The runner writes its private-runner registration from the heartbeat."""
 import json
 
 from canopy_runner import private_runner

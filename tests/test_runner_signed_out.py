@@ -1,8 +1,8 @@
 """A runner whose Claude login is gone claims nothing, and a turn waiting on it says so.
 
-2026-10-22: acedimagi-mbp-cdp was online with no Claude sign-in. The chat said
-"Picking this up on acedimagi-mbp-cdp…", the box took each message, and each
-"reply" was the CLI's `Not logged in · Please run /login`. The box now reports
+A box can be online with no Claude sign-in: the chat says
+"Picking this up on <box>…", the box takes each message, and each
+"reply" is the CLI's `Not logged in · Please run /login`. The box reports
 `canopy_transcript.SIGNED_OUT_NOTE` as its readiness note; this pins what the
 server does with it.
 """

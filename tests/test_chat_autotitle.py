@@ -120,9 +120,8 @@ def test_non_assistant_turn_event_does_not_autotitle(ctx):
 
 def test_a_runner_backed_session_keeps_the_emdash_task_name():
     """The name the human sees in their own emdash sidebar is what they navigate
-    by. Autotitling over it made the session HARDER to find — observed
-    2026-07-27: "I think we basically implemented everything we need to…" where
-    the sidebar said "canopy-web-api-7716-0726-1521"."""
+    by. Autotitling over it would make the session HARDER to find: a title
+    from the first message instead of the sidebar's task name."""
     from apps.canopy_sessions.models import RunnerBinding
     from apps.harness.models import Runner
 

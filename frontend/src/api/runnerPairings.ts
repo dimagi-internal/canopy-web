@@ -1,5 +1,4 @@
-// Laptop pairing by browser and the runner downloads (spec
-// 2026-10-19-runner-installers). Its own module so the /pair page and the
+// Laptop pairing by browser and the runner downloads. Its own module so the /pair page and the
 // download buttons can be tested without ./harness.
 import { apiV2 } from './client.v2'
 import type { components } from './generated'

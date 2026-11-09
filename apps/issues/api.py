@@ -34,9 +34,9 @@ def _visible(qs, request: HttpRequest, *, listing: bool = False):
     """Scope to the caller's workspaces (the hard tenant boundary). A LIST takes
     the read rule (a caller in two tenant trees must pin one); a lookup of one
     record by repo + number takes every membership."""
-    # A null-workspace row is in nobody's scope. It used to be in everybody's —
-    # the NULL-means-allow leg — and `issues/0003` homed the rows it was keeping
-    # visible, so dropping it hides nothing anyone legitimately reads.
+    # A null-workspace row is in nobody's scope. Treating it as visible to
+    # everybody (NULL means allow) is not done: `issues/0003` homed those rows,
+    # so dropping that leg hides nothing anyone legitimately reads.
     scope = wsvc.request_workspace_slugs(request) if listing else wsvc.request_member_slugs(request)
     return qs.filter(workspace_id__in=scope)
 
@@ -67,7 +67,7 @@ def _assign_workspace(request: HttpRequest, agent_slug: str):
     is a member of it (agent-authored provenance); otherwise a workspace the
     caller is ALREADY in — so nobody files a record into a workspace they're not
     in, and filing one is not itself a way to join a workspace. The fallback
-    used to `ensure_member`; see wsvc.creation_workspace."""
+    never `ensure_member`s; see wsvc.creation_workspace."""
     slugs = wsvc.request_member_slugs(request)
     agent = Agent.objects.filter(slug=agent_slug).first()
     if agent and agent.workspace_id in slugs:

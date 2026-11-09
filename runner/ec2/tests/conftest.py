@@ -23,7 +23,7 @@ _MODULE_PATH = pathlib.Path(__file__).resolve().parent.parent / "cloud_runner.py
 # The runner shells out to `canopy` for an agent's secrets. On a machine with the CLI
 # and a device key (a laptop; CI has neither), every test that drove a turn made a REAL
 # read of a real agent's vault: 30 of hal's per full run, plus trellis and scout, which
-# one evening reached hundreds of reads and two owner alerts (2026-11-03). So the name
+# reached hundreds of reads and owner alerts. So the name
 # `canopy` resolves to a stand-in that refuses, from before any test or collection runs,
 # in every xdist worker. A test wanting CLI behaviour fakes subprocess.run, as they do.
 _STANDIN_DIR = tempfile.mkdtemp(prefix="no-real-canopy-")
@@ -71,7 +71,7 @@ def cloud_runner(load_cloud_runner):
 
 @pytest.fixture(autouse=True)
 def _no_aws_device_proof(monkeypatch):
-    """Every resolve tries to attach the box's IAM-role device proof (canopy-web#1549),
+    """Every resolve tries to attach the box's IAM-role device proof (Canopy Vault Phase 1b),
     which reads IMDS — through urllib.request.urlopen, which many tests fake to record
     what the runner fetched. Off by default here; tests/test_aws_device_proof.py turns it
     back on and points IMDS at a closed port."""

@@ -40,7 +40,7 @@ from .vault_gates import agent_vault, zk_admin
 
 router = Router(auth=session_auth, tags=["agents"])
 
-# ---- zero-knowledge vault (Canopy Vault Phase 2, canopy-web#1550) ------------------
+# ---- zero-knowledge vault (Canopy Vault Phase 2) ------------------
 # Formats: docs/vault/zk-v1/zk_v1_reference.py. canopy-web only shape-checks and
 # stores; the browser and the canopy CLI do every encryption (apps/agents/credentials/zk.py).
 # Owner/admin only. Writes from a browser need a passkey step-up; a token held

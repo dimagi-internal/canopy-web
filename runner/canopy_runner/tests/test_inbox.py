@@ -113,7 +113,7 @@ def test_newest_sender_returns_none_on_gog_failure():
 
 # --- CloudWatch alarm pairs: one incident, one turn -------------------------------
 #
-# Real subjects and sender from the 2026-09-05 `labs-jj-web-cpu-high` incident, which
+# Real subjects and sender from a `labs-jj-web-cpu-high` incident, which
 # spawned two hal sessions for one alarm transition.
 
 SNS = "Labs Alerts <no-reply@sns.amazonaws.com>"
@@ -259,10 +259,10 @@ def test_non_alarm_mail_is_completely_unaffected():
 
 # --- one incident, one turn: the REPEAT and the LATE recovery ---------------------
 #
-# From hal, 2026-09-07. `labs-jj-web-cpu-high-actionable` transitioned to ALARM at
-# 12:23:56, 12:29:21 and 12:34:21 UTC for ONE incident, and its `OK:` landed at 12:48
-# — 24 minutes after the `ALARM:`, by which time that thread had been read and closed
-# out. Result: three turns on the ALARM thread plus a fourth on the OK thread.
+# The shape: `labs-jj-web-cpu-high-actionable` transitions to ALARM at
+# 12:23:56, 12:29:21 and 12:34:21 UTC for ONE incident, and its `OK:` lands at 12:48
+# — 24 minutes after the `ALARM:`, by which time that thread has been read and closed
+# out. It must not become three turns on the ALARM thread plus a fourth on the OK thread.
 
 def _alarm_thread(count):
     """The SAME Gmail thread, re-fired: CloudWatch threads by subject, so a repeat is a
@@ -320,8 +320,8 @@ def test_a_coalesced_refire_does_not_extend_its_own_suppression():
 
 
 def test_ok_is_coalesced_even_when_its_alarm_was_an_earlier_batch():
-    """#670 paired them only within one poll, so a recovery arriving after its `ALARM:`
-    had been read fell straight through and spawned a turn with nothing to do."""
+    """Pairing only within one poll would mean a recovery arriving after its `ALARM:`
+    had been read falls straight through and spawns a turn with nothing to do."""
     client = FakeClient()
     inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
                       runner=_runner(_alarm_thread(1)), sender_of=lambda tid: SNS.lower(),
@@ -336,12 +336,12 @@ def test_ok_is_coalesced_even_when_its_alarm_was_an_earlier_batch():
 
 
 def test_ok_is_still_coalesced_across_a_runner_restart(tmp_path):
-    """#714 — the regression this file could not previously see.
+    """The incident record is persisted across a restart.
 
-    `_alarm_enqueued` was process-local, so the runner's own self-update restart erased
-    which incidents had an owner and the next poll re-dispatched an already-owned `OK:`.
-    Measured 2026-09-09: an upgrade restart, then a CREATE 23 seconds later on a thread
-    the previous process had been suppressing for 50 minutes.
+    A process-local `_alarm_enqueued` would be erased by the runner's own self-update
+    restart, and the next poll would re-dispatch an already-owned `OK:` (an upgrade
+    restart, then a CREATE seconds later on a thread the previous process had been
+    suppressing).
     """
     state = tmp_path / "alarm-incidents.json"
     client = FakeClient()
@@ -363,7 +363,7 @@ def test_ok_is_still_coalesced_across_a_runner_restart(tmp_path):
 
 def test_restart_state_expires_so_a_later_ok_is_a_real_incident(tmp_path):
     """The persisted record must not resurrect ownership forever — past the longest
-    window it is dropped on load and the `OK:` fires, as it would have pre-#714."""
+    window it is dropped on load and the `OK:` fires, as it would without persistence."""
     state = tmp_path / "alarm-incidents.json"
     client = FakeClient()
     inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
@@ -382,8 +382,8 @@ def test_restart_state_expires_so_a_later_ok_is_a_real_incident(tmp_path):
                                      '[["hal", "x", "soon"]]', '[["hal", 5, 1.0]]'])
 def test_unreadable_alarm_state_fails_open(tmp_path, payload):
     """Every corruption mode enqueues rather than suppressing. Suppression requires a
-    valid entry, so a damaged file can only ever cost the redundant turn we were already
-    paying before #714 — never a dropped incident."""
+    valid entry, so a damaged file can only ever cost the redundant turn we would pay
+    without persistence — never a dropped incident."""
     state = tmp_path / "alarm-incidents.json"
     state.write_text(payload)
     client = FakeClient()
@@ -405,7 +405,7 @@ def test_missing_alarm_state_file_fails_open(tmp_path):
 
 
 def test_no_state_path_keeps_the_record_in_memory_only(tmp_path):
-    """Omitting the path must behave exactly as before #714 — and write nothing."""
+    """Omitting the path keeps the record in memory — and writes nothing."""
     client = FakeClient()
     inbox.check_inbox(client, "hal", mailbox="hal@dimagi-ai.com", gog_client="canopy",
                       runner=_runner(_alarm_thread(1)), sender_of=lambda tid: SNS.lower(),
@@ -476,18 +476,17 @@ def test_a_human_subject_that_looks_like_a_refire_is_never_suppressed():
     assert res["new"] == ["thr-human"]
 
 
-# --- An `OK:` with no ALARM to recover from is not an incident (#688, #712) ---------
+# --- An `OK:` with no ALARM to recover from is not an incident ---------
 #
 # CloudWatch emails every alarm carrying `OKActions` the moment it is created, under a
 # subject indistinguishable from a real recovery. Only the body separates them. Bodies
-# below are the real 2026-09-07 `labs-jj-web-worker-kill-rate-actionable` notice, which
-# burned a full hal session, and its real-recovery counterpart.
+# below are a real `labs-jj-web-worker-kill-rate-actionable` creation notice and its
+# real-recovery counterpart.
 #
-# #688 keyed on `N/A -> OK`. #712 is why that was too narrow: the SAME non-event spells
-# itself `INSUFFICIENT_DATA -> OK` when the alarm is created a few minutes ahead of its
-# data, and that spelling burned another full hal session. The rule is now "an `OK:` is
-# only work when it recovers from ALARM", which covers both spellings and cannot swallow
-# a real recovery.
+# Keying on `N/A -> OK` alone is too narrow: the SAME non-event spells itself
+# `INSUFFICIENT_DATA -> OK` when the alarm is created a few minutes ahead of its data.
+# The rule is "an `OK:` is only work when it recovers from ALARM", which covers both
+# spellings and cannot swallow a real recovery.
 
 _CREATION_OK = 'OK: "labs-jj-web-worker-kill-rate-actionable" in US East (N. Virginia)'
 
@@ -512,7 +511,7 @@ _RECOVERY_BODY = (
 
 _INSUFFICIENT_OK = 'OK: "labs-jj-rds-free-storage-low" in US East (N. Virginia)'
 
-#: The real 2026-09-09 notice (#712). `labs-jj-rds-free-storage-low` was created by a
+#: A real notice. `labs-jj-rds-free-storage-low` was created by a
 #: CloudFormation change set at 00:15:09Z and emailed this at 00:27:33Z — 83.7 GB free
 #: against a 20 GB threshold, having never been in ALARM. Note there is NO "was created"
 #: marker in the reason and NO `N/A`: the ONLY thing separating it from a real recovery
@@ -562,8 +561,8 @@ def _dual_runner(threads, body, frm=SNS, *, parts=False):
 
 
 def test_alarm_creation_notice_does_not_fire_a_turn():
-    """The bug in #688: `labs-jj-web-worker-kill-rate-actionable` had never fired, so
-    there was no `ALARM:` to pair with and the notice enqueued a full session."""
+    """`labs-jj-web-worker-kill-rate-actionable` has never fired, so
+    there is no `ALARM:` to pair with and the notice must not enqueue a full session."""
     client = FakeClient()
     threads = [{"id": "thr-created", "from": SNS, "subject": _CREATION_OK,
                 "messageCount": 1}]
@@ -584,10 +583,10 @@ def test_creation_notice_is_detected_inside_a_multipart_body():
 
 
 def test_an_INSUFFICIENT_DATA_creation_does_not_fire_a_turn():
-    """#712: the second spelling of a creation. `labs-jj-rds-free-storage-low` was created
+    """The second spelling of a creation. `labs-jj-rds-free-storage-low` was created
     at 00:15:09Z, had never been in ALARM, and emailed `INSUFFICIENT_DATA -> OK` at
-    00:27:33Z with 83.7 GB free against a 20 GB threshold. #688's `N/A -> OK` key did not
-    match it and it dispatched a full hal turn."""
+    00:27:33Z with 83.7 GB free against a 20 GB threshold. An `N/A -> OK` key alone
+    would not match it and it would dispatch a full hal turn."""
     client = FakeClient()
     threads = [{"id": "thr-insuff", "from": SNS, "subject": _INSUFFICIENT_OK,
                 "messageCount": 1}]
@@ -747,7 +746,7 @@ def test_no_headers_means_no_headers_key_and_the_originator_as_before():
     assert "headers" not in ref
 
 
-# --- machine-written mail: nobody to answer, so no session (canopy#653) -------------
+# --- machine-written mail: nobody to answer, so no session -------------
 
 _SES_SUBJECT = "Amazon SES Email Event Notification"
 _SES_FROM = "Labs email events <no-reply@sns.amazonaws.com>"
@@ -793,13 +792,13 @@ def test_ses_event_receipts_do_not_start_a_session():
     assert client.enqueued == []
     assert res["archived"] == ["thr-ses"] and res["rows"] == {"thr-ses": "ignored/no-reply-sender"}
     # ARCHIVED, not skipped: out of the inbox, read, and labelled with the row that did it
-    # (canopy#679) — a skipped thread held a `max_threads` slot for 14 days.
+    # — a skipped thread would hold a `max_threads` slot for 14 days.
     assert modified and modified[0][4:7] == ["thr-ses", "--remove=INBOX,UNREAD",
                                              "--add=ignored/no-reply-sender"]
 
 
 def test_an_rfc_auto_reply_from_a_person_does_not_start_a_session():
-    """canopy#653's repro: a colleague's OOO whose wording no subject filter knew."""
+    """A colleague's OOO whose wording no subject filter knew."""
     client = FakeClient()
     r = _search_then_get(
         [{"id": "thr-ooo", "from": "Neal <nlesh@dimagi.com>",
@@ -902,7 +901,7 @@ def test_cloudwatch_alarms_from_the_same_sender_still_dispatch(subject):
     [{"name": "From", "value": "Fatima <fatima@llo-foo.org>"},
      {"name": "Auto-Submitted", "value": "no"}],
     # "reply" inside a word is not the no-reply token. (A literal `noreply` token, as in
-    # `x-noreply-y@`, IS no-reply mail since #679: Gmail's `from:noreply` filter already
+    # `x-noreply-y@`, IS no-reply mail: Gmail's `from:noreply` filter already
     # tokenised it that way, and the runner and the filter must not disagree.)
     [{"name": "From", "value": "Reply Guy <replyguy@llo-foo.org>"}],
 ])

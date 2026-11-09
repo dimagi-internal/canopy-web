@@ -5,10 +5,9 @@
  * the server emits that together with `stream_complete` from one `assistant`
  * ledger event (apps/canopy_sessions/stream_map.py) — i.e. only once the reply's
  * first text exists, which on a laptop runner is a claim poll plus an emdash
- * drive plus however long the agent thinks. So the conversation sat visibly
+ * drive plus however long the agent thinks. So the conversation would sit visibly
  * unchanged for seconds-to-minutes after a send, which reads as the app having
- * ignored you. Reported on a phone, twice, after the header-chip fix (#490)
- * had supposedly addressed it.
+ * ignored you; the header chip alone does not address it.
  */
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -104,8 +103,8 @@ describe("the pending-reply row", () => {
   });
 
   it("is not held up by your own line still waiting for its receipt", () => {
-    // 2026-10-30: one user row left `pending` (never confirmed) sat under a turn
-    // that had ended 20 minutes earlier, and read as "Queued… 22m · Stop". A
+    // One user row left `pending` (never confirmed) under a turn
+    // that ended 20 minutes earlier must not read as "Queued… 22m · Stop". A
     // send in its window is `awaitingReply`'s job; the row alone is not a turn.
     const reply = message({ id: "m2", turn_index: 2, role: "assistant", plaintext: "done" });
     const mine = message({ id: "local:x", turn_index: 3, plaintext: "again", status: "pending" });

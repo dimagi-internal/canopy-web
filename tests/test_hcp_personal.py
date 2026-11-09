@@ -1,7 +1,7 @@
 """A person with NO workspace keeps their own HCP instance (docs/architecture/hcp-service.md).
 
-Jonathan, 2026-10-09: HCP "could be exposed for anyone even if they don't yet
-belong to a workspace". So a signed-in human with no WorkspaceMembership can
+HCP is exposed for anyone even if they do not yet
+belong to a workspace. So a signed-in human with no WorkspaceMembership can
 write PERSONAL entries (workspace NULL), find, correct and export them, and
 manage their grants and audit log — and no workspace's agent is ever told a
 personal entry.

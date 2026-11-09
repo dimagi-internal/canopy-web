@@ -128,8 +128,8 @@ def test_an_unknown_flag_refuses_the_arrival(site, key):
 
 
 def test_a_contact_cannot_start_one_under_that_token(site, key):
-    """A contact has no vault key, so it cannot hold a conversation sealed to its people
-    (spec 2026-10-23 §2): refused in a sentence, before anything exists."""
+    """A contact has no vault key, so it cannot hold a conversation sealed to its people:
+    refused in a sentence, before anything exists."""
     raw = _arrive(key, requirements=["sensitive_data"]).json()["token"]
     r = bearer_client(raw).post("/api/contact/sessions", {"agent_slug": "helper"}, content_type="application/json")
     assert r.status_code == 422 and "vault key" in r.json()["detail"]

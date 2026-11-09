@@ -15,7 +15,7 @@ path in the DB, so the transcript is resolved by CONVENTION:
     file      = newest *.jsonl in that dir
 
 The convention has two real-world wrinkles the naive path missed (both verified
-against the live fleet, 2026-07-20): emdash appends a short random de-dupe suffix
+against the live fleet): emdash appends a short random de-dupe suffix
 to the worktree dir name (`-cysov`), and the layout is not uniform — some
 worktrees sit at `<repo>/<task>` with no `emdash` segment. `resolve_transcript`
 handles both by prefix-globbing each candidate base and accepting a `-<suffix>`
@@ -103,8 +103,8 @@ from . import emdash as _emdash
 
 
 def _worktree_bases(repo: str, task: str, home: Path) -> list[Path]:
-    """Candidate worktree paths for (repo, task). Verified against the live fleet
-    (2026-07-20): most agents nest under `<repo>/emdash/<task>`, but some worktrees
+    """Candidate worktree paths for (repo, task). Verified against the live fleet:
+    most agents nest under `<repo>/emdash/<task>`, but some worktrees
     (e.g. echo's) sit directly at `<repo>/<task>` with no `emdash` segment. Try both;
     a wrong guess simply doesn't match a project dir and degrades to no transcript."""
     root = home / "emdash" / "worktrees" / repo
@@ -202,12 +202,9 @@ def _user_text(content) -> str:
 # system reminders, the local-command caveat, command stdout, skill bodies.
 # Skipped so the tail shows only the real you<->agent conversation.
 #
-# The rule lives in canopy_transcript, NOT here. This module used to carry its
-# own list; the server carried a second one, and they drifted — the server grew
-# two prefixes on 2026-07-26 and this copy didn't, so a skill body kept
-# rendering in the human's own bubble on the tail path (found 2026-07-30).
-# Re-exported under the old private names so existing callers and tests are
-# unaffected.
+# The rule lives in canopy_transcript, NOT here: a second copy of the list would
+# drift from the server's, and a skill body would render in the human's own bubble
+# on the tail path. Re-exported under these private names for callers and tests.
 from canopy_transcript import SYSTEM_NOISE_PREFIXES as _SYSTEM_NOISE_PREFIXES  # noqa: E402,F401
 from canopy_transcript import is_system_noise as _is_system_noise  # noqa: E402
 
@@ -265,10 +262,10 @@ def read_recent_messages(path: Path, limit: int = 8) -> list[dict]:
     return msgs
 
 
-# Timestamped record kinds that are NOT the agent doing something. Both were
-# measured writing to a live transcript while its session sat parked at
-# "awaiting-input" (spark, 2026-08-15: last `assistant` record 04:22:40, a
-# `pr-link` at 04:46:16 and `queue-operation`s past 04:46:56). Counting them made
+# Timestamped record kinds that are NOT the agent doing something. Both are
+# written to a live transcript while its session sits parked at
+# "awaiting-input" (a `pr-link` or `queue-operation`s after the last `assistant`
+# record). Counting them makes
 # `newest_record_time` — and so the chat list's "2m ago" and its running-first
 # sort — say a session parked for 27 minutes had just acted.
 #
@@ -290,7 +287,7 @@ def newest_record_time(path: Path) -> str | None:
     The session's real activity clock. Deliberately NOT the file's mtime: a
     live-but-idle `claude` process rewrites its own transcript from time to time
     without appending a single record, so mtime advances while the conversation is
-    dormant (observed on the fleet 2026-07-25: files whose mtime ran 23h and 44h
+    dormant (observed on the fleet: files whose mtime ran 23h and 44h
     ahead of their newest record). What the transcript SAYS happened is the only
     signal that can't drift that way.
 
@@ -342,8 +339,7 @@ def activity_bytes(path: Path | None) -> int:
 
     BYTES, not mtime. A transcript only ever grows by appending, so new bytes
     are new work, and nothing else is. Its mtime moves without any new record
-    (measured 2026-10-05: `lost-message`'s file stamped 18:21:42 with its newest
-    record at 17:18:04 and its size unchanged, and `slack-new` the same at 18:04),
+    (a file stamped an hour after its newest record with its size unchanged),
     and an mtime-based dissent read each of those touches as the session still
     working, so an idle session wore the running badge for minutes at a time.
     Every comparison this feeds is against an earlier reading of itself on this
@@ -434,7 +430,7 @@ def attach_recent_tail(
             # emdash_db: without it, a task whose worktree is not named after it
             # (`slack-new` in `emdash-slack-jpxzv`) resolves to nothing, and its
             # tail AND its last-activity time silently freeze at whatever emdash's
-            # UI last recorded (2026-10-05: "12:04" on a session working at 17:14).
+            # UI last recorded (a stale "12:04" on a session working at 17:14).
             path = resolve_transcript(
                 s.get("project", ""), s.get("emdash_task", ""),
                 home=home, claude_home=claude_home, emdash_db=emdash_db,

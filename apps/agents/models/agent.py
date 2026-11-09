@@ -98,7 +98,7 @@ class Agent(models.Model):
     # independently grew a `workspace_id IS NULL` leg that reads as ALLOW
     # (agents/api.py, harness/api.py x2, harness/services.py x2,
     # harness/schedule_services.py, realtime/snapshot.py, agent_runs/api.py).
-    # Four were fixed one site at a time (PRs #378, #421, #423) before it was
+    # Four were fixed one site at a time before it was
     # clear that the recurrence — not any single site — was the defect: a
     # nullable tenant FK invites `if agent.workspace_id and <check>`, which
     # short-circuits to "ungated" on exactly the row that has no tenant.
@@ -125,7 +125,7 @@ class Agent(models.Model):
         '["canopy-pat","echo-gog"]. The reconciler resolves each from the env store.',
     )
     # Ordered runner-KIND preference, e.g. ["cloud", "emdash"]. As of the
-    # directed-runner-routing cascade (spec 2026-07-24), agent-turn claim
+    # directed-runner-routing cascade, agent-turn claim
     # eligibility is decided by RunnerAssignment rank instead — this field is no
     # longer read by harness.services.claim_next_turn. Retained for AgentIn and
     # the one-time bridge in harness.routing that turns it into RunnerAssignment
@@ -138,7 +138,7 @@ class Agent(models.Model):
         default=dict, blank=True,
         help_text='Per-ref value source: {"name": {"value": "literal"}}.',
     )
-    # Canopy Vault Phase 1b (canopy-web#1549): rotate the agent's own
+    # Canopy Vault Phase 1b: rotate the agent's own
     # `canopy-pat` every `pat_rotation_days` (apps/agents/credentials/pat_rotation.py).
     # Owner/admin opt-in (PATCH /pat-rotation); `pat_rotation_enabled_by` is the
     # person whose standing the background job acts on (the impersonation guard
@@ -150,7 +150,7 @@ class Agent(models.Model):
         related_name="+",
     )
     pat_rotated_at = models.DateTimeField(null=True, blank=True)
-    # Canopy Vault Phase 2 (canopy-web#1550): zero-knowledge, the agent vault's only
+    # Canopy Vault Phase 2: zero-knowledge, the agent vault's only
     # mode. Every AgentCredential holds ciphertext (`zk1:` under a per-agent vault
     # key canopy-web never sees, which reaches each principal as an AgentVaultWrap,
     # or `zks1` sealed to each reader before that key exists). `zk_kv` is the
@@ -542,10 +542,10 @@ class AgentBootstrapReport(models.Model):
 
     The gap this closes, in one sentence: `agent_credential_status` answers
     "is the credential stored here", and the question that actually matters is
-    "can the box USE it" — and those came apart badly on 2026-09-07.
+    "can the box USE it" — and those can come apart badly.
 
-    canopy-web held a valid, freshly-minted gog-token for ACE. The status screen
-    would have shown `gog-token: set` with a green tick. On the box, the OAuth
+    Example: canopy-web holds a valid, freshly-minted gog-token for ACE. The status screen
+    shows `gog-token: set` with a green tick. On the box, the OAuth
     client id+secret that token is useless without had failed to materialize, so
     every gmail call returned `No auth for gmail ace@dimagi-ai.com`. Both facts
     were true at once, and only one of them was visible anywhere but journald.
@@ -568,14 +568,14 @@ class AgentBootstrapReport(models.Model):
     #: inventing a lookup would add a failure mode to a diagnostic.
     runner_name = models.CharField(max_length=200)
     #: Did the OAuth CLIENT credential land (credentials-<client>.json)? The
-    #: half that failed on 2026-09-07 and the half nothing was watching.
+    #: half that can fail on its own, with nothing else watching it.
     client_creds_ok = models.BooleanField(default=False)
     #: Can the mailbox actually authenticate — the box ran the call, not a
     #: guess from what is configured.
     mailbox_ok = models.BooleanField(default=False)
     #: Which gog client the box ended up using. A browser mint binds the token
     #: to `canopy-web`, a laptop `gog login` to `canopy`; either serves a fleet
-    #: agent's turns (2026-10-04), so this says which path the token came through.
+    #: agent's turns, so this says which path the token came through.
     gog_client = models.CharField(max_length=120, blank=True, default="")
     #: The client the agent's TURNS will actually present — what
     #: `config/agent.json.gog_client` declares (`canopy` fleet-wide), or — when a
@@ -586,16 +586,15 @@ class AgentBootstrapReport(models.Model):
     #: Did the agent's secrets materialize (`canopy cred sync` writing its `.env`)?
     #: Null = the box did not say. False means the box kept whatever `.env` it
     #: already had, so the agent still runs — on secrets that may be stale, and
-    #: without any key added to the template since. Observed on cloud-ec2-1
-    #: (2026-09-22): four agents failing this for two weeks, visible only in
-    #: journald.
+    #: without any key added to the template since. On a box it can fail on several
+    #: agents for weeks, visible only in journald.
     env_ok = models.BooleanField(null=True, blank=True)
     #: Can the mailbox authenticate under `turn_client` — the client the CONSUMER
     #: uses, not the one the verifier picked. Null means the box did not check
     #: (an older box, or gog absent), which must not read as False.
     #:
     #: This exists because `mailbox_ok` was TRUE for a full day while every ACE
-    #: email turn blocked at preflight (2026-09-08). Both halves were internally
+    #: email turn blocked at preflight. Both halves were internally
     #: consistent and they disagreed: bootstrap probes the client whose token
     #: AUTHENTICATES (deliberately — see the GOG_CLIENT note in
     #: bootstrap_agents.sh), while `/ace:turn` presents the client its config
@@ -604,7 +603,7 @@ class AgentBootstrapReport(models.Model):
     #: the readiness report said the mailbox was live the whole time.
     #:
     #: A check that passes under a client the consumer never uses is not a check.
-    #: (Since 2026-10-04 turns accept EITHER fleet client, so a `canopy-web` token
+    #: (Turns accept EITHER fleet client, so a `canopy-web` token
     #: for a `canopy` declaration is turn-ready; this now fails only when no fleet
     #: client can read the mailbox, or the token is under a non-fleet client.)
     turn_ready = models.BooleanField(null=True, blank=True, default=None)
@@ -711,8 +710,8 @@ class SenderTrust(models.Model):
     The rule it bends is `harness.channels.email.member_behind_email`: a member's
     email is linked to their account only when THIS message is aligned, because
     an unaligned From: is a header anyone can write. Some members' domains sign
-    with a provider's key and publish no DMARC record (dimagi-associate.com,
-    canopy-web#1265), so their own mail reaches the agent as a stranger's until
+    with a provider's key and publish no DMARC record (dimagi-associate.com),
+    so their own mail reaches the agent as a stranger's until
     the domain's admin fixes it. This is the stopgap while they do: an agent
     admin names the address, says why, and it EXPIRES — there is no permanent
     form, since a permanent one would be "accept a forgeable header" by default.

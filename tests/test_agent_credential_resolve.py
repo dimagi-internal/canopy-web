@@ -1,4 +1,4 @@
-"""The admin resolve path (canopy#850).
+"""The admin resolve path.
 
 `GET /credentials/resolve` has two principals: a caller pairing a live runner the
 agent routes to (`via: runner`), and the agent's owner or an admin resolving for a
@@ -90,7 +90,7 @@ def test_a_runner_resolve_is_audited_as_runner(cs):
 
 
 def test_a_runner_owner_resolving_without_naming_the_box_is_audited_as_admin(cs):
-    """canopy-web#1563: pairing a box is a fact about the caller; a request
+    """Pairing a box is a fact about the caller; a request
     that names no box is the admin's own session."""
     _box(cs["admin"], cs["agent"])
     res = pat_client(cs["admin"]).get("/api/agents/csbot/credentials/resolve")

@@ -1,7 +1,7 @@
 """Contacts build up HCP when THEY opt in, from a site canopy trusts for email.
 
-Jonathan, 2026-10-09: "allow contacts to start building up HCP interactions if they
-opt in from a trusted system like labs where we do trust their e-mail identity."
+Contacts may start building up HCP interactions if they
+opt in from a trusted system like labs where canopy trusts their e-mail identity.
 
 What these pin:
 * identity — only a superuser-trusted site's signed `email_verified: true` makes

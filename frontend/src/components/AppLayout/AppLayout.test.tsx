@@ -99,8 +99,8 @@ describe('AppLayout — WorkspaceSwitcher gating', () => {
   })
 
   it('nested workspaces show plain names — tree order, no branch glyph or indent', async () => {
-    // Jonathan, 2026-09-29: the "↳ CommCare" marker looked noisy, and to someone
-    // who is only in the division it points at an org they cannot open.
+    // A "↳ CommCare" marker would be noisy, and to someone who is only in the
+    // division it points at an org they cannot open.
     listWorkspaces.mockResolvedValue([
       { slug: 'commcare', display_name: 'CommCare', parent: 'dimagi' },
       { slug: 'dimagi', display_name: 'Dimagi', parent: null },

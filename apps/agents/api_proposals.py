@@ -233,7 +233,7 @@ def _task_in(project, ref: str) -> AgentTask:
 
 @router.post("/{slug}/projects/{ref}/tasks/propose/", response={200: TaskProposeOut, 201: TaskProposeOut},
              summary="Propose a task in a project (or revise an open proposed task of the same title)")
-# proposed TASKS in a project (check-ins, 2026-10-17): the same gates one level down
+# proposed TASKS in a project: the same gates one level down
 # an editor, or the project's agent itself
 @gate("agent.work", "agent-login", kind="content")
 def propose_task(request: HttpRequest, slug: str, ref: str, payload: TaskProposeIn) -> Status:

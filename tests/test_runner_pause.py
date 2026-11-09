@@ -7,7 +7,7 @@ runner FROM THE OTHER ACCOUNT, which was impossible: the only pause was the loca
 `~/.canopy/PAUSED` sentinel, and ~/.canopy over there is owned by the other user.
 The only reachable lever was `retire`, which is a decommission (it deletes
 RunnerAssignment rows `unretire` does not restore, and 404s the daemon's own
-heartbeat — it cost jj-mbp-cdp ten sessions on 2026-07-25).
+heartbeat).
 
 The design rule these tests exist to hold:
 

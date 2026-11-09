@@ -13,8 +13,7 @@ DPoP-bound token server-side (`apps/host_grants/host_gateway.py`). So:
   host answered: `site_call` records the tool, `site_read` the URI.
 
 `site_read` is `resources/read` beside `site_call`'s `tools/call`: a host's tool may
-answer with facts plus a `resource_link` to a result it keeps (spec
-2026-10-23-host-held-results), and the agent reads the rows through it only when it
+answer with facts plus a `resource_link` to a result it keeps, and the agent reads the rows through it only when it
 needs them — so a large result never has to be in context.
 
 **The turn comes from a credential, never an argument.** A confined (or scoped)

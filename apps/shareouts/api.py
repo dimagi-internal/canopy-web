@@ -76,9 +76,9 @@ def create_shareouts(
     pins it, otherwise it resolves to your default. 422 if you belong to none.
     """
     # Resolution is `wsvc.creation_workspace`, which only ever returns a tenant
-    # the caller is already in. This used to be `pinned or
+    # the caller is already in. It is never `pinned or
     # ensure_default_workspace()` followed by `ensure_member(ws, request.user)`
-    # — which on the flat mount made posting a shareout a way to BECOME an
+    # — on the flat mount that would make posting a shareout a way to BECOME an
     # editor of the org default. See that helper's docstring for the full shape.
     ws = wsvc.creation_workspace(request)
     if ws is None:

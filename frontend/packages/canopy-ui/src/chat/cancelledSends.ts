@@ -7,9 +7,9 @@ export const CANCELLED_ROW_PREFIX = "cancelled:";
 /** Sends the user withdrew, placed in the transcript where they were SENT.
  *
  *  A cancelled send never reaches the transcript, so the server lists it
- *  separately (`CancelledSend`). Drawn at the tail (the old behaviour: an
- *  optimistic row nobody retired), it read as the newest, still-unanswered line
- *  (canopy-web#2092). Here it becomes a user row ordered by `sent_at` among the
+ *  separately (`CancelledSend`). Drawn at the tail (an
+ *  optimistic row nobody retires), it would read as the newest, still-unanswered
+ *  line. Instead it becomes a user row ordered by `sent_at` among the
  *  messages' `created_at`, carrying `content.cancelled` so the bubble can mute
  *  itself and say who cancelled it.
  *

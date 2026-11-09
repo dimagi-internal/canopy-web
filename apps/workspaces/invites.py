@@ -65,16 +65,15 @@ def create_invite(
     it. Reuse re-arms the row in place (fresh token, fresh expiry, the
     newly-requested role) whenever anything about the request actually
     changed: the TTL lapsed, OR the requested role differs from what the row
-    already holds. That second case is not cosmetic — it closes a real
+    already holds. That second case is not cosmetic — it prevents a real
     integrity bug: without it, re-inviting someone at a DIFFERENT role while
-    their first invite is still pending returned the *same* row still
+    their first invite is still pending would return the *same* row still
     carrying the FIRST role (e.g. an owner invites b@ as owner, immediately
-    corrects it to editor — the still-live row kept reading "owner"). The
+    corrects it to editor — the still-live row would keep reading "owner"). The
     owner then hands out a link that promotes b@ to owner regardless of what
     the UI most recently showed, and since `accept_invite` is upgrade-only,
-    an already-lower-privileged b@ accepting it is a real, silent promotion —
-    not the harmless no-op it used to be under the old get_or_create accept
-    semantic. A request that changes nothing (same role, still pending) is a
+    an already-lower-privileged b@ accepting it would be a real, silent
+    promotion. A request that changes nothing (same role, still pending) is a
     true no-op: the token is NOT rotated, so an already-shared link keeps
     working. Email is normalized to lowercase. Belt-and-braces: if a
     genuinely concurrent call still races past the `existing` check, the

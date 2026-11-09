@@ -93,7 +93,7 @@ def test_is_windows_reads_os_name():
 
 def test_nudge_reports_the_platform_job_name(on_windows, monkeypatch, tmp_path, caplog):
     """End of the wire: `update.nudge` logs the Windows task path on Windows,
-    not the launchd label it used to hardcode."""
+    not the launchd label."""
     import logging
 
     from canopy_runner import provenance, update
@@ -136,7 +136,7 @@ def test_process_account_on_posix_comes_from_the_uid(on_posix, monkeypatch):
 
 def test_every_runner_module_imports_without_posix_only_modules():
     """Every canopy-runner command died on Windows with `No module named 'pwd'`
-    because two modules imported it at top level (#1008). Import the whole
+    if a module imports it at top level. Import the whole
     package in a fresh interpreter with `pwd` and `fcntl` unavailable, so a
     POSIX-only top-level import fails here, in CI on Linux, not on someone's
     Windows box.

@@ -434,9 +434,9 @@ def test_a_pat_still_answers_about_the_users_own_pages(ctx):
 
 # --- a turn with no agent: a repo chat ------------------------------------------------
 #
-# 2026-09-27: the "who is asking" note on Jonathan's own canopy-web repo chat called
-# him a CALLER "not the agent's owner" and told the session not to push or deploy —
-# because a turn with no agent fell straight through to CALLER.
+# The "who is asking" note on a repo chat must not call its owner a CALLER "not the
+# agent's owner" and tell the session not to push or deploy, which is what happens
+# if a turn with no agent falls straight through to CALLER.
 
 def _repo_turn(ws, asker, *, creator=None, runner=None):
     from apps.canopy_sessions.models import Session
@@ -548,17 +548,16 @@ def test_a_confined_or_capped_or_unverified_turn_on_my_own_box_is_not_an_own_box
     assert caller_context.build(unverified)["own_box_turn"] is False
 
 
-# --- an agent's own login dispatching onto its owner's runner (canopy-web#1011) ------
+# --- an agent's own login dispatching onto its owner's runner ------
 #
-# 2026-09-28: Jonathan asked an ACE session on emdash to dispatch a validation session
-# onto his `haldimagi-mbp-cdp` runner. The dispatch called canopy with ACE's own PAT and
-# no agent on the turn, so `_relationship_without_agent` saw a user who neither paired
-# the runner nor owns a session — CALLER. The session then refused, correctly by its
-# envelope, to merge on the owner's typed "I approve", twice.
+# A session dispatches a validation session onto the owner's runner with the agent's
+# own PAT and no agent on the turn, so `_relationship_without_agent` would see a user
+# who neither paired the runner nor owns a session — CALLER — and the session would
+# refuse, correctly by its envelope, to merge on the owner's typed "I approve".
 
 def _dispatched_turn(asker, runner):
-    # A repo-targeted turn: no agent, no chat session (the shape the 2026-09-28 envelope
-    # showed — `agent: null`, `session_id: null`).
+    # A repo-targeted turn: no agent, no chat session (the shape of an envelope
+    # with `agent: null`, `session_id: null`).
     return Turn.objects.create(origin=Turn.ORIGIN_API, idempotency_key=f"dispatch-{runner.pk}",
                                prompt="validate", claimed_by=runner, project="ace",
                                **who.for_user(asker, via="api", assurance="pat").fields())
@@ -576,7 +575,7 @@ def test_an_agents_own_login_on_its_owners_runner_is_the_agent_itself(ctx):
 
 
 def test_an_agents_login_on_someone_elses_runner_stays_a_contact(ctx):
-    # The #983 guard, restated for the no-agent path: an agent's login is the agent
+    # The guard, restated for the no-agent path: an agent's login is the agent
     # only where its OWNER's authority already runs.
     from apps.harness.models import Runner
 
@@ -600,11 +599,11 @@ def test_a_plain_user_on_the_owners_runner_is_still_a_contact(ctx):
     assert env["relationship"] == caller_context.CONTACT
 
 
-# --- the repo-internal ship grant (owner decision, 2026-10-03) -----------------------
+# --- the repo-internal ship grant -----------------------
 #
-# Ada's fix dispatches to sibling agents (eva#343, eva#347, canopy#715) each stopped for
-# the owner to type "yes merge" though the brief said to merge: the envelope said
-# relationship=admin, turn_mode=manual, and manual means the owner approves a merge.
+# A fix dispatched to a sibling agent would stop for the owner to type "yes merge"
+# though the brief said to merge: the envelope says relationship=admin,
+# turn_mode=manual, and manual means the owner approves a merge.
 # The grant lifts exactly that — push / PR / merge in the TARGET agent's own repo — when
 # another agent's login that holds the target's keys dispatched the turn. Nothing else.
 
@@ -725,7 +724,7 @@ def test_an_ordinary_email_turn_has_no_grant(ctx):
     assert caller_context.build(_email(agent, headers=HDRS))["ship_grant"] is None
 
 
-# --- envelope VERSION 2: one word per meaning (2026-10-04) ----------------------------
+# --- envelope VERSION 2: one word per meaning ----------------------------
 
 def test_version_2_renames_and_readers_accept_both():
     # `caller` -> `contact`, `restricted` -> `confined`; an envelope from an older
@@ -740,7 +739,7 @@ def test_version_2_renames_and_readers_accept_both():
     assert caller_context.normalize_profile("full") == "full"
 
 
-# --- unproven_member: a member's mail that could not be tied to them (#1265) -------
+# --- unproven_member: a member's mail that could not be tied to them -------
 
 DKIM_ONLY = [{"name": "Authentication-Results",
               "value": ("mx.google.com; dkim=pass header.i=@mail-provider.example; "
