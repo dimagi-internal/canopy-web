@@ -121,3 +121,34 @@ def test_it_has_no_runtime_dependencies():
         "canopy-agent-factory has grown runtime dependencies; the whole point of "
         "extracting it was that it had none"
     )
+
+
+def test_a_scaffolded_agent_carries_the_current_state_guard_and_its_workflow(tmp_path: Path):
+    """A new agent is born with the fleet's docs guard wired into CI, and the guard passes.
+
+    The factory stamps `tests/test_docs_current_state.py`, a `.github/workflows/test.yml`
+    that runs it, and a CLAUDE.md Conventions line. The scaffold is rendered to disk and the
+    stamped guard is run with pytest against the fresh repo, so a factory release whose
+    guard fails on its own scaffold fails here before a browser-created agent hits it.
+    """
+    import subprocess
+    import sys
+
+    spec = factory.AgentSpec(
+        slug="guard-probe",
+        display_name="Guard Probe",
+        mandate="Prove the stamped guard passes on a fresh scaffold.",
+        mailbox="guard-probe@example.org",
+    )
+    root = tmp_path / "guard-probe"
+    written = {p.relative_to(root).as_posix() for p in factory.create_agent(spec, root)}
+    assert "tests/test_docs_current_state.py" in written
+    assert ".github/workflows/test.yml" in written
+    assert "test_docs_current_state.py" in (root / ".github/workflows/test.yml").read_text()
+    assert "test_docs_current_state" in (root / "CLAUDE.md").read_text()
+
+    done = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"],
+        cwd=root, capture_output=True, text=True, timeout=120,
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
