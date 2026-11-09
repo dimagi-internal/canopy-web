@@ -32,8 +32,7 @@ service gets the grant: pass `BrokerRoleName=canopy-web-task-role`. All AWS call
 
 ## 1. Declare it in your repo
 
-One `capability.yaml` per capability, in the agent's own repo (for example
-`infra/capabilities/<name>/capability.yaml`). The fields, defaults, ranges and the per-kind rules are
+One `capability.yaml` per capability, in the agent's own repo (its path is the repo's choice). The fields, defaults, ranges and the per-kind rules are
 `canopy_runtime.schema.CapabilityManifest` (`packages/canopy_runtime/canopy_runtime/schema.py`); unknown keys
 are an error. A param with no `default` is required at acquire.
 
