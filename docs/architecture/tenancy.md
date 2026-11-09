@@ -14,27 +14,24 @@ the host-grant chain is in [`sdk/python/README.md` § Host grant contract v1](..
 
 ## The tenant: `Workspace`
 
-- `Workspace` (`apps/workspaces`) anchors every surface that owns tenant data. Members hold
-  `viewer < editor < admin < owner`, plus email invites and access requests (`access.md` →
-  "Getting into a workspace").
+- `Workspace` (`apps/workspaces`) anchors every surface that owns tenant data. Roles and how a
+  person gets in: `access.md` → "Getting into a workspace".
 - Tenant surfaces live under `/w/:workspace/` (browser) and `/api/w/{ws}/` (API).
   `apps/api/tenancy.py::WorkspaceResolveMiddleware` gates membership on the pinned form,
   then strips the prefix and reroutes to the flat mount, so the OpenAPI schema stays single.
-  The flat `/api/…` routes remain a compat shim; how an unpinned read or write is scoped is
-  below and in `roles.md` → "A read that names no workspace stays inside one organisation".
-- Rows carrying a tenant FK: `agents`, `agent_runs`, and the product roots `walkthroughs`,
-  `reviews`, `shareouts` (plus storyboards, issues, sessions, events …). Authenticated lists
-  filter by `wsvc.request_workspace_slugs(request)` (the read scope).
-- **`ConnectionApp` (`apps/connections`) belongs to a workspace**: the OAuth client a workspace admin sets up for a provider (one per workspace and provider; its secret is encrypted in the DB). A `Connection` goes through one app, and a person's connection is usable only while they are a member (read) of that app's workspace — leaving the workspace ends its use (`not_connected`), it is not deleted. An agent uses its own workspace's apps. → [`vault-connections.md`](vault-connections.md) § OAuth connections are sealed to their owner.
-- **`Agent.workspace` is NOT NULL** (`agents/0013`). This is a security invariant: a nullable
+  How an unpinned read or write is scoped is below and in `roles.md` → "A read that names no
+  workspace stays inside one organisation". Authenticated lists filter by
+  `wsvc.request_workspace_slugs(request)` (the read scope).
+- **`ConnectionApp` (`apps/connections/models.py`) belongs to a workspace**: a `Connection` goes through one app, and a person's connection is usable only while they are a member (read) of that app's workspace — leaving the workspace ends its use (`not_connected`), it is not deleted. An agent uses its own workspace's apps. → [`vault-connections.md`](vault-connections.md) § OAuth connections are sealed to their owner.
+- **`Agent.workspace` is NOT NULL** (`apps/agents/models/agent.py::Agent.workspace`). This is a security invariant: a nullable
   tenant FK invites `if row.workspace_id and <membership check>`, which reads a NULL tenant as
   *allow*. Don't re-nullable it, and never write a NULL-means-allow leg in any tenancy
   predicate — a row with no workspace is visible to nobody (`roles.md`).
-- `Turn` has **no** workspace FK; it derives its tenant one hop away (`turn.agent.workspace`,
-  or its session's). `InboundMailbox` does the same through its agent.
+- `Turn` derives its tenant one hop away (`turn.agent.workspace`, or its session's); only a
+  project turn, which has neither, carries its own `workspace` FK, read only when both are
+  null (`apps/harness/models/turn.py::Turn.workspace`). `InboundMailbox` derives through its agent.
 - `Runner.workspace` (nullable, `PROTECT`) records where a box LIVES, not whom it works for —
   see "Runners and tenancy" below.
-
 
 ## One authorizer for workspace access (CI-enforced)
 
@@ -48,7 +45,7 @@ and fails on a `WorkspaceMembership` **read** filtered by **both** a workspace k
 key outside that file — that pair is the signature of an access decision.
 
 - Escape hatch: an inline `# authz-exempt: <why>`, for a question about someone ELSE (e.g. is
-  the TARGET already a member — `apps/agents/api.py`).
+  the TARGET already a member — `apps/agents/api.py`, `apps/workspaces/services.py`).
 - Deliberately narrow: user-only filters (my workspaces) and workspace-only filters (who is in
   this) are listings; writes are not decisions. Membership creation has its own guards
   (`tests/test_no_implicit_enrolment.py`, `apps/workspaces/tests/test_access_requests.py`).
@@ -99,8 +96,8 @@ the rule, its claim/schedule parity test and the routing hint:
 
 - An `Agent` row is an INSTANCE in one workspace: board, credentials, turns, runner
   assignments and mailbox hang off it. Persona, skills and config live in the git repo at
-  `repo_url` @ `repo_ref` (`apps/agents/definition.py`). There is no `AgentInstance` model and
-  the definition is not a database concept — `AgentSkill` is replaced wholesale on each
+  `repo_url` @ `repo_ref` (`apps/agents/definition.py`). The definition is not a database
+  concept — `AgentSkill` is replaced wholesale on each
   publish so it mirrors the repo.
 - Sharing = two instances pointing at the same repo; forking = pointing elsewhere.
   `definition_key()` normalises the URL (`.git`, scp-style, case, trailing slash, non-default
@@ -128,8 +125,7 @@ failure again.
 ### Users
 
 - **Sign-in:** Google OAuth via django-allauth, restricted to `AUTH_ALLOWED_EMAIL_DOMAIN`
-  (comma-separated; default `dimagi.com` in `config/settings/base.py`, deployed as
-  `dimagi.com,dimagi-ai.com,dimagi-associate.com` in `deploy/aws/canopy-web.cfn.yaml`).
+  (`config/settings/base.py`; the deployed value is in `deploy/aws/canopy-web.cfn.yaml`).
   A new login domain also needs the Google consent screen to allow it.
 - **Personal access tokens** (`apps/tokens/`) authenticate machine callers with
   `Authorization: Bearer <raw>`; `apps.tokens.middleware.BearerTokenAuthMiddleware` resolves
@@ -139,13 +135,11 @@ failure again.
   A token acts with exactly its person's role (`roles.md` → "A token can do whatever its
   person can").
 - **One resolver, and a prefix per kind.** REST, MCP and the WebSocket handshake all resolve a
-  bearer with `apps/tokens/principal.py::resolve_bearer`. Tokens name their kind: `cpat_`
-  (personal access, incl. MCP OAuth access tokens), `cdt_` (delegated), `ccon_` (contact),
-  `cct_` (caller), `crt_` (runner), `chk_` (chat key), `hcpat_`/`hcprt_` (HCP). A prefixed
-  token is looked up in its own table only, and refused by a route that does not take its
-  kind. Tokens minted before the `cpat_`/`cdt_`/`ccon_` prefixes are 43 bare characters and
-  still resolve by trying each kind. The prefixes are what `.gitleaks.toml` (`canopy-token`)
-  and the transcript scrubber (`apps/session_sharing/redact.py`) recognise.
+  bearer with `apps/tokens/principal.py::resolve_bearer`. Tokens name their kind by prefix (each model's `PREFIX`, listed in
+  `apps/tokens/principal.py`). A prefixed token is looked up in its own table only, and refused
+  by a route that does not take its kind; a bare 43-character token (`principal.LEGACY_LENGTH`)
+  resolves by trying each kind. `.gitleaks.toml` (`canopy-token`) and the transcript scrubber
+  (`apps/session_sharing/redact.py`) recognise the prefixes: a new prefix goes into both.
 - **What each kind may do is one table**, `apps/tokens/kinds.py`: every credential type a
   route records (`request.auth_credential["type"]`; none = `session`), what it reaches, whether
   it may mint another credential (a session or a PAT only), whether it is a turn speaking for
@@ -158,7 +152,7 @@ failure again.
   as that account — and it is ALWAYS the account at the agent's own email. canopy creates it
   when there is none, and links one nobody has ever signed in to; an account there that has
   signed in is linked only when its person accepts, in
-  their browser behind a passkey step-up (`AgentLoginRequest`, `apps/agents/agent_login.py`). Its stored token expires (`PAT_DEFAULT_TTL_DAYS`); an agent turn's caller token
+  their browser behind a passkey step-up (`AgentLoginRequest`, `apps/agents/agent_login.py::decide_link`). Its stored token expires (`PAT_DEFAULT_TTL_DAYS`); an agent turn's caller token
   reads as its asker and never writes (`access.md` → "Whose authority an agent acts with").
 - `POST /api/debug/mint-session/` (`apps/tokens/mint_session.py`) trades a PAT for a
   short-lived browser session (the macOS menubar's web view). A minted session is still a
@@ -186,7 +180,7 @@ failure again.
 - `visible_session_q` (users) and `contact_session_q` (contacts) in
   `apps/canopy_sessions/access.py` are disjoint predicates.
 - A host vouches for a visitor with a **signed assertion** (`apps/embedding/assertions.py`:
-  asymmetric algorithms only, `aud` enforced, `exp` ≤ 120s, single-use `jti` failing closed).
+  asymmetric algorithms only, `aud` enforced, `exp` capped at `contract.ASSERTION_MAX_LIFETIME`, single-use `jti` failing closed).
   canopy holds only the host's public key. Arrival resolves to an account the person already
   has that is a member of the site's workspace, or to a contact — it never creates a user or a
   membership. **Don't add a shared-secret-plus-email route**; a signature is the only way a
@@ -199,9 +193,8 @@ failure again.
   arrival is its own `HostGrant` row, the token minted with it points at it, and a conversation
   reads through the grant of the page that last acted in it (a send, a page-state declaration —
   `canopy_sessions.services.note_host_grant`, read by `host_grants.grant_for(session=)`), so a
-  host that holds a page's grant to what that page shows sees each tab's own. canopy's client identity is the CIMD at
-  `/oauth/client.json` + `/oauth/jwks.json` (keys `CANOPY_OAUTH_CLIENT_KEY` /
-  `CANOPY_OAUTH_DPOP_KEY`). Contract: [`sdk/python/README.md` § Host grant contract v1](../../sdk/python/README.md#host-grant-contract-v1).
+  host that holds a page's grant to what that page shows sees each tab's own. canopy's client identity is the CIMD served at
+  `/oauth/client.json` + `/oauth/jwks.json` (`config/urls.py`). Contract: [`sdk/python/README.md` § Host grant contract v1](../../sdk/python/README.md#host-grant-contract-v1).
 - Guarded by `tests/test_contact_surface_is_bounded.py`.
 
 ## Contacts (`apps/contacts/`): a person canopy knows who is not a member
@@ -214,8 +207,7 @@ failure again.
 - Per-tenant by design: the same human known to two workspaces is two contacts; merging would
   leak one tenant's dealings into another.
 - **Email identity is an assertion.** `From:` is forgeable, so `apps/contacts/email_auth.py`
-  grades the receiver's `Authentication-Results`: `dmarc` (or `dkim_aligned`, a DKIM
-  signature by the `From:` domain itself) > `dkim` > `spf` > `none` (graded, not boolean).
+  grades the receiver's `Authentication-Results` (`Contact.AUTH_*`: graded, not boolean).
   Only OUR receiver's header is read, selected by `authserv-id`; an unknown or
   absent one fails closed. `dmarc=pass` proves the domain, not the human.
 - Grades are a high-water mark (a forwarded message must not downgrade a correspondent), with

@@ -783,7 +783,7 @@ class RunnerBinding(models.Model):
     agent_status_stale = models.BooleanField(default=False)
     last_interacted_at = models.DateTimeField(null=True, blank=True)
     live_seen_at = models.DateTimeField(null=True, blank=True)
-    # Stamped ONLY by the report loop (apps/harness/services.py::
+    # Stamped ONLY by the report loop (apps/harness/session_sync.py::
     # replace_reported_sessions) — deliberately NOT by record_session, which BOTH
     # runners call. That asymmetry is the whole point: it makes "a runner is
     # reporting an emdash task for this session" an observable fact rather than

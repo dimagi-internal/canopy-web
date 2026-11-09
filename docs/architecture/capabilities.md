@@ -1,419 +1,207 @@
 # Cloud capabilities — the agent author's contract
 
-A **capability** is a machine an agent leases from canopy-web for exactly as long as it
-needs it: "give me my `android-emulator`", get a fresh EC2 instance booted from the
-agent's own image, drive it, release it, and it is terminated. A capability of kind
-`pool` leases a **named slot** instead — an exclusive checkout of one of a few fixed
-things (a test account, a seat), with no machine and no AWS call (§6).
-Code: `apps/capabilities`
-(framework tier), `canopy_sdk.ondemand.EphemeralInstance`,
-`canopy_runtime.schema.CapabilityManifest`.
+A **capability** is a machine an agent leases from canopy-web for exactly as long as it needs it: it asks for
+its `android-emulator`, gets a fresh EC2 instance booted from the agent's own image, drives it, releases it,
+and the instance is terminated. A capability of kind `pool` leases a **named slot** instead — an exclusive
+checkout of one of a few fixed things (a test account, a seat), with no machine and no AWS call (§6). Code:
+`apps/capabilities` (framework tier), `canopy_sdk.ondemand.EphemeralInstance`,
+`canopy_runtime.schema.CapabilityManifest`. Start reading at `apps/capabilities/api.py` (module docstring: who
+may call what), then `apps/capabilities/services.py`.
 
 **"Capability" means five things in canopy.** This page is about (c).
 
 | | Meaning | Where |
 |---|---|---|
-| (a) | **Read mode or a host site**: a confined profile an agent offers (read mode, or one site), run as an allowlist for callers on its access list; stored as an entry of `Agent.interface`'s `capabilities` and stamped on `Turn.capability` | `apps/agents/published_profiles.py`, `docs/architecture/access.md` |
-| (b) | **Workspace permission**: a named right a workspace role holds (`perms.can(user, ws, perms.X)`) | `apps/workspaces/permissions.py`, `docs/architecture/roles.md` |
+| (a) | **Read mode or a host site**: a confined profile an agent offers, stored as an entry of `Agent.interface`'s `capabilities` and stamped on `Turn.capability` | `apps/agents/published_profiles.py`, `access-agent-roles-and-access-list.md` |
+| (b) | **Workspace permission**: a named right a workspace role holds (`perms.can(user, ws, perms.X)`) | `apps/workspaces/permissions.py`, `roles.md` |
 | (c) | **Cloud capability**: a leased machine or named pool slot | `apps/capabilities`, this page |
-| (d) | **`Runner.capabilities`**: the JSON a box reports about itself (what it serves, its repos) | `apps/harness/models/runner.py`, `docs/architecture/runners.md` |
-| (e) | **`Storyboard.capability`**: the level a share link grants (read, comment, ...) | `apps/storyboards/models.py` |
+| (d) | **`Runner.capabilities`**: the JSON a box reports about itself | `apps/harness/models/runner.py`, `runners.md` |
+| (e) | **`Storyboard.capability`**: the level a share link grants | `apps/storyboards/models.py` |
 
-**Who owns what.** canopy-web owns the generic half and nothing domain-specific: the
-manifest schema, the `ec2-ephemeral` and `pool` kinds, the grant, the lease lifecycle, caps, audit
-and the sweep. The agent's repo (or a shared repo it points at) owns everything else:
-`capability.yaml`, the CloudFormation stack, the image and its bake, the boot hook and
+**Who owns what.** canopy-web owns the generic half and nothing domain-specific: the manifest schema, the
+`ec2-ephemeral` and `pool` kinds, the grant, the lease lifecycle, caps, audit and the sweep. The agent's repo
+owns everything else: `capability.yaml`, the CloudFormation stack, the image and its bake, the boot hook and
 the CLI on the machine.
 
-**Whose AWS permissions.** canopy-web's ECS task role grants it nothing for
-capabilities. Every capability call is one the agent's stack grants that role —
-`BrokerPolicy`, attached through the stack's `BrokerRoleName` — scoped to that agent's
-tagged instances, its exec document, its bucket and its stack. That role is canopy-web's
-own `canopy-web-task-role` (`deploy.md` § canopy-web's own task role),
-so no other labs service gets the grant. Pass `BrokerRoleName=canopy-web-task-role`.
+**Whose AWS permissions.** canopy-web's ECS task role grants it nothing for capabilities. Every capability
+call is one the agent's stack grants that role (`BrokerPolicy`, attached through the stack's
+`BrokerRoleName`), scoped to that agent's tagged instances, its exec document, its bucket and its stack. The
+role is canopy-web's own `canopy-web-task-role` (`deploy.md` § canopy-web's own task role), so no other labs
+service gets the grant: pass `BrokerRoleName=canopy-web-task-role`. All AWS calls sit behind one seam,
+`apps/capabilities/aws.py`.
 
 ## 1. Declare it in your repo
 
-One `capability.yaml` per capability, e.g. `infra/capabilities/android-emulator/capability.yaml` in the agent's own repo (ACE's, here)
-(`CapabilityManifest`, version 1; unknown keys are an error):
+One `capability.yaml` per capability, in the agent's own repo (its path is the repo's choice). The fields, defaults, ranges and the per-kind rules are
+`canopy_runtime.schema.CapabilityManifest` (`packages/canopy_runtime/canopy_runtime/schema.py`); unknown keys
+are an error. A param with no `default` is required at acquire.
 
-```yaml
-version: 1
-name: android-emulator            # [a-z0-9-]{3,40}, unique per agent (the shared template caps it at 31)
-kind: ec2-ephemeral               # or `pool` (§6)
-description: Android 14 emulator with CommCare + Maestro, driven by the ace-mobile CLI.
-aws:
-  region: us-east-1
-  stack: canopy-cap-ace-android-emulator   # canopy-web reads this stack's Outputs
-limits:                           # ceilings; a grant may only lower them
-  max_concurrent: 4               # 1-50 (default 1)
-  max_lease_s: 14400              # 60-172800 (default 3600); the machine halts at this age
-  idle_release_s: 900             # released after this long with no lease call or running exec (default 900)
-  ready_timeout_s: 900            # failed if not ready this long after launch (default 900)
-params:                           # what an acquire may pass; types: string|integer|number|boolean
-  state: {type: string, default: cc-2.63.0, enum: [cc-2.62.0, cc-2.63.0]}
-exec:
-  allow: [ace-mobile]             # argv[0] allowlist: bare names on the machine's PATH
-```
+Publish as part of the agent's deploy: `canopy-runtime publish-capabilities --dir infra/capabilities --agent
+<slug>` (`--help` lists the flags). `--dir` takes every `<dir>/*/capability.yaml` and refuses a directory with
+none, rather than retire everything. It sends the whole list in one `PUT /api/agents/{slug}/capabilities`
+(`api.put_agent_capabilities`). canopy-web validates again with the same model, reads each ec2-ephemeral
+stack's Outputs, and refuses the publish (422, naming what is wrong) unless every stack meets the contract
+(§2), is the agent's own (its `Owner` Output), lists every `exec.allow` entry on its `ExecAllow`, and allows
+`max_lease_s` within its `MaxInstanceLifetimeSeconds` (`services._resolve_outputs`). Nothing is written unless
+every manifest passes. Publishing is idempotent. A capability missing from the list is **retired** and its
+live leases released; a changed `kind` ends the live leases first, as the kind they were
+(`services.publish`). The caller must be the agent's owner or an admin, or the agent's own login.
 
-A param with no `default` is required at acquire.
-
-**Publish as part of your deploy:**
-
-```bash
-canopy-runtime publish-capabilities --dir infra/capabilities --agent <slug> \
-  [--base-url https://canopy.dimagi.com] [--token $CANOPY_TOKEN]
-```
-
-`--dir` takes every `<dir>/*/capability.yaml` (and refuses a directory with none, rather than
-retire everything); `--manifest PATH` names one file and repeats. The old `--spec` form is
-retired and exits 2.
-
-It validates every manifest and sends the whole list in one
-`PUT /api/agents/{slug}/capabilities`. canopy-web validates again (same model), reads
-each stack's Outputs, and refuses the publish (422, naming what is wrong) unless every
-stack meets §2 and is not another agent's (its `Owner` Output) — including, on a 0.9.0+ stack, that every `exec.allow` entry is on the
-stack's `ExecAllow` and that `max_lease_s` is within its `MaxInstanceLifetimeSeconds`.
-Idempotent. A capability missing from the list is **retired** and its live leases
-released. The caller must be the agent's owner or an admin, or the agent's own login (its
-PAT).
-
-The Outputs are re-read by the sweep about every 15 minutes, after a lease misses its
-ready deadline, and on `POST /api/agents/{slug}/capabilities/{name}/refresh` (run it right
-after a stack update). A re-read that fails the contract keeps the old Outputs and records
-`capability.outputs.unreadable`.
+The Outputs are re-read by the sweep, after a lease misses its ready deadline, and on
+`POST /api/agents/{slug}/capabilities/{name}/refresh` (run it right after a stack update). A re-read that fails
+the contract keeps the old Outputs and records `capability.outputs.unreadable`
+(`services.refresh_outputs`).
 
 ## 2. The `ec2-ephemeral` stack
 
 Deploy canopy's shared template with `Mode=ephemeral`
-(`canopy_sdk.ondemand.assets.asset_path("ondemand-capability.cfn.yaml")`, pinned to a
-`dimagi-canopy-v<version>` tag), or write your own that exposes the same contract.
+(`canopy_sdk.ondemand.assets.asset_path("ondemand-capability.cfn.yaml")`, pinned to a `dimagi-canopy-v<version>`
+tag), or write your own that exposes the same contract. The template's header
+(`sdk/python/src/canopy_sdk/ondemand/assets/ondemand-capability.cfn.yaml`) states the contract and its
+parameters; the Outputs canopy-web requires are `aws.REQUIRED_OUTPUTS`, `CHECKED_OUTPUTS` and
+`OPTIONAL_OUTPUTS`. Things the template cannot say for you:
 
-```bash
-aws cloudformation deploy --stack-name canopy-cap-<agent>-<capability> \
-  --template-file ondemand-capability.cfn.yaml --capabilities CAPABILITY_NAMED_IAM \
-  --parameter-overrides Mode=ephemeral Capability=<capability> Owner=<agent-slug> \
-    OwnerTag=<who-to-ask> InstanceType=m8i.xlarge VpcId=vpc-… SubnetId=subnet-… \
-    NestedVirtualization=true ExecAllow=<cli>[,<cli>…] BrokerRoleName=<canopy-web's task role>
-```
+- **`Owner` must equal the agent's slug**, and the stack must be that agent's own.
+- **Broker tags.** canopy-web tags instances `canopy:lease` and `canopy:broker` (`services.broker_id`, which
+  `CAPABILITY_BROKER_ID` overrides). A broker counts and kills only instances carrying its own `canopy:broker`
+  tag (or none), so two canopy-webs can share a stack (`services._ours`).
+- **The AMI pointer** is the SSM parameter `/canopy/capabilities/<agent>/<name>/ami`, resolved by EC2 at every
+  launch. A rebake writes it; nothing is re-pinned. Write it before the first deploy.
+- **The launch template's `$Latest`** is what the broker launches, so a stack update applies from the next
+  lease.
+- **Update a stack to the per-instance layout (`LeaseObjectScope`) when no lease is live**: a running
+  old-layout lease loses its `leases/` grants the moment the stack updates. A lease keeps the layout it
+  started with (`CapabilityLease.s3_base`).
+- **Cost backstops live in the stack** (self-terminating shutdown behaviour, the backstop Lambda) so they work
+  while canopy-web is down. `MaxInstanceLifetimeSeconds` must stay above `max_lease_s`.
+- **The instance role must not read SSM parameters**: `AmazonSSMManagedInstanceCore` would let a lease machine
+  decrypt every SecureString in the account, which is why the template carries an explicit Deny on
+  `ssm:GetParameter*`.
 
-| Ephemeral parameter | |
-|---|---|
-| `Mode` | `ephemeral` (default `persistent`, the stopped-when-idle single instance) |
-| `Capability` | the manifest's `name` |
-| `Owner` | the agent's slug; tags instances `canopy:owner` and names the AMI parameter |
-| `OwnerTag` | the human-facing `owner` tag |
-| `BrokerRoleName` | the broker's IAM role: canopy-web's own task role, `canopy-web-task-role` (`deploy.md`) |
-| `ExecAllow` | **required** (0.9.0+): the manifest's `exec.allow`, comma-separated; the exec document runs nothing else |
-| `MaxInstanceLifetimeSeconds` | 0.9.0+, default 16200 (4 h + 30 min): the backstop terminates any of the capability's instances older than this. Keep it above `max_lease_s` |
-| `RootVolumeIops`, `RootVolumeThroughput`, `RootVolumeInitializationRate` | 0.9.0+, default empty (= unset; `0` too): gp3 IOPS (3000–80000), gp3 throughput MiB/s (125–2000), and the EBS volume initialization rate MiB/s (100–300) at which a fresh root volume pulls the AMI snapshot instead of hydrating lazily. Every lease starts from a cold volume, so this is the boot-time lever: `6000` / `500` / `300` cuts the Android emulator's `boot_completed` from ~50 s to ~37 s |
-| `InstanceType`, `VpcId`, `SubnetId`, `NestedVirtualization`, `RootVolumeGb`, `UserData` | as for persistent |
-| `AmiId`, `ConsumerTaskRoleName`, `IdleStopMinutes` | persistent only; leave empty |
-
-What the stack must provide:
-
-- **Outputs:** `LaunchTemplateId`, `ArtifactsBucketName`, `InstanceRoleArn`,
-  `Capability` — and `Owner` (must equal the agent's slug) and `InstanceRoleId` (names
-  each instance's S3 prefix). A publish names any that are missing. A 0.9.0+ stack adds
-  `LeaseObjectScope` (`instance`), `ExecDocumentName`, `ExecAllow`,
-  `MaxInstanceLifetimeSeconds` and `BackstopFunctionName`; without them the broker uses the
-  pre-0.9.0 contract (`leases/<id>/` objects, `AWS-RunShellScript`).
-- **Launch template:** the broker launches its `$Latest` version (SDK 0.9.0+), so a stack
-  update — new volume settings, instance type, user data — applies from the next lease.
-  Only the stack writes versions; `BrokerPolicy` cannot.
-- **Tags:** instances are tagged `canopy:capability=<name>` and `canopy:owner=<agent>`
-  (the launch template sets them; canopy-web also sends them, plus `canopy:lease=<id>` and
-  `canopy:broker=<deployment>` — `CAPABILITY_BROKER_ID`, by default the host of
-  `CANOPY_IDENTITY_BASE_URL`). A broker counts and kills only instances carrying its own
-  `canopy:broker` tag (or no `canopy:broker` tag at all), so two canopy-webs can
-  share a stack.
-- **AMI pointer:** the launch template's image is `resolve:ssm:/canopy/capabilities/<agent>/<name>/ami`,
-  resolved by EC2 at every launch (as the RunInstances caller, so `BrokerPolicy` may read
-  that one parameter). A rebake writes it; nothing is re-pinned. Write it before the first
-  deploy.
-- **Self-termination:** `InstanceInitiatedShutdownBehavior: terminate`. There is no
-  CloudWatch idle alarm (an alarm names one instance, and these do not exist at deploy).
-- **The backstop** (0.9.0+): `BackstopFunction`, a stack-owned Lambda on an EventBridge
-  `rate(5 minutes)` rule, terminates every instance tagged with this capability and owner
-  whose launch time is older than `MaxInstanceLifetimeSeconds`. Its role can describe
-  instances, terminate only those two tags' instances, and write its own log group. It
-  works with canopy-web down, deleted or wrong.
-- **The exec document** (0.9.0+): `canopy-cap-<owner>-<capability>-exec`, the only document
-  `BrokerPolicy` may send. It takes `Argv` (base64 of the argv, each argument
-  NUL-terminated), `LeaseId`, `LeaseIn`, `LeaseOut` and `ExecutionTimeout`, every one
-  pattern-restricted so no value can carry shell syntax; it runs the argv only if argv[0]
-  is exactly one of `ExecAllow` (else exit 126). Updated in place (`NewVersion`); the broker
-  sends `$LATEST`.
-- **Broker permissions** (`BrokerPolicy` on `BrokerRoleName`), and nothing else:
-  `ec2:RunInstances` from this launch template only, the instance only with both request
-  tags (extra tags allowed); `ec2:CreateTags` at launch only; `ec2:TerminateInstances` and
-  `ssm:SendCommand` on instances carrying both tags (plus the exec document — on older
-  stacks `AWS-RunShellScript`); `ec2:DescribeInstances`/`DescribeInstanceStatus` and
-  `ssm:GetCommandInvocation` (read-only, no resource scoping exists); `ssm:GetParameter(s)`
-  on the AMI parameter; `iam:PassRole` on the instance role to EC2; S3 on the stack's
-  bucket; `cloudformation:DescribeStacks` on the stack.
-- **Instance role** (0.9.0+): read and write only `vm/${aws:userid}/*` — its own prefix (an
-  instance cannot read its own tags, so the scope is the session,
-  `<InstanceRoleId>:<instance-id>`); the SSM agent's own calls (registration, Run Command,
-  Session Manager, associations, inventory) and an explicit **Deny on
-  `ssm:GetParameter*`**. Not `AmazonSSMManagedInstanceCore`: its `ssm:GetParameter(s)` on `*`
-  would let a lease machine decrypt every SecureString in the account. Objects under
-  `leases/` and `vm/` expire after 7 days.
-
-**Where a lease's objects live.** On a 0.9.0+ stack under the machine's own prefix,
-`vm/<InstanceRoleId>:<instance-id>/lease/<lease-id>/` — `in/` (uploads), `out/`
-(artifacts), `exec/` (SSM's command output). On an older stack, `leases/<lease-id>/`. A
-lease keeps the layout it started with (`CapabilityLease.s3_base`) even if its stack is
-updated mid-lease. **Update a stack to 0.9.0 when no lease is live**: a running old-layout
-lease loses its `leases/` grants the moment the stack updates.
-
-**The image must:**
+**The image must** (canopy-web cannot check it; `services._launch`, `services.check_ready`):
 
 1. read user-data JSON `{"lease_id", "params", "max_lifetime_s", "bucket"}` from IMDS;
 2. when ready, write `s3://<bucket>/vm/<aws:userid>/ready.json` — the prefix is
-   `aws sts get-caller-identity --query UserId --output text`, i.e.
-   `<InstanceRoleId>:<instance-id>` — containing `{"ok": true|false, "reason"?, "timings"?, "cli_version"?}`.
-   `ok: false` fails the lease at once (and terminates the machine);
+   `aws sts get-caller-identity --query UserId --output text` (`<InstanceRoleId>:<instance-id>`) — containing
+   `{"ok": true|false, "reason"?, "timings"?, "cli_version"?}`; `ok: false` fails the lease at once and
+   terminates the machine;
 3. halt at `max_lifetime_s` (a halt terminates);
-4. put every `exec.allow` command on `PATH` for SSM's root shell, and have `bash` and
-   `base64` (any Ubuntu image does);
-5. read and write S3 only through the URIs it is given (argv, `CANOPY_LEASE_IN`,
-   `CANOPY_LEASE_OUT`) — never compute a lease path itself.
+4. put every `exec.allow` command on `PATH` for SSM's root shell, and have `bash` and `base64`;
+5. read and write S3 only through the URIs it is given (argv, `CANOPY_LEASE_IN`, `CANOPY_LEASE_OUT`) — never
+   compute a lease path itself.
 
-An exec runs with `CANOPY_LEASE_ID`, `CANOPY_LEASE_IN` and `CANOPY_LEASE_OUT` (the lease's
-`in/` and `out/` prefixes) exported. Write artifacts under `CANOPY_LEASE_OUT`; read staged
-inputs from the `s3_uri`s the uploads route returned.
+An exec runs with `CANOPY_LEASE_ID`, `CANOPY_LEASE_IN` and `CANOPY_LEASE_OUT` exported. Write artifacts under
+`CANOPY_LEASE_OUT`; read staged inputs from the `s3_uri`s the uploads route returned.
 
 ## 3. Allow it (a workspace admin)
 
-On the web: the agent's **Capabilities** page,
-`https://canopy.dimagi.com/w/<workspace>/agents/<slug>/capabilities` — Grant (optionally
-lowering the limits), Limits, Revoke; members without `integrations` see it read-only.
-Through the API:
-
-`PUT /api/capabilities/grants {"agent", "capability", "max_concurrent"?, "max_lease_s"?}`
-(`integrations`: admin or owner of the agent's workspace). Without a grant an acquire
-is 403 and the message names this call. A grant may only lower the manifest's limits;
-revoking it (`DELETE /api/capabilities/grants/{id}`) releases its live leases. Grants
-and publishes are settings, recorded in the settings audit.
+Without a grant an acquire is 403, and the message names the call (`services.acquire`). A grant is
+`PUT /api/capabilities/grants` (`api.set_capability_grant`; `integrations`: admin or owner of the agent's
+workspace), and the agent's **Capabilities** page does the same. A grant may only lower the manifest's limits
+(`services.effective_limits`); revoking it releases its live leases. Grants and publishes are settings,
+recorded in the settings audit.
 
 ## 4. Lease and use it
 
-The caller is the agent's own login, or an editor+ of the agent's workspace acting for
-it (a laptop session). PAT-authenticated; every route is also an MCP tool.
+The caller is the agent's own login, or an editor+ of the agent's workspace acting for it
+(`api._agent_to_lease_for`). Routes, bodies and refusals: `apps/capabilities/api.py` and
+`apps/capabilities/schemas.py`; every route is also an MCP tool. Use the URIs the broker returns
+(`out_prefix`, `s3_uri`); never build them. `out_prefix` names the machine, so it is `""` until `instance_id`
+is set.
 
-| Route | Body → response |
-|---|---|
-| `POST /api/capabilities/leases` | `{agent, capability, params?, turn_id?}` → lease. Returns at once: `provisioning` (launched with `ClientToken=lease_id`) or `queued` with `position`. 422 for an undeclared capability or a bad param; 403 without a grant (§3) |
-| `GET /api/capabilities/leases/{id}?wait_s=0..20` | → lease. **The heartbeat**; while provisioning it reads `ready.json`. `wait_s` long-polls (below) |
-| `DELETE /api/capabilities/leases/{id}` | → lease, `released`; the machine is terminated. Idempotent |
-| `POST /api/capabilities/leases/{id}/exec` | `{argv[], timeout_s=600}` → `{lease_id, exec_id, timeout_s}`. 422 unless `argv[0]` is on `exec.allow`; 409 unless ready. `timeout_s` is capped at the time the lease has left |
-| `GET /api/capabilities/leases/{id}/exec/{exec_id}?wait_s=0..20` | → `{exec_id, status, done, exit_code, stdout_tail, stderr_tail, stdout_url, stderr_url}` |
-| `POST /api/capabilities/leases/{id}/uploads` | `{names[]}` → `{lease_id, uploads: [{name, put_url, s3_uri}], expires_in_s}`. 409 for an ended lease, and (0.9.0+ stack) while the machine is not launched yet (`instance_id` null) |
-| `GET /api/capabilities/leases/{id}/artifacts?prefix=` | → `{lease_id, prefix, artifacts: [{path, size, url}], expires_in_s}` |
-| `GET /api/agents/{slug}/capabilities` | → `{agent, capabilities: [{name, kind, description, region, stack, manifest, stack_outputs, published_at, grant, limits, live_leases}], retired}` |
-
-A **lease** is `{lease_id, agent, capability, status, ready, position, instance_id,
-params, turn_id, created_at, provisioning_at, ready_at, ended_at, expires_at,
-last_heartbeat_at, idle_release_s, reason, ready_info, slot, out_prefix, slot_data}` (`slot`: a
-`pool` lease's slot, else null; `slot_data`: a ready pool lease's slot data, for its
-acquirer only — § 6 "Slot data" — else null). `out_prefix` is the
-lease's `out/` as an `s3://` URI, the same value as `CANOPY_LEASE_OUT`, for a CLI that needs
-`--out` as a literal (argv is never shell-expanded, so `$CANOPY_LEASE_OUT` is not
-expanded). On a 0.9.0+ stack it names the machine, so it is `""` until `instance_id` is set
-(normally already in the acquire's response). Use the URIs the broker returns; never
-build them.
-
-- **States:** `queued → provisioning → ready → released`; failure exits `failed`
-  (launch refused, not ready in time, `ok: false`, the machine died) and `expired`
-  (`max_lease_s`). A `ready` lease never returns to `provisioning`: release a sick
-  machine and acquire another.
-- **Heartbeat:** any lease call counts, and so does a running exec — until it is done or
-  its `timeout_s` passes, an exec keeps its lease from idling out even if nobody polls.
-  Otherwise poll at least every `idle_release_s`, including while queued.
-- **Long-poll:** `wait_s` (0-20; more is 422) holds a GET until the state changes: a lease
-  returns as soon as it leaves the status it had on arrival (queued → provisioning,
-  provisioning → ready or failed), an exec as soon as it is done; otherwise after
-  `wait_s`. The server re-checks about once a second (ready.json in S3, or
-  GetCommandInvocation) and never calls DescribeInstances in the loop. Keep your HTTP
-  timeout above `wait_s` + 10 s.
-- **Exec** `status` is SSM's own (`Pending`, `InProgress`, `Delayed`, `Success`,
-  `Cancelled`, `TimedOut`, `Failed`, `Cancelling`); `exit_code` and the presigned
-  `stdout_url`/`stderr_url` appear once `done`. `stdout_tail` is the last 4000
-  characters. SSM is the job store, so an exec survives a canopy-web deploy. Exit 126 with
-  "not on this capability's exec allow list" means the stack's `ExecAllow` and the
-  manifest disagree.
-- **Presigned URLs** (uploads, artifacts, exec streams) work for up to 1 h — never longer
-  than the credentials that signed them; `expires_in_s` says how long.
-- **Turn binding:** pass `turn_id` (the cloud runner exports `CANOPY_TURN_ID` to every
-  turn) and the lease is released when that turn ends.
-- **Caps:** at most `max_concurrent` machines per agent capability, counting holding
-  leases plus any of this broker's tagged instances no lease accounts for (except one whose
-  lease has already ended: it was terminated a moment ago). Over the cap, leases queue FIFO and are promoted as machines free
-  up.
-
-**Operating it** (workspace-scoped; all also MCP tools):
-
-| Route | |
-|---|---|
-| `GET /api/capabilities/leases?agent=&capability=&status=&since=&limit=` | → `{leases: [lease], truncated}`, newest first; `status` is one status, a comma list, or `live` (queued, provisioning, ready); `limit` 1–500 (default 100). Member. A read: no heartbeat |
-| `GET /api/capabilities/spend?since=&until=&agent=&capability=` | → `{since, until, rows: [{agent, capability, leases, machine_seconds, live}], total_machine_seconds}`: machine time from `provisioning_at` to `ended_at` (or now), clipped to the window (default the last 7 days) |
-| `POST /api/capabilities/leases/{id}/force-release` | `{reason?}` → lease. Ends a live lease and terminates its machine **even if the lease already ended**. `integrations` or the agent's admins |
-| `POST /api/agents/{slug}/capabilities/{name}/terminate-orphans` | → `{agent, capability, orphans, gone}`: the sweep's machine pass, now. `integrations` or the agent's admins; 502 if EC2 cannot be listed |
-| `POST /api/agents/{slug}/capabilities/{name}/refresh` | → the capability: re-read the stack's Outputs (422 naming what fails the contract). Agent admins or the agent's own login |
-| `manage.py capability_sweep` | run the sweep once in an ECS Exec shell; prints the counts |
-
-Every transition is an event (`source=capabilities`, `kind=capability.lease.<status>`;
-also `capability.lease.launched`, `.launch_retry` (once per distinct error),
-`.force_terminated`, `capability.exec.sent` — `argv0` and `argc` only, never the arguments,
-which can carry paths and credentials — `capability.orphans.terminated`,
-`capability.published`, `capability.retired`, `capability.outputs.refreshed` /
-`.unreadable`, and the sweep's own `capability.sweep.failed` / `.error` / `.unreachable`,
-coalesced so a persistent failure is one row with a count), readable at
-`GET /api/events/?source=capabilities`.
+- **States:** `queued → provisioning → ready → released`; failure exits `failed` (launch refused, not ready in
+  time, `ok: false`, the machine died) and `expired` (`max_lease_s`). A `ready` lease never returns to
+  `provisioning`: release a sick machine and acquire another.
+- **Heartbeat:** any lease call counts, and so does a running exec until it is done or its `timeout_s` passes
+  (`services.last_activity`). Otherwise poll at least every `idle_release_s`, including while queued.
+- **Long-poll:** `wait_s` on the lease and exec GETs (`services.MAX_WAIT_S`; more is 422) holds the request
+  until the state changes. Keep your HTTP timeout above `wait_s` + 10 s.
+- **Exec** runs only an `argv[0]` on the manifest's `exec.allow` (422 otherwise) and only on a `ready` lease
+  (409). SSM is the job store, so an exec survives a canopy-web deploy. Exit 126 with "not on this capability's
+  exec allow list" means the stack's `ExecAllow` and the manifest disagree.
+- **Presigned URLs** (uploads, artifacts, exec streams) last at most `services.PRESIGN_TTL_S`, never longer
+  than the credentials that signed them.
+- **Turn binding:** pass `turn_id` (the cloud runner exports `CANOPY_TURN_ID` to every turn) and the lease is
+  released when that turn ends (`apps/capabilities/signals.py`).
+- **Caps:** at most `max_concurrent` machines per agent capability, counting holding leases plus any of this
+  broker's tagged instances no lease accounts for (except one whose lease has already ended). Over the cap,
+  leases queue FIFO and are promoted as machines free up (`services._holding_count`, `services.promote`).
+- **Operating it** (list, spend, force-release, terminate-orphans, `manage.py capability_sweep`): same files.
+  Force-release ends a lease and terminates its machine **even if the lease already ended**.
+- **Events:** every transition is an event with `source=capabilities`, `kind=capability.lease.<status>` and
+  siblings (`services._event`, `services._cap_event`), readable at `GET /api/events/?source=capabilities`.
+  `capability.exec.sent` carries `argv0` and `argc` only, never the arguments, which can carry paths and
+  credentials and are readable by every member of the workspace.
 
 ## 5. Cost guards (each independent of the ones before it)
 
 1. Explicit release.
-2. The bound turn ending (`turn_events_appended` with a terminal status), or no lease call
-   and no running exec for `idle_release_s`.
-3. **The sweep.** Off-request: every web process runs it as a job on the shared clock
-   (`apps/common/ticks.py`, registered by `apps/capabilities/scheduler.py`, every
-   `CAPABILITY_SWEEP_INTERVAL_S`, default 30 s; `runner-routing.md` § Periodic work). A cache key makes it at most once per 25 s
-   **across the fleet**; if the cache (Redis) fails, each process falls back to its own
-   clock rather than skipping. A runner's claim (`apps/harness/claim.py`) triggers it too,
-   above every early return, but only when no sweep has finished for 90 s — so a fleet hold
-   or no runner online stops nothing, and normally no AWS call rides a claim. It never
-   raises; a failure is an error event. It: expires leases past `expires_at`; releases idle
-   ones and ones whose turn ended; finishes provisioning checks and re-launches a
-   provisioning lease that has no instance (same ClientToken); adopts an instance whose id
-   never reached the DB; ends a ready lease whose machine is gone; re-reads stale stack
-   Outputs; terminates every one of this broker's tagged instances with no live lease — for
-   **every** published capability (and any retired in the last 3 days), not only ones with
-   recent leases; and promotes the queue.
-4. **Deleting what a lease belongs to** (its agent, or its capability row) terminates the
-   lease's machine first (`pre_delete`). A workspace cannot be deleted under an agent.
+2. The bound turn ending, or no lease call and no running exec for `idle_release_s`.
+3. **The sweep** (`services.sweep`). Off-request: every web process runs it as a job on the shared clock
+   (`apps/common/ticks.py`, registered by `apps/capabilities/scheduler.py`; `runner-routing.md` § Periodic
+   work). A cache key makes it run at most once per `services.SWEEP_EVERY_S` **across the fleet**; if the cache
+   fails, each process falls back to its own clock rather than skipping. A runner's claim (`apps/harness/claim.py`)
+   triggers it too, above every early return, but only when no sweep has finished for `SWEEP_STALE_S`, so a
+   fleet hold or no runner online stops nothing and normally no AWS call rides a claim. It never raises; a
+   failure is an error event. It terminates every one of this broker's tagged instances with no live lease for
+   **every** published capability (and any retired within `RETIRED_SWEEP_DAYS`), not only ones with recent
+   leases.
+4. **Deleting what a lease belongs to** (its agent, or its capability row) terminates the lease's machine
+   first (`apps/capabilities/signals.py`, `pre_delete`). A workspace cannot be deleted under an agent.
 5. Machine-side: halt at `max_lifetime_s`, shutdown = terminate.
-6. Stack-side: the backstop Lambda (§2), every 5 minutes. 5 and 6 work while canopy-web is
-   down.
+6. Stack-side: the backstop Lambda (§2). 5 and 6 work while canopy-web is down.
 
 ## 6. The `pool` kind: an exclusive checkout of a named slot
 
-A `pool` capability brokers **one of a small fixed set of named things per lease** — no
-machine, no stack, no image, no AWS call anywhere (publish, acquire, release, sweep). Use
-it when two holders of the same thing at once break each other: ACE's Connect test
-workers, where a second device signing in as the same worker locks the first out.
+A `pool` capability brokers **one of a small fixed set of named things per lease** — no machine, no stack, no
+image, no AWS call anywhere (publish, acquire, release, sweep). Use it when two holders of the same thing at
+once break each other: a second device signing in as the same test worker locks the first out. The manifest
+shape is `CapabilityManifest` (`slots` required; `aws`, `exec` and `params` refused; the broker owns the one
+acquire param, `slot`).
 
-```yaml
-version: 1
-name: test-worker
-kind: pool
-description: Connect test workers, one device session each.
-slots: [worker-1, worker-2, worker-3, worker-4]   # 1-50, unique, [a-z0-9-]{3,40}; handed out in this order
-limits: {max_lease_s: 14400, idle_release_s: 900}
-```
-
-- **Manifest:** `slots` required; `aws`, `exec` and `params` are refused (the broker owns
-  the one acquire param, `slot`); `ready_timeout_s` is ignored. Concurrency is the slot
-  count: `limits.max_concurrent` defaults to `len(slots)` and, like a grant, may only lower
-  it. An `ec2-ephemeral` manifest may not carry `slots`.
-- **Publish:** the same `canopy-runtime publish-capabilities` / `PUT
-  /api/agents/{slug}/capabilities`; no stack is read (`stack`, `region` and
-  `stack_outputs` are empty). Changing `slots` never strands a live lease: one holding a
-  removed slot keeps it until it ends, and that slot is never handed out again; a queued
-  lease that asked for a removed slot fails. Changing a capability's kind ends its live
-  leases first, as the kind they were (an ec2-ephemeral machine is terminated).
-- **Acquire:** `POST /api/capabilities/leases {agent, capability, params?, turn_id?}`;
-  `params` takes only an optional `{"slot": "<one of slots>"}` (anything else is 422).
-  Under the capability's row lock, a free slot — one no live lease of this capability
-  holds — makes the lease **`ready` at once** (`queued → ready`; it never provisions):
-  `slot`, `params.slot` and `ready_info` (`{"slot": …}`) name it, `expires_at` is
-  `max_lease_s` from now, and `instance_id`/`out_prefix` stay empty. The requested slot,
-  else the first free one in declared order. With none free (or the requested one held)
-  the lease is `queued` with `position`.
-- **Promotion:** releasing (or expiring, idling, force-releasing, a turn ending, revoking
-  the grant) frees the slot and hands it on **in the same transaction**: oldest queued
-  first; a lease waiting for one particular slot gets exactly that slot and does not hold
-  up the leases behind it. The sweep promotes pools too (no AWS work for them), so a
+- **Acquire:** under the capability's row lock, a free slot — one no live lease of this capability holds —
+  makes the lease **`ready` at once** (`queued → ready`; it never provisions). The requested slot, else the
+  first free one in declared order; with none free (or the requested one held) the lease is `queued`
+  (`services._assign_slots`).
+- **Changing `slots` never strands a live lease:** one holding a removed slot keeps it until it ends, and that
+  slot is never handed out again; a queued lease that asked for a removed slot fails.
+- **Promotion:** releasing (or expiring, idling, force-releasing, a turn ending, revoking the grant) frees the
+  slot and hands it on **in the same transaction**: oldest queued first; a lease waiting for one particular
+  slot gets exactly that slot and does not hold up the leases behind it. The sweep promotes pools too, so a
   promotion lost to a crash waits at most one sweep.
-- **Exclusivity is in the database:** a conditional unique constraint
-  (`cap_lease_one_live_per_slot`: one `(capability, slot)` among live leases), not only the
-  row lock.
-- **Everything else is the ec2-ephemeral contract:** grants, heartbeat and long-poll
-  (`wait_s` returns when a queued lease gets its slot), list (`slot` on every lease shows
-  who holds which), idle release, `max_lease_s` expiry, turn binding, events
-  (`capability.lease.ready` names the slot) and spend (slot-seconds from `ready_at`).
-- **No machine:** exec, exec status, uploads and artifacts on a pool lease are 422, and so
-  are `…/refresh` and `…/terminate-orphans` on a pool capability.
+- **Exclusivity is in the database:** the conditional unique constraint `cap_lease_one_live_per_slot`
+  (`apps/capabilities/models.py`), not only the row lock.
+- **No machine:** exec, uploads and artifacts on a pool lease are 422, and so are `…/refresh` and
+  `…/terminate-orphans` on a pool capability (`services._no_machine`). Everything else is the ec2-ephemeral
+  contract.
 
 ### Slot data: what each slot is
 
-A pool slot is a fixed thing — ACE's `worker-1` is one Connect test worker — and the
-holder needs its details. canopy-web keeps them next to the lease, one row per slot
-(`CapabilitySlotData`, unique on capability + slot): a `public` map (str → str: a phone, a
-name) and a `secret` map (a PIN, a backup code), `secret_zk` — each value **sealed** (`zks1`,
-zk-v1 §6, `apps/agents/credentials/zk_seal.py`) to the agent's readers as they are when it is
-written (`zk_seal.recipients_for`: each eligible device's ECDH key, each vault member's vault
-key), under the name `capability-slot:<capability>/<slot>/<key>`. canopy-web holds no key that
-opens it. Key names are stored in clear. Every slot holds its own values; there is no default
-or shared value across slots.
+A pool slot is a fixed thing (one Connect test worker) and the holder needs its details. canopy-web keeps them
+beside the lease, one row per slot (`CapabilitySlotData`, unique on capability + slot): a `public` map and a
+`secret` map. Read `apps/capabilities/slot_data.py`'s module docstring first; it states the security rules,
+and `tests/` pins them. In short, none of these may be relaxed:
 
-| Route | Gate | Body → response |
-|---|---|---|
-| `PUT /api/agents/{slug}/capabilities/{name}/slots/{slot}` | workspace admin (`integrations`), or the agent's own login | `{"public": {k: v\|null}?, "secret": {k: "zks1:…"\|plaintext\|null}?}` → the masked slot |
-| `GET /api/agents/{slug}/capabilities/{name}/slots` | member | → `{agent, capability, slots: [masked slot]}`, one per declared slot, in order; 422 on an ec2-ephemeral capability |
-| `DELETE /api/agents/{slug}/capabilities/{name}/slots/{slot}` | as PUT | → 204, idempotent; also removes an undeclared slot's data |
-
-A **masked slot** is `{slot, declared, public, secret_keys, updated_at, updated_by, held,
-lease_id}`: public values, the NAMES of the secret keys, and whether (and
-which) live lease holds it. MCP tools: `set_capability_slot_data`, `list_capability_slot_data`,
-`delete_capability_slot_data`.
-
-- **Writes are per key.** A string writes the key, `null` deletes it, a key left out is
-  kept, a section left out is untouched. Values are non-blank strings (≤ 4096); keys match
-  `[A-Za-z0-9_.-]{1,64}`, at most 50 per section; a key is public or secret, never both
-  (send `null` in one section and the value in the other to move it). A slot left with no
-  keys has no row. 422 unless the capability is a `pool` that declares `slot` (and is not
-  retired); a refusal names the key, never the value.
-- **A secret value is sealed before it is stored.** A writer that can seals it itself (to the
-  readers `GET …/vault/zk/recipients` names, checking their endorsements) and sends `zks1:…`,
-  stored as sent after a shape check (422 if malformed). A plaintext value — what the MCP tool
-  and the ACE repo's `scripts/test-worker-set.ts` send — is sealed in the request, server side, and
-  never stored or logged in clear. 409 when nobody can read the agent's secrets yet (no vault
-  key, no approved machine). A seal reaches the readers of that moment; it then follows
-  the agent's readers (below).
-- **It follows the agent's readers.** A machine approved later, or a new vault member with a
-  vault key, gets it from a box that holds it: the keeper (`canopy vault zk keep`) reads
-  `GET /api/harness/runners/{rid}/vault-keeper/slot-secrets` (each value sealed to one of its
-  machines that a reader waits for, with every reader's public key and the endorsements),
-  opens it with its own device key, checks a waiting machine's endorsement (a person is
-  pinned on first sight, as for the vault key), and sends the new `zks1` to
-  `PUT …/vault-keeper/{slug}/slot-secrets/{capability}/{slot}/{key}` with `expect` (the
-  digest of what it opened). canopy-web refuses a recipient that is not a reader now (422),
-  one that drops a reader that held it (422), a box that held no copy (403) and a stale
-  write (409) (`slot_data.reseal`). A reader the agent loses — a machine revoked, retired
-  or no longer serving it, a person who left the vault — is dropped from every value's
-  envelope within ten minutes (`slot_data.prune`, a tick); each recipient has its own
-  ciphertext, so that decrypts nothing.
-- **Republishing keeps the data.** It is keyed by the capability row and the slot name, not
-  the manifest. Data for a slot the manifest no longer declares is kept but never
-  delivered; DELETE removes it (PUT refuses it).
-- **Delivery — the only route a secret value leaves by, still sealed.** The acquire response
-  and `GET /api/capabilities/leases/{id}` (and its long-poll, and the `get_capability_lease`
-  tool) carry `slot_data: {"public": {…}, "sealed": {key: "zks1:…"}, "agent_id"}` when ALL
-  hold: the caller is
-  the lease's `requested_by` (the login that acquired it — an agent's PAT gets it for the
-  leases it acquired), the lease is a pool lease in `ready`, its slot is still declared, and
-  the slot has data. Otherwise `slot_data` is `null` — on every list, on release, once the
-  lease is terminal, and for every other caller, workspace admins and owners included. The
-  holder opens `sealed` on its machine: `canopy vault open-slot-data < lease.json` prints
-  `{"public", "secret"}` with this device's key (and passes an older server's plaintext
-  `secret` through).
-- **Every delivery of secret values is an event**, `capability.slot.secret_delivered`
-  (lease id, slot, user, secret key names). Writes are `capability.slot.data_set` /
-  `.data_deleted` with key names; a keeper's re-seal is `capability.slot.secret_resealed`.
-- **Never in a log.** No event, error, `__str__`/`repr`, MCP call-log row or settings-audit
-  row carries a secret value: the audit stores the request body with `secret` redacted and
-  a masked before/after (`public`, `secret_keys`, and `secret_keys_written` — so a rotated
-  PIN is still a recorded change). Not a digest either: a PIN's hash is the PIN.
-
+- **Zero-knowledge.** A secret value is stored only **sealed** (`zks1`, `apps/agents/credentials/zk_seal.py`)
+  to the agent's readers at the moment of the write (`zk_seal.recipients_for`), under the name
+  `capability-slot:<capability>/<slot>/<key>`. canopy-web holds no key that opens it. A plaintext value is
+  sealed in the request and never stored or logged in clear; 409 when nobody can read the agent's secrets yet.
+  Key names are stored in clear.
+- **Delivered to exactly one caller, still sealed** (`slot_data.deliver`): the user who acquired the lease
+  (`requested_by`), while it is `ready`, for the slot it holds, while the manifest still declares that slot.
+  Everyone else gets `slot_data: null` — on every list, on release, once terminal, workspace admins and owners
+  included. The holder opens it on its machine with `canopy vault open-slot-data`. Each delivery of secret
+  values is an event, `capability.slot.secret_delivered`, with key names.
+- **Writes** are for a workspace admin (`integrations`) or the agent's own login; a browser also needs a fresh
+  passkey step-up (`api.set_capability_slot_data`). The listing is masked: public values, the NAMES of secret
+  keys, never a secret value, to anyone.
+- **It follows the agent's readers.** A reader gained later (a machine approved, a vault member with a vault
+  key) gets the value from a box that holds it: the keeper (`canopy vault zk keep`) re-seals through
+  `slot_data.keeper_work` / `slot_data.reseal`, and canopy-web refuses a recipient that is not a reader now, a
+  re-seal that drops a reader that held it, a box that held no copy, and a stale write. A reader the agent
+  loses is dropped from every value's envelope by `slot_data.prune` (a tick, `scheduler.SLOT_PRUNE_EVERY_S`).
+- **Republishing keeps the data**, keyed by capability row and slot name. Data for a slot the manifest no
+  longer declares is kept but never delivered; DELETE removes it.
+- **Never in a log.** No event, error, `__str__`/`repr`, MCP call-log row or settings-audit row carries a
+  secret value: the audit stores the request body with `secret` redacted and a masked before/after
+  (`secret_keys_written` records that a PIN rotated). Not a digest either: a PIN's hash is the PIN.

@@ -20,8 +20,7 @@ What is counted, for each agent of the workspace, over the last `days`:
 * `facts_written` — facts the agent recorded IN-SESSION: asserted by the agent,
   in this workspace, sourced from one of those human turns. Facts are recorded by
   the session that learned them (HCP `addPreference`, prompted by the person
-  block and the turn checklist); there is no separate digest turn since
-  2026-10-09.
+  block and the turn checklist); there is no separate digest turn.
 * `people` — distinct people who started a human turn with the agent.
 
 THE RULE (`healthy`), deliberately simple so it can be read off the numbers:

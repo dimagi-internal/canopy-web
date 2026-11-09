@@ -39,7 +39,7 @@ someone merely for being in the same workspace:
   they explicitly added, asks. A reviewer, a runner admin and any agent login
   read the stored rows and nothing more.
 
-The audience per channel is tabled in `docs/architecture/access.md`
+The audience per channel is tabled in `docs/architecture/access-sessions-and-people.md`
 § Who can see a session.
 
 A contact is a different principal with a disjoint predicate

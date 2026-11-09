@@ -7,11 +7,9 @@ starts from the parent's conversation so far — condensed into its first prompt
 (`exports.build_branch_seed`) — and goes its own way from there, while the parent
 carries on untouched. Branch as often as you like: each is another sibling.
 
-Who may branch: the person who started the conversation, or an admin of its
-agent — the same people who may take its conversation elsewhere (`export_session`
-is the starter's call). Anyone else is told so: a branch hands the whole
-conversation to a new session, which is not something a reply in the thread
-should be able to do.
+Who may branch: anyone who may write in the conversation (`access.can_write`) or
+an admin of its agent. A viewer, or a member who never joined the thread, is told
+so: a branch hands the whole conversation to a new session.
 """
 from __future__ import annotations
 

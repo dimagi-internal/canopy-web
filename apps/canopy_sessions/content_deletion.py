@@ -201,7 +201,7 @@ def _drop_words(session, *, binding, turn_ids, now) -> dict:
     SessionHandoff.objects.filter(session=session).update(
         brief="", capture_note="", manifest=None, restore_report=None, close_error="")
     AgentSecretRequest.objects.filter(session=session).update(reason="")
-    # A coach asked to review this one session stops at once (`access._review_ask_q` also
+    # A coach asked to review this one session stops at once (the asked read in `api_read.py` also
     # refuses it). The chat that ask opened is its own conversation, and its own to delete.
     SessionReviewAsk.objects.filter(session=session, revoked_at__isnull=True).update(revoked_at=now)
     ActAsGrant.objects.filter(login_session=session).update(reason="")

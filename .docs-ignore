@@ -4,30 +4,19 @@
 #
 # --- Not in this repository: another repo, a third-party library, a service API, build output ---
 capability.yaml  # a file in each capability's own repository (the manifest canopy-web validates), not here
-infra/capabilities/android-emulator/capability.yaml  # a capability repository's manifest
 .canopy/jobs.yaml  # a file in an agent's own repository
 connect_labs/*  # the connect-labs repository
 HttpAgent  # the AG-UI client library
 strict_required_status_checks_policy  # GitHub's ruleset API field
 merge_queue  # GitHub's ruleset rule type
 page_scrollToRow  # an example page action a host defines in its own code
-canopy-ui/chat/turnStatus.ts  # package-relative shorthand for frontend/packages/canopy-ui/src/chat/turnStatus.ts
-_role_changed  # shorthand for the suffix of the participant_role_changed event name
 # --- Stale citations: the code no longer has these. Fix the doc (point at what exists, or drop the
 # --- claim), then delete the line. Added when this test was introduced; the doc triage removes them.
-api_credentials._zk_admin  # no such helper
-scripts/test-worker-set.ts  # no such file
 tier2_securing  # no such identifier
 templates/contacts/hcp_consent.html  # no such template
 test_host_site  # no such test
 agent_reply  # no such tool
-_refuse_auto_unless_admin  # no such helper
 tests/test_turn_executors.py  # no such test file
-api._page_in_it_or_403  # no such helper
-test_key_passphrase_only  # no such test
-test_key_exists  # no such test
-test_key  # no such test
-sharing.set_shared  # no such function (the project-sharing writer was removed)
 agents/0064_kb_passages.py  # no such migration file
 CreateIn  # no such class
 PATCH /api/workspaces/<ws>/host-sites[/<id>]  # route not found as written
