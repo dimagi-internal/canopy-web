@@ -17,7 +17,7 @@ describe('guideGroups', () => {
 
   it('never drops a surface, even one nothing claims', () => {
     const groups = guideGroups([
-      { path: '/nowhere-at-all', title: 'Orphan', audience: 'Anyone', what: 'x' },
+      { path: '/nowhere-at-all', title: 'Orphan', use: 'Never.' },
     ])
     expect(groups).toEqual([
       { label: 'Elsewhere', surfaces: [expect.objectContaining({ path: '/nowhere-at-all' })] },
