@@ -1,10 +1,10 @@
 """A runner's own token stages the agents that runner serves — no owner PAT.
 
-On 2026-10-17 the laptop runner's owner PAT was revoked in a token cleanup. The box
-kept heartbeating on its device-key runner token (`POST /api/runner-sessions/`), but
-`canopy agent prepare` on it could no longer read Hal's or Eva's secrets: the token
-reached `/credentials/resolve` but not the two reads that say what is being resolved
-(`/runtime`, `/credentials/access`), and nothing tied it to its own box. Now it reads
+When a laptop runner's owner PAT is revoked, the box keeps heartbeating on its
+device-key runner token (`POST /api/runner-sessions/`), and `canopy agent prepare` on
+it must still read the secrets of the agents it serves: the token reaches
+`/credentials/resolve` and the two reads that say what is being resolved
+(`/runtime`, `/credentials/access`), tied to its own box. It reads
 exactly what its box serves, and nothing its owner merely administers.
 """
 from __future__ import annotations

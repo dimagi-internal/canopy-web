@@ -1,8 +1,8 @@
 """A runner reports its own features, and can be asked to refresh itself.
 
-cloud-ec2-1 read online + ready + code-current for six hours on 2026-09-22 while
-it wrote no durable chat rows, read no mail and could not steer a turn: a failed
-`git pull` skipped loading three packages, and the only record was a journald
+A box can read online + ready + code-current while
+it writes no durable chat rows, reads no mail and cannot steer a turn: a failed
+`git pull` skips loading packages, and the only record is a journald
 line. `health` is the box saying which features work; `refresh` is the durable
 request to re-run its bootstrap.
 """

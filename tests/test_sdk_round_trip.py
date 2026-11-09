@@ -334,8 +334,7 @@ def test_a_host_requiring_sensitive_keeps_its_visitor_off_a_ordinary_runner(site
 
     settings.CHAT_STUB_EXECUTOR = False   # leave the turn queued for a real runner
     host.config = dataclasses.replace(host.config, runner_requirements=("sensitive_data",))
-    # A sensitive conversation runs only in a profile that handles sensitive data (spec
-    # 2026-10-22-sensitive-data-agents §5).
+    # A sensitive conversation runs only in a profile that handles sensitive data.
     declare(site["agent"], {"connect": {**IFACE["capabilities"]["connect"], "data": "sensitive"}})
     r = _arrive(host, scopes=(), member=False)
     assert r.status_code == 200, r.content

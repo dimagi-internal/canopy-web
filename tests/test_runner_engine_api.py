@@ -1,5 +1,5 @@
-"""Choosing a laptop runner's session runtime: emdash or the Claude desktop app
-(canopy-web#1188). The owner or a runner admin flips it on canopy-web; the runner
+"""Choosing a laptop runner's session runtime: emdash or the Claude desktop app.
+The owner or a runner admin flips it on canopy-web; the runner
 reads it off its own heartbeat response, so the flip needs no shell on the box.
 """
 from __future__ import annotations

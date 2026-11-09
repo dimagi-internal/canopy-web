@@ -73,7 +73,7 @@ def test_the_allowlist_is_current():
 
 def test_canopy_web_never_opens_the_words():
     """No module that touches `sealed` decrypts anything: canopy-web writes a sensitive
-    conversation and cannot read it back (spec 2026-10-23 §2)."""
+    conversation and cannot read it back."""
     openers = [rel for rel in ALLOWED
                if "decrypt_secret" in (ROOT / rel).read_text() or "_open(" in (ROOT / rel).read_text()]
     assert not openers, f"decrypts a sensitive conversation's words: {openers}"

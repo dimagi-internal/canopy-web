@@ -1,13 +1,12 @@
 """Which mailboxes a runner can READ is reported by the runner, not configured.
 
-A laptop runner used to read only the mailboxes in a hand-kept `mailboxes` map in
-~/.canopy/runner.json. The owner did not know the map existed, a box with `{}`
-there was still rung by the push doorbell (which only knew agent assignments),
-and it silently ignored every ring (canopy-web#1087). Now the runner probes —
+A hand-kept `mailboxes` map in ~/.canopy/runner.json would go unnoticed: a box with `{}`
+there would still be rung by the push doorbell (which only knows agent assignments)
+and silently ignore every ring. Instead the runner probes —
 a gog token for the address that answers a one-message search — and reports the
 readable list on its heartbeat. The doorbell rings only boxes that can read the
 address, the mailbox page shows who can, and a runner that has never reported
-(older code) is UNKNOWN and keeps being rung, exactly as before.
+(older code) is UNKNOWN and keeps being rung.
 """
 from __future__ import annotations
 
@@ -113,7 +112,7 @@ def test_the_runner_list_serves_what_was_reported(client, owner, workspace):
 
 
 def test_the_doorbell_skips_a_runner_that_cannot_read_the_mailbox(mailbox, agent, owner, workspace):
-    """The #1087 case: assigned, online, holds no token — ringing it does nothing."""
+    """Assigned, online, holds no token — ringing it does nothing."""
     blind = _runner(owner, workspace, mailboxes_readable=[])
     RunnerAssignment.objects.create(agent=agent, runner=blind, rank=0)
     assert services.online_runners_for(mailbox) == []

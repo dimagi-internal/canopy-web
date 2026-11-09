@@ -1,13 +1,12 @@
-"""Regressions found by using the converged Sessions UI on prod (2026-07-23).
+"""The API surfaces what the RunnerBinding already held.
 
-Three distinct bugs, all rooted in the API not surfacing what the RunnerBinding
-already held:
-  1. every row rendered `created_at` (when the report sweep first NOTICED the
-     session), so a long-dead repo and a live one both read "4h ago";
-  2. opening a runner-discovered session showed "Start the conversation" even
-     though the binding carried a rolling tail;
-  3. sending into one spawned a FRESH emdash session, because the turn's
-     thread_key was the canopy Session id while the binding is keyed
+Three cases:
+  1. a row shows activity time, not `created_at` (when the report sweep first
+     NOTICED the session), so a long-dead repo and a live one do not both read "4h ago";
+  2. opening a runner-discovered session shows its rolling tail, not "Start the
+     conversation";
+  3. sending into one reuses its emdash session rather than spawning a FRESH one,
+     though the turn's thread_key is the canopy Session id and the binding is keyed
      `emdash:<task>`.
 """
 import datetime as dt

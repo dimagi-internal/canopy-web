@@ -3,7 +3,7 @@
 The Session info panel (the chat's ⋯ menu and the /ide row menu) reads this one
 route. What it must answer is "where did this session come from": who asked,
 through which credential and client, under which parent, on which runner — the
-record a runner log line used to be the only place to find.
+record otherwise only a runner log line holds.
 """
 from __future__ import annotations
 

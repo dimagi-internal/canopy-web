@@ -19,11 +19,9 @@ pytestmark = pytest.mark.django_db
 def client(default_workspace):
     """An OWNER of the agent's workspace — the legitimate CRUD caller.
 
-    The membership is granted EXPLICITLY. This used to rely on jj being the
-    DB's first user (and so `ensure_default_workspace()`'s owner) purely
-    because the `client` fixture was listed before `default_workspace` in every
-    test's parameter list — reorder the params and the gate stopped being
-    exercised with nothing failing to say so. Schedule CRUD now requires
+    The membership is granted EXPLICITLY, not through jj being the
+    DB's first user (and so `ensure_default_workspace()`'s owner), which would depend
+    on fixture order in every test's parameter list. Schedule CRUD requires
     `editor` or better, so the role these tests run as is load-bearing and has
     to be stated.
     """
@@ -449,7 +447,7 @@ def test_the_mcp_tools_inherit_the_same_gate(viewer, agent):
 def test_pinned_parent_lists_a_child_workspace_agents_schedules(client, default_workspace):
     """`/api/w/<parent>/agents/<slug>/schedules/` for an agent in a workspace
     below the pin answers like the agent page under the same pin does (both
-    use `wsvc.member_scope`) — it used to 404 on an exact-pin match."""
+    use `wsvc.member_scope`), not a 404 on an exact-pin match."""
     owner = User.objects.get(username="jj")
     child = Workspace.objects.create(
         slug="child-ws", display_name="Child", parent=default_workspace, created_by=owner,

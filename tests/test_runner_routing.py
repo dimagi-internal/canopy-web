@@ -1,4 +1,4 @@
-"""Claim routing — pinned turns (spec 2026-07-24-directed-runner-routing, Task 3).
+"""Claim routing — pinned turns.
 
 A `pinned_runner` on a Turn is a HARD pin: only that runner may claim it,
 bypassing assignments/capabilities entirely, but never the tenant gate. Mirrors

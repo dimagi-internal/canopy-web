@@ -1,9 +1,9 @@
 """A session's mode is fixed when it starts (apps/harness/turn_mode.py).
 
-Jonathan, 2026-10-07: "the entire session is started in auto or manual, it doesn't
-change because of something that happens in the session." Ada's dispatches from ACE
-ran manual and stopped for approval; his "yes merge it" in the same chat then ran
-auto, judged afresh as the owner. Now a later turn takes the session's first mode —
+The entire session is started in auto or manual; it doesn't change because of
+something that happens in the session. Dispatches that ran manual and stopped for
+approval must not turn auto when the owner replies "yes merge it" in the same
+chat. A later turn takes the session's first mode —
 but only downward: an auto start never lifts a turn its own sender would hold manual.
 """
 from __future__ import annotations

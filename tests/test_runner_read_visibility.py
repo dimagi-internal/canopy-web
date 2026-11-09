@@ -9,8 +9,7 @@ member — an agent identity, a teammate — listed zero runners and could not t
 That is not hypothetical. `canopy project dispatch` preflights by listing the
 fleet, concluded BLOCKED from an empty list, and was routed around with
 `--no-preflight`; the next dispatch went at a repo genuinely nothing declared and
-sat QUEUED until the stuck-turn banner caught it (labs, 2026-07-28, turn
-cec64f60). The banner could catch it precisely because `unclaimable_queued_turns`
+sat QUEUED until the stuck-turn banner caught it. The banner could catch it precisely because `unclaimable_queued_turns`
 had ALREADY made this fix at its own call site — it scopes candidate runners by
 `runner_tenant_slugs`, with a comment explaining that `owner=user` made every
 stuck turn read as `config` for anyone who had not paired a runner. This file
@@ -161,8 +160,8 @@ def test_a_null_workspace_runner_is_visible_only_to_whoever_paired_it(owner, tea
 
 
 def test_an_editor_pins_only_to_a_runner_they_administer(teammate, workspace, runner):
-    """Seeing a runner is not enough to pin an agent's work to it (2026-10-04,
-    docs/architecture/access.md): the agent's admins may pin any box that can hold
+    """Seeing a runner is not enough to pin an agent's work to it
+    (docs/architecture/access.md): the agent's admins may pin any box that can hold
     it, anyone else only a box they administer. The pin stays a READ question for
     whether the id is known at all (an invisible id still 422s as unknown)."""
     from apps.harness.models import RunnerAdmin
