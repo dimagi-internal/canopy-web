@@ -6,7 +6,11 @@
   canopy-listen meetings [--limit N] [--json]
   canopy-listen meetings read ID [--transcript] [--json]
   canopy-listen delete ID
-  canopy-listen models          download both models now
+  canopy-listen models [--json]                   every model it can use, and which are downloaded
+  canopy-listen models download [NAME ...]        the configured ones, or those named
+  canopy-listen config [KEY VALUE]                show, or set asr / speakers / final / language / same_voice
+  canopy-listen bench DIR [--asr a,b|all] [--speakers x,y|all] [--final x,y|all]
+  canopy-listen bench-data DIR                    build a test set from published recordings
   canopy-listen queue-file AUDIO [--speed N]   for testing: the next start plays AUDIO
 
 `meetings` and `meetings read` print what Superwhisper's command-line tool prints, so
@@ -22,6 +26,7 @@ import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 from . import store
 from .recorder import FileSource, MicSource, pid_of, record
@@ -126,11 +131,108 @@ def cmd_queue_file(args) -> int:
     return 0
 
 
-def cmd_models(args) -> int:  # noqa: ARG001
-    from .models import download
+def _downloaded(repo: str) -> bool:
+    cache = Path(os.environ.get("HF_HOME") or Path.home() / ".cache" / "huggingface") / "hub"
+    snapshots = cache / ("models--" + repo.replace("/", "--")) / "snapshots"
+    # A refused or broken download leaves a folder with no config: not downloaded.
+    return any(snapshots.glob("*/config.json")) if snapshots.exists() else False
 
-    download()
-    print("models ready")
+
+def cmd_models(args) -> int:
+    from . import config, engines
+
+    chosen = config.load()
+    if args.action == "download":
+        names = args.names or [chosen["asr"], chosen["speakers"], chosen["final"]]
+        for name in names:
+            if name in engines.SPEECH:
+                engines.Recogniser(name, chosen["language"])
+            elif name == "titanet":
+                engines.voice_model_path()
+            elif name == "sortformer":
+                engines.SortformerStream()
+            elif name == "pyannote":
+                engines.segmentation_model_path()
+                engines.voice_model_path()
+            elif name != "none":
+                print(f"unknown model {name!r}", file=sys.stderr)
+                return 2
+            print(f"{name}: ready")
+        return 0
+    rows = [{"kind": "asr", "name": s.name, "repo": s.repo, "by": "sentence" if s.timed else "pause",
+             "languages": s.languages, "downloaded": _downloaded(s.repo), "chosen": s.name == chosen["asr"],
+             "note": s.note} for s in engines.SPEECH.values()]
+    rows += [{"kind": "speakers", "name": k, "chosen": k == chosen["speakers"], "note": v}
+             for k, v in engines.SPEAKERS.items()]
+    rows += [{"kind": "final", "name": k, "chosen": k == chosen["final"], "note": v} for k, v in engines.FINAL.items()]
+    if args.json:
+        print(json.dumps(rows))
+        return 0
+    for kind in ("asr", "speakers", "final"):
+        print({"asr": "Speech", "speakers": "Speakers, live", "final": "Speakers, after the meeting"}[kind])
+        for r in (r for r in rows if r["kind"] == kind):
+            mark = "*" if r["chosen"] else " "
+            extra = ""
+            if kind == "asr":
+                extra = f"  [{r['by']}, {r['languages']}{', downloaded' if r['downloaded'] else ''}]"
+            print(f" {mark} {r['name']:18} {r['note']}{extra}")
+    return 0
+
+
+def cmd_config(args) -> int:
+    from . import config
+
+    if args.key:
+        if args.value is None:
+            print("usage: canopy-listen config KEY VALUE", file=sys.stderr)
+            return 2
+        try:
+            current = config.save({args.key: args.value})
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+    else:
+        current = config.load()
+    print(json.dumps(current, indent=2))
+    return 0
+
+
+def _choice(value: str, every: dict, default: list) -> list:
+    if not value:
+        return default
+    if value == "none" and "none" not in every:
+        return []
+    return list(every) if value == "all" else [v.strip() for v in value.split(",") if v.strip()]
+
+
+def cmd_bench(args) -> int:
+    from . import bench, config, engines
+
+    chosen = config.load()
+    results = bench.run(Path(args.directory),
+                        asr=_choice(args.asr, engines.SPEECH, [chosen["asr"]]),
+                        speakers=_choice(args.speakers, engines.SPEAKERS, [chosen["speakers"]]),
+                        final=_choice(args.final, engines.FINAL, []),
+                        base_asr=chosen["asr"], language=chosen["language"], same_voice=chosen["same_voice"])
+    out = store.home() / "bench" / time.strftime("%Y%m%d-%H%M%S.json")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(results, indent=2))
+    print(f"saved: {out}")
+    return 0
+
+
+def cmd_bench_data(args) -> int:
+    from . import benchdata
+
+    benchdata.build(Path(args.directory))
+    return 0
+
+
+def cmd_turns(args) -> int:
+    from . import engines
+    from .recorder import read_audio
+
+    print(json.dumps(engines.turns_here(args.name, read_audio(args.wav))))
     return 0
 
 
@@ -165,11 +267,32 @@ def parser() -> argparse.ArgumentParser:
     d = sub.add_parser("delete", help="delete a meeting and its recording")
     d.add_argument("id")
     d.set_defaults(func=cmd_delete)
-    sub.add_parser("models", help="download the models now").set_defaults(func=cmd_models)
+    mo = sub.add_parser("models", help="every model it can use; `models download` fetches them")
+    mo.add_argument("action", nargs="?", choices=["download"])
+    mo.add_argument("names", nargs="*")
+    mo.add_argument("--json", action="store_true")
+    mo.set_defaults(func=cmd_models)
+    co = sub.add_parser("config", help="show, or set, which models a recording uses")
+    co.add_argument("key", nargs="?")
+    co.add_argument("value", nargs="?")
+    co.set_defaults(func=cmd_config)
+    be = sub.add_parser("bench", help="compare models on a folder of recordings with known answers")
+    be.add_argument("directory")
+    be.add_argument("--asr", default="", help="comma-separated, or all (default: the configured one)")
+    be.add_argument("--speakers", default="", help="comma-separated, or all")
+    be.add_argument("--final", default="", help="comma-separated, or all (default: none)")
+    be.set_defaults(func=cmd_bench)
+    bd = sub.add_parser("bench-data", help="build a test set from published recordings (about 360 MB, once)")
+    bd.add_argument("directory")
+    bd.set_defaults(func=cmd_bench_data)
     q = sub.add_parser("queue-file", help="for testing: the next start plays this audio file instead of the microphone")
     q.add_argument("file")
     q.add_argument("--speed", type=float, default=1.0)
     q.set_defaults(func=cmd_queue_file)
+    tu = sub.add_parser("_turns")
+    tu.add_argument("name")
+    tu.add_argument("wav")
+    tu.set_defaults(func=cmd_turns)
     r = sub.add_parser("_record")
     r.add_argument("id")
     r.add_argument("--file")
