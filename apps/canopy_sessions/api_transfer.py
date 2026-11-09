@@ -217,12 +217,9 @@ def transfer(request: HttpRequest, session_id: uuid.UUID, payload: TransferIn):
     """Move a session between boxes — cloud -> laptop, or between the two macOS
     accounts — carrying its message history across.
 
-    `place` was the closest thing before this and it is not the same operation:
-    it re-pins one queued turn and leaves the binding where it was, so the next
-    ship still 404s and the next send sticks to the old box. The failure that
-    motivated this endpoint was doing the move by hand with `place`/`send` —
-    execution DID move, and the session's entire pre-transfer history was deleted
-    on the new box's first ship (session 169212e2, 2026-09-12).
+    `place` is not the same operation: it re-pins one queued turn and leaves the
+    binding where it was, so the next ship still 404s and the next send sticks to
+    the old box. A transfer moves the binding and carries the history with it.
 
     WHOSE box it lands on decides whether it moves now (`status: moved`) or asks
     (`status: pending`): onto a runner you administer, or between two runners with

@@ -964,9 +964,10 @@ def set_agent_clis(request: HttpRequest, slug: str, payload: AgentClisIn) -> Age
 @gate("agent-admin", setting=True)
 def set_slack_enabled(request: HttpRequest, slug: str, payload: SlackEnabledIn) -> SlackEnabledOut:
     """Whether people in this workspace's connected Slack can talk to the agent
-    (by mention, DM, `/canopy <slug>` or `/<slug>`). Owner only. Adds or removes
+    (by mention, DM, `/canopy <slug>` or `/<slug>`). The agent's owner or an
+    admin (`agent-admin`; an editor may not). Adds or removes
     the agent's `/<slug>` command in the Slack app when canopy manages it."""
-    # Owner, not editor: editor is what anyone who self-joined already holds,
+    # Admin, not editor: editor is what anyone who self-joined already holds,
     # and this opens the agent to everyone in a Slack workspace.
 
     agent = agent_for_admin(request, slug)

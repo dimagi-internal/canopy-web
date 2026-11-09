@@ -107,19 +107,17 @@ def _runner_rows(request: HttpRequest, qs) -> list:
 def update_runner_capabilities(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerCapabilitiesIn):
     """Replace a runner's capabilities (owner-gated via _runner_or_404).
 
-    Capabilities are set at pairing and were otherwise immutable — the only way to
-    add a capability to an existing runner was to re-pair, which mints a NEW runner
-    and orphans the old one's RunnerBindings. This lets a paired runner opt into
-    driving new agents in place. capabilities is a routing hint, not a security
+    Capabilities are set at pairing; this lets a paired runner opt into driving
+    new agents in place, without re-pairing (which would mint a NEW runner and
+    orphan the old one's RunnerBindings). capabilities is a routing hint, not a security
     boundary (the workspace gates), so replacing it changes what the runner PULLS,
     never what it may reach.
 
-    EXCEPT `projects`, which the runner now REPORTS on every heartbeat (spec
-    2026-07-28). Accepting a hand-written value would be accepting a ghost edit:
+    EXCEPT `projects`, which the runner REPORTS on every heartbeat. Accepting a hand-written value would be accepting a ghost edit:
     the next heartbeat overwrites it seconds later, so the caller sees a 200,
     believes the repo is declared, and dispatches into a hole. A 422 naming the
     real fix is the honest answer. `projects` is also PRESERVED across a write that
-    omits it — it belongs to the runner now, so a capabilities PATCH must not drop
+    omits it — it belongs to the runner, so a capabilities PATCH must not drop
     it as a side effect.
     """
     runner = runner_or_404(request, runner_id)

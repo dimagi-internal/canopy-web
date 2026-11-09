@@ -50,9 +50,10 @@ class CredentialRefused(ValueError):
 
 
 LAST_FALLBACK_REFUSAL = (
-    "That is this runner's last token or API key. Keep at least one: a full login "
-    "renews itself, and when its renewal fails a runner with nothing else stops "
-    "(cloud-ec2-2, 2026-10-15). Add another first, then remove this one.")
+        "That is this runner's last token or API key, and a runner needs at least one. "
+    "A full login renews itself, and when that renewal fails a runner with no token "
+    "or API key to fall back on cannot run anything. Add another first, then remove "
+    "this one.")
 
 #: The kinds that hold a value here (a login's lives on the box).
 VALUE_KINDS = (RunnerLogin.TOKEN, RunnerLogin.API_KEY)

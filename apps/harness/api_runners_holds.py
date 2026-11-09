@@ -73,7 +73,7 @@ def hold_fleet(request: HttpRequest, payload: FleetHoldIn):
     /runners/{id}/pause (see FleetHold). Turns keep enqueuing and wait QUEUED with
     their trigger, so `list turns?status=queued` shows what tried to start while
     held. Running turns finish normally — stopping them is /fleet-stop. A superuser
-    or a named holder (`CANOPY_FLEET_HOLDERS`, i.e. Ada) — it spans every tenant,
+    or a named holder (an address in `CANOPY_FLEET_HOLDERS`) — it spans every tenant,
     but only stops work. Idempotent — holding again refreshes the note."""
     if not _may_hold_fleet(request.user):
         raise HttpError(403, "holding the whole fleet requires a superuser or a named fleet holder")

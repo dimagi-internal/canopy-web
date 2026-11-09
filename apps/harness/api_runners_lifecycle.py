@@ -34,16 +34,16 @@ from .schemas import (
 @gate("runner", setting=True)
 def retire_runner(request: HttpRequest, runner_id: uuid.UUID):
     """Retire a runner — a decommission, not a liveness state (see
-    Runner.live_status). Idempotent by construction: _runner_or_404 already excludes
-    retired runners, so retiring an already-retired runner 404s at lookup rather than
-    no-opping here. Reversible via /unretire — but see the caveat below.
+    Runner.live_status). Retiring an already-retired runner is a 404 at lookup
+    (_runner_or_404 excludes retired runners), not a no-op. Reversible via
+    /unretire — but see the caveat below.
 
     Deletes the runner's RunnerAssignment rows in the same transaction. A
     retired runner is invisible to _runner_visibility_q, but its stale
     assignment rows were NOT — GET /agents/{slug}/runners kept listing them,
     and PUT /agents/{slug}/runners round-trips that same list to save any
-    unrelated change, so a lingering row 422'd every matrix save with "unknown
-    or retired runner id" (a prod incident 2026-07-25). Ranks of the
+    unrelated change, so a lingering row would 422 every matrix save with "unknown
+    or retired runner id". Ranks of the
     survivors need not be compacted — RunnerAssignment.rank is only ever
     compared relatively (0 = first choice), never assumed contiguous.
 
@@ -102,13 +102,9 @@ def unretire_runner(request: HttpRequest, runner_id: uuid.UUID):
     """Bring a retired runner back, keeping its identity — and therefore every
     RunnerBinding, assignment and session that points at it.
 
-    Retirement used to be impossible to undo, which made it a trap rather than a
-    decision. `_runner_or_404` 404s a retired runner, so its daemon's heartbeat,
-    claim and session-report calls all fail forever once retired; and `pair_runner`
-    unconditionally CREATES a row, so the only recovery — re-pairing — minted a new
-    id and orphaned the old one's bindings. Retiring a laptop you were logged out of
-    therefore silently destroyed its sessions' identity the moment you brought it
-    back (labs 2026-07-25: jj-mbp-cdp, 10 sessions).
+    A retired runner is 404 to its own daemon's heartbeat, claim and session-report
+    calls, and re-pairing would mint a new id and orphan the old one's bindings;
+    this is the way back that keeps the identity.
 
     Restores DISCONNECTED, not ONLINE: liveness is observed, never asserted — the
     next heartbeat is what makes it online (Runner.live_status). Idempotent for an
@@ -126,14 +122,9 @@ def unretire_runner(request: HttpRequest, runner_id: uuid.UUID):
 def pause_runner(request: HttpRequest, runner_id: uuid.UUID, payload: PauseIn):
     """Stop ROUTING work to this runner, without decommissioning it.
 
-    The remote half of the runner's local `~/.canopy/PAUSED` sentinel, which only
-    a human on that machine could ever drop. Jonathan runs the fleet under two
-    macOS accounts for token-limit failover (Runner.host), and moving work off a
-    rate-limited account means silencing its runner FROM THE OTHER ONE — impossible
-    until now, because ~/.canopy there is owned by the other account. The only
-    reachable lever was `retire`, which is a decommission: it deletes
-    RunnerAssignment rows `unretire` does not restore, and it 404s the daemon's own
-    heartbeat and claim calls. This destroys nothing and is reversible by
+    The remote half of the runner's local `~/.canopy/PAUSED` sentinel, so work can
+    be moved off a box (a rate-limited account, say) from anywhere. Unlike `retire`,
+    which is a decommission, this destroys nothing and is reversible by
     construction.
 
     ENFORCED SERVER-SIDE, so it does not depend on the runner cooperating or even

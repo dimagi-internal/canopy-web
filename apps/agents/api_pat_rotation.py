@@ -44,15 +44,20 @@ def get_pat_rotation(request: HttpRequest, slug: str) -> PatRotationOut:
               summary="Turn automatic canopy-pat rotation on or off")
 @gate("agent-admin", setting=True)  # turning it on also asks mint_agent_canopy_token's guard
 def set_pat_rotation(request: HttpRequest, slug: str, payload: PatRotationIn) -> PatRotationOut:
-    """Canopy Vault (canopy-web#1549). When on, every `period_days` (default
-    30) canopy-web mints a new token for the agent's own canopy login, writes
-    it to the agent's `canopy-pat` credential (a runner picks it up at its next
+    """`{enabled, period_days}` (default 30, 1-365). This route only records the
+    setting: while it is on, canopy-web mints a new token for the agent's own
+    canopy login every `period_days` (counted from the last rotation, else from
+    when the credential was last written), stores it in the agent's
+    `CANOPY_WEB_PAT` credential (a runner picks it up at its next
     `canopy cred sync`), keeps the old token valid for 24 h and then revokes it.
-    The agent's token expires (the PAT default, 180 days), so `period_days` is
-    capped 14 days short of that and the token is always replaced first.
-    Turning it on needs the agent to have its own login and a stored
-    `canopy-pat`, and — when that login has ever signed in interactively — a
-    workspace owner (422/403 otherwise). The owner or an admin."""
+    The agent's token expires after the PAT default lifetime, so `period_days`
+    is silently lowered to 14 days short of that and the token is always
+    replaced first. Turning it on is refused (nothing is saved) with 409 when
+    nobody holds a key that could read a new token (no approved device or
+    member vault key), 422 when the agent has no canopy login of its own or no
+    stored `CANOPY_WEB_PAT`, and 403 when that login has ever signed in
+    interactively (it may be a person's) unless the caller is a workspace
+    owner. Turning it off needs only the gate. The agent's owner or an admin."""
 
     agent = agent_for_admin(request, slug)
     before = (agent.pat_rotation_enabled, agent.pat_rotation_days)

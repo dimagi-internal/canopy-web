@@ -108,8 +108,8 @@ def agent_shared_vaults(request: HttpRequest, slug: str):
             summary="May the caller resolve this agent's secrets? (never values)")
 @gate("member")  # no values; reports the resolve gate for the caller
 def agent_credential_access(request: HttpRequest, slug: str) -> AgentCredentialAccessOut:
-    """The cheap check `canopy cred` makes before fetching anything
-    (canopy#850): which backend the agent resolves from, and whether THIS
+    """The cheap check `canopy cred` makes before fetching anything:
+    which backend the agent resolves from, and whether THIS
     caller would be let through `/credentials/resolve` — and as whom.
 
     Session or bearer: it returns no values, so the browser may ask it too.
@@ -182,12 +182,11 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
        - `runner`: pairs a live runner this agent routes to. Mirrors the runner
          credential fetch, whose boundary is "the caller who can claim turns as
          this runner".
-       - `admin`: is the agent's owner or an admin (`Agent.is_admin`) — a human
-         resolving for a local Claude Code session (canopy#850). Not a widening
+       - `admin`: is the agent's owner or an admin (`Agent.is_admin`) — a human resolving for a local Claude Code session. Not a widening
          in substance: an admin can already write every value, swap the vault
          key, and put their own box on the agent to read them back.
        - `license`: holds an ACTIVE license to use the agent directly and names
-         their OWN open direct turn on it in `X-Canopy-Turn-Id` (canopy-web#1704).
+         their OWN open direct turn on it in `X-Canopy-Turn-Id`.
          The read is logged against that turn and license.
        Anyone else — a member, an editor with no direct turn — is refused, and
        told which access to ask for. Tighter than workspace membership on purpose.
@@ -241,7 +240,7 @@ def delete_agent_credential(request: HttpRequest, slug: str, name: str):
             summary="Who read this credential's value, from which box and turn")
 @gate("agent-admin")  # the read log; never a value
 def agent_credential_reads(request: HttpRequest, slug: str, name: str, limit: int = 100):
-    """The read log (canopy-web#1538), newest first. Never the value. The
+    """The read log, newest first. Never the value. The
     agent's owner or an admin — the same people who may set the value."""
     agent = agent_for_admin(request, slug)
     return services.credential_reads(agent, name, limit=max(1, min(limit, 500)))
@@ -274,7 +273,7 @@ def agent_device_keys(request: HttpRequest, slug: str):
             summary="Read-anomaly alerts on this agent's secrets")
 @gate("agent-admin")  # read-anomaly alerts; never a value
 def agent_credential_alerts(request: HttpRequest, slug: str, limit: int = 50):
-    """Canopy Vault (canopy-web#1549), newest first: reads with no turn id by
+    """Credential alerts, newest first: reads with no turn id by
     someone not the owner or an admin, bursts, and
     resolves refused for a bad or missing device proof. At most one per kind
     per hour (`occurrences` counts the rest). The agent's owner or an admin."""

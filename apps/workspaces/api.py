@@ -613,8 +613,10 @@ def create_invite(request: HttpRequest, slug: str, payload: InviteCreateIn) -> S
 @router.get("/{slug}/invites/", response=list[InviteOut], summary="List invites (member-only)",)
 @gate("member", step_up="an invite link")  # tokens only to members.manage
 def list_invites(request: HttpRequest, slug: str) -> list[InviteOut]:
-    """Every member sees who has been invited; only an owner gets each invite's
-    `token` (it is empty for everyone else)."""
+    """Every member sees who has been invited; an invite's `token` is given only to
+    a member who may manage members (admin or owner) and may grant that invite's
+    role (an admin does not get an admin's or owner's link), and is empty for
+    everyone else."""
     m = _membership_or_404(request.user, slug)
     # A pending invite's token IS the invite — the link that admits someone at
     # its role, owner included — and handing it out is an owner's act, like

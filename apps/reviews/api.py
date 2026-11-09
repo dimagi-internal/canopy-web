@@ -687,7 +687,7 @@ def suggest_review(request: HttpRequest, rid: UUID, payload: ReviewSuggestIn) ->
       unguessable and never ambient (not a cookie), so no CSRF check is needed;
     - a member of the review's workspace saving wording edits WITHOUT deciding.
       Before this, a member's only way to keep an edit was "Submit — approve &
-      build", which locks the narrative as the build plan (canopy-web#1266). A
+      build", which locks the narrative as the build plan. A
       session is ambient, so this path is CSRF-checked like /submit/."""
     review = _get_or_404(rid)
 
