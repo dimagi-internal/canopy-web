@@ -208,10 +208,9 @@ def test_an_unexpected_sync_failure_still_serves_the_stored_history(client, ws_a
 def test_a_list_is_capped_and_summarised_so_a_tool_result_stays_readable(agent):
     """The default read is a survey, not the whole archive.
 
-    Measured 2026-09-20 on labs: at the old default of 300 revisions with 4 KB
-    bodies, `skill_history` for ACE returned ~640 KB and 80 revisions of
-    idea-to-pdd were refused outright as too large — so the assistant could not
-    answer the question the page exists to invite.
+    At a default of 300 revisions with 4 KB bodies, `skill_history` returns
+    ~640 KB and a long skill's revisions are refused outright as too large — so
+    the assistant could not answer the question the page exists to invite.
     """
     long_body = "x" * 3000
     c = SkillHistoryCommit.objects.create(

@@ -366,7 +366,7 @@ def test_a_non_member_cannot_answer_a_repo_session_and_leaves_the_buttons(slack,
 
 
 def test_a_person_a_typed_reply_would_confine_cannot_act_and_forks_nothing(slack, linked, alice, hal_session):
-    """A typed reply from them forks to a confined session of their own (#1366). A
+    """A typed reply from them forks to a confined session of their own. A
     button stands for a choice in THIS conversation, so it does not act at all."""
     declare(hal_session.agent, {"ask": {"description": "Ask"}})
     allow(hal_session.agent, role=roles.READ_ONLY, contact=True)

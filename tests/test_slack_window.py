@@ -594,9 +594,9 @@ def test_only_an_owner_sets_the_policy(installation, ws, alice):
 
 def test_a_reply_in_an_old_thread_is_read(settings):
     """History lists threads by PARENT time, so a reply posted inside the window
-    to a day-old thread used to be invisible: on 2026-10-01 a 20-minute read came
+    to a day-old thread must not be invisible: a 20-minute read must not come
     back "(nothing was posted in this window)" while the message it was asked
-    about sat in exactly such a thread."""
+    about sits in exactly such a thread."""
     import unittest.mock as mock
 
     settings.SLACK_HISTORY_THREAD_LOOKBACK_HOURS = 48

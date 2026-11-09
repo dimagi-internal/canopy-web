@@ -116,7 +116,7 @@ def test_mention_queues_a_slack_turn_on_a_private_session(slack, linked, hal, al
 def test_a_routed_runner_without_sessions_is_named_not_reported_as_no_runner(slack, linked, hal, alice):
     """A freshly paired laptop that never declared `sessions` IS routed — it just
     can't take chat. "No runner is set up" sent the first person to hit it chasing
-    identity and routes (2026-10-02); the line must name the box and the cause."""
+    identity and routes; the line must name the box and the cause."""
     from apps.harness.models import Runner, RunnerAssignment
 
     box = Runner.objects.create(name="new-laptop", kind=Runner.EMDASH, owner=alice,
@@ -276,8 +276,8 @@ def test_a_guest_is_a_contact_even_with_a_member_email(slack, installation, hal,
 
 
 def test_a_colleague_on_our_slack_is_a_verified_caller(slack, installation, hal, ws):
-    # Labs 2026-09-26: Gillian — a full member of Dimagi's Slack with no canopy
-    # account — drove Hal from Slack, and her envelope said `verified: false`.
+    # A full member of Dimagi's Slack with no canopy account who drives an agent
+    # from Slack is a verified caller (not `verified: false`).
     from apps.harness.caller_context import build
 
     mention("hal who owns the budget?")
@@ -512,7 +512,7 @@ def test_slash_command_when_bot_is_not_in_the_channel(slack, linked, hal):
 
 def test_slash_command_from_a_contact_is_answered(slack, installation, hal):
     """hal publishes no interface, so a contact is refused on arrival — and told
-    so. It used to say "Sent … the reply will come back here" over a turn that
+    so, rather than saying "Sent … the reply will come back here" over a turn that
     was already cancelled: a promise of a reply that could never come."""
     resp = command("hal draft the update")
     assert resp.json()["text"].startswith("`hal` didn't run this")
@@ -625,7 +625,7 @@ def test_install_callback_rejects_a_foreign_state(slack, ws):
 
 def test_a_second_workspace_joins_a_connected_slack_beside_the_first(slack, installation, ws):
     """One Slack serves several tenants: connecting another ADDS a link and
-    leaves the first tenant's in place (it used to be refused, then re-pointed)."""
+    leaves the first tenant's in place (it is neither refused nor re-pointed)."""
     other = a_workspace("elsewhere")
     c = _link_client(_owner(other))
     start = c.get("/auth/slack/install/", {"workspace": other.slug})
@@ -724,7 +724,7 @@ def test_a_long_reply_is_split_into_whole_posts(slack, linked, hal, django_captu
 
 
 def test_a_reply_renders_as_markdown_tables_included(slack, linked, hal, django_capture_on_commit_callbacks):
-    """A table arrived as rows of pipes (2026-10-09): mrkdwn has no tables, a markdown block does."""
+    """A table must not arrive as rows of pipes: mrkdwn has no tables, a markdown block does."""
     mention("hal summarise")
     body = "**Plan**\n\n| Piece | New? |\n|---|---|\n| `state` meta | **New** |"
     _reply(Turn.objects.get(), {"kind": "assistant", "payload": {"text": body}},
@@ -810,9 +810,9 @@ def bucket(settings):
 
 
 def test_an_image_in_slack_reaches_the_agent_as_an_attachment(slack, linked, hal, bucket):
-    """Slack marks a message carrying a file `subtype: file_share`. It used to be
-    dropped with the edits and joins, so a reply with a screenshot vanished; now
-    the file becomes a session attachment the runner downloads, like a web one."""
+    """Slack marks a message carrying a file `subtype: file_share`. It is not
+    dropped with the edits and joins (a reply with a screenshot would vanish); the
+    file becomes a session attachment the runner downloads, like a web one."""
     from apps.canopy_sessions.models import Attachment
 
     mention("hal first")
@@ -852,7 +852,7 @@ def test_without_the_files_scope_slack_answers_a_web_page_and_the_agent_is_told(
 
 
 def test_without_the_files_scope_slack_redirects_to_sign_in_and_the_agent_is_told(slack, linked, hal, bucket):
-    """What Slack actually does in production (2026-10-05) without `files:read`:
+    """What Slack does in production without `files:read`:
     a redirect to the workspace's sign-in page, which then 403s. That read as a
     generic "could not be downloaded", hiding the one fix — the scope."""
     from apps.canopy_sessions.models import Attachment
@@ -1264,7 +1264,7 @@ def test_an_offline_runner_says_it_is_blocked(slack, linked, hal, alice):
 
 def test_continuing_from_the_web_while_the_runner_is_offline_still_tells_the_thread(
         slack, linked, hal, alice, django_capture_on_commit_callbacks):
-    """The gap this closes (2026-09-21). A Slack-born conversation continued from
+    """The gap this closes: a Slack-born conversation continued from
     canopy-web or a phone got its line only when a runner CLAIMED the turn —
     and an offline runner never claims. So the thread heard nothing: not the
     question, not that it was stuck. Meanwhile the chat page, driven by the
@@ -1331,7 +1331,7 @@ def test_the_line_is_edited_as_the_turn_moves(slack, linked, hal, alice, django_
 
 def test_a_follow_up_sent_mid_turn_says_it_is_queued_behind_then_moves(
         slack, linked, hal, alice, django_capture_on_commit_callbacks):
-    """canopy-web#1147: a follow-up sent while the thread's previous message is
+    """A follow-up sent while the thread's previous message is
     still executing is held by the claim, so "picking this up" was a promise
     nothing kept and the message looked lost. It says it is queued behind, then
     moves on its own when the turn ahead ends."""
@@ -1360,7 +1360,7 @@ def test_a_follow_up_sent_mid_turn_says_it_is_queued_behind_then_moves(
 
 def test_a_follow_up_mid_turn_is_delivered_into_the_running_turn(
         slack, linked, hal, alice, django_capture_on_commit_callbacks):
-    """canopy-web#1153: on a runner that delivers mid-turn the follow-up is not
+    """On a runner that delivers mid-turn the follow-up is not
     queued behind at all — it is claimed into the running turn, says it is being
     worked on, and finishes when that turn does."""
     runner = _runner("jj-mbp", runner_owner=alice, agent=hal)
@@ -1567,8 +1567,8 @@ def test_a_marked_prompt_delivered_by_a_slack_turn_is_not_announced(
 
 
 def test_the_agent_reading_an_image_is_not_someone_typing(bound, slack, django_capture_on_commit_callbacks):
-    # Labs 2026-09-26: after a Slack turn ended, Hal finished waiting on a deploy,
-    # Read its own screenshot, and wrote the answer. Reading an image makes Claude
+    # After a Slack turn ends, an agent that finishes waiting on a deploy,
+    # reads its own screenshot, and writes the answer. Reading an image makes Claude
     # Code write "[Image: original WxH, ...]" as a `type: "user"` record — which
     # posted "carrying on directly in the agent's session" AND, by becoming the
     # latest human message, stopped the answer itself reaching the thread.
@@ -1636,8 +1636,8 @@ def test_a_runner_dying_mid_turn_is_noticed_and_pinged_once(slack, linked, hal, 
 
 def test_a_working_turn_that_goes_quiet_says_so_and_recovers(slack, linked, hal, alice,
                                                             django_capture_on_commit_callbacks):
-    """2026-10-17: a box whose token was revoked kept heartbeating, claimed turns
-    and could report nothing back — each read "working on this" for its whole
+    """A box whose token was revoked keeps heartbeating, claims turns
+    and can report nothing back — each would read "working on this" for its whole
     lease. After QUIET_AFTER_SECONDS the line states the fact instead, in Slack
     date tokens so the sweep does not edit it every minute."""
     from apps.harness.models import TurnEvent
@@ -1801,8 +1801,7 @@ def test_a_lost_turn_can_be_run_again_on_the_cloud(slack, linked, hal, alice, cl
 #
 # emdash ends a turn when the agent yields to background work, so the ledger relay
 # posts what was written up to then; the real answer (after CI, a merge, a deploy)
-# arrives only on the transcript stream. 2026-09-19: the summary of the change that
-# built the status line never reached the thread that asked for it.
+# arrives only on the transcript stream.
 
 def _yielded(bound, capture, bridged="Waiting on CI — back when it lands."):
     """The Slack turn delivered, bridged its reply so far, then closed on a yield."""
@@ -1839,7 +1838,7 @@ def test_text_already_bridged_by_the_turn_is_not_posted_again(bound, slack, djan
 
 def test_a_reply_to_something_typed_in_emdash_reaches_the_thread_but_the_typing_does_not(
         bound, slack, django_capture_on_commit_callbacks):
-    """Owner decision, 2026-10-05: a conversation that lives in a Slack thread
+    """A conversation that lives in a Slack thread
     keeps the thread in step even when someone carries it on from the laptop —
     the agent's replies are posted; what was typed in emdash is not."""
     session, runner, runner_owner = _yielded(bound, django_capture_on_commit_callbacks)
@@ -1856,7 +1855,7 @@ def test_a_reply_to_something_typed_in_emdash_reaches_the_thread_but_the_typing_
 
 def test_something_typed_in_emdash_during_the_slack_turn_does_not_hold_back_the_answer(
         bound, slack, django_capture_on_commit_callbacks):
-    """2026-10-02: the owner added a screenshot in emdash while the Slack turn was
+    """The owner adds a screenshot in emdash while the Slack turn is
     running. The turn then yielded to a merge-wait, and the merge, the deploy and
     the summary never reached the thread — the mid-turn note was the latest human
     message, so the guard read the conversation as having moved into emdash."""
@@ -1882,7 +1881,7 @@ def test_something_typed_in_emdash_during_the_slack_turn_does_not_hold_back_the_
 
 def test_a_reply_to_a_slack_message_with_an_attachment_reaches_the_thread(
         bound, slack, django_capture_on_commit_callbacks):
-    """2026-10-05: the runner appends "The user attached the following file…" to
+    """The runner appends "The user attached the following file…" to
     the prompt it types, so the transcript's copy of the person's message is no
     longer the turn's prompt — and every reply after the turn closed was held
     back as if the conversation had moved into emdash. Seen exactly as stored:
@@ -1942,7 +1941,7 @@ def test_connecting_the_token_rotates_it_and_syncs_enabled_agents(slack, hal, in
     bot = set(slack.manifest["oauth_config"]["scopes"]["bot"])
     assert set(BOT_SCOPES) <= bot
     assert "files:read" in managed["scopes_added"]
-    # And it is declared an agent in the same sync — no button (owner decision, 2026-10-16).
+    # And it is declared an agent in the same sync — no button.
     assert slack.manifest["features"]["agent_view"]["agent_description"]
     assert managed["declared"] and installation.agent_declared_at is not None
 
@@ -2255,8 +2254,8 @@ def test_a_stop_for_a_thread_we_do_not_know_is_harmless(slack, linked, hal, alic
 
 # ---- declaring the app an agent ----------------------------------------------------
 #
-# The manifest edits that make Slack draw its own indicator. Every sync makes them
-# (since 2026-10-16); the owner-only endpoint stays for an operator.
+# The manifest edits that make Slack draw its own indicator. Every sync makes them;
+# the owner-only endpoint stays for an operator.
 
 
 def _declare(owner_client, ws):
@@ -2312,7 +2311,7 @@ def test_declaring_without_a_config_token_says_so(slack, ws, installation, owner
 
 def test_a_confined_reply_says_it_is_a_separate_session(slack, installation, hal):
     """In Slack a confined turn looks exactly like typing into the thread, but it
-    runs in its own session on the runner. Shayoni's reply did this, 2026-10-01."""
+    runs in its own session on the runner."""
     _read_mode_for_contacts(hal, "Ask Hal")
     mention("hal who owns the budget?")
     assert Turn.objects.get().capability == "ask"
@@ -2338,8 +2337,8 @@ def _read_mode_for_contacts(agent, description="Ask"):
 
 
 def test_a_confined_reply_in_a_members_thread_forks_to_its_own_thread(slack, linked, hal, alice):
-    """2026-10-09: a colleague's correction on an ace thread queued behind the owner's
-    turn and was answered in a side session nobody could find. It now gets its own
+    """A colleague's correction on an agent thread that queues behind the owner's
+    turn must not be answered in a side session nobody can find. It gets its own
     Slack thread and session, and the original thread links to it."""
     from apps.harness import routing
 

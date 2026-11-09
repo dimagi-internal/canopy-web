@@ -268,8 +268,8 @@ def test_the_turn_api_carries_the_initiator_by_name(ctx):
 
 
 def test_a_turn_the_agent_started_as_itself_says_so(ctx):
-    """2026-10-08: ACE read its own Labs-widget test runs (initiator ace@) as a
-    person's requests and attributed them to someone in Slack. The initiator now
+    """An agent's own widget test runs (initiator ace@) must not read as a
+    person's requests attributed to someone in Slack. The initiator
     says outright that it is the agent's own login."""
     owner, _ws, agent = ctx
     login = User.objects.create_user("echo-bot", "echo@dimagi-ai.com", "pw")

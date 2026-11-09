@@ -1,10 +1,9 @@
 """Repo turns route by the workspace's runner order.
 
-A repo turn (a project dispatch: no agent, no chat session) never had a ranking —
-`_assignment_allows` only ever ran for agent turns — so every online runner that
-declared the repo raced for it and the first poll won. Observed 2026-10-02: a
-canopy-web dispatch was claimed by a second macOS account's runner 126 ms after
-enqueue while the owner's runner, rank 0 in every agent's order, was online.
+A repo turn (a project dispatch: no agent, no chat session) is ranked by the
+workspace's runner order. Without it every online runner that declared the repo
+races for it and the first poll wins, even while the owner's runner, rank 0 in
+every agent's order, is online.
 """
 from __future__ import annotations
 
@@ -72,7 +71,7 @@ def test_without_an_order_any_declaring_runner_claims(fleet):
 
 
 def test_an_unlisted_runner_never_claims(fleet):
-    """The 2026-10-02 case: haldimagi polled first and won. Not any more."""
+    """A runner that polls first but is not listed does not win."""
     _jj, ws, first, second, hal = fleet
     _order(ws, first, second)
     _turn(ws, age_seconds=3600)  # past the grace too — unlisted is unlisted

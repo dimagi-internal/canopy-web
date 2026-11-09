@@ -1,7 +1,7 @@
 # ruff: noqa: F811 — the fixtures below are imported from test_slack and then requested by name.
 """A message that reaches no agent says why, and how to reach one.
 
-The motivating case, 2026-10-01: a colleague typed `@canopy can you search and
+The motivating case: a colleague typed `@canopy can you search and
 summarize slack for me?` as a reply in a thread an agent had answered in. No
 agent was named, so it went to that thread's agent; the agent offers nothing to
 this caller, so the turn was written cancelled — and the only thing Slack said
@@ -130,8 +130,8 @@ def test_an_unnamed_message_to_a_closed_conversation_posts_a_notice_with_a_butto
 
 
 def test_a_plain_reply_in_a_closed_thread_is_never_silent(slack, linked, hal, ace):
-    """Sophie's case, 2026-10-26: the first reply got a note only she could see,
-    and every later one was dropped without a word."""
+    """The first reply gets a note only the sender can see,
+    and no later one is dropped without a word."""
     _closed_thread(hal)
     for i in range(3):   # people keep talking in the thread after the agent is gone
         _plain("still there?", f"1700000000.00095{i}")

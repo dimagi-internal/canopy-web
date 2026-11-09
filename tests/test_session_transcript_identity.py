@@ -1,20 +1,20 @@
-"""A session's rows belong to ONE transcript — the guard for issue #615.
+"""A session's rows belong to ONE transcript — the ordinal-space guard.
 
 A `RunnerBinding` is keyed on the emdash task NAME, and names are reused: close a
 task called "bednet", open another, and the binding is silently re-pointed at a
 new conversation with the previous one's Message rows still attached. That alone
 renders one session as another. What made it unrecoverable is that `turn_index` is
 a PER-FILE ordinal, so the first_index/last_index markers the server derives from
-the old rows are meaningless against the new file — measured on prod 2026-08-14, a
-593-record predecessor left last_index=37,696 against a live 384-record transcript
-whose highest possible ordinal was 24,575, so every record of the live session sat
-below the marker and shipped nothing for 23.5 hours.
+the old rows are meaningless against the new file — a
+593-record predecessor leaves last_index=37,696 against a live 384-record transcript
+whose highest possible ordinal is 24,575, so every record of the live session sits
+below the marker and ships nothing.
 
 `ensure_transcript_identity` is the sibling of `_ensure_current_ordinal_scheme`:
 the other way a session's ordinal space is invalidated. A changed transcript opens
-a new EPOCH above the held rows rather than dropping them (issue #1731: a
-credential failover moved a live session to a fresh claude conversation and the
-drop deleted history nothing could re-derive). Name reuse — the case dropping was
+a new EPOCH above the held rows rather than dropping them (a
+credential failover moves a live session to a fresh claude conversation, and
+dropping would delete history nothing can re-derive). Name reuse — the case dropping was
 built for — is caught earlier by the forks. Only rows of unknown provenance (a
 blank recorded id) are still dropped and re-derived.
 """
@@ -55,7 +55,7 @@ def _rows(session, indices, prefix="old"):
 
 
 def test_a_different_transcript_keeps_the_held_rows_and_opens_an_epoch():
-    """Issue #1731: same session, new claude conversation (a credential failover
+    """Same session, new claude conversation (a credential failover
     that could not resume). The new file holds none of the old history, so the
     old rows are the only copy left — they stay, and the new file lands above."""
     session, binding = _ctx(transcript_id="fc41aa1a")
@@ -71,7 +71,7 @@ def test_a_different_transcript_keeps_the_held_rows_and_opens_an_epoch():
 
 
 def test_the_new_transcript_lands_above_the_old_one_without_colliding():
-    """The #615 hazard the drop used to prevent: the new file's ordinals restart
+    """The hazard of mixed ordinal spaces: the new file's ordinals restart
     near 0 and would collide with, or sort among, the old ones. The epoch shifts
     them past the high-water mark instead, so the render stays chronological."""
     session, binding = _ctx(transcript_id="fc41aa1a")

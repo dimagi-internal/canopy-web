@@ -1,9 +1,8 @@
 # ruff: noqa: F811 — the fixtures below are imported from test_slack and then requested by name.
-"""A whole Slack channel, read for an agent — only with permission (canopy-web#1533).
+"""A whole Slack channel, read for an agent — only with permission.
 
 Driven through the real REST routes and the real signed interactions webhook,
-with Slack faked at the `requests` boundary as in test_slack.py. What is pinned
-is the issue's list: nothing is read before approval; the agent's login cannot
+with Slack faked at the `requests` boundary as in test_slack.py. What is pinned: nothing is read before approval; the agent's login cannot
 approve; a non-member cannot approve; a decline reads nothing; revoke stops
 follow; pagination resumes after a rate limit; only the requesting agent reads
 the transcript.
@@ -395,7 +394,7 @@ def test_an_admin_or_owner_can_allow_list_but_not_a_member(channel, installation
 
 
 def test_an_allow_listed_channel_is_never_read_from_the_api(allowed, channel, ws, hal_login, slack):
-    """Owner decision, 2026-10-16: a read starts only from a person in Slack."""
+    """A read starts only from a person in Slack."""
     for ref in (CHAN, "#canopy-support"):
         channel.reads.clear()
         resp = _link_client(hal_login).post("/api/slack-ingests/", {"agent": "hal", "channel": ref, "purpose": "x"},

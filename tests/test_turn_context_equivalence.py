@@ -10,7 +10,7 @@ compared by nobody: they are `apps/agents/refusals.py`'s, and Stage 4 rewrote th
 
 A difference means someone's access would change. The fix is in the resolver, never here.
 
-One change was made on purpose: on 2026-11-06 the owner removed the `session_writer` rule, in the resolver
+One change is on purpose: the `session_writer` rule is absent, in the resolver
 and in the reference alike. `test_being_added_to_an_admins_session_no_longer_raises_access` names the cases
 that changed.
 """
@@ -341,7 +341,7 @@ def test_being_in_a_session_gives_nobody_more_than_their_own_line(people, creato
 
 
 #: The cases the removal changed: an editor or owner participant in a session the agent's owner or an admin
-#: started. Before 2026-11-06 every one of them was `full` (basis `session:<role>`); now each answers by their
+#: started. Under the removed rule every one of them was `full` (basis `session:<role>`); now each answers by their
 #: own line. `(person, sensitive, requested) -> (access, stamp, basis, refusal code)`.
 CHANGED = {
     ("outsider", False, None): ("none", None, "refused", "not_on_access_list"),

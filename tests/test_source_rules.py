@@ -35,12 +35,10 @@ def _rows(agent, origin, actor=""):
 
 
 def test_a_source_rule_may_now_hold_several_runners_in_rank_order():
-    """DELIBERATE RELAXATION (spec 2026-09-05). This used to raise IntegrityError:
-    the old `one_priority_runner_per_agent_source` capped a rule at one runner.
+    """A source rule is a rank-ordered LIST of runners, not capped at one.
 
-    That cap could not express the operator's real case — "either of my two macOS
-    accounts, never cloud", where which account is live rotates — so a rule became
-    a rank-ordered LIST. `rank` was already reserved for this by the source spec.
+    A one-runner cap could not express "either of my two macOS accounts, never
+    cloud", where which account is live rotates.
     """
     a, r1, r2 = _agent(), _runner("r1"), _runner("r2")
     RunnerAssignment.objects.create(agent=a, runner=r1, rank=0, source=Turn.ORIGIN_EMAIL)

@@ -1,10 +1,10 @@
 """Uploaded HTML never runs as the viewer.
 
 A walkthrough deck (or a DDD docs page) is HTML an editor or an agent wrote,
-served from canopy's own origin. It used to go out as plain `text/html` with no
-CSP, framed by viewers sandboxed `allow-scripts allow-same-origin` — which on a
-same-origin URL is no sandbox: a script in the deck could call the
-cookie-authenticated API as whoever opened it. The content response now carries
+served from canopy's own origin. Served as plain `text/html` with no
+CSP, framed by viewers sandboxed `allow-scripts allow-same-origin`, it would have no
+sandbox on a same-origin URL: a script in the deck could call the
+cookie-authenticated API as whoever opened it. The content response carries
 a `sandbox` CSP, which holds even when the URL is opened directly (no frame), so
 the document always lands in an opaque origin.
 """

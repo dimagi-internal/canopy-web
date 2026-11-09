@@ -256,7 +256,7 @@ def test_a_review_chat_refuses_what_it_would_refuse_and_narrows_the_rest(w):
 
 
 def test_an_editor_in_the_owners_own_session_answers_by_their_own_line(w):
-    """`session_writer` was removed on 2026-11-06: being added to a session raises nobody's access."""
+    """There is no `session_writer` rule: being added to a session raises nobody's access."""
     session = _chat(w)
     SessionParticipant.objects.create(session=session, user=w.stranger, role=SessionParticipant.EDITOR)
     SessionParticipant.objects.create(session=session, user=w.reader, role=SessionParticipant.OWNER)

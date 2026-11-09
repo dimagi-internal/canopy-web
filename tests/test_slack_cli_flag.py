@@ -1,6 +1,6 @@
 # ruff: noqa: F811 — the fixtures below are imported from test_slack and then requested by name.
 """`@canopy hal --codex <ask>`: a Slack thread chooses the agent CLI its conversation
-runs on (spec 2026-10-26-multi-cli-agents §1). The flag is read where a
+runs on. The flag is read where a
 conversation starts; a thread keeps the CLI it started on."""
 from __future__ import annotations
 

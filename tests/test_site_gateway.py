@@ -305,8 +305,7 @@ def test_a_sensitive_conversation_with_no_claiming_runner_is_refused(w):
 
 
 def _declared(w):
-    """`connect` handles sensitive data: what a sensitive conversation's data needs (spec
-    2026-10-22-sensitive-data-agents §6)."""
+    """`connect` handles sensitive data: what a sensitive conversation's data needs."""
     caps = dict(IFACE["capabilities"])
     caps["connect"] = {**caps["connect"], "data": "sensitive"}
     declare(w["agent"], caps)

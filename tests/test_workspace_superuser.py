@@ -1,6 +1,6 @@
 """The workspace SUPERUSER role, and the workspace controls it holds.
 
-Asked for on 2026-10-30: superuser exists at two levels — the system (`User.is_superuser`,
+Superuser exists at two levels — the system (`User.is_superuser`,
 the whole fleet's switches) and a workspace — and both are first class. A workspace
 superuser holds everything an owner does, in the workspace and every one below it, as
 OVERSIGHT: the owner is told (blocking alerts, access requests), the superuser is not.

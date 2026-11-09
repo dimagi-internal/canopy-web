@@ -1,13 +1,11 @@
 """Moving a LIVE session between runners, history and all.
 
-The regression these pin is not hypothetical and was not found by reading: on
-2026-09-12 session 169212e2 was moved from `cloud-ec2-1` to `jj-mbp-cdp` by hand,
-with `place` + `send` (the closest thing that existed). Execution moved correctly
-— and every one of the session's 60+ pre-transfer Message rows was deleted the
-moment the laptop shipped its first transcript, because a new box necessarily
-opens a new claude session and `ensure_transcript_identity` reads a changed
-`transcript_id` as "these rows are another conversation's". `has_more_before`
-came back `false` with the oldest surviving row at index 448.
+The regression these pin: moving a session between boxes by hand, with `place` +
+`send`, moves execution correctly — and would delete every pre-transfer Message
+row the moment the new box shipped its first transcript, because a new box
+necessarily opens a new claude session and `ensure_transcript_identity` would
+read a changed `transcript_id` as "these rows are another conversation's".
+`has_more_before` would come back `false` with the oldest surviving row at a high index.
 
 So the history test below is the point of the feature, not a detail of it.
 """
@@ -104,7 +102,7 @@ def test_transfer_preserves_history_when_the_new_box_ships_a_new_transcript():
 
 def test_a_later_transcript_change_opens_another_epoch_above_the_transfer():
     """A transcript change on the new box stacks a further epoch: the inherited
-    rows and the new box's first transcript both stay (issue #1731)."""
+    rows and the new box's first transcript both stay."""
     _u, ws, cloud, laptop, _c = _ctx()
     s = _bound_session(ws, cloud, indices=(0, 64))
     session_placement.transfer_session(session=s, placement=str(laptop.id))
@@ -213,8 +211,7 @@ def test_transfer_re_pins_later_unrouted_sends_to_the_target():
 
 
 def test_transferring_back_does_not_dedupe_onto_the_outbound_turn():
-    """Both directions in one day is the NORMAL shape of a failover (ada's
-    user-switch measured it on 2026-07-31), so the idempotency key must not
+    """Both directions in one day is the NORMAL shape of a failover, so the idempotency key must not
     collapse the return leg onto the outbound one."""
     _u, ws, cloud, laptop, _c = _ctx()
     s = _bound_session(ws, cloud)
@@ -300,8 +297,8 @@ def test_the_targets_first_report_does_not_reset_the_epoch():
 def test_streams_report_markers_in_the_runners_own_ordinal_space():
     """The runner compares these against ordinals from its OWN file, so the
     offset must be undone on the way out. Unfiltered, the inherited high-water
-    mark would be unreachable and the live conversation would never ship — #615's
-    failure, reintroduced by preserving history."""
+    mark would be unreachable and the live conversation would never ship — the
+    stuck-marker failure, reintroduced by preserving history."""
     _u, ws, cloud, laptop, c = _ctx()
     s = _bound_session(ws, cloud, indices=(0, 64, 128))
     session_placement.transfer_session(session=s, placement=str(laptop.id))
