@@ -245,6 +245,82 @@ def test_the_keep_answer_cannot_change_what_was_allowed(lili, client_id):
     assert grant.expires_at - timezone.now() <= dt.timedelta(hours=1)
 
 
+def _after_act_one(c, client_id, *, scope=READ):
+    """Answer act 1 and return the nonce act 2 must present."""
+    _, challenge = _pkce()
+    r = c.post(AUTHORIZE, {**_params(client_id, challenge, scope=scope), "step": "allow"})
+    assert r.status_code == 200 and b"keep this access" in r.content
+    return re.search(rb'name="nonce" value="([^"]+)"', r.content).group(1).decode()
+
+
+def _nothing_was_made(r):
+    assert r.status_code == 400 and "Location" not in r             # shown, never redirected to
+    assert not PersonGrant.objects.exists()
+    from apps.contacts.models import HcpAuthorizationCode
+    assert not HcpAuthorizationCode.objects.exists()
+    assert not PersonAuditEvent.objects.filter(event_type="grant.issued").exists()
+
+
+def test_a_client_disabled_between_the_acts_gets_no_grant_and_no_code(lili, client_id, admin):
+    c = _as(lili)
+    nonce = _after_act_one(c, client_id)
+    assert _patch(admin, client_id, {"disabled": True}).status_code == 200
+    r = c.post(AUTHORIZE, {"step": "keep", "nonce": nonce, "keep": "yes"})
+    _nothing_was_made(r)
+    assert b"disabled" in r.content
+
+
+def test_scopes_narrowed_between_the_acts_get_no_grant_and_no_code(lili, client_id, admin):
+    c = _as(lili)
+    nonce = _after_act_one(c, client_id, scope=f"{READ} {WRITE}")
+    assert _patch(admin, client_id, {"allowed_scopes": [READ]}).status_code == 200
+    r = c.post(AUTHORIZE, {"step": "keep", "nonce": nonce, "keep": "yes"})
+    _nothing_was_made(r)
+    assert WRITE.encode() in r.content
+
+
+def test_a_client_deleted_between_the_acts_gets_no_grant_and_no_code(lili, client_id):
+    c = _as(lili)
+    nonce = _after_act_one(c, client_id)
+    HcpClient.objects.filter(client_id=client_id).delete()
+    r = c.post(AUTHORIZE, {"step": "keep", "nonce": nonce, "keep": "yes"})
+    _nothing_was_made(r)
+    assert b"not registered" in r.content
+
+
+def test_a_return_address_removed_between_the_acts_is_not_redirected_to(lili, client_id):
+    c = _as(lili)
+    nonce = _after_act_one(c, client_id)
+    HcpClient.objects.filter(client_id=client_id).update(redirect_uris=["https://other.example/cb"])
+    _nothing_was_made(c.post(AUTHORIZE, {"step": "keep", "nonce": nonce, "keep": "yes"}))
+
+
+def test_an_unchanged_client_still_gets_its_grant_and_code_at_the_keep_step(lili, client_id, admin):
+    """Edits that leave the request valid (a wider allowed list, a rename) change nothing."""
+    c = _as(lili)
+    nonce = _after_act_one(c, client_id, scope=READ)
+    assert _patch(admin, client_id, {"allowed_scopes": [READ]}).status_code == 200
+    r = c.post(AUTHORIZE, {"step": "keep", "nonce": nonce, "keep": "yes"})
+    assert r.status_code == 302 and r["Location"].startswith(REDIRECT) and "code=" in r["Location"]
+    assert PersonGrant.objects.get().scopes == [READ]
+    assert PersonAuditEvent.objects.filter(event_type="grant.issued").count() == 1
+
+
+def test_the_acts_state_cannot_be_replayed_to_widen_scopes(lili, bob, client_id, admin):
+    # A nonce holds what act 1 showed; neither a wider scope posted with act 2 nor
+    # another person's session can use it, and a refused keep spends it.
+    nonce = _after_act_one(_as(lili), client_id, scope=READ)
+    r = _as(bob).post(AUTHORIZE, {"step": "keep", "nonce": nonce, "keep": "yes", "scope": f"{READ} {WRITE}"})
+    assert r.status_code == 400 and not PersonGrant.objects.exists()
+    assert _patch(admin, client_id, {"disabled": True}).status_code == 200
+    c = _as(lili)
+    _nothing_was_made(c.post(AUTHORIZE, {"step": "keep", "nonce": nonce, "keep": "yes",
+                                          "scope": f"{READ} {WRITE}"}))
+    assert _patch(admin, client_id, {"disabled": False}).status_code == 200
+    assert c.post(AUTHORIZE, {"step": "keep", "nonce": nonce, "keep": "yes"}).status_code == 400
+    assert not PersonGrant.objects.exists()
+
+
 def test_the_keep_nonce_works_once(lili, client_id):
     _, challenge = _pkce()
     p = _params(client_id, challenge)

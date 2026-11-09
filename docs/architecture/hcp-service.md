@@ -68,7 +68,13 @@ self-audit against the spec is `hcp-conformance.md`.
 6. **Act 2, separately.** "Do you want *X* to keep this access after that, until
    you turn it off yourself?" The page has two buttons, neither styled as the
    default, and nothing is pre-selected.
-7. **Only after act 2** is the `PersonGrant` written (temporary or persistent,
+7. **Only after act 2, and a second look at the client.** Before anything is
+   written the request is validated again against the registry as it now stands
+   (`hcp_oauth.recheck_pending`): the client must still exist and be enabled, the
+   return address must still be registered, and every scope must still be one the
+   service holds and one the client's `allowed_scopes` names. A client disabled,
+   deleted or narrowed between the acts is shown the error page, never redirected
+   to, and no grant, code or `grant.issued` is made. Then the `PersonGrant` is written (temporary or persistent,
    `hcp_client` set) and `grant.issued` audited. The audit records the client,
    operator, type, expiry, modality, scopes and restrictions. A code is issued and
    the person is redirected.
