@@ -84,7 +84,6 @@ from dataclasses import dataclass
 from django.db.models import Q
 from django.utils import timezone
 
-from apps.agents.models import Agent
 from apps.harness import runner_requirements as rr
 from apps.harness import runners, sensitivity
 from apps.harness.models import Runner, Turn
