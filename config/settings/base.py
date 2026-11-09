@@ -100,6 +100,7 @@ INSTALLED_APPS = [
     "apps.workspace_apps",
     "apps.local_apps",
     "apps.meetings",
+    "apps.listen",
     "apps.mcp",
     "apps.session_sharing",
     "apps.push",

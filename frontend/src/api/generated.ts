@@ -4685,6 +4685,111 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/listen/runners": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Your computers a phone can record to
+         * @description Your runners, each with whether it is online now (its daemon beat in the last 90 seconds).
+         */
+        readonly get: operations["list_listen_runners"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/listen/sessions": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Open a listen session
+         * @description Open a relay from this phone to one of your computers, and tell that computer.
+         *
+         *     `hello` carries public keys only. 404 when the runner isn't yours, 409 when it is
+         *     offline or (for a meeting) already has one running.
+         */
+        readonly post: operations["open_listen_session"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/listen/sessions/{session_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * A listen session
+         * @description One of your listen sessions: its kind, state and, once ended, why.
+         */
+        readonly get: operations["get_listen_session"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/listen/sessions/{session_id}/end": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * End a listen session
+         * @description End one of your listen sessions now; both of its sockets are closed.
+         */
+        readonly post: operations["end_listen_session"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/runner/listen-sessions/pending": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Listen sessions waiting for this runner
+         * @description Sessions waiting for this runner, made in the last 2 minutes: the fallback when
+         *     its control socket is down. A runner's own key reads its own; a person's token
+         *     reads the runner named by `runner_id`, or all of theirs.
+         */
+        readonly get: operations["pending_listen_sessions"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/{runner_id}/local-apps/": {
         readonly parameters: {
             readonly query?: never;
@@ -27004,6 +27109,109 @@ export interface components {
              * @default
              */
             readonly ask: string;
+        };
+        /** ListenRunnerOut */
+        readonly ListenRunnerOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Name */
+            readonly name: string;
+            /** Online */
+            readonly online: boolean;
+        };
+        /** ListenRunnersOut */
+        readonly ListenRunnersOut: {
+            /** Items */
+            readonly items: readonly components["schemas"]["ListenRunnerOut"][];
+        };
+        /** ListenSessionCreated */
+        readonly ListenSessionCreated: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+        };
+        /** ListenHello */
+        readonly ListenHello: {
+            /** Phone Eph */
+            readonly phone_eph: string;
+            /** Phone Key */
+            readonly phone_key?: string | null;
+            /**
+             * Label
+             * @default
+             */
+            readonly label: string;
+        };
+        /** ListenSessionIn */
+        readonly ListenSessionIn: {
+            /**
+             * Runner Id
+             * Format: uuid
+             */
+            readonly runner_id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "pair" | "meeting";
+            readonly hello: components["schemas"]["ListenHello"];
+        };
+        /** ListenSessionOut */
+        readonly ListenSessionOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "pair" | "meeting";
+            /**
+             * State
+             * @enum {string}
+             */
+            readonly state: "waiting" | "live" | "ended";
+            /** End Reason */
+            readonly end_reason: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+        };
+        /** PendingListenSession */
+        readonly PendingListenSession: {
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            readonly session_id: string;
+            /**
+             * Runner Id
+             * Format: uuid
+             */
+            readonly runner_id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "pair" | "meeting";
+            /** Hello */
+            readonly hello: {
+                readonly [key: string]: unknown;
+            };
+        };
+        /** PendingListenSessionsOut */
+        readonly PendingListenSessionsOut: {
+            /** Items */
+            readonly items: readonly components["schemas"]["PendingListenSession"][];
         };
         /** RunnerLocalAppOut */
         readonly RunnerLocalAppOut: {
@@ -56453,6 +56661,116 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["MeetingFollowUpOut"];
+                };
+            };
+        };
+    };
+    readonly list_listen_runners: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ListenRunnersOut"];
+                };
+            };
+        };
+    };
+    readonly open_listen_session: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ListenSessionIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ListenSessionCreated"];
+                };
+            };
+        };
+    };
+    readonly get_listen_session: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ListenSessionOut"];
+                };
+            };
+        };
+    };
+    readonly end_listen_session: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ListenSessionOut"];
+                };
+            };
+        };
+    };
+    readonly pending_listen_sessions: {
+        readonly parameters: {
+            readonly query?: {
+                readonly runner_id?: string | null;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PendingListenSessionsOut"];
                 };
             };
         };

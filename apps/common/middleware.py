@@ -225,7 +225,11 @@ def _is_storyboard_link(request) -> bool:
 # PUBLIC_PATH_PREFIXES, and /get-started reads nothing anonymously — so a
 # future route that merely begins "/about" (e.g. "/about-billing", "/aboutus")
 # does not silently become public too.
-_PUBLIC_PAGES = frozenset({"/about", "/get-started"})
+# /listen is the phone's recording page: its shell must load before sign-in so the
+# page can take the pairing secret out of the QR link's `#pair=` fragment (which a
+# redirect to Google would drop) before the app sends a signed-out phone to sign in.
+# The shell reads nothing; every /api/listen/ route needs a session.
+_PUBLIC_PAGES = frozenset({"/about", "/get-started", "/listen"})
 
 
 def _is_public_page(path: str) -> bool:
