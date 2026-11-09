@@ -2,6 +2,10 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.29.1 — 2026-11-09
+
+Comment and docstring wording only; no behaviour change.
+
 ## 0.29.0 — 2026-11-07
 
 **Runner attestations: a host site learns which approved runner made a request.**

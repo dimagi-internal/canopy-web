@@ -31,7 +31,24 @@ HISTORY = re.compile(
     re.I,
 )
 # A string that LOOKS like history and is not: {(path, the matched text): why}. A stale entry fails.
-ALLOW: dict[tuple[str, str], str] = {}
+ALLOW: dict[tuple[str, str], str] = {
+    ("apps/harness/aws_iam_proof.py", "2011-06-15"): "the AWS STS API version sent in the request body",
+    ("apps/host_grants/client_identity.py", "2026-07-28"): "an MCP protocol revision id",
+    ("apps/mcp/project_gateway.py", "2026-07-28"): "an MCP protocol revision id",
+    ("apps/mcp_apps_host/mcp_apps.py", "2026-01-26"): "the MCP Apps spec version, also PROTOCOL_VERSION",
+    ("apps/reviews/schemas.py", "2026-10-07"): "an example run-id format",
+    ("apps/runs/ddd.py", "2026-05-29"): "an example run-id format the code parses",
+    ("apps/runs/tests/test_aggregate.py", "2026-07-14"): "a run-id example the test uses as data",
+    ("apps/runs/timeline.py", "2026-06-02"): "an example run-id format the code parses",
+    ("runner/canopy_runner/canopy_runner/inbox_rules.py", "2026-09-24"):
+        "vendored byte-identical from canopy; tests/test_inbox_rules_vendored.py pins its sha256",
+    ("runner/canopy_runner/canopy_runner/inbox_rules.py", "canopy#653"): "same vendored file",
+    ("runner/canopy_runner/canopy_runner/inbox_rules.py", "canopy#679"): "same vendored file",
+    ("tests/test_slack_window.py", "2026-11-01"): "the DST date the test asserts through its fixture",
+    ("sdk/python/src/canopy_sdk/resources.py", "2025-06-18"): "an MCP protocol revision id",
+    ("frontend/src/api/tokenStatus.test.ts", "2027-03-01"): "the fixture date the test uses",
+    ("frontend/src/components/ddd/DddLeftNav.tsx", "2026-06-02"): "an example run-id format the regex beside it parses",
+}
 # apps/*/api*.py and apps/contacts/hcp* route docstrings are published as OpenAPI text; their `#` comments are scanned.
 
 
