@@ -1,14 +1,14 @@
 """`canopy-runner pair` — set a NEW macOS account up as a runner, in one step.
 
-Before this existed, adding a runner for another account on the same laptop (the
-fleet runs one per macOS account, for Claude-subscription failover) was five hand
-steps, and two of them bit the third account on 2026-09-28:
+Adding a runner for another account on the same laptop (the fleet runs one per macOS
+account, for Claude-subscription failover) would otherwise be five hand steps, and
+several are easy to get wrong:
 
-- the README's pairing curl omitted `workspace`, which 422s for anyone in more than
-  one workspace ("… you belong to 2 workspaces, so there is no default");
+- pairing must name a `workspace`, which 422s for anyone in more than one workspace
+  ("… you belong to 2 workspaces, so there is no default");
 - the account needs its OWN CDP and hook ports — two emdash instances cannot share a
-  debug port — which meant reading the sibling accounts' runner.json by hand;
-- the "Emdash CDP" launcher the README tells you to open was never created by anything.
+  debug port — which would mean reading the sibling accounts' runner.json by hand;
+- the "Emdash CDP" launcher has to be created by something.
 
 What this does, in order: pair (or recognise an existing pairing), choose free
 ports, write ~/.canopy/runner.json, and build the per-account launcher. It is
@@ -52,7 +52,7 @@ class PairError(Exception):
 
 def macos_user() -> str:
     """The account from the UID, never $LOGNAME/$USER: a session with LOGNAME=root
-    once pinned a runner to an account that doesn't exist (#1008)."""
+    would pin a runner to an account that doesn't exist."""
     return process_account()
 
 
@@ -153,9 +153,9 @@ def emdash_live_cdp_port(home: Path, *, is_up=None) -> int | None:
 
     Electron writes `DevToolsActivePort` (first line = port) into its userData dir
     when launched with --remote-debugging-port. Without this, pairing on a box whose
-    emdash is already up saw 9222 as "taken" and proposed 9223 — a port nothing
-    listens on, so the runner would have been `cdp_down` forever (2026-10-02, a
-    re-pair with emdash running). The file outlives the process, so it is trusted
+    emdash is already up sees 9222 as "taken" and proposes 9223 — a port nothing
+    listens on, so the runner would be `cdp_down` forever (a re-pair with emdash
+    running). The file outlives the process, so it is trusted
     only while something actually answers DevTools on that port.
     """
     is_up = is_up or cdp_up
@@ -389,7 +389,7 @@ def run_pair(config_path: Path, *, name: str = "", workspace: str = "",
         if clash is not None and not clash.get("can_manage"):
             # Re-pairing under a NEW owner (e.g. a box first paired with the wrong
             # token). Adoption can't help — it never transfers ownership — so say
-            # what does (2026-10-02).
+            # what does.
             raise PairError(
                 f"a runner named '{name}' already exists ({clash.get('id')}) and it is "
                 f"not yours (owned by {clash.get('owner_email') or 'someone else'}), "
@@ -443,8 +443,8 @@ def run_pair(config_path: Path, *, name: str = "", workspace: str = "",
             "name": name, "kind": "emdash", "workspace": ws,
             # `sessions: true` — a laptop emdash runner takes Slack/chat (session)
             # turns; without it the box pairs looking healthy and every chat turn
-            # for its agents sits UNROUTED (2026-10-02, stewari-mbp-cdp: "no runner
-            # is set up to run ace", which reads like a routing/identity fault).
+            # for its agents sits UNROUTED ("no runner is set up to run ace", which
+            # reads like a routing/identity fault).
             "capabilities": {"agents": agents, "sessions": True},
         }, retry=False)
         runner_id = str((created or {}).get("id") or "")

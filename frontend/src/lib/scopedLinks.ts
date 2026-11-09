@@ -2,11 +2,11 @@ import { useParams } from 'react-router-dom'
 
 /**
  * Every page that shows tenant data lives under `/w/:workspace/` — the share
- * links too (owner decision, 2026-10-08; canopy-web#1289). A share token still
+ * links too. A share token still
  * opens one artifact without a login; it just does so at its workspace's
  * address, and the page asks the API to confirm the row really lives there.
  *
- * There is ONE address per artifact and no flat form (canopy-web#1337): a flat
+ * There is ONE address per artifact and no flat form: a flat
  * `/walkthrough/…`, `/review/…`, `/share/…`, `/storyboard/…`, `/narrative/…`
  * or `/ddd-release/…` link is a server 404, so a workspace is required here —
  * nothing falls back to a flat path.

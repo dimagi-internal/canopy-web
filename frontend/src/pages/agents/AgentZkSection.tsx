@@ -13,7 +13,7 @@ import { keyFlowError } from '@/vault/prf'
 import { useUnlockPrompt } from '@/vault/UnlockPrompt'
 import { Td, Th, Tr } from '@/components/DataTable'
 
-// Zero-knowledge for this agent (Canopy Vault Phase 2, canopy-web#1550). With
+// Zero-knowledge for this agent (Canopy Vault Phase 2). With
 // it on, values are encrypted in a member's browser (or by the canopy CLI on a
 // box) under the agent's vault key, and canopy-web stores only ciphertext and
 // that key wrapped to each device and person. Every flow lives in
@@ -117,7 +117,7 @@ export function AgentZkSection({
       {state.kv === 0 ? (
         // Nothing to do here by hand: an agent with no key of its own yet (kv 0)
         // has each secret sealed to you and its approved machines as it arrives,
-        // and approving a new machine gives it access (canopy-web#1550).
+        // and approving a new machine gives it access.
         <p className="text-[12px] text-foreground" data-testid="zk-private">
           Only you (your passkey) and the machines you approve can open these — canopy-web can&rsquo;t.
         </p>

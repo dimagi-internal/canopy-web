@@ -9,7 +9,7 @@ import { stepUpMiddleware } from "../auth/stepUp";
 // below is what makes that a bounce and not a loop: if we land back here still
 // 401 within this window of the last bounce, the round-trip isn't sticking (a
 // rejected cookie, an IdP hiccup, a service worker shadowing /accounts/ — the
-// #244 outage), so we STOP navigating and let the 401 fall through to the
+// an outage seen in production), so we STOP navigating and let the 401 fall through to the
 // in-app login screen, which the user drives by hand. Defense in depth: an
 // infinite redirect loop is now structurally impossible regardless of *why* the
 // session won't take. sessionStorage (not a module-scope var) because the
@@ -44,8 +44,8 @@ export function noteAuthSucceeded(): void {
 // "anonymous, and we are leaving for Google right now" apart from "anonymous,
 // and we are staying put". Without that distinction AuthProvider paints the
 // login card during the browser's navigation delay and it is immediately swept
-// away — the flicker from our own Sign-in button to Google's, reported on
-// Android 2026-07-26.
+// away — the flicker from our own Sign-in button to Google's, seen on
+// Android.
 //
 // A module-scoped flag, NOT sessionStorage, and that is the whole point: this
 // asks "is a navigation in flight in THIS page load", which a full-page
@@ -255,7 +255,7 @@ apiV2.use({
   },
 });
 
-// Passkey step-up (canopy-web#1538): a 403 `step_up_required` prompts for the
+// Passkey step-up: a 403 `step_up_required` prompts for the
 // passkey and retries the request once. LAST, so the copy it keeps for the
 // retry already carries the CSRF header and the workspace-rewritten URL.
 apiV2.use(stepUpMiddleware());

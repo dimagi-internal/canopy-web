@@ -77,10 +77,9 @@ def _project_asker(turn: Turn):
 def is_caller_scoped(turn: Turn) -> bool:
     """Whether this FULL-profile turn must reach canopy's MCP as its asker.
 
-    Who-is-asking phase 5 (§9.5, canopy-web#1332). A confined turn already gets
-    a caller token; an editor's full turn did not, so its session used the runner's
-    PAT — and read across sessions as the runner's owner (2026-10-08, ACE
-    answering a colleague it had given the whole agent). A turn with no agent (a project
+    A confined turn gets a caller token; an editor's full turn needs one too, or
+    its session would use the runner's PAT — and read across sessions as the
+    runner's owner. A turn with no agent (a project
     turn or project chat) has no agent to act as, so it acts as its verified
     asker (`_project_asker`); with no such person it gets no token at all."""
     from apps.agents import turn_context

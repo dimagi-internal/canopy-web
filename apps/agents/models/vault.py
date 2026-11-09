@@ -101,7 +101,7 @@ class AgentCredential(VaultEntryAccount):
     agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="credentials")
     #: Matches a name in the agent's declared secrets (Agent.runtime_secrets).
     name = models.CharField(max_length=120)
-    #: Zero-knowledge (canopy-web#1550), the only way a value is stored: `zk1:`
+    #: Zero-knowledge, the only way a value is stored: `zk1:`
     #: AES-GCM ciphertext under the agent's vault key at version `kv`, or `zks1`
     #: sealed to each reader before the vault key exists (kv 0). canopy-web holds
     #: no key that opens either.
@@ -127,7 +127,7 @@ class AgentCredential(VaultEntryAccount):
 
 
 class AgentCredentialRead(models.Model):
-    """One read of one agent credential's VALUE — the read log (canopy-web#1538).
+    """One read of one agent credential's VALUE — the read log.
 
     Written by `/credentials/resolve`, one row per ref handed out, so "who read
     `gog-token`, from which box, during which turn" is a query rather than a
@@ -202,8 +202,8 @@ class AgentCredentialAlert(models.Model):
     )
     turn_id = models.CharField(max_length=120, blank=True, default="")
     #: Who asked, as the request said and canopy-web resolved it — enough to name the
-    #: process without SSH-ing to the box (2026-10-28: an alert named a turn id its admin
-    #: could not open, and nothing else): the client and User-Agent, the session headers,
+    #: process without SSH-ing to the box (an alert naming only a turn id its admin
+    #: cannot open is not enough): the client and User-Agent, the session headers,
     #: the CLI's reason for sending no device proof, and what the named turn is (agent,
     #: origin, chat session, who started it). Never a value. `vault_alerts.request_context`.
     context = models.JSONField(default=dict, blank=True)
@@ -227,7 +227,7 @@ class AgentCredentialAlert(models.Model):
 
 class AgentVaultWrap(models.Model):
     """The agent's vault key (VK) at version `kv`, wrapped to ONE principal
-    (Canopy Vault Phase 2, canopy-web#1550; formats in
+    (Canopy Vault Phase 2; formats in
     docs/vault/zk-v1/zk_v1_reference.py).
 
     * `device` — ECDH-ES to a RunnerDeviceKey's `ecdh_public_jwk`;
@@ -628,7 +628,7 @@ class AgentGoogleMint(models.Model):
 
 class ZkGrantNotice(models.Model):
     """A wrap target the agent's vault key has not reached yet, and whether the
-    people who hold that key were told (canopy-web#1550; `apps/agents/credentials/zk_notify.py`).
+    people who hold that key were told (`apps/agents/credentials/zk_notify.py`).
 
     One row per (agent, kind, target, kv): seen first at `first_seen_at`, told
     at most once (`notified_at`), closed (`cleared_at`) once the target is
@@ -756,8 +756,7 @@ class RepoIdentity(models.Model):
     at most one answer. `repo_slug` unique is that rule in the database; a list
     on `Agent` could not stop two agents claiming the same repo.
 
-    Moved here from the retired workbench project registry's
-    `default_identity_agent` (agents/0037 copies the rows), so the lookup is a
+    The lookup is a
     plain framework query instead of a resolver a product app registered.
     """
 

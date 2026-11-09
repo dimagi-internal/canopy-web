@@ -2,7 +2,7 @@ import type { AgentCredentialAlertOut } from '@/api/deviceKeys'
 import { relativeAge } from '@/lib/relativeAge'
 import { Td } from '@/components/DataTable'
 
-// Read-anomaly alerts (Canopy Vault, canopy-web#1549): reads of this agent's
+// Read-anomaly alerts (Canopy Vault): reads of this agent's
 // secrets that looked wrong. The owner was emailed/pushed for each; at most one
 // per kind per hour, with repeats counted. Shown only when there are any. The
 // server keeps one row per hour, so the list is grouped here: the same thing

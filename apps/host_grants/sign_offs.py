@@ -38,7 +38,7 @@ from . import client_identity, site_agents
 from .site_agents import SiteAgentsRefused
 
 #: A person's own request is answered at once, in the browser it redirected; an agent's
-#: waits for its owner (Jonathan, 2026-10-27).
+#: waits for its owner.
 SUBJECT_LIFETIME = timedelta(minutes=15)
 AGENT_ADMINS_LIFETIME = timedelta(hours=24)
 EXPIRED = "expired"

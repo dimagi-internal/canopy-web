@@ -2,8 +2,7 @@
 the call in front of it, then decide whether to release sensitive data.
 
 canopy's gateway adds ``Canopy-Execution: <JWT>`` to every request it makes to a
-host's MCP server on an agent's turn (spec 2026-10-22-sensitive-data-agents-design
-§6). It says which agent is calling, in which capability and whether its
+host's MCP server on an agent's turn. It says which agent is calling, in which capability and whether its
 interface marks it as handling sensitive data (`data: sensitive`, and who set that), on which runner (its flags in force, and who declared them), and in
 which conversation with which requirements. ``Canopy-Actor`` only NAMES the agent
 and must never be trusted; this is signed by canopy's published client key.

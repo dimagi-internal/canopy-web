@@ -93,7 +93,7 @@ def _routed_to(agent, runner) -> bool:
     follows), and a STRICT rule for the agent's own address, when there is one,
     must name it too. Pinning such a box adds no reach the routing did not
     already give: an agent sending its next chat to a box it is ordered onto
-    (hal handing off acedimagi → haldimagi, 2026-10-19) is a choice among boxes
+    (hal handing off acedimagi → haldimagi) is a choice among boxes
     its admins chose, while a box outside the order, or one a strict rule keeps
     its work off, stays the admins' or the box's administrators' to pick."""
 

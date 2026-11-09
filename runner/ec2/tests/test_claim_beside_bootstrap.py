@@ -1,8 +1,7 @@
 """A restart does not stop a box taking work.
 
-cloud-ec2-live, 2026-11-03: a canopy release made the box refresh at 18:16:28, and a message
-sent 27 seconds later waited until 18:22:34, because the box ran its whole bootstrap before
-asking for work. Its health said "claiming" throughout.
+A refresh must not make the box run its whole bootstrap before asking for work: a
+message sent just after would wait minutes while its health says "claiming".
 """
 from __future__ import annotations
 

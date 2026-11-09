@@ -1,15 +1,14 @@
 """A rebuild must hand the box back to the fleet on exactly the terms it left.
 
 `wire.sh` promises, in its own header, to replace the predecessor's assignment row
-"(preserving rank + enabled)". It did not. Retiring the predecessor DROPS its
-assignment rows, and step 4 then re-read each agent's list — by which point the
-predecessor was gone, so nothing matched, the append path ran, and that path
+"(preserving rank + enabled)". Retiring the predecessor DROPS its
+assignment rows, and step 4 then re-reads each agent's list — by which point the
+predecessor is gone, so nothing matches, the append path runs, and that path
 hardcodes `enabled: True`.
 
-Observed 2026-08-12, rebuilding the cloud box: the runner had been deliberately
-DISABLED for all five agents, and came back enabled for all five. Nobody chose
-that, and nothing reported it — the wiring output says "appended" either way. A
-silent config flip on the one path you take while recovering from an outage.
+A runner deliberately DISABLED for its agents would come back enabled. Nobody
+chose that, and nothing reports it — the wiring output says "appended" either way.
+A silent config flip on the one path you take while recovering from an outage.
 
 Driven against the real script with `curl` faked on PATH, same approach as
 test_update_runner_sh.py: the whole content of wire.sh is which calls it makes

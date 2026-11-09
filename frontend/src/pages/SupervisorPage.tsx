@@ -59,12 +59,12 @@ const SCREENS = [
 ] as const
 type Screen = (typeof SCREENS)[number]['id']
 
-// The ONE supervisor surface (spec 2026-07-14). Three consumers will load this
+// The ONE supervisor surface Three consumers will load this
 // same route: the phone as an installed PWA, the menubar's WKWebView (Phase 5),
 // and a desktop browser. Phone-first layout — a single column that widens.
 //
 // Home is a FEED of sessions that finished a turn and need your next prompt,
-// readable and answerable in place (Jonathan, 2026-10-03). Waiting on you, Sessions,
+// readable and answerable in place. Waiting on you, Sessions,
 // Agents and Runners are separate screens reached from the header menu.
 export default function SupervisorPage(): JSX.Element {
   const [agents, setAgents] = useState<AgentOut[] | null>(null)

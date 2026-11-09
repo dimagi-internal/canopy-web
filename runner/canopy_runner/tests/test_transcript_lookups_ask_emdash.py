@@ -3,10 +3,9 @@
 emdash names a worktree for the task it was CREATED as (`emdash-slack-jpxzv`), so a
 renamed task (`slack-new`) is not findable by path convention; only emdash's own
 `conversations.cwd` knows. The staleness watch, the live stream and backfills
-already asked. The session tail and the blocked-dialog read did not, so on
-2026-10-05 `slack-new` reported its last activity as 12:04 (emdash's UI clock)
-while it was replying at 17:14, and a question it asked could only have reached
-the phone by the hook.
+ask. The session tail and the blocked-dialog read must too: otherwise `slack-new`
+would report its last activity from emdash's UI clock while it was replying later,
+and a question it asked could only reach the phone by the hook.
 """
 from canopy_runner import transcript
 

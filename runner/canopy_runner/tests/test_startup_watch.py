@@ -1,8 +1,8 @@
-"""A session canopy created that never started is reported as waiting on you (#1190).
+"""A session canopy created that never started is reported as waiting on you.
 
-The case behind this: on 2026-10-06 a dispatched turn sat for 16 minutes on Claude
-Code's "Claude in Chrome extension detected" startup dialog. There was no hook
-menu, no transcript, and canopy-web showed it as idle.
+The case behind this: a dispatched turn sitting on Claude
+Code's "Claude in Chrome extension detected" startup dialog has no hook
+menu and no transcript, and canopy-web would show it as idle.
 """
 import json
 
@@ -103,8 +103,8 @@ def test_an_ambiguous_name_matches_nothing():
 
 @pytest.mark.parametrize("outcome", ["no_dialog", "answered"])
 def test_cancel_clears_the_marker_for_good(tmp_path, outcome):
-    """REGRESSION, eva 2026-10-22: Cancel on a stall marker hid it for one grace
-    window, then the next report re-derived it from "still no transcript". An
+    """Cancel on a stall marker must not hide it for just one grace
+    window, with the next report re-deriving it from "still no transcript". An
     authoritative answer outcome must retire the watch, durably."""
     from canopy_runner import hooks
 

@@ -117,10 +117,10 @@ function receiptTime(at: string): string {
 }
 
 /**
- * One MCP Apps View, rendered sandboxed in the chat (spec 2026-10-08 §7-8).
+ * One MCP Apps View, rendered sandboxed in the chat.
  *
  * The frame is canopy's sandbox proxy, framed `sandbox="allow-scripts"` with NO
- * `allow-same-origin` (owner decision 1): its origin is opaque, so the View it
+ * `allow-same-origin`: its origin is opaque, so the View it
  * hosts can reach neither canopy's cookies, storage nor DOM. The View is drawn
  * inside a labelled boundary ("from Labs") so nobody mistakes it for canopy's
  * own UI. Mounting re-reads everything from the server, so a reload never

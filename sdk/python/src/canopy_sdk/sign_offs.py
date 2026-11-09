@@ -1,6 +1,5 @@
 """Site sign-offs: a host site asks canopy for a person's passkey approval of ONE
-action, and canopy hands back a signed "yes" (spec canopy-web
-``2026-10-27-site-sign-offs-design``).
+action, and canopy hands back a signed "yes".
 
 A site that wants a person behind something (labs, before it mints a full-access MCP
 token) does not build passkeys of its own. It asks canopy, canopy asks the person for

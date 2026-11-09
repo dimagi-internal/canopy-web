@@ -2,13 +2,11 @@
 """Build the first-boot seed of cloud_runner.py for Secrets Manager.
 
 A fresh box has nothing to run until `canopy-fetch-env` (runner.cfn.yaml)
-installs cloud_runner.py from Secrets Manager. That used to be ONE secret holding
-the file as gzip+base64, which stopped deploying once the runner grew: Secrets
-Manager caps a value at 65536 bytes, and on 2026-10-04 the encoded file was
-91 KB, so every `up.sh` died on PutSecretValue with a ValidationException. xz or
-bz2 would have bought a few weeks (79 KB / 73 KB — still over).
+installs cloud_runner.py from Secrets Manager. One secret holding the file as
+gzip+base64 does not fit: Secrets Manager caps a value at 65536 bytes and the
+encoded file is about 91 KB (xz or bz2 would be 79 KB / 73 KB — still over).
 
-So the seed is now a MANIFEST plus N parts, which scales with the file:
+So the seed is a MANIFEST plus N parts, which scales with the file:
 
     canopy/cloud-runner/runner-seed          {"format": ..., "parts": N,
                                               "sha256": <of the .py>,
@@ -22,9 +20,8 @@ through a publish fails its ExecStartPre and retries (Restart=on-failure),
 rather than running half of one version and half of another. Parts are written
 before the manifest for the same reason.
 
-Provenance (`sha`, `committed_at`) lives in the manifest, replacing the separate
-runner-code-sha secret: one read tells the box both what it is installing and
-what that is.
+Provenance (`sha`, `committed_at`) lives in the manifest: one read tells the box
+both what it is installing and what that is.
 
 Stdlib only; runs on the operator's machine (up.sh) and in tests.
 """

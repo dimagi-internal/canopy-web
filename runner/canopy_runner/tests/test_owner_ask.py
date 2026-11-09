@@ -1,4 +1,4 @@
-"""A caller's session's `For <Agent>'s owner:` line reaches its turn (canopy-web#1416)."""
+"""A caller's session's `For <Agent>'s owner:` line reaches its turn."""
 from __future__ import annotations
 
 import json

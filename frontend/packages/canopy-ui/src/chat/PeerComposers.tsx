@@ -7,9 +7,9 @@ import { initials, personColor } from "./personColor";
  *
  *  Each person typing gets a read-only copy of a composer, stacked directly
  *  above your own and drawn with the same width and corners, so what you see is
- *  "another person writing", not a status line. It used to be one row of grey
- *  italic `text-xs`, truncated to a single line — in a live test it was easy to
- *  miss entirely and read like the app reporting on itself.
+ *  "another person writing", not a status line. A single row of grey
+ *  italic `text-xs` truncated to one line would be easy to
+ *  miss and read like the app reporting on itself.
  *
  *  Newest edit last (the order `peer_drafts` arrives in). A person in `typing`
  *  mode shares the fact, not the words: their box shows a typing indicator

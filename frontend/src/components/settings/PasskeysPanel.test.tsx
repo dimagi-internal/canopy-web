@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// The Passkeys card (canopy-web#1538/#1550): the register form only when there
+// The Passkeys card: the register form only when there
 // is no passkey yet, and which passkey unlocks the vault key.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'

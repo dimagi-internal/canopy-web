@@ -37,12 +37,11 @@ export function backfillAction(status: string): BackfillAction {
  *
  * Gated on the session having a RUNNER, not on `origin === "runner"`. Where a
  * conversation started says nothing about where its record lives: since
- * `transcript_sourced` (spec 2026-07-24) a phone-started chat is driven by the
+ * `transcript_sourced` a phone-started chat is driven by the
  * same runner writing the same transcript, so its history is recoverable in
- * exactly the same way — but `origin` is `"web"`, so the control was hidden on
- * precisely the sessions started from the phone. Confirmed live on labs
- * (2026-07-31): an `origin="web"` session bound to an online runner, holding 0
- * of its 75 transcript rows, could not offer it.
+ * exactly the same way — but `origin` is `"web"`, so gating on origin would hide
+ * the control on precisely the sessions started from the phone (an `origin="web"`
+ * session bound to an online runner, holding 0 of its 75 transcript rows).
  *
  * The offer must NOT depend on messages already being on screen — an empty
  * discovered session is the case that most needs it. Gate only on:
@@ -89,12 +88,12 @@ export function shouldShowLoadFull(args: {
  * `Notification` marker: nothing was parsed there, nobody looked at the screen,
  * and the message may just be Claude Code's ordinary sixty-second idle nudge.
  *
- * Locking on those is how a chat becomes unusable with no way out. Measured
- * 2026-08-17: an API 500 ended a turn without firing `Stop`, the next idle
- * notification was recorded as a block, and the session showed a "Waiting on
- * you" with no options to pick, over a composer that refused to send — so the
- * only control left was a button labelled Cancel. The runner half of that bug
- * is fixed too, but this is the half that decides whether the next unforeseen
+ * Locking on those is how a chat becomes unusable with no way out. For example,
+ * an API 500 ends a turn without firing `Stop`, the next idle
+ * notification is recorded as a block, and the session shows a "Waiting on
+ * you" with no options to pick, over a composer that refuses to send — so the
+ * only control left is a button labelled Cancel. The runner has its own guard,
+ * but this is the half that decides whether the next unforeseen
  * false marker is an inconvenience or a trap.
  *
  * Letting the send through costs nothing when the marker IS real: the runner
@@ -163,9 +162,9 @@ export function sendBlockReason(args: {
  * Nothing on the server clears the menu when you answer it: the runner presses
  * the key, and the retraction only arrives when the next session report notices
  * the dialog is gone (~10s) or the agent streams its next row. On a phone that
- * gap read as the tap being ignored. The buttons came back to life the moment
- * the POST returned, the header still said "needs you", and the composer stayed
- * locked, even though the answer had landed (Jonathan, 2026-09-18). So the page
+ * gap reads as the tap being ignored: the buttons come back to life the moment
+ * the POST returns, the header still says "needs you", and the composer stays
+ * locked, even though the answer has landed. So the page
  * hides the dialog it just answered, straight away, and only brings it back
  * when there is evidence the answer did NOT take.
  */

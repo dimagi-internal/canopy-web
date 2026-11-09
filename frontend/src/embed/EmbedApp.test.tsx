@@ -110,8 +110,8 @@ afterEach(() => {
  *
  *  A member's goes to `…/canopy-sessions/` and a contact's to
  *  `/api/contact/sessions`. Still anchored at the end so it cannot match a
- *  sub-resource like `…/sess-1/attach` — the property #785 added this regex
- *  for. */
+ *  sub-resource like `…/sess-1/attach` — the property this regex
+ *  exists for. */
 /** Type a first message and send it — which is what now creates the session.
  *
  *  Nothing is created on mount any more (see the regression test below), so
@@ -621,9 +621,8 @@ describe('the page is declared BEFORE the turn is queued', () => {
   }
 
   it('sends the person\'s words alone when the page has declared its state', async () => {
-    // Until 2026-09-26 the declared state was pasted under the first message so
-    // the agent would know to look — and every transcript showed a JSON dump
-    // under the question the person typed. The agent now learns the page exists
+    // The declared state is not pasted under the first message: it would show
+    // a JSON dump under the question the person typed. The agent learns the page exists
     // from the caller envelope (canopy-web `caller_context.build()["page"]`,
     // surfaced by the canopy plugin's UserPromptSubmit hook), outside the
     // person's words; the state itself is declared before the send (below).

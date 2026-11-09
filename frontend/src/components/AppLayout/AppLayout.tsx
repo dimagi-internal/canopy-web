@@ -177,8 +177,7 @@ function WorkspaceSwitcher() {
       >
         {/* Plain names, tree ORDER only: a division follows its parent, but carries
             no glyph or indent — someone who is only in CommCare should just see
-            "CommCare", not a branch marker pointing at an org they can't open
-            (Jonathan, 2026-09-29). */}
+            "CommCare", not a branch marker pointing at an org they can't open. */}
         {workspaceTree(workspaces).map(({ w }) => (
           <option key={w.slug} value={w.slug}>
             {w.display_name}

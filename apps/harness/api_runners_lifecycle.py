@@ -60,8 +60,7 @@ def retire_runner(request: HttpRequest, runner_id: uuid.UUID):
                     .order_by("agent__slug", "source", "actor"))
         RunnerAssignment.objects.filter(runner=runner).delete()
         # And out of every workspace's default order. Left in, it reads as a
-        # listed runner the order's next save then 422s on — the 2026-07-25
-        # incident, one level up — and every agent following that order would
+        # listed runner the order's next save then 422s on, and every agent following that order would
         # silently lose the box.
         orders = [row.workspace for row in WorkspaceRunnerOrder.objects.filter(runner=runner)
                   .select_related("workspace")]

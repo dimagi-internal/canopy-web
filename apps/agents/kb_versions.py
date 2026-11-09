@@ -1,6 +1,6 @@
 """A workspace project's knowledge base as a version log of whole files.
 
-canopy-web never builds an index (#1971: building in its web process ran it out of
+canopy-web never builds an index (building in its web process would run it out of
 memory). The machine that refreshes builds kb.sqlite (`canopy_kb.curate`, or `canopy kb
 build`) and publishes it whole (`publish_full`): canopy-web checks it, stores it, serves
 it, and records it as a version.
@@ -37,7 +37,7 @@ from .models import Agent, AgentProject, KbVersion
 log = logging.getLogger(__name__)
 
 KEEP_FILES = 5
-#: A version still on its way (a delta canopy-web was to build, before #1971).
+#: A version still on its way.
 _LIVE = (KbVersion.PENDING, KbVersion.BUILDING)
 
 
@@ -80,7 +80,7 @@ def publish_full(project, key: str, sha256: str, *, base: int | None, curation: 
         if (head.number if head else None) != base:
             raise KbConflict(f"the knowledge base is at version {head.number if head else 'none'}, not {base}: "
                              "another publish or a rollback landed since this refresh started; refresh again")
-        # A delta canopy-web was still to build (before #1971) never will be.
+        # An unfinished version never will be built: canopy-web builds no deltas.
         KbVersion.objects.filter(project=project, status__in=_LIVE).update(
             status=KbVersion.FAILED, error="superseded by a whole-file publish", finished_at=timezone.now())
         project = kb_store.publish(project, key, sha256)

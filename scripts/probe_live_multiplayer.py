@@ -6,8 +6,7 @@ credentials that exist independently of any test fixture: a human's workbench
 PAT and ACE's own agent PAT.
 
 Reports, rather than asserts, so it is equally useful before and after a deploy:
-run it now and `presence.joined` carries only a user_id (the bug), run it after
-#692 and it carries the participant.
+`presence.joined` should carry the participant, not only a user_id.
 
     uv run python scripts/probe_live_multiplayer.py
 """

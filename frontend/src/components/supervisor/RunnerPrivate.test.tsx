@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { RunnerOut } from '@/api/harness'
 
 // The owner turns their own runner private from the runner's page — no CLI on the
-// box (canopy-web#1705). Acting as a lower role is a turn's, not a machine's.
+// box. Acting as a lower role is a turn's, not a machine's.
 
 const setRunnerPrivate = vi.fn()
 vi.mock('@/api/harness', () => ({

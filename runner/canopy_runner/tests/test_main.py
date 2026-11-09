@@ -455,8 +455,7 @@ def test_cdp_healthy_claims_and_executes(monkeypatch, tmp_path):
 
 def test_a_healthy_tick_reports_the_repos_this_box_can_drive(monkeypatch, tmp_path):
     """The heartbeat carries `projects`, or the box never tells anyone what it has
-    and `capabilities.projects` is back to being a list somebody typed once (spec
-    2026-07-28). This cfg's emdash DB does not exist — a true "no emdash here",
+    and `capabilities.projects` is a list somebody typed once. This cfg's emdash DB does not exist — a true "no emdash here",
     which reports [] rather than omitting: the runner is CLAIMING on this path, and
     [] is an answer where None is a refusal to answer."""
     _stub_cdp(monkeypatch, healthy=True)
@@ -525,7 +524,7 @@ def test_cdp_down_still_polls_inbox_and_schedules(monkeypatch, tmp_path):
 
 
 def test_the_claim_runs_before_the_reporting_sweep(monkeypatch, tmp_path):
-    """The latency fix (2026-09-19): on a lossy link every canopy-web call can take
+    """On a lossy link every canopy-web call can take
     its full timeout, so status reports ahead of the claim held a Slack turn queued
     for 162s. The claim must come first; the sweep still runs after it."""
     _stub_cdp(monkeypatch, healthy=True)
@@ -548,8 +547,8 @@ def test_the_claim_runs_before_the_reporting_sweep(monkeypatch, tmp_path):
 
 
 def test_a_failing_status_step_does_not_cost_the_claim(monkeypatch, tmp_path):
-    """A connection reset in any non-claim step used to crash run_once, and a crashed
-    tick claims nothing — 14 claim-less ticks in a row on 2026-09-19."""
+    """A connection reset in any non-claim step must not crash run_once: a crashed
+    tick claims nothing."""
     _stub_cdp(monkeypatch, healthy=True)
 
     def boom(*a, **k):
@@ -652,9 +651,8 @@ def test_maybe_report_sessions_throttled(db, tmp_path, monkeypatch):
 
 
 def test_repeated_backfill_failures_are_warned_not_swallowed(caplog):
-    """The NUL-byte bug (2026-07-26) was a hard 500 on EVERY backfill attempt for
-    one session, invisible in the runner log because the handler logged at DEBUG.
-    A failure that repeats means stuck, not flaky, and must be visible."""
+    """A hard 500 on EVERY backfill attempt for one session (a NUL byte in the
+    transcript) must not be invisible in the runner log. A failure that repeats means stuck, not flaky, and must be visible."""
     import logging
 
     failure_log._failures.clear()
@@ -760,8 +758,7 @@ def test_an_option_not_on_the_dialog_is_dropped(monkeypatch):
 def test_the_hook_listener_never_reads_the_screen_by_itself(monkeypatch, tmp_path):
     """Reading a session's screen drives emdash over CDP, and `openTask` CLICKS
     the task and focuses its terminal. Wired to a hook, that yanked emdash to
-    whatever agent had just asked for input — mid-typing, twice, reported
-    2026-07-28. Nothing on the hook path may steal focus.
+    whatever agent had just asked for input — mid-typing. Nothing on the hook path may steal focus.
     """
     cfg = Config(base_url="http://x", token="t", runner_id="r",
                  emdash_db=str(tmp_path / "emdash.db"),

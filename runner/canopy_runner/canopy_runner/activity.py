@@ -1,5 +1,5 @@
 """Did anything happen on this box this tick? The idle back-off's one input
-beyond the claim result (#647).
+beyond the claim result.
 
 A tick that claimed nothing is not necessarily quiet: a person may be working in
 an emdash session, or an agent may still be writing after its turn handed off. A

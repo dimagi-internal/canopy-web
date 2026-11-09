@@ -39,9 +39,8 @@ def storage_content(content: dict, text: str) -> dict:
     path reads `content["text"]` — MessageItem and ToolCallPair both use
     `plaintext`.
 
-    Keeping the copy cost 36% of all stored transcript bytes (measured over
-    20,585 rows of live transcripts, 2026-07-26: 9.4MB of 26.2MB), mostly tool
-    result bodies duplicated verbatim. Only the redundant key is dropped: a
+    Keeping the copy would cost about a third of all stored transcript bytes,
+    mostly tool result bodies duplicated verbatim. Only the redundant key is dropped: a
     `text` that somehow DIFFERS from plaintext is kept, and every other key
     (`id`, `name`, `input`, `tool_use_id`, `client_id`) is untouched.
     """
@@ -117,22 +116,19 @@ def ensure_transcript_identity(session, transcript_id: str) -> int:
     rows from two files in one index space are not merely untidy: the
     first_index/last_index markers derived from the old file are nonsense against
     the new one, and a shorter successor sits entirely below the old high-water
-    mark and is suppressed forever (issue #615).
+    mark and is suppressed forever.
 
     A changed id opens a NEW EPOCH — exactly what `transfer_session` does — so the
-    new transcript's rows land above the old ones and the old ones stay. It used
-    to drop them and re-derive, on the claim that the runner re-ships the whole
-    history; that holds only when the new file CONTAINS the old conversation, and
-    nothing guarantees it. Measured 2026-10-20 (issue #1731) on session f6e30263:
-    a credential failover on cloud-ec2-2 started a fresh claude conversation for
-    the same session, the next ship carried its id, and every earlier row was
-    deleted with nothing left that could re-derive them. A changed id inside one
+    new transcript's rows land above the old ones and the old ones stay. Dropping them
+    to re-derive would assume the runner re-ships the whole history; that holds
+    only when the new file CONTAINS the old conversation, and nothing guarantees
+    it (a credential failover can start a fresh claude conversation for the same
+    session, leaving nothing to re-derive the earlier rows from). A changed id inside one
     session is the same conversation continuing in a new file (a failover,
     `/clear`, a box that could not resume), and its history is the session's.
 
-    The case dropping was built for — a reused emdash task NAME pointing this
-    binding at a genuinely different conversation — no longer reaches here: the
-    forks catch it first and move the binding to a new Session, leaving the old
+    A reused emdash task NAME pointing this binding at a genuinely different
+    conversation does not reach here: the forks catch it first and move the binding to a new Session, leaving the old
     one whole (`fork_if_name_reused` on the ship path, `fork_if_task_changed` on
     the report path).
 
@@ -141,8 +137,7 @@ def ensure_transcript_identity(session, transcript_id: str) -> int:
     reset). Those rows are of unknown provenance, the shipper sends the full
     history for exactly that reason, and the drop is scoped to the current epoch —
     at or above `binding.index_offset` — so history carried across a transfer is
-    never touched (session 169212e2, 2026-09-12, lost 60+ rows before that scope
-    existed).
+    never touched.
 
     Blank incoming `transcript_id` (an old runner) is a no-op: it carries no claim
     about provenance. Returns rows deleted (0 when an epoch was opened instead).
@@ -176,7 +171,7 @@ def _adopt_transcript(binding, session, transcript_id: str) -> int:
         binding.save(update_fields=["transcript_id", "index_offset", "updated_at"])
         return 0
     # First sighting (blank) still drops: a session that predates this field
-    # is exactly the state issue #615 describes — rows of unknown provenance,
+    # is exactly the state of rows of unknown provenance,
     # possibly a previous task's — and the shipper is sending the full history
     # for precisely that reason. Rebuilding once is cheap and self-healing.
     deleted, _ = Message.objects.filter(
@@ -205,10 +200,9 @@ def fork_if_name_reused(session, transcript_id: str):
     closed one is matched to the closed one's binding, and the report revives it.
     `ensure_transcript_identity` would then drop the old conversation's rows and
     fill the session with the new one — inheriting everything ELSE the session
-    carries too: its Slack thread, participants, turns. Observed 2026-10-05: a new
-    `slack` task in canopy-web revived the Sep 21 `slack` session, wiped its
-    history, and posted "carrying on in the agent's session" into the Slack thread
-    that had been told on Sep 22 the session was closed.
+    carries too: its Slack thread, participants, turns (a new `slack` task would
+    revive an old closed `slack` session, wipe its history, and post "carrying on
+    in the agent's session" into a Slack thread that had been told it was closed).
 
     So a REVIVED session whose transcript then turns out to differ forks instead:
     the binding moves to a new Session and the old one goes back to archived with
@@ -459,8 +453,8 @@ def record_transcript(session, rows, *, transcript_id: str = "", epoch: int | No
     through here, and no caller shifts an ordinal itself. A given (transcript
     ordinal, epoch) maps to exactly one `turn_index`, so re-ships stay no-ops.
 
-    **Server-side attribution (2026-09-27), the primary path now that canopy no
-    longer marks a chat send's prompt at claim** (authorship.py). A USER row
+    **Server-side attribution, the primary path (canopy does not mark a chat
+    send's prompt at claim; authorship.py).** A USER row
     with no vouched marker is matched to the EARLIEST of this session's
     claimed, unlinked chat-send turns whose `prompt` equals the row's text
     with ALL whitespace ignored (`_squash` — the laptop runner delivers a
@@ -489,13 +483,12 @@ def record_transcript(session, rows, *, transcript_id: str = "", epoch: int | No
     disabling the match outright.
 
     **`held` (which rows are already persisted) is computed BEFORE any
-    matching, never after.** It used to run once, on `prepared`'s indices,
-    right before `bulk_create` — by which point every row, including one
-    whose index already exists (a re-ship: reconnect, catch-up, backfill
-    overlap — routine, not an error), had already called `pool.claim`. A
-    re-shipped row is dropped at `bulk_create` and so was never going to
-    consume a candidate — but it did, stealing the match a genuinely NEW row
-    in the same batch with the same (squashed) text needed, which then got
+    matching, never after.** Computing it right before `bulk_create` would be too late:
+    by then every row, including one whose index already exists (a re-ship:
+    reconnect, catch-up, backfill overlap — routine, not an error), has already
+    called `pool.claim`. A re-shipped row is dropped at `bulk_create` and is never
+    going to consume a candidate, but would steal the match a genuinely NEW row in
+    the same batch with the same (squashed) text needs, which then gets
     `author=None` or the wrong turn. Only an explicit ordinal (`index >= 0`)
     can already be held: a row with none always gets a FRESH one from
     `_next_index`, one past the session's high-water mark, so it can never
@@ -541,7 +534,7 @@ def record_transcript(session, rows, *, transcript_id: str = "", epoch: int | No
         from apps.harness import sensitivity
 
         # A sensitive conversation keeps which call and whether it failed, never
-        # the result (spec 2026-10-22-sensitive-data-agents §4).
+        # the result.
         withhold = sensitivity.seals(locked)
         # Which tool each call in this batch is, so a result whose call has not been
         # stored yet is still placed (a sensitive row keeps links only from the site's own).
@@ -587,9 +580,8 @@ def record_transcript(session, rows, *, transcript_id: str = "", epoch: int | No
             # history (backfill, reset) must not write it back.
             if index < locked.retention_floor_index:
                 continue
-            # First occurrence wins, matching what `get_or_create` did implicitly:
-            # a repeat within ONE payload used to find the row its predecessor had
-            # just written. A bulk insert has no such ordering, and the pair would
+            # First occurrence wins, like `get_or_create` would:
+            # a repeat within ONE payload finds the row its predecessor wrote. A bulk insert has no such ordering, and the pair would
             # violate the unique constraint, so the dedupe has to be explicit.
             if index in claimed:
                 continue
@@ -853,7 +845,7 @@ def seed_stream_desired(binding) -> None:
     later when it claims the turn. The edge had already fired into nothing, the
     new binding started at False, and `post_session_stream` then persisted every
     event and pushed none — the viewer saw "Thinking…" and never their own
-    words or the reply (connect-labs, 2026-09-25).
+    words or the reply.
 
     So whoever creates or refreshes a binding calls this after saving it: if
     someone is watching and the binding does not know, it is told — and the

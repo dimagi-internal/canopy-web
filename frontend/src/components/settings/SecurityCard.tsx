@@ -4,13 +4,12 @@ import { RecoveryRow } from './RecoveryRow'
 import { ZkAgentsPanel } from './ZkAgentsPanel'
 
 /**
- * Security — one card for everything that keeps agents' secrets safe
- * (canopy-web#1550): You (how you confirm it's you, your recovery code),
- * Your runners (approve or revoke), Your agents (where each stands). The old
- * separate Passkeys / Device keys / Vault key / Zero-knowledge cards were one
- * idea split four ways. Deep links still land: #passkeys, #vault-key,
- * #device-keys, #your-agents, and #your-machines (this row's old name, in
- * links already sent).
+ * Security — one card for everything that keeps agents' secrets safe:
+ * You (how you confirm it's you, your recovery code),
+ * Your runners (approve or revoke), Your agents (where each stands).
+ * Deep links land: #passkeys, #vault-key,
+ * #device-keys, #your-agents, and #your-machines (this row's alternate name,
+ * kept for links already sent).
  */
 export function SecurityCard({ machines }: { machines: ReactNode }) {
   return (

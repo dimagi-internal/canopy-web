@@ -120,8 +120,7 @@ class SessionContext:
 
     @cached_property
     def session_grants(self) -> tuple[SessionGrant, ...]:
-        """§ 3.4, the seam. No kind exists now: `session_writer` was removed on 2026-11-06, at the owner's
-        decision, so being in a session raises nobody's access. Adding a kind is one builder here, read from
+        """§ 3.4, the seam. No kind exists now (there is no `session_writer`), so being in a session raises nobody's access. Adding a kind is one builder here, read from
         this session and `self._agent`, and one test; the resolver already applies what this returns."""
         return ()
 

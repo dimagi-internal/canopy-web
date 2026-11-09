@@ -29,8 +29,7 @@ from .routing_machine import _served_agent_slug, dedicated_agent_slugs, prime_ma
 def load_assignment_rows(agent_ids) -> tuple[dict, dict]:
     """Load every ENABLED assignment row for these agents in one query, split into
     the two shapes routing needs: the per-agent default list (rank-ordered) and the
-    per-(agent, source, actor) RULE — a rank-ordered LIST of rows, not one row
-    (spec 2026-09-05).
+    per-(agent, source, actor) RULE — a rank-ordered LIST of rows, not one row.
 
     enabled=False is filtered here, once, so a disabled row can neither claim nor
     count as a better-ranked availability blocker. A rule whose rows are ALL
@@ -87,12 +86,12 @@ def cannot_serve(runner: Runner, slug: str) -> str:
       - a laptop driving emdash names the emdash projects it has (`projects`), and
         an agent's project is its slug. A laptop whose report lacks the slug fails
         the turn at once (`_project_missing` on the runner), so handing it one is
-        claiming a turn to fail it (shayoni-win-cdp, fizzy, 2026-10-15). A box
+        claiming a turn to fail it. A box
         that has never reported `projects` is UNKNOWN, not "has none".
       - any box names the agents it tried to set up and could not
         (`capabilities["unprepared"]`). A cloud box with no clone of the agent ran
         its turn in a bare scratch dir, with none of its plugin or credentials,
-        and the turn ended without doing anything (cloud-ec2-2, fizzy, 2026-10-15).
+        and the turn ended without doing anything.
 
     A box can only refuse work for itself here, so a self-report is safe to trust
     in this direction. And what it serves on its machine (`serves_refusal`), which is
@@ -300,7 +299,7 @@ def labelled_assignment_rows(
     if requires:
         # A requirement is a FLOOR, applied to the composed list so a runner that
         # lacks it neither claims nor counts as a better-ranked blocker, and the
-        # grace has nobody below the floor to promote (spec 2026-09-30). Applied
+        # grace has nobody below the floor to promote. Applied
         # AFTER the strict truncation, so a strict rule whose runners all lack the
         # flag leaves an empty list — the turn waits, it does not fall through.
         out = [(r, g) for r, g in out if rr.runner_satisfies(r, requires)]
@@ -365,7 +364,7 @@ def holds_a_job(runner: Runner) -> bool:
     return Turn.objects.filter(held, status__in=EXECUTING).exclude(job="").exists()
 
 
-# Rank = availability cascade (spec 2026-07-24-directed-runner-routing). A lower
+# Rank = availability cascade. A lower
 # rank may claim only while every better rank is unavailable — EXCEPT after the
 # grace: an online-but-wedged runner (heartbeating, never claiming) must not
 # stall an agent's queue forever, so a turn queued past the grace opens to the
@@ -555,13 +554,13 @@ def _dialog_up(session_id) -> bool:
 
 
 #: `origin_ref` flag on a follow-up whose mid-turn delivery failed: it waits for
-#: the running turn to end, as before canopy-web#1153, rather than ride again.
+#: the running turn to end, rather than ride again.
 MIDTURN_FAILED = "midturn_failed"
 
 
 def may_ride(turn: Turn, holder: Turn) -> bool:
     """Can queued `turn` be delivered INTO `holder`, its conversation's running
-    turn, instead of waiting for it to end (canopy-web#1153)?
+    turn, instead of waiting for it to end?
 
     The one rule both `claim_next_turn` and `blocking_turn` ask, so "queued
     behind" and "not claimable" still cannot disagree. Only full-profile turns
@@ -622,9 +621,9 @@ def blocking_turn(turn: Turn) -> Turn | None:
 
 def runner_target_q(runner: Runner, exclude_slugs: list[str] | None = None,
                     *, ignore_serves: bool = False) -> Q:
-    """Which queued turns this runner can TARGET under directed routing (spec
-    2026-07-24): agents via RunnerAssignment (the one source of truth —
-    capabilities.agents no longer routes agent turns), repos via
+    """Which queued turns this runner can TARGET under directed routing:
+    agents via RunnerAssignment (the one source of truth —
+    capabilities.agents does not route agent turns), repos via
     capabilities.projects, and sessions (when session-capable) with binding
     STICKINESS — a bound session matches only its binding holder; a bound
     session whose holder is gone matches nobody until the user places it.
@@ -664,8 +663,8 @@ def runner_target_q(runner: Runner, exclude_slugs: list[str] | None = None,
         # refined per-candidate in the claim loop (agent sessions follow the
         # assignment cascade; project sessions `project_session_allows`).
         #
-        # Deliberately NOT relaxed to "stale bindings fail over automatically"
-        # (spec 2026-07-24): continuing elsewhere means a FRESH emdash session with
+        # Deliberately NOT relaxed to "stale bindings fail over automatically":
+        # continuing elsewhere means a FRESH emdash session with
         # none of the conversation's warm context, so it is the user's call, not a
         # timeout's. The stuck-forever case that motivated revisiting this was never
         # really routing — it was the chat banner failing open for a bound runner
@@ -793,12 +792,9 @@ def agent_tenant_q(ws_slugs, *, prefix: str = "agent") -> Q:
     (a `Turn.agent`, an `AgentSchedule.agent`).
 
     There is NO null-workspace escape hatch, and there is nowhere left to put
-    one: `Agent.workspace` is NOT NULL as of agents/0013. It used to read
-    `Q(...__workspace_id__in=slugs) | Q(...__workspace_id__isnull=True)`, an
-    ALLOW-on-NULL leg that made a workspace-less agent claimable and its
-    schedules readable by every tenant. That leg existed in six predicates
-    across the codebase and was fixed four times one site at a time (PRs #378,
-    #421, #423) before the column itself was constrained.
+    one: `Agent.workspace` is NOT NULL. An ALLOW-on-NULL leg
+    (`Q(...__workspace_id__isnull=True)`) would make a workspace-less agent
+    claimable and its schedules readable by every tenant.
 
     Callers must pass a slug set from `runner_tenant_slugs` (runner-scoped) or
     from the caller's own memberships (user-scoped) — this function deliberately
@@ -808,7 +804,7 @@ def agent_tenant_q(ws_slugs, *, prefix: str = "agent") -> Q:
     agent. `agent__workspace_id` traverses a nullable FK, so on a project or
     session turn (`agent_id IS NULL`) the LEFT JOIN yields NULL and any
     `isnull=True` leg would match unconditionally — the second, independent
-    reason the old shape leaked. Every caller therefore ANDs this with
+    reason an isnull leg would leak. Every caller therefore ANDs this with
     `Q(agent__isnull=False)`.
     """
     return Q(**{f"{prefix}__workspace_id__in": ws_slugs})
@@ -817,7 +813,7 @@ def agent_tenant_q(ws_slugs, *, prefix: str = "agent") -> Q:
 #: The profile-enforcement version a runner must REPORT to be given a restricted
 #: turn. 1 = the runner opens a caller's turn in its own `cx-` session with its
 #: profile written first, AND the installed canopy guard confines that session.
-#: 3 (2026-09-26) = runners now report the installed GUARD's version, and 3 is the
+#: 3 = runners report the installed GUARD's version, and 3 is the
 #: guard that checks writes against `write_paths`. A runner on older code reports
 #: 1 or 2 whatever its guard, so it stops getting caller turns until it updates —
 #: fail closed, rather than trusting a guard that lets a caller overwrite the script
@@ -826,7 +822,7 @@ PROFILES_VERSION = 3
 
 
 #: The caller-envelope version a runner's code must REPORT (`envelope`) to be
-#: given a restricted turn. 2 (2026-10-04) = it reads `profile: "confined"` (the
+#: given a restricted turn. 2 = it reads `profile: "confined"` (the
 #: envelope's VERSION 2 word for what was "restricted"). A runner on older code
 #: tests `profile == "restricted"` and would run a confined turn in the FULL
 #: profile, so it gets no caller turns until it updates — fail closed.
@@ -867,7 +863,7 @@ def seed_assignments_from_capabilities(
     query names every column the model has TODAY against the schema as it stood
     at that migration, so the next field added to `Runner` breaks `migrate` from
     zero — every fresh dev DB and the whole CI suite, in a file nobody touched.
-    Adding `code_version`/`code_sha` (spec 2026-07-28) is exactly what tripped it.
+    Adding a new `Runner` column such as `code_sha` is exactly what trips it.
     """
     from apps.agents import models as agent_models
     from apps.harness import models as harness_models

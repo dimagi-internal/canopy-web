@@ -82,7 +82,7 @@ def _apply_capability(turn: Turn, requested: str | None = None) -> None:
         turn.save(update_fields=fields)
         turn_snapshot.record(turn, turn_snapshot.ENQUEUE, context=resolved, requested=requested)
         # Refused whatever the rules say; the workspace's `offered-nothing` rule
-        # decides what is recorded and who is told (canopy-web#1416).
+        # decides what is recorded and who is told.
         from apps.admission import evaluate as admission
 
         admission.at_refusal(turn, access="none")
@@ -494,9 +494,9 @@ def cancel_requested_turn_ids(runner: Runner, active_turn_ids) -> list[str]:
 
     The DURABLE half of a stop. `cancel_turn` publishes `runner.cancel` down the
     runner's socket, but a frame is a doorbell: a box on the REST fallback, or
-    whose socket is mid-reconnect, never hears it, and the turn ran to completion
-    (cloud-ec2-2, 2026-10-17). The `cancel_requested` ledger event is the record,
-    and every heartbeat reply now carries it back, so the stop lands within one
+    whose socket is mid-reconnect, never hears it, and the turn would run to completion.
+    The `cancel_requested` ledger event is the record,
+    and every heartbeat reply carries it back, so the stop lands within one
     beat on every path. Both runner kinds read the same field.
     """
     ids = _valid_turn_ids(active_turn_ids)
@@ -536,17 +536,16 @@ def heartbeat(
 ) -> Runner:
     """A runner's liveness and what it reports, nothing else: the beat renews the
     leases of the turns it holds and answers with the stops it owes. Periodic
-    work that used to ride the beat (scheduled unpauses, due pushes, purges,
-    notices) runs on the off-request clock, apps/common/ticks.py, so it does not
-    stop when no runner is beating.
+    work (scheduled unpauses, due pushes, purges,
+    notices) does not ride the beat: it runs on the off-request clock,
+    apps/common/ticks.py, so it does not stop when no runner is beating.
 
     `profiles` is the profile-enforcement version the runner REPORTS it can
     honour (see `profile_q`). Written on every beat, and 0 from a runner that
     does not send it — so a downgrade takes effect on the next beat, and nothing
     but the runner itself can claim that version for it.
 
-    `projects` is the runner REPORTING which repos it can drive (spec
-    2026-07-28) — the answer emdash already had, replacing a list a human typed
+    `projects` is the runner REPORTING which repos it can drive — the answer emdash already has, not a list a human typed
     once at pairing and nothing kept true.
 
     `None` is not `[]`. None means "I could not tell this tick" and must leave the
@@ -631,7 +630,7 @@ def heartbeat(
         if "capabilities" not in fields:
             fields.append("capabilities")
     # Whether this runner's CODE delivers a follow-up into a running turn
-    # (`rides_turn`, canopy-web#1153). Reported, same contract as `envelope`:
+    # (`rides_turn`). Reported, same contract as `envelope`:
     # an older runner would claim a rider as an ordinary chat turn and bridge
     # the same reply twice, so it must never be handed one.
     if int(runner.capabilities.get("midturn") or 0) != int(midturn or 0):
@@ -765,10 +764,9 @@ def finish_turn(
 
     # ---- a follow-up that could not be typed into the running turn waits instead ----
     #
-    # Measured live (2026-10-05, the #1153 check): the rider was claimed into the
-    # running turn within 5s, then every attempt to type it failed
-    # COMPOSER_NOT_VISIBLE and the follow-up ended FAILED — a message that, before
-    # mid-turn delivery, would merely have arrived late. A rider's send failure
+    # A rider can be claimed into the running turn and then every attempt to type it
+    # fail COMPOSER_NOT_VISIBLE, which would end the follow-up FAILED — a message that,
+    # without mid-turn delivery, would merely have arrived late. A rider's send failure
     # names no session (nothing was typed), so it goes back to the queue marked
     # MIDTURN_FAILED: `may_ride` refuses it, and it is claimed the ordinary way when
     # the running turn ends. Not counted as an attempt — nothing about the request
@@ -808,9 +806,8 @@ def finish_turn(
     # the thread stayed UNREAD, the poller re-saw it on every later tick, regenerated
     # the identical key, collapsed onto the dead row, and logged it "seen".
     #
-    # Measured: 2026-09-03, jjackson emailed eva "Stripe sessions". Its only turn
-    # failed at `emdash create failed: cannot connect to emdash CDP on 127.0.0.1:9223`
-    # and nothing looked at that thread again; a human noticed a day later. The same
+    # Example: an email whose only turn failed at `emdash create failed: cannot
+    # connect to emdash CDP on 127.0.0.1:9223` is never looked at again. The same
     # hole swallows `api`-origin dispatches, which is how an agent-to-agent fix brief
     # can vanish with no trace but a `failed` row nobody reads.
     #
@@ -863,28 +860,26 @@ def finish_turn(
             }}])
             return turn
         # Fell through: the turn was not executing (already terminal, or queued and
-        # never claimed). Let the normal path below decide, exactly as before.
-    # A turn that RAN TO COMPLETION after a stop was requested. This used to be
-    # rewritten DONE -> CANCELLED, on the reasoning that the user asked to stop so a
-    # reply that raced the interrupt "is still a cancelled turn". That records the
-    # user's INTENT in the field that is supposed to record the OUTCOME, and it costs
-    # more than it buys:
+        # never claimed). Let the normal path below decide.
+    # A turn that RAN TO COMPLETION after a stop was requested stays DONE; it is not
+    # rewritten DONE -> CANCELLED. Recording the user's INTENT in the field that is
+    # supposed to record the OUTCOME costs more than it buys:
     #
     #   * The turn carries a complete reply. Labelling it `cancelled` puts a full
     #     answer under a status that says it was stopped — self-contradictory on its
     #     face, and unreadable to anyone auditing a session later.
-    #   * A stop that worked and a stop that was completely ignored both stored
-    #     `cancelled`, so the ledger could not tell them apart. That is exactly what
-    #     made "stop doesn't seem reliable" so hard to pin down (#649): the record
-    #     said the same thing either way.
-    #   * A scheduled occurrence that completed did NOT discharge its nag, because
-    #     the discharge below keys on DONE and the coercion had moved it. The work
-    #     was done and the board still asked for attention.
+    #   * A stop that worked and a stop that was completely ignored would both store
+    #     `cancelled`, so the ledger could not tell them apart, which makes "stop
+    #     doesn't seem reliable" very hard to pin down: the record says the same
+    #     thing either way.
+    #   * A scheduled occurrence that completed would not discharge its nag, because
+    #     the discharge below keys on DONE. The work was done and the board would
+    #     still ask for attention.
     #
-    # And the "stranded cancel_requested" it was written to prevent is not stranded:
-    # the event is on the ledger, which is the durable record, and `cancel_requested`
-    # on a DONE turn is precisely the fact worth keeping — we asked, it finished
-    # anyway. So keep the outcome truthful and make the failed stop legible instead.
+    # Nor is `cancel_requested` stranded: the event is on the ledger, which is the
+    # durable record, and `cancel_requested` on a DONE turn is precisely the fact worth
+    # keeping — we asked, it finished anyway. So keep the outcome truthful and make
+    # the failed stop legible instead.
     #
     # Scoped deliberately to this case. `sweep_expired_leases` keeps its own
     # cancel_requested -> CANCELLED rule: there the turn did NOT complete and the

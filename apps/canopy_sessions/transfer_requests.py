@@ -2,10 +2,9 @@
 administrator, then carried out by `placement.transfer_session`.
 
 `transfer_session` already does the hard part (re-point the binding, open a new
-transcript epoch, hand the cold session a brief). What it never asked is whose
-box the session lands on. With every runner belonging to one operator that didn't
-matter; once a colleague runs an agent on their own laptop (2026-10-02) it does —
-a transfer spends their machine and Claude subscription. So a move onto a box the
+transcript epoch, hand the cold session a brief). What it never asks is whose
+box the session lands on. That matters when a colleague runs an agent on their
+own laptop: a transfer spends their machine and Claude subscription. So a move onto a box the
 requester does not administer becomes a REQUEST, and the box's administrator
 (`can_administer_runner`: its owner, or someone they granted) approves it. A move
 between two boxes of the SAME owner never asks.

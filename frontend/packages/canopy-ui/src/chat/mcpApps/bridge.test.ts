@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * The host end of an MCP Apps View's wire (spec 2026-10-08 test plan, frontend):
+ * The host end of an MCP Apps View's wire:
  * the handshake order, who may speak, what is never forwarded, and what a viewer
  * who may not act is told.
  */

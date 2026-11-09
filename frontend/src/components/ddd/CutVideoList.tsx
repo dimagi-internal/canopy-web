@@ -3,7 +3,7 @@ import { withBase } from '@/lib/basePath'
 import { AppLinks, type AppLink } from './AppLinks'
 import { CutPlayer, countWords, fmtDuration } from './CutPlayer'
 
-/** One cut of a recorded narrative and the video pinned to it (canopy-web#1288).
+/** One cut of a recorded narrative and the video pinned to it.
  *  The narrative page and the review link both pass their own payload's cuts,
  *  which share this shape. */
 export interface CutVideo {

@@ -1,6 +1,5 @@
 """Whether a host site of an agent HANDLES SENSITIVE DATA — may serve a host's
-sensitive data — an interface setting, `data: sensitive` (spec
-2026-10-22-sensitive-data-agents §5).
+sensitive data — an interface setting, `data: sensitive`.
 
 A host site says `data: sensitive` on the published interface. That is accepted only
 

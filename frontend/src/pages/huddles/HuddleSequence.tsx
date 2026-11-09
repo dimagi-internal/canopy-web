@@ -16,9 +16,8 @@ import { lanesOf, sequenceOf, YOU, type Message } from './sequenceModel'
  * dashed one an answer coming back, and the last arrow is the result coming to
  * you. Click a row for the full text.
  *
- * Jonathan, 2026-10-07: "we mostly want to show the time sequence of the
- * flow" — so the only thing position encodes is who and when, and the only
- * colour is each participant's own.
+ * The diagram shows the time sequence of the flow, so the only thing position
+ * encodes is who and when, and the only colour is each participant's own.
  *
  * Step 4 ("Settling changes") is different in kind: the idea's lead and the
  * teammate who asked for changes talk DIRECTLY, so its arrows run agent to agent

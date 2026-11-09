@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// The PRF assertion (canopy-web#1550): it asks the passkey for
+// The PRF assertion: it asks the passkey for
 // `prf.eval.first = prf_input`, returns the PRF output to the caller, and sends
 // the server the assertion WITHOUT that output.
 import { afterEach, describe, expect, it, vi } from 'vitest'

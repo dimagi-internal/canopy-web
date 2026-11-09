@@ -1,9 +1,8 @@
 """One turn per mail thread at a time: coalescing for `inbound_mail` triggers.
 
-A CloudWatch alarm re-notifies on its thread every evaluation period. Before this,
-every new message was a full turn: thread 1a184f500cd30f72 (2026-10-29) ran six in
-twelve hours as it grew to 14 messages, each re-reading the procedure, rebuilding
-the storm and adding one more GitHub comment. The runner's own per-process memory
+A CloudWatch alarm re-notifies on its thread every evaluation period. Without
+coalescing, every new message would be a full turn, each re-reading the procedure,
+rebuilding the storm and adding one more GitHub comment. The runner's own per-process memory
 (`inbox._alarm_incident_is_owned`) cannot see the other runners, so this is decided
 here, under the thread session's row lock.
 

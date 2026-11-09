@@ -25,7 +25,7 @@ import { type Target, openVk, targetOf, wrapTo } from './agentVault'
 import { recordGranted, rotateWith } from './agentKeyOps'
 
 
-// ---- a workspace vault: a runner's own (spec 2026-10-23-runner-claude-credentials-in-the-vault) ----
+// ---- a workspace vault: a runner's own ----
 // Its zero-knowledge routes take the agent vault's shapes with the vault's binding id as
 // `agent_id`, so these are the agent flows above, pointed at `/api/vaults/{id}/zk`.
 

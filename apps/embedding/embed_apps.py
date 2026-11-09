@@ -17,9 +17,8 @@ an app the moment that person moved on.
 canopy's users by email domain. A site vouches for a visitor with a signed
 assertion, and canopy decides who that is: a member of this workspace, as the
 account they already have, or a contact — never a new account, and never a
-membership. The provisioning grant
-this paragraph used to describe went with `/api/auth/token-exchange`
-(2026-09-22), so an app registered here can only ever be embedded.
+membership. There is no provisioning grant,
+so an app registered here can only ever be embedded.
 """
 
 from __future__ import annotations
@@ -431,10 +430,9 @@ def revoke(app: AppCredential) -> AppCredential:
 def disconnect(*, user, app: AppCredential, workspace_slug: str) -> AppCredential:
     """This tenant stops using the site.
 
-    Just `revoke`, now that the row is this tenant's alone. It used to carry
-    custody transfer and a last-grant check, because the row was shared and
-    retiring it would have ended every other tenant's integration; another
-    tenant using the same external system has its own row and does not notice.
+    Just `revoke`: the row is this tenant's alone, so retiring it ends no other
+    tenant's integration; another tenant using the same external system has its
+    own row and does not notice.
     """
     require(user, workspace_slug, perms.OWN)
     if app.workspace_id != workspace_slug:
@@ -445,8 +443,7 @@ def disconnect(*, user, app: AppCredential, workspace_slug: str) -> AppCredentia
 def self_app():
     """The app whose widget canopy shows on its own pages, or None.
 
-    One query on a column, where this used to be a name read from a setting
-    and looked up. Nothing special-cases canopy: it is whichever host
+    One query on a column, not a name read from a setting. Nothing special-cases canopy: it is whichever host
     site an owner ticked the box on, and usually that site is canopy itself.
     """
     return AppCredential.objects.filter(

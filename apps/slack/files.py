@@ -4,8 +4,7 @@ screenshot pasted into canopy-web (`origin_ref.attachments`, execute.fetch_attac
 
 Slack serves a file's bytes from `url_private_download` to a bearer of the bot
 token, and only with the `files:read` scope. Without that scope Slack does not
-refuse: it REDIRECTS to the workspace's sign-in page (seen in production,
-2026-10-05: `302 → https://<team>.slack.com/?redir=/files-pri/…`, which then
+refuse: it REDIRECTS to the workspace's sign-in page (`302 → https://<team>.slack.com/?redir=/files-pri/…`, which then
 403s), or answers 200 with that page's HTML. So landing on a sign-in page
 (`?redir=`) is read as the missing scope whatever its status, and the content
 type decides the rest; either way the person is told the scope is what is

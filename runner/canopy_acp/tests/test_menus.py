@@ -1,7 +1,7 @@
 """ACP permission requests -> the menu payload the phone already renders.
 
 The fixture is the VERBATIM `session/request_permission` params captured from
-claude-agent-acp 0.63.0 on 2026-07-28 (spike4), so this pins the real contract
+claude-agent-acp 0.63.0, so this pins the real contract
 rather than a guess at it.
 
 The point of these tests is convergence: what comes out here must be

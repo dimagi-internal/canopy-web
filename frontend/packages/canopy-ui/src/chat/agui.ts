@@ -161,7 +161,7 @@ function decode(pendingCalls: PendingCalls, frame: AguiFrame): WsEvent[] {
             plaintext: str(frame.delta),
             // Who typed it — a transcript-sourced session's durable row carries
             // no user beyond the runner's own login, so this metadata is
-            // canopy's only chance to say (spec 2026-09-26). Absent when the
+            // canopy's only chance to say. Absent when the
             // server sent none (an agent/scheduled/email turn's own send).
             author: m.author as MessageAuthor | undefined,
             // The transcript record's provenance — the `content.record` a

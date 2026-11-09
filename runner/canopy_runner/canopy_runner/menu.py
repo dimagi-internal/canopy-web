@@ -13,7 +13,7 @@ words together (`Accessingworkspace:`). xterm resolves those into cells, and the
 runner reads the resulting text out of emdash's DOM over CDP — so this parser
 takes the grid, which is what a terminal shows.
 
-Verified end to end on 2026-07-28: a real dialog was captured from a live
+Verified end to end: a real dialog was captured from a live
 `claude`, parsed by this module, answered with `answer_keys`, and the file it
 asked about was actually deleted.
 
@@ -43,7 +43,7 @@ _QUESTION = re.compile(r"^\s*(.*\?)\s*$")
 # "│ canopy's scheduler … a paused" / "│ runner fires nothing …". Chrome, not
 # words. Kept in, it reached the phone as "a paused │ runner fires", and — the
 # real harm — the question no longer matched the declared one, so a tapped
-# answer was refused as unmodelled and pressed nothing (2026-10-08).
+# answer was refused as unmodelled and pressed nothing.
 _GUTTER = re.compile(r"^\s*│\s?")
 
 # Footer hints, never options or subject.
@@ -214,7 +214,6 @@ def _unwrap_question(lines: list[str], question: str, question_line: int):
     The question is found as the last line ending in '?', which on a wrapped one
     is only its TAIL: a real dialog reached the phone reading "press into that
     session?" — grammatical, useless, and indistinguishable from a short question
-    (captured 2026-08-01).
 
     Joined only on the hard-wrap signature: the line above ran to the frame's own
     width and broke at a space. That is deliberately narrow. A dialog's SUBJECT
@@ -285,7 +284,7 @@ def find_menu(text: str) -> Menu | None:
         # thing on screen, so the last run is the dialog. Keeping the first run
         # let an agent's own "1. … / 2. …" above the dialog swallow the dialog's
         # 3, 4, 5 and drop its 1 and 2 — a menu with no tab strip, which refused
-        # a multi-question answer as unmodelled (bednet, 2026-10-17).
+        # a multi-question answer as unmodelled.
         if number == 1:
             options, selected, first_option_line = [], None, i
         elif not options or number != options[-1].number + 1:
@@ -306,11 +305,9 @@ def find_menu(text: str) -> Menu | None:
     # But the footer is only drawn if there is a ROW LEFT TO DRAW IT ON. A tall
     # AskUserQuestion — a long question, five or six options, a description
     # under each — overflows a short emdash pane, and the line that falls off the
-    # bottom is the footer. Captured live 2026-08-01 from two sessions blocked
-    # this way, one for 15 minutes and one for 1h20m, both showing the phone
-    # nothing: 41-row frames ending mid-dialog on "6. Chat about this", no
-    # footer anywhere. The docstring predicted the miss ("a dialog with no
-    # footer would be missed"); this is that case, and it is not rare.
+    # bottom is the footer. A session blocked this way shows the phone
+    # nothing: a 41-row frame ending mid-dialog on "6. Chat about this", no
+    # footer anywhere. A dialog with no footer would be missed; this case is not rare.
     #
     # So a second, equally strict acceptance: the TUI's own selection cursor
     # sits on one of the options AND the dialog runs to the bottom of the frame.
@@ -369,7 +366,7 @@ def find_menu(text: str) -> Menu | None:
 def find_menu_settled(read_screen, *, attempts: int = 3, delay: float = 0.8):
     """`find_menu`, tolerant of a half-drawn frame.
 
-    Observed live 2026-07-28: a single read caught the TUI mid-render — the
+    A single read caught the TUI mid-render — the
     options were on screen but the footer had not been painted yet — so the
     dialog did not parse, and the answer was dropped as stale. Failing safe is
     right, but a phone tap that silently does nothing is its own bug, and the
@@ -504,8 +501,7 @@ def question_index(menu: "Menu", questions: list[dict]) -> int | None:
     `_WRAP_SLACK` allows, `_unwrap_question` keeps only the TAIL — measured on a
     3-question ask whose second question broke before "(read-only", ten columns
     short, so the screen read "(read-only Gmail + Calendar, … Salesforce)?" and
-    the driver refused after answering only the first tab (chrome-sales,
-    2026-10-28). The declared list is what disambiguates, so matching a tail
+    the driver refused after answering only the first tab. The declared list is what disambiguates, so matching a tail
     against it does not need the subject-swallowing risk a wider slack would.
     """
     shown = normalise(menu.question)

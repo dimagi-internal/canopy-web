@@ -19,8 +19,7 @@ class FleetHold(models.Model):
     """The fleet-wide hold: while `held`, NO runner is handed a turn — anywhere.
 
     The per-runner pause (`Runner.paused`) parks one box; this parks the whole fleet,
-    for the moment something is starting sessions nobody can account for (2026-10-07:
-    people-digest turns appearing on a laptop). Turns keep ENQUEUING while held — that
+    for the moment something is starting sessions nobody can account for. Turns keep ENQUEUING while held — that
     is the point: they pile up QUEUED, each carrying its origin, `origin_ref.trigger`
     and initiator, so `/harness/turns?status=queued` is the list of everything that
     tried to start, and `unclaimable_queued_turns` names the hold as the reason.
@@ -214,7 +213,7 @@ class RunnerFleet(models.Model):
 
 class RunnerPairing(models.Model):
     """A laptop box asks to be paired, and a person approves it in their browser
-    (`apps/harness/api_runner_pairings.py`, spec 2026-10-19-runner-installers).
+    (`apps/harness/api_runner_pairings.py`).
 
     The box makes its device key first and opens a pairing with a DPoP proof of
     it (anonymous: no token exists yet). The person opens `/pair/<user_code>`,
@@ -263,7 +262,7 @@ class RunnerPairing(models.Model):
     runner = models.ForeignKey(Runner, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
     #: The runner this box says it already IS (its runner.json), when its token stopped
     #: working: approved by that runner's owner, the claim adds the key to that runner
-    #: instead of making a new one. The box's word alone changes nothing (canopy-web#1705).
+    #: instead of making a new one. The box's word alone changes nothing.
     reconnect_runner = models.ForeignKey(Runner, on_delete=models.SET_NULL, null=True, blank=True,
                                          related_name="+")
 
@@ -296,8 +295,8 @@ class PrivateRunner(models.Model):
     opens there with an agent is a real, recorded turn (`Turn.ORIGIN_LOCAL`,
     `apps/harness/local_turns.py`): who ran it, on which machine, under which license.
     It belongs to the person, not to an agent or a workspace — one private runner serves
-    every agent they use. canopy-web#1704. When the machine also runs the runner app,
-    `runner` links the two, and that runner is marked `private` (canopy-web#1705).
+    every agent they use. When the machine also runs the runner app,
+    `runner` links the two, and that runner is marked `private`.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -311,7 +310,7 @@ class PrivateRunner(models.Model):
     #: Last time a direct turn opened or renewed from it.
     last_seen_at = models.DateTimeField(null=True, blank=True)
     retired_at = models.DateTimeField(null=True, blank=True)
-    #: The runner this machine also is (canopy-web#1705): one machine, one object with
+    #: The runner this machine also is: one machine, one object with
     #: two powers — direct sessions here, and the runner app's turns. Its device key is
     #: what a direct turn proves itself with.
     runner = models.OneToOneField("harness.Runner", null=True, blank=True,

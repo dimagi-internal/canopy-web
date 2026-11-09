@@ -1,4 +1,4 @@
-"""This box as its owner's PRIVATE runner — set up from the heartbeat, no CLI (canopy-web#1705).
+"""This box as its owner's PRIVATE runner — set up from the heartbeat, no CLI.
 
 When the runner's owner marks it private on canopy-web (the runner's page → Private
 runner), canopy-web links a private-runner registration to it and reports its id on

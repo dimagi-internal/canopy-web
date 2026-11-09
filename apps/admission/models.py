@@ -1,7 +1,7 @@
 """Admission rules: the one place canopy decides "this turn will not run".
 
 Some turns can never complete. An email from a confined caller, in manual mode,
-claimed by a cloud runner is the worked example (canopy-web#1400): the ask
+claimed by a cloud runner is the worked example: the ask
 procedure drafts a reply and waits for a human yes in a session nobody can
 reach, so the turn spends an LLM session and ends with nothing sent and nobody
 told. An `AdmissionRule` names a combination like that and rejects it before
@@ -194,7 +194,7 @@ class AdmissionNotice(models.Model):
     FAILED = "failed"                  # tried, and nothing more will try
     #: canopy-web could not send it, so the agent's runner owes it: the runner
     #: that reads the mailbox claims it on its next poll and sends it through
-    #: its own gog client (`runner_notices.py`, canopy-web#1416).
+    #: its own gog client (`runner_notices.py`).
     PENDING = "pending"
     STATUS_CHOICES = [(s, s) for s in (SENT, HELD, SKIPPED, NOT_CONFIGURED, FAILED, PENDING)]
 
@@ -236,7 +236,7 @@ class AdmissionNotice(models.Model):
 class AdmissionSettings(models.Model):
     """A workspace's admission switches, set by its admins on the Admission rules
     page — never by the deployment, so turning a behaviour on is a setting a
-    person can see and flip, not an env var and a deploy (canopy-web#1416).
+    person can see and flip, not an env var and a deploy.
 
     No row = the defaults below.
     """

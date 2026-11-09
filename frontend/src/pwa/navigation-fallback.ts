@@ -14,7 +14,7 @@
  *
  * This inverts the historical "shell for everything except a denylist of server
  * prefixes" default, which silently swallowed any server route nobody
- * remembered to denylist (issue #345: `/walkthrough/<id>/content` embedded via
+ * remembered to denylist (for example `/walkthrough/<id>/content` embedded via
  * `<iframe>` rendered the whole SPA again inside itself). The rule now FAILS
  * SAFE:
  *
@@ -66,8 +66,8 @@ export const NAVIGATE_FALLBACK_ALLOWLIST: RegExp[] = [
   /^\/(canopy\/)?ddd(\/|$)/,
   /^\/(canopy\/)?reviews/, // legacy flat → redirect
   // No flat /review/, /walkthrough/, /share/, /storyboard/, /narrative/ or
-  // /ddd-release/: those artifact addresses are a server 404 now
-  // (canopy-web#1337), so they must reach the network. The viewers live under
+  // /ddd-release/: those artifact addresses are a server 404,
+  // so they must reach the network. The viewers live under
   // /w/<ws>/, which `^/w/` above already allows.
   /^\/(canopy\/)?invite\//, // /invite/:token accept page
   /^\/(canopy\/)?about/, // /about public explainer (chrome-less, anonymous)

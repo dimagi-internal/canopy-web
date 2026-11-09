@@ -1,7 +1,7 @@
 import type { RunnerDeviceKeyOut } from '@/api/deviceKeys'
 
 /**
- * Plain words for a machine on Settings > Security (canopy-web#1550): which
+ * Plain words for a machine on Settings > Security: which
  * machine it is, where its key lives, which agents it can open. People see a
  * runner as "the MacBook" or "the AWS server", never as a key kind or a
  * thumbprint.

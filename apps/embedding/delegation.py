@@ -3,12 +3,12 @@
 A `DelegatedToken` is what a host site's widget (or its server) holds when
 one of its visitors turned out to be an existing canopy user
 (`contact_api.contact_token`, `assurance=host_signed`), and what canopy's own
-widget mints for itself (`/api/embed/token`). It used to authenticate EVERY
-route as that user: a token handed to ace-web for Jonathan could read his
-chats in any workspace, change workspace settings, mint PATs — anything he can
-do anywhere in canopy. The site only ever needed its own agents' chat.
+widget mints for itself (`/api/embed/token`). Authenticating it as the user on EVERY
+route would let a token handed to ace-web for a person read their chats in any
+workspace, change workspace settings, mint PATs — anything they can do anywhere
+in canopy. The site only needs its own agents' chat.
 
-So the token now reaches the intersection of two things:
+So the token reaches the intersection of two things:
 
 * **the user's own rights** — unchanged, every view still applies them; and
 * **what the SITE may do** — two limits, both enforced here:
@@ -30,7 +30,7 @@ at the browser is who is acting and the surface limit does not apply — but the
 agent limit still does, because the widget is still speaking as the site.
 
 The surface list is the complete set of calls canopy-widget, canopy-client and
-ace-web make with this token, read from their source on 2026-09-24 — ace-web's
+ace-web make with this token, read from their source — ace-web's
 server (`apps/canopy/client.py`: create/send/stop, turns by id, unclaimable,
 transcript) and frontend (`frontend/src/canopy/api.ts`: runners, sessions feed,
 turns list, turn events). A host that needs more asks for it here, by name.

@@ -1,4 +1,4 @@
-"""Runner start enrolls this machine's device key (Canopy Vault, dimagi-internal/canopy#946).
+"""Runner start enrolls this machine's device key (Canopy Vault).
 
 The key and its registration are canopy's (`canopy vault device --enroll`); the runner runs
 it once per start as ITS identity, says what a person must do while the key is pending (log
@@ -95,7 +95,7 @@ def test_start_runs_in_the_background_and_swallows_errors(monkeypatch):
 
 
 def test_finds_the_windows_canopy_exe(tmp_path, monkeypatch):
-    # A Windows runner (TPM key, canopy-web#1549): `uv tool install` leaves canopy.exe.
+    # A Windows runner (TPM key): `uv tool install` leaves canopy.exe.
     monkeypatch.setattr(dk.shutil, "which", lambda _: None)
     exe = tmp_path / ".local" / "bin" / "canopy.exe"
     exe.parent.mkdir(parents=True)
@@ -105,7 +105,7 @@ def test_finds_the_windows_canopy_exe(tmp_path, monkeypatch):
 
 
 def test_a_new_ecdh_key_sending_the_key_back_to_pending_notifies_again(tmp_path, monkeypatch):
-    """canopy-web#1550: registering the ECDH key on an approved key resets it to pending —
+    """Registering the ECDH key on an approved key resets it to pending —
     same signing thumbprint, so a marker keyed by jkt alone would stay silent."""
     def pending(ecdh_jkt):
         return Fake(out=json.dumps({"status": "pending", "jkt": "JKT-1", "kind": "secure-enclave",
@@ -125,7 +125,7 @@ def test_a_new_ecdh_key_sending_the_key_back_to_pending_notifies_again(tmp_path,
 
 def test_a_helper_rebuilt_after_start_brings_the_ecdh_key_without_a_restart(tmp_path, monkeypatch):
     # The runner enrolled seconds before the installer rebuilt canopy-device-key
-    # (haldimagi, 2026-10-19): it must notice the rebuild and enroll again.
+    # it must notice the rebuild and enroll again.
     helper = dk.helper_path(tmp_path)
     helper.parent.mkdir(parents=True)
     helper.write_text("old")

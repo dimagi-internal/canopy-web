@@ -1,5 +1,5 @@
 """Server-minted secrets for a zero-knowledge agent — `zks1:` "sealed to
-recipients" (canopy-web#1550, §6 of docs/vault/zk-v1/zk_v1_reference.py).
+recipients" (§6 of docs/vault/zk-v1/zk_v1_reference.py).
 
 canopy-web itself creates some secrets: the rotated `canopy-pat`. (The Gmail
 token from "Connect Google mailbox" is made on a runner and arrives here already

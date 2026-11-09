@@ -301,10 +301,10 @@ def _open_verifier(target: str, task: str, cfg):
 
 #: One plain sentence per way recovery can give up, appended to the note. Plain
 #: (unquoted, no ids) on purpose: auto_debug fingerprints the normalized note, and
-#: quoted text and ids are normalized away. One shared note hid at least four
-#: different causes in ONE failure investigation (#2, 2026-10-14 → 10-23: a lost
-#: Enter, a notification racing the send, a lone "?", a covered composer), so each
-#: fix "did not hold" for a cause it was never about. Distinct sentences make
+#: quoted text and ids are normalized away. One shared note would hide
+#: different causes in ONE failure investigation (a lost Enter, a notification
+#: racing the send, a lone "?", a covered composer), so each fix "did not hold"
+#: for a cause it was never about. Distinct sentences make
 #: distinct investigations.
 _NOT_RECEIVED_CAUSES = {
     "composer_not_visible": "When the runner looked again, the session was showing something "
@@ -328,9 +328,9 @@ def _not_received_note(task: str, reason: str = "") -> str:
     the keystrokes went out but the transcript never showed them arriving.
 
     It must NOT say "not delivered" or "send it again". The keystrokes DID go out;
-    all the runner knows is that it could not see them land. It used to assert a
-    loss and ask for a resend, and on turn 22662f53 (2026-10-04) the message had in
-    fact arrived — in a same-named session of another project — four times. A false
+    all the runner knows is that it could not see them land. Asserting a
+    loss and asking for a resend is wrong when the message did arrive (for
+    instance in a same-named session of another project). A false
     "lost" costs a duplicate; so say what is known and send the human to look."""
     return (
         f"Couldn't confirm your message was delivered. It was typed into the emdash "
@@ -344,19 +344,17 @@ def _not_received_note(task: str, reason: str = "") -> str:
 # turn id -> when its message was typed into a live session. A turn whose keystrokes
 # went out is NEVER typed again, whatever the server does with it: a requeue, a
 # lease-expiry reclaim, or an older server that requeues a failure with no session
-# key. Turn 22662f53 (2026-10-04) was typed four times because each unconfirmed send
-# failed sessionless, the server requeued it as a "non-attempt", and this runner
+# key. Otherwise a turn is typed repeatedly: each unconfirmed send
+# fails sessionless, the server requeued it as a "non-attempt", and this runner
 # claimed and retyped it. In memory is enough — those re-claims come within seconds.
 _TYPED_TURNS: dict[str, float] = {}
 TYPED_TURN_TTL = 6 * 3600.0
 
 # turn id -> (emdash task, when) for every session this runner CREATED for a turn.
 # Creating a session delivers the turn's prompt, so a turn that has one is never
-# created again: a crash after the create used to fail the turn with no session key,
-# the server requeued it as a non-attempt, and the re-claim made a SECOND session
-# with the same prompt in it (Slack turn f7cb8694, 2026-10-23: record-session 500'd
-# mid-deploy on both attempts, two worktrees, and the web listed the orphan as its
-# own session). `main._claim_and_execute` reads this to fail a crash terminally.
+# created again: a crash after the create would fail the turn with no session key,
+# the server would requeue it as a non-attempt, and the re-claim would make a
+# SECOND session with the same prompt in it. `main._claim_and_execute` reads this to fail a crash terminally.
 _CREATED_TURNS: dict[str, tuple[str, float]] = {}
 
 
@@ -492,7 +490,7 @@ def _undelivered(client, turn_id: str, task: str, verifier, prompt: str, *,
                    "within %.0fs, and recovery could not deliver it", turn_id, task,
                    delivery.CONFIRM_TIMEOUT)
     # `landed` is this runner's verdict for the debugger, so it never has to read
-    # the transcript (7 of 10 debug turns, 2026-10-15..23, opened by trying, and a
+    # the transcript (a debug turn that tries opens by trying, and a
     # chat turn's 404s by design). "no": the transcript was read throughout and the
     # message never reached it. "unknown": the session could not be read at all.
     _post_events_best_effort(client, turn_id, [{"kind": "status",
@@ -511,10 +509,9 @@ RECOVERY_ATTEMPTS = 2
 #: loop is blocked while we wait.
 RECOVERY_CONFIRM_TIMEOUT = 10.0
 #: How long recovery waits for a BUSY session to go idle before looking again.
-#: 2026-10-18 (turn 79313c1f, failure investigation 2 recurring): Jonathan's chat
-#: message to ACE was typed ~20s before a background-agent notification started a
-#: turn; at the look the composer was empty and Claude was running, so recovery
-#: left it and the message was lost. Busy is not a verdict, only "not yet": once
+#: A chat message can be typed ~20s before a background-agent notification
+#: starts a turn; at the look the composer is empty and Claude is running, so
+#: recovery would leave it and the message would be lost. Busy is not a verdict, only "not yet": once
 #: the session is idle its queue has drained into the transcript, so a message
 #: still missing then was lost, and a retype cannot double it. Bounded because the
 #: claim loop waits with us; past it we fail as before.
@@ -531,8 +528,8 @@ def _snapshot_after_send(client, turn_id: str, task: str, *, port: int, project:
     """Best-effort: post what the composer holds just after our Enter. Never raises.
 
     `sent` is the sidecar's open-send result; its `pre` is what the composer read
-    BEFORE typing. Turn 64cada76 (2026-10-23) read empty there while a human's draft
-    sat in the composer, and nothing recorded it — so it rides along here."""
+    BEFORE typing. It can read empty there while a human's draft sits in the
+    composer, so it rides along here."""
     if not SNAPSHOT_AFTER_SEND:
         return
     try:
@@ -592,11 +589,9 @@ def _landed(verifier, prompt: str) -> bool:
     return delivery.classify(verifier.read_new(), prompt) is not None
 
 
-#: LEAVE reasons whose look says nothing about what WAS on screen. Investigation 2's
-#: fourth cause (turn d9de6f41, ace on haldimagi, 2026-10-23): recovery left the
-#: session with composer_not_visible and nothing recorded what covered the input
-#: box — the claim-bounce path (`_blocking_dialog_note`) already posts the frame,
-#: this path did not.
+#: LEAVE reasons whose look says nothing about what WAS on screen: with
+#: composer_not_visible, the frame is what shows what covered the input box (the
+#: claim-bounce path, `_blocking_dialog_note`, posts it too).
 _SCREEN_TAIL_REASONS = frozenset({"composer_not_visible", "session_busy_timeout"})
 
 
@@ -619,9 +614,9 @@ def _recover_delivery(client, turn_id: str, task: str, verifier, prompt: str, *,
     ever putting it into the session twice. (delivered, reason): delivered when it is
     now believed delivered; otherwise reason says why recovery gave up.
 
-    The incident (2026-10-07, ACE, a Slack message typed into a live session while
-    Jonathan was using emdash): the keystrokes went out and nothing reached the
-    transcript in 20s, so the turn failed and the person was told to go and look.
+    The case: a Slack message typed into a live session while a person is using
+    emdash. The keystrokes go out and nothing reaches the
+    transcript in 20s, so the turn fails and the person was told to go and look.
     The two plausible causes are both recoverable, and both visible in the session:
     the text went somewhere else (a click stole focus between the sidecar's focus
     and its insert — the composer is empty), or the Enter was swallowed (our text is
@@ -738,12 +733,12 @@ def _project_missing(cfg, target: str) -> str:
     """Is `target` (an agent slug or repo) an emdash project on this box? "" if yes,
     or if emdash's DB cannot say; else a note for the caller to fail the turn with.
 
-    2026-10-15, turn f60e3ab4 (failure investigation 4): an email turn for `fizzy`
-    was claimed by shayoni-win-cdp, whose emdash had no `fizzy` project. The sidecar
-    searched the sidebar, failed with `project "fizzy" not found in the emdash
-    sidebar`, and the generic create-failure path marked the WHOLE runner not-ready
-    for 15 minutes (readiness.mark_failed) — a per-agent setup gap read as box
-    health, taking every other agent on that box out of routing with it. emdash's DB
+    A turn for an agent whose project this emdash lacks would reach the sidecar,
+    which searches the sidebar and fails with `project "fizzy" not found in the
+    emdash sidebar`; the generic create-failure path would then mark the WHOLE
+    runner not-ready for 15 minutes (readiness.mark_failed) — a per-agent setup gap
+    read as box health, taking every other agent on that box out of routing with
+    it. emdash's DB
     is the truth (the same `projects` table the heartbeat reports), so ask it first
     and say what to fix. A missing or unreadable DB proceeds as before: a read failure
     must never read as "not here".
@@ -766,10 +761,10 @@ def _not_created(cfg, task: str, *, timeout: float = 10.0, poll: float = 0.5) ->
     note for the caller to fail the turn with.
 
     The sidecar's create is UI automation: it reports the task it ASKED for, and a
-    click that lands on the wrong control still returns. On 2026-10-11 (emdash 1.2.8)
-    every create clicked a "Create new worktree" dropdown instead of the submit, the
-    dialog sat filled-in on the owner's screen, and this logged CREATE … new session
-    for tasks that never existed — so turns "succeeded" and nothing ran. emdash's DB
+    click that lands on the wrong control still returns. For example, a create can click a
+    "Create new worktree" dropdown instead of the submit, leaving the dialog
+    filled-in on the owner's screen while CREATE … new session is logged for a
+    task that never existed — so the turn "succeeds" and nothing runs. emdash's DB
     is the source of truth; "unknown" (no/unreadable DB) proceeds as before, because
     a read failure must never read as "not created".
     """
@@ -929,11 +924,11 @@ def _blocking_dialog_note(cfg, client, runner_id: str, turn: dict, task: str, ex
 
     `COMPOSER_NOT_VISIBLE` means something is drawn where the input line should
     be, and the overwhelmingly common something is a menu the agent is waiting
-    on. That is the one send failure a human can actually resolve, and it used
-    to be the quietest thing in the system: the phone got a failed turn carrying
-    a runner-internal string, so "the agent asked you something" and "the send
-    broke" looked identical. Observed 2026-07-30 — three sends bounced off an
-    unanswered AskUserQuestion and the session sat dead for 139 minutes.
+    on. That is the one send failure a human can actually resolve, and without the
+    dialog it is the quietest thing in the system: the phone would get a failed
+    turn carrying a runner-internal string, so "the agent asked you something" and
+    "the send broke" would look identical, and sends keep bouncing off an
+    unanswered AskUserQuestion.
 
     Reading the screen here is free of the hazard that rules it out on a hook
     signal (see `hooks.start_hook_listener`): `open-send` has ALREADY opened this
@@ -962,11 +957,9 @@ def _blocking_dialog_note(cfg, client, runner_id: str, turn: dict, task: str, ex
         # Mid-redraw or a stale frame — the error's other causes. Saying "blocked"
         # here would report an agent as needing a human when it is merely busy.
         #
-        # Record WHAT was drawn instead of the input line. Failure investigation #1
-        # (turn a225d132, ace on stewari-mbp-cdp, 2026-10-12): four claims over 80s
-        # all bounced COMPOSER_NOT_VISIBLE with no parsable dialog, into a session
-        # whose agent was mid-run in a subagent — and nothing anywhere said what was
-        # on screen, so "a menu the parser does not model", "a scrolled-up pane" and
+        # Record WHAT was drawn instead of the input line: claims can bounce
+        # COMPOSER_NOT_VISIBLE with no parsable dialog, into a session whose agent is
+        # mid-run in a subagent, and without the frame "a menu the parser does not model", "a scrolled-up pane" and
         # "a TUI view with no composer" could not be told apart.
         try:
             client.post_events(turn.get("id") or "", [{"kind": "status", "payload": {
@@ -990,9 +983,9 @@ def _blocking_dialog_note(cfg, client, runner_id: str, turn: dict, task: str, ex
 # (task, unsent line) -> (choice, when asked). A deferred chat turn is failed with no
 # session, so the server requeues it (up to MAX_SESSIONLESS_RETRIES) and this runner
 # claims it again on the very next tick — into the same unsent text. Asking again on
-# every attempt put up a fresh 30s modal each time, and the claim loop waited on it:
-# 4 popups, ~2.5 min during which no other turn on this box could be claimed
-# (2026-09-18, four chat turns queued 100-131s behind one). The human's answer to
+# every attempt would put up a fresh 30s modal each time, and the claim loop waits
+# on it: several popups, minutes during which no other turn on this box could be
+# claimed. The human's answer to
 # "this text is in the way" does not change while the text is unchanged, so ask once.
 _COLLISION_ANSWERS: dict[tuple[str, str], tuple[str, float]] = {}
 COLLISION_ANSWER_TTL = 600.0
@@ -1004,12 +997,11 @@ def _undelivered_note(task: str, *, cancelled: bool = False) -> str:
     This string is not a log line. `apps/slack/relay.py` posts a failed turn's
     `result_note` straight into the thread ("⚠️ This turn failed: <note>"), and the
     chat UI shows the same field — so it is the entire explanation the person gets
-    for a message that went nowhere. It used to read `chat send deferred: unsent
-    text in 'c-some-session-4795'`, which names an internal task id and no action.
+    for a message that went nowhere, so it names the session and the action, never
+    an internal task id.
 
-    It matters more since the retries stopped waiting on a 30s modal each (#859):
-    the attempts are spent in seconds now, so this note arrives almost at once and
-    IS the recovery path — the person clears the line and sends again."""
+    The retries do not wait on a 30s modal each: the attempts are spent in
+    seconds, so this note arrives almost at once and IS the recovery path — the person clears the line and sends again."""
     lead = "You stopped the delivery" if cancelled else "Your message was not delivered"
     return (
         f"{lead}: the emdash session \"{task}\" has unsent text sitting in its prompt, "
@@ -1058,11 +1050,11 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
     says the agent handed the floor back. Cancellation moved with it: the pump watches
     CANCELLED_TURNS, presses Escape in the live emdash session, and finishes CANCELLED.
 
-    `cancel_check` is read ONCE here, immediately before delivery. It used to be
-    ignored outright ("accepted for signature compatibility"), which made the cheapest
-    stop of all impossible: a human who hits stop between the claim and the send still
-    had the message typed into their agent, because the only consumer of the signal
-    was a pump that does not exist yet at this point. Nothing after delivery is checked
+    `cancel_check` is read ONCE here, immediately before delivery. Checking it
+    here makes the cheapest stop possible: a human who hits stop between the claim
+    and the send must not have the message typed into their agent, and the only
+    other consumer of the signal is a pump that does not exist yet at this point.
+    Nothing after delivery is checked
     here — from then on the bridge owns it, and the pump does the interrupting.
     """
     turn_id = turn["id"]
@@ -1088,8 +1080,8 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
     client.start(turn_id)
 
     task = plan.get("emdash_task_id") if plan.get("reuse") else None
-    # A follow-up claimed to ride this conversation's RUNNING turn
-    # (canopy-web#1153): type it into that turn's live session — Claude Code
+    # A follow-up claimed to ride this conversation's RUNNING turn:
+    # type it into that turn's live session — Claude Code
     # takes it mid-turn or right after, as it does anything a person types — and
     # let that turn's bridge carry the reply. No bridge here (the session went
     # away between the claim and now) means an ordinary send.
@@ -1139,11 +1131,10 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
             )
             return f"failed:{turn_id}"
         # A collision is `ok: true` with action="collision" and NOTHING delivered —
-        # not an exception. This path used to discard the result entirely, so a
-        # chat send into a prompt the human was typing in reported success while
-        # the message went nowhere. The agent path has asked since #320; chat now
-        # asks the same way, because it is the SAME hazard and the human is right
-        # there.
+        # not an exception. Discarding the result would report success for a chat
+        # send into a prompt the human was typing in, while the message went
+        # nowhere. The agent path asks the human, and chat asks the same way,
+        # because it is the SAME hazard and the human is right there.
         if res.get("action") == "collision":
             line = res.get("line", "")
             if _clear_requested(turn):
@@ -1178,8 +1169,8 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
                 client.fail_turn(turn_id, _undelivered_note(task))
                 return f"deferred:{turn_id}"
         # `sent` is "the keystrokes went out". Confirm the session took them, or the
-        # turn sits RUNNING with no reply and nobody is told (turn ffaa56ce,
-        # 2026-10-02). Never retype blind: a late landing would arrive twice (the one
+        # turn sits RUNNING with no reply and nobody is told.
+        # Never retype blind: a late landing would arrive twice (the one
         # retype is `_recover_delivery`'s, into a composer it has just seen empty).
         _TYPED_TURNS[turn_id] = time.monotonic()
         _snapshot_after_send(client, turn_id, task, port=cfg.cdp_port, project=target,
@@ -1283,7 +1274,7 @@ def execute_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> 
 
     `cancel_check` (`lambda turn_id: bool`) is threaded straight through to
     `execute_chat_turn` — only chat/session turns are cancellable today (see there)."""
-    # The session runtime (canopy-web#1188): a new thread on a box switched to
+    # The session runtime: a new thread on a box switched to
     # claude-desktop, or any thread whose session already lives there, goes to the
     # desktop backend; everything else falls through to emdash, unchanged.
     from . import desktop
@@ -1311,7 +1302,7 @@ def execute_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> 
     # A repo turn always carries an explicit prompt (the composer requires it).
     work_prompt = turn.get("prompt") or f"/{agent}:turn"
 
-    # turn_id: never reuse a session that is mid-turn (#309) — the server refuses
+    # turn_id: never reuse a session that is mid-turn — the server refuses
     # and we create fresh below, exactly as for a session that is gone.
     plan = client.resolve_session(
         runner_id, agent_slug, thread_key, project=project, workspace=workspace,
@@ -1331,8 +1322,8 @@ def execute_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> 
     envelope = caller.write_caller_file(turn)
     work_prompt = caller.with_caller_flag(work_prompt, envelope)
     # Log the plan: "why did it create a new session?" must be answerable from the log
-    # alone. Without this the reuse decision was invisible and every diagnosis started
-    # by guessing (see the 2026-07-15 eva org-research investigation).
+    # alone. Without this the reuse decision is invisible and every diagnosis starts
+    # by guessing.
     logger.info("resolve turn=%s agent=%s thread=%s -> reuse=%s task=%r link=%s busy=%r",
                 turn_id, agent, thread_key, plan.get("reuse"),
                 plan.get("emdash_task_id") or "", plan.get("link_id"), plan.get("busy") or "")

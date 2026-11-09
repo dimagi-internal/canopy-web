@@ -41,12 +41,12 @@ from . import initiator as who
 from .models import Turn
 
 #: Bump when a field's MEANING changes; adding a field does not need it.
-#: 2 (2026-10-04): `relationship` "caller" is now "contact", `profile`
+#: 2: `relationship` "caller" is now "contact", `profile`
 #: "restricted" is now "confined" — one word per meaning, the same words the
 #: roster and the docs use. Readers accept both (`normalize_relationship`,
 #: `normalize_profile`), since an envelope written by an older canopy-web may
 #: still sit on a box.
-#: 3 (2026-10-07, fleet brain v1, canopy#804): adds `person` — what canopy knows
+#: 3: adds `person` — what canopy knows
 #: about the human asking (facts, this agent's workspace only) — and
 #: `trigger.kind`. Purely additive: every v2 field keeps its meaning, so a v2
 #: reader (runner, canopy hook) ignores the new keys and works unchanged. The
@@ -119,7 +119,7 @@ def relationship(turn, agent) -> str:
 
 def acting_cap(turn) -> str:
     """The role a turn's initiator acts as, applied to `turn.initiator_user`: the
-    `acts_as` the turn was started with (canopy-web#1705). "" when they act as
+    `acts_as` the turn was started with. "" when they act as
     themselves."""
     from apps.workspaces import role_cap
 
@@ -133,10 +133,9 @@ def _relationship_without_agent(turn, user) -> str:
     """What someone is to a turn with NO agent — a repo chat, a project turn.
 
     There is no agent to own, so the question is whose conversation and whose
-    machine it is. It used to fall through to a CALLER (now `contact`), so the owner of a repo
-    chat on their own laptop was told, in the "who is asking" note on every
-    message, that they did not hold the agent's authority and must not push or
-    deploy (2026-09-27, on Jonathan's own canopy-web session).
+    machine it is. Falling through to `contact` would tell the owner of a repo chat on their own
+    laptop, in the "who is asking" note on every message, that they did not hold
+    the agent's authority and must not push or deploy.
 
     OWNER: the runner's owner doing the work (it is their box and
     their Claude login), or the session's owner by the session ACL. MEMBER:
@@ -145,11 +144,11 @@ def _relationship_without_agent(turn, user) -> str:
     runner = getattr(turn, "claimed_by", None)
     if runner is not None and getattr(runner, "owner_id", None) == user.pk:
         return OWNER
-    # An agent's OWN login (`Agent.user`, #983) working on a box its OWNER paired is
+    # An agent's OWN login (`Agent.user`) working on a box its OWNER paired is
     # that agent acting where its owner's authority already runs — the dispatch shape
     # (an agent session asked by its owner to start work on the owner's runner, calling
-    # canopy with the agent's PAT). It fell through to CALLER (now contact) and froze push/merge in
-    # exactly the sessions the owner asked for (canopy-web#1011). Same answer
+    # canopy with the agent's PAT). Falling through to contact would freeze push/merge in
+    # exactly the sessions the owner asked for. Same answer
     # `relationship_for_user` gives the agent's own login; still only its own, and
     # only on its owner's box — anywhere else it stays a CONTACT.
     agent_self = getattr(user, "agent_identity", None)
@@ -187,7 +186,7 @@ def relationship_for_user(user, agent, *, role=UNREAD, granted: bool | None = No
         role = wsvc.member_role(user, agent.workspace_id)
     if not capped and agent.owner_id == user.pk and role is not None:
         return OWNER
-    # The agent's OWN canopy login (`Agent.user`, #983) is the agent itself —
+    # The agent's OWN canopy login (`Agent.user`) is the agent itself —
     # confining it against itself is nonsense. Only its own: another agent's
     # login stays whatever its membership makes it, or everyone with the whole
     # of agent A could steer agent B through A (anyone at dimagi.com with full
@@ -343,8 +342,8 @@ def build(turn, *, reader_user=None) -> dict:
         # Non-null when this email came from an address that belongs to a MEMBER of
         # the agent's workspace, but THIS message could not be tied to them (it is
         # not DMARC- or DKIM-aligned), so they were treated as a contact. Without it
-        # a confined session cannot tell its own editor from a stranger
-        # (canopy-web#1265). Information only: it grants nothing, changes no
+        # a confined session cannot tell its own editor from a stranger.
+        # Information only: it grants nothing, changes no
         # `relationship`/`profile`/`granted_by`, and must not be read as proof of
         # who sent the message — the whole point is that it is NOT proven.
         "unproven_member": _unproven_member(turn, agent),
@@ -360,8 +359,8 @@ def build(turn, *, reader_user=None) -> dict:
             # WHERE IN SLACK this conversation is, when its session holds a Slack
             # thread: {team_id, channel_id, channel_name, thread_ts, permalink,
             # is_dm}; null otherwise. Without it an agent asked to "post a clean
-            # thread in the channel" had to ask which channel it was in
-            # (2026-10-16). Read from the session's cache — building the envelope
+            # thread in the channel" had to ask which channel it was in.
+            # Read from the session's cache — building the envelope
             # never calls Slack (apps/slack/location.py). Additive: no VERSION bump.
             "slack": _slack_location(cs),
             # No `history`: a SENSITIVE conversation's agent resumes the session its
@@ -414,7 +413,7 @@ def build(turn, *, reader_user=None) -> dict:
         # agent's clone, as it does a person by hand. See `_own_box_turn`. Additive: no
         # VERSION bump.
         "own_box_turn": _own_box_turn(turn, agent),
-        # The owner-approved REPO-INTERNAL SHIP GRANT (Jonathan, 2026-10-03): when
+        # The REPO-INTERNAL SHIP GRANT: when
         # another agent's login that holds this agent's keys (an explicit admin, or
         # the owner) dispatches work AT this agent, the session may push, open PRs
         # and merge in THIS AGENT'S OWN repo without stopping for the owner. Nothing
@@ -442,9 +441,9 @@ def build(turn, *, reader_user=None) -> dict:
         # page's backing tool. The canopy plugin's UserPromptSubmit hook puts
         # this into the session's context, which is not a transcript row, so
         # the agent has the screen on turn one even while its MCP servers are
-        # still connecting (why the widget used to paste it) and the person's
-        # message stays exactly what they typed. Until 2026-09-26 the widget
-        # pasted it, and every transcript showed a JSON dump under the question.
+        # still connecting and the person's
+        # message stays exactly what they typed (the widget does not paste it, so
+        # no transcript shows a JSON dump under the question).
         "page": _page(cs),
         # THE SITE THIS CONVERSATION IS HELD ON, when its agent serves that site on
         # pages (`published_profiles.page_turn`): the agent reaches it here ONLY through
@@ -453,7 +452,7 @@ def build(turn, *, reader_user=None) -> dict:
         # are, the agent's owner included. Its own login there (`withheld`) is not in
         # this turn. null for any other turn.
         "site": _site(turn, agent),
-        # MCP APPS (spec 2026-10-08 §6): what a site's View in this conversation
+        # MCP APPS: what a site's View in this conversation
         # last said about its state (`ui/update-model-context`, latest wins) and
         # canopy's OWN receipts of the calls a person made by clicking in one —
         # recorded by the host, never reported by the View. null when no View
@@ -664,11 +663,10 @@ SHIP_NOT_GRANTED = ("send email or messages", "publish or share documents", "pub
 def _ship_grant(turn, agent, rel: str) -> dict | None:
     """The repo-internal ship grant for an agent-to-agent dispatch, or None.
 
-    Owner decision, 2026-10-03 (Jonathan): Ada's fix dispatches to its sibling
-    agents (eva#343, eva#347, canopy#715) each stopped for the owner to type "yes
-    merge" although the brief said to merge — the receiving session read
-    `turn_mode: manual` and, correctly by its envelope, waited. The grant lifts
-    THAT wait and only that one. Every condition is required:
+    Without it, a fix dispatched to a sibling agent would stop for the owner to
+    type "yes merge" although the brief said to merge — the receiving session
+    reads `turn_mode: manual` and, correctly by its envelope, waits. The grant
+    lifts THAT wait and only that one. Every condition is required:
 
     * the turn targets an AGENT directly (`turn.agent`) — not a repo/project
       turn, and not a chat or email session that happens to belong to one;

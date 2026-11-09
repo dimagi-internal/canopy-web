@@ -2,7 +2,7 @@ import type { components } from '@/api/generated'
 
 export type CredRow = components['schemas']['AgentCredentialStatusOut']
 
-/** One line of the status list that leads the Credentials section (#1314):
+/** One line of the status list that leads the Credentials section:
  *  each credential's detail section reports it up, so the one that needs a
  *  person is visible at the top instead of last on the page. */
 export type CredStatus = { label: string; tone: 'success' | 'warning' | 'destructive' | 'muted' }

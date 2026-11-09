@@ -142,7 +142,7 @@ function VersionBlock({
   const scoped = useScopedPath()
   const [busy, setBusy] = useState(false)
   const label = version.version != null ? `v${version.version}` : 'no narrative'
-  // A recorded narrative (canopy#796) is several short videos, one per cut: show
+  // A recorded narrative is several short videos, one per cut: show
   // each beside what it says, instead of the whole story as one paragraph.
   const cuts = version.cuts ?? []
   const recorded = cuts.length > 0
@@ -351,8 +351,8 @@ export function NarrativeLanding({ slug }: { slug: string }) {
             )}
             {detail.project_slug && <span>· {detail.project_slug}</span>}
           </div>
-          {/* The way in to the review was a sidebar "v2 CURRENT" link or a per-version
-              "Edit narrative" — neither said a story was waiting (canopy-web#1271). */}
+          {/* A sidebar "v2 CURRENT" link or a per-version "Edit narrative" does not say
+              a story is waiting, so the way in to the review is this link. */}
           {detail.current_version?.review_id && (
             <a
               href={withBase(scoped(`/review/${detail.current_version.review_id}`))}

@@ -207,7 +207,7 @@ def _scrub_turns(turn_ids: list, now: dt.datetime) -> None:
             TurnEvent.objects.filter(turn_id__in=ids).delete()
             TurnTranscript.objects.filter(turn_id__in=ids).delete()
             CallerToken.objects.filter(turn_id__in=ids).delete()
-            # The status line carries the whole ask (slack #1134).
+            # The status line carries the whole ask.
             SlackTurnPost.objects.filter(turn_id__in=ids).update(rendered="", prefix="")
 
 
@@ -252,7 +252,7 @@ def sensitive_rule() -> RetentionRule:
 
 def _sweep_sensitive(tally, *, now, apply, limit) -> None:
     """Sensitive conversations past the forced period, and the session-less
-    turns started from them (spec 2026-10-22-sensitive-data-agents §4).
+    turns started from them.
     Runs whatever `CANOPY_RETENTION_ENFORCE` says. A workspace rule that is
     SHORTER still applies through `_sweep_chats` when enforcement is on."""
     from apps.canopy_sessions.models import Session

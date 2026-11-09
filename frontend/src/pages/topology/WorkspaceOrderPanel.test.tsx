@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 //
-// A new workspace (a family's, 2026-10-18) starts with no runners. The order
-// refuses a box that is not enrolled there, and enrolling lived only on each
-// runner's own page — so "have my boxes run this workspace" was four detours
-// and a 422. Adding your own box to the order now enrolls it on the way.
+// A new workspace starts with no runners. The order refuses a box that is not
+// enrolled there, and enrolling would otherwise live only on each runner's own
+// page — "have my boxes run this workspace" would be four detours and a 422.
+// Adding your own box to the order enrolls it on the way.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 

@@ -138,8 +138,8 @@ def test_the_gate_passes_ordinary_bearers_through_untouched(world):
 
 def test_a_bound_token_sent_as_a_plain_bearer_is_refused_at_the_gate(world, token):
     # RFC 9449 §7.1. Left to the host's own verifier it only works on a host whose
-    # verifier refuses an unknown bearer outright; canopy's live probe found one
-    # that let it reach the tool layer (2026-09-28).
+    # verifier refuses an unknown bearer outright; a looser one lets it reach the
+    # tool layer.
     seen = []
     status, headers, _ = _post(DPoPGate(echo_app(seen), world.verifier), {"Authorization": f"Bearer {token}"})
     assert status == 401 and seen == []

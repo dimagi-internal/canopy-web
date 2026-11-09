@@ -78,7 +78,7 @@ def test_a_truly_unrelated_event_is_ignored():
 
 
 def test_a_notification_reports_blocked():
-    """Notification used to be ignored. It is the only signal that the agent is
+    """A Notification is the only signal that the agent is
     waiting on a HUMAN — a permission prompt, or an idle wait for input — and
     without it such a session rendered exactly like one that was working, so you
     waited on an agent that was waiting on you."""
@@ -340,10 +340,9 @@ def test_a_held_port_falls_back_instead_of_turning_live_events_off(caplog):
     """The hook port is machine-global; the config that names it is per-account.
 
     Two runners on one Mac (two macOS accounts) both default to 8787, so the
-    second one used to lose the bind and run with live events off FOREVER — the
-    chat UI's "running" indicator dead for every session it drove. Measured on
-    this machine 2026-07-28 → 07-30. A free port costs nothing, because we write
-    the number into ~/.claude/settings.json ourselves.
+    second one would lose the bind and run with live events off FOREVER — the
+    chat UI's "running" indicator dead for every session it drove. A free port
+    costs nothing, because we write the number into ~/.claude/settings.json ourselves.
     """
     import socket
 
@@ -425,9 +424,9 @@ def test_the_hook_config_is_written_with_the_port_actually_bound(monkeypatch, tm
 # the race takes an ephemeral port and re-points the account's hooks at itself,
 # and if it then exits, every hook curls a port nothing is listening on.
 #
-# Observed live 2026-07-30: the runner listening on :8788, the config pointing
-# at :49366, nothing bound there, and the hook receipt rate collapsing from 293
-# per 5 minutes to 88 as sessions restarted onto the dead port.
+# The failure shape: the runner listening on :8788, the config pointing
+# at :49366, nothing bound there, and the hook receipt rate collapsing as
+# sessions restart onto the dead port.
 
 
 def _idle_listener(port, nonce):

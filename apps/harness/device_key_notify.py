@@ -1,7 +1,7 @@
 """Tell the people who can approve a runner's device key that one is waiting
-(Canopy Vault, canopy-web#1538 / #1550).
+(Canopy Vault).
 
-(A new pending key on a workspace's runner is now the `device_key_pending`
+(A new pending key on a workspace's runner is the `device_key_pending`
 alert instead of this notice; see `notify_pending`.)
 
 A box registering a key prints `approve_url` — to a terminal nobody may be
@@ -45,7 +45,7 @@ def approvers(runner) -> list:
 
 #: `platform.system()` names, as the canopy CLI's default key label carries them
 #: ("DIM-SA-A126 (Darwin)"). "Darwin" read to a Mac owner as a machine they had
-#: never heard of (2026-10-21), so a notice names the kind of computer instead.
+#: never heard of, so a notice names the kind of computer instead.
 _SYSTEMS = {"Darwin": "Mac", "macOS": "Mac", "Windows": "Windows PC", "Linux": "Linux machine"}
 
 
@@ -131,8 +131,7 @@ def _send(people, *, subject: str, detail: str, link: str, foot: str, link_text:
 
 
 def notify_invitation(invitation, link: str) -> dict:
-    """Mail + push the person who invited a new box its approve link (spec
-    2026-10-19 #9). Only they can approve it, so only they are told. Never raises."""
+    """Mail + push the person who invited a new box its approve link. Only they can approve it, so only they are told. Never raises."""
     result: dict = {"emailed": [], "failed": [], "not_configured": False, "pushed": 0}
     try:
         person = invitation.created_by

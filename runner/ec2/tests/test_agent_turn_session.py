@@ -33,9 +33,8 @@ def test_an_agent_turn_records_under_agent_and_turn_id(cloud_runner):
 
 
 def test_a_named_thread_is_one_session_across_its_turns(cloud_runner):
-    """2026-10-29: one Hal alarm thread, re-dispatched, opened four cold sessions
-    on cloud-ec2-live (each keyed `hal:<turn id>`) while the laptop runner kept
-    one (keyed by the Gmail thread). Both runners now key it the same way."""
+    """A re-dispatched alarm thread must not open a cold session per turn (keyed
+    `hal:<turn id>`); the cloud and laptop runners both key it by the Gmail thread."""
     email = _agent_turn(agent_slug="hal", prompt="/hal:turn --thread 1a184f500cd30f72",
                         origin_ref={"thread_id": "1a184f500cd30f72", "subject": "ALARM"})
     again = {**email, "id": "a72a5d39-3ae9-41ec-8aa4-00776b868b28"}
@@ -46,7 +45,7 @@ def test_a_named_thread_is_one_session_across_its_turns(cloud_runner):
 
 
 def test_a_keyless_turn_still_gets_its_own_session(cloud_runner):
-    """The #309 guard: a schedule fire, a board turn, a keyless dispatch never
+    """A schedule fire, a board turn, a keyless dispatch never
     lands in another turn's session."""
     assert cloud_runner._agent_thread_key(_agent_turn()) == f"echo:{TID}"
     assert cloud_runner._agent_thread_key(_agent_turn(origin_ref={})) == f"echo:{TID}"
@@ -127,7 +126,7 @@ def test_an_agent_session_is_named_for_a_person_not_by_its_uuid(cloud_runner):
 
 
 def test_a_command_prompt_is_not_a_session_name(cloud_runner):
-    """2026-10-03: ACE's email session was titled "/ace:turn --thread 1a0f…"."""
+    """An email session is not titled "/ace:turn --thread 1a0f…"."""
     email = _agent_turn(origin_ref={"subject": "Latest on workflows", "thread_id": "1a0f"},
                         prompt="/ace:turn --thread 1a0f24bf9b830273")
     assert cloud_runner._agent_session_title(email) == "Latest on workflows"
@@ -309,7 +308,7 @@ def test_acp_announces_the_session_before_prompting(cloud_runner, monkeypatch, t
         cloud_runner._SESSION_HOOKS.pop("t-acp", None)
     assert (ok, sid) == (True, "acp-1")
     # Session start gets its own, generous timeout — not canopy_acp's 120s default
-    # (eva's environment sometimes needs ~125s to boot; 2026-10-04).
+    # (an agent's environment can need ~125s to boot).
     assert order == [f"timeout:{cloud_runner.ACP_SESSION_START_TIMEOUT_SECONDS}",
                      "session:acp-1", "prompt"]
     assert cloud_runner.ACP_SESSION_START_TIMEOUT_SECONDS >= 300
@@ -452,8 +451,8 @@ def test_a_dropped_acp_connection_carries_the_adapters_exit(cloud_runner, monkey
 def test_acp_reply_fragments_are_emitted_as_whole_messages(cloud_runner, monkeypatch, tmp_path):
     """ACP streams a reply as `agent_message_chunk` fragments of a few characters.
     Each assistant event is one row downstream — one Slack post — so emitting a
-    fragment per event posted an Eva reply to Slack as 85 messages split
-    mid-word (2026-10-06). A message is emitted whole: when the agent moves to a
+    fragment per event would post one reply to Slack as dozens of messages split
+    mid-word. A message is emitted whole: when the agent moves to a
     tool call, and at the end of the turn."""
     from types import SimpleNamespace
 

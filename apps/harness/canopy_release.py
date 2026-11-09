@@ -3,9 +3,8 @@
 The update doorbell keys on the runner's CODE (`Runner.expected_code_sha`), which a
 canopy-web deploy moves. The canopy plugin + CLI is a separate program released from
 dimagi-internal/canopy on every merge, and a cloud box only picks it up when its
-bootstrap re-runs. Nothing server-side knew the current release, so a box behind on
-it rang nothing and caught up only on its 24h age refresh (cloud-ec2-2 sat on 0.2.804
-for hours after 0.2.805 stopped an hourly owner alert, 2026-10-27).
+bootstrap re-runs. The server must know the current release, or a box behind on
+it rings nothing and catches up only on its 24h age refresh.
 
 `expected()` is that release: canopy main's `plugins/canopy/.claude-plugin/plugin.json`,
 read anonymously (canopy is public) and cached — the same file a box's marketplace

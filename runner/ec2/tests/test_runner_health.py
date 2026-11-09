@@ -1,10 +1,10 @@
 """The box reports its own features, keeps its package clone to itself, and
 refreshes itself when asked or overdue — never mid-turn, never in a loop.
 
-All three come from one incident (cloud-ec2-1, 2026-09-22): an agent turn left
-the shared canopy-web clone on a branch, `git pull --ff-only` failed on the next
-start, the three in-repo packages were never exposed, and the box ran six hours
-online + ready with no transcripts, no inbox and no ACP.
+All three guard one failure: an agent turn leaves the shared canopy-web clone on a
+branch, `git pull --ff-only` fails on the next start, the three in-repo packages
+are never exposed, and the box runs online + ready with no transcripts, no inbox
+and no ACP.
 """
 from __future__ import annotations
 
@@ -197,8 +197,8 @@ def _versions(cloud_runner, monkeypatch, *, cli, clone):
 
 
 def test_a_box_whose_clone_is_as_stale_as_its_cli_is_behind_the_release(cloud_runner, monkeypatch):
-    # cloud-ec2-2, 2026-10-27: CLI and clone both 0.2.804 read "ok" while canopy
-    # had released 0.2.805. The server's release is what it is judged by.
+    # CLI and clone both at 0.2.804 must not read "ok" while canopy has released
+    # 0.2.805. The server's release is what it is judged by.
     _versions(cloud_runner, monkeypatch, cli="0.2.804", clone="0.2.804")
     cloud_runner._observe_beat({"paused": False, "expected_canopy_version": "0.2.805"})
     monkeypatch.setattr(cloud_runner, "_HEALTH_SLOW_AT", 0.0)
@@ -269,8 +269,8 @@ def test_an_unsupervised_box_never_restarts_mid_turn(refresh, monkeypatch):
 
 
 def test_a_supervised_box_refreshes_mid_turn_by_handing_off(refresh, monkeypatch):
-    # cloud-ec2-live, 2026-10-28 → 10-30: a refresh that waited for an idle box sat
-    # 45 hours behind chats. A supervisor can carry every turn to the next daemon.
+    # A refresh that waits for an idle box can sit hours behind chats. A supervisor
+    # can carry every turn to the next daemon.
     cr, calls = refresh
     monkeypatch.setattr(cr, "_in_flight_ids", lambda: ["t1", "t2"])
     monkeypatch.setenv("CANOPY_RUNNER_SUPERVISED", "1")
@@ -323,8 +323,8 @@ def test_health_reports_when_the_floor_lets_it_restart_again(refresh):
 
 
 def test_a_runner_sharing_its_machine_exits_for_its_unit_to_restart_it(refresh, monkeypatch, tmp_path):
-    # cloud-ec2-2-marshellis, 2026-10-28: a `canopy-runner@<id>` runner has no sudo
-    # and cannot write /opt/canopy-runner, so its refresh sat pending, idle, for hours.
+    # A `canopy-runner@<id>` runner has no sudo and cannot write /opt/canopy-runner,
+    # so its refresh would sit pending, idle, for hours.
     cr, calls = refresh
     monkeypatch.setattr(cr, "RUNNER_INSTANCE", "d0bb2dd6")
     monkeypatch.setattr(cr, "RUNNER_HOME", "/nonexistent/opt/canopy-runner")
@@ -346,7 +346,7 @@ def test_a_refresh_it_cannot_start_says_so_in_the_refresh_check(refresh, monkeyp
 
 
 def test_a_failed_bootstrap_says_why_in_the_check(cloud_runner, monkeypatch, tmp_path, capsys):
-    # "exited 1" alone sent someone to journald on 2026-09-22; the reason was the
+    # "exited 1" alone sends someone to journald; the reason is the
     # script's last line (`line 1024: ace: unbound variable`).
     src = tmp_path / "src"
     script = src / "runner" / "ec2" / "bootstrap_agents.sh"

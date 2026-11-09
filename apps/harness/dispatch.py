@@ -132,7 +132,7 @@ def dispatch(task, *, action, actor_workspace_ids: set[str]) -> list[Turn]:
         # a strictly worse bug than the one being fixed — it blinds the lens to the human's
         # primary channel.
         #
-        # Idempotent, so an agent that already stamped client-side (Ada does, ada#55) passes
+        # Idempotent, so an agent that already stamped client-side (Ada does) passes
         # through untouched and is not double-marked.
         sender = task.agent or task.created_by_agent or target
         brief = stamp_dispatched(spec.prompt or invocations.command(target.slug, "turn"), sender=sender.slug)
@@ -176,9 +176,9 @@ def _dispatch_parent(task) -> dict | None:
 
 # ---- the board's own turns: approve with no `on_approve`, nudge, reply, answer
 #
-# A task without `on_approve` used to approve into a pending action row and
-# nothing else — no turn, so the agent heard about it only whenever it next
-# happened to run (Jonathan, 2026-10-08: approve ALWAYS starts the work). When
+# Approving a task always starts the work, so a task without `on_approve` must not
+# approve into a pending action row alone (no turn, so the agent would hear about it
+# only whenever it next happened to run). When
 # the card carries no spec of its own, canopy-web writes the one turn the
 # action implies, from the card itself, and runs it through the same enqueue
 # as `dispatch()`: same stamp, same initiator, same parent, same task link.
@@ -223,7 +223,7 @@ def _task_context(task) -> str:
         if toolbox:
             # Its card says what it holds and how to read it (apps/mcp/project_gateway.py).
             lines.append(f'Its toolbox ({toolbox}): open it first with open_project("{project.address}").')
-    # The person's own words come before the agent's inference, and outweigh it (T68).
+    # The person's own words come before the agent's inference, and outweigh it.
     for why in task.human_whys.all():
         who = why.who_name or why.who_email or "someone"
         where = f" ({why.source_url})" if why.source_url else ""

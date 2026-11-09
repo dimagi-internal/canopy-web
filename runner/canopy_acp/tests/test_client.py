@@ -325,8 +325,7 @@ def _wait(predicate, timeout=2.0):
 def test_a_dead_adapter_says_why(tmp_path):
     """The adapter dying mid-turn surfaced only as "ACP connection closed before a
     reply arrived": its stderr went to a DEBUG log and its exit status nowhere, so
-    an OOM kill, a crash and a clean exit all read the same (2026-10-05, a hal
-    turn on cloud-ec2-1 that nobody could diagnose afterwards)."""
+    an OOM kill, a crash and a clean exit all read the same."""
     import sys
 
     from canopy_acp.client import AcpAgent
@@ -356,9 +355,8 @@ def test_a_running_adapter_reports_no_exit(tmp_path):
 def test_the_adapter_pipes_are_utf8_whatever_the_locale(tmp_path, monkeypatch):
     """On Windows the locale default is cp1252, which cannot decode the 0x9D byte
     of a right double quote. The reader died on it and the turn failed as "ACP
-    connection closed before a reply arrived" (2026-10-26, fizzy email turn
-    b50c9a50 on shayoni-win-cdp; failure investigation 11). Here the locale
-    default is forced to cp1252, as on that box."""
+    connection closed before a reply arrived". Here the locale default is forced
+    to cp1252, as on Windows."""
     import subprocess
     import sys
 

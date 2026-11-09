@@ -10,8 +10,8 @@ Resolution order: session cookie → `Authorization: Bearer` (a runner key, a PA
 then a delegated token) → `?ticket=` (a delegated token only). A browser cannot put a header on
 `new WebSocket()`, so a page holding a delegated or contact token trades it for
 a one-time ticket over REST (apps/tokens/ws_ticket.py) and opens the socket with
-that. A token is never read from the URL: `?token=` was accepted until
-2026-10-06 and put live tokens in access logs.
+that. A token is never read from the URL: `?token=` is not accepted: it
+would put live tokens in access logs.
 
 The middleware always sets scope["user"] to a real User or AnonymousUser; the
 per-surface authorization (can this user read this turn?) happens in the consumer.
@@ -160,10 +160,9 @@ async def still_signed_in(scope) -> bool:
     user? Re-resolved through the same path `RealtimeAuthMiddleware` used.
 
     A socket is authenticated once, at the handshake, and then lives for hours.
-    Revoking the PAT behind it closed nothing: a runner whose token was revoked
-    kept claiming turns over its socket while every REST call it made (events,
-    transcript, finish) was refused, so each claimed turn vanished (2026-10-17,
-    cloud-ec2-2). A consumer that ACTS on a frame asks this first.
+    Revoking the PAT behind it closes nothing by itself: a runner whose token was revoked
+    would keep claiming turns over its socket while every REST call it made (events,
+    transcript, finish) was refused, so each claimed turn would vanish. A consumer that ACTS on a frame asks this first.
 
     A scope the middleware never saw (no `auth_method`) has no credential to
     re-check, and keeps the user it was given.

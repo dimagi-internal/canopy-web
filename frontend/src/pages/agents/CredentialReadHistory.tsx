@@ -9,7 +9,7 @@ import { relativeAge } from '@/lib/relativeAge'
 import { AlertRows } from '@/pages/agents/AgentCredentialAlertsSection'
 import { Td } from '@/components/DataTable'
 
-// Who has been handed one credential's value (Canopy Vault, canopy-web#1538), shown
+// Who has been handed one credential's value (Canopy Vault), shown
 // in the row's Activity panel — never the value. Grouped by person and machine, so
 // 111 reads are the two or three places they came from; the raw list is one click
 // further. Mounted only while the panel is open.
@@ -44,7 +44,7 @@ export function CredentialReadHistory({
 }: {
   slug: string
   row: AgentCredentialStatusOut
-  /** The agent's read alerts (canopy-web#1549); those naming this ref show here too. */
+  /** The agent's read alerts; those naming this ref show here too. */
   alerts?: AgentCredentialAlertOut[] | null
 }) {
   const mine = (alerts ?? []).filter((a) => a.refs.includes(row.name))

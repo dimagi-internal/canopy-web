@@ -187,7 +187,7 @@ def _viewer_url(w: Walkthrough) -> str:
 
 
 def _cut_payload(w: Walkthrough) -> dict:
-    """One recorded-narrative cut's video (canopy-web#1288)."""
+    """One recorded-narrative cut's video."""
     return {
         "cut_id": w.cut_id,
         "title": pinned.cut_title(w),
@@ -600,8 +600,8 @@ def build_release(run_id: str, request, ws: str = "") -> dict | None:
         # The shareable handle: the primary artifact's token (only when public).
         "share_token": primary.share_token if is_public else None,
         # The page's own address, absolute and token-bearing — what you send
-        # someone. Under the run's workspace like every artifact
-        # (canopy-web#1337); the flat /ddd-release/ is a 404.
+        # someone. Under the run's workspace like every artifact;
+        # the flat /ddd-release/ is a 404.
         "share_url": (
             wslinks.scoped_url_or_none(
                 primary.workspace_id,

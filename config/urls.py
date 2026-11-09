@@ -123,8 +123,7 @@ urlpatterns = [
     path("w/<str:ws>/marketplace.json", plugin_views.moved, name="plugin-marketplace-moved"),
     re_path(r"^w/[^/]+/plugins/", plugin_views.moved, name="plugin-archive-moved"),
     # The flat artifact addresses — /walkthrough/…, /review/…, /share/… — and
-    # the pre-tenancy /w/<uuid>/… ones are GONE (owner decision, 2026-10-08;
-    # canopy-web#1337): one URL per artifact, under its workspace, and nothing
+    # the pre-tenancy /w/<uuid>/… ones are GONE: one URL per artifact, under its workspace, and nothing
     # forwarded. A plain 404 that says so, served before the SPA catch-all so
     # the app shell never renders under a dead link.
     re_path(FLAT_ARTIFACT_PATH, flat_artifact_gone, name="flat-artifact-gone"),
@@ -153,7 +152,7 @@ urlpatterns = [
     # through, and without this the catch-all answered a `.js` request with
     # index.html at `200 text/html`. The browser cannot parse HTML as a module,
     # so the app rendered a WHITE PAGE until a force-refresh, with no error a
-    # user could act on. Reported and reproduced 2026-09-08.
+    # user could act on.
     #
     # A 404 is the honest answer to "that bundle is gone", and it is one the
     # client can handle: the request fails visibly rather than half-succeeding.

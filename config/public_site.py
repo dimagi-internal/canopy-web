@@ -2,10 +2,9 @@
 
 ``/`` is the product site for EVERYONE, signed in or not, and ``/app`` is the way
 into the app (the SPA sends it to your default workspace; signed out, the login
-middleware sends you through Google first). That is deliberate for now (owner,
-2026-10-06): the site is being iterated on and has to be visible while signed in.
-The earlier rule — signed-in ``/`` went straight to the workbench — is one line
-in ``serve`` to restore. Only a path that EXISTS
+middleware sends you through Google first). That is deliberate: the site is being iterated on and has to be visible while
+signed in (sending signed-in ``/`` straight to the workbench is one line in
+``serve``). Only a path that EXISTS
 in ``site/dist`` is ever the site's, so no app route can be shadowed by it — the
 set is read from the build output rather than hand-listed.
 

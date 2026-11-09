@@ -1,9 +1,9 @@
 """A runner that CANNOT arm a Gmail watch has to say so — and back off.
 
-Two failures used to be invisible together. The arm retried every tick because a
-failure never wrote the state file, and the server was told nothing because
-`report_watch` was only called on the success path — so canopy-web kept showing
-the last good expiry, and the mailbox only went loud days later as `watch.expired`,
+Two failures would otherwise be invisible together: an arm that retries every tick
+because a failure never wrote the state file, and a server told nothing because
+`report_watch` is only called on the success path — canopy-web would keep showing
+the last good expiry, and the mailbox would only go loud days later as `watch.expired`,
 which names the wrong cause. These pin both halves, plus the rule that a PAUSED
 runner is silent (it is parked on purpose; that is not an error to page anyone about).
 """

@@ -1,8 +1,7 @@
 """What a host SIGNS: the visitor assertion and the ID-JAG, and the arrival
 request that carries them to canopy.
 
-Extracted from connect-labs ``connect_labs/labs/canopy.py`` (PR #2060) and
-generalised. Two rules from there are load-bearing:
+Two rules are load-bearing:
 
 * ``sub`` is the HOST'S OWN id for its signed-in user and nothing else. The
   host is asserting "this is a real person here", and canopy believes it because

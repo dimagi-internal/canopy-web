@@ -1,4 +1,4 @@
-"""Moving an agent to another workspace — with its history (#1532).
+"""Moving an agent to another workspace — with its history.
 
 `Agent.workspace` is one pointer, but an agent's history lives in many tables,
 and several of them carry their OWN `workspace` FK: chat sessions, capability

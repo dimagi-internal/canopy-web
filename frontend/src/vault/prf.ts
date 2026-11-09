@@ -1,5 +1,5 @@
 /**
- * Passkey + WebAuthn PRF (canopy-web#1550): the key that seals a person's vault
+ * Passkey + WebAuthn PRF: the key that seals a person's vault
  * key comes from their passkey's PRF output, which never leaves this browser.
  *
  * One assertion does two jobs: it is the ordinary passkey step-up (the server

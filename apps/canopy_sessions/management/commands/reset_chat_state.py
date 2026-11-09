@@ -24,9 +24,8 @@ A session is only unresettable when there is no pointer to a transcript (no
 binding) or no live runner to read one (offline/retired, which is transient). It
 is NOT enough that emdash closed or deleted the task: a backfill resolves the
 transcript by worktree PATH under ~/.claude/projects and never asks emdash, and
-Claude Code never deletes those files — verified 2026-07-26 against tasks absent
-from emdash's DB entirely, whose transcripts still resolved with 545 and 607
-records. Falling off the session report ends a session's LISTING, not its
+Claude Code never deletes those files — transcripts of tasks absent from emdash's DB
+entirely still resolve. Falling off the session report ends a session's LISTING, not its
 recoverability.
 """
 from __future__ import annotations

@@ -1,4 +1,4 @@
-// Canopy Vault Phase 2 (canopy-web#1550): the zero-knowledge vault's REST calls.
+// Canopy Vault Phase 2: the zero-knowledge vault's REST calls.
 // Every body here is ciphertext, a wrap or a seal: canopy-web holds no agent
 // value it can read. Its own module so the vault UI can be tested without
 // dragging in ./agents.

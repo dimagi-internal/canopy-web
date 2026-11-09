@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Keep a cloud runner's disk from filling with caches nobody reads.
 
-cloud-ec2-1's 20 GB root hit 100% on 2026-10-04. Most of it was
-~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/: Claude Code copies
-each plugin version it installs there and this box never removed one — 33
-canopy and 24 ace versions, about 9 GB — while bootstrap updated plugins daily.
-npm's and uv's download caches took most of the rest. It was cleaned by hand.
+The bulk of a runner's cache is ~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/:
+Claude Code copies each plugin version it installs there and never removes one,
+while bootstrap updates plugins daily. npm's and uv's download caches are most of
+the rest.
 
 This runs from bootstrap_agents.sh (step 4, after the plugin updates, so the
 version just installed is already recorded) — i.e. on every service start and

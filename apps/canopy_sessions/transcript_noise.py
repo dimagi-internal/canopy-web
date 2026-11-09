@@ -4,7 +4,7 @@ A Claude Code transcript encodes far more than the conversation: the harness
 injects task notifications, system reminders and local command output as records
 of `type: "user"`, indistinguishable by shape from something a person typed. Ship
 those verbatim and the machine's own event stream renders on the HUMAN's side of
-the chat — observed on labs 2026-07-26, where a session's transcript read:
+the chat — for example a session's transcript read:
 
     [1146] role=user  <task-notification> … Monitor event: "Labs deploy run …"
     [1160] role=user  <task-notification> … Deploy to Fargate: success
@@ -14,10 +14,8 @@ Only the last of those was the user.
 
 The RULE itself (`SYSTEM_NOISE_PREFIXES` / `is_system_noise`) now lives in
 `canopy_transcript.noise`, the transcript core the server and both runners
-already share — it used to be defined here AND privately in the runner, and the
-two drifted: two prefixes were added here on 2026-07-26 and the runner's copy
-never grew them (see that module's docstring). This module keeps the
-server-specific half (`scrub_nul`) and re-exports the rule so existing importers
+already share, so the server and the runner cannot drift (see that module's
+docstring). This module keeps the server-specific half (`scrub_nul`) and re-exports the rule so existing importers
 are unaffected.
 
 Server-side ENFORCEMENT is still the point. A producer-side filter only ever
@@ -39,9 +37,8 @@ def scrub_nul(value):
 
     Postgres rejects 0x00 outright in text and jsonb. A tool result is raw bytes
     from whatever the tool touched, so a `Read` of a compressed or binary file
-    carries one straight into the write path — observed on labs 2026-07-26: one
-    row in 683 took down the whole batch with a 500, and because the write is a
-    single transaction and the runner retries forever, that session's history
+    carries one straight into the write path — one such row takes down the whole
+    batch with a 500, and because the write is a single transaction and the runner retries forever, that session's history
     could never rebuild.
 
     Server-side for the same reason the noise filter is enforced here (see the

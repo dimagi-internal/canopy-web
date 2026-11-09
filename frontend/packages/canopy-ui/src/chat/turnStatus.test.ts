@@ -37,7 +37,7 @@ describe("agentHasFloor", () => {
 
   it("withdraws it once the server says nothing will pick the turn up", () => {
     // The regression this whole projection exists for: a spinner over an ask
-    // queued behind a closed laptop, which used to spin until the tab closed.
+    // queued behind a closed laptop must not spin until the tab closes.
     const s = status({ state: "waiting_runner", stuck: true, claimed_by: null });
     expect(agentHasFloor({ status: s, awaitingReply: true })).toBe(false);
   });
@@ -131,7 +131,7 @@ describe("turnNotice", () => {
   });
 
   it("says a signed-out box cannot run it, instead of picking it up", () => {
-    // 2026-10-22: "Picking this up on acedimagi-mbp-cdp…" over a box with no
+    // "Picking this up on acedimagi-mbp-cdp…" over a box with no
     // Claude login, which answered every message "Not logged in".
     const s = status({ state: "signed_out", stuck: true, claimed_by: null, runners: ["acedimagi-mbp-cdp"] });
     expect(agentHasFloor({ status: s, awaitingReply: true })).toBe(false);
@@ -195,7 +195,7 @@ describe("turnNotice", () => {
   });
 
   it("says why a turn failed when the runner gave a reason", () => {
-    // 2026-09-27: a bare "Could not finish." hid a note that said exactly
+    // A bare "Could not finish." must not hide a note that said exactly
     // what to do.
     const n = turnNotice(status({
       state: "failed", settled: true,
@@ -268,8 +268,8 @@ describe("turnNotice, when the conversation requires a runner flag", () => {
 });
 
 describe("turnNotice, when a working turn goes quiet", () => {
-  // 2026-10-17: a box whose token was revoked took four turns and could report
-  // nothing back; each read "Thinking on cloud-ec2-2…" until its lease ran out.
+  // A box whose token was revoked takes turns and can report
+  // nothing back; each must not read "Thinking on cloud-ec2-2…" until its lease ran out.
   const claimed = "2026-10-17T15:45:00Z";
   const at = (min: number) => Date.parse(claimed) + min * 60_000;
   const working = (over: Partial<TurnStatus> = {}) =>
@@ -341,8 +341,8 @@ describe("turnPhase — the one answer the header and the panel share", () => {
   });
 
   it("is idle once the server has settled the turn, whatever the client flag says", () => {
-    // 2026-10-30: the header read `awaitingReply` alone and said "queued" over a
-    // turn the server had finished twenty minutes earlier.
+    // The header must not read `awaitingReply` alone and say "queued" over a
+    // turn the server finished twenty minutes earlier.
     expect(turnPhase({ status: status({ state: "done", settled: true }), awaitingReply: true })).toBe("idle");
   });
 

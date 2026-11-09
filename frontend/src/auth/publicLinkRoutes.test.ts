@@ -39,7 +39,7 @@ describe('isPublicLinkRoute', () => {
     }
     // The artifact viewers — the shared arc, its narratives and a run's release
     // page included — are public only under their workspace
-    // (isScopedViewerPath); the flat addresses are gone (canopy-web#1337).
+    // (isScopedViewerPath); the flat addresses are gone.
     for (const flat of [
       '/review/', '/share/', '/walkthrough/', '/storyboard/', '/narrative/', '/ddd-release/',
     ]) {
@@ -50,7 +50,7 @@ describe('isPublicLinkRoute', () => {
   })
 
   it('/about is an exact match, not a prefix', () => {
-    // Regression pin for C8: "/about" used to be startsWith, which would also
+    // Regression pin for C8: "/about" must not be a startsWith match, which would also
     // admit "/about-billing" or "/aboutus".
     expect(publicPrefixes(clientSrc)).not.toContain('/about/')
     expect(clientSrc).toMatch(/===\s*["']\/about["']/)

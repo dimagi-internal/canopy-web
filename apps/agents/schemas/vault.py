@@ -460,7 +460,7 @@ class BootstrapReportIn(StrictModel):
 
     Booleans the box OBSERVED, not configuration it read back. `mailbox_ok`
     specifically means a gmail call was attempted and succeeded — the one thing
-    a credentials screen can never tell you (2026-09-07)."""
+    a credentials screen can never tell you."""
 
     runner_name: str
     client_creds_ok: bool = False

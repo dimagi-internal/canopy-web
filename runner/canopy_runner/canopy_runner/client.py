@@ -160,8 +160,8 @@ class Client:
 
         Authorized by the TURN (`/harness/runners/{rid}/turns/{tid}/attachments/…`),
         not by whether this box's owner can read the chat: the person who sent the
-        file is often not the box's owner, and the old session-read route 404'd
-        every one of their files (2026-10-15, 63 images dropped in one chat).
+        file is often not the box's owner, and the session-read route 404s
+        every one of their files.
 
         NOT via _call: that one json-decodes the body; these are raw bytes.
         """
@@ -233,7 +233,7 @@ class Client:
         # What this CODE reads in a caller envelope — canopy-web withholds caller
         # turns from a runner that does not say it reads `profile: "confined"`.
         body["envelope"] = caller.ENVELOPE_VERSION
-        # Delivers a follow-up into a running chat turn (canopy-web#1153).
+        # Delivers a follow-up into a running chat turn.
         from .chat_bridge import MIDTURN_VERSION
         body["midturn"] = MIDTURN_VERSION
         # The model this box's sessions start on (`claude_model.configured`), so
@@ -302,7 +302,7 @@ class Client:
 
         Pass EITHER agent_slug OR (project + workspace) — a project session is
         tenant-gated on its workspace, which the turn carries. `turn_id` (the turn
-        asking) lets the server refuse reuse of a session that is mid-turn (#309);
+        asking) lets the server refuse reuse of a session that is mid-turn;
         the plan's `busy` then says why."""
         body = {"agent_slug": agent_slug, "project": project, "workspace": workspace,
                 "thread_key": thread_key}
@@ -372,7 +372,7 @@ class Client:
 
         `transcript_id` names the transcript these ordinals index into, so the
         server can tell a continuation from a different conversation that merely
-        reuses the emdash task name (issue #615)."""
+        reuses the emdash task name."""
         self._call("POST", f"/runners/{runner_id}/session-stream",
                    {"session_id": session_id, "events": events,
                     "transcript_id": transcript_id})
@@ -491,7 +491,7 @@ class Client:
         """Ship a chunk of a session's transcript for the server to write as Message
         rows. `final=False` means more chunks follow, so the server keeps the ask
         set — see streams.chunk_rows for why one request is not enough.
-        `transcript_id` names which conversation the history is (issue #615)."""
+        `transcript_id` names which conversation the history is."""
         self._call("POST", f"/runners/{runner_id}/session-backfill",
                    {"session_id": session_id, "messages": messages, "final": final,
                     "transcript_id": transcript_id})
@@ -651,7 +651,7 @@ def acts_as() -> str:
     """The lower mode this runner put itself in: `CANOPY_ACTS_AS=editor|viewer` in its
     environment, "" for none. Every call then carries `X-Canopy-Acts-As`, so canopy
     judges this box — and the turns of its owner's it claims — at that role, until it
-    is restarted without it. Only ever lowers (canopy-web#1705)."""
+    is restarted without it. Only ever lowers."""
     import os
 
     cap = os.environ.get("CANOPY_ACTS_AS", "").strip().lower()

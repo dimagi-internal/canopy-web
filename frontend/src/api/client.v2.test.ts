@@ -4,7 +4,7 @@ import { isLoginBounceInFlight, rewriteForWorkspace, shouldBounceToLogin } from 
 // The login-loop breaker. A lapsed session should bounce through OAuth exactly
 // once; a second 401 landing back inside the window means the round-trip isn't
 // sticking (rejected cookie, IdP hiccup, a service worker shadowing /accounts/ —
-// the #244 outage), so we must HOLD and surface the login screen instead of
+// an outage seen in production), so we must HOLD and surface the login screen instead of
 // navigating again. This is the pure decision behind that guard; the DOM/
 // sessionStorage plumbing around it is not exercised here (this file's "no live
 // DOM" convention), but the branch that actually prevents the infinite loop is.

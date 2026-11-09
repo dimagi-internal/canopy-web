@@ -1,7 +1,6 @@
 """The host's jwt-bearer grant (``GrantHandler``).
 
-Ported from connect-labs ``connect_labs/mcp/tests/test_delegation.py`` (PR
-#2060): every refusal path there has a counterpart here. Most of this file is
+Every refusal path has a test here. Most of this file is
 refusals, because that is where the security lives — each request fails exactly
 one check and nothing else.
 """
@@ -330,7 +329,7 @@ def test_no_refusal_carries_a_credential(world):
 
 def test_the_protected_resource_document_keeps_the_hosts_own_scopes(world):
     """An interactive client registers for the PRM's scopes_supported, so the grant
-    must not add its tool scopes there (canopy-web#1157). The RFC 8414 document
+    must not add its tool scopes there. The RFC 8414 document
     still lists them."""
     from canopy_sdk.host import authorization_server_metadata, protected_resource_metadata
 

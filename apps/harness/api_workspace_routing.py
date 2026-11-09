@@ -76,10 +76,9 @@ def set_runner_order(request: HttpRequest, slug: str, payload: RunnerOrderIn) ->
     owner an editor or above (`runner_tenant_slugs`) — or the order would name a box the
     claim path refuses anyway; such a runner is a 422, as is an unknown or retired
     one."""
-    # Maintainer note: was `agent.work` while the order routed only this
-    # workspace's repo turns; an agent following it may live in a division where
-    # an editor here holds no role at all. Then `own`; lowered to admin
-    # (2026-10-05) — the runners it names must already serve this workspace.
+    # An agent following the order may live in a division where an editor
+    # here holds no role at all, so `agent.work` is not enough; admin is enough
+    # because the runners it names must already serve this workspace.
     m = require(request.user, slug, perms.RUNNERS_ROUTE)
     ids = [row.runner_id for row in payload.runners]
     if len(ids) != len(set(ids)):

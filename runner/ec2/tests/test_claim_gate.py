@@ -1,8 +1,7 @@
 """The box says on its heartbeat why it is not claiming.
 
-2026-10-24: an Eva chat turn sat queued 15 minutes behind cloud-ec2-2. The
-server saw an online, ready, idle box; the box was skipping its own claim, and
-only journald knew which of its limits said no. `claim_gate` is the one gate
+A box that skips its own claim looks online, ready and idle to the server, and
+only journald would say which of its limits said no. `claim_gate` is the one gate
 both claim loops ask, and the `claim` health check reports it.
 """
 from __future__ import annotations

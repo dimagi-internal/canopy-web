@@ -1,9 +1,8 @@
 """A refresh must actually move the canopy plugin forward.
 
-Step 4 used to ADD the canopy marketplace once and never pull it, so the clone
-advanced only when a session's async SessionStart hook happened to, and a
-refresh re-ran bootstrap against a stale canopy (hal's drill on cloud-ec2-1,
-2026-09-22: plugin 0.2.509 with 0.2.511 on origin).
+Step 4 must pull the canopy marketplace, not only add it: otherwise the clone
+advances only when a session's async SessionStart hook happens to, and a refresh
+re-runs bootstrap against a stale canopy.
 """
 from __future__ import annotations
 

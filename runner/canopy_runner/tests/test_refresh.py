@@ -1,5 +1,5 @@
 """Refresh on a laptop: the runner page's Refresh updates plugins and the canopy CLI
-in place, and the heartbeat reports when it finished (canopy-web#1763)."""
+in place, and the heartbeat reports when it finished."""
 import json
 import subprocess
 from pathlib import Path

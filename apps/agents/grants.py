@@ -289,7 +289,7 @@ def describe(line: AgentGrant) -> str:
 def domain_warning(line: AgentGrant, workspace_id) -> str:
     """Advice, never a refusal, about a line that names a domain it can never match: a line
     that needs a VERIFIED address at a domain whose mail cannot prove its senders (no DMARC
-    record, and no mail DKIM-signed by the domain itself has been seen: canopy-web#1280) admits
+    record, and no mail DKIM-signed by the domain itself has been seen) admits
     nobody by email. "" when there is nothing to say, including when DNS could not be asked —
     a warning raised by a resolver hiccup would teach people to ignore the real one."""
     if line.kind not in (AgentGrant.DOMAIN, AgentGrant.CONTACT) or not line.verified or not line.domain:

@@ -5,9 +5,8 @@ import type { RoleOption } from './roles'
 // ONE role control for every "who has access" surface — workspace members, an
 // agent's roster, a runner's administrators, a chat's people.
 //
-// They used to be four different shapes (a <select> here, a "Make admin" link
-// there, a bare list elsewhere), so the same question — "what is this person's
-// role, and can I change it?" — had to be re-learned on every page. Now the role
+// The same question — "what is this person's role, and can I change it?" —
+// gets the same answer on every page. The role
 // always sits in the same column: a dropdown when the viewer may change it,
 // otherwise the same words in the same place as plain text, with a short muted
 // line saying why it is fixed.

@@ -85,7 +85,7 @@ export async function unpauseRunner(runnerId: string): Promise<RunnerOut> {
   return toRunner(unwrap(res, 'unpauseRunner'))
 }
 
-// The session runtime a laptop runner opens NEW sessions in (canopy-web#1188).
+// The session runtime a laptop runner opens NEW sessions in.
 // The runner picks it up off its next heartbeat; live sessions stay where they are.
 export type RunnerEngine = 'emdash' | 'claude-desktop' | 'claude-cli'
 
@@ -97,7 +97,7 @@ export async function setRunnerEngine(runnerId: string, engine: RunnerEngine): P
   return toRunner(unwrap(res, 'setRunnerEngine'))
 }
 
-// Make a runner its owner's PRIVATE runner (canopy-web#1705): no fleet work, only
+// Make a runner its owner's PRIVATE runner: no fleet work, only
 // what its owner puts on it and the direct sessions on it. (Running as a lower role is
 // a property of a turn — `acts_as` on it — not of a machine.)
 export async function setRunnerPrivate(runnerId: string, isPrivate: boolean): Promise<RunnerOut> {

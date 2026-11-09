@@ -3,9 +3,8 @@ import { setRunnerSessions, type RunnerOut } from '@/api/harness'
 import { isDirectedOnly } from '@/components/chat/runnerEligibility'
 import { SettingRow, Switch } from '@/components/supervisor/SettingRow'
 
-// Slack/chat sessions on or off. Was settable only over the API, so a box paired
-// before pairing set it (haldimagi-mbp-cdp, 2026-10-02) silently never appeared
-// in "start a session" and nobody could see why. The switch is the owner's; anyone
+// Slack/chat sessions on or off. A box with it off never appears
+// in "start a session", so the state is shown here. The switch is the owner's; anyone
 // else reads the state, because "why isn't this box in the session picker?" is a
 // question any member asks.
 export function RunnerSessions({

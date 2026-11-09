@@ -1,7 +1,7 @@
 """Who a turn is FROM — the actor half of the routing key.
 
-Source rules (spec 2026-07-27) answer "which box runs this KIND of work".
-Actor rules (spec 2026-09-05) answer "which box runs THIS PERSON'S work", which
+Source rules answer "which box runs this KIND of work".
+Actor rules answer "which box runs THIS PERSON'S work", which
 is what lets a cloud runner take other people's work while the operator's own
 work stays on the operator's boxes. This module is the resolution half: one pure
 function mapping a turn to a normalized actor.
@@ -89,9 +89,9 @@ def actor_of(turn: Turn) -> str:
 
     Falls back to the INITIATING CONTACT's address when no member enqueued the
     turn. A Slack sender who is not a workspace member, and every ace-web widget
-    turn, arrive as a contact with `enqueued_by` NULL — so before this a person
-    route for them could never match, and the turn silently took the default box
-    (measured 2026-10-02: 4 Slack + 2 ace-web ACE turns in 72h with no actor).
+    turn, arrive as a contact with `enqueued_by` NULL — so without this a person
+    route for them could never match, and the turn would silently take the
+    default box.
     Safe for the one decision that trusts the actor: an actor rule's `auto` mode
     is separately gated on `caller_context.is_verified` (turn_mode.py)."""
     email = turn.enqueued_by.email if turn.enqueued_by_id else ""

@@ -6,10 +6,8 @@ list — and never touches `/api/agents/{slug}/runner-rules`. Retiring the prede
 cascades ALL of its assignment rows, and a source/actor rule is an assignment row,
 so a recycle silently deletes every rule pointing at the box being replaced.
 
-That was harmless while rules did not exist. It stopped being harmless on
-2026-09-05, when actor rules became the mechanism that lets a cloud runner take
-other people's work while the operator's own work stays local (spec
-2026-09-05-actor-aware-runner-routing-design). Losing them on rebuild does not
+Actor rules are the mechanism that lets a cloud runner take other people's work
+while the operator's own work stays local. Losing them on rebuild does not
 degrade routing — it silently reverts the fleet to "everything runs on the
 operator's laptop", which is the exact state that feature exists to end, and
 nothing in the wiring output would say so.

@@ -1,4 +1,4 @@
-"""#647: the cloud runner's stream clock backs off once transcripts go quiet.
+"""The cloud runner's stream clock backs off once transcripts go quiet.
 
 At 3s an idle box asked /streams 1,200 times an hour for nothing. A viewer
 attaching still rings the `stream` doorbell (an immediate sync), and the first

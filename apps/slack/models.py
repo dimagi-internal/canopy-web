@@ -383,8 +383,8 @@ class SlackTranscriptPost(models.Model):
 
     `SlackRelayPost` covers what the ledger carries, which ends when the turn
     does — and emdash ends a turn the moment the agent yields to background
-    work, so a reply finished after waiting on CI or a deploy never reached the
-    thread (2026-09-19: the summary of the very change that built this). Keyed
+    work, so a reply finished after waiting on CI or a deploy never reaches the
+    thread. Keyed
     on the transcript ordinal, inserted before posting, so a re-shipped stream
     batch cannot post twice.
     """

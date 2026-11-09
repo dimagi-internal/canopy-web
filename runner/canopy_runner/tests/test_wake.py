@@ -131,14 +131,10 @@ def _menu_handler(monkeypatch, client):
 
 
 def test_the_control_frame_retires_the_answer_it_pressed(monkeypatch):
-    """REGRESSION, eva 2026-08-12. The server holds an answer until a runner
-    REPORTS on it — that is what makes it survive a dead control channel. This
-    fast path pressed the key and reported nothing, so the answer stayed queued
-    and the next poll tick (5s later) pressed it a SECOND time:
-
-        16:49:48 answered the dialog on eva-… with option 1
-        16:49:54 answered the dialog on eva-… with option 1
-        16:49:55 menu answer for eva-… applied from the poll tick (answered)
+    """The server holds an answer until a runner REPORTS on it — that is what
+    makes it survive a dead control channel. A fast path that pressed the key and
+    reported nothing would leave the answer queued, and the next poll tick (5s
+    later) would press it a SECOND time.
 
     Harmless on a permission prompt, destructive on a multi-select, where a
     number key toggles: one tap, two presses, checkbox back where it started.

@@ -271,8 +271,7 @@ class AcpConnection:
                     logger.debug("dispatch failed", exc_info=True)
         except Exception as exc:  # noqa: BLE001 — a closed pipe is an ordinary end
             # ...but anything else is not, and it must say so: a decode error used
-            # to end the reader here and read exactly like the adapter hanging up
-            # (investigation 11, 2026-10-26).
+            # to end the reader here and read exactly like the adapter hanging up.
             if not self._closed.is_set():
                 self._reader_error = f"{type(exc).__name__}: {exc}"
             logger.debug("ACP reader ended", exc_info=True)
@@ -495,9 +494,7 @@ class AcpAgent:
         # UTF-8 named, never the locale's: the adapter (node) always writes UTF-8,
         # and on Windows the locale default is cp1252, which cannot decode bytes
         # such as the 0x9D in a right double quote. The reader died on the first
-        # one and the turn read "ACP connection closed before a reply arrived"
-        # (2026-10-26, a fizzy email turn b50c9a50 on shayoni-win-cdp; failure
-        # investigation 11).
+        # one and the turn read "ACP connection closed before a reply arrived".
         if self._spawn is not None:
             self.proc = self._spawn(self._argv, cwd=str(self.cwd), env=self._env)
             return self._connect()

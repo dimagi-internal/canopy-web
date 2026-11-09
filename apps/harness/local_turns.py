@@ -1,6 +1,6 @@
 """Direct use of an agent: a person's own Claude Code session, recorded as a turn.
 
-Three objects (canopy-web#1704, `docs/architecture/access-direct-use-and-admission.md` § Direct use):
+Three objects (`docs/architecture/access-direct-use-and-admission.md` § Direct use):
 
 * a **private runner** (`models.PrivateRunner`) — the person's machine, registered once
   with their own token; it never claims anything;
@@ -56,7 +56,7 @@ def register_private_runner(user, *, name: str, host: str = "",
     """The person's private runner called `name`, creating it on first use (idempotent
     per person and name — re-registering the same machine is not an error). A
     retired one is brought back. `runner` — a Runner the person owns, the runner app
-    on this same machine — links the two (canopy-web#1705)."""
+    on this same machine — links the two."""
     name = (name or "").strip()[:100]
     if not name:
         raise ValueError("a private runner needs a name")
@@ -128,7 +128,7 @@ def retire_computer_runner(runner) -> None:
 
 
 def private_runner_for_runner(runner) -> PrivateRunner:
-    """The registration of a runner its owner just made private (canopy-web#1705).
+    """The registration of a runner its owner just made private.
 
     The one already linked to THIS runner when there is one (brought back if
     retired). Otherwise a new one under the runner's name — taking over a row of

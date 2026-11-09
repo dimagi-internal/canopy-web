@@ -681,7 +681,7 @@ export async function deleteSecret(id: string, name: string): Promise<void> {
   }), "Could not forget the secret");
 }
 
-// --- MCP Apps (spec 2026-10-08): the browser plumbing behind a rendered View ---
+// --- MCP Apps: the browser plumbing behind a rendered View ---
 
 /** How canopy's own chat page reaches a session's MCP Apps Views. Every call
  *  runs as the SIGNED-IN person (session cookie) — the person looking, never

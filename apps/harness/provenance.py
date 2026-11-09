@@ -1,12 +1,11 @@
 """What created a Turn or a Session, and why — recorded once, logged once.
 
-The incident this answers (2026-10-05): a scratch script in one Claude session
-posted chat messages to `hal` with a person's PAT. The only trace was a runner
+The case this answers: a scratch script in one Claude session posts chat messages
+to `hal` with a person's PAT. Without this, the only trace is a runner
 line (`chat turn=<id> created emdash task=c-… (agent=hal)`) and
 `Turn.initiator_*` = that person / chat / pat — indistinguishable from them
-typing in the web UI. There was no server log of the creation at all, the PAT's
-identity was discarded at auth, and nothing recorded a client, a request id or
-the session the script ran inside.
+typing in the web UI: no server log of the creation, the PAT's identity discarded
+at auth, and no record of a client, a request id or the session the script ran inside.
 
 Three things live here, and only here:
 

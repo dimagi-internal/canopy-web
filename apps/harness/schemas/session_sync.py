@@ -22,7 +22,7 @@ class StreamDescriptorOut(Schema):
     first_index: int | None = None
     # Whether a viewer is attached. Governs live fan-out ONLY — rows are persisted
     # for every session either way (see list_streams). Old runners ignore it, which
-    # is safe: they simply keep streaming exactly the sessions they used to.
+    # is safe: they simply keep streaming exactly the sessions they already did.
     live: bool = True
     # WHICH transcript the first_index/last_index markers above were computed from
     # (the Claude session uuid). The markers are per-file ordinals, so they mean
@@ -110,7 +110,7 @@ class SessionBackfillIn(Schema):
     # False = "more chunks follow"; the server keeps `backfill_requested` set so a
     # ship that dies halfway is retried whole rather than leaving a partial history
     # behind a cleared flag. A transcript has to be chunked at all because the whole
-    # payload used to go in ONE request against DATA_UPLOAD_MAX_MEMORY_SIZE (2.5 MB),
+    # payload would go in ONE request against DATA_UPLOAD_MAX_MEMORY_SIZE (2.5 MB),
     # which Django raises as an unhandled 500 BEFORE the view runs — measured over
     # 193 local transcripts, one already exceeds it and three more are past 1.9 MB.
     # Defaults True so an old runner, which posts exactly once, is unaffected.

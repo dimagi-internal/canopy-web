@@ -5,7 +5,7 @@
  * time you open that section — which can be hours after the page loaded. Asset
  * filenames are content-hashed, the container ships exactly one `dist/`, and a
  * deploy replaces it, so the moment a deploy lands every chunk THIS page has not
- * fetched yet is gone. `#708` made that miss an honest 404 instead of a white
+ * fetched yet is gone. the server answers that miss with an honest 404 instead of a white
  * page, and `RouteErrorBoundary` turns the 404 into "This section didn't load"
  * with a Try again button — a button whose only job is to do the manual refresh
  * we are trying to stop asking for. With six deploys in a day and a tab open all

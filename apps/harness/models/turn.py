@@ -17,8 +17,7 @@ def agent_turns_q(agent) -> models.Q:
     the ones targeting one of its SESSIONS (an email or Slack thread: enqueue_turn
     converts those to a session target, and the XOR constraint leaves `agent`
     NULL). The one definition, so `GET /api/harness/turns/?agent=` and the agent
-    card's `turn_count` / `latest_turn_at` cannot count different sets (#359,
-    #1087)."""
+    card's `turn_count` / `latest_turn_at` cannot count different sets."""
     return models.Q(agent=agent) | models.Q(agent__isnull=True, chat_session__agent=agent)
 
 
@@ -35,11 +34,11 @@ class Turn(models.Model):
     TERMINAL = {DONE, FAILED, LOST, MISSED, CANCELLED}
     NON_TERMINAL = {QUEUED, CLAIMED, RUNNING, NEEDS_HUMAN}
 
-    # THE SOURCE VOCABULARY (spec 2026-07-27-source-aware-runner-routing).
-    # `origin` is not just provenance any more — it is what per-agent routing
+    # THE SOURCE VOCABULARY.
+    # `origin` is not just provenance — it is what per-agent routing
     # rules key on, so the values are the words the operator sees in the routing
-    # UI and the turn log. `api` stays the honest catch-all; everything that had
-    # a real producer got named.
+    # UI and the turn log. `api` is the honest catch-all; everything with
+    # a real producer is named.
     ORIGIN_API, ORIGIN_ACE_WEB, ORIGIN_CANOPY_WEB_CHAT = "api", "ace_web", "canopy_web_chat"
     ORIGIN_CANOPY_SCHEDULER, ORIGIN_EMAIL, ORIGIN_SLACK = "canopy_scheduler", "email", "slack"
     # A person's own Claude Code session on their private runner (`apps/harness/local_turns.py`).
@@ -135,11 +134,6 @@ class Turn(models.Model):
     #: (AgentTask.raised_by points back). Null for turns with no decision behind
     #: them: the phone composer (a human asking directly), cron schedules, inbox
     #: polls.
-    #:
-    #: There was a second FK beside this one, `raised_from`, pointing at the
-    #: retired `Item` model. Both were written for one release after #873 so a
-    #: rollback kept its provenance; measured on labs before removal, every turn
-    #: carrying the old edge carried this one too (0 exceptions).
     raised_from_task = models.ForeignKey(
         "agents.AgentTask", on_delete=models.SET_NULL, null=True, blank=True,
         related_name="dispatched_turns",
@@ -227,7 +221,7 @@ class Turn(models.Model):
     # start it on one CLI never holds it to that CLI.
     cli = models.CharField(max_length=32, blank=True, default="", db_default="")
     # A follow-up DELIVERED INTO a conversation's running turn rather than queued
-    # behind it (canopy-web#1153): the runner holding that turn typed it into the
+    # behind it the runner holding that turn typed it into the
     # live session, where Claude Code takes it mid-turn or right after, as it
     # would anything a person typed. It executes beside the turn it rides — the
     # only exception to one_executing_turn_per_session — renews its lease with it
@@ -253,8 +247,7 @@ class Turn(models.Model):
     # which request (`request_id`, `ip`), via which MCP tool, and under which
     # parent. Stamped once at creation from the request in flight; {} for a turn
     # canopy started itself with no request behind it (a schedule firing).
-    # Added after a script on a person's PAT was indistinguishable from the web
-    # UI (2026-10-05).
+    # Without it a script on a person's PAT is indistinguishable from the web UI.
     provenance = models.JSONField(default=dict, blank=True)
     # The turn / session / emdash task / Claude session this turn was started
     # FROM — from the X-Canopy-Parent-* headers, a `parent` object in the
@@ -295,15 +288,12 @@ class Turn(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
 
-    # ---- the report half (was apps.agents.AgentTurn, merged here 2026-08-11) ----
+    # ---- the report half ----
     #
-    # A turn has two halves and they used to be two models: this one recorded the
-    # DISPATCH (queued → a session exists), and agents.AgentTurn recorded the
-    # agent's own CLOSE-OUT (what it did, what it produced). Nothing joined them,
-    # so `/api/agents/<slug>/` served turn_count/latest_turn_at off the close-out
-    # table while the queue said something else entirely — ada read `0 turns` with
-    # 34 dispatched. Both numbers were "right"; they answered different questions
-    # under one name. One model, both halves, so that cannot recur.
+    # A turn has two halves in ONE model: the DISPATCH (queued → a session exists)
+    # and the agent's own CLOSE-OUT (what it did, what it produced). One model, both
+    # halves, so `/api/agents/<slug>/`'s turn_count/latest_turn_at and the queue
+    # cannot answer different questions under one name.
     #
     # Every report field is blank-by-default: a turn that was dispatched and never
     # closed out (the agent died, the session was killed) is the NORMAL case, not a
@@ -392,13 +382,12 @@ class Turn(models.Model):
                 condition=~models.Q(cli_session_id=""),
                 name="uniq_turn_agent_cli_session",
             ),
-            # An AGENT is not a lane. There used to be a partial unique index here,
-            # `one_executing_turn_per_agent`, that let at most one of an agent's
-            # turns execute at a time; it was removed (2026-10-30) because nothing
-            # needed it and it made a single long-running turn hold every other
-            # request for that agent -- a dispatch, a chat message -- queued for
-            # hours behind it, on a runner with room to spare. Turns of one agent
-            # run side by side, each in its own worktree on the cloud runner.
+            # An AGENT is not a lane. There is no unique index limiting how many of an
+            # agent's turns execute at a time: such a limit would make a single
+            # long-running turn hold every other request for that agent -- a
+            # dispatch, a chat message -- queued for hours behind it, on a runner
+            # with room to spare. Turns of one agent run side by side, each in its
+            # own worktree on the cloud runner.
             #
             # The lanes that remain are the CONVERSATION's (below): two messages in
             # one chat session never execute at once. Whatever an agent's own turns
@@ -579,16 +568,15 @@ class TurnTranscript(models.Model):
     `raw_jsonl_gz` may hold MULTIPLE concatenated gzip members (one per
     `append_transcript` batch) rather than a single re-compressed blob —
     `gzip.decompress` reassembles a concatenated multi-member stream
-    transparently, so this is format-compatible with earlier single-member
-    rows. See services.append_transcript for why (O(1) appends instead of
+    transparently, so single-member rows read the same. See services.append_transcript for why (O(1) appends instead of
     decompress-all + recompress-all under the Turn row lock).
 
     RETENTION (cross-turn): not this model's job. `apps/retention` deletes a
-    turn's row here once its rule's `keep_days` pass (spec
-    2026-10-05-content-retention-design). With no rule, or enforcement off,
+    turn's row here once its rule's `keep_days` pass.
+    With no rule, or enforcement off,
     the table still grows forever.
 
-    SIZE (per-turn, bounded — security review 2026-07-26, F2): a single turn's
+    SIZE (per-turn, bounded): a single turn's
     content IS capped at `services.TRANSCRIPT_TURN_MAX_BYTES` — a different
     axis from the retention gap above. `raw_jsonl_gz` is Postgres `bytea`
     (1GB hard limit) and `bytes_raw` a `PositiveIntegerField` (2GB), and both
@@ -645,12 +633,9 @@ class PendingMail(models.Model):
 class FailureInvestigation(models.Model):
     """One KIND of turn failure, and what the fleet's debugger agent did about it.
 
-    Jonathan, 2026-10-07: an ACE Slack turn ended FAILED with the runner's
-    "Couldn't confirm your message was delivered…" note, Slack showed "❌ ace
-    could not finish this", and nothing in the fleet looked at it until a human
-    did. A board task would have waited for a turn to read it; the ask was that a
-    failure IMMEDIATELY starts a turn of the conductor agent (`ada`) to
-    investigate, learn and fix — `apps/harness/auto_debug.py` is that hook, and
+    A failed turn nobody looks at stays broken until a human notices. A board task
+    would wait for a turn to read it, so a failure IMMEDIATELY starts a turn of the
+    conductor agent (`ada`) to investigate, learn and fix — `apps/harness/auto_debug.py` is that hook, and
     this row is its memory.
 
     Keyed on a FINGERPRINT of the failure (the result note with every quoted
@@ -718,9 +703,8 @@ class FailureInvestigation(models.Model):
     #: The commit that fixes it, when the fix is to the runner code that failed —
     #: and its committer time, the ORDER a sha cannot carry (`Runner.code_committed_at`).
     #: A recurrence is judged against the failing runner: without the fix it only
-    #: counts. Investigations 1, 2 and 10 (2026-10-22..23) were resolved "merged,
-    #: NOT yet deployed" (#1488, #1504, #1527, #1965); investigation 2's 10-23
-    #: recurrence ran on a box without the fix and was escalated as "the fix did
+    #: counts. An investigation resolved "merged, NOT yet deployed" whose recurrence
+    #: ran on a box without the fix would otherwise be escalated as "the fix did
     #: not hold".
     fix_commit = models.CharField(max_length=40, blank=True, default="")
     fix_committed_at = models.DateTimeField(null=True, blank=True)

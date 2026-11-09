@@ -6,9 +6,9 @@
  * labs tenant, so the bounce stays under THIS deployment rather than landing on
  * a sibling tenant's login.
  *
- * It lives here because four call sites built this same string by hand — the
+ * It lives here because four call sites need this same string — the
  * API client's 401 bounce, the full-page login card, the invite accept page,
- * and (canopy-web#516) the walkthrough viewer's anonymous branch. A prefix rule
+ * and the walkthrough viewer's anonymous branch. A prefix rule
  * copied five times is a prefix rule that drifts; copied once, it can't.
  */
 export function loginHref(next: string): string {

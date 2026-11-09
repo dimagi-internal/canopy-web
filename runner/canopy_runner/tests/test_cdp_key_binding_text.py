@@ -1,7 +1,6 @@
 """A chat message that is just "?", "!" or "/" must land in the session as text.
 
-Turn e4fb721c (2026-10-20, failure investigation 2): Jonathan's canopy-web chat
-message was a single "?". Claude Code reads one keystroke into an empty prompt as a
+A canopy-web chat message that is a single "?" is the failure shape. Claude Code reads one keystroke into an empty prompt as a
 key binding — "?" opens the shortcuts panel and types nothing — so the message
 never reached the session and each recovery retype only toggled the panel.
 Measured on a raw pty against claude v2.1.304: "?", "!" and "/" alone are bindings

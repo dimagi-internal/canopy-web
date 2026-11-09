@@ -1,5 +1,5 @@
-"""The runner's first real Windows run (2026-10-15) found four places that
-assumed macOS once the process could start at all:
+"""The runner's Windows support covers four places that
+would otherwise assume macOS once the process can start at all:
 
 - the CDP sidecar's `npm install` ran a bare "npm", which CreateProcess cannot
   resolve to `npm.cmd`;
@@ -80,7 +80,7 @@ def test_unencodable_mark_does_not_crash_a_cp1252_console():
 def test_installer_logon_trigger_names_the_user():
     """`New-ScheduledTaskTrigger -AtLogOn` with no `-User` means ANY user's logon,
     which only an administrator may register — so a normal (non-elevated) install
-    failed at Register-ScheduledTask with "Access is denied" (2026-10-16). There is
+    fails at Register-ScheduledTask with "Access is denied". There is
     no PowerShell in CI, so pin the script text: every AtLogOn trigger carries -User,
     and the principal and trigger name the same account."""
     script = (Path(__file__).resolve().parents[1] / "scripts" / "install-runner.ps1").read_text()

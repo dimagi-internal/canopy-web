@@ -2687,9 +2687,6 @@ export interface paths {
          * Earlier messages
          * @description The SAME page a user's scroll-back returns (`MessagePageOut`), so a chat UI
          *     renders a contact's conversation with the one renderer it already has.
-         *
-         *     (It used to hand-build rows from `m.body`, a field `Message` does not have —
-         *     every call on a conversation with a message in it was a 500.)
          */
         readonly get: operations["messages"];
         readonly put?: never;
@@ -23975,7 +23972,7 @@ export interface components {
         };
         /**
          * MessageAppOut
-         * @description MCP Apps: the View a tool result carries (spec 2026-10-08 §3).
+         * @description MCP Apps: the View a tool result carries.
          */
         readonly MessageAppOut: {
             /** Tool Call Id */
@@ -24680,7 +24677,7 @@ export interface components {
         };
         /**
          * ReviewPinnedVideoOut
-         * @description A video pinned to the review's narrative version (canopy-web#1288).
+         * @description A video pinned to the review's narrative version.
          */
         readonly ReviewPinnedVideoOut: {
             /**
@@ -24907,7 +24904,7 @@ export interface components {
          * NarrativeCutOut
          * @description One cut of a ``style: recorded`` narrative and the video pinned to it.
          *
-         *     A recorded narrative renders one mp4 per cut (canopy#796); each is uploaded
+         *     A recorded narrative renders one mp4 per cut; each is uploaded
          *     with the recipe's ``cuts[].id`` and the scene ids it plays. Ordered by where
          *     the cut's first scene falls in the narration.
          */
@@ -29609,7 +29606,7 @@ export interface components {
          *     `runners` reuses the default list's row schema, and its ORDER is the rule's
          *     rank order. A rule names several runners because the operator's own boxes are
          *     two macOS accounts alternated as each runs out of tokens: "either of mine,
-         *     never cloud" cannot be said with one runner (spec 2026-09-05). Per-runner
+         *     never cloud" cannot be said with one runner. Per-runner
          *     `enabled` lives on the row, which is why this schema has no rule-level
          *     `enabled` — a change from the pre-actor shape, safe because canopy-web's own
          *     frontend is the only caller and no rules exist in production yet.
@@ -32056,14 +32053,14 @@ export interface components {
          * AgentCredentialAccessOut
          * @description Whether the CALLER may resolve this agent's secrets — never the values.
          *
-         *     The cheap check `canopy cred` makes before deciding how to resolve
-         *     (canopy#850). `may_resolve` mirrors GET /credentials/resolve exactly, minus
-         *     its bearer requirement (that is a property of the request, not of the
-         *     caller): `via` is `runner` when the caller pairs a live runner this agent
-         *     routes to, `admin` when they are the agent's owner or an admin, `license`
-         *     when they hold an active license to use it directly and name their own open
-         *     direct turn in `X-Canopy-Turn-Id`, and null when none holds — then `reason`
-         *     names the access to ask for.
+         *         The cheap check `canopy cred` makes before deciding how to resolve
+         *     . `may_resolve` mirrors GET /credentials/resolve exactly, minus
+         *         its bearer requirement (that is a property of the request, not of the
+         *         caller): `via` is `runner` when the caller pairs a live runner this agent
+         *         routes to, `admin` when they are the agent's owner or an admin, `license`
+         *         when they hold an active license to use it directly and name their own open
+         *         direct turn in `X-Canopy-Turn-Id`, and null when none holds — then `reason`
+         *         names the access to ask for.
          */
         readonly AgentCredentialAccessOut: {
             /** Agent */
@@ -32348,7 +32345,7 @@ export interface components {
          * DeviceKeyVouchOut
          * @description An agent whose vault the caller is a member of but does not manage, that
          *     their own machine waits on: they sign for the machine (an endorsement) and a
-         *     keeper hands it the vault key (spec 2026-10-22 vault-access-follows-canopy-access §1).
+         *     keeper hands it the vault key.
          */
         readonly DeviceKeyVouchOut: {
             /** Slug */
@@ -32471,7 +32468,7 @@ export interface components {
         };
         /**
          * AgentCredentialAlertOut
-         * @description A read of the agent's secrets that looked wrong (canopy-web#1549). At
+         * @description A read of the agent's secrets that looked wrong. At
          *     most one per kind per hour; `occurrences` counts repeats inside it.
          */
         readonly AgentCredentialAlertOut: {
@@ -33355,7 +33352,7 @@ export interface components {
          *
          *     Booleans the box OBSERVED, not configuration it read back. `mailbox_ok`
          *     specifically means a gmail call was attempted and succeeded — the one thing
-         *     a credentials screen can never tell you (2026-09-07).
+         *     a credentials screen can never tell you.
          */
         readonly BootstrapReportIn: {
             /** Runner Name */
@@ -42643,8 +42640,7 @@ export interface components {
          * RetireOut
          * @description What retiring took with it. A retired runner cannot stay routed, so its
          *     routing rows are deleted — and said so here, because silently dropping a
-         *     person's route sent their work to someone else's box with nothing surfacing it
-         *     (2026-10-02).
+         *     person's route sent their work to someone else's box with nothing surfacing it.
          */
         readonly RetireOut: {
             /** Runner */
@@ -44402,11 +44398,11 @@ export interface components {
          * @description Register the PUBLIC half of a key the runner holds. Re-posting the same
          *     key (same RFC 7638 thumbprint) is idempotent.
          *
-         *     `kind: "aws-iam"` (an EC2 box's instance role, canopy-web#1549) sends
+         *     `kind: "aws-iam"` (an EC2 box's instance role) sends
          *     `role_arn` and `proof` (an `X-Canopy-Aws-Proof` value whose htu is this
          *     URL) instead of `public_jwk`; the proof's signer must BE `role_arn`.
          *
-         *     `ecdh_public_jwk` (zero-knowledge vault, canopy-web#1550) is a SEPARATE
+         *     `ecdh_public_jwk` (zero-knowledge vault) is a SEPARATE
          *     P-256 public key the box does ECDH with, for every kind including
          *     `aws-iam`. Sending a new or different one for an `active` key sends it
          *     back to `pending` — a person approves again.

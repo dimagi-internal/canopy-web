@@ -5,13 +5,13 @@ import pkg from '../package.json'
  * Every in-repo workspace package that `src/` imports must be a DECLARED
  * dependency in frontend/package.json.
  *
- * WHY THIS EXISTS. `main` was undeployable for three hours with CI green the
- * whole time. #762 imported `canopy-client` — a local workspace under
- * `frontend/packages/` — without adding it to `dependencies`. That resolves
+ * WHY THIS EXISTS. A `main` can be undeployable with CI green the
+ * whole time. Importing `canopy-client` — a local workspace under
+ * `frontend/packages/` — without adding it to `dependencies` resolves
  * locally and in CI, because `npm install` in a workspace root links every
  * workspace into `node_modules` regardless of the declared graph. The Docker
  * build runs `npm ci`, which follows the lockfile's dependency graph strictly,
- * so the symlink was never created and `tsc -b` failed with "Cannot find
+ * so the symlink is never created and `tsc -b` fails with "Cannot find
  * module 'canopy-client'".
  *
  * So the failure is invisible to `npm run build` AND to the CI job literally

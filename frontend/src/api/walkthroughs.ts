@@ -8,8 +8,7 @@ import { ApiError, ensureOk, unwrap } from "./problem";
  * A failed walkthrough call, carrying the HTTP status — the shared `ApiError`
  * (./problem) under its old name. The status is the whole point: a private
  * walkthrough 404s to an anonymous caller (deliberate existence-hiding), and the
- * viewer needs the number to offer a sign-in instead of a dead end
- * (canopy-web#516).
+ * viewer needs the number to offer a sign-in instead of a dead end.
  */
 export { ApiError as WalkthroughApiError };
 
@@ -121,7 +120,7 @@ export function walkthroughContentUrl(
   token?: string | null,
 ): string {
   // The bytes live under the walkthrough's workspace, like its page — the only
-  // address they have (canopy-web#1337). Base-aware so the `<video>`/`<iframe>`
+  // address they have. Base-aware so the `<video>`/`<iframe>`
   // src resolves under a deployed sub-path, not the origin root. Anonymous
   // public access carries the share token as ?t=.
   const suffix = token ? `?t=${encodeURIComponent(token)}` : "";

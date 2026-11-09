@@ -5,8 +5,7 @@ grant contract v1 pins it. Framework-free: a view passes the form and the
 ``DPoP`` header in and gets either a ``GrantResult`` (persisted already, through
 the ``TokenStore``) or a ``GrantRefused`` carrying the RFC 6749 error to send.
 
-Extracted from connect-labs ``connect_labs/mcp/delegation.py::_redeem`` (PR
-#2060), in the same order of checks, with the same refusal for each:
+The order of checks, and the refusal for each:
 
 1. the client is the ONE configured canopy client, authenticated by
    ``private_key_jwt`` against the keys its metadata document names;

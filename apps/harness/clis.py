@@ -1,5 +1,5 @@
 """Which agent CLI runs a turn: the vocabulary, what a runner reports it has, and
-the one rule that picks (spec 2026-10-26-multi-cli-agents).
+the one rule that picks.
 
 A CLI is the program a turn runs in — Claude Code or OpenAI's Codex. It is not a
 surface (`Runner.engine`: where a laptop opens a session) and never inferred from

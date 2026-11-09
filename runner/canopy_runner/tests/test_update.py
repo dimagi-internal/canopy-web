@@ -90,7 +90,7 @@ def test_a_flaky_network_never_triggers_an_update(cfg):
 
 def test_a_refused_token_compares_with_the_public_deployed_version(cfg):
     """A dead token repeats every cycle, and newer code is what recovers it — so
-    the updater must still be able to reach that code (canopy-web#1762)."""
+    the updater must still be able to reach that code."""
     from canopy_runner.client import ClientError
 
     for code in (401, 403):

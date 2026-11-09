@@ -1,10 +1,10 @@
 """Did a message typed into a live session actually REACH Claude Code?
 
 `cdp_control.open_and_send` types the text and presses Enter, and the sidecar
-reports `sent` the moment the keystrokes are dispatched. Nothing checked that the
-TUI took them. On 2026-10-02 (turn ffaa56ce, Hal's Slack thread) a message was
-reported `sent`, never appeared in the session's transcript, and the turn sat
-RUNNING with no reply until a human noticed. A lost message and a delivered one
+reports `sent` the moment the keystrokes are dispatched. Nothing in that
+report says the TUI took them: a message can be reported `sent`, never appear in
+the session's transcript, and leave the turn RUNNING with no reply until a human
+notices. A lost message and a delivered one
 were indistinguishable.
 
 The transcript is the authority: Claude Code writes a `user` record when it takes
@@ -113,14 +113,13 @@ def confirm(reader, prompt: str, *, timeout: float | None = None,
 
 # ── recovery: what to do about a send the transcript never showed ─────────────
 #
-# 2026-10-07: a Slack message to ACE was typed into a live session while Jonathan
-# was using emdash, and nothing reached the transcript in the window. The turn
-# failed with "Couldn't confirm…" — correct, but the message was very likely still
-# recoverable: a click of his between the sidecar's focus and its insert sends the
+# A message typed into a live session while a person is using emdash may not
+# reach the transcript in the window. The turn then fails with "Couldn't
+# confirm…", but the message is very likely still recoverable: a click of theirs between the sidecar's focus and its insert sends the
 # text elsewhere (nothing in the composer — retype it), and a swallowed Enter
 # leaves it sitting in the composer (press Enter). Retyping is the one dangerous
-# move — if the message is already in the session it lands twice (turn 22662f53
-# typed one message four times) — so every branch below that could find the
+# move — if the message is already in the session it lands twice (a retype
+# can type one message several times) — so every branch below that could find the
 # message already present says "don't retype", and anything it cannot read says
 # "leave it".
 #
@@ -142,8 +141,8 @@ _PASTED_ANY = re.compile(r"\[Pasted text #\d+")
 #: One or more paste placeholders at the START of the composer, then the rest. A
 #: long ONE-line message arrives in more than one chunk; claude reads the first as
 #: a paste and collapses it, and the rest lands as typed text, so the composer
-#: shows "[Pasted text #1] …the end of our message" (turn 50bfdf45, 2026-10-14,
-#: failure investigation 2: ACE's chat follow-up sat there unsent, twice).
+#: shows "[Pasted text #1] …the end of our message" (a chat follow-up
+#: can sit there unsent).
 _PASTED_LEAD = re.compile(r"^(?:\[Pasted text #\d+[^\]]*\]\s*)+")
 _PLACEHOLDER = re.compile(r"^(Try |Ask |/ for |\? for )", re.I)
 
@@ -223,7 +222,7 @@ def recovery_action(state: dict, prompt: str) -> tuple[str, str]:
         # Claude is working. Maybe on our message (the transcript we watch is not
         # the one it is writing) — retyping would queue a second copy behind it.
         # Not a final answer: the caller waits for idle and looks again
-        # (execute._await_idle, 2026-10-18 turn 79313c1f).
+        # (execute._await_idle).
         return LEAVE, "session_busy"
     if _collapses(prompt) and _PASTED_ANY.search(screen):
         # Our message would show as "[Pasted text #N …]" and one is on screen; it

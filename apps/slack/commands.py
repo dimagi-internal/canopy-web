@@ -55,11 +55,10 @@ def _commands_url() -> str:
 def _former_urls(path: str) -> set[str]:
     """``path`` under every address this deployment has since left.
 
-    canopy moved from labs.connect.dimagi.com/canopy to canopy.dimagi.com
-    (2026-10-05), and its protocol identity followed. Without this a sync no
-    longer recognised the commands it had created — `managed` compares URLs — so
-    it could neither move them to the new address nor remove one whose agent was
-    switched off. ``CANOPY_FORMER_BASE_URLS`` names the old addresses; the
+    canopy moved from labs.connect.dimagi.com/canopy to canopy.dimagi.com,
+    and its protocol identity followed. Without this a sync would not recognise
+    the commands it had created — `managed` compares URLs — so it could neither
+    move them to the new address nor remove one whose agent was switched off. ``CANOPY_FORMER_BASE_URLS`` names the old addresses; the
     identity base is included while it still differs from the visited one.
     """
     from django.conf import settings
@@ -192,8 +191,8 @@ def reconcile(installation: SlackInstallation) -> dict:
         # delete tenant A's `/hal` as "not wanted".
         ours = {f"/{s.lower()}" for s in Agent.objects.filter(workspace_id__in=installation.workspace_ids())
                 .values_list("slug", flat=True)} | {BASE_COMMAND}
-        # Declared an agent as part of the same sync (owner decision, 2026-10-16:
-        # it is not an option anyone weighs, so it is not a button). An app on
+        # Declared an agent as part of the same sync (it is not an option
+        # anyone weighs, so it is not a button). An app on
         # the older assistant_view is left alone: that swap is one-way.
         try:
             declared = _declare_into(manifest)
@@ -238,7 +237,7 @@ def reconcile(installation: SlackInstallation) -> dict:
         if redirect_added:
             redirects = redirects + [_oauth_redirect_url()]
         # And the callback on an address canopy has left goes: nothing builds it
-        # any more (an install starts from the address the person is on, and the
+        # (an install starts from the address the person is on, and the
         # old address redirects every browser page to the new one), so keeping it
         # only leaves Slack willing to send an install somewhere canopy is not.
         former_callbacks = _former_urls("/auth/slack/callback/")
@@ -312,9 +311,8 @@ def sync_quietly(installation: SlackInstallation | None) -> dict:
 # owns — so it is done here, through the same configuration token, rather than
 # by hand in a UI nobody can diff.
 #
-# Part of every `reconcile` since 2026-10-16 (owner decision): it used to be an
-# owner's button, but nobody weighs it — every canopy Slack should show the
-# indicator. `declare_agent` remains for `manage.py slack_declare_agent` and the
+# Part of every `reconcile`: it is not an owner's button, because nobody weighs
+# it — every canopy Slack should show the indicator. `declare_agent` remains for `manage.py slack_declare_agent` and the
 # API, and both refuse an app on the older `assistant_view` (a one-way swap).
 
 AGENT_SCOPE = "assistant:write"

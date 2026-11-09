@@ -9,13 +9,13 @@ POST /api/debug/mint-session/ turns an authenticated caller — in practice a PA
 menubar app, which trades the runner's PAT for a cookie so its web view opens
 /supervisor already signed in; a bearer header cannot log a web view in.
 
-It used to be a Settings button for handing a cookie to an AI assistant. That
-button is gone (2026-09-25): an assistant working the API uses a short-lived PAT.
+There is no Settings button for handing a cookie to an AI assistant: an
+assistant working the API uses a short-lived PAT.
 
 A MINTED SESSION IS STILL A MACHINE. The few "canopy web app only" decisions
 (transfer an agent's owner, change its admins) refuse a bearer token that authenticated the request
 (`request.auth_method` set),
-so a leaked token cannot take over an agent — and before this, any PAT could
+so a leaked token cannot take over an agent — and without this, any PAT could
 walk straight past that by minting a cookie first. Every minted session carries
 `DEBUG_SESSION_MARKER`, and `is_machine(request)` treats it exactly like a
 bearer, so those gates hold for a person signed in through Google and nobody else.

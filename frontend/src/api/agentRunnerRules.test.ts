@@ -17,7 +17,7 @@ function row(over: Partial<AgentRunnerRuleOut>): AgentRunnerRuleOut {
   }
 }
 
-// ACE on 2026-10-05: Matt's work on the cloud box, Sarvesh's on his own laptop.
+// Two people's work on one agent: Matt's work on the cloud box, Sarvesh's on his own laptop.
 const prev = [
   row({ actor: 'mtheis@dimagi.com' }),
   row({ actor: 'stewari@dimagi.com', runner_id: 'st-mbp', runner_name: 'st-mbp' }),

@@ -1,5 +1,5 @@
 """Host-held results: the resource links a host's tool returns, and the host telling
-canopy that one of them changed (spec ``2026-10-23-host-held-results-design``).
+canopy that one of them changed.
 
 A host's tool returns FACTS for the model and one or more MCP ``resource_link``
 content items (MCP 2025-06-18) naming results the HOST keeps — a result set, a

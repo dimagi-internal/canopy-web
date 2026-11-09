@@ -26,7 +26,7 @@ def record_bootstrap_report(agent, *, runner_name, client_creds_ok, mailbox_ok,
     # They were written as None instead, which erased the last real answer: the
     # updater's credentials-only pass (every 30 minutes) does not run
     # `canopy cred sync`, so minutes after a full bootstrap recorded `env_ok` for all
-    # five agents, every one of them read "not checked" (labs, 2026-09-24).
+    # five agents, every one of them read "not checked".
     if turn_ready is not None:
         fields["turn_ready"] = bool(turn_ready)
     elif not mailbox_ok:
@@ -34,7 +34,7 @@ def record_bootstrap_report(agent, *, runner_name, client_creds_ok, mailbox_ok,
         # working mailbox: turns read mail through that mailbox, so "turns can read it" is
         # no longer known. A box with no token computes no turn_ready at all, which left
         # lex's row saying true for a day while its mailbox was down and the setup
-        # checklist read "done" off it (2026-10-20). A stored false stays: it names why.
+        # checklist read "done" off it. A stored false stays: it names why.
         AgentBootstrapReport.objects.filter(
             agent=agent, runner_name=runner_name.strip(), turn_ready=True,
         ).update(turn_ready=None)
@@ -52,7 +52,7 @@ def bootstrap_reports(agent) -> list:
 
     A retired runner's last report is left out. Rows key on the box's NAME (see
     `AgentBootstrapReport.runner_name`), so retiring a runner never touched them,
-    and a box retired on 2026-10-04 (cloud-ec2-test) went on answering "can this
+    and a retired box would go on answering "can this
     agent run" for echo/eva/ada — a frozen all-green row from a machine that no
     longer exists, read as a second healthy box by anyone counting rows. A row is
     hidden only when EVERY runner of that name is retired: a report from a name

@@ -36,7 +36,7 @@ import { ApiError } from '@/api/problem'
 // machines and hands the frame each section's body and one-line summary.
 //
 // The status route returns booleans and timestamps and never plaintext. The
-// agent vault is zero-knowledge (canopy-web#1550): Reveal opens a value HERE
+// agent vault is zero-knowledge: Reveal opens a value HERE
 // with the person's own vault key, and canopy-web never holds one it can read.
 // Save seals in the browser once the agent has a vault key; before that it
 // hands the value to the server, which seals it to the agent's readers and

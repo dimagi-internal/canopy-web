@@ -1,6 +1,6 @@
 """The old address (labs.connect.dimagi.com/canopy), after the move to the root.
 
-canopy is served at the root of canopy.dimagi.com (2026-10-05): ``FORCE_SCRIPT_NAME``
+canopy is served at the root of canopy.dimagi.com: ``FORCE_SCRIPT_NAME``
 is unset and the SPA is built with base ``/``. The old address still reaches the
 same container — the shared ALB's ``/canopy/*`` rule — and
 ``config.asgi_prefix.StripScriptName`` strips the prefix and marks the scope.

@@ -1,4 +1,4 @@
-"""Runner device keys and the DPoP device proof (Canopy Vault, canopy-web#1538 Phase 1a).
+"""Runner device keys and the DPoP device proof (Canopy Vault).
 
 A runner registers the PUBLIC half of an EC P-256 key it holds (ideally in the
 Secure Enclave or a TPM). Once a person approves it, a request to
@@ -179,7 +179,7 @@ def runner_serves_agent(runner, agent, facts=None) -> bool:
     last two, as its owner: they administer the agent, or hold its license.
 
     A cloud box the owner also owns is not a reason on its own: it reads only what
-    it runs (canopy-web#1563).
+    it runs.
 
     `facts` (`routing.ServingFacts`) answers from one read of many runners and
     agents; without it, the facts of this one pair are read."""
@@ -206,7 +206,7 @@ def runner_serves_agent(runner, agent, facts=None) -> bool:
 
 
 def private_runner_licensed(runner, agent) -> bool:
-    """A PRIVATE runner whose owner holds an ACTIVE license for `agent` (canopy-web#1705):
+    """A PRIVATE runner whose owner holds an ACTIVE license for `agent`:
     the person uses the agent on their own machine, and its secrets are read there only
     during their own turns (`licenses.credential_principal`)."""
     if not runner.private or runner.owner is None:
@@ -220,7 +220,7 @@ def agents_served(runner):
     """The agents this box should PREPARE: the ones it runs
     (`routing.agents_routed_to`). Not the owner's-laptop or live-turn arms of
     `runner_serves_agent`: those read secrets for one session or one turn, and a
-    box that staged more asked for vaults it would never use (fizzy, 2026-10-17)."""
+    box that staged more would ask for vaults it never uses."""
     from .routing import agents_routed_to
 
     return agents_routed_to(runner)

@@ -1,8 +1,6 @@
 """Pydantic schemas for the /api/walkthroughs surface.
 
-Mirror the field set from apps/walkthroughs/serializers.py — the
-walkthroughs app shipped in PR #40 (2026-05-26) with DRF serializers
-that this replaces.
+The field set mirrors the walkthrough model's serialized form.
 """
 from __future__ import annotations
 

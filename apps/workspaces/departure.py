@@ -1,11 +1,11 @@
 """What leaving a workspace takes with it.
 
-Removing a membership row used to be the whole of removal. Everything the
-person had been granted *because* they were a member stayed behind — agent
+Removing a membership row is not the whole of removal. Everything the
+person was granted *because* they were a member would stay behind — agent
 admin rows, runner admin rows, chat participant rows, the GitHub token they
 lent an agent, the agents they owned, and their own box's place on those
 agents' runner lists. Most of those legs re-check membership at read time, so
-the leftovers were dormant rather than live. But dormant is the problem:
+the leftovers are dormant rather than live. But dormant is the problem:
 `dimagi` auto-approves access requests (as editor, for now), so a removed
 person asks again, lands as an editor, and every one of those grants wakes up
 again. Removal you can undo yourself

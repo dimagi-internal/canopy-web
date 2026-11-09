@@ -4,7 +4,7 @@ agent's repo (canopy-web `runner_projects`).
 
 A laptop runs an agent in the emdash project named after it, and canopy routes no
 work for that agent here until this box's heartbeat reports that project. Making
-it used to be a person at this Mac cloning the repo and adding it in emdash's UI.
+it is this module's job, not a person's: it clones the repo and adds it to emdash.
 
 The ask rides the heartbeat reply (`add_projects`: id, name, repo_url). For each:
 

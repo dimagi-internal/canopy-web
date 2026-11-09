@@ -21,7 +21,7 @@ import { Td, Th, Tr } from '@/components/DataTable'
 
 
 /**
- * Your vault key (Canopy Vault zero-knowledge, canopy-web#1550): a key pair made
+ * Your vault key (Canopy Vault zero-knowledge): a key pair made
  * in this browser that zero-knowledge agents wrap their vault key to. Its
  * private half is kept only SEALED — by a passkey (its PRF extension), and/or
  * by a passphrase plus a Secret Key. canopy-web stores the

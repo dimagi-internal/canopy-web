@@ -70,4 +70,4 @@ class HandOffInvestigationIn(Schema):
                     description="The person's email. Default: the debugger agent's owner.")
 
 
-# ---- Runner device keys (Canopy Vault, canopy-web#1538 Phase 1a) -------------
+# ---- Runner device keys (Canopy Vault) -------------

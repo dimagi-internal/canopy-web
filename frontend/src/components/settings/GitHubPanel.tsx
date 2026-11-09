@@ -26,13 +26,10 @@ import { InstallationRow, ScopeAdvice, ConnectLink, Card, Note } from './GitHubP
  *    should not be able to, since a third party drawing "which repos do you
  *    grant?" is a phishing surface.
  *
- * The first version of this panel sent people to authorize and then treated
- * `connected: true` as success. Measured on labs 2026-09-13: a user authorized
- * cleanly, the panel said "Connected as @jjackson", and they had access to ZERO
- * repositories — so nothing could be pushed and the UI said everything was
- * fine. Connect now starts the INSTALL flow (which authorizes in the same
- * trip), and "connected" is no longer treated as sufficient: the installation
- * list is fetched and an empty one is reported as unfinished setup.
+ * `connected: true` alone is not success: a user can authorize cleanly and
+ * have access to ZERO repositories, so nothing can be pushed. Connect starts
+ * the INSTALL flow (which authorizes in the same trip), and the installation
+ * list is fetched; an empty one is reported as unfinished setup.
  */
 export function GitHubPanel() {
   const [conn, setConn] = useState<GitHubConnectionOut | null>(null)
@@ -67,8 +64,8 @@ export function GitHubPanel() {
         // does not list a brand-new installation immediately, so the first
         // read straight after coming back from the install screen can be
         // empty for a moment — and showing "no repository access" on that is
-        // alarming and wrong. Observed on labs 2026-09-13: the warning
-        // appeared and then vanished on its own.
+        // alarming and wrong: the warning
+        // would appear and then vanish on its own.
         const read = (attempt: number): void => {
           listGitHubInstallations()
             .then((rows) => {

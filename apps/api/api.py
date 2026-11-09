@@ -467,8 +467,8 @@ api.add_router("/sessions", sessions_router)
 # tenant URL /api/w/{ws}/agents/... is gated + stripped to this flat path by
 # apps.api.tenancy.WorkspaceResolveMiddleware, which also sets request.workspace_slug.
 # Before the agents router: `…/projects/propose/` must not be read as a project ref.
-api.add_router("/agents", proposals_router)  # proposed projects + backings (layer 1, 2026-10-16)
-api.add_router("/agents", checkins_project_router)  # a project's check-ins + its timeline (2026-10-17)
+api.add_router("/agents", proposals_router)  # proposed projects + backings
+api.add_router("/agents", checkins_project_router)  # a project's check-ins + its timeline
 api.add_router("/agents", agents_router)
 # The rest of apps/agents' surface, split by subdomain. Mounted in the order the
 # routes were written in, which is the order of /api/openapi.json's paths.
@@ -510,8 +510,8 @@ api.add_router("/agents", contributors_router)  # ideas + contributor pages on a
 api.add_router("/agents", agent_capabilities_router)  # what an agent declares it can lease
 api.add_router("/capabilities", capabilities_router)  # grants + leases (cloud capabilities)
 api.add_router("/agent-tasks", agent_tasks_router)  # call an agent inline, get a structured result
-api.add_router("/passkeys", passkeys_router)  # a person's passkeys + the step-up (canopy-web#1538)
-api.add_router("/vault", vault_keyset_router)  # a person's zero-knowledge vault key (canopy-web#1550)
+api.add_router("/passkeys", passkeys_router)  # a person's passkeys + the step-up
+api.add_router("/vault", vault_keyset_router)  # a person's zero-knowledge vault key
 # Fleet-wide task and project lists (/api/tasks/, /api/projects/) — the
 # per-agent filters across every agent the caller can see.
 api.add_router("", fleet_tasks_router)
@@ -546,14 +546,13 @@ api.add_router("/harness/runner-fleets", runner_fleets_router)
 api.add_router("/harness/runner-credential-sets", runner_credential_sets_router)
 api.add_router("/harness/runners/pair-by-role", runner_pair_by_role_router)
 api.add_router("/harness/runners/box-egress", box_egress_router)
-# A laptop box pairs by browser, and its installers and updates (spec
-# 2026-10-19-runner-installers).
+# A laptop box pairs by browser, and its installers and updates (runner installers).
 api.add_router("/harness/runner-pairings", runner_pairings_router)
 api.add_router("/harness/runner-releases", runner_releases_router)
-# A turn-scoped agent login (spec 2026-10-21-turn-scoped-agent-token).
+# A turn-scoped agent login.
 api.add_router("/harness/runners", turn_agent_token_router)
 
-# Direct use (canopy-web#1704): a person's private runner and the turns its sessions open.
+# Direct use: a person's private runner and the turns its sessions open.
 api.add_router("/harness/local-turns", local_turns_router)
 api.add_router("/private-runners", private_runners_router)
 api.add_router("", workspace_vaults_router)  # workspace vaults: /workspaces/{slug}/vaults, /vaults/{id}
@@ -565,7 +564,7 @@ api.add_router("/harness", harness_router)
 api.add_router("/me/canopy-projects", project_opt_in_router)
 # What the fleet's debugger agent reads and closes (apps/harness/auto_debug.py).
 api.add_router("/harness/failure-investigations", investigations_router)
-# Canopy Vault: hardware-bound runner keys behind the DPoP device proof (#1538).
+# Canopy Vault: hardware-bound runner keys behind the DPoP device proof.
 api.add_router("/runner-device-keys", device_keys_router)
 api.add_router("/runner-sessions", runner_sessions_router)
 api.add_router("/runner-device-key-requests", device_key_requests_router)
@@ -592,6 +591,6 @@ api.add_router("/me", my_sessions_router)
 api.add_router("/canopy-sessions", app_views_router)
 api.add_router("/session-secrets", session_secrets_router)
 api.add_router("/contacts", contacts_router)
-api.add_router("/people", people_router)  # fleet brain v1 (canopy#804)
+api.add_router("/people", people_router)  # fleet brain v1
 api.add_router("/hcp", hcp_router)  # Human Context Protocol v1 over the people brain
 api.add_router("/hcp-admin", hcp_clients_router)  # the HCP service's client registry (superusers)

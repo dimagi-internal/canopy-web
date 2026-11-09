@@ -369,9 +369,9 @@ def auto_link(installation: SlackInstallation, slack_user_id: str, info: dict):
     """Link a Slack user to the canopy user with the same email, if exactly one.
 
     The manual link page proves exactly this — Slack email equals canopy email —
-    plus a click. The click added friction and no assurance, so it is now the
-    fallback for someone whose two emails differ. Requiring it first is what
-    made the first live mention on labs (2026-09-19) look like silence.
+    plus a click. The click adds friction and no assurance, so it is the
+    fallback for someone whose two emails differ. Requiring it first would make
+    a first mention look like silence.
 
     "Same email" is `contacts.services.user_for_verified_email`, as on every channel.
     Only for a full member of this Slack (`is_home_member`): a guest is
@@ -720,9 +720,9 @@ def _confined_elsewhere(session: Session, agent: Agent, principal: Principal, in
     Asked of an unsaved probe turn through THE rule (`turn_context.for_turn`),
     so it cannot disagree with the profile the real turn would be stamped with.
     A confined turn in the owner's conversation reaches nothing of it — it runs
-    apart on the runner — yet it shared the owner's chat session, so it queued
-    behind the owner's turn and its answer landed in the owner's thread as if it
-    were part of it (2026-10-09, a colleague's correction on an ace thread).
+    apart on the runner — yet if it shared the owner's chat session it would queue
+    behind the owner's turn and its answer would land in the owner's thread as if it
+    were part of it.
     """
     if inbound.is_dm or not inbound.thread_ts or _owns(session, principal):
         return False

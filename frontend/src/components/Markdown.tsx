@@ -97,9 +97,9 @@ const components: Components = {
 
 // Inside an embedded panel a link must leave the panel. Followed in place it
 // loads the target INTO the panel's iframe, and a site that refuses framing
-// (Labs does) shows "refused to connect" where the answer was (2026-10-13: the
-// PMC explorer link an agent gave on Labs' targeting page). A new tab is a
-// normal page: the frame's sandbox lets popups escape it (#1359).
+// (Labs does) shows "refused to connect" where the answer was (e.g. an explorer link an agent gave on a
+// host page). A new tab is a
+// normal page: the frame's sandbox lets popups escape it.
 const newTabComponents: Components = {
   ...components,
   a: ({ href, children, title }) => (

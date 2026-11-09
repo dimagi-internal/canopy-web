@@ -50,13 +50,12 @@ class Runner(models.Model):
     LOCAL = "local"
     CLOUD = "cloud"
     LOCATION_CHOICES = [(LOCAL, "Local"), (CLOUD, "Cloud")]
-    # The session runtime a LAPTOP runner opens new sessions in (canopy-web#1188).
+    # The session runtime a LAPTOP runner opens new sessions in.
     # Set here by the runner's owner or admins, read back by the runner off every
     # heartbeat, so flipping it needs no restart and no shell on the box. It only
     # decides where NEW sessions go: a thread already running in one runtime keeps
     # its session there. Not a kind — the box, its routing and its repos are the
-    # same either way. (A `desktop` kind briefly existed for a separate desktop
-    # daemon; it was folded into the laptop runner as this setting.)
+    # same either way.
     ENGINE_EMDASH = "emdash"
     ENGINE_CLAUDE_DESKTOP = "claude-desktop"
     # The runner runs Claude itself, headless over ACP (the cloud runner's
@@ -126,7 +125,7 @@ class Runner(models.Model):
     # A pause is NOT a liveness state and NOT a decommission. `retire` was the only
     # reachable lever and is the wrong one: it deletes RunnerAssignment rows that
     # `unretire` explicitly does not restore, and it 404s the daemon's own
-    # heartbeat/claim calls (it cost jj-mbp-cdp ten sessions on 2026-07-25). This is
+    # heartbeat/claim calls. This is
     # reversible by construction and destroys nothing.
     #
     # Deliberately NOT touched by `heartbeat()`: the runner reports liveness, the
@@ -162,7 +161,7 @@ class Runner(models.Model):
     # heartbeating. The two differ: a laptop's daemon can heartbeat for hours while
     # the app that actually takes turns is asleep or stuck, and from the server an
     # `online` runner then looks like one that is about to pick a queued turn up
-    # (2026-10-30: a turn pinned to an "online, ready" laptop sat 5h16m). Written at
+    # (a turn pinned to an "online, ready" laptop can sit for hours). Written at
     # most every POLL_RECORD_EVERY_S. Null = never since this column existed.
     last_claim_poll_at = models.DateTimeField(null=True, blank=True)
     # A FLEET member (`apps/harness/fleets.py`): one instance of an EC2 Auto Scaling
@@ -241,9 +240,9 @@ class Runner(models.Model):
     #
     # `code_sha != expected` means DIFFERENT, and the supervisor was reporting it
     # as "behind": one of three possibilities (older, newer, divergent) stated as
-    # if it were the only one. Observed 2026-07-29 — a laptop installed from
+    # if it were the only one. A laptop installed from
     # origin/main between a runner change landing and the deploy that ships it
-    # was flagged "update this box" while being the most current in the fleet.
+    # would be flagged "update this box" while being the most current in the fleet.
     # Telling someone to fix the newest box is how a real alert gets ignored.
     #
     # A timestamp, not a counter, because it needs no human to maintain it and no
@@ -257,9 +256,9 @@ class Runner(models.Model):
     # "bootstrapped_at", "received_at"}`. OBSERVED, never typed, like `projects`.
     #
     # Separate from `ready` on purpose: `ready` answers "can this box execute a
-    # turn", this answers "which of its features actually work". Those came
-    # apart on 2026-09-22 — cloud-ec2-1 read online + ready + code-current for
-    # six hours while it wrote no durable chat rows, read no mail and could not
+    # turn", this answers "which of its features actually work". Those can come
+    # apart: a box can read online + ready + code-current for
+    # hours while it writes no durable chat rows, read no mail and could not
     # steer a turn, because a failed `git pull` skipped loading three packages
     # and the only record was a journald line. Empty = the runner does not
     # report health (the laptops, an older box): UNKNOWN, never "healthy".
@@ -269,7 +268,7 @@ class Runner(models.Model):
     # REPORTED on the heartbeat. OBSERVED, never typed, like `projects`: it
     # replaced a hand-kept `mailboxes` map in runner.json that the owner did not
     # know existed, and a runner with `{}` there was still rung by the doorbell
-    # for every mail and silently ignored each ring (canopy-web#1087).
+    # for every mail and silently ignored each ring.
     #
     # NULL means NEVER REPORTED (an older runner) and is read as "unknown", never
     # as "reads nothing": the doorbell keeps ringing such a box, exactly as it did
@@ -282,7 +281,7 @@ class Runner(models.Model):
     # An operator asked this box to refresh itself (re-run bootstrap: plugins,
     # the canopy CLI, Claude Code, agent provisioning). DURABLE, not a frame: a
     # control frame is a doorbell, and one sent while the socket is down is
-    # simply lost (spec 2026-08-01). The runner reads `refresh_pending` off its
+    # simply lost. The runner reads `refresh_pending` off its
     # heartbeat reply and restarts itself once idle; the request is discharged by
     # the box reporting a bootstrap newer than it (`health.bootstrapped_at`), so
     # nothing has to clear it and a refresh that never happened stays visible.
@@ -309,7 +308,7 @@ class Runner(models.Model):
     # legacy-ungated path it keeps open on purpose), and BOTH `_runner_schedule_qs`
     # and `claim_next_turn` derive the tenant from it — a runner may sync/fire/claim
     # in a workspace where its owner may run work AND that it is enrolled in
-    # (`RunnerEnrollment`, 2026-10-11; `routing.runner_tenant_slugs`).
+    # (`RunnerEnrollment`; `routing.runner_tenant_slugs`).
     #
     # OPERATIONAL CONSEQUENCE — deleting a pairing user permanently bricks their
     # runners. SET_NULL orphans the row rather than removing it; `owner_id`
@@ -353,7 +352,7 @@ class Runner(models.Model):
     # role). Read by `routing.serves_refusal` and the topology's grouping; never a
     # grant on its own.
     machine_id = models.CharField(max_length=300, blank=True, default="", db_index=True)
-    #: A PRIVATE runner is its owner's own machine (canopy-web#1705): it takes no fleet
+    #: A PRIVATE runner is its owner's own machine: it takes no fleet
     #: work — nothing routed, no workspace order, no source rule — only what its owner
     #: puts on it (a pin, a session bound to it) and the direct sessions opened on it
     #: (`apps/harness/local_turns.py`). Set by its owner, never reported by the box.
@@ -541,8 +540,7 @@ class Runner(models.Model):
     def session_capable(self) -> bool:
         """Whether this runner executes chat-session turns (the interactive
         way in — SP2b). Opt-in via `capabilities.sessions: true`. Cloud runners
-        and laptop emdash runners both set it (`canopy-runner pair` declares it since
-        2026-10-02); a box without it never receives a chat/Slack turn. Like the
+        and laptop emdash runners both set it (`canopy-runner pair` declares it); a box without it never receives a chat/Slack turn. Like the
         other capabilities, a hint gated by tenant."""
         return self.kind != Runner.COMPUTER and bool(self.capabilities.get("sessions", False))
 
@@ -601,7 +599,7 @@ class Runner(models.Model):
     @property
     def is_available(self) -> bool:
         """Can this runner take work RIGHT NOW — online (fresh heartbeat) AND
-        self-reported ready. The cascade's availability probe (spec 2026-07-24)."""
+        self-reported ready. The cascade's availability probe."""
         return self.live_status == Runner.ONLINE and self.ready
 
     @property
@@ -671,8 +669,8 @@ class Runner(models.Model):
         is the gate for work that FINISHES or reads what already exists — pressing
         a menu answer into a blocked session, shipping a transcript — never for
         starting new work, which is `is_available`'s question. Excluding PAUSED
-        here made a parked runner refuse the very menu its own session report had
-        just delivered (2026-07-31, ada blocked on a box parked for a rate limit).
+        here would make a parked runner refuse the very menu its own session report had
+        just delivered.
         """
         return self.live_status in (self.ONLINE, self.DEGRADED, self.PAUSED)
 
@@ -710,15 +708,14 @@ class RunnerSlashCommands(models.Model):
 class RunnerAdmin(models.Model):
     """Someone who may ADMINISTER this runner without speaking FOR it.
 
-    `owner` was doing two jobs. It is the credential the box authenticates
-    with — `claim_next_turn` derives a tenant from it, so heartbeating, claiming
-    and drilling must stay bound to it — and it was also the only answer to "who
-    may fix this box". For a shared cloud runner those are different questions,
-    and conflating them means one human is a single point of failure: on
-    2026-09-08 a signed-out cloud box could not be re-authenticated by the very
-    identity it runs as, because someone else had run the pairing command.
+    `owner` is the credential the box authenticates with — `claim_next_turn`
+    derives a tenant from it, so heartbeating, claiming and drilling must stay
+    bound to it. "Who may fix this box" is a different question. For a shared
+    cloud runner conflating them means one human is a single point of failure: a
+    signed-out cloud box could not be re-authenticated by the very identity it
+    runs as, because someone else had run the pairing command.
 
-    Ownership could not simply be moved. The box authenticates with the owner's
+    Ownership cannot simply be moved. The box authenticates with the owner's
     PAT, so re-pointing `owner` 404s its own heartbeat until that PAT is
     rotated — a change in AWS, not here.
 
@@ -726,7 +723,7 @@ class RunnerAdmin(models.Model):
     OWNER is too narrow (the dimagi workspace has exactly one, which is the
     problem being fixed). Workspace MEMBER is far too wide: that workspace
     auto-joins every `dimagi.com` address, so it would hand the fleet's Claude
-    credentials to 22 people who never asked for them — and the tenancy predicates
+    credentials to every member, none of whom asked for them — and the tenancy predicates
     deliberately keep credentials out of the member tier for exactly that reason.
 
     So the grant is EXPLICIT and per-runner. Authorization is one place where
@@ -753,7 +750,7 @@ class RunnerAdmin(models.Model):
 
 
 class RunnerFlag(models.Model):
-    """One property a runner's OWNER vouches for (spec 2026-09-30-zdr-runners).
+    """One property a runner's OWNER vouches for.
 
     canopy cannot verify any of these -- `sensitive_data` means "this box runs Claude
     only on a ZDR API key, under a locked harness", which is not observable from here -- so
@@ -775,8 +772,7 @@ class RunnerFlag(models.Model):
 
 class RunnerAssignment(models.Model):
     """One row of an agent's ordered runner list — THE routing authority for agent
-    turns (spec 2026-07-24-directed-runner-routing). An agent with no rows is
-    explicitly unroutable. Replaced routing-by-capabilities + kind preference."""
+    turns. An agent with no rows is explicitly unroutable."""
 
     agent = models.ForeignKey(
         "agents.Agent", on_delete=models.CASCADE, related_name="runner_assignments"
@@ -791,8 +787,8 @@ class RunnerAssignment(models.Model):
     # lower rank. Distinct from removal — the operator's "x" toggles this
     # instead of deleting the row, so re-enabling doesn't lose the rank.
     enabled = models.BooleanField(default=True)
-    # THE SOURCE RULE (spec 2026-07-27). "" = this row belongs to the agent's
-    # DEFAULT ordered list (the pre-existing behaviour). Non-empty = this row is
+    # THE SOURCE RULE. "" = this row belongs to the agent's
+    # DEFAULT ordered list. Non-empty = this row is
     # the single priority runner for that source, and `rank` is meaningless on it
     # (the uniqueness constraint below allows exactly one). The column is kept
     # rather than dropped so an ordered per-source list needs no second migration.
@@ -802,8 +798,8 @@ class RunnerAssignment(models.Model):
     # it, because the rule is its own row with its own toggle. Pinned by
     # tests/test_source_rules.py and stated in the Runners-tab UI.
     source = models.CharField(max_length=32, blank=True, default="")
-    # THE ACTOR RULE (spec 2026-09-05). "" = this rule applies to any actor
-    # (exactly what a source rule meant before actors existed). Non-empty = a
+    # THE ACTOR RULE. "" = this rule applies to any actor
+    # (a source rule for every actor). Non-empty = a
     # normalized, lowercased bare address, matched against `actors.actor_of(turn)`.
     #
     # Only meaningful alongside a non-empty `source`: a default-list row routes
@@ -815,7 +811,7 @@ class RunnerAssignment(models.Model):
     # waits rather than degrading, which is the point for a source whose work can
     # only happen on one box (mailbox credentials, local files).
     strict = models.BooleanField(default=False)
-    # THE MODE RULE (spec 2026-09-23). Only meaningful on a source row, and
+    # THE MODE RULE. Only meaningful on a source row, and
     # rule-level like `strict` (written to every row of the rule). "" = the rule
     # says nothing about mode, so the next rung decides: an actor rule defers to
     # the source rule, which defers to `Agent.turn_mode`. "manual" or "auto"
@@ -827,18 +823,16 @@ class RunnerAssignment(models.Model):
     class Meta:
         ordering = ["agent_id", "rank"]
         constraints = [
-            # One DEFAULT row per runner (what one_assignment_per_agent_runner
-            # meant before source rules existed) …
+            # One DEFAULT row per runner …
             models.UniqueConstraint(
                 fields=["agent", "runner"],
                 condition=models.Q(source=""),
                 name="one_default_assignment_per_agent_runner",
             ),
             # … and, within one RULE — the rows sharing (agent, source, actor),
-            # rank-ordered — each runner at most once. This REPLACED a constraint
-            # that capped a rule at a single runner, which could not express
-            # "either of my two boxes, never cloud" for an operator whose live
-            # account rotates (spec 2026-09-05).
+            # rank-ordered — each runner at most once. A rule may list
+            # several runners, so "either of my two boxes, never cloud" is expressible
+            # for an operator whose live account rotates.
             models.UniqueConstraint(
                 fields=["agent", "source", "actor", "runner"],
                 condition=~models.Q(source=""),
@@ -852,13 +846,13 @@ class WorkspaceRunnerOrder(models.Model):
     turns (a project dispatch: agent NULL, chat_session NULL) in that workspace.
 
     A repo turn has no agent, so `RunnerAssignment` never ranked it: every online
-    runner that declared the repo raced for it, and the first poll won (observed
-    2026-10-02: a canopy-web dispatch landed on a second macOS account 126 ms after
-    enqueue while the owner's own runner, first in every agent's order, sat online).
+    runner that declared the repo raced for it, and the first poll won (a
+    dispatch could land on a second macOS account within milliseconds of enqueue while
+    the owner's own runner, first in every agent's order, sat online).
 
     Same semantics as an agent's default list: index = rank, the availability
     cascade with the same grace, and a disabled row is kept but never routes. A
-    workspace with NO enabled rows routes repo turns exactly as before (any runner
+    workspace with NO enabled rows routes repo turns with no ordering (any runner
     that declares the repo), so this is opt-in per workspace. Ranks are taken only
     among the listed runners that DECLARE the turn's repo — a better-ranked runner
     that does not serve the repo can never take it, so it must not block one that
@@ -889,11 +883,11 @@ class RunnerEnrollment(models.Model):
     it is enrolled there or in a workspace ABOVE it (a row here — enrollment
     covers the subtree, `routing.covered_slugs`), AND its owner may still run work there
     (`agent.work`, editor and above). Enrollment never grants more than membership
-    does; it only narrows it. Before this table the membership half was the whole
-    rule, so a box served every workspace its owner could work in — the day
-    Jonathan became owner of a family workspace (`marshellis`, 2026-10-11), his
-    Dimagi laptop and the cloud box would have started claiming its repo turns
-    and unbound chats, and a family box would have claimed Dimagi's.
+    does; it only narrows it. Without this table the membership half would be the whole
+    rule, so a box would serve every workspace its owner could work in — an owner
+    of a family workspace (`marshellis`) would have his work laptop and the cloud
+    box claiming its repo turns and unbound chats, and a family box would claim
+    Dimagi's.
 
     Who adds rows: pairing enrolls the box in the workspace it paired into
     (`Runner.workspace`) and nothing else; the owner or a runner admin adds and

@@ -1,15 +1,15 @@
 """A runner whose token canopy-web stopped accepting reconnects itself from the browser.
 
-The old failure (jj-mbp-cdp, 2026-10-15 → 10-20): the PAT in runner.json expired, every
-heartbeat got 401, the box never learned it was out of date, and its updater asked with
-the same dead token and did nothing — a deadlock only a shell on the box could break.
+The failure it prevents: the PAT in runner.json expires, every heartbeat gets 401,
+the box never learns it is out of date, and its updater asks with the same dead token
+and does nothing — a deadlock only a shell on the box could break.
 
-Now: after a few heartbeats in a row are refused (401) and this box has no active
+So: after a few heartbeats in a row are refused (401) and this box has no active
 device key that could sign it in instead, the runner starts a browser pairing that
 names itself (`browser_pair.run_browser_pair(reconnect=True)`). It opens the approve
 page on this machine; when the runner's owner approves it (passkey), the runner gets
 this machine's key back — same runner, same settings — runner.json drops the dead
-token, and the runner restarts itself signed in with the key (canopy-web#1705).
+token, and the runner restarts itself signed in with the key.
 `~/.canopy/pairing.json` carries the code for the menu-bar app meanwhile. Windows has
 no menu bar showing it, so there a small notice names the code before the browser
 opens — once per code (`notify_code`).

@@ -6,8 +6,8 @@ import { Markdown } from '@/components/Markdown'
  *  collapsing). Injected into the kit via its `renderMarkdown` seam so the kit
  *  itself stays free of react-markdown.
  *
- *  Every link in a chat opens in a new tab, canopy's own pages included
- *  (Jonathan, 2026-10-19): followed in place, a link replaced the session you
+ *  Every link in a chat opens in a new tab, canopy's own pages included:
+ *  followed in place, a link replaced the session you
  *  were reading — in /ide, the whole workbench. */
 export function renderChatMarkdown(text: string) {
   return (

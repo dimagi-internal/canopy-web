@@ -1,6 +1,6 @@
 """A runner asks its owner to approve a cloud sign-in from their phone.
 
-An agent turn on a box hits an expired AWS SSO session and stops. Before this
+An agent turn on a box hits an expired AWS SSO session and stops. Without this
 it could only say "run `aws sso login --profile labs`" and wait for somebody to
 reach a terminal on that box. AWS's device-code flow does not need the
 terminal: the CLI on the box prints a URL with the code already filled in, and
@@ -13,8 +13,8 @@ The AWS credential never leaves the box. What passes through is a URL whose
 code is single-use and expires in about ten minutes, and canopy-web keeps it
 for exactly that long as a `SignInRequest` row, so the supervisor feed can show
 the owner every request still open. A push the push service accepted is not a
-push the phone showed (2026-10-19), and before the row a missed notification
-left the owner no other way to find out a box was waiting. The box reports the
+push the phone showed, and without the row a missed notification
+would leave the owner no other way to find out a box was waiting. The box reports the
 outcome (`resolve`), which clears the URL; a box that never reports leaves a
 row that reads as expired once the code would have.
 
@@ -89,7 +89,7 @@ def push_sign_in_request(runner, *, provider: str, url: str, label: str = "",
 
     `reason` is required. The notification must say who is asking, on which
     box, and why, so the owner can decide from the lock screen without opening
-    the session to find out what an approval is for (Jonathan, 2026-10-09). A
+    the session to find out what an approval is for. A
     credential grant with no stated purpose is also the shape a person should
     learn to refuse.
     """

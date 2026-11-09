@@ -2,9 +2,9 @@
 //
 // The mint exists because provisioning a mailbox was the last thing that could
 // not be done from a browser: it meant a terminal, `gog auth login`, a loopback
-// listener, and a hand-written secret. Jonathan's goal on 2026-09-05 was
-// that "someone could plausibly create a completely new agent without direct
-// access to the cloud box" — this is the piece that was missing.
+// listener, and a hand-written secret. The goal is that
+// someone can create a completely new agent without direct access to the cloud
+// box, and this is the piece that makes mailbox provisioning possible from a browser.
 
 /** The credential slot a Google mailbox lands in — the same one a hand-minted
  *  token uses, so the box never has two sources of truth for one mailbox. */
@@ -13,11 +13,10 @@ export const GOG_TOKEN_REF = 'gog-token'
 /** Does this agent have a Google mailbox to connect? Either it declares the
  *  `gog-token` slot, or the agent simply HAS a mailbox address.
  *
- *  It used to be the declaration alone, so the button rendered only for an agent
- *  that declared secrets — ace — and never for ada/echo/eva/hal (declared: 0), which
- *  all have mailboxes and all run on the same `gog-token` slot. For those four the
- *  only way to re-mint was a terminal `gog login` plus a hand-written secret, which is
- *  the exact trip this button exists to remove (2026-10-04). */
+ *  The declaration alone is not enough: an agent that declares no secrets can
+ *  still have a mailbox running on the same `gog-token` slot, and for it the only
+ *  way to re-mint would be a terminal `gog login` plus a hand-written secret,
+ *  which is the exact trip this button exists to remove. */
 export function declaresMailbox(rows: readonly { name: string }[], email?: string | null): boolean {
   return Boolean(email?.trim()) || rows.some((r) => r.name === GOG_TOKEN_REF)
 }
@@ -99,7 +98,7 @@ export function mintOutcome(status: string | null, ctx: MintContext = {}): MintO
     }
     case 'zk-no-recipients':
       // A zero-knowledge agent: the token is sealed to its devices and members,
-      // and it has neither yet (canopy-web#1550).
+      // and it has neither yet.
       // The setup checklist puts the vault step first for exactly this reason, and
       // the link is that step's own.
       return {

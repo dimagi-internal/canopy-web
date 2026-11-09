@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // An address no route matches still names its workspace. /w/marshellis/topology
-// (a hand-written link, 2026-10-18) matched nothing, so there was no :workspace
-// param and the header showed the last workspace used — "Dimagi" — on a page
+// (a hand-written link) matches nothing, so there is no :workspace
+// param, and the header must not show the last workspace used — "Dimagi" — on a page
 // about marshellis. The header reads the workspace off the address itself.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'

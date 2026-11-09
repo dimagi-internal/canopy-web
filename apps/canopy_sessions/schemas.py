@@ -84,7 +84,7 @@ class SendIn(Schema):
     # session's currently bound runner, or a runner UUID string pins to that
     # runner outright. None leaves normal routing/stickiness in charge.
     placement: str | None = None
-    # What KIND of work this send is, for source-aware routing (spec 2026-07-27).
+    # What KIND of work this send is, for source-aware routing.
     # None = the default `canopy_web_chat` (a human typing in the web UI), which
     # a caller cannot spell for itself: `ChatSendOrigin` admits only `api` and `ace_web`,
     # so the server-only sources keep exactly one producer each. ace-web sets
@@ -275,7 +275,7 @@ class TurnOutMinimal(Schema):
 
 
 class MessageAppOut(Schema):
-    """MCP Apps: the View a tool result carries (spec 2026-10-08 §3)."""
+    """MCP Apps: the View a tool result carries."""
     tool_call_id: str
     site: str
     tool: str
@@ -300,7 +300,7 @@ class MessageOut(Schema):
     content: dict
     author: dict | None = None
     created_at: dt.datetime
-    #: MCP Apps (spec 2026-10-08 §3): set on a tool_result whose call has a View
+    #: MCP Apps: set on a tool_result whose call has a View
     #: — `{tool_call_id, site, tool, resource_uri, path}`. Decided server-side;
     #: a client never guesses which tools have Views.
     app: MessageAppOut | None = None
@@ -516,7 +516,7 @@ class SessionOut(Schema):
     # and the dialog itself on the detail read: the list needs to RANK and badge
     # a waiting session, not render its options. Without it a blocked agent and
     # an idle one are indistinguishable in the list — the "it looks like the
-    # session stopped" half of the 2026-07-31 spark report.
+    # session stopped" case.
     waiting_on_you: bool = False
     # The runner tried to close this session and could not — why, in a short
     # sentence, and when. "" when no failed close is outstanding. Shown as
@@ -1108,7 +1108,7 @@ class PageActionSpec(Schema):
     """
 
     # Rationale, deliberately out of the docstring — a Ninja docstring is the
-    # PUBLISHED OpenAPI description and ships into `generated.ts` (#757).
+    # PUBLISHED OpenAPI description and ships into `generated.ts`.
     #
     # Two spellings in, one out, rather than two fields that can disagree.
     # canopy publishes these declarations as MCP tools, so a host author

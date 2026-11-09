@@ -1,5 +1,5 @@
 /**
- * Canopy Vault zero-knowledge v1 — the browser's half (canopy-web#1550).
+ * Canopy Vault zero-knowledge v1 — the browser's half.
  *
  * The NORMATIVE definition of every byte is `docs/vault/zk-v1/zk_v1_reference.py`;
  * `zk.test.ts` reproduces every output of `zk_v1_vectors.json` byte for byte.

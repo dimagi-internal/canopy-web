@@ -1,9 +1,8 @@
 """The runner unit must survive an OOM kill of one turn's process.
 
-2026-10-05, cloud-ec2-1 (t3.medium, no swap): the kernel OOM-killed a turn's
-`node` ACP adapter at 04:02 and a `node` + `claude` at 12:02. systemd's default
-OOMPolicy=stop then stopped the WHOLE unit each time, so one turn's memory spike
-took every in-flight turn with it. These pin the template's two defences; the
+On a small box with no swap the kernel can OOM-kill a turn's `node` ACP adapter
+or a `node` + `claude`. systemd's default OOMPolicy=stop then stops the WHOLE
+unit, so one turn's memory spike takes every in-flight turn with it. These pin the template's two defences; the
 claim-side memory gate is covered in test_cloud_runner.py.
 """
 from __future__ import annotations

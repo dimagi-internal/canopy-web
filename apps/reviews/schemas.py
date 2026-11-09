@@ -16,7 +16,7 @@ ReviewVisibility = Literal["private", "link"]
 
 
 class ReviewPinnedVideoOut(StrictModel):
-    """A video pinned to the review's narrative version (canopy-web#1288)."""
+    """A video pinned to the review's narrative version."""
 
     # The recorded-narrative cut (the recipe's cuts[].id); "" for a plain video.
     cut_id: str = ""
@@ -61,11 +61,11 @@ class ReviewRequestOut(ArtifactSignalsOut):
     workspace: str | None = None
     # Whether THIS caller may resolve the gate (an editor of the review's workspace).
     # The page decides between the decide-and-submit editor and the suggest-only
-    # editor on this — not on "is anyone signed in", which handed a signed-in
-    # non-editor an approve button the server then refused (canopy-web#1268).
+    # editor on this — not on "is anyone signed in", which would hand a signed-in
+    # non-editor an approve button the server then refuses.
     can_decide: bool = False
     # The narrative's human name (apps.reviews.titles) — the review page's subtitle
-    # was a run id like "chlorine-dispenser-walkthroughs-2026-10-07-002" (#1271).
+    # instead of a run id like "chlorine-dispenser-walkthroughs-2026-10-07-002".
     title: str | None = None
     created_at: dt.datetime
     resolved_at: dt.datetime | None = None

@@ -1,9 +1,8 @@
 """A fresh cloud box gets the clone its auto-updater reads from.
 
-cloud-ec2-2 (built 2026-10-05) logged "no update_runner.sh in /opt/canopy-web yet;
-skipping" on every updater tick: cloud-init only creates the directory, and
-nothing cloned into it once the runner moved to RUNNER_SRC_DIR. The box never
-updated. cloud-ec2-1 only did because its clone predated that move.
+Without it the box logs "no update_runner.sh in /opt/canopy-web yet; skipping" on
+every updater tick: cloud-init only creates the directory, and the runner reads
+RUNNER_SRC_DIR, so nothing clones into it and the box never updates.
 """
 from __future__ import annotations
 

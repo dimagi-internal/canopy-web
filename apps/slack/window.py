@@ -29,9 +29,8 @@ said. Its guarantees are this module's:
 5. **Audited** — see `services._record_window`.
 
 Threads: history returns parents by PARENT time, so a reply posted inside the
-window to an older thread is invisible to a plain windowed read. That gap was
-accepted in the spec and bit the first real use (2026-10-01: a 20-minute read
-came back empty while the conversation it was asked about was a reply in a
+window to an older thread is invisible to a plain windowed read (a 20-minute read
+comes back empty when the conversation it was asked about is a reply in a
 day-old thread). So the parent scan reaches back
 `SLACK_HISTORY_THREAD_LOOKBACK_HOURS` and keeps any thread whose `latest_reply`
 is inside the window; only those threads' in-window replies (and their parent,

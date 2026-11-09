@@ -582,7 +582,7 @@ def start_session(request: HttpRequest, payload: ContactSessionCreateIn) -> Cont
     # Server-owned, from the token: which site, and its runner requirements.
     session_services.stamp_host_metadata(metadata, request)
     # A sensitive site's conversation is sealed to its people's vault keys, and a
-    # contact has none (spec 2026-10-23 §2): refused before the conversation exists.
+    # contact has none: refused before the conversation exists.
     if sensitivity.is_sensitive(Session(metadata=metadata)):
 
         raise HttpError(422, str(CannotHold()))
@@ -694,8 +694,6 @@ def messages(request: HttpRequest, session_id: str, before: int, limit: int = 50
     """The SAME page a user's scroll-back returns (`MessagePageOut`), so a chat UI
     renders a contact's conversation with the one renderer it already has.
 
-    (It used to hand-build rows from `m.body`, a field `Message` does not have —
-    every call on a conversation with a message in it was a 500.)
     """
     from apps.api.pagination import clamp_limit
     from apps.canopy_sessions import transcript_read as session_transcript_read
@@ -854,7 +852,7 @@ def _turn_or_404(request: HttpRequest, turn_id: str):
 def stop(request: HttpRequest, session_id: str) -> dict:
     from apps.canopy_sessions import control as session_control
 
-    # The ONE stop, as REST and the chat socket use (canopy-web#1226): turns, else the session.
+    # The ONE stop, as REST and the chat socket use: turns, else the session.
     return {"cancelled": bool(session_control.stop_session(_session_or_404(request, session_id)))}
 
 
@@ -890,7 +888,7 @@ def my_turn_transcript(request: HttpRequest, turn_id: str):
                                  content_type="application/x-ndjson")
 
 
-# --- MCP Apps: the View a contact is looking at (spec 2026-10-08 §5) -------------
+# --- MCP Apps: the View a contact is looking at -------------
 #
 # The same five routes a canopy user's chat has (`canopy_sessions/app_views_api.py`),
 # for a contact in their OWN session. `/api/contact/` is excluded from MCP whole.

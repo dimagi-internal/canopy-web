@@ -240,7 +240,7 @@ def _locked(pk):
 
     ``project`` is a nullable FK, so joining it is a LEFT OUTER JOIN, and
     Postgres refuses ``FOR UPDATE`` on the nullable side of an outer join (every
-    state write 500'd in production, 2026-10-04). The test DB is SQLite, which
+    state write 500'd in production). The test DB is SQLite, which
     ignores ``FOR UPDATE`` entirely, so only the SQL shape can catch this:
     ``test_documents.test_the_state_lock_never_outer_joins``. Relations load
     lazily after the lock.

@@ -13,7 +13,7 @@ from canopy_runner import schedules
 FRIDAY_9AM = "0 9 * * 5"
 TZ = "America/New_York"
 
-# 2026-07-10 and 2026-07-17 are Fridays; ET is UTC-4 in July, so the 09:00 ET slot
+# Jul 10 and Jul 17 2026 are Fridays; ET is UTC-4 in July, so the 09:00 ET slot
 # lands at 13:00 UTC.
 SLOT_JUL_10 = dt.datetime(2026, 7, 10, 13, 0, tzinfo=dt.UTC)
 
@@ -76,7 +76,7 @@ def test_due_slot_fires_once_with_the_slot():
 def test_fire_after_is_the_anchor_not_last_slot():
     """The trap: last_slot is NULL until the first fire. Anchoring on it (or on None)
     looks backward unbounded and fires a schedule for a slot that PREDATES it."""
-    # Created Wed 2026-07-08; the previous Friday (Jul 3) is before that anchor.
+    # Created Wed Jul 8; the previous Friday (Jul 3) is before that anchor.
     client = FakeClient([_schedule(last_slot=None, fire_after="2026-07-08T12:00:00+00:00")])
     res = schedules.check_schedules(
         client, "r-1", now=dt.datetime(2026, 7, 8, 18, 0, tzinfo=dt.UTC)  # still Wed

@@ -1,9 +1,8 @@
 // @vitest-environment jsdom
 //
-// A runner's Refresh: findable, and it says where it is. The bar is the evening
-// of 2026-10-27 on cloud-ec2-2-marshellis: a small grey button in the Health
-// card, then a disabled "Refresh requested" and no hint of when it would run,
-// why it was waiting, or whether it had finished.
+// A runner's Refresh: findable, and it says where it is. The bar: not a small grey button in the Health
+// card followed by a disabled "Refresh requested" with no hint of when it will run,
+// why it is waiting, or whether it has finished.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 

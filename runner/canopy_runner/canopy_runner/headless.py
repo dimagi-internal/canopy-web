@@ -14,7 +14,7 @@ another thread, and keeping the mod out.
 ONE LIVE PROCESS PER SESSION. Two Claude processes resumed on one session each
 work from the history they loaded at start: both append to the same transcript,
 which forks, and a later resume follows one branch — the other's turns drop out
-of its context, silently (measured 2026-10-18 on Claude Code 2.1.302). So the
+of its context, silently (measured on Claude Code 2.1.302). So the
 adapter lives for ONE turn: between turns no process holds the session, which is
 also what the app's resume picker needs (it refuses a running session).
 

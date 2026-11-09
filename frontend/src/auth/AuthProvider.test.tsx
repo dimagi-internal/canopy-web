@@ -24,7 +24,7 @@ beforeEach(() => {
 })
 
 /**
- * The Android flicker (2026-07-26): our own Sign-in button painting for a few
+ * The Android flicker: our own Sign-in button painting for a few
  * hundred ms and then being swept away by a full-page navigation to Google.
  *
  * The cause is a race between two things that both follow a 401 on /api/me:

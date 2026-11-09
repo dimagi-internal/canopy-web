@@ -2,8 +2,8 @@
 prompt (the box's `claude.probe.<label>` health checks) — signed in by its owner on
 the runner's Credentials tab while wire.sh waits.
 
-cloud-ec2-fork, 2026-10-18: wired onto a token at its weekly cap, it failed every
-turn as "not signed in". The stored value was there; it just did not work.
+A box wired onto a token at its weekly cap fails every turn as "not signed in":
+the stored value is there; it just does not work.
 """
 from __future__ import annotations
 

@@ -10,10 +10,8 @@ authenticated here.
 client and per issuer, because it is unauthenticated — the signed assertion IS
 the credential, so there is nobody to bill until one has been checked.
 
-The per-credential exchange budget that used to live here went with
-`/api/auth/token-exchange` (2026-09-22): a shared secret that minted a token
-for any address in an app's allowed domains, and created the canopy user as a
-side effect. Nothing needs a budget for it because nothing can call it.
+There is no per-credential exchange budget: no endpoint mints a token from a
+shared secret for an address in an app's allowed domains.
 """
 from __future__ import annotations
 

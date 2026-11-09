@@ -29,9 +29,8 @@ export function nextRowsForMove(rows: readonly AgentRunnerOut[], i: number, d: -
   return next
 }
 
-// Replaces the old remove — flips `enabled` in place, rank untouched. This is
-// the whole of what used to be the "×" remove button: no row is ever dropped
-// from the list by user action anymore.
+// Flips `enabled` in place, rank untouched. This is the "×" button: no row is
+// ever dropped from the list by user action.
 export function nextRowsForToggle(rows: readonly AgentRunnerOut[], id: string): RunnerRow[] {
   return toRows(rows).map((r) => (r.runnerId === id ? { ...r, enabled: !r.enabled } : r))
 }

@@ -18,7 +18,7 @@ export type { AgentRunnerRuleOut, RuleTurnMode }
 // existing rule is simply a rule of length one with an empty actor, and renders
 // and edits exactly as it did.
 //
-// A rule also carries a MODE (spec 2026-09-23): '' says nothing and the row below
+// A rule also carries a MODE: '' says nothing and the row below
 // decides; 'manual' / 'auto' override the agent's own turn mode for this work.
 // An 'auto' naming a person applies only to a VERIFIED message from them — the
 // server enforces that (apps/harness/turn_mode.py); the table says it.
@@ -227,7 +227,7 @@ export function nextRulesForRunnerRemove(
   })
 }
 
-// ONE ROW FOR SEVERAL KINDS OF WORK (#1314). Storage keeps one rule per
+// ONE ROW FOR SEVERAL KINDS OF WORK. Storage keeps one rule per
 // (source, actor) — that is the routing authority and it stays unchanged — but
 // an operator who sends "my api, chat and email work to my laptop" made three
 // identical rows. Rules that agree on everything but the kind of work are drawn

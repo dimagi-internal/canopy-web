@@ -1,8 +1,7 @@
 """The REACTION signal on an artifact: who commented, and whether its human looked.
 
-Why (board task hal/T76, 2026-10-09): a "useful artifact" is one the agent judged
-good at the time OR one the human responded to and implied was good. Canopy could
-show neither — artifacts carried no reaction at all. This module answers, for a
+Why: a "useful artifact" is one the agent judged good at the time OR one the
+human responded to and implied was good. This module answers, for a
 batch of artifacts, four numbers a list can render without an N+1:
 
 * ``comment_count``   — Feedback rows aimed at the artifact (any channel).
@@ -12,7 +11,7 @@ batch of artifacts, four numbers a list can render without an N+1:
   own login (``Agent.user``) is not a human; reading back your own upload is not
   a reaction (``bin/hal-verify-link --as-hal`` does exactly that).
 * ``owner_viewed_at`` — when the creator's human last opened it. For an upload
-  made with an agent's PAT that human is the agent's OWNER (Jonathan, for hal);
+  made with an agent's PAT that human is the agent's OWNER;
   for an upload made by a person it is that person.
 
 Framework tier, generic over its target by string — the caller (a product app)

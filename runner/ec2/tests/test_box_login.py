@@ -2,8 +2,7 @@
 connectors (Claude Docs and the rest).
 
 A setup-token is inference-only by design, so a turn on a cloud runner could not
-read a Claude Doc however it was shared (2026-10-14: ACE could read one on a
-laptop and not on the box). The fix signs the box in with `claude auth login`,
+read a Claude Doc however it was shared. So the box is signed in with `claude auth login`,
 keeps that login ON the box (its refresh token rotates, so a copy anywhere else
 breaks both), and puts it first in the cascade.
 
@@ -357,11 +356,10 @@ def test_an_unchanged_state_is_reported_once(cr, monkeypatch):
 
 
 def test_a_box_waiting_for_a_credential_still_serves_the_browser_sign_in(cr, tmp_path, monkeypatch):
-    """cloud-ec2-2, 2026-10-15: its only credential was its own login, the login
-    expired, and an auto-update restarted it into the credential wait. Sign-ins
-    were drained only by the main loop, so the browser sign-in — the one way to
-    give it a credential — never reached it. The wait must serve it, and a
-    finished sign-in must end the wait."""
+    """A box whose only credential is its own login, expired and restarted into the
+    credential wait, must still drain sign-ins: the browser sign-in is the one way to
+    give it a credential. The wait must serve it, and a finished sign-in must end
+    the wait."""
     drained = []
 
     def drain(runner_id):

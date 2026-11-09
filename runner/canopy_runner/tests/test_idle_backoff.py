@@ -1,7 +1,7 @@
-"""#647: an idle runner backs off its poll, but only where that is safe.
+"""An idle runner backs off its poll, but only where that is safe.
 
-On labs, runner polling was ~98% of all ALB traffic on an idle Saturday and
-/claim answered 204 every time. The loop now stretches its wait once it has been
+Idle runner polling would otherwise dominate ALB traffic, with /claim answering 204
+every time. The loop stretches its wait once it has been
 quiet for a while, and only while the WS wake channel is up, because that channel
 delivers every doorbell (enqueue, viewer attach, session stop, inbox) at once.
 """

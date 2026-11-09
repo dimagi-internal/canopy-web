@@ -1,8 +1,8 @@
 """A turn's reply that runs past the note cap says so and links the rest.
 
-canopy-web#1955: the finish stored `text[:2000]` with no marker. 12 of 17 replies a
-member read through `canopy agent turns` were exactly 2,000 characters, and their
-Claude dispatched follow-ups — new sessions with no memory — to get the rest.
+A finish that stores `text[:2000]` with no marker leaves replies a member reads
+through `canopy agent turns` cut at exactly 2,000 characters, and their Claude
+dispatches follow-ups — new sessions with no memory — to get the rest.
 """
 from __future__ import annotations
 

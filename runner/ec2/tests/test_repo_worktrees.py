@@ -1,11 +1,9 @@
-"""Every cloud turn that works on a repo gets its OWN worktree of it (#1131).
+"""Every cloud turn that works on a repo gets its OWN worktree of it .
 
-On 2026-10-05 four turns on cloud-ec2-1 shared one checkout, /opt/canopy-web: a
-project session's commit was stranded there, a Hal turn's uncommitted change sat
-on top of it, a stash crossed between turns and branches moved under each other.
-Project turns had an empty scratch dir and agent turns had no sanctioned place
-for another repo, so each found /opt/canopy-web with `find /`. These pin the fix:
-a per-session/per-turn worktree off a shared clone, for project turns and for
+Turns sharing one checkout (/opt/canopy-web) strand a project session's commit
+there, stack a turn's uncommitted change on top of it, cross stashes and move
+branches under each other. So project turns do not get an empty scratch dir and
+agent turns do get a sanctioned place for another repo. These pin: a per-session/per-turn worktree off a shared clone, for project turns and for
 anything an agent asks `canopy-repo-worktree` for, and a shared clone that
 refuses commits.
 """

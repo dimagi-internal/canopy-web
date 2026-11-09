@@ -386,7 +386,7 @@ def log_unproven_member(turn) -> None:
 
     Where an owner already reads a turn's history (`read_turn_events`, the
     activity drill-down): "a member wrote in, but this message could not be tied
-    to their account, so they were treated as a contact" (canopy-web#1265).
+    to their account, so they were treated as a contact".
     Logging only — it grants nothing, and the turn's initiator, profile and
     grant are already decided by the time this runs. Never raises: a log line
     is not worth failing to enqueue someone's mail.
@@ -439,7 +439,7 @@ def refused_email_turn(agent, contact, *, origin, idempotency_key, prompt,
 
     turn_snapshot.record(turn, turn_snapshot.ENQUEUE, context=turn_context.blocked_sender(turn, agent))
     # Refused whatever the rules say; the workspace's `blocked-sender` rule
-    # decides what is recorded and who is told (canopy-web#1416).
+    # decides what is recorded and who is told.
     from apps.admission import evaluate as admission
 
     admission.at_refusal(turn, sender="blocked")

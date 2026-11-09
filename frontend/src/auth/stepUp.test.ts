@@ -1,4 +1,4 @@
-// The step-up retry (canopy-web#1538): a 403 `step_up_required` prompts once
+// The step-up retry: a 403 `step_up_required` prompts once
 // and replays the ORIGINAL request — body included — exactly once.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import createClient from 'openapi-fetch'

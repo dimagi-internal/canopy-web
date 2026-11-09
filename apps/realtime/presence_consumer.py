@@ -152,7 +152,7 @@ class PresenceConsumer(AsyncJsonWebsocketConsumer):
             await self.channel_layer.group_add(self.group, self.channel_name)
             # Idle state is per-page, not per-connection — arriving on a new
             # page must not carry over "idle" from whatever page the user
-            # was previously parked on.
+            # was parked on before.
             self.idle = False
             self._last_broadcast_idle = False
 

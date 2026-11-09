@@ -1,6 +1,6 @@
 """Bearer credentials for tests: mint a personal token and call the API with it.
 
-One home for what used to be a private `_pat` / `_bearer` in a score of test modules. Pick the
+One home for the `_pat` / `_bearer` helpers test modules share. Pick the
 shape the call site needs:
 
     pat_token(user)            -> the raw token string

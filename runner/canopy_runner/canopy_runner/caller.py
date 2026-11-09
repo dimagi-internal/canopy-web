@@ -110,10 +110,10 @@ def with_caller_flag(prompt: str, path: pathlib.Path | None) -> str:
 # --- the pending pointer: who is asking, for a FREE-TEXT prompt -----------------------
 #
 # A chat prompt (Slack, the web chat, the widget) is the person's own words, so it
-# never carries `--caller`. The agent still has to KNOW who it is talking to — on
-# 2026-09-26 Hal, driven from Slack by a non-member, pushed and deployed code with an
-# envelope on disk that said relationship=caller, verified=false, turn_mode=manual,
-# and never read it. So before the runner types a turn's text into a session it
+# never carries `--caller`. The agent still has to KNOW who it is talking to: an agent
+# driven from Slack by a non-member, with an envelope on disk that said
+# relationship=caller, verified=false, turn_mode=manual, must read it before it
+# pushes or deploys code. So before the runner types a turn's text into a session it
 # leaves a POINTER keyed by that session's emdash task name, and the canopy plugin's
 # UserPromptSubmit hook (`caller_context.py`) consumes it and adds a short summary of
 # the envelope to Claude's context — beside the prompt, never inside it.
@@ -203,7 +203,7 @@ PROFILE_ROOT = pathlib.Path.home() / ".canopy" / "profiles"
 #: version (`profiles_supported`), which harness `PROFILES_VERSION` gates on.
 PROFILE_DOC_VERSION = 1
 #: The oldest installed guard this runner will run a caller's turn under. 3 is the
-#: one that checks Write/Edit against `write_paths` (2026-09-26); an older guard
+#: one that checks Write/Edit against `write_paths`; an older guard
 #: checks them against read_paths, which lets a caller overwrite the script its
 #: bash allowlist runs. The runner REPORTS the guard's own version, so canopy-web
 #: (harness `PROFILES_VERSION`) decides who gets caller turns.

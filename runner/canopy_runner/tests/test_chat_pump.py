@@ -1,8 +1,9 @@
 """The tick pump that carries an in-flight chat reply back into the ledger.
 
-This is the half that used to be an inline poll loop inside execute_chat_turn, where
-it had to give up after 3s of transcript silence to avoid blocking the runner — and
-giving up after 3s is what truncated every answer that involved a tool call.
+This is the half that carries a reply across ticks instead of polling inline inside
+execute_chat_turn, where it would have to give up after 3s of transcript silence to
+avoid blocking the runner — and giving up after 3s truncates every answer that
+involves a tool call.
 """
 import types
 

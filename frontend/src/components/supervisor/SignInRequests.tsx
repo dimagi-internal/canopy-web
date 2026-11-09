@@ -4,8 +4,8 @@ import { usePolled } from '@/hooks/usePolled'
 
 // Sign-ins a box is waiting on you to approve (AWS SSO's device code), at the
 // top of the feed. The push notification carries the same link, but the push
-// service accepting a push is not the phone showing it: on 2026-10-19 three
-// were accepted and never displayed, and nothing else said a box was waiting.
+// service accepting a push is not the phone showing it: a push can be accepted and
+// never displayed, and nothing else says a box is waiting.
 // A request leaves this list when its box reports the outcome or its code
 // expires (about ten minutes), so re-reading is what clears a card.
 

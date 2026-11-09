@@ -290,14 +290,13 @@ def agent_detail(agent: Agent) -> dict:
         "task_count": agent.tasks.filter(task_read_q(None)).count(),
         # Same set as `GET /api/harness/turns/?agent=` (agent_turns_q): counting
         # only `agent.turns` left out every email/Slack turn, which targets the
-        # agent's session, so the card and the turn list disagreed (#359).
+        # agent's session, so the card and the turn list disagreed.
         "turn_count": Turn.objects.filter(agent_turns_q(agent)).count(),
         "latest_sync_at": latest.period_end if latest else None,
         # "When did this agent last RUN" — read off the dispatch queue, which has a
-        # row for every turn the harness sent. It used to be read off the close-out
-        # report, which only exists when an agent survived to package itself: ada
-        # rendered as never-run (0 / null) against 34 dispatched turns, and every
-        # other agent was weeks stale against its own queue.
+        # row for every turn the harness sent. It is not read off the close-out
+        # report, which only exists when an agent survived to package itself: an agent
+        # would render as never-run (0 / null) against its dispatched turns.
         #
         # `started_at` (not created_at) is the honest answer — a queued turn nobody
         # picked up is not a run — with created_at as the fallback for rows that

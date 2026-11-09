@@ -3,8 +3,8 @@
     manage.py reencrypt_secrets            # dry run: counts only, writes nothing
     manage.py reencrypt_secrets --apply    # rewrite the rows that need it
 
-canopy-web#1538 Phase 0. `apps/common/encryption.py` writes under
-`FIELD_ENCRYPTION_KEY` and still reads under the legacy `SECRET_KEY`-derived key;
+`apps/common/encryption.py` writes under
+`FIELD_ENCRYPTION_KEY` and reads under the legacy `SECRET_KEY`-derived key;
 this moves every row written under the legacy key onto the new one
 (`MultiFernet.rotate`), so the legacy key can later be dropped. Run it AFTER the
 deploy that provisions `FIELD_ENCRYPTION_KEY` — with only the legacy key

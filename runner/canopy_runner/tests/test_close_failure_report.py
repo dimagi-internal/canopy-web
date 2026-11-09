@@ -1,8 +1,7 @@
 """A failed close is reported to canopy, from every close path.
 
-2026-10-12: "Close sessions" from the menu bar left three sessions open, and the
-only place the reason existed was ~/.canopy/runner.log in another macOS user's
-home folder. Each path now turns the failure into a sentence a person can act on
+A failed "Close sessions" from the menu bar must not leave the reason only in
+~/.canopy/runner.log in another macOS user's home folder. Each path turns the failure into a sentence a person can act on
 and sends it (POST /runners/{id}/close-results); Supervisor shows it."""
 import types
 

@@ -137,7 +137,7 @@ def _is_yours(viewer, session, runner) -> bool:
     # Except on a cloud runner: nobody sits at that box, so a session an agent
     # opened there (a dispatch, a scheduled turn — no creator) is its owner's to
     # drive. Without this a manual cloud session waiting for approval reached no
-    # one's feed (Jonathan, 2026-10-07).
+    # one's feed.
     from apps.harness.models import Runner
 
     viewer_id = getattr(viewer, "pk", None)

@@ -2,7 +2,7 @@
 
 A real FastMCP server (reached in-process over ASGI through the gateway's
 `_transport_override`, the same seam `test_site_gateway` uses) that implements
-the host-app half spec 2026-10-08 describes for connect-labs:
+the host-app half connect-labs implements:
 
 * `workflow_run_action` carries `_meta.ui.resourceUri` and is visible to both the
   model and the app. Called WITHOUT `confirm` it previews, and — when the client

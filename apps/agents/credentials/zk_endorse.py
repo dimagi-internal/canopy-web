@@ -110,8 +110,8 @@ def add(agent, *, user, items: list, own_machines_only: bool = False) -> int:
     vault key, name a current recipient by its current key, and verify.
 
     `own_machines_only`: the caller is a member of the vault, not a manager, and may
-    vouch only for a machine that works for THEM (spec 2026-10-22 §1: "a machine is
-    trusted through the person who approved it, who must be a member of the vault")."""
+    vouch only for a machine that works for THEM (a machine is trusted through the
+    person who approved it, who must be a member of the vault)."""
 
     if len(items) > MAX_ENDORSEMENTS:
         raise _shape(f"at most {MAX_ENDORSEMENTS} endorsements")

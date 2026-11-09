@@ -266,8 +266,8 @@ function CopyShare({ url }: { url: string }) {
 }
 
 /** The absolute, tokened share URL for this release (only when public). The
- * server builds it — `/w/<ws>/ddd-release/…`, under the run's workspace
- * (canopy-web#1337) — so the page never assembles an address itself. */
+ * server builds it — `/w/<ws>/ddd-release/…`, under the run's workspace —
+ * so the page never assembles an address itself. */
 function useShareUrl(data: DddRunRelease): string | null {
   return data.is_public ? (data.share_url ?? null) : null
 }

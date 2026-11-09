@@ -193,9 +193,9 @@ def unseen_q() -> Q:
     Where a chat was STARTED says nothing about whether it is still open. Once a web
     chat has been sent, a runner holds an emdash session for it and re-reports it every
     ~10s exactly like a runner-discovered one, so absence from that report is the same
-    direct observation for both. Scoping the rule to `origin="runner"` left labs listing
-    11 week-old phone chats as live whose emdash tasks had been deleted days earlier
-    (2026-07-31) — indistinguishable, in the list, from a chat you could continue.
+    direct observation for both. Scoping the rule to `origin="runner"` would list
+    week-old phone chats as live whose emdash tasks had been deleted days earlier —
+    indistinguishable, in the list, from a chat you could continue.
 
     But staleness needs an OBSERVER, and that is what origin was standing in for badly.
     Two things have to be true before absence means anything: a runner holds this

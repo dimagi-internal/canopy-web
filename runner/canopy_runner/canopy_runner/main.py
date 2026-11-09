@@ -186,8 +186,8 @@ def _maybe_check_inboxes(cfg: Config, client: Client, now_fn=time.time,
 
     A ``check_inbox`` control frame from canopy-web means Gmail just told the
     server that mailbox changed — that mailbox is checked NOW, bypassing the
-    timer. Everything else still runs on ``inbox_poll_seconds`` (300s), which is
-    no longer the delivery mechanism but remains the AUDITOR: a message the
+    timer. Everything else runs on ``inbox_poll_seconds`` (300s), which is
+    not the delivery mechanism but the AUDITOR: a message the
     timer finds is a message push failed to ring for, and the ``discovered_by``
     tag is what lets the server say so.
 
@@ -230,8 +230,8 @@ def _maybe_check_inboxes(cfg: Config, client: Client, now_fn=time.time,
     from . import inbox as inbox_mod
     cap = getattr(cfg, "inbox_max_threads", 8)
     # Which alarm incidents already have an owner — the one piece of dedup state with no
-    # server-side equivalent, so it has to survive the runner's own self-update restart
-    # (#714). Sibling of inbox-last.json / gmail-watch.json.
+    # server-side equivalent, so it has to survive the runner's own self-update restart.
+    # Sibling of inbox-last.json / gmail-watch.json.
     alarm_state = (Path(cfg.state_path).with_name("alarm-incidents.json")
                    if cfg.state_path else Path("alarm-incidents.json"))
     for agent, box in ((a, b) for a in due_slugs for b in every.get(a) or [boxes[a]]):
@@ -261,9 +261,8 @@ def _maybe_check_inboxes(cfg: Config, client: Client, now_fn=time.time,
             # `ok_without_alarm` = an `OK:` that recovers from something other than ALARM
             # (an alarm announcing its own creation, or a merely-dark metric) — there was
             # no incident to fold into, so it gets its own count for the same visibility
-            # reason. Named for what it MEASURES, not for the one cause we first saw it
-            # from: keying on `N/A -> OK` alone missed the `INSUFFICIENT_DATA -> OK`
-            # spelling and burned a hal turn (#712).
+            # reason. Named for what it MEASURES, not for one cause: keying on `N/A -> OK`
+            # alone would miss the `INSUFFICIENT_DATA -> OK` spelling.
             logger.info("inbox[%s]: %s — %d unread (%d NEW -> session, %d already tracked, "
                         "%d skipped: agent's own reply, %d coalesced: alarm OK: into its "
                         "ALARM:, %d OK: with no ALARM to recover from, %d archived by the "
@@ -271,7 +270,7 @@ def _maybe_check_inboxes(cfg: Config, client: Client, now_fn=time.time,
                         agent, "RUNG" if agent in rung_slugs else "polled",
                         n_new + n_seen + n_skip + n_coal + n_no_alarm + n_auto + n_arch,
                         n_new, n_seen, n_skip, n_coal, n_no_alarm, n_arch, n_auto)
-            # The row per thread (canopy#679): "which rule did this?" is answerable from
+            # The row per thread: "which rule did this?" is answerable from
             # the log without re-running the classifier.
             rows = res.get("rows") or {}
             for tid in res.get("new", []) + res.get("archived", []):
@@ -287,7 +286,7 @@ def _maybe_check_inboxes(cfg: Config, client: Client, now_fn=time.time,
             # one broken credential into a subprocess storm.
             stamps[agent] = now_fn()
     # The automatic replies canopy-web could not send for the mailboxes just
-    # polled (canopy-web#1416): it holds no client that can refresh a desktop
+    # polled: it holds no client that can refresh a desktop
     # `canopy` token, and this box does. Same tick, same mailboxes, same pause.
     try:
         from . import admission_notices
@@ -359,12 +358,12 @@ def _maybe_rearm_watches(cfg: Config, client: Client, now_fn=time.time, *,
     provisioned behaves exactly as before. Best-effort per mailbox: one failing
     mailbox (revoked grant, dead OAuth client) never raises into the tick.
 
-    A failure does two things beyond logging, both of which it used to skip:
-    it BACKS OFF (state was left untouched, so the 24h window stayed open and the
-    next tick retried ~5s later — forever), and past the second attempt it TELLS
-    the server the mailbox is unwatched. Waiting for `watch.expired` to make it
-    loud was a 7-day lie: push is dead the moment the arm starts failing, and the
-    row that eventually appeared blamed the clock rather than the credential.
+    A failure does two things beyond logging: it BACKS OFF (state is left untouched,
+    so the 24h window stays open and without a back-off the next tick would retry
+    ~5s later — forever), and past the second attempt it TELLS the server the
+    mailbox is unwatched. Waiting for `watch.expired` to make it loud would be a
+    7-day lie: push is dead the moment the arm starts failing, and the row that
+    eventually appeared would blame the clock rather than the credential.
 
     Arms the mailboxes this box can READ (the probe's map), never one it holds no
     token for — that arm could only fail.
@@ -467,7 +466,7 @@ def _note_failure(client: Client, address: str, exc: Exception, fail: dict, *,
     if report:
         try:
             # A null expiry is the wire's way of saying "this mailbox has no
-            # watch" — the server already accepts it; it just used to drop it.
+            # watch" — the server accepts it.
             client.report_watch(address, None, error=error)
             logger.warning("reported to canopy-web: %s is NOT being watched", address)
         except Exception as rexc:  # noqa: BLE001 — reporting is not the arming
@@ -619,8 +618,7 @@ def run_once(cfg: Config, client: Client) -> str:
     Self-heal: the runner CONNECTS to emdash, it never launches it, so a closed/crashed
     emdash (or one launched without --remote-debugging-port) can't run work. If we claimed
     anyway, execute would hit the CDP-connect failure and fail the turn — and a failed turn
-    is NOT auto-re-claimed, so one outage burned a turn per hit agent (real incident
-    2026-07-17: 11 turns). So we PREFLIGHT: an unhealthy CDP skips the claim for this tick,
+    is NOT auto-re-claimed, so one outage would burn a turn per hit agent. So we PREFLIGHT: an unhealthy CDP skips the claim for this tick,
     leaving queued turns queued to auto-drain when emdash returns. Inbox + schedule polling
     still run (inbound work keeps ENQUEUING); only the claim is gated."""
     from . import readiness
@@ -707,12 +705,10 @@ def run_once(cfg: Config, client: Client) -> str:
     _step("session interrupts", session_interrupt.drain, cfg, client, cfg.runner_id)
 
     # THE CLAIM COMES BEFORE THE REPORTING SWEEP. Every step in `_report_sweep` is a
-    # canopy-web round trip, and they used to run here, ahead of the claim. On a
-    # healthy link that is milliseconds; on a bad one each call can take its full
-    # 10s timeout plus retries, so a human's message sat queued behind five status
-    # reports every tick. Measured 2026-09-19 at 40% packet loss: a Slack turn
-    # waited 162s to be claimed (2 ticks in 7.5 min), against a 0-6s norm. The
-    # sweep reports state; nothing in it gates the claim, so it runs after it.
+    # canopy-web round trip. On a healthy link that is milliseconds; on a bad one each
+    # call can take its full 10s timeout plus retries, so run ahead of the claim they
+    # would leave a human's message queued behind five status reports every tick.
+    # The sweep reports state; nothing in it gates the claim, so it runs after it.
     try:
         return _decide_and_claim(cfg, client, me, healthy)
     finally:
@@ -727,8 +723,8 @@ def _active_turn_ids() -> list[str]:
 
 def _step(name: str, fn, *args, **kwargs) -> None:
     """Run one tick step that must not take the claim down with it. A step that
-    raised used to crash the whole `run_once`, and a crashed tick claims nothing —
-    on a flaky link that was 14 consecutive claim-less ticks (2026-09-19)."""
+    raised would crash the whole `run_once`, and a crashed tick claims nothing — on a
+    flaky link that is a run of claim-less ticks."""
     try:
         fn(*args, **kwargs)
     except Exception:  # noqa: BLE001 — a status step must never block the claim
@@ -1254,7 +1250,7 @@ IDLE_POLL_CAP_SECONDS = 45
 
 
 def next_wait(cfg: Config, *, quiet_streak: int, wake_connected: bool) -> float:
-    """How long the loop waits before its next tick (#647).
+    """How long the loop waits before its next tick.
 
     `poll_seconds` normally. After `idle_after_ticks` quiet ticks in a row, and
     only while the WS wake channel is up, `idle_poll_seconds` (capped). The
@@ -1316,13 +1312,13 @@ def make_control_handler(cfg: Config, waker, client=None):
             # that also carries cancel and wake.
             inbox_due.ring(str(msg["mailbox"]))
             # Wake the loop too: an idle runner may be in a long back-off wait
-            # (#647), and the doorbell is the whole point of not polling.
+            # and the doorbell is the whole point of not polling.
             waker.event.set()
         elif msg.get("type") == "stream":
             # The viewer/backfill doorbell — the frame that had no branch. Wakes
             # the loop so sync_session_streams + drain_backfills run now rather
-            # than up to poll_seconds later; the cloud runner has done this since
-            # 2026-07-28 (`mtype == "stream"`), so this is the laptop catching up.
+            # than up to poll_seconds later; the cloud runner handles it the same way
+            # (`mtype == "stream"`).
             # Only nudges: the transcript read stays on the poll thread, for the
             # same reason the inbox doorbell does.
             waker.event.set()
@@ -1360,7 +1356,6 @@ def make_control_handler(cfg: Config, waker, client=None):
             # and the very next poll tick pressed it a SECOND time. Harmless on a
             # permission prompt, destructive on a multi-select, where a number
             # key toggles: one tap, two presses, box back to where it started.
-            # Observed 2026-08-12 16:49:48 and 16:49:54 on eva's July closeout.
             # `client` is optional only so the dispatch stays constructible in a
             # test with no server; in the runner it is always supplied, and
             # without it the poll tick is still the (double-pressing) backstop.
@@ -1394,7 +1389,7 @@ def _tolerant_console(streams=None) -> None:
 
     The CLI marks results with ✓/✗. A Windows console on cp1252 cannot encode
     them, so `print(f"✗ {exc}")` raised UnicodeEncodeError and buried the real
-    error under it (2026-10-15). Keep the console's encoding; only stop it raising.
+    error under it. Keep the console's encoding; only stop it raising.
     """
     for stream in streams or (sys.stdout, sys.stderr):
         try:
@@ -1563,7 +1558,7 @@ def main() -> None:
     _uc.log_startup_drift(cfg.emdash_db, home=Path.home(),
                           claude_home=Path.home() / ".claude" / "projects", log=logger)
 
-    # Canopy Vault (canopy#946): make sure this machine's device key exists and is
+    # Canopy Vault: make sure this machine's device key exists and is
     # registered for this runner; logs + notifies the approve URL while it is pending.
     # Background and fail-open — it never delays or stops the loop.
     from . import device_key as _device_key
@@ -1618,7 +1613,7 @@ def main() -> None:
     if wake_on:
         logger.info("  wake: WS control channel connected — claims fire on enqueue, not just poll")
     hooks.start_hook_listener(cfg, client)
-    # Sessions canopy created that have not started yet (#1190). Persisted beside
+    # Sessions canopy created that have not started yet. Persisted beside
     # the other runner state so a self-update restart does not lose a stall.
     from . import startup_watch
 
@@ -1641,19 +1636,18 @@ def main() -> None:
     idle_streak = 0
     quiet_streak = 0  # consecutive ticks with nothing claimed, carried or observed
     paused = False
-    # A token canopy stopped accepting is fixed from the browser, not a shell (#1705).
+    # A token canopy stopped accepting is fixed from the browser, not a shell.
     from .reconnect import AuthWatch
 
     auth_watch = AuthWatch(Path(args.config), cfg.base_url, cfg.runner_id)
     while True:
         _beat()
         # The pause is NOT short-circuited here any more, and that is deliberate.
-        # This branch used to `continue` before run_once, which meant a local
-        # sentinel could never be pushed up — the local file and the server's
-        # `paused` were two states with no path between them. run_once now
-        # heartbeats, pumps in-flight replies, reconciles the two, and returns
-        # "paused" without starting anything, which is everything this branch did
-        # plus the sync. One place owns the rule.
+        # A `continue` here, before run_once, would mean a local sentinel could
+        # never be pushed up — the local file and the server's `paused` would be
+        # two states with no path between them. run_once heartbeats, pumps
+        # in-flight replies, reconciles the two, and returns "paused" without
+        # starting anything. One place owns the rule.
         try:
             result = run_once(cfg, client)
             auth_watch.ok()
@@ -1690,7 +1684,7 @@ def main() -> None:
             else:
                 logger.info("cycle: %s", result)
             idle_streak = 0
-        # Idle back-off (#647): a tick is quiet when it claimed nothing, carries no
+        # Idle back-off: a tick is quiet when it claimed nothing, carries no
         # in-flight turn and saw no session activity. take() runs every tick so a
         # note from a busy tick never leaks into a later one.
         observed = activity.take()

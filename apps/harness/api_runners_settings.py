@@ -94,7 +94,7 @@ def set_runner_private(request: HttpRequest, runner_id: uuid.UUID, payload: Runn
     source rule — only what its owner pins or binds to it, and the direct sessions
     opened on it. Owner only. (To run as a lower role, start the TURN with
     `acts_as` — it is a property of one turn, not of a machine.)"""
-    # canopy-web#1705. Owner only, not runner admins: it decides whose work the box
+    # Owner only, not runner admins: it decides whose work the box
     # takes, which is the owner's to say.
     from apps.events import audit
 
@@ -269,7 +269,7 @@ def set_runner_engine(request: HttpRequest, runner_id: uuid.UUID, payload: Runne
     """Set the runtime (`emdash`, `claude-desktop` or `claude-cli`) a laptop runner
     opens new sessions in. Takes effect on the runner's next heartbeat; sessions already
     running stay where they are."""
-    # canopy-web#1188. The runner reads `engine` off its heartbeat response, so a
+    # The runner reads `engine` off its heartbeat response, so a
     # flip needs no restart and no shell on the box, and is safe while sessions are
     # live: a thread already running in one runtime keeps its own session, and
     # routing is the same either way. Owner or runner admins, like flags — it

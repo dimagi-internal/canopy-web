@@ -59,9 +59,9 @@ class Session(models.Model):
         and every caller that shipped a bare `session.project` silently sent ""
         for agent sessions. `resolve_transcript` then returned None and the
         caller `continue`d, so agent chats were never streamed and never
-        backfilled — permanently, and with no error anywhere. Measured on labs
-        2026-08-01: a fresh hal session sat at zero durable rows through a 7-minute
-        backfill wait, and "load full session" could not work for any agent chat.
+        backfilled — permanently, and with no error anywhere. A fresh agent
+        session would sit at zero durable rows, and "load full session" could not
+        work for any agent chat.
         """
         return self.project or (self.agent.slug if self.agent_id else "")
     title = models.CharField(max_length=200, blank=True, default="")
@@ -157,8 +157,8 @@ class Session(models.Model):
 
     #: What the attached page currently SHOWS, as opposed to what it can do.
     #: The other half of AG-UI's frontend split (shared state beside frontend
-    #: tools), and the half canopy lacked: page context used to be prose pasted
-    #: onto the first message, read once at frame init. Here it is a thing the
+    #: tools), and the half prose pasted onto the first message would lack, read once at
+    #: frame init. Here it is a thing the
     #: agent re-reads whenever it asks, so it cannot go stale mid-conversation.
     #:
     #: Carries a monotonic `version` assigned server-side. Bounded on write
@@ -409,7 +409,7 @@ class SessionParticipant(models.Model):
 
 class SessionKey(models.Model):
     """A SENSITIVE conversation's key pair, public half only
-    (`conversation_keys`; spec 2026-10-23-sensitive-conversations-sealed-to-their-people §2).
+    (`conversation_keys`).
 
     Every stored message's words are sealed to `public_jwk`; the private half exists
     only wrapped to each of the conversation's people (`SessionKeyWrap`), so canopy-web
@@ -519,7 +519,7 @@ class PageAction(models.Model):
 class Draft(models.Model):
     """One person's outgoing message in a session. One OPEN draft (slot='next')
     per (session, author) — everyone types in their own box, and the others see
-    it live as a `draft.typing` row (spec 2026-09-26). It replaced a single shared
+    it live as a `draft.typing` row. It replaced a single shared
     draft with a 2s soft lock, which made two people who wanted to speak at once
     queue for the keyboard. `version` still guards one person's own tabs."""
 
@@ -579,10 +579,10 @@ class RunnerBinding(models.Model):
     # upsert keyed on the bare name, so the two collapsed into one row — and because
     # the report deduplicates before it upserts, the loser was not merely mislabelled
     # but dropped from the report entirely, invisible on the web with no error
-    # anywhere. Measured on labs 2026-08-27: a session titled "issues" reported
+    # anywhere. For example, a session titled "issues" reported
     # `project: "ace"` while serving a connect-labs transcript (its live tail was
     # `gh issue close 1195 -R dimagi-internal/connect-labs`), because an `issues`
-    # task under `ace` on 2026-08-14 had claimed the name first.
+    # task under `ace` had claimed the name first.
     #
     # Denormalised rather than joined because it is half of a UNIQUE constraint, and
     # a constraint cannot span tables. Backfilled from `session.emdash_project` in
@@ -611,7 +611,7 @@ class RunnerBinding(models.Model):
     # re-pointed at the new conversation, while the old one's rows stay attached.
     # That alone renders one session as another; worse, `turn_index` is a PER-FILE ordinal, so the
     # first_index/last_index markers computed off the old file are meaningless
-    # against the new one. Measured on prod 2026-08-14 (issue #615): a 593-record
+    # against the new one. For example a 593-record
     # predecessor left last_index=37,696 against a live 384-record transcript whose
     # highest possible ordinal was 24,575, so every record of the live session sat
     # BELOW the marker and the runner shipped nothing — the panel was pinned to a
@@ -636,9 +636,9 @@ class RunnerBinding(models.Model):
     # complete reports of absence (or an explicit archived signal). Close a task and
     # open its namesake inside that window, or on a report the runner's limit cut
     # short, and the new conversation was matched to the old record and wiped its
-    # rows (`ensure_transcript_identity`). Measured 2026-10-09 (hal board T74): 5 of
+    # rows (`ensure_transcript_identity`). Observed: 5 of
     # 20 core Supply sessions folded into namesakes — one `supply` record spanned
-    # 2026-07-28 → 2026-10-02 across three separate tasks.
+    # three separate tasks over months.
     #
     # Blank = never reported (an old runner, a desktop session with no emdash task,
     # a cloud runner). Blank on either side makes no claim and never forks.
@@ -710,13 +710,13 @@ class RunnerBinding(models.Model):
     #
     # `{"id": "<uuid>", "option": <int|null>, "at": <epoch>}`.
     #
-    # The answer used to exist ONLY as a WebSocket control frame. When that
+    # An answer sent ONLY as a WebSocket control frame is lost when that
     # channel is down the frame lands in a Channels group with no consumer and is
     # discarded — while the runner still heartbeats over REST, so it reads ONLINE,
     # `is_reachable` is true, and the API answers `ok:true`. Nothing anywhere
-    # records that the tap was lost. Measured on labs 2026-08-01: the control
-    # channel reconnected at 10:16 and again at 10:58, and an answer sent at 10:50
-    # never reached the runner at all — no keystroke, no refusal, no log line.
+    # records that the tap was lost. If the control
+    # channel reconnects, an answer sent while it was down never reaches the
+    # runner at all — no keystroke, no refusal, no log line.
     # That is the purest form of "clicking does nothing".
     #
     # So the frame becomes the doorbell and this is the record: the runner drains
@@ -740,7 +740,7 @@ class RunnerBinding(models.Model):
 
     # A close the runner has not carried out yet — same reasoning as
     # `pending_answer`, for the other verb that only ever existed as a WS frame.
-    # Verified 2026-08-01 by sending a real close: the API answered
+    # A real close: the API answers
     # `{"ok":true,"closing":true}` and the runner logged nothing at all — no
     # attempt, no error — so the emdash task stayed open and the session stayed
     # active forever. `/close`'s own fallback ("the task's plain absence from the
@@ -817,7 +817,7 @@ class RunnerBinding(models.Model):
         """True if this runner owns the live session (same runner + same macOS host)
         and a concrete session_key is recorded. The runner STILL verifies the task
         exists in its own emdash before driving it — this is the server-side gate.
-        Ported verbatim from the retired SessionLink.reusable_by."""
+"""
         return bool(
             self.session_key
             and self.runner_id == runner.id
@@ -943,11 +943,11 @@ class ChatKey(models.Model):
 
     What a chat's own secrets and its page context need to know is whether the
     caller is the conversation bound to this chat — not which account it signs
-    in as. That used to be pieced together from two indirect facts: the caller
+    in as. Two indirect facts would not do: the caller
     was the chat's agent (`Agent.user`, a login shared by EVERY turn of that
     agent) and knew the chat's Claude session id (a value that can be found,
     not one that was given). Brittle, and it made an identity link carry a
-    permission (Jonathan, 2026-09-26).
+    permission.
 
     A chat key inverts it: canopy ISSUES the permission. When a runner claims a
     chat's turn, canopy mints a key for that chat and hands it only to that
@@ -979,7 +979,7 @@ class TransferRequest(models.Model):
     A transfer runs the session on someone else's box and Claude subscription, so
     the person who administers the TARGET decides — not whoever happens to be able
     to write to the session. Built for the first box run by someone other than the
-    operator (2026-10-02): a colleague can be handed a thread the operator started,
+    operator: a colleague can be handed a thread the operator started,
     and the operator can pull one back, without either reaching onto the other's
     machine unasked. A requester who already administers the target needs nobody's
     yes, and their request is recorded already approved — an audit row, not a gate.
@@ -1169,8 +1169,8 @@ class SessionWorkspacePreference(models.Model):
     """Where a person's own emdash sessions are FILED when nothing else decides.
 
     A runner reports every open emdash task on its box; a task whose project
-    names an agent follows that agent's workspace, and every other one used to
-    land in `runner.workspace` — which says where the box was paired, not whose
+    names an agent follows that agent's workspace, and every other one lands in
+    `runner.workspace` — which says where the box was paired, not whose
     work it is. A person in two tenants (a work org and a family workspace) had
     no say. This is their say: the workspace a NEW agent-less session reported
     by a runner they own is filed in (`filing.filing_workspace`).
@@ -1201,7 +1201,7 @@ class SessionWorkspacePreference(models.Model):
 
 class AppViewSubscription(models.Model):
     """A rendered MCP Apps View asked to hear when a host resource changes
-    (`resources/subscribe`, spec 2026-10-23-host-held-results §3).
+    (`resources/subscribe`).
 
     canopy holds it, not the host: canopy's gateway opens one short MCP session per
     request, so no host-side subscription would outlive the call that made it. The

@@ -70,8 +70,8 @@ export interface CanopyClient {
   rest: CanopyRest
   /** The session socket URL, with the cached token already on it.
    *
-   *  @deprecated canopy no longer reads a token from the socket URL
-   *  (2026-10-06), so this URL is refused. Use `sessionSocketTicketUrl`. */
+   *  @deprecated canopy does not read a token from the socket URL,
+   *  so this URL is refused. Use `sessionSocketTicketUrl`. */
   sessionSocketUrl(sessionId: string): string | null
   /** The session socket URL with a fresh one-time ticket on it instead of the
    *  token — what to open the socket with, since a URL lands in access logs.

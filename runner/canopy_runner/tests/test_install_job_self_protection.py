@@ -3,7 +3,7 @@
 `launchctl bootout` tears down a job's whole process tree. In --if-stale mode
 that tree contains install-runner.sh itself, so booting out the updater label
 kills the installer before it can bootstrap the job back — leaving auto-update
-unloaded until the next login. Observed 2026-07-29; see the comment above
+unloaded until the next login. See the comment above
 install_job.
 
 These drive the REAL shell function with a fake `launchctl` on PATH and assert

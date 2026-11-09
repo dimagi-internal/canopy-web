@@ -10,8 +10,7 @@ a workspace"): they create it, an admin invites them and they accept
 (`invites`), or they REQUEST an invitation (`access_requests`, open to people
 whose login email is at one of the workspace's `access_request_domains`) and an
 admin or owner approves it. Nothing joins anyone automatically: a domain match
-makes a workspace REQUESTABLE, never joined (owner decision, 2026-10-04, which
-replaced the self-join of 2026-09-12).
+makes a workspace REQUESTABLE, never joined.
 
 Elsewhere in this package: `links` (addresses under `/w/<ws>/`), `invites`,
 `login_gate` (who may sign in or create a workspace), `access_requests`,
@@ -478,9 +477,8 @@ class WorkspaceRequired(ProblemError):
 
 def pinned_read_scope(user, pinned: str) -> set[str]:
     """What a read PINNED to `pinned` spans: that workspace plus every workspace
-    BELOW it the caller is in (directly, or by owning an ancestor) — owner
-    decision, Jonathan, 2026-10-12: "a pinned read of W returns W plus every
-    descendant of W that the caller is a member of".
+    BELOW it the caller is in (directly, or by owning an ancestor): a pinned
+    read of W returns W plus every descendant of W that the caller is a member of.
 
     `dimagi` covers `connect` for anyone in both, so one pinned read answers the
     whole organisation; `connect` does not cover `dimagi` (nothing above the pin);
@@ -498,15 +496,14 @@ def pinned_read_scope(user, pinned: str) -> set[str]:
 
 def read_scope(user, pinned: str | None = None) -> set[str]:
     """The workspaces a LIST or SEARCH may span for `user` — the read rule
-    (owner decisions, Jonathan, 2026-10-11: "workspaces should need to be
-    specified — workspace confusion shouldn't be possible"; 2026-10-12: a pinned
-    read covers the workspaces below the pin).
+    (workspaces must be specified — workspace confusion must not be possible;
+    a pinned read covers the workspaces below the pin).
 
     * pinned → that workspace and the caller's workspaces below it
       (`pinned_read_scope`; the caller already proved membership of the pin:
       `WorkspaceResolveMiddleware`, or the MCP `workspace` argument);
     * unpinned, and every membership sits in ONE tree (dimagi + connect) → the
-      union, as before: within one organisation it is that org's own data;
+      union: within one organisation it is that org's own data;
     * unpinned, memberships in MORE THAN ONE tree (dimagi + marshellis) →
       `WorkspaceRequired` (422). Fails closed: nothing is guessed.
 
@@ -552,9 +549,9 @@ def member_scope(user, pinned: str | None = None) -> set[str]:
     a read of tenant data (routing, runners, the workspace switcher). Pinned →
     that workspace and the caller's workspaces below it (`pinned_read_scope`),
     the same span a pinned LIST has — so a row a pinned list shows is always one
-    the by-id gate admits. Before 2026-10-17 it was exactly the pin: pinned to
-    `dimagi`, `/api/w/dimagi/agents/hal` 404'd though `dimagi`'s agent list showed
-    hal (in `connect`), and a `dimagi`-pinned write couldn't name a `connect` task.
+    the by-id gate admits (were it exactly the pin, `/api/w/dimagi/agents/hal`
+    would 404 though `dimagi`'s agent list showed hal, in `connect`, and a
+    `dimagi`-pinned write couldn't name a `connect` task).
     Never wider than unpinned (still only the caller's memberships); a bulk write
     stays `write_scope`, exactly the pin, and each object's role check is its own."""
     if pinned:
@@ -776,25 +773,18 @@ def creation_workspace(request) -> Workspace | None:
     is already in. `None` means "cannot be resolved"; the caller turns that
     into a 422.
 
-    THIS REPLACED THE IMPLICIT-ENROLMENT SHAPE, which five create endpoints had
-    each hand-rolled a copy of (projects, shareouts, walkthroughs, reviews,
-    issues):
+    It never enrols the caller. A create endpoint must not do
 
         ws = pinned or ensure_default_workspace()
         ensure_member(ws, request.user)          # <- grants EDITOR
 
-    On the flat mount `request.workspace_slug` is None, so `ws` was the org
+    On the flat mount `request.workspace_slug` is None, so `ws` would be the org
     default (`dimagi`) *regardless of who was calling*, and `ensure_member`
-    then granted them EDITOR of it as a side effect of posting a shareout.
-    That was strictly broader than the self-join feature it coexisted with
-    (since replaced by access requests), which at least required the caller's
-    email domain to match, while this required nothing at all. An
+    would grant them EDITOR of it as a side effect of posting a shareout. An
     invite-admitted user — whose defining property is that they are NOT on the
-    domain allowlist — became an editor of `dimagi` by creating one row, and
-    from there passed every editor gate on the agent fleet.
-
-    It also made `docs/architecture/roles.md` wrong where it says there are
-    three ways into a workspace and "no automatic join". There are now three.
+    domain allowlist — would become an editor of `dimagi` by creating one row,
+    and from there pass every editor gate on the agent fleet. There are three
+    ways into a workspace and no automatic join (`docs/architecture/roles.md`).
 
     Resolution, both legs membership-bound:
 
@@ -805,13 +795,11 @@ def creation_workspace(request) -> Workspace | None:
     3. Otherwise `None`: they belong to nothing, or to several workspaces and
        named none. `creation_refusal` says which, for the caller's 422.
 
-    There used to be a leg between 1 and 2: "the org default, if the caller is
-    a member". It silently filed a multi-workspace caller's writes in `dimagi`,
-    which is how the chlorine demo narrative meant for `connect` (its reviewer
-    was a connect member) landed where he could never find it — ACE is an
-    editor in both, named neither, and every write succeeded (canopy-web#1289).
-    Owner decision, 2026-10-08: nothing on canopy outside a workspace, and a
-    caller in more than one must say which.
+    There is no leg between 1 and 2 for "the org default, if the caller is a
+    member": it would silently file a multi-workspace caller's writes in
+    `dimagi`, where the reviewer of a `connect` narrative could never find it.
+    Nothing on canopy lives outside a workspace, and a caller in more than one
+    must say which.
 
     Resolving a workspace is not permission to write in it: every caller still
     checks the editor role on what this returns.

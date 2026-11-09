@@ -639,7 +639,7 @@ def test_heartbeat_restage_still_only_refreshes_held_files(cr, monkeypatch, tmp_
 # ---- R15: a CLI older than sealed connections --------------------------------------------
 
 def test_the_minimum_cli_is_the_first_release_with_the_feature(cr):
-    """#1134 didn't bump the version, so a build of #1133 also reports 0.2.837 without it."""
+    """The minimum is the first release that has the feature: an earlier build can report the preceding version (0.2.837) without it."""
     assert cr.CONNECTIONS_ZK_MIN_CLI == (0, 2, 838)
 
 

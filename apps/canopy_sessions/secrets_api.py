@@ -6,9 +6,6 @@ issued when its runner claimed the chat's turn (`X-Canopy-Chat-Key`, see
 `models.ChatKey`) — the `/key` routes. There is no route that takes a chat id:
 a key reaches the secrets of the chat it was issued for and no other.
 
-(The old `/{transcript_id}` routes — the caller had to be the chat's agent login
-AND name the chat's Claude session id — were removed 2026-09-26.)
-
 Bearer only. Anyone refused gets the same 404 as "nothing here", so the answer
 never says whether a chat exists or which check failed. What comes back is the
 value sealed (`zks1`) to the machine running the chat — canopy-web cannot open

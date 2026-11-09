@@ -5,7 +5,7 @@ over the runner's own 300s poll, exactly like the `wake` frame is over its 5s
 claim poll. A frame we fail to deliver costs latency, never correctness.
 
 What is NOT best-effort is SAYING SO. Every outcome writes an event, including
-the ones that used to be silent — a push for a mailbox nobody owns, a push with
+the ones that could be silent — a push for a mailbox nobody owns, a push with
 no online runner to ring. "It'll get picked up by the next poll" is the failure
 mode this app exists to make visible, not a defence.
 """
@@ -80,7 +80,7 @@ def online_runners_for(mailbox: InboundMailbox) -> list[Runner]:
     # (thread, messageCount)): under a strict actor rule the box that DISCOVERS a
     # thread may not be the box that ANSWERS it — the enqueue lands, the discoverer
     # is refused at claim time, and the rule's runner takes it on its own 5s claim
-    # poll. A ring we get wrong costs latency, never correctness (spec 2026-09-05).
+    # poll. A ring we get wrong costs latency, never correctness.
     rows = routing.assignment_rows_for(
         mailbox.agent_id, Turn.ORIGIN_EMAIL, "", defaults, priorities
     )
@@ -96,7 +96,7 @@ def online_runners_for(mailbox: InboundMailbox) -> list[Runner]:
         # Ringing a box that cannot READ this mailbox wakes it for nothing: it
         # has no token, so the check it runs is a no-op and the ring is silently
         # dropped — which is how a runner with an empty `mailboxes` map answered
-        # every push for months (canopy-web#1087). Routing still decides who
+        # every push. Routing still decides who
         # CLAIMS the resulting turn; this only decides who is asked to LOOK.
         if can_read(r, mailbox.address) is False:
             logger.info("doorbell: skipping %s for %s — it reports it cannot read it",
@@ -181,10 +181,8 @@ def handle_push(address: str, workspace, history_id: str = "") -> dict:
     creates a retry storm.
 
     ``workspace`` comes from the URL and has already been verified against, so
-    an unknown mailbox lands in the RIGHT tenant's log. It used to fall back to
-    the default workspace, which wrote the unregistered address into whichever
-    tenant happened to be default — a small cross-tenant leak that only existed
-    because the endpoint had no way to know who the push was for.
+    an unknown mailbox lands in the RIGHT tenant's log, never the default workspace's (which would leak the
+    unregistered address across tenants).
     """
     mailbox = resolve_mailbox(address, workspace_slug=workspace.pk)
     if mailbox is None:
@@ -243,10 +241,10 @@ def note_watch_state(mailbox: InboundMailbox, expires_at: dt.datetime | None,
 
     * an expiry — armed, and here is the cliff.
     * an `error` — a runner that is SUPPOSED to be watching this mailbox cannot.
-      This used to have nowhere to go (a null expiry returned early), so a dead
-      OAuth client stayed invisible until the last good watch lapsed days later
-      and surfaced as ``gmail.watch.expired`` — which names the clock, not the
-      credential, and sends you looking in the wrong place.
+      It is recorded even with a null expiry: otherwise a dead OAuth client
+      stays invisible until the last good watch lapses days later and surfaces
+      as ``gmail.watch.expired`` — which names the clock, not the credential,
+      and sends you looking in the wrong place.
     * neither — a retraction: no watch, and nothing to complain about. That is a
       paused runner parking itself, which must not read as an outage.
     """

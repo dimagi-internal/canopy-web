@@ -126,7 +126,7 @@ describe('RunnerReauth', () => {
     // wait limit passed, so after 90s the page stopped looking. A mint that
     // failed four minutes in was never fetched, and the screen sat on
     // "Finishing the sign-in on the runner…" indefinitely while the server had
-    // said `failed` the whole time. Reported 2026-09-08.
+    // said `failed` the whole time.
     vi.useFakeTimers()
     try {
       api.getRunnerMint.mockResolvedValue(mint({ status: 'requested' }))
@@ -162,7 +162,7 @@ describe('RunnerReauth', () => {
   })
 
   it('does not greet you with the outcome of an attempt nobody remembers', async () => {
-    // Observed 2026-09-08: a mint abandoned at 14:39 was still showing "This
+    // A mint abandoned at 14:39 was still showing "This
     // sign-in expired before it was finished" in red, on a fresh page load an
     // hour later, above a perfectly healthy box. Opening the page cold should
     // show the CURRENT state and a way in — not a verdict on someone else's

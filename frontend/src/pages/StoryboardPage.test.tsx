@@ -157,8 +157,8 @@ describe('StoryboardPage', () => {
   })
 
   it('offers exactly one composer per narrative', async () => {
-    // There used to be two — one on the act, one on the demo inside it —
-    // identical in every way the page showed. See the screenshot in #467.
+    // One composer on the act and another on the demo inside it would be
+    // identical in every way the page shows.
     getStoryboard.mockResolvedValue(board({ capability: 'comment' }))
     renderAt()
     await screen.findByText('What the money bought')

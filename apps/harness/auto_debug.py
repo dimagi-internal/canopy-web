@@ -1,13 +1,13 @@
 """A failed turn starts a debugger turn — immediately, deduplicated, rate-limited.
 
-WHY. Jonathan, 2026-10-07: an ACE Slack turn ended FAILED with the runner's
+WHY. An ACE Slack turn can end FAILED with the runner's
 "Couldn't confirm your message was delivered. It was typed into the emdash
 session "…", but it hasn't shown up in that session's transcript…" note
 (`runner/canopy_runner/canopy_runner/execute.py::_not_received_note`). Slack
-showed "❌ ace could not finish this on haldimagi-mbp-cdp." and that was the
-whole response: the failure sat in a `failed` row until a human happened to
-look. A board task was considered and rejected — it waits for somebody's turn
-to read the board, which is the same delay with an extra hop. So the moment a
+shows "❌ ace could not finish this on <runner>." and that is the
+whole response: the failure sits in a `failed` row until a human happens to
+look. A board task would wait for somebody's turn to read the board, which is
+the same delay with an extra hop. So the moment a
 turn ends FAILED, canopy enqueues a turn to the fleet's debugger agent
 (`settings.CANOPY_AUTO_DEBUG_AGENT`, `ada` — the conductor) whose prompt is
 `/ada:debug-failure --investigation <id>` plus every fact it needs.
@@ -28,16 +28,13 @@ module is the brakes. Each one, and the incident class it stops:
 * A FIX THAT DID NOT HOLD IS NEVER RE-DEBUGGED: it goes to a PERSON, with no
   turn. A fingerprint gets one debug turn; once it is resolved, a recurrence is
   judged against the failing runner (below) and either only counts or is handed
-  to the debugger's owner. (It used to earn an "escalation" debug turn, whose
-  only verb was resolve; resolving cleared the alert, so the next repeat was
-  "recurred after resolve" again — investigation 10 ran debug turns at 15:02
-  and 15:04 on 2026-10-22, the repeat 47 seconds after the resolve; 1 and 2 ran
-  twice 30 minutes apart on 10-22 and 10-23, each emailing Jonathan.)
+  to the debugger's owner. (An "escalation" debug turn would have only one verb, resolve; resolving
+  clears the alert, so the next repeat would be "recurred after resolve" again,
+  looping.)
 
-ONE LIFECYCLE (Jonathan, 2026-10-23: "the error should cause an alert that then
-triggers an auto-debug session … successful resolution closes the alert"; "in
-a clean alert -> ada fix -> resolved, I don't want to be notified at all").
-The investigation is the memory; the `turn_failure` alert is its face, raised
+ONE LIFECYCLE: the error causes an alert that triggers an auto-debug session,
+and a successful resolution closes the alert; a clean alert -> fix -> resolved
+notifies nobody. The investigation is the memory; the `turn_failure` alert is its face, raised
 the moment the failure is recorded and HELD BY THE DEBUGGER AGENT — visible on
 canopy-web, silent. Then exactly one of:
 
@@ -47,12 +44,11 @@ canopy-web, silent. Then exactly one of:
   `pending_deploy`: the alert stays open, quiet, still the agent's, and closes
   by itself once every runner it hit runs the fix (`close_live_fixes`, on the
   alert tick). A recurrence on a runner WITHOUT the fix only counts: no turn,
-  no person. (#1488, #1504, #1527 and #1965 were all resolved "merged, NOT yet
-  deployed"; investigation 2's 10-23 recurrence ran on runner code without the
-  fix and was counted as "the fix did not hold".)
+  no person (a fix "merged, NOT yet deployed" must not be counted as "the fix
+  did not hold").
 * `hand_off` — needs a person: the alert is reassigned to them with a one-line
-  ask and stays open, and THAT is the one notification. The debugger can no
-  longer resolve it; a person does (or the fix going live, above).
+  ask and stays open, and THAT is the one notification. The debugger cannot
+  resolve it; a person does (or the fix going live, above).
 * A recurrence on a runner that RUNS the fix (or where canopy cannot tell, or
   with no fix commit named) is the fix not holding: the same alert reopens,
   assigned to the debugger's owner.
@@ -112,8 +108,7 @@ RECENT_NAMES = 20
 #: become a megabyte prompt.
 NOTE_MAX_CHARS = 6000
 #: Never two debug turns for one fingerprint inside this — not by its own
-#: trigger, not by riding along in another's. Investigation 10 (2026-10-22) ran
-#: two two minutes apart; 1 and 2 ran two 30 minutes apart.
+#: trigger, not by riding along in another's.
 REPEAT_WINDOW = dt.timedelta(minutes=30)
 ASK_MAX = 300
 
@@ -128,7 +123,7 @@ ASK_MAX = 300
 # menu where the input line should be, typed nothing, and showed the dialog to the
 # sender, who can answer it from there. The next step is theirs, so there is nothing
 # to debug. The note quotes the dialog's question, so each new question would also
-# have opened its own investigation (investigation 28, turn 0e300b8c, 2026-11-04).
+# open its own investigation.
 _HUMAN_NOTES = re.compile(
     r"cancelled by (?:human|user)|you stopped the delivery"
     r"|has unsent text sitting in its prompt"
@@ -252,8 +247,7 @@ def _on_turn_failed(turn: Turn) -> None:
 
     if rr.requirements_of(turn):
         # A conversation that must stay on sensitive-data runners: its note can quote what the
-        # turn read, and the debugger runs wherever ada does. Never re-processed
-        # (spec 2026-10-22-sensitive-data-agents).
+        # turn read, and the debugger runs wherever ada does. Never re-processed.
         return
     if turn_access.on_personal_project(turn):
         # The same reason: its note can quote the project, and neither the debugger nor
@@ -519,8 +513,8 @@ def _iso(value) -> str:
 
 #: The runner's delivery ledger, copied into the prompt as evidence. A failed CHAT
 #: turn lives in a person's chat, and the one chat ACL (apps/canopy_sessions/
-#: access.py) keeps the debugger out of it: on investigation 2 (2026-10-20 and
-#: 10-23) Ada got 404 on both failed ACE turns and could not see the
+#: access.py) keeps the debugger out of it: the debugger gets 404 on a failed chat turn and
+#: could not see the
 #: delivery_snapshot / delivery_retry events that decide which cause it was. The
 #: ACL stays as it is; canopy, which already holds the evidence, hands over the
 #: DIAGNOSTIC fields only — never `line` (what the composer held) or `screen_tail`
@@ -530,8 +524,8 @@ _EVIDENCE_STATUSES = re.compile(r"^(?:delivery_\w+|undelivered|composer_not_visi
 #: whose CDP drive raised (`reuse_send_failed`, execute.py `_deliver_to_existing`)
 #: names WHICH error only in its `detail` — a sidecar string (COMPOSER_NOT_VISIBLE,
 #: FOCUS_LOST, could not click task …), never a person's words — and its result note
-#: leaves the error out. Investigation 15 (turn c3717cce, ace on stewari-mbp-cdp,
-#: 2026-10-27) could not tell a scrolled-up pane from a lost focus without it.
+#: leaves the error out. Without it the debugger cannot tell a scrolled-up pane
+#: from a lost focus.
 _EVIDENCE_ERROR_STATUSES = re.compile(r"^reuse_send_failed$")
 #: `landed` is the RUNNER's own verdict on whether the message reached the
 #: session's transcript (yes / no / unknown — execute.py), so the debugger never
@@ -563,14 +557,11 @@ def _delivery_evidence(turn: Turn) -> list[str]:
 
 #: The runner's `lifecycle` events (cloud_runner `_lifecycle`: claimed, started,
 #: adopted, exited, lost, reported, left_for_requeue …), copied in as evidence too.
-#: Investigation 35 (turn 918a10da, ada chat on cloud-ec2-live, 2026-11-06 21:37Z)
-#: and 36 (an ace turn one second later, same box) both ended "turn ended:
-#: cancelled (the adapter's own: canopy sent no cancel)", 36 minutes after the
-#: box's bootstrap and just after canopy 0.2.863 shipped — the shape of a mid-turn
-#: self-refresh HANDOFF that failed to carry its turns. Whether either turn was
-#: `adopted` by a new daemon is posted to the turn's ledger, but the chat ACL keeps
-#: the debugger out of it and the prompt carried only delivery events, so the
-#: cause could not be decided. Allow-listed MACHINE fields only: never `cwd`,
+#: A turn that ends "cancelled (the adapter's own: canopy sent no cancel)"
+#: just after a box's bootstrap has the shape of a mid-turn self-refresh HANDOFF
+#: that failed to carry its turns. Whether the turn was `adopted` by a new daemon
+#: is posted to the turn's ledger, but the chat ACL keeps the debugger out of it,
+#: so without these events the cause cannot be decided. Allow-listed MACHINE fields only: never `cwd`,
 #: `target` or `detail` (a runner error can quote the adapter's stderr).
 _LIFECYCLE_KEYS = ("event", "executor", "pid", "attempt", "exited", "adopted", "adoptable",
                    "ok", "stop_reason", "code", "status", "http", "reason", "streak",
@@ -604,15 +595,14 @@ def landed(turn: Turn) -> str:
 def runner_snapshot(runner, now=None) -> dict:
     """What canopy knows about `runner` right now, as evidence for the debugger.
 
-    Runner state decided 5 of the 6 non-delivery causes in the last ten debug
-    turns (2026-10-15..23): the login probe signed out on cloud-ec2-2
-    (investigations 5 and 10), a usage cap misread as an auth failure (9), the
-    ACP wall-clock limit (8), and the code sha for every "is the fix deployed?".
-    None of it was in the prompt; each debugger went hunting for it.
+    Runner state decides most non-delivery causes: a signed-out login probe, a
+    usage cap misread as an auth failure, the ACP wall-clock limit, and the code
+    sha for every "is the fix deployed?". Putting it in the prompt saves each
+    debugger from hunting for it.
 
     Machine-reported fields ONLY — never `paused_note` (a person types it), a
     login's `account`, or anything else that can carry a person's words (the
-    #1959 rule for delivery events)."""
+    same rule as for delivery events)."""
     if runner is None:
         return {}
     now = now or timezone.now()
@@ -763,10 +753,8 @@ def render_prompt(inv: FailureInvestigation, turn: Turn, riders=(), *, alert=Non
     and types the whole prompt, so everything after it reaches the skill as its
     arguments, exactly as a scheduled `/ada:turn` does.
 
-    It names the failed turn but does NOT link its API record: 7 of the last 10
-    debug turns (2026-10-15..23; e.g. d9de6f41, 64cada76, fbb2a895, 7c388223)
-    opened with get_turn / read_turn_events, which 404 on a chat turn by design
-    (the chat ACL). Everything that decides the cause is below instead."""
+    It names the failed turn but does NOT link its API record: get_turn /
+    read_turn_events 404 on a chat turn by design (the chat ACL). Everything that decides the cause is below instead."""
     base = _base_url()
     note = _note_for(turn)
     if len(note) > NOTE_MAX_CHARS:
@@ -872,10 +860,9 @@ def resolve(inv: FailureInvestigation, *, note: str, by=None, fix_commit: str = 
     `pending_deploy` until the fix is live (`close_live_fixes`).
 
     A row with a person (`escalated`) is theirs: the debugger's own login is
-    refused (`WithAPersonError`, a 409 from the API). Resolving was the debugger's
-    ONLY verb, so it resolved even "needs Jonathan" — which cleared the alert
-    and made the next repeat an escalation again (investigation 10, 2026-10-22
-    15:02 and 15:04). It hands off now (`hand_off`); only a person closes."""
+    refused (`WithAPersonError`, a 409 from the API). Resolving must not clear an alert
+    that needs a person, or the next repeat would escalate again. The debugger
+    hands off instead (`hand_off`); only a person closes."""
     if inv.status == FailureInvestigation.ESCALATED and _is_debugger(by):
         raise WithAPersonError(
             f"investigation {inv.pk} is with a person ({inv.ask or 'handed off'}); only a "

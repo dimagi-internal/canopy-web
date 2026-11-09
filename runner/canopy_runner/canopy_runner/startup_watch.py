@@ -1,4 +1,4 @@
-"""A session canopy created that never started is waiting on someone (#1190).
+"""A session canopy created that never started is waiting on someone.
 
 **The failure.** Claude Code can stop at a dialog before a session's first turn
 starts. Two seen so far: the one-time "Claude in Chrome extension detected" offer,
@@ -6,8 +6,8 @@ and the folder-trust gate. Nothing in the existing chain notices. No hook has
 fired yet (hooks belong to a running session), so `pending-menus.json` stays
 empty. No transcript exists yet either, so `pending_question` has nothing to
 read. canopy-web then shows `running=false, waiting_on_you=false`, which reads
-as idle. On haldimagi's runner (2026-10-06) a dispatched turn sat on the Chrome
-offer for 16 minutes like that. One Enter in emdash unblocked it.
+as idle. A dispatched turn can sit on the Chrome
+offer for many minutes like that. One Enter in emdash unblocked it.
 
 **The signal.** A session canopy CREATED that has no transcript a couple of
 minutes later has not started. Claude Code writes the transcript as soon as the
@@ -20,7 +20,7 @@ buttons, pointing the human at emdash. canopy-web already renders that shape and
 counts it as waiting on you. It does not lock the composer (`menuBlocksComposer`).
 
 **What the marker does NOT do.** It does not say which dialog it is. Reading the
-screen needs CDP, which clicks the task and steals focus (#510). Guessing from
+screen needs CDP, which clicks the task and steals focus. Guessing from
 timing is how a signal starts lying. It does not answer the dialog either. A
 startup dialog's default is not always the safe choice: the trust gate's default
 is "Yes, I trust this folder", and the Chrome offer's answer is saved as a

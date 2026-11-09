@@ -50,13 +50,12 @@ def _session_chat_events(turn, events):
     The other row kinds survive that on their own — tool rows reconcile on
     `tool_use_id` and user rows on their text — but an assistant row has no
     correlation key at all, so both copies render and every reply doubles on
-    screen while a reload shows it once. Observed live 2026-08-27 on the
-    `targeting` session: four assistant lines, each on screen twice.
+    screen while a reload shows it once.
 
-    Both runners have shipped `/session-stream` since the transcript became the
-    durable source (spec 2026-07-24; runner/ec2 `_sync_session_streams` mirrors
-    runner/canopy_runner `sync_session_streams`), which is what made the ledger
-    copy redundant rather than merely noisy — nobody switched it off then.
+    Both runners ship `/session-stream` (the transcript is the durable source;
+    runner/ec2 `_sync_session_streams` mirrors runner/canopy_runner
+    `sync_session_streams`), which makes the ledger copy redundant rather than
+    merely noisy.
 
     Ledger-sourced sessions (the dev stub, and pre-unification sessions that
     have not been reset) have no transcript to tail, so for them the ledger IS

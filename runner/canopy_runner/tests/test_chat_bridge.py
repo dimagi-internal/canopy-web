@@ -54,15 +54,14 @@ def test_hands_back_to_human_only_on_a_terminal_stop_reason():
 
 
 def test_bridge_survives_a_long_silent_tool_call():
-    """THE BUG (labs 2026-07-26): completion was "the transcript went quiet for 3s",
-    but a turn is silent for as long as its longest tool call — 296s in the session
-    that exposed this. Every turn ended at its first Bash call, so chat showed the
-    agent's opening line and dropped the answer (11 straight turns bridged 70-220
-    chars each). Silence must mean nothing at all."""
+    """THE BUG: completion must not be "the transcript went quiet for 3s", because a turn
+    is silent for as long as its longest tool call (hundreds of seconds). Ending at the
+    first Bash call would show the agent's opening line in chat and drop the answer.
+    Silence must mean nothing at all."""
     b = _bridge()
     b.step([_asst("On it.")])                 # the preamble, mid-turn
     assert b.pending == ["On it."]
-    assert not b.done_reason                  # <- used to be "done" 3s later
+    assert not b.done_reason                  # <- not "done" 3s later
     for _ in range(50):                       # a long tool call: many silent ticks
         b.step([])
     assert not b.done_reason, "a silent tool call must not end the turn"
@@ -126,10 +125,9 @@ def _ix(record, block=0):
 
 
 
-# -- a follow-up delivered INTO the running turn (canopy-web#1153) -------------
+# -- a follow-up delivered INTO the running turn -------------
 #
-# Record shapes are the ones Claude Code wrote in the #1147 incident session
-# (2026-10-05): typed while busy -> `queue-operation` enqueue; taken mid-turn ->
+# Record shapes are the ones Claude Code writes: typed while busy -> `queue-operation` enqueue; taken mid-turn ->
 # `remove` + a `queued_command` attachment; taken after the turn -> `dequeue` +
 # an ordinary user prompt.
 

@@ -1,9 +1,9 @@
 """wire.sh never holds a Claude credential: it gives the new box a vault and says where
 its owner signs it in.
 
-It used to copy a live box's whole bundle — tokens and API key, in plaintext, through
-this script — and fall back to a months-old Secrets Manager token. A box's credentials
-now live in a vault only its own device key opens, so there is nothing to copy: the box
+It copies no live box's bundle (tokens and API key in plaintext through this script)
+and falls back to no Secrets Manager token. A box's credentials live in a vault only
+its own device key opens, so there is nothing to copy: the box
 gets its own vault (or, with --vault, shares one inside its isolation boundary), and its
 owner makes the key and signs it in on the runner's Credentials tab.
 """

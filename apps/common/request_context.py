@@ -1,10 +1,10 @@
 """WHO is calling, from WHAT, on behalf of WHICH parent — for the request in flight.
 
-Written after an incident (2026-10-05): a scratch script in one Claude session
-posted chat messages to an agent with a person's PAT, and the only trace was a
-runner log line plus `initiator_via=chat / assurance=pat` — byte-identical to the
-web UI. Nothing said a token (which one?), a script (which?), or a parent session
-(whose?) was behind it. This module captures that, once, at the edge:
+Without it, a scratch script in one Claude session that posts chat messages to
+an agent with a person's PAT leaves only a runner log line plus
+`initiator_via=chat / assurance=pat` — byte-identical to the web UI. Nothing
+would say a token (which one?), a script (which?), or a parent session (whose?)
+was behind it. This module captures that, once, at the edge:
 
 * `RequestContextMiddleware` (after `BearerTokenAuthMiddleware`, so the
   credential is known) mints or accepts an `X-Request-Id`, echoes it on the

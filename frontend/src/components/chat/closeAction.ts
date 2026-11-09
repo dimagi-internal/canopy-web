@@ -79,10 +79,9 @@ export const CLOSE_CONFIRM_TIMEOUT_MS = 45_000
  * Settle the closes the list is waiting on against a fresh listing.
  *
  * A relayed close (`closing: true`) leaves the row listed until the runner has
- * deleted the emdash task and reported. The list used to re-fetch once, right
- * away, find the row still there, and show it exactly as before: a close that
- * worked looked like one that failed, so people tapped ✕ again (2026-09-23,
- * `runner-config` closed twice, seven seconds apart). A row now stays marked
+ * deleted the emdash task and reported. Re-fetching once, right
+ * away, would find the row still there and show it exactly as before: a close that
+ * worked would look like one that failed, so people would tap ✕ again. A row stays marked
  * "Closing…" until it leaves the listing (`done`), until the runner reports
  * that the close FAILED (`failed` — the row then says why, "Close failed: …",
  * with a Retry), or until the timeout passes, when it is reported as `stuck`

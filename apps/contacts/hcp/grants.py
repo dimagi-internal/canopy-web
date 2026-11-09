@@ -67,8 +67,8 @@ def _expire_if_due(grant: PersonGrant) -> PersonGrant:
 
 # --- first-party grants: per agent, and only by the person's act (4.1.4, 4.1.6) ---------
 #
-# Jonathan, 2026-10-09: "each agent session / entry should obtain the grant explicitly
-# or due to previous granting to this agent." So:
+# Each agent session / entry obtains the grant explicitly, or through previous
+# granting to this agent. So:
 #
 # * The HCP CLIENT is the agent. A grant is keyed on the agent alone — not on how the
 #   person reached it (channel) or where (host): "previous granting to this agent" is
@@ -172,9 +172,9 @@ def granted(person: Person, agent, session=None) -> dict:
 #: divisions, as they are when the grant is used — a new division is covered
 #: without a new grant).
 #:
-#: Reach is DERIVED from the relationship, never ticked in a prompt (Jonathan,
-#: 2026-10-11: an agent serving me in another division "should have my Dimagi-wide
-#: context and even personal context if I give it"). The building blocks are
+#: Reach is DERIVED from the relationship, never ticked in a prompt: an
+#: agent serving a person in another division can have their organisation-wide
+#: context, and personal context if they give it. The building blocks are
 #: CONTEXTS — an organisation (`tree:<root>`) and `personal` (what the person adds
 #: themselves); a site is not one. A first-party agent's grant reaches its own
 #: organisation's whole tree by default. To reach more (personal, say) the person
