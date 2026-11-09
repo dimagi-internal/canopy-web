@@ -62,8 +62,17 @@ class ListenConsumer(AsyncWebsocketConsumer):
         if runner_id is not None and role != "laptop":
             await self.close(code=NOT_YOURS)  # a runner's key is the laptop, never the phone
             return
+        # Listen BEFORE claiming the role. The peer may be on another web task: if it
+        # claimed its role between our claim and our subscribe, its "connected" notice
+        # would go past us and our frames would wait forever.
+        groups = [services.session_group(sid), services.role_group(sid, role)]
+        for group in groups:
+            await self.channel_layer.group_add(group, self.channel_name)
         outcome, detail = await database_sync_to_async(services.claim_role)(
             user, sid, role, self.channel_name, runner_id=runner_id)
+        if outcome != "ok":
+            for group in groups:
+                await self.channel_layer.group_discard(group, self.channel_name)
         if outcome == "missing":
             await self.close(code=NOT_YOURS)
             return
@@ -77,13 +86,11 @@ class ListenConsumer(AsyncWebsocketConsumer):
             await self.close()
             return
         self._sid, self._role, self._peer = sid, role, services.other(role)
-        self._holding, self._peer_present = True, bool(detail)
         self._held: deque[tuple[float, bytes]] = deque()
         self._sent = 0
         self._window, self._count = time.monotonic(), 0
-        self._groups = [services.session_group(sid), services.role_group(sid, role)]
-        for group in self._groups:
-            await self.channel_layer.group_add(group, self.channel_name)
+        self._groups = groups
+        self._holding, self._peer_present = True, bool(detail)
         await self._send_note({"type": "peer", "role": self._peer, "connected": self._peer_present})
         await self.channel_layer.group_send(services.role_group(sid, self._peer), {
             "type": "listen.peer", "role": role, "connected": True})
@@ -170,6 +177,9 @@ class ListenConsumer(AsyncWebsocketConsumer):
             if state == "":
                 await self.close(code=ROLE_TAKEN)
                 return
+            if not self._peer_present and await database_sync_to_async(services.peer_present)(self._sid, self._role):
+                # A backstop for a notice the layer didn't deliver (pub/sub is at most once).
+                await self.listen_peer({"role": self._peer, "connected": True})
 
     def _end_reason(self) -> str:
         return ListenSession.objects.filter(pk=self._sid).values_list("end_reason", flat=True).first() or "ended"

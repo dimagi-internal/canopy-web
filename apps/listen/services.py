@@ -193,6 +193,12 @@ def beat(session_id, role: str, channel: str, *, sent: int = 0) -> str:
         return s.state if mine else ""
 
 
+def peer_present(session_id, role: str) -> bool:
+    """Whether the other role holds a live socket now, whatever web task it is on."""
+    s = ListenSession.objects.filter(pk=session_id).first()
+    return bool(s and s.state != ListenSession.ENDED and _present(s, other(role), timezone.now()))
+
+
 def release_role(session_id, role: str, channel: str, *, sent: int = 0) -> None:
     """This socket closed: give the role up (if it still held it) and start the
     peer-gone clock on a live session."""

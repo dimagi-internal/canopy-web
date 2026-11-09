@@ -88,34 +88,14 @@ if _REDIS_URL:
             "LOCATION": _REDIS_URL,
         }
     }
-# Channel layer = InMemory, NOT Redis, and this is deliberate.
-#
-# This service runs a SINGLE ECS task with a SINGLE uvicorn process (DesiredCount=1,
-# no --workers). Every WebSocket consumer AND every group-send publisher (turn
-# enqueue → wake, chat → cancel) lives in that one process, so an in-process
-# layer is all the coordination that's needed — and it is the layer the Channels
-# docs recommend for a single process.
-#
-# The Redis channel layer (channels_redis) actively BROKE long-lived WebSockets
-# here: its consumer receive loop does a blocking read against the shared
-# ElastiCache, and on an idle connection that read raises
-# `redis.exceptions.TimeoutError: Timeout reading from …` up through
-# channels.utils.await_many_dispatch, which tears the socket down. That produced
-# erratic ~5-10s disconnects on every realtime surface (runner control channel,
-# supervisor + turn tails) that looked like a proxy idle-timeout but was not — the
-# shared ALB holds long connections fine (connect-labs' long-running workflows
-# prove it). Redis bought us nothing here (nothing to coordinate across) and cost
-# us the whole feature.
-#
-# SCALING CAVEAT: InMemory does not cross processes. If this service ever runs more
-# than one web task (or uvicorn --workers > 1), a runner connected to task A would
-# not receive a wake published by task B. At that point restore a Redis channel
-# layer — but configure it with connection health so idle reads don't kill sockets:
-#   "hosts": [{"address": _REDIS_URL, "health_check_interval": 30,
-#             "socket_keepalive": True, "retry_on_timeout": True}]
-# Redis stays the Django CACHE backend above (request-scoped reads, never a
-# long-lived blocking pop — unaffected by this).
-CHANNEL_LAYERS = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}}
+# Channel layer: Redis pub/sub, so more than one web task or uvicorn worker can serve
+# sockets. Why pub/sub and not channels_redis's default (whose blocking reads tore
+# sockets down on this ElastiCache), and the prefix, are in config/channel_layers.py.
+# CHANNEL_LAYER=memory goes back to the in-process layer, which only works with ONE
+# process. Redis stays the Django cache backend above either way.
+from config.channel_layers import channel_layers  # noqa: E402
+
+CHANNEL_LAYERS = channel_layers(_REDIS_URL, env("CHANNEL_LAYER", default=""))
 
 # Chat sends execute for REAL on labs (not the inline dev stub): a chat Session turn
 # stays QUEUED for a session-capable runner (e.g. the laptop emdash daemon), which

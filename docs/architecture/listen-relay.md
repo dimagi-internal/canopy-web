@@ -95,6 +95,11 @@ WebSocket `/ws/listen/<sid>/?role=phone|laptop`:
   neither side's first message is lost to who connected first; it is never written down.
   Text from a client is ignored. Frames cross the channel layer as `bytes` in a
   `listen.frame` group message, which msgpack (the Redis layer) carries exactly.
+- **Any web task:** the phone and the laptop may be on different web tasks or workers;
+  the Redis pub/sub layer (`config/channel_layers.py`) carries frames and notices
+  between them. A socket subscribes to its groups before it claims its role, so a peer
+  arriving on another task in between can't be missed, and every beat re-reads whether
+  the peer is there, as a backstop for a notice pub/sub didn't deliver.
 - **What the server sends:** text frames, JSON from the server only:
   `{"type":"peer","role":…,"connected":bool}` whenever the other side connects or
   leaves, and `{"type":"ended","reason":…}`. The server never reads a binary message.

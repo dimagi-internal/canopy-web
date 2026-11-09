@@ -126,10 +126,9 @@ EXPOSE 8000
 # keepalive for long-lived sockets (runner control channel, supervisor + turn
 # tails): the server→client traffic keeps the shared ALB from idle-closing the
 # connection, and clients auto-pong. Proven live: a fully idle WS holds 90s+ with
-# only these pings. (The earlier erratic ~5-10s drops were NOT the proxy — they
-# were the channels_redis layer's blocking reads timing out on ElastiCache and
-# killing the consumer; fixed by moving the single-task channel layer to InMemory.
-# See config/settings/connectlabs.py.) --ws-ping-timeout 20 closes a peer that
+# only these pings. (Erratic ~5-10s drops were once NOT the proxy but a channel
+# layer whose blocking Redis reads timed out and killed the consumer; the layer is
+# chosen in config/channel_layers.py.) --ws-ping-timeout 20 closes a peer that
 # stops ponging.
 # --no-access-log: uvicorn's access line carries the client address and the full
 # path and query — a `/share/<token>` link, a `?ticket=` — into CloudWatch. No
