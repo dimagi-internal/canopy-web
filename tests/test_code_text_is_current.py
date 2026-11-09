@@ -49,8 +49,6 @@ ALLOW: dict[tuple[str, str], str] = {
     ("runner/canopy_runner/canopy_runner/inbox_rules.py", "canopy#653"): "same vendored file",
     ("runner/canopy_runner/canopy_runner/inbox_rules.py", "canopy#679"): "same vendored file",
     ("tests/test_slack_window.py", "2026-11-01"): "the DST date the test asserts through its fixture",
-    ("tests/test_session_ledger_fanout.py", "2026-08-27"):
-        "left as is: touching this file runs tests that fail on main; clear it when they are fixed",
     ("sdk/python/src/canopy_sdk/resources.py", "2025-06-18"): "an MCP protocol revision id",
     ("frontend/src/api/tokenStatus.test.ts", "2027-03-01"): "the fixture date the test uses",
     ("frontend/src/components/ddd/DddLeftNav.tsx", "2026-06-02"): "an example run-id format the regex beside it parses",

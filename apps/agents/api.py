@@ -591,7 +591,7 @@ def mint_agent_canopy_token(request: HttpRequest, slug: str, payload: AgentCanop
 # The same mint, stored sealed and never returned. Browser: + passkey step-up.
 @gate("agent-admin", setting=True, step_up=True)
 def give_agent_canopy_login(request: HttpRequest, slug: str, payload: AgentCanopyTokenIn) -> Status:
-    """Mint the agent's own canopy token, store it as its `canopy-pat` sealed to the
+    """Mint the agent's own canopy token, store it as its canopy login, sealed to the
     people and machines that may read the agent, and turn on automatic rotation. Only
     for an agent on the Canopy vault (409 otherwise, or when nobody could open the
     stored token yet). Changes a secret, so a browser needs a fresh passkey step-up.

@@ -172,7 +172,7 @@ class AgentCredentialAlertOut(StrictModel):
 
 
 class PatRotationIn(StrictModel):
-    """Opt the agent's own `canopy-pat` in to (or out of) automatic rotation."""
+    """Opt the agent's own canopy login in to (or out of) automatic rotation."""
 
     enabled: bool
     period_days: int = Field(default=30, ge=1, le=365)
@@ -189,7 +189,7 @@ class PatRotationEventOut(StrictModel):
 
 
 class PatRotationOut(StrictModel):
-    """The agent's canopy-pat rotation: the setting, when it is next due, and
+    """The agent's canopy login rotation: the setting, when it is next due, and
     its recent rotations. Never a token."""
 
     enabled: bool

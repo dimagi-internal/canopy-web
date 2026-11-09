@@ -5431,7 +5431,7 @@ export interface paths {
         readonly put?: never;
         /**
          * Give the agent its canopy login, stored in its Canopy vault
-         * @description Mint the agent's own canopy token, store it as its `canopy-pat` sealed to the
+         * @description Mint the agent's own canopy token, store it as its canopy login, sealed to the
          *     people and machines that may read the agent, and turn on automatic rotation. Only
          *     for an agent on the Canopy vault (409 otherwise, or when nobody could open the
          *     stored token yet). Changes a secret, so a browser needs a fresh passkey step-up.
@@ -7273,7 +7273,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /**
-         * This agent's canopy-pat rotation: setting, next due, history
+         * This agent's canopy login rotation: setting, next due, history
          * @description Never a token. The agent's owner or an admin.
          */
         readonly get: operations["get_pat_rotation"];
@@ -7283,7 +7283,7 @@ export interface paths {
         readonly options?: never;
         readonly head?: never;
         /**
-         * Turn automatic canopy-pat rotation on or off
+         * Turn automatic canopy login rotation on or off
          * @description `{enabled, period_days}` (default 30, 1-365). This route only records the
          *     setting: while it is on, canopy-web mints a new token for the agent's own
          *     canopy login every `period_days` (counted from the last rotation, else from
@@ -7312,9 +7312,9 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /**
-         * Rotate this agent's canopy-pat now
+         * Rotate this agent's canopy login now
          * @description The same rotation the schedule does, now, whether or not rotation is on:
-         *     a new token in `canopy-pat`, the old one valid for 24 h then revoked. It
+         *     a new token as the canopy login, the old one valid for 24 h then revoked. It
          *     changes a secret, so from a browser it needs a fresh passkey step-up (403
          *     `step_up_required`); a token may call it. The owner or an admin.
          */
@@ -29005,7 +29005,7 @@ export interface components {
         /**
          * AgentCanopyLoginOut
          * @description `POST /canopy-login`: the agent's canopy login was made (or reused), its token
-         *     stored sealed as `canopy-pat`, rotation turned on when it could be. Never the token.
+         *     stored sealed in its vault, rotation turned on when it could be. Never the token.
          */
         readonly AgentCanopyLoginOut: {
             /** User Email */
@@ -33183,7 +33183,7 @@ export interface components {
         };
         /**
          * PatRotationOut
-         * @description The agent's canopy-pat rotation: the setting, when it is next due, and
+         * @description The agent's canopy login rotation: the setting, when it is next due, and
          *     its recent rotations. Never a token.
          */
         readonly PatRotationOut: {
@@ -33208,7 +33208,7 @@ export interface components {
         };
         /**
          * PatRotationIn
-         * @description Opt the agent's own `canopy-pat` in to (or out of) automatic rotation.
+         * @description Opt the agent's own canopy login in to (or out of) automatic rotation.
          */
         readonly PatRotationIn: {
             /** Enabled */

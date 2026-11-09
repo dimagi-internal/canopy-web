@@ -28,10 +28,9 @@ from .schemas import (
 
 router = Router(auth=session_auth, tags=["agents"])
 
-# The credential rotated is `pat_rotation.CANOPY_PAT_REF`; `canopy-pat` in the route
-# texts below names that same login.
+# The credential rotated is `pat_rotation.CANOPY_PAT_REF`, the agent's canopy login.
 @router.get("/{slug}/pat-rotation", response=PatRotationOut,
-            summary="This agent's canopy-pat rotation: setting, next due, history")
+            summary="This agent's canopy login rotation: setting, next due, history")
 @gate("agent-admin")
 def get_pat_rotation(request: HttpRequest, slug: str) -> PatRotationOut:
     """Never a token. The agent's owner or an admin."""
@@ -41,7 +40,7 @@ def get_pat_rotation(request: HttpRequest, slug: str) -> PatRotationOut:
 
 
 @router.patch("/{slug}/pat-rotation", response=PatRotationOut,
-              summary="Turn automatic canopy-pat rotation on or off")
+              summary="Turn automatic canopy login rotation on or off")
 @gate("agent-admin", setting=True)  # turning it on also asks mint_agent_canopy_token's guard
 def set_pat_rotation(request: HttpRequest, slug: str, payload: PatRotationIn) -> PatRotationOut:
     """`{enabled, period_days}` (default 30, 1-365). This route only records the
@@ -78,11 +77,11 @@ def set_pat_rotation(request: HttpRequest, slug: str, payload: PatRotationIn) ->
 
 
 @router.post("/{slug}/pat-rotation/rotate", response=PatRotationOut,
-             summary="Rotate this agent's canopy-pat now")
+             summary="Rotate this agent's canopy login now")
 @gate("agent-admin", setting=True, step_up=True)  # browser: + passkey step-up; token allowed
 def rotate_pat_now(request: HttpRequest, slug: str) -> PatRotationOut:
     """The same rotation the schedule does, now, whether or not rotation is on:
-    a new token in `canopy-pat`, the old one valid for 24 h then revoked. It
+    a new token as the canopy login, the old one valid for 24 h then revoked. It
     changes a secret, so from a browser it needs a fresh passkey step-up (403
     `step_up_required`); a token may call it. The owner or an admin."""
 
