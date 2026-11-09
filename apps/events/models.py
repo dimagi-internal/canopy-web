@@ -103,9 +103,9 @@ class SettingChange(models.Model):
     without leaving a row. A new write route cannot ship until it is classified
     as a setting or not (`tests/test_every_route_declares_its_gate.py`).
 
-    Origin, 2026-10-12: ACE carried a strict routing rule nobody could account
-    for. Routing rows carry no author, each save deletes and re-creates them, and
-    only MCP-originated writes left even a tool-call line (`MCPAuditLog`).
+    Why it exists: routing rows carry no author, each save deletes and re-creates
+    them, and only MCP-originated writes leave even a tool-call line
+    (`MCPAuditLog`), so a rule nobody can account for would have no trail.
 
     Append-only: there is no route that edits or deletes a row.
     """

@@ -1,10 +1,10 @@
 """A chat with an agent on the cloud box IS that agent.
 
-Until 2026-09-22 a cloud chat with hal ran in a bare scratch directory with no
-hal repo (no persona, none of hal's own hooks) and none of hal's credentials, and
-its canopy-web MCP never authenticated. These pin the three halves of the fix:
-the session gets a worktree of the agent's repo, the turn gets the agent's env,
-and the env names the agent in a variable Claude Code passes to MCP helpers.
+A chat in a bare scratch directory would have no agent repo (no persona, none of
+the agent's own hooks), none of its credentials, and a canopy-web MCP that never
+authenticates. These pin the three halves: the session gets a worktree of the
+agent's repo, the turn gets the agent's env, and the env names the agent in a
+variable Claude Code passes to MCP helpers.
 """
 from __future__ import annotations
 

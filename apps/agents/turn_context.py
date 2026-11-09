@@ -306,7 +306,7 @@ def _no_list_stage(agent, asker: Asker, session_ctx, turn, trace: list) -> _Reac
     trace.append(TraceEntry("trusted_without_a_list", "no", f"relationship {rel}"))
     if user is not None:
         # The seam (spec § 3.4): the one place a session grant applies. No kind exists now
-        # (`session_writer` was removed 2026-11-06), so this always finds none; a new kind is a builder
+        # (there is no `session_writer`), so this always finds none; a new kind is a builder
         # in `session_context.SessionContext.session_grants`, and is applied here as it was: someone a
         # grant names drives this conversation, nothing gives them the agent itself, so their
         # permissions (what the envelope and the own-repo rail read) stop at `write`.

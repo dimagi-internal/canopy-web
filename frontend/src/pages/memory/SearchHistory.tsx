@@ -9,8 +9,8 @@ import { EntryScore, SearchPreview } from './SearchPreview'
 /** The purpose canopy gives a turn's own look-up (apps/contacts/people.py ENVELOPE_PURPOSE). */
 const TURN_START = "answer this person's turn: context about who is asking"
 
-/** One conversation's look-ups, newest first. Before 2026-10-18 a turn's context
- *  was fetched (and logged) several times — the same question, all but one empty —
+/** One conversation's look-ups, newest first. A turn's context
+ *  may be fetched (and logged) several times — the same question, all but one empty —
  *  so a turn is one row, shown by the look-up that found the most. */
 export type Conversation = { key: string; best: SearchRecord; runs: number }
 

@@ -19,7 +19,7 @@ class PasskeyOut(StrictModel):
     #: Synced through a password manager (iCloud Keychain…) rather than device-bound.
     backed_up: bool
     #: Reported the WebAuthn PRF extension at registration — can hold a vault
-    #: key seal (canopy-web#1550). None: registered before that was asked.
+    #: key seal. None: registered before PRF support was recorded.
     prf_enabled: bool | None = None
 
 
@@ -50,7 +50,7 @@ class StepUpStatusOut(StrictModel):
     window_seconds: int
 
 
-# ---- the person's zero-knowledge vault keyset (canopy-web#1550) --------------
+# ---- the person's zero-knowledge vault keyset --------------
 
 class VaultSetupOut(StrictModel):
     #: The SPA must ask for a passkey and a vault key before anything else: a

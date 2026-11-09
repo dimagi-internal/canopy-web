@@ -25,7 +25,7 @@ export const AuthContext = createContext<AuthState>({ status: 'loading', user: n
 // (/w/<ws>/walkthrough|review|share|storyboard|narrative|ddd-release/…,
 // lib/scopedLinks.ts); every other /w/<workspace> tenant path stays behind the
 // gate. A flat /walkthrough/, /review/, /share/, /storyboard/, /narrative/ or
-// /ddd-release/ link is a server 404 now (canopy-web#1337), so it is not
+// /ddd-release/ link is a server 404 now, so it is not
 // listed here.
 // /invite/<token> is the odd one out: the invitee has no Dimagi session (may
 // not even be a Dimagi address), so the accept page must render for an

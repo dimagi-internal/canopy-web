@@ -6,8 +6,8 @@ import { useSessionSocket } from './useSessionSocket'
 
 /**
  * A send must never vanish. A phone resuming from the background can hold a
- * socket that reads OPEN but delivers nothing, and before this the composer
- * cleared, no line appeared, and the prompt was simply gone (2026-09-23).
+ * socket that reads OPEN but delivers nothing, and without a receipt the composer
+ * would clear, no line would appear, and the prompt would be simply gone.
  */
 
 class FakeSocket {

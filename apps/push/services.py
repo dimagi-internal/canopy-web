@@ -1,10 +1,10 @@
 """Push policy. The only place that decides WHETHER to push.
 
-You are pushed about what lands on your supervisor FEED, and only that
-(Jonathan, 2026-10-05): a session asking you something, or a session that
+You are pushed about what lands on your supervisor FEED, and only that:
+a session asking you something, or a session that
 finished and is waiting for your next prompt — each sent only to someone the
 feed rule (`canopy_sessions.feed`) puts it in front of. Tasks waiting on you
-(open asks, tasks parked on a person) are not on the feed and no longer push;
+(open asks, tasks parked on a person) are not on the feed and do not push;
 their count is still snapshotted per agent, because the live Waiting on you
 badge reads it.
 """
@@ -61,10 +61,9 @@ class _NoRedirectSession(requests.Session):
 
 # How long the push service holds a push for a device it cannot reach right
 # now. pywebpush's default TTL is 0, which means deliver now or drop it. An Android
-# phone in Doze is not reachable "now", so pushes sent while it sat idle were
-# discarded by FCM while canopy-web counted them as sent: Jonathan never saw an
-# AWS sign-in request that had gone to his only, working subscription
-# (2026-10-19). Notifications collapse by title (sw-push.js), so a late
+# phone in Doze is not reachable "now", so a push sent while it sits idle is
+# discarded by FCM while canopy-web counts it as sent, and a person misses a
+# sign-in request that went to their only, working subscription. Notifications collapse by title (sw-push.js), so a late
 # delivery replaces a stale one instead of stacking.
 DEFAULT_TTL = 12 * 3600
 # Normal urgency lets the device batch delivery to save battery. A push someone
@@ -166,9 +165,9 @@ def refresh_agent_waiting(agent: Agent) -> None:
 def agent_audience(agent) -> list:
     """Who hears about this agent: its owner; else the people who run it.
 
-    Pushing to `agent.owner` alone notified nobody for most of the fleet: on labs
-    six of eight agents (hal, eva, ada, …) have no owner (seen 2026-09-24), so
-    "Hal needs you" was computed, snapshotted and silently dropped. The session
+    Pushing to `agent.owner` alone would notify nobody for most of the fleet: most
+    agents (hal, eva, ada, …) have no owner, so "Hal needs you" would be
+    computed, snapshotted and silently dropped. The session
     ACL already hit the same wall and settled on `Agent.is_admin`'s people
     (`canopy_sessions/access.py`, leg 4); this is that set, narrowest first —
     explicit admins who are still members, then the workspace's owners — so a
@@ -238,7 +237,7 @@ def mark_dirty(agent_id: int) -> None:
 # that runs code.
 #
 # Why it matters at all: rendering the menu perfectly still requires somebody to
-# open the app. `spark` sat blocked for 52 minutes on 2026-07-31 with nobody
+# open the app. An agent can sit blocked for an hour with nobody
 # looking, and no amount of UI fixes that.
 
 QUESTION_BODY_MAX = 140
@@ -251,8 +250,7 @@ def can_open(user, session) -> bool:
 
     The session read rule itself (`canopy_sessions.access.can_read`). A push
     whose tap lands on "No Session matches the given query" is worse than no
-    push — it says something needs you and then refuses to show you what
-    (2026-09-23).
+    push — it says something needs you and then refuses to show you what.
     """
     from apps.canopy_sessions.access import can_read
 
@@ -264,15 +262,15 @@ def _question_audience(session, *, auto: bool):
 
     In order: whoever started the chat; the agent's owner; the human who PAIRED
     the runner — the person whose laptop the session is actually sitting on. A
-    runner-discovered session (what `spark` was) has no creator and no agent,
-    so without the last leg the case that motivated this would notify nobody.
+    runner-discovered session has no creator and no agent,
+    so without the last leg it would notify nobody.
 
     The first of those for whom the session is ON THEIR FEED — they can open it
     (`can_open`; a notification is a link, and one to a chat you cannot read is a
     dead end) and the feed rule does not hold it back (`canopy_sessions.feed`).
     So a session on a colleague's runner skips a workspace owner and reaches the
     colleague, and an agent's own auto run reaches nobody: you are alerted for
-    what lands on your feed, and only that (Jonathan, 2026-10-05).
+    what lands on your feed, and only that.
 
     Fails closed on None, the same way `runner.owner` gates tenancy: with
     nobody identifiable, we stay silent rather than broadcast a workspace.
@@ -301,8 +299,8 @@ def session_label(session, default: str = "An agent") -> str:
     """"<agent or project> · <session>", so a lock screen says WHICH one.
 
     A session's title alone is usually its emdash task name (`mcp`), which
-    names nothing on a phone that is not looking at emdash — it read "mcp is
-    asking" about an ace-web deploy (2026-09-22). The agent, or for an agentless
+    names nothing on a phone that is not looking at emdash — it would read "mcp is
+    asking" about an ace-web deploy. The agent, or for an agentless
     runner session the repo it runs in, is what tells you where to go.
     """
     agent = getattr(session, "agent", None)

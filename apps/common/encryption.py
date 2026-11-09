@@ -10,8 +10,8 @@ KEYS. A ``MultiFernet`` over an ordered key list (see ``_keys``):
 * ``FIELD_ENCRYPTION_KEY`` unset (dev, tests) → just the LEGACY key derived from
   ``settings.SECRET_KEY``.
 * ``FIELD_ENCRYPTION_KEY`` set (production) → just the field key. The legacy key
-  was dropped once agents 0053 had re-encrypted every row onto the field key, so
-  ``SECRET_KEY`` no longer unlocks stored secrets. ``FIELD_ENCRYPTION_ACCEPT_LEGACY``
+  is not used: agents 0053 re-encrypted every row onto the field key, so
+  ``SECRET_KEY`` does not unlock stored secrets. ``FIELD_ENCRYPTION_ACCEPT_LEGACY``
   re-adds it as a read key for an emergency.
 
 Writes encrypt with the FIRST key; reads try every key in order.
@@ -45,9 +45,8 @@ def _keys() -> list[bytes]:
     """The ordered key list: the write key first, then every key reads may need.
 
     With ``FIELD_ENCRYPTION_KEY`` set, the legacy ``SECRET_KEY``-derived key is NOT
-    in the list: production re-encrypted every row onto the field key (agents 0053,
-    2026-10-16: 74 rewritten, 0 unreadable), so a leaked ``SECRET_KEY`` no longer
-    decrypts anything. ``FIELD_ENCRYPTION_ACCEPT_LEGACY`` puts it back as a READ
+    in the list: production re-encrypted every row onto the field key (agents 0053), so a
+    leaked ``SECRET_KEY`` decrypts nothing. ``FIELD_ENCRYPTION_ACCEPT_LEGACY`` puts it back as a READ
     key — an emergency switch if a row written under it ever turns up.
     """
     field_key = getattr(settings, "FIELD_ENCRYPTION_KEY", "") or ""

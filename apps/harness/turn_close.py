@@ -65,7 +65,7 @@ def close_turn(
 
     sensitive = sensitivity.is_sensitive(turn)
     if sensitive:
-        # Metadata only (spec 2026-10-22 §4): the prompt was held only until the
+        # Metadata only: the prompt was held only until the
         # turn ended, and the note is withheld -- an error can quote what was read.
         fields["prompt"] = ""
         if note and not canopys_note:

@@ -6,12 +6,10 @@
  * "this whole feature set should go" — the thought you have while looking at a
  * page and lose a second later.
  *
- * There used to be a second, opt-in layer here: `usePageContext` let a component
- * contribute what was on screen, and `buildPageContext` folded it in under
- * `onScreen`. It is gone, superseded by `pageState.ts`, which does the same job
- * without the flaw that made it unreliable — this one was READ ONCE, when a
- * conversation opened, so a user who filtered the page afterwards left the agent
- * describing a view that no longer existed. The state channel pushes instead.
+ * The page's own contribution of what is on screen lives in `pageState.ts`, not
+ * here: a layer READ ONCE, when a conversation opens, would leave the agent
+ * describing a view that no longer exists after the user filtered the page. The
+ * state channel pushes instead.
  * `currentPageState(buildPageContext(...))` is how the two now compose: route
  * layer underneath, the page's own declaration on top.
  *

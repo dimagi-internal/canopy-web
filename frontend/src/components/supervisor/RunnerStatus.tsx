@@ -22,7 +22,7 @@ const DOT: Record<string, string> = {
 const relative = (iso: string | null): string => relativeAge(iso)
 
 // Health problems the box reported about itself. A box can be online and ready
-// while a feature is off (2026-09-22: no transcripts, no inbox), so this is its
+// while a feature is off (no transcripts, no inbox), so this is its
 // own chip rather than folded into `not ready`. Red if any check failed, amber
 // if only warnings; nothing at all when the box does not report health.
 function HealthBadge({ runner }: { runner: RunnerOut }): JSX.Element | null {
@@ -101,7 +101,7 @@ export function RunnerStatus({
             </span>
           ) : null}
           {/* Health problems the box reported about itself. A box can be online
-              and ready while a feature is off (2026-09-22: no transcripts, no
+              and ready while a feature is off (no transcripts, no
               inbox), so this is its own chip rather than folded into ready. */}
           {/* A test box that takes only what is put on it (pins, chats bound
               to it): a fact about the box, not a problem. */}
@@ -129,9 +129,8 @@ export function RunnerStatus({
 
           {/* Phone: the host the wide row shows inline, on its own line instead
               of hidden. A runner you cannot identify is the failure this list
-              exists to prevent. (A readiness-drill badge sat beside it until
-              2026-10-12: drills are a debugging tool, and a months-old failure
-              painted a healthy box red — they live on the runner's detail.) */}
+              exists to prevent. (No readiness-drill badge sits beside it: drills are a debugging tool, and a
+              months-old failure would paint a healthy box red — they live on the runner's detail.) */}
           {r.host && (
             <span className="flex items-baseline gap-2 pl-[18px] text-xs sm:hidden">
               <span className="min-w-0 truncate text-muted-foreground">{r.host}</span>

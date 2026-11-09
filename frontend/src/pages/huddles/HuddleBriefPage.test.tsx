@@ -3,8 +3,8 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, expect, it, vi } from 'vitest'
 
-// A huddle run on a priorities brief (canopy `huddle plan --priorities-file`,
-// 2026-10-09 on): round 1 reports levers, an idea names its priority by number,
+// A huddle run on a priorities brief (canopy `huddle plan --priorities-file`):
+// round 1 reports levers, an idea names its priority by number,
 // says what it needs from Jonathan and what would make it fail — no confidence %.
 const H = 'work-fleet-20261009'
 const brief = [

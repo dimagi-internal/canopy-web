@@ -23,19 +23,18 @@ PUBLIC_PATH_PREFIXES = (
     "/static/",              # static assets
     # The built SPA's content-hashed bundles — the same class of thing as
     # /static/, and already referenced by the login page's own HTML, so gating
-    # them protects nothing. Gating them DID break things: an expired session
+    # them protects nothing. Gating them breaks things: an expired session
     # turned every <script> request into a 302 to Google, so the browser was
     # handed a sign-in page where it expected a module and rendered a white
-    # page. Reproduced 2026-09-08.
+    # page.
     "/assets/",              # built SPA bundles
     "/api/csrf/",            # bootstraps CSRF cookie before login
     "/api/openapi.json",      # openapi-typescript fetches the schema
     "/api/docs/",             # Scalar HTML
     "/api/redoc/",            # Redoc HTML
     "/api/mcp/",              # FastMCP server — auth via Bearer in the request
-    # NOTE: /auth/cli/authorize/ is deliberately NOT listed. It used to be, so
-    # that the view's own @login_required would bounce and preserve
-    # ?cb/?state/?label — but Django's decorator builds ?next= from
+    # NOTE: /auth/cli/authorize/ is deliberately NOT listed: if it were, the
+    # view's own @login_required would bounce, but Django's decorator builds ?next= from
     # request.get_full_path(), which drops the /canopy script prefix (see
     # apps.common.script_prefix), so a first-time operator landed on Connect
     # Labs after signing in. This middleware's own bounce below preserves the
@@ -124,7 +123,7 @@ def _is_public(path: str) -> bool:
 # /w/<ws>/review/<id>, /w/<ws>/share/<token>, /w/<ws>/storyboard/<slug>,
 # /w/<ws>/narrative/<slug> and /w/<ws>/ddd-release/<narrative>/<run> — and the
 # walkthrough's bytes (/w/<ws>/walkthrough/<id>/content): the ONLY address each
-# has (canopy-web#1337). The SPA shell and the stream self-gate on their token:
+# has. The SPA shell and the stream self-gate on their token:
 # the page reads self-gating APIs passing `ws`, and the stream 404s a row from
 # another workspace. `/w/<ws>/walkthroughs` and `/w/<ws>/storyboards` (the
 # lists, plural) and every other tenant page stay behind the gate — the
@@ -216,7 +215,7 @@ def _is_storyboard_link(request) -> bool:
     # callers and let the API decide. A wrong token 404s there rather than
     # 403ing, so existence never leaks. The pages themselves
     # (/w/<ws>/storyboard/<slug>, /w/<ws>/narrative/<slug>) are scoped viewers;
-    # the flat /storyboard/ and /narrative/ are a 404 (canopy-web#1337).
+    # the flat /storyboard/ and /narrative/ are a 404.
     return request.path.startswith("/api/storyboards/")
 
 
@@ -250,7 +249,7 @@ def _is_ddd_release_link(request) -> bool:
     # ?t=<share_token> gate (or a workspace-member session) inside
     # build_release, so admit anonymous callers through the middleware. The
     # page is a scoped viewer (/w/<ws>/ddd-release/<narrative>/<run>); the flat
-    # /ddd-release/ is a 404 (canopy-web#1337). The rest of /api/ddd/* stays
+    # /ddd-release/ is a 404. The rest of /api/ddd/* stays
     # auth'd.
     return request.method == "GET" and request.path.startswith("/api/ddd/release/")
 

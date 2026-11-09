@@ -10,7 +10,7 @@ import { relativeAge } from '@/lib/relativeAge'
 import { toneText } from 'canopy-ui/lib'
 import { Td, Th } from '@/components/DataTable'
 
-// WHO USES THIS AGENT DIRECTLY (canopy-web#1704).
+// WHO USES THIS AGENT DIRECTLY.
 //
 // A license is a person running the agent in their own Claude Code, on their own
 // computer, with canopy keeping the record. The caller list decides who MAY

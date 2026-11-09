@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 //
-// An agent with no runners of its own follows its workspace's default order
-// (2026-10-03). The row must say so — routing nobody can see on the agent is the
+// An agent with no runners of its own follows its workspace's default order.
+// The row must say so — routing nobody can see on the agent is the
 // failure that design had to avoid — and offer the two ways out of it.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'

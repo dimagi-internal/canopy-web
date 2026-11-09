@@ -33,7 +33,7 @@ class AgentRun(models.Model):
     # Stored convenience mirror of the derived status; the read model recomputes.
     # 40, not 20: a run document stores its workflow's terminal status here
     # ("stopped_not_converged" is 21, "converged_with_open_questions" 29); the
-    # 20-char column 500'd every state write once a DDD run ended (2026-10-04).
+    # 20-char column 500'd every state write once a DDD run ended.
     status = models.CharField(max_length=40, blank=True, default="", help_text="Mirror of derived status; read model recomputes from steps.")
     current_step = models.CharField(max_length=120, blank=True, default="", help_text="Key of the step currently in focus.")
     forked_from = models.ForeignKey(
@@ -48,9 +48,8 @@ class AgentRun(models.Model):
 
     # ---- run documents: a run of a KIND of work on an agent's PROJECT ----------
     # The generic record a specific workflow specializes. DDD is the first kind:
-    # its state (iteration, findings, progress, gate decisions) used to live only
-    # on the disk of the runner that started it, so no other machine could resume
-    # it and two machines could mint the same run id. All optional — a plain
+    # its state (iteration, findings, progress, gate decisions) lives on canopy-web, not on the disk of the runner that started it, so any
+    # machine can resume it and two machines cannot mint the same run id. All optional — a plain
     # lifecycle run (ACE's) leaves them empty. See apps/agent_runs/documents.py.
     project = models.ForeignKey(
         "agents.AgentProject", on_delete=models.SET_NULL, null=True, blank=True,

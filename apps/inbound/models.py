@@ -24,9 +24,9 @@ from django.db import models
 class InboundPushConfig(models.Model):
     """One workspace's push setup — the thing that makes this multi-tenant.
 
-    Verification used to be two deployment-global settings, which meant exactly
-    ONE Workspace could ever be verified: a second tenant's subscription signs
-    with its own service account, and a single pinned signer rejects it. A LIST
+    Verification is per workspace, not a deployment-global setting: each tenant's
+    subscription signs with its own service account, and a single pinned signer
+    would reject all but one. A LIST
     of allowed signers is not the fix either — that would let tenant A's service
     account push for tenant B's mailbox. Verification has to bind to the tenant.
 

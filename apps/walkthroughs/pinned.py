@@ -2,10 +2,10 @@
 
 A video walkthrough stamped with a version's review id (``narrative_review_id``)
 belongs to that exact story version. An explainer narrative has one such video.
-A ``style: recorded`` narrative (canopy#796) renders one mp4 per cut, each
+A ``style: recorded`` narrative renders one mp4 per cut, each
 uploaded with its recipe ``cut_id`` — so a version holds a video PER CUT, and the
 narrative page and the review link both read them from here, so the two cannot
-disagree about which video is which cut (canopy-web#1288).
+disagree about which video is which cut.
 
 The hero (the narrative-level video) is, in order:
   1. the latest pinned video that is NOT a cut — an explainer render;

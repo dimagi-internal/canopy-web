@@ -10,13 +10,10 @@ about one, each answering for exactly one party:
 * **A confined caller's session, about its own conversation** — its caller
   token (`apps/mcp/turn_scope.caller_turn_ids`).
 
-There used to be a fourth leg here: the AGENT's login (`Agent.user`) matched
-every chat the agent was in. That was how an agent, calling canopy's MCP with
-its own PAT, first got to see the page of the person it was talking to — and it
-answered too broadly (every chat of that agent, not the one being driven) by
-inferring a permission from an identity. The chat key replaced it, and the leg
-was removed on 2026-09-26. `Agent.user` now means only "this login is the
-agent", which is what `agents/access.py` reads it for.
+The AGENT's login (`Agent.user`) is deliberately not a leg: matching every chat
+the agent was in would answer too broadly (every chat of that agent, not the one
+being driven) by inferring a permission from an identity. `Agent.user` means only
+"this login is the agent", which is what `agents/access.py` reads it for.
 
 An absent caller matches NOTHING — `Q(pk__in=[])`, never an empty `Q()`, which
 is the identity and would widen the caller's filter to every session on the

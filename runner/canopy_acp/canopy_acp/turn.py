@@ -15,14 +15,14 @@ What it gets right, each found on a live box:
   fragments, often a few characters each, and every assistant event is one row
   downstream — one Slack post. Fragments are joined and the message emitted when
   the agent moves on to a tool call or the turn ends (an Eva reply once posted
-  as 85 messages split mid-word, 2026-10-06).
+  as 85 messages split mid-word).
 * **A tool call is emitted with its arguments.** `tool_call` opens with
   `rawInput: {}`; the start waits for the first update that has input, or for an
   argument-less call to finish. `tool_end` is emitted once, at a terminal status
   (`tool_call_update` is a sparse patch; see updates.py).
 * **No time limit by default**, like `claude -p`. A wall-clock deadline killed a
   busy 90-minute ACE run, and an idle limit would kill a long quiet tool call the
-  same way (2026-10-18). A stuck turn is ended by a stop; `idle_timeout` and
+  same way. A stuck turn is ended by a stop; `idle_timeout` and
   `timeout` exist for a caller that wants a cap.
 * **The session is free when the turn returns.** The Agent SDK's own `claude`
   process outlives the adapter by a few seconds (measured 2-4s, adapter 0.93.0),
@@ -110,11 +110,10 @@ def wait_released(session_id: str, wait: float = RELEASE_WAIT_SECONDS,
 def stop_origin(stop: str, canopy_cancelled: bool, init) -> str:
     """Who ended a turn that did not end cleanly, and which adapter build did it.
 
-    On 2026-10-26 turn 068076b8 (canopy-web on demo-0fc9c7b1efb87c5c3, failure
-    investigation 14) failed "turn ended: cancelled" with no stop requested, and
-    the note could not say whether canopy had sent the cancel or the adapter
-    ended the turn on its own, nor which claude-agent-acp the box runs (cloud
-    boxes install it unpinned). Both decide where the fix goes."""
+    A "turn ended: cancelled" with no stop requested must say whether canopy sent
+    the cancel or the adapter ended the turn on its own, and which
+    claude-agent-acp the box runs (cloud boxes install it unpinned). Both decide
+    where the fix goes."""
     info = (init or {}).get("agentInfo") if isinstance(init, dict) else None
     version = info.get("version") if isinstance(info, dict) else ""
     adapter = f"claude-agent-acp {version}" if version else "adapter version unknown"
@@ -251,10 +250,8 @@ def _result_of(agent, result, stream: _Stream, session_id: str, was_cancelled: b
     ok = stop in ("end_turn", "max_tokens") and rate_limit.get("status") != "rejected"
     text = reducer.assistant_text.strip()
     if stop not in ("end_turn", "max_tokens"):
-        # A turn failed on its stop reason must say which one. On 2026-10-26 turn
-        # cfab21f5 (demo runner, failure investigation 12) failed with only the
-        # agent's last words — "Standalone sleep is blocked, so I'll run it in the
-        # background." — and nothing recorded why it was graded failed.
+        # A turn failed on its stop reason must say which one; the agent's last
+        # words alone do not record why it was graded failed.
         reason = f"turn ended: {stop or 'unknown'} ({stop_origin(stop, was_cancelled, init)})"
         text = f"{text}\n\n{reason}" if text else reason
         tail = getattr(agent, "stderr_tail", lambda: "")()
@@ -279,11 +276,9 @@ def _turn_error(exc, agent, stream: _Stream, session_id: str, step: str = SENT,
         pass
     if not why and agent is not None:
         # The adapter is still up and answered with an error: its Claude child
-        # died, or it refused. On 2026-11-06 turn 735292d3 (fizzy on
-        # shayoni-win-cdp, failure investigation 33) failed "Internal error: The
-        # Claude Agent process exited unexpectedly." and nothing recorded whether
-        # the prompt had reached the session (did the message land?) or what the
-        # Claude process said as it died. The step goes in the note; the stderr
+        # died, or it refused ("Internal error: The Claude Agent process exited
+        # unexpectedly."). The note must record whether the prompt had reached the
+        # session (did the message land?). The step goes in the note; the stderr
         # only in the runner's log, since it is not vetted for what it quotes.
         where = step if step == SENT else f"{step}, before the prompt was sent"
         why = f"adapter still running; failed {where}"

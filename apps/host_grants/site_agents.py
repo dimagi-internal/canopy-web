@@ -1,13 +1,13 @@
 """The site agents API: what canopy tells a host site, signed, about the
-agents it may show there (spec connect-labs `2026-10-22-canopy-site-agents-api-design` §1).
+agents it may show there (the connect-labs site agents API design).
 
-A site used to keep hand-typed copies of canopy's facts — which agents, which
-handle sensitive data, which runner flags exist — and a wrong copy showed only as an
-agent that silently did not appear. `GET /api/sites/agents` replaces the copies:
+A site never keeps hand-typed copies of canopy's facts (which agents, which
+handle sensitive data, which runner flags exist): a wrong copy shows only as an
+agent that silently does not appear. `GET /api/sites/agents` serves them instead:
 the site asks with a JWT signed by its own key (the one canopy already verifies
 its visitor assertions with), and canopy answers with a JWS signed by its
 client key (the `Canopy-Execution` key, `kid` in `/oauth/client.json`). Both
-anchors existed before this; nothing new is shared.
+are anchors canopy already holds; nothing new is shared.
 
 `site_agents_content(app)` is the ONE answer to "which agents may this site show, and on
 what terms" — the endpoint signs it, and the host sites page reads the same

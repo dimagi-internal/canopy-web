@@ -144,7 +144,7 @@ def pair_runners(request: HttpRequest, payload, role_arn: str, *, refuse, out_cl
     for name, runner in existing.items():
         if _active_key(runner) is None:
             # A key revoked on a live runner was a deliberate act its owner undoes —
-            # never something re-pairing launders (PR 3's rule, per runner).
+            # never something re-pairing launders (per runner).
             raise refuse(f"{runner.name} on {machine} has no active key (revoked?)")
     # Which existing runners may be re-keyed WITHOUT a person: only a runner already
     # paired this way — its active key is a runner software key and the runner is on this

@@ -3,8 +3,7 @@
 Set by hand it does not survive: `canopy-fetch-env` (ExecStartPre) rewrites
 /opt/canopy-runner/runner.env from scratch on EVERY service start, so an
 appended line is gone before systemd reads the file — and the turn then runs on
-`claude -p` with nothing in the log to say the flag was dropped. Measured
-2026-09-09 on cloud-ec2-1: exactly that, twice, before the cause was found.
+`claude -p` with nothing in the log to say the flag was dropped.
 """
 from __future__ import annotations
 

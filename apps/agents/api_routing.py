@@ -174,7 +174,7 @@ def get_agent_default_order(request: HttpRequest, slug: str) -> AgentDefaultOrde
         # `workspace` still names the order it WOULD follow, so a screen can
         # offer "follow it instead". `runners` is the agent's own list, the same
         # rows `GET /runners` serves: leaving it empty here read as "routes
-        # nowhere" to every caller of this endpoint (#1233).
+        # nowhere" to every caller of this endpoint.
         return AgentDefaultOrderOut(own=True, workspace=default_order_source(agent),
                                     runners=list_agent_runners(request, slug),
                                     repo_url=agent.repo_url or "")
@@ -508,7 +508,7 @@ def replace_agent_runner_rules(
     return list_agent_runner_rules(request, slug)
 
 
-# ---- one rule at a time (#1143) ----
+# ---- one rule at a time ----
 #
 # A rule belongs to one (source, person) — the person's work, routed to boxes that
 # may belong to someone else entirely. Saving ALL of an agent's rules to change

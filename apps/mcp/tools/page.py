@@ -4,9 +4,9 @@
 gives it what the page currently SHOWS — the other half of AG-UI's frontend
 split, and the half that was missing.
 
-**Why a tool and not a prompt preamble.** Page context used to be fetched once
-when the widget's frame initialised, rendered to prose, and pasted onto the
-first message. That reads the screen at the wrong moment (a user filters the
+**Why a tool and not a prompt preamble.** Page context fetched once
+when the widget's frame initialises, rendered to prose, and pasted onto the
+first message would read the screen at the wrong moment (a user filters the
 page *after* opening the chat at least as often as before), in the wrong form
 (the WebMCP origin-trial ablation recovered the right next action 19/20 from a
 bounded structured packet against 14/20 from a byte-matched prose summary), and

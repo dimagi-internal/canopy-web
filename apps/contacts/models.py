@@ -55,8 +55,8 @@ class Person(models.Model):
     stays. This is the separate question underneath it: does canopy *know* the
     two records are the same person?
 
-    Until now it only knew implicitly — `(app, external_id)` sits on every
-    contact row, so anything could join on it. Implicit is how two features end
+    Without this row it would know only implicitly — `(app, external_id)` sits on
+    every contact row, so anything could join on it. Implicit is how two features end
     up computing "the same person" slightly differently and disagreeing, which
     is the `definition_key()` lesson from `apps/agents/definition.py`. One row,
     one answer.
@@ -82,9 +82,8 @@ class Person(models.Model):
     #: `iss` it signs with, and `AppCredential.signer()` — which keys it signs
     #: with. Not a row.
     #:
-    #: It was an FK to the site row, when a site was one row shared by every
-    #: tenant. Now each tenant registers a system itself (2026-09-24), so the
-    #: same system is several rows and an FK would make one human arriving via
+    #: It is not an FK to the site row: each tenant registers a system itself, so
+    #: the same system is several rows and an FK would make one human arriving via
     #: two tenants two people — silently undoing this model. Two registrations
     #: that trust the same keys ARE the same signer, and only that signer can
     #: produce an assertion either of them accepts, so joining on it never
@@ -97,10 +96,10 @@ class Person(models.Model):
     #: Set when the address IS the identity (a correspondent), not when a site
     #: merely told us one.
     email = models.EmailField(blank=True, default="")
-    #: The canopy ACCOUNT this person is, when they have one (fleet brain v1,
-    #: canopy#804). A workspace member never has a `Contact` — so before this,
-    #: the people agents talk to most had no `Person` at all and nothing could
-    #: be remembered about them. Set by `services.person_for(user=…)`, which
+    #: The canopy ACCOUNT this person is, when they have one (fleet brain). A
+    #: workspace member never has a `Contact`, so without this the people agents
+    #: talk to most would have no `Person` and nothing could be remembered about
+    #: them. Set by `services.person_for(user=…)`, which
     #: also joins the account to the correspondent row for its VERIFIED address
     #: (a login proves an address the way DMARC does), so someone who both
     #: emails an agent and talks to it in Slack is one person.
@@ -108,9 +107,9 @@ class Person(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
         related_name="person",
     )
-    #: Agent memory is the PERSON's own, as two independent features (Jonathan,
-    #: 2026-10-09: "each person should be able to turn it on or off"; then "it
-    #: should be available per session, not just at the system level"):
+    #: Agent memory is the PERSON's own, as two independent features: each
+    #: person can turn it on or off, and it is available per session, not just at
+    #: the system level:
     #:
     #: * record — "Agents may learn about me": agents may WRITE (HCP add / update /
     #:   delete, the legacy fact write) and are told to record.
@@ -221,15 +220,15 @@ class Contact(models.Model):
     # same where it grades (`contacts/contact_api.py`: "it proves the SITE said
     # this, not that the human is who the site thinks").
     #
-    # `app_signed_origin` ("Signed assertion from a framed origin") used to sit
-    # here, ranked 3, and nothing ever assigned it — there is no path that could,
+    # There is deliberately no `app_signed_origin` grade ("Signed assertion from a
+    # framed origin"): no path could assign it,
     # since a token is minted server-to-server with no browser origin in sight,
     # and a visitor canopy DOES resolve to an account stops being a contact
-    # (`resolve_arrival`) and is graded on the user ladder instead. It was an
-    # unearnable top grade that `:verified` rules were written against, so the
-    # gap read as "this visitor failed the check" rather than "this check can
-    # never pass". A stray stored value now ranks 0 via `AUTH_RANK.get(_, 0)`,
-    # which is the fail-closed direction.
+    # (`resolve_arrival`) and is graded on the user ladder instead. Such a grade
+    # would be unearnable, and `:verified` rules written against it would read as
+    # "this visitor failed the check" rather than "this check can never pass".
+    # A stray stored value ranks 0 via `AUTH_RANK.get(_, 0)`, which is the
+    # fail-closed direction.
     AUTH_CHOICES = [
         (AUTH_NONE, "Unverified"),
         (AUTH_SPF, "SPF only (envelope sender)"),
@@ -458,7 +457,7 @@ class Contact(models.Model):
         return self.AUTH_RANK.get(self.auth_result, 0) >= self.AUTH_RANK[grade]
 
 
-# --- the fleet brain (canopy#804): what agents know about a person --------------
+# --- the fleet brain: what agents know about a person --------------
 #
 # Two layers:
 #
@@ -466,8 +465,7 @@ class Contact(models.Model):
 #   2. FACTS — `PersonFact`, append-only, small, one sentence each, recorded by
 #      the session that learned them (HCP addPreference).
 #
-# (A third layer, a per-person DIGEST written by a separate agent turn, was
-# removed 2026-10-09.) Every agent that serves a person reads (2) in its caller
+# (There is no third layer: no per-person DIGEST is written.) Every agent that serves a person reads (2) in its caller
 # envelope (`apps/harness/caller_context.py`, envelope v3 `person`), and every
 # such read is logged in `PersonAccess`, which the person can see. Raw
 # conversations stay exactly as private as before: only facts cross agents.
@@ -746,9 +744,8 @@ class PersonGrant(models.Model):
     """HCP 4.1.5 — one client's category-scoped, revocable access to a person's
     entries.
 
-    **A first-party client is the agent** (Jonathan, 2026-10-09: "each agent
-    session / entry should obtain the grant explicitly or due to previous
-    granting to this agent"). Its `client_key` names the agent only; a
+    **A first-party client is the agent**: each agent session / entry obtains the
+    grant explicitly, or through previous granting to this agent. Its `client_key` names the agent only; a
     "for this session" grant adds the session to `attributes`. The channel/host
     columns stay for older rows. An OAuth app's grant is keyed on `hcp_client`.
 
@@ -952,9 +949,9 @@ class MemoryViewer(models.Model):
 
 
 class SessionAgentMemory(models.Model):
-    """One session's override of a person's agent-memory defaults (Jonathan,
-    2026-10-09: "in any given session, you can provide yes to either if they are
-    enabled at the canopy level"). `None` = inherit the person's default. It can
+    """One session's override of a person's agent-memory defaults: in any given
+    session, either feature can be turned on if it is enabled at the canopy
+    level. `None` = inherit the person's default. It can
     never turn on a feature the person has not made available — `hcp.effective`
     applies `available AND (override, else default)`. Keyed by (session, person) so
     in a shared session one person's choice never speaks for another; only the

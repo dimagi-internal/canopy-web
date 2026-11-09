@@ -1,5 +1,5 @@
 """`canopy_runner/inbox_rules.py` is a VERBATIM copy of canopy's
-`src/orchestrator/inbox_rules.py` — the fleet's one inbound-email table (canopy#679).
+`src/orchestrator/inbox_rules.py` — the fleet's one inbound-email table.
 
 The runner cannot import canopy, so the table is vendored rather than shared. This pin is
 the drift tripwire: canopy's `tests/test_inbox_rules.py` pins the SAME hash, so editing

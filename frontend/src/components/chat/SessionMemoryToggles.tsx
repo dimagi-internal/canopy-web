@@ -66,9 +66,9 @@ function isMemory(s: unknown): s is SessionMemory {
 
 /** Whether a feature is actually working here: on in this session AND, when the
  *  session has an agent, granted to it. Anything short of that is off — there is
- *  no "waiting for you" state, because the session never asks (Jonathan,
- *  2026-10-19: the grant popup on every conversation was noise; the person turns
- *  it on themselves when they want it). */
+ *  no "waiting for you" state, because the session never asks (a grant popup on
+ *  every conversation would be noise; the person turns it on themselves when
+ *  they want it). */
 export function memoryWorking(state: SessionMemory, f: MemoryFeature): boolean {
   return state[f].effective && (state[f].granted || !state.agent)
 }

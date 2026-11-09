@@ -1,10 +1,10 @@
 """What a session DID, aggregated as its transcript streams in: `Session.activity`.
 
 Answers "which sessions built X?" without anyone re-reading local `.jsonl`
-transcripts. Before this, selecting every session that worked on connect-labs'
-`connect_labs/supply_chain` meant rebuilding the signal from Claude transcripts on
-the laptop that happened to hold them (board task T75) — the server held the rows
-but had no index over what they did.
+transcripts, so selecting every session that worked on connect-labs'
+`connect_labs/supply_chain` needs no rebuilding of the signal from Claude transcripts on
+the laptop that happened to hold them: the server holds the rows and an index over
+what they did.
 
 The shape (all keys optional; an empty dict is a session nothing is known about)::
 
@@ -401,8 +401,8 @@ def rebuild(session, *, save: bool = True) -> Activity:
     fold_rows(act, Message.objects.filter(session=session).order_by("turn_index")
               .values_list("role", "plaintext", "content").iterator(chunk_size=500))
     # Here as well as in `store`, so a `save=False` caller (the command's
-    # --dry-run) sees and counts what WOULD be written. Without it the 2026-10-09
-    # prod dry run reported 49 changes against a real run of 150.
+    # --dry-run) sees and counts what WOULD be written. Without it a
+    # dry run reports fewer changes than a real run.
     normalize(act.d)
     if save:
         store(session, act)

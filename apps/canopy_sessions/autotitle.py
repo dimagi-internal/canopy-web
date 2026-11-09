@@ -70,7 +70,7 @@ def maybe_autotitle(session_id) -> str | None:
         # A session a runner backs is ALREADY named — by the emdash task the
         # human sees in their own sidebar. That name is what they navigate by, so
         # inventing a title from the first message actively makes the session
-        # harder to find (observed 2026-07-27: "I think we basically implemented
+        # harder to find (for example "I think we basically implemented
         # everything we need to…" where the sidebar said
         # "canopy-web-api-7716-0726-1521").
         #

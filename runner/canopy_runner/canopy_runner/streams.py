@@ -1,7 +1,7 @@
 """Transcript push for every session this runner backs.
 
 Runs for ALL of them, not only the watched ones: the transcript is the durable
-source (spec 2026-07-24), so persisting it must not depend on someone having the
+source, so persisting it must not depend on someone having the
 chat open. `stream_desired` survives server-side as the LIVE fan-out gate only.
 Holds NO durable resume state — the server's `first_index`/`last_index` are the
 checkpoint. When the box's owner opted in to coaching, the server also lists their
@@ -31,7 +31,7 @@ logger = logging.getLogger("canopy_runner")
 # Each entry: {"reader": TailReader|None, "count": int (records consumed == the next
 # record's ordinal), "session_key": str, "project": str, "first_index"/"last_index":
 # int|None (the bounds of what the server holds)}. Deliberately holds NO durable
-# resume state — those server-side markers are the checkpoint (spec 2026-07-24).
+# resume state — those server-side markers are the checkpoint.
 _stream_readers: dict[str, dict] = {}
 
 
@@ -73,7 +73,7 @@ def sync_session_streams(cfg: Config, client: Client) -> None:
     """Tail EVERY session this runner backs and ship its conversational records
     (user + assistant) with their transcript ordinals — the server persists them as
     the session's durable Message rows, and fans them out live only for the ones a
-    viewer has open (spec 2026-07-24).
+    viewer has open.
 
     Every session, not just the watched ones. While the server only asked about
     attached sessions, a session's durable history was a side effect of somebody
@@ -144,7 +144,7 @@ def sync_session_streams(cfg: Config, client: Client) -> None:
         if st["reader"] is not None and st.get("transcript_id") != transcript_id:
             # The task behind this session was replaced. Start over on the new file:
             # its ordinals are a fresh space, and the server drops what it holds the
-            # moment it sees the new id (issue #615).
+            # moment it sees the new id.
             st["reader"], st["count"] = None, 0
         st["transcript_id"] = transcript_id
         sync_subagents(cfg, client, sid, st, path)
@@ -176,7 +176,7 @@ def sync_session_streams(cfg: Config, client: Client) -> None:
         new_records = reader.read_new()
         if not new_records:
             continue
-        activity.note()  # a transcript grew: someone may be watching it (#647)
+        activity.note()  # a transcript grew: someone may be watching it
         base = st["count"]
         # The batch's records start at `base` in the file; the offset is applied
         # to the RECORD ordinal inside compose_index, never to the composite
@@ -214,9 +214,9 @@ def drain_closes(cfg: Config, client: Client) -> None:
     """Close any session we have been asked to close and have not.
 
     The twin of `drain_menu_answers`, for the other verb that only ever existed
-    as a WS control frame. Verified 2026-08-01: a real close returned
-    `{"ok":true,"closing":true}` from the API and the runner logged nothing at
-    all, so the emdash task stayed open and the session stayed active.
+    as a WS control frame. A close the API answers with
+    `{"ok":true,"closing":true}` does nothing on its own: the emdash task stays open
+    and the session stays active until the runner acts.
 
     Idempotent by construction — closing a task that is already gone is a no-op,
     and the server retires the request when the task stops being reported.
@@ -269,8 +269,8 @@ def drain_menu_answers(cfg: Config, client: Client) -> None:
     answer SURVIVE the channel being down: a frame published into a group with no
     consumer is discarded silently, while the runner keeps heartbeating over REST
     and so still reads ONLINE — the API says `ok:true` and the tap simply
-    evaporates. Measured on labs 2026-08-01: an answer sent at 10:50 never
-    arrived, between control-channel reconnects at 10:16 and 10:58.
+    evaporates. An answer sent between control-channel reconnects
+    never arrives.
 
     Best-effort, like every other drain here: a failure is retried next tick,
     because the server only retires an answer once we report on it.
@@ -337,7 +337,7 @@ def drain_backfills(cfg: Config, client: Client) -> None:
                     cfg.runner_id, sid, batch, final=(i == len(batches) - 1),
                     # Names the conversation this history belongs to, so a rebuild
                     # REPLACES a predecessor's rows instead of upsert-filling into
-                    # them under a shared ordinal space (issue #615).
+                    # them under a shared ordinal space.
                     transcript_id=path.stem,
                 )
             note_success(f"backfill:{sid}")

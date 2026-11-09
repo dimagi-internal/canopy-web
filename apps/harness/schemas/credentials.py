@@ -159,8 +159,7 @@ class DroppedRouteOut(Schema):
 class RetireOut(Schema):
     """What retiring took with it. A retired runner cannot stay routed, so its
     routing rows are deleted — and said so here, because silently dropping a
-    person's route sent their work to someone else's box with nothing surfacing it
-    (2026-10-02)."""
+    person's route sent their work to someone else's box with nothing surfacing it."""
     runner: str
     dropped_routes: list[DroppedRouteOut] = []
 
@@ -475,7 +474,7 @@ class RunnerGitHubReadinessOut(Schema):
 
 
 # ---------------------------------------------------------------------------
-# Readiness drills (spec 2026-07-24-directed-runner-routing, Task 7)
+# Readiness drills
 # ---------------------------------------------------------------------------
 
 

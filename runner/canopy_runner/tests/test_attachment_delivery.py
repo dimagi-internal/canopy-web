@@ -107,9 +107,8 @@ def test_only_files_that_actually_arrived_are_cited():
 
 
 def test_a_file_that_never_arrived_is_named_so_the_agent_can_say_so():
-    """Silently dropping the images is how a whole deck review went wrong
-    (2026-10-15: 63 images 404'd, the agent got text only and could not tell
-    why). The agent must be told what is missing — but never told to READ it."""
+    """Silently dropping the images is how a whole deck review goes wrong
+    (images 404, the agent gets text only and cannot tell why). The agent must be told what is missing — but never told to READ it."""
     client = _Client(fail={"bad"})
     paths, missing = execute.fetch_attachments(
         client, "r1", _turn([{"id": "bad", "filename": "slide-01.jpg"}, {"id": "ok", "filename": "slide-02.jpg"}])
@@ -130,7 +129,7 @@ def test_a_long_list_of_missing_files_is_summarized():
 
 
 def test_two_pasted_screenshots_named_alike_both_arrive(tmp_path, monkeypatch):
-    """Every pasted screenshot is "image.png"; two in one message used to land on
+    """Every pasted screenshot is "image.png"; two in one message must not land on
     one path, the second overwriting the first."""
     monkeypatch.setattr(execute, "ATTACHMENT_ROOT", tmp_path)
     client = _Client()

@@ -1,4 +1,4 @@
-"""Can a mail domain PROVE its senders? (canopy-web#1280)
+"""Can a mail domain PROVE its senders?
 
 An email is tied to a person only when it is DMARC-aligned or DKIM-signed by its
 own From: domain (`Contact.EMAIL_ALIGNED`). A domain that publishes no DMARC

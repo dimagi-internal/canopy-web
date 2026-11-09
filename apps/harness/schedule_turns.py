@@ -330,8 +330,8 @@ def skip_late_scheduled_turns(*, now: dt.datetime | None = None) -> int:
     of their slot. Runs lazily on the claim tick, like the grace release.
 
     WHY. No-backfill already collapses a long outage to one slot per schedule, but
-    it still fires that one however stale it is: on 2026-09-23 a laptop reopened at
-    19:21Z fired all five schedules at once, for slots from 14:00Z to 18:00Z. A
+    it still fires that one however stale it is: a laptop reopened at
+    19:21Z would fire all five schedules at once, for slots from 14:00Z to 18:00Z. A
     morning briefing or a chief-of-staff sweep five hours late is noise, not work
     owed. The next slot fires on time as usual.
 

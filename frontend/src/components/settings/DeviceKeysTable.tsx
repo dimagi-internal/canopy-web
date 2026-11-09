@@ -5,8 +5,7 @@ import { approveAndGrant, giveAccess, unlockVaultKey, vouchForMyMachine } from '
 import { useUnlockPrompt } from '@/vault/UnlockPrompt'
 import { canOpenText, keyPlace, machineDescription } from './machineText'
 
-// The machines that may open agents' secrets (Canopy Vault, canopy-web#1538,
-// #1550). Each holds a key made inside its own hardware; approving one (a
+// The machines that may open agents' secrets (Canopy Vault). Each holds a key made inside its own hardware; approving one (a
 // passkey touch) hands it a copy of the key to the agents it runs. Shown as one
 // plain line per machine — which machine, where its key lives, what it can
 // open. Shared by the account Settings page and an agent's Credentials.
@@ -23,7 +22,7 @@ export function DeviceKeysTable({
 }) {
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  // Zero-knowledge agents this key now waits on (canopy-web#1550): offered
+  // Zero-knowledge agents this key now waits on: offered
   // right after approving it, so the box can read them on its next turn.
   const [grant, setGrant] = useState<{ key: string; agents: string[]; done: string[] } | null>(null)
   const unlocker = useUnlockPrompt()
@@ -91,7 +90,7 @@ export function DeviceKeysTable({
     }
   }
 
-  // Approve = wrap (canopy-web#1550): a key that zero-knowledge agents will
+  // Approve = wrap: a key that zero-knowledge agents will
   // wait on is approved and handed their vault keys in ONE passkey touch.
   const approve = async (k: RunnerDeviceKeyOut) => {
     const agents = k.zk_pending_agents ?? []

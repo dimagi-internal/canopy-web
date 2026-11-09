@@ -1,8 +1,7 @@
 """The MCP Apps SANDBOX PROXY (SEP-1865 §Sandbox proxy) — one page, nothing else.
 
 canopy's chat frames this page for every View it renders; the page frames the
-View's HTML and relays JSON-RPC between the two. Spec 2026-10-08 §7, as amended
-by owner decision 1 (no new DNS):
+View's HTML and relays JSON-RPC between the two. The proxy needs no new DNS:
 
 * **Served at a canopy sub-path, isolated by an OPAQUE origin.** The host frames
   it with `sandbox="allow-scripts"` and NO `allow-same-origin`, and the response

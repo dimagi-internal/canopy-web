@@ -5,8 +5,8 @@
 whose turns are capped to manual) is `apps/agents/turn_context.resolve_turn_context`.
 
 A routing rule (`RunnerAssignment` with a non-empty `source`) already answers
-"which box runs this person's work on this channel". Spec 2026-09-23 lets the
-same rule answer "and may the agent act on it without asking first":
+"which box runs this person's work on this channel". The same
+rule can also answer "and may the agent act on it without asking first":
 `eva / email / beth@… → cloud, auto`.
 
 The ladder is the routing ladder, read for its `turn_mode` instead of its
@@ -46,9 +46,8 @@ the person an admin while the turn is queued, takes effect. The same holds for a
 turn canopy starts on someone's behalf: a schedule's occurrence is bounded by its
 creator, so a schedule is not a way around the cap.
 
-**A session's mode is fixed when it starts** (Jonathan, 2026-10-07: "the entire
-session is started in auto or manual, it doesn't change because of something that
-happens in the session"). A later turn in the same session — the owner's reply to a
+**A session's mode is fixed when it starts**: the entire session is started in auto
+or manual, and it doesn't change because of something that happens in the session. A later turn in the same session — the owner's reply to a
 dispatch waiting for approval, say — takes the mode of the session's first claimed
 turn instead of being judged afresh. One-directional, so it can never raise
 autonomy: a session that started manual keeps every later turn manual, and one that
@@ -253,8 +252,7 @@ def _carried(started: Resolved, turn, agent, priorities: dict | None) -> Resolve
     """A session that started manual keeps this turn manual. That manual is still
     RAISABLE by an admission `auto` rule when nothing about THIS turn holds it back:
     its own rungs resolve to the agent's standing posture, the message is verified,
-    and the sender is not confined (read mode or a host site) (Jonathan, 2026-10-14, option 3
-    of canopy-web#1474). Otherwise a thread first handled on a laptop in manual is
+    and the sender is not confined (read mode or a host site). Otherwise a thread first handled on a laptop in manual is
     claimed by a cloud runner in manual, where nobody can approve its reply, and the
     turn ends `done` having sent nothing."""
     if getattr(turn, "capability", ""):

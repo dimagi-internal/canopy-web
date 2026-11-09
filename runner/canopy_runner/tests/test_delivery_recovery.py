@@ -1,14 +1,14 @@
 """An unconfirmed send is RECOVERED when a look at the session proves how — and
 never typed into a session that might already hold it.
 
-The incident (2026-10-07): a Slack message to ACE was typed into an existing emdash
-session while Jonathan was using the machine. Nothing reached the transcript within
+The incident shape: a Slack message is typed into an existing emdash session while
+a human is using the machine. Nothing reached the transcript within
 the confirm window and the turn failed with "Couldn't confirm…". The likely causes
 — a click stealing focus between the sidecar's focus and its insert, or a swallowed
 Enter — leave the message recoverable and leave evidence in the session: an empty
 composer, or our text still sitting in it.
 
-Retyping is the dangerous move (turn 22662f53 typed one message four times), so
+Retyping is the dangerous move (one message once got typed four times), so
 these pin each branch of the ladder, and above all the ones that must NOT type:
 a late transcript record, a human's text in the composer, our text already on
 screen, an unreadable frame.
@@ -406,7 +406,7 @@ def test_an_agent_turn_recovers_a_swallowed_enter(monkeypatch, transcript):
     assert client.failed is None
 
 
-# ── 2026-10-14 (ACE, turn 50bfdf45, investigation 2): a long one-liner split ──
+# ── a long one-liner split ───────────────────────────────────────────────────
 
 LONG = ("Follow-up, still read-only, please only explain, don't create, edit or publish: "
         "walk me through how to UPDATE an existing indicator definition safely: where to "
@@ -431,7 +431,7 @@ def test_a_collapsed_paste_then_our_tail_then_a_humans_words_is_left_alone():
     assert delivery.recovery_action(_state(typed=typed), LONG)[0] == delivery.LEAVE
 
 
-# ── a busy session is waited out, not given up on (2026-10-18, turn 79313c1f) ──
+# ── a busy session is waited out, not given up on ────────────────────────────
 #
 # A background-agent notification started a turn ~20s after our Enter. At the look
 # the composer was empty and Claude was running, so recovery left it and the message
@@ -516,7 +516,7 @@ def test_a_snapshot_of_the_composer_is_posted_right_after_the_send(monkeypatch, 
 # ── the note names WHY recovery gave up, so causes stop sharing one investigation ──
 
 def test_a_covered_composer_fails_with_its_own_note_and_the_screen(monkeypatch, transcript):
-    """Investigation 2's fourth cause (turn d9de6f41, 2026-10-23): recovery left a
+    """A fourth cause: recovery left a
     session whose input box was covered, and nothing recorded what covered it."""
     s = _Session(monkeypatch, transcript, looks=[_state(found=False)], retype_lands=True)
     frame = "⏺ earlier answer\n\n Do you want to proceed?\n ❯ 1. Yes\n   2. No\n"

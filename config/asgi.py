@@ -6,7 +6,7 @@ It exposes the ASGI callable as a module-level variable named ``application``.
 The FastMCP Streamable-HTTP server (apps/mcp) is mounted at /api/mcp/, and each
 workspace project's own server at /api/mcp/projects/<workspace>/<handle>/.
 Auth is enforced INSIDE the MCP app via FastMCP MultiAuth (per-user PAT +
-optional OAuth) — there is no hand-rolled gate here anymore.
+optional OAuth) — there is no hand-rolled gate here.
 
 Streamable-HTTP requires the MCP app's lifespan to run for session
 management. Django's bare ASGI app has no lifespan, so we build a
@@ -85,9 +85,9 @@ class _McpWithoutSlash:
 
     Claude Code stores an MCP URL without its trailing slash (`claude mcp add
     … /api/mcp/` becomes `…/api/mcp`), and `Mount("/api/mcp")` matches only
-    `/api/mcp/…`, so the bare path fell through to Django: a 401 with no OAuth
-    challenge before sign-in, and a 404 HTML page for every MCP call after it
-    (2026-09-30). Middleware rather than a wrapper, so `application` stays the
+    `/api/mcp/…`, so the bare path would fall through to Django: a 401 with no OAuth
+    challenge before sign-in, and a 404 HTML page for every MCP call after it.
+    Middleware rather than a wrapper, so `application` stays the
     Starlette app its lifespan and mounts are read from."""
 
     def __init__(self, app):

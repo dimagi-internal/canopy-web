@@ -1,9 +1,8 @@
-"""Each cloud AGENT turn runs in its own worktree of the agent's clone (#1141).
+"""Each cloud AGENT turn runs in its own worktree of the agent's clone .
 
-Every agent turn used to run IN AGENT_ROOT/<slug>, so two concurrent turns for
-one agent shared a working tree — the stranded commits and moving branches #1131
-fixed for other repos. These pin the fix and the three things it had to keep
-working: the clone's ignored state (.env, node_modules) still reaches the turn, a
+A turn running IN AGENT_ROOT/<slug> would share a working tree with a concurrent
+turn for the same agent — stranded commits and moving branches. These pin the
+worktree and the three things it has to keep working: the clone's ignored state (.env, node_modules) still reaches the turn, a
 chat reply can still resume an agent turn's session, and the stream tail still
 finds its transcript — now by looking up where the turn ran, not deriving it.
 """
@@ -110,8 +109,8 @@ def test_an_agent_whose_bootstrap_cannot_clone_it_keeps_the_scratch_dir(box, mon
 
 
 def test_a_new_agent_is_set_up_before_its_first_turn_runs(box, monkeypatch):
-    """Labs 2026-10-14: a just-created agent's turn ran in a bare scratch dir —
-    none of its code — because the box had not bootstrapped since it was made."""
+    """A just-created agent's turn must not run in a bare scratch dir with none of
+    its code because the box has not bootstrapped since it was made."""
     mod, origin, _, tmp = box
     agents = tmp / "agents"
 

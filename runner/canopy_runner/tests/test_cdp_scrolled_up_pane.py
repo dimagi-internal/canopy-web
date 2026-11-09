@@ -3,8 +3,7 @@
 The sidecar reads the composer from `.xterm-rows`, which is only what the terminal's
 view shows. Someone who scrolled an emdash pane up to read a long reply left it
 there, and every chat send into that session bounced COMPOSER_NOT_VISIBLE however
-often it was retried: turn 6c185edd (2026-10-26), four claims over 90s, each reading
-the identical mid-reply frame. The fix wheels the view back down before giving up,
+often it is retried, each claim reading the identical mid-reply frame. The fix wheels the view back down before giving up,
 and each choice in it was measured against emdash's xterm, so each is held here:
 
 - only a TRUSTED wheel scrolls that xterm (`page.mouse.wheel`); a WheelEvent

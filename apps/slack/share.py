@@ -54,7 +54,7 @@ NOT_INSTALLED, NOT_LINKED, NO_SESSION, AGENT_NOT_ON_SLACK, NOT_IN_CHANNEL, \
         "not_in_channel", "ambiguous_workspace", "post_failed", "bad_request")
 
 #: The conversation holds a host's sensitive data and never goes to Slack
-#: (`apps.harness.sensitivity`; spec 2026-10-22-sensitive-data-agents §4).
+#: (`apps.harness.sensitivity`).
 SENSITIVE = "sensitive"
 
 #: Slack's answers that mean "the bot cannot post there", as opposed to a fault.

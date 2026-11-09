@@ -256,7 +256,7 @@ function RouteChips({
   )
 }
 
-// People's OWN machines (canopy-web#1704): a session there runs an agent in that
+// People's OWN machines: a session there runs an agent in that
 // person's Claude Code and is recorded as a direct turn. Listed beside the runners
 // because "where does this agent's work happen" now has a second answer. A private
 // runner works only for its owner: their direct sessions, and — when the machine

@@ -3,7 +3,7 @@ import { createContext, useContext } from "react";
 import type { CallToolResult } from "./bridge";
 
 /** What the server put on a tool result row that has an MCP Apps View
- *  (`MessageOut.app`; spec 2026-10-08 §3). Decided server-side — the client
+ *  (`MessageOut.app`). Decided server-side — the client
  *  never guesses which tools have Views. */
 export interface AppRef {
   tool_call_id: string;

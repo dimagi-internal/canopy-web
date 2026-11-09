@@ -237,10 +237,8 @@ export function SettingsRedirect({ to }: { to: string }) {
 }
 
 // /w/:workspace index: lands on the workspace's agents — their projects and
-// tasks are canopy's one project system (the workbench Projects page that used
-// to live here was retired 2026-10-06). A pre-tenancy /w/<uuid> walkthrough
-// link never reaches here: the server answers it with a plain 404
-// (canopy-web#1337).
+// tasks are canopy's one project system. A pre-tenancy /w/<uuid> walkthrough
+// link never reaches here: the server answers it with a plain 404.
 function WorkspaceIndex() {
   const { workspace = '' } = useParams()
   return <Navigate to={scopedPath(workspace, '/agents')} replace />
@@ -342,8 +340,7 @@ export const routeTable: RouteObject[] = [
       { path: '/beta-requests', element: <BetaRequestsPage /> },
       { path: '/beta-requests/:requestId', element: <BetaRequestPage /> },
       // There is no flat /walkthrough/:id, /review/:id or /share/:token: one
-      // URL per artifact, under its workspace, and nothing forwarded (owner
-      // decision, 2026-10-08; canopy-web#1337). The server answers a flat link
+      // URL per artifact, under its workspace, and nothing forwarded. The server answers a flat link
       // with a plain 404 that says so (config/views.py::flat_artifact_gone).
       // /invite/:token — the accept page. Deliberately OUTSIDE /w/:workspace:
       // an invitee has no workspace membership yet, so there is no tenant to
@@ -399,7 +396,7 @@ export const routeTable: RouteObject[] = [
           { path: 'agent-access', element: <Navigate to="../topology/agents" replace /> },
         ],
       },
-      // The four pages these sections used to be. Live links were handed to
+      // Redirects for the four pages these sections replace. Live links were handed to
       // people, so they redirect rather than 404.
       { path: '/w/:workspace/members', element: <SettingsRedirect to="members" /> },
       // One member's page, as the viewer's role lets them see it.
@@ -409,7 +406,7 @@ export const routeTable: RouteObject[] = [
       { path: '/w/:workspace/slack', element: <SettingsRedirect to="slack" /> },
       // The settings sections people name by their own word ("the marshellis
       // topology", "its email") — the short form lands on the section instead of
-      // a 404 (2026-10-18: a hand-written /w/marshellis/topology link did).
+      // a 404 (a hand-written /w/<ws>/topology link, for example).
       ...['topology', 'email', 'access-requests', 'secrets', 'retention', 'admission-rules'].map((to) => (
         { path: `/w/:workspace/${to}`, element: <SettingsRedirect to={to} /> })),
       { path: '/w/:workspace/timeline', element: <TimelinePage /> },
@@ -608,8 +605,7 @@ export const routeTable: RouteObject[] = [
   // operator console at /w/:ws/ddd/:narrative/:runId is a different page.
   //
   // These three live under their workspace like every artifact, and there is
-  // no flat /ddd-release/, /storyboard/ or /narrative/ (owner decision,
-  // 2026-10-08; canopy-web#1337): the server answers a flat link with a plain
+  // no flat /ddd-release/, /storyboard/ or /narrative/ : the server answers a flat link with a plain
   // 404 (config/views.py::flat_artifact_gone). Each page passes `ws` so the API
   // 404s a row from another workspace.
   {

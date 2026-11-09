@@ -13,14 +13,14 @@ function item(name: string, agent: string, ws: string, fires: string[]): Schedul
 
 describe("bucketByDay", () => {
   it("drops each fire into its local-day column (Mon-indexed)", () => {
-    // Week of Mon 2026-07-13, all constructed from LOCAL date parts (not a
+    // A week starting Mon 13 July, all constructed from LOCAL date parts (not a
     // UTC-Z literal) so the test's expectations hold under any machine
     // timezone, not just UTC — a hardcoded "...T00:00:00Z" weekStart lands on
     // the PREVIOUS local calendar day in any negative-offset zone (e.g.
     // America/Denver), which is exactly the off-by-one this suite guards
     // against. Fires are serialized to ISO (UTC-on-the-wire) to mirror what
     // the API actually sends, then bucketByDay converts back to local time.
-    const weekStart = new Date(2026, 6, 13); // local Mon 2026-07-13 00:00
+    const weekStart = new Date(2026, 6, 13); // local Mon 13 July 00:00
     const monFire = new Date(2026, 6, 13, 9, 0, 0).toISOString();
     const wedFire = new Date(2026, 6, 15, 9, 0, 0).toISOString();
     const items = [item("Daily", "eva", "alpha", [monFire, wedFire])];
@@ -36,8 +36,8 @@ describe("bucketByDay", () => {
 
 describe("bucketByDay DST regression", () => {
   // This test MUST run under Asia/Jerusalem to exercise the DST math: Israel's
-  // 2026 spring-forward is Friday 2026-03-27 (a 23h local day), MID-WEEK for the
-  // week of Monday 2026-03-23. US/EU zones transition on a Sunday (the grid's
+  // spring-forward is a Friday (a 23h local day; here Fri 27 March), MID-WEEK for the
+  // week of Monday 23 March. US/EU zones transition on a Sunday (the grid's
   // last column) so the bug is invisible there — a mid-week-transition zone is
   // required. We force TZ deterministically (below) instead of early-returning
   // on the ambient TZ: CI runs under UTC, and the old `if (tz !== 'Asia/
@@ -60,8 +60,8 @@ describe("bucketByDay DST regression", () => {
     // failure, not a silent skip. Israel is UTC+3 (IDT) after the transition.
     expect(new Date(2026, 2, 28, 0, 30, 0).toString()).toContain("GMT+0300");
 
-    const weekStart = new Date(2026, 2, 23); // local Mon 2026-03-23 00:00
-    // A fire in the FIRST local hour after midnight on Saturday 2026-03-28 — the
+    const weekStart = new Date(2026, 2, 23); // local Mon 23 March 00:00
+    // A fire in the FIRST local hour after midnight on Saturday 28 March — the
     // day AFTER Friday's lost hour. The naive fixed-ms division floors this into
     // Friday's column (Fri is only 23h, so ~119.5h / 86.4M = 4.98 -> index 4);
     // the DST-safe local-calendar-day index lands it correctly on Saturday (5).

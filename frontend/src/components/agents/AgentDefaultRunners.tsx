@@ -10,8 +10,8 @@ import { scopedPath } from '../../lib/scopedLinks'
 // The "Everything else" row's runners: the agent's OWN ordered list, or — when it
 // has none — the default order of its workspace (or the nearest one above it),
 // which it follows live. Following is the default for a new agent, so replacing a
-// cloud box is one edit to the workspace's order rather than one per agent
-// (2026-10-03). Its source rules, the rows above this one, apply either way.
+// cloud box is one edit to the workspace's order rather than one per agent.
+// Its source rules, the rows above this one, apply either way.
 export function AgentDefaultRunners({
   agentSlug,
   agentName,

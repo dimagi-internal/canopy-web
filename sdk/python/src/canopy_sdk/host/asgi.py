@@ -76,7 +76,6 @@ class DPoPGate:
             # HERE, not left to the host's own verifier to fail. That verifier does
             # refuse it on a correctly built host, but a looser one (an anonymous
             # fallback, a scope check deeper down) let it reach the tool layer —
-            # found by canopy's live probe, 2026-09-28.
             await _refuse(send, "invalid_token", "a DPoP-bound token must be presented with DPoP")
             return
         if len(authorization) != 1 or authorization[0][:5].lower() != b"dpop ":

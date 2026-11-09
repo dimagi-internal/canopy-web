@@ -5,9 +5,6 @@ Ported from ace-web `apps/workspaces`, made domain-agnostic: the ace-specific
 Workspace owns members (roles) and pending email invites; agents + runs are
 scoped to exactly one workspace (a later increment adds that FK).
 
-This is the tenancy concept — distinct from the retired co-authoring app that
-used to be `apps/workspace` (singular).
-
 FRAMEWORK tier: may FK to the auth User + framework models; must not import any
 product app. See ARCHITECTURE.md.
 """
@@ -74,8 +71,7 @@ class Workspace(models.Model):
     # Workspaces form a TREE: an org (`dimagi`) sits above its divisions
     # (`connect`, `strategy`, …). What the tree grants is deliberately narrow —
     # an OWNER or ADMIN of an ancestor is an owner or admin of every descendant
-    # (`WorkspaceMembership.INHERITS_DOWN`; admin since owner decision,
-    # Jonathan, 2026-10-16: "fix it so admin flows down"), and no other ACCESS
+    # (`WorkspaceMembership.INHERITS_DOWN`: admin flows down too), and no other ACCESS
     # flows down (a workspace vault attached at the root reaches every agent below
     # it, and grants no person anything). A parent's editors
     # and viewers get no access to a child: the org workspace takes access
@@ -93,13 +89,12 @@ class Workspace(models.Model):
         blank=True,
         related_name="children",
     )
-    # Who may REQUEST an invitation (owner decision, 2026-10-04): a person whose
+    # Who may REQUEST an invitation: a person whose
     # login email is at one of these domains sees this workspace in
     # `GET /api/workspaces/requestable` and may `POST .../access-requests`.
     # Nothing here grants membership — an admin or owner approves the request
     # (or, while `auto_approve_role` is set, it is approved at that role).
-    # Server-only: never client input (see WorkspaceCreateIn). Was
-    # `self_join_domains` ("may join") until workspaces/0012.
+    # Server-only: never client input (see WorkspaceCreateIn).
     access_request_domains = models.JSONField(
         default=list,
         blank=True,
@@ -111,8 +106,8 @@ class Workspace(models.Model):
     # so turning it off or lowering it is a settings change (a workspace owner,
     # `PUT /api/workspaces/{slug}/access-settings`). Capped at editor — an
     # automatic grant never makes an admin or owner. Off everywhere by
-    # default; `dimagi` was set to editor by workspaces/0012 while it
-    # bootstraps (Jonathan, 2026-10-04). An auto-approved request is still a
+    # default; `dimagi` is set to editor (workspaces/0012) while it
+    # bootstraps. An auto-approved request is still a
     # normal request record, and every admin and owner is still told.
     AUTO_APPROVE_CHOICES = [("", "Off"), ("viewer", "Viewer"), ("editor", "Editor")]
     auto_approve_role = models.CharField(
@@ -194,13 +189,13 @@ class WorkspaceMembership(models.Model):
     # outside this app allowed to reason about roles at all
     # (`tests/test_roles_named_only_in_workspaces.py`).
     #
-    # ADMIN (2026-10-02) sits between editor and owner: it runs the workspace
+    # ADMIN sits between editor and owner: it runs the workspace
     # day to day — reads every log, manages invites and members below itself,
     # and the integrations (mailboxes, host sites, Slack sync) — without
     # the owner's keys: the shared vault, deleting or moving the workspace, the
     # Slack app itself, and agents' credentials.
     #
-    # SUPERUSER (2026-10-30) sits above owner: everything an owner may do, in this
+    # SUPERUSER sits above owner: everything an owner may do, in this
     # workspace and every one below it, as OVERSIGHT — it is not told. The owner is
     # the accountable person and gets the mail (blocking alerts, access requests,
     # owner notices: `services.owner_user_ids`, `services.mail_recipients`); a
@@ -231,8 +226,7 @@ class WorkspaceMembership(models.Model):
     )
     # Provenance for a row an AppCredential's provisioning grant created, rather
     # than an organic human join/invite. Null for every other row. NOTHING WRITES
-    # THIS ANY MORE: the grant went with `/api/auth/token-exchange` (2026-09-22),
-    # and the column is kept because it records how existing rows came to be —
+    # THIS: there is no provisioning grant, and the column is kept because it records how existing rows came to be —
     # dropping it would erase that, which is the one thing it is for.
     # A string ref ("tokens.AppCredential") avoids a hard Python import from
     # workspaces -> tokens (tokens already imports workspaces for

@@ -137,9 +137,7 @@ export function partitionByRunnerReachability<T extends SessionRunnerLiveness>(
  * Names the WAITING ones specifically, because the "N waiting on you" count in
  * the heading is deliberately taken over the whole list while this filter hides
  * part of it. Without saying so, the panel reports somebody is waiting and then
- * shows nothing waiting — a dead end with no next move, reported on 2026-08-01
- * ("my phone knows something is pending but doesn't show any one session as
- * pending"). The count stays whole-list; this is what makes it followable. */
+ * shows nothing waiting — a dead end with no next move. The count stays whole-list; this is what makes it followable. */
 export function parkedSummary(parked: readonly SessionRunnerLiveness[]): string {
   if (parked.length === 0) return ''
   const reasons = new Set(parked.map(parkedReason))

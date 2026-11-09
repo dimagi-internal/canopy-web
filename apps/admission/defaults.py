@@ -27,7 +27,7 @@ DEFAULTS: tuple[dict, ...] = (
         "action": "reject", "notify_sender": True, "notify_owner": True, "enabled": False,
         "reason": _NO_APPROVER.format(where="a laptop session nobody is watching"),
     },
-    # The two refusals canopy always makes, as rows (canopy-web#1416, #1400 item 6).
+    # The two refusals canopy always makes, as rows.
     # A row cannot let these turns run (`AdmissionRule.is_refusal`); it decides
     # what the refusal records and who is told. Both ship with every notice OFF,
     # which is exactly what these refusals did before they were rows — turning
@@ -38,7 +38,7 @@ DEFAULTS: tuple[dict, ...] = (
         "action": "reject", "notify_sender": False, "notify_owner": False, "enabled": True,
         "reason": "the sender is blocked in this workspace, so their mail is not run.",
     },
-    # Turns no runner will take (canopy-web#1416 follow-up). Ordinary rules, not
+    # Turns no runner will take. Ordinary rules, not
     # refusals: nothing about the PERSON is wrong, so an admin may switch either
     # off and let such turns sit queued instead. Both tell the owner; neither
     # auto-replies (the sender of a chat, Slack or MCP ask reads the reason on

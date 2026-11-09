@@ -207,8 +207,8 @@ class TurnOut(Schema):
 
     @staticmethod
     def resolve_agent_slug(obj) -> str | None:
-        # None for project turns — dereferencing obj.agent unconditionally is
-        # what this used to do, and it 500s the moment agent can be NULL.
+        # None for project turns — dereferencing obj.agent unconditionally
+        # would 500 the moment agent can be NULL.
         if obj.agent_id:
             return obj.agent.slug
         # A chat SESSION turn targets a Session, not an agent — but you chat WITH an
@@ -357,9 +357,8 @@ class ClaimedTurnOut(TurnOut):
 
     # Nothing about a visitor's HOST credential is ever here (host grant
     # contract v1): the gateway (`site_call`) attaches it inside canopy-web, so
-    # it cannot leak through a runner. The canopy-minted `on_behalf_of`
-    # assertion that used to ride this response was deleted on 2026-09-26
-    # before anything consumed it.
+    # it cannot leak through a runner. No canopy-minted `on_behalf_of`
+    # assertion rides this response either.
 
     @staticmethod
     def resolve_mcp_token(obj) -> str | None:
@@ -454,7 +453,7 @@ class TranscriptAppendIn(Schema):
     verbatim (see services.append_transcript). Never re-encoded or parsed."""
 
     lines: list[str]
-    # Optional per-batch idempotency key (security review 2026-07-26, F5): if
+    # Optional per-batch idempotency key: if
     # this matches the LAST batch actually applied to the turn, the append is
     # a no-op (a retry after a lost response), not a double-append. Omit to
     # skip dedup entirely — older/simpler callers are unaffected.

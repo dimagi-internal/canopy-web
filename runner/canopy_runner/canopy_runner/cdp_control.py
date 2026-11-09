@@ -57,7 +57,7 @@ def ensure_sidecar_deps(*, timeout: int = 300) -> None:
         return
     # Resolve npm through PATH + PATHEXT first: on Windows npm is `npm.cmd`, and
     # CreateProcess does not apply PATHEXT to a bare "npm", so with Node installed it
-    # still raised "npm not found" (2026-10-15, the first real Windows runner).
+    # still raised "npm not found".
     npm = shutil.which("npm") or "npm"
     try:
         proc = subprocess.run(
@@ -87,8 +87,8 @@ def _account() -> str:
     """The macOS account this process RUNS AS — from the uid, never the environment.
 
     Not ``getpass.getuser()``: that reads LOGNAME/USER first, and a shell can carry a
-    LOGNAME that is not the account. Observed 2026-09-28 provisioning a third account
-    (haldimagi): a session launched with ``LOGNAME=root``, a smoke-test ``run --once``
+    LOGNAME that is not the account. Observed provisioning a third account:
+    a session launched with ``LOGNAME=root``, a smoke-test ``run --once``
     pinned ``root@…`` into ~/.canopy/host-id, and the pin made it permanent — so the
     fleet list showed a laptop runner owned by "root" and session ownership was keyed
     on an account that does not exist. The uid cannot disagree with the account."""
@@ -99,8 +99,8 @@ def host_id() -> str:
     """The ownership key deciding whether a live emdash session is reusable — pinned on
     first use, because it MUST be stable and macOS's hostname is not.
 
-    `socket.gethostname()` flaps between the Bonjour and DHCP names (observed
-    2026-07-15: Jonathans-MacBook-Pro.local <-> Jonathans-MBP.localdomain, three
+    `socket.gethostname()` flaps between the Bonjour and DHCP names (for example
+    Jonathans-MacBook-Pro.local <-> Jonathans-MBP.localdomain, three
     restarts each way in a day). SessionLink.reusable_by() compares this value by string
     EQUALITY, so every flap silently orphaned every link recorded under the other name:
     resolve returned reuse=false, each thread got a fresh cold session, and nothing was
@@ -159,7 +159,7 @@ def _run(command: str, args: dict, *, node: str = "node", timeout: int = 90) -> 
             [node, str(SIDECAR), command], input=json.dumps(args),
             # Node writes UTF-8 whatever the OS. Decoding with the locale's code page
             # (cp1252 on Windows) garbled every em dash in a sidecar error into "â€”"
-            # (2026-10-15, the first real Windows runner) and would raise outright on
+            # and would raise outright on
             # bytes cp1252 leaves unmapped (0x81/0x8D/0x8F/0x90/0x9D — inside many
             # emoji) in a read-term screen.
             capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -246,7 +246,7 @@ def open_and_send(task: str, text: str, *, clear_first: bool = False, port: int 
     `project` scopes the lookup to that emdash project's sidebar section. Pass it
     whenever it is known: task names are unique per project only, and without it
     the sidecar opens the FIRST row with that name — which typed eva's chat message
-    into ada's same-named session four times (turn 22662f53, 2026-10-04)."""
+    into ada's same-named session."""
     args = {"port": port, "task": task, "text": text}
     if clear_first:
         args["clearFirst"] = True

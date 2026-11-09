@@ -68,8 +68,7 @@ def _connect_session_signals():
     def _new_ask(sender, session_id, menu, new_ask=False, **kwargs):
         """To the phone in your pocket, for an agent that just STARTED waiting.
         Only a new ask: a retraction is not news, and a re-stamp of the same
-        dialog is not a new question (it buzzed a phone every ten seconds,
-        2026-09-22). A menu that renders perfectly still needs somebody to open
+        dialog is not a new question (it would buzz a phone every ten seconds). A menu that renders perfectly still needs somebody to open
         the app."""
         if not new_ask or not menu:
             return

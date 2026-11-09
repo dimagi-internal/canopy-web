@@ -17,9 +17,8 @@ class Config:
     # gets picked up. Kept low so delivery feels near-immediate; the claim + heartbeat
     # are cheap HTTP. The heavier session report is throttled separately below.
     poll_seconds: int = 5
-    # Idle back-off (#647). A runner with nothing to do used to tick at poll_seconds
-    # forever — on labs that was ~98% of all ALB traffic on an idle Saturday, with
-    # /claim answering 204 every time. After `idle_after_ticks` quiet ticks, and
+    # Idle back-off. A runner with nothing to do would otherwise tick at poll_seconds
+    # forever, each /claim answering 204. After `idle_after_ticks` quiet ticks, and
     # ONLY while the WS wake channel is connected (it delivers enqueue, stream,
     # interrupt and inbox doorbells the instant they happen), the loop waits
     # `idle_poll_seconds` instead. Any activity snaps it back. Capped well inside
@@ -39,7 +38,7 @@ class Config:
     # supervisor's session list. Silent truncation is therefore not cosmetic — keep
     # it well above any realistic open-task count.
     session_report_limit: int = 100
-    # --- Live hook events (spec 2026-07-27) -------------------------------
+    # --- Live hook events -------------------------------
     # Claude Code hooks POST every tool call to a loopback listener this runner
     # owns, giving the phone real-time tool activity that transcript tailing
     # cannot (the docs are explicit that the transcript "may lag the in-memory

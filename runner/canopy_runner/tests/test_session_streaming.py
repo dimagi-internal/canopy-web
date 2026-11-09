@@ -1,4 +1,4 @@
-"""Runner live-streaming (spec 2026-07-24): tail a desired session's transcript and
+"""Runner live-streaming: tail a desired session's transcript and
 ship each new conversational row (user + assistant + tool calls) with its COMPOSITE
 transcript ordinal (record * BLOCK_STRIDE + block).
 The resume point is the SERVER's `last_index` marker on the stream descriptor —
@@ -54,7 +54,7 @@ def _desc(last_index=None, first_index=..., transcript_id="echo"):
     `transcript_id` defaults to the stem of the transcript `_setup` writes, i.e.
     "the markers below are markers into the file this runner is about to read".
     Passing a different one is how a caller says the session was swapped out from
-    under the binding (issue #615) — see the tests at the bottom."""
+    under the binding — see the tests at the bottom."""
     return {"session_id": "s1", "session_key": "echo-1", "project": "echo",
             "last_index": last_index,
             "first_index": (None if last_index is None else 0)
@@ -77,11 +77,10 @@ def _setup(tmp_path, monkeypatch, content):
 def test_first_attach_ships_the_whole_history(tmp_path, monkeypatch):
     """The server holds nothing => ship EVERYTHING, then stream forward.
 
-    Deliberately replaces "don't replay history". Forward-only on first sight is
-    what left the server holding 983 of 6119 transcript rows across 12 live
-    sessions (labs, 2026-07-31), 8 of them at exactly zero — and it is why "Load
-    full session" had to go and ask the runner at read time, which measured 14.6s
-    against a client that waited 1.2s. The transcript is the durable source, so
+    History is replayed, not skipped. Forward-only on first sight would leave the
+    server holding only a fraction of a session's transcript rows (some at exactly
+    zero), and "Load full session" would have to ask the runner at read time, which is
+    far slower than a client waits. The transcript is the durable source, so
     first sight of a session is precisely when to capture it.
     """
     p = _setup(tmp_path, monkeypatch, _summary() + _user("old q") + _asst("old a"))
@@ -130,7 +129,7 @@ def test_attach_catches_up_from_the_server_marker(tmp_path, monkeypatch):
 
 
 def test_restart_resumes_from_the_server_marker(tmp_path, monkeypatch):
-    """The durable version of the #368 fix: attach → stream → the runner RESTARTS
+    """Attach → stream → the runner RESTARTS
     (all in-memory state gone) while the agent keeps writing → on re-attach the
     server's marker seeds the catch-up, so nothing written while away is lost and
     no ordinal is ever shipped twice."""
@@ -203,12 +202,12 @@ def test_sync_streams_survives_client_error(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Transcript identity (issue #615) — an emdash task NAME is not a conversation
+# Transcript identity — an emdash task NAME is not a conversation
 # ---------------------------------------------------------------------------
 
 
 def test_markers_from_another_transcript_are_discarded(tmp_path, monkeypatch):
-    """The failure that pinned a live session to a day-old one for 23 hours.
+    """The failure that pins a live session to a day-old one.
 
     A binding is keyed on the emdash task NAME, so closing "bednet" and opening
     another one re-points it at a NEW conversation while the old one's rows stay.

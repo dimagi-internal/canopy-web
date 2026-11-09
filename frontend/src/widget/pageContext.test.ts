@@ -7,8 +7,8 @@ import { buildPageContext, describePage } from './pageContext'
  * needs only the route layer, on ANY page, including ones nobody wrote a rule
  * for.
  *
- * The page layer that used to live here — a contributor registry merged in
- * under `onScreen` — moved to `pageState.ts`, and its tests moved with it.
+ * The page layer — a contributor registry merged in
+ * under `onScreen` — lives in `pageState.ts`, and its tests live there.
  * Every behaviour they pinned (last-wins, a superseded disposer not clearing
  * the live page, a throwing contributor costing only itself) is asserted in
  * `pageState.test.ts` against the channel that replaced it.

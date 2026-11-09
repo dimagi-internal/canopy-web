@@ -25,10 +25,9 @@ class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
         allauth answers a failed callback by rendering a page with HTTP 200, so
         the container's access log shows a plain `200 OK` and nothing else — a
         failure is indistinguishable from a success unless you already know
-        that a *successful* callback is a 302. Diagnosing the 2026-07-26 labs
-        incident meant inferring the cause from status codes and a repeated
-        `code` query param; this hook is allauth's own seam for saying it out
-        loud instead.
+        that a *successful* callback is a 302. Without this, the cause has to be
+        inferred from status codes and a repeated `code` query param; this hook is
+        allauth's own seam for saying it out loud instead.
 
         The fields are chosen to separate the failure modes that actually
         differ in the field:
@@ -67,12 +66,12 @@ class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
 
         allauth's default delegates this to the ACCOUNT adapter, and
         `CustomAccountAdapter.is_open_for_signup` answers False to close the local
-        username/password form. Left delegated, that also closed FIRST-TIME Google
-        sign-in: `pre_social_login` admitted the (allowlisted or invited) email,
-        then `process_signup` asked this gate, got False, and rendered "Sign Up
+        username/password form. Left delegated, that would also close FIRST-TIME Google
+        sign-in: `pre_social_login` admits the (allowlisted or invited) email,
+        then `process_signup` asks this gate, would get False, and render "Sign Up
         Closed" to every person without an existing `User` row — while everyone
-        who signed in before the form was closed never reached the check, so
-        nobody on the inside saw it (canopy-web#740, 2026-09-10).
+        who already has a row never reaches the check, so nobody on the inside
+        would see it.
 
         The gate that matters — domain allowlist or live workspace invite, on a
         PROVIDER-verified email — has already run in `pre_social_login` below by
@@ -85,11 +84,11 @@ class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
         admitted_outside_domain = False
         if not email_in_allowlist(email):
             # An email outside the global domain allowlist is normally a
-            # hard reject. Two structural facts used to make the domain
+            # hard reject. Two structural facts make the domain
             # check ALONE sufficient proof of control: nobody gets a Google
             # identity asserting an `@dimagi.com` address unless Dimagi
             # issued it, and the allowlisted domain was itself the reason
-            # a raw (unverified) email claim could be trusted at all.
+            # a raw (unverified) email claim can be trusted at all.
             # Bypassing the domain check for a workspace invite loses that
             # bound, so BOTH must be re-established explicitly, independent
             # of one another:
@@ -157,10 +156,9 @@ class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
         same human, instead of letting allauth's own duplicate-email path fork
         or block a second account.
 
-        Nothing mints these any more — `/api/auth/token-exchange`, which created
-        a user as a side effect of a host asserting an email, went on 2026-09-22
-        and arrival never creates an account. This path stays because the ROWS
-        it made are still in the database, and the first real Google login for
+        Nothing mints these: arrival never creates an account. This path stays
+        because the ROWS minted earlier (by a host asserting an email) are still
+        in the database, and the first real Google login for
         one of those people still has to land on their existing user rather
         than fork a second.
 

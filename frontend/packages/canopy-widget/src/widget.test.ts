@@ -159,7 +159,7 @@ describe('mounting and the three display modes', () => {
     expect(sandbox).toContain('allow-same-origin')
     expect(sandbox).not.toContain('allow-top-navigation')
     // A tab the panel opens is a normal page, not a copy of this sandbox: a sign-in
-    // redirect opened from a card rendered blank without it (2026-10-09).
+    // redirect opened from a card renders blank without it.
     expect(sandbox).toContain('allow-popups-to-escape-sandbox')
   })
 })

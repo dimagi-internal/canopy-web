@@ -16,7 +16,7 @@ function row(id: string, idx: number, role: "user" | "assistant", text: string, 
   } as Message;
 }
 
-// canopy-web#2092: A is sent and cancelled; B is sent and answered. A must read
+// A is sent and cancelled; B is sent and answered. A must read
 // between the earlier reply and B — not under B's reply — and say it was cancelled.
 const cancelledA: CancelledSend = {
   turn_id: "t-a", client_id: "ca", author: me, text: "message A", sent_at: "2026-10-25T10:01:00Z", cancelled_by: "Jon",

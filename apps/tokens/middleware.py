@@ -231,11 +231,11 @@ class BearerTokenAuthMiddleware:
         #
         # Stamped even when a SESSION already signed this request in, which is
         # not a detail: canopy embedding its own widget is same-origin, so the
-        # browser attaches canopy's session cookie to the frame's XHRs. The
-        # early return this used to take meant the `Authorization` header was
-        # never read on exactly that path — `delegated_app` stayed None and
-        # `/api/embed/agents` answered 403 to the one deployment we shipped it
-        # for. Cross-origin hosts never saw it, because no cookie rides along.
+        # browser attaches canopy's session cookie to the frame's XHRs. Returning
+        # early here would mean the `Authorization` header is never read on exactly
+        # that path — `delegated_app` would stay None and `/api/embed/agents`
+        # would answer 403. Cross-origin hosts never hit it, because no cookie
+        # rides along.
         request.delegated_app = dtok.app
         request.runner_requirements = tuple(dtok.runner_requirements or ())
         request.bound_agent_id = dtok.bound_agent_id
@@ -400,7 +400,7 @@ caller_token_routes: Callable[[str, str], bool] | None = None
 def _authenticate_caller_token(request: HttpRequest, raw: str) -> HttpResponse | None:
     """A conversation's caller token (`apps/harness/caller_tokens.py`) on REST.
 
-    canopy-web#1782: a project turn's session acts as the person who asked, and
+    A project turn's session acts as the person who asked, and
     its canopy CLI needs REST for that, not only MCP. Accepted only as the MCP
     route accepts it, so nothing new is granted:
 

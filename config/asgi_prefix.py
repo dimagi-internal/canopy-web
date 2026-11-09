@@ -15,7 +15,7 @@ nginx does, but keeps canopy's single-container model.
 
 No-op when ``prefix`` is empty (i.e. every non-labs environment).
 
-Since canopy moved to the root of canopy.dimagi.com (2026-10-05) the prefix is
+canopy lives at the root of canopy.dimagi.com, so the prefix is
 LEGACY: ``FORCE_SCRIPT_NAME`` is unset, so Django generates root URLs, and only
 the old address (labs.connect.dimagi.com/canopy) arrives prefixed. A stripped
 scope is therefore marked with ``SCOPE_KEY`` so

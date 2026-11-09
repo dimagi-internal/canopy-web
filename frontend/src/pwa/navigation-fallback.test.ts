@@ -61,7 +61,7 @@ describe('navigate-fallback ownership', () => {
       '/w/connect/marketplace.json', // the Claude Code plugin marketplace (apps/plugins)
       '/w/connect/plugins/echo/0123456789ab.zip',
       // The retired flat addresses: a server 404 that says links now carry the
-      // workspace (canopy-web#1337) — never the app shell.
+      // workspace — never the app shell.
       `/walkthrough/${UUID}`,
       `/walkthrough/${UUID}/content`,
       '/review/abc',
@@ -179,8 +179,8 @@ describe('the matcher workbox inlines into the SW', () => {
   describe('the embed shell is a server route, not an SPA route', () => {
     // The widget frame must reach Django so it gets its per-app
     // `frame-ancestors` header. If the SW ever claimed it, an iframe would be
-    // answered with the precached app shell — which is issue #345 exactly (an
-    // iframe rendering the whole SPA inside itself), now with a security
+    // answered with the precached app shell — which is the failure of an
+    // iframe rendering the whole SPA inside itself, now with a security
     // header silently missing.
     //
     // Nothing was added to either list to make this true: an unknown path goes

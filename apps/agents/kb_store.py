@@ -2,7 +2,7 @@
 copy each serving instance reads.
 
 The steward builds `kb.sqlite` (on its runner, from the served file and what changed)
-and publishes the whole file here; canopy-web never builds one (#1971). It answers the
+and publishes the whole file here; canopy-web never builds one. It answers the
 project's MCP tools from it (`apps/mcp/projects.py`). Readers never download anything:
 they call the tools.
 
@@ -83,7 +83,7 @@ def _client():
 
 def root(project) -> str:
     """Where everything the project's knowledge base stores lives: keyed by the project,
-    never by its address, so a rename (`services.promote_project`) moves nothing (#2047)."""
+    never by its address, so a rename (`services.promote_project`) moves nothing."""
     return project.storage_root or f"kb-projects/{project.pk}/"
 
 

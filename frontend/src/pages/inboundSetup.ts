@@ -22,7 +22,7 @@ export type SetupInputs = {
  * clients live on the runner, in gog's config, so canopy-web cannot know the
  * answer and has no business guessing it.
  *
- * This used to default to `connect-labs`, which is plausible, runnable, and
+ * A default of `connect-labs` would be plausible, runnable, and
  * wrong: it provisions cleanly and every `users.watch` then fails, so the
  * mailbox silently keeps polling. A placeholder makes the generated block
  * obviously incomplete instead of confidently broken.

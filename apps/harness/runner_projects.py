@@ -2,8 +2,8 @@
 
 A laptop runs an agent in the emdash project named after it, and routing drops a
 laptop that has none (`routing.cannot_serve`, `InheritedOrder.missing_repo`).
-Making that project used to be a person at that Mac cloning the repo and adding it
-in emdash by hand. Now a person asks here (`RunnerProjectRequest`); the box reads
+Making that project would otherwise take a person at that Mac cloning the repo and
+adding it in emdash by hand. Instead a person asks here (`RunnerProjectRequest`); the box reads
 the ask off its heartbeat reply (`RunnerOut.add_projects`), clones the repo under
 its own account, opens it in emdash through emdash's own Add Project dialog
 (`cdp/emdash_control.mjs add-project`), checks emdash's DB says it exists, and

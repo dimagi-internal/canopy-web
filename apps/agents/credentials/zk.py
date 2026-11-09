@@ -1,4 +1,4 @@
-"""Zero-knowledge vault for an agent (Canopy Vault Phase 2, canopy-web#1550).
+"""Zero-knowledge vault for an agent (Canopy Vault Phase 2).
 
 canopy-web stores only ciphertext and wrapped keys for an agent: its vault has
 no other mode. Every byte format is defined by `docs/vault/zk-v1/zk_v1_reference.py`
@@ -255,7 +255,7 @@ def enable(agent, *, kv: int, wraps: list, values: list, user) -> None:
     """Create the agent's first vault key, atomically: the wraps, every stored
     value re-encrypted under it, then the flag. An agent is zero-knowledge from
     birth at kv 0, "no vault key yet" (`born_zk`); this moves it to kv 1. The CLI may enable as its device before the owner has a
-    keyset; the owner's member wrap is then granted later (decision, 2026-10-16)."""
+    keyset; the owner's member wrap is then granted later (decision)."""
     with transaction.atomic():
         engine.enable(_store(agent), kv=kv, wraps=wraps, values=values, user=user,
                       already=f"{agent.slug} is already zero-knowledge")

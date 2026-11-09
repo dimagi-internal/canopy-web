@@ -19,9 +19,9 @@ from .runner_protocol import owned_runner_q
 
 def _runner_owned_q(request: HttpRequest) -> Q:
     """Ownership: the caller owns it. A runner NOBODY owns is acted on by
-    nobody — it used to be acted on by everyone (heartbeat, claim, retire, and
+    nobody (a NULL owner must not mean "acted on by everyone": heartbeat, claim, retire, and
     its plaintext credential bundle), the NULL-means-allow shape this repo has
-    removed everywhere else. Every live runner on labs has a owner (2026-10-02)."""
+    removed everywhere else."""
     return owned_runner_q(request.user)
 
 
@@ -41,23 +41,22 @@ def runner_read_q(request: HttpRequest) -> Q:
     other member listed ZERO runners and could not distinguish "no runner serves
     this repo" from "I can see nothing at all".
 
-    That cost a real afternoon (labs, 2026-07-28). `canopy project dispatch`
-    preflights by listing the fleet; under an agent identity the list came back
-    empty, it concluded BLOCKED, and it was routed around with `--no-preflight`.
-    The next dispatch went at a repo nothing declared, was accepted 201, and sat
-    QUEUED until the stuck-turn banner caught it — a guard that cries wolf gets
-    disabled, and takes the true positives with it.
+    `canopy project dispatch` preflights by listing the fleet; under an agent
+    identity an owner-only list comes back empty, the preflight concludes BLOCKED,
+    and it gets routed around with `--no-preflight`. The next dispatch then goes at a
+    repo nothing declared, is accepted 201, and sits QUEUED until the stuck-turn
+    banner catches it — a guard that cries wolf gets disabled, and takes the true
+    positives with it.
 
-    `services.unclaimable_queued_turns` had ALREADY made this exact fix at its own
-    call site, with a comment explaining that scoping candidates to
-    `owner=user` made every stuck turn read as `config` for anyone who had not
-    personally paired a runner. Same rule, second call site.
+    `services.unclaimable_queued_turns` follows the same rule at its own call site:
+    scoping candidates to `owner=user` would make every stuck turn read as `config`
+    for anyone who had not personally paired a runner.
 
     What is deliberately NOT inherited from the act-on predicate: its
     `workspace_id__isnull=True` leg. There it is backstopped by ownership, so it
     means "your own legacy runner"; here, with ownership gone, the same leg would
     mean "everyone's", which is the NULL-means-allow shape this codebase has
-    already paid to remove from six tenancy predicates (PRs #378, #421, #423). A
+    already removed from its tenancy predicates. A
     runner with no workspace has no tenant to share, so it stays visible only to
     its owner — hence the `& _runner_owned_q` on that leg alone.
 
@@ -88,7 +87,7 @@ def _runners_serving_q(slugs) -> Q:
     LIVES. The fleet's cloud boxes live in `dimagi` and serve `connect`; an
     exact match on the home workspace listed them nowhere in `connect` and
     422'd a turn pinned to one there, while claim gave the same box the same
-    turn unpinned (#1447).
+    turn unpinned.
 
     Read-only widening: everything that speaks FOR a runner still gates on
     `_runner_visibility_q` (ownership). A runner with no home workspace stays
@@ -113,7 +112,7 @@ def _runner_visibility_q(request: HttpRequest) -> Q:
     someone else's runner is acting with their memberships.
 
     `runner_read_q` is deliberately WIDER, which gives up the invariant these two
-    used to share by being one function ("never list a runner every action then
+    would share by being one function ("never list a runner every action then
     404s on"). That invariant is now carried explicitly instead of structurally,
     by `RunnerOut.can_manage`: a client can say "runner X serves this repo, ask
     its owner to declare on it" rather than discovering ownership from a bare 404

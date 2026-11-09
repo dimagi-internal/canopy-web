@@ -89,7 +89,7 @@ def test_a_dropped_required_column_is_named(tmp_path):
 
 
 def test_an_absent_1_2_column_reads_as_an_older_emdash_not_a_drift(tmp_path):
-    """The distinction #641 exists for. The fleet's boxes auto-update independently, so
+    """The fleet's boxes auto-update independently, so
     it is routinely mixed-version. Calling the older shape "drifted" reddens a healthy
     install — and a check that reddens on healthy boxes is muted before the day it is
     right. The reads adapt, so this is informational."""
@@ -243,7 +243,7 @@ def test_a_pre_1_2_emdash_skips_rather_than_reporting_a_drift(paths, tmp_path):
 
 
 # --- the startup hook ---------------------------------------------------------------------
-# emdash auto-updates, so a check nobody runs is a check that does not exist (#643).
+# emdash auto-updates, so a check nobody runs is a check that does not exist.
 
 class _Log:
     def __init__(self):
@@ -281,7 +281,7 @@ def test_startup_is_quiet_when_everything_is_intact(paths, tmp_path):
 
 
 def test_an_older_emdash_does_not_warn(paths, tmp_path):
-    """"predates 1.2" is a healthy state — the reads adapt to it (#641). Warning here
+    """"predates 1.2" is a healthy state — the reads adapt to it. Warning here
     would put a permanent, un-actionable warning in the log of every older box."""
     home, claude_home = paths
     old = _SCHEMA_12.replace(",\n      provider_session_id TEXT", "")

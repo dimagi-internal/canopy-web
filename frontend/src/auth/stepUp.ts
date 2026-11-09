@@ -1,5 +1,5 @@
 /**
- * Passkey step-up, for every call through the API client (canopy-web#1538).
+ * Passkey step-up, for every call through the API client.
  *
  * A route that needs a fresh passkey answers 403 problem+json with a top-level
  * `error: "step_up_required"` (`apps/passkeys/stepup.py`). The middleware below

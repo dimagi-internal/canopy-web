@@ -1,7 +1,6 @@
 """The box prepares each agent with canopy's `canopy agent prepare --runner` — the one
 implementation shared with laptops (canopy docs/architecture/agent-setup-lifecycle.md) — and
-bootstrap_agents.sh keeps only the BOX's own steps. Drilled on a standby (cloud-ec2-prep,
-2026-10-15): readiness matched the old bash agent for agent before the bash was removed.
+bootstrap_agents.sh keeps only the BOX's own steps.
 
 Pinned:
 - step 3 calls `canopy agent prepare --runner --slug <s>` per roster agent (with
@@ -95,9 +94,9 @@ def test_a_never_seen_agent_is_prepared_alone(cloud_runner, monkeypatch):
 
 def test_the_fleet_bootstrap_reads_as_the_box_not_with_runner_envs_pat(cloud_runner, monkeypatch,
                                                                        tmp_path):
-    """2026-10-17: runner.env's PAT was revoked. The bootstrap inherited it, its roster
-    read came back empty, and only the AGENT_SLUGS fallback was ever prepared — a new
-    agent (marshellis) never was. It gets the box's own token, as prepare_agent does."""
+    """The bootstrap must not inherit runner.env's PAT: if it is revoked the roster
+    read comes back empty and only the AGENT_SLUGS fallback is prepared, never a new
+    agent. It gets the box's own token, as prepare_agent does."""
     mod = cloud_runner
     src = tmp_path / "src"
     (src / "runner" / "ec2").mkdir(parents=True)

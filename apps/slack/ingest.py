@@ -4,13 +4,13 @@
 the bigger read: everything ever said in a channel, and optionally everything
 said in it from now on, handed to one agent as a transcript. So it keeps every
 guarantee window.py makes, and adds the one a bigger read needs — consent from
-someone who can give it, asked in the channel itself (canopy-web#1533):
+someone who can give it, asked in the channel itself:
 
 0. **Started by a person, in Slack.** On an allow-listed channel the only
    way to read is a person typing `/<agent> read-channel <ask>` in it
    (`read_channel`): canopy reads everything since the agent's last read there
    and hands it to the agent with the ask, in that command's thread. The agent
-   cannot start one from the API (owner decision, 2026-10-16).
+   cannot start one from the API.
 1. **Asked for, never assumed.** `request` creates a PENDING ingest and posts
    ONE message in the target channel naming the agent, the purpose and who
    asked, with Approve / Decline. Nothing is read before an Approve. A decline
@@ -788,7 +788,7 @@ def start_group_read(*, agent, installation, channel_id: str, user, run_id: int,
     `huddles.checkins.deliver_read`. Raises IngestError to refuse.
 
     Called ONLY from that click — never from the schedule, an agent, the API or
-    the web UI (Jonathan's rule: a channel is read only on a person's command in Slack)."""
+    the web UI (a channel is read only on a person's command in Slack)."""
     allowance = allowance_for(agent, channel_id)
     if allowance is None:
         raise IngestError(f"This channel isn't on `{agent.slug}`'s list of channels it may read — "

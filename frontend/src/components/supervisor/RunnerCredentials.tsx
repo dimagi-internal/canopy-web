@@ -62,7 +62,7 @@ export function credentialWarning(s: CredentialStatus, signedIn: boolean | null 
  *  health check ("signed in on this box as <email> — …"). The box knows who it
  *  signed in as, so the sign-in row shows THAT rather than a name someone types:
  *  a hand-typed label is how a row came to name one account while holding
- *  another (2026-10-14). Empty for an older runner that does not say. */
+ *  another. Empty for an older runner that does not say. */
 export function boxLoginAccount(detail: string | undefined): string {
   return detail?.match(/signed in on this box as (\S+@\S+)/)?.[1] ?? ''
 }

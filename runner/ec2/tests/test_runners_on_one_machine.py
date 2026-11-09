@@ -1,5 +1,4 @@
-"""The machine half of several runners on one machine (spec
-2026-10-19-runner-isolation-runners §1, §2, §5; plan Tasks 6.2 and 6.5): `Runners`
+"""The machine half of several runners on one machine: `Runners`
 parsing and naming, each runner's environment, root's setup (users, files, the IMDS
 rule), the ONE pair-by-role payload for every runner, and how the live single-runner
 box is adopted (its runner name and KMS key kept).

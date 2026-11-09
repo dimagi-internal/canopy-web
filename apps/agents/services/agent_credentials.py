@@ -9,7 +9,7 @@ from apps.workspaces import role_cap
 from ..models import Agent, AgentCredential, AgentCredentialRead
 
 #: Where a value comes from: stored here as zero-knowledge ciphertext
-#: (canopy-web#1550), the only way canopy-web stores one, or not stored at all.
+#:, the only way canopy-web stores one, or not stored at all.
 SOURCE_CANOPY_WEB_ZK = "canopy-web-zk"
 
 
@@ -69,9 +69,8 @@ def agent_credential_status(agent) -> list[dict]:
     """Every ref the agent DECLARES, against what is actually set — booleans and
     timestamps, never values.
 
-    This is the screen that would have caught the 2026-09-05 failure: ACE's
-    mailbox had been dead since May and seeing that required SSH-ing to a box and
-    running `gog auth list`. A credential that lives only in a vault and a
+    This screen shows a dead mailbox, which otherwise takes
+    SSH-ing to a box and running `gog auth list` to see. A credential that lives only in a vault and a
     keyring is a credential nobody is watching.
 
     Declared-but-unset rows appear (that is the question the page answers), and
@@ -158,7 +157,7 @@ def declare_credential_names(agent, names) -> list[str]:
 
 def record_credential_reads(agent, names, *, user=None, runner=None, via="", turn_id="",
                             license=None) -> None:
-    """One `AgentCredentialRead` row per ref handed out (canopy-web#1538)."""
+    """One `AgentCredentialRead` row per ref handed out."""
 
     AgentCredentialRead.objects.bulk_create([
         AgentCredentialRead(
@@ -187,9 +186,8 @@ def caller_runs_agent(user, agent) -> bool:
     # the automatic rotation — it stops being a fallback — but it does NOT stop
     # work being directed there: `claim_next_turn` checks `pinned_runner` first
     # and returns before any assignment lookup ("a pin trumps everything below
-    # it"). That combination IS the explicit-only runner Jonathan asked for on
-    # 2026-09-06: "I don't want it to fire ace commands as a fall back, only if
-    # we explicit trigger it."
+    # it"). That combination IS an explicit-only runner: it never fires the
+    # agent's commands as a fallback, only when explicitly triggered.
     #
     # So requiring `enabled=True` here contradicted the claim path: a pinned turn
     # would land on the box, which would then be refused the very secrets it
@@ -218,4 +216,4 @@ def caller_runs_agent(user, agent) -> bool:
     return bool(inh) and any(r.owner_id == user.pk for r in inh.runners)
 
 
-# ---- what the BOX observed (spec 2026-09-07) ---------------------------------
+# ---- what the BOX observed ---------------------------------

@@ -1,10 +1,9 @@
 """The runner's own read of the agent owner's GitHub delegation names no turn.
 
-trellis on cloud-ec2-live, 2026-11-04: GET /api/agents/trellis/readiness said "could not read
-Username" while the delegation was healthy. The box's resolve of trellis carried the confined
-turn's id; the turn was started by the runner's OWNER as an editor (`acts_as`), so canopy-web
-capped the owner on that request, made them no admin of the agent and answered 403 "does not run
-trellis". `_clone_refresh_env` took that as no delegation and fetched with no token. These tests
+If the box's resolve of an agent carries a confined turn's id, and the turn was started by the runner's OWNER as an editor (`acts_as`), canopy-web caps
+the owner on that request, makes them no admin of the agent and answers 403 "does not run
+trellis". `_clone_refresh_env` would take that as no delegation and fetch with no token (the
+readiness page then says "could not read Username" while the delegation is healthy). These tests
 run the real `_turn_values` and `_clone_refresh_env` against a stand-in canopy CLI that behaves
 that way.
 """

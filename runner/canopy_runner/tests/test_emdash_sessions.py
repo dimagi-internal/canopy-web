@@ -55,8 +55,8 @@ def test_lists_recently_archived_task_names_newest_first(tmp_path):
     "I lost sight of it", so it can never retire a row.
 
     Row-insertion order here is deliberately the OPPOSITE of the asserted result: the
-    older-archived row ('older', archived 2026-07-01) goes in BEFORE the newer-archived
-    one ('old', archived 2026-07-15, re-inserted after `_make_db`'s copy is deleted). With
+    older-archived row ('older') goes in BEFORE the newer-archived
+    one ('old', re-inserted after `_make_db`'s copy is deleted). With
     no `ORDER BY` at all, sqlite's natural (rowid) order would yield ["older", "old"] —
     the WRONG order — so the asserted ["old", "older"] can only pass via a real
     `ORDER BY t.archived_at DESC`. (An earlier version of this test inserted 'old' before

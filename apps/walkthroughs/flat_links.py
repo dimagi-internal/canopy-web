@@ -1,8 +1,7 @@
-"""Rewrite flat artifact links already STORED in canopy's data (canopy-web#1337).
+"""Rewrite flat artifact links already STORED in canopy's data.
 
-Owner decision (Jonathan, 2026-10-08): one URL per artifact, `/w/<workspace>/…`,
-and nothing forwarded. #1338 (and the storyboard/narrative/release follow-up)
-made the flat addresses a plain 404, which broke every flat link already baked
+There is one URL per artifact, `/w/<workspace>/…`, and nothing is forwarded: the
+flat addresses are a plain 404, which breaks every flat link already baked
 into data canopy serves back: a review's `request_json` (`video.url`,
 `deck_url`, a deck deep link in a decision prompt), an agent task's links, and
 the HTML decks/docs pages whose `<video src>` points at

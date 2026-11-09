@@ -468,8 +468,8 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
   //
   // allow-popups-to-escape-sandbox: a tab the panel opens (a link in a reply, an
   // MCP Apps card's ui/open-link) is a normal page, not a copy of this sandbox.
-  // Without it the new tab inherited these flags and a sign-in redirect there
-  // rendered blank (Labs' "Connect Open Chat Studio" OAuth start, 2026-10-09).
+  // Without it the new tab inherits these flags and a sign-in redirect there
+  // renders blank (e.g. an OAuth start).
   iframe.setAttribute(
     'sandbox',
     'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox',
@@ -478,8 +478,8 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
   // passkey can unlock in the frame (canopy's origin) only if the page delegates it.
   //
   // clipboard-write: a cross-origin frame is refused navigator.clipboard.writeText
-  // unless the embedding page delegates it, so the chat's Copy buttons failed
-  // silently on every host page (Labs' "Ask an agent", reported 2026-10-30).
+  // unless the embedding page delegates it, so the chat's Copy buttons fail
+  // silently on every host page.
   iframe.setAttribute('allow', 'publickey-credentials-get; clipboard-write')
   panel.appendChild(iframe)
   root.appendChild(panel)

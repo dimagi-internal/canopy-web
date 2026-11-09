@@ -245,8 +245,8 @@ def set_workspace_parent(request: HttpRequest, slug: str, payload: WorkspacePare
     ws = m.workspace
     if ws.parent_id and not payload.parent:
         # Detaching to a root ends every inherited ownership of it. Done by
-        # someone who only owned it by inheritance, it used to save and then
-        # 500 (they were no longer a member to describe it to) — and it left
+        # someone who only owned it by inheritance, it would save and then
+        # 500 (they are no longer a member to describe it to) — and leave
         # a workspace nobody owned. So: only a DIRECT owner may detach, and
         # never into a workspace with no direct owner left to run it.
         if getattr(m, "inherited", False):
@@ -620,7 +620,7 @@ def list_invites(request: HttpRequest, slug: str) -> list[InviteOut]:
     m = _membership_or_404(request.user, slug)
     # A pending invite's token IS the invite — the link that admits someone at
     # its role, owner included — and handing it out is an owner's act, like
-    # creating it. Every member used to receive every token, so a viewer could
+    # creating it. Not every member may receive every token: a viewer could
     # forward an owner-level link the owners never meant to send. A viewer
     # still sees the list (the page shows it to everyone), just not the links.
     return [

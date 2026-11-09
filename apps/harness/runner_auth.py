@@ -59,7 +59,7 @@ _RULES: tuple[tuple[frozenset[str], str], ...] = (
 )
 
 
-#: What a PRIVATE runner's token reaches beyond the protocol (canopy-web#1705): its
+#: What a PRIVATE runner's token reaches beyond the protocol: its
 #: owner's own Claude Code sessions on that machine sign in with the box's device key
 #: instead of a PAT, so they open, renew and close their direct turns and read their
 #: agent's secrets under the owner's license (credentials/resolve, above). Only on a

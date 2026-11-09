@@ -168,7 +168,7 @@ def record_resource(app_id: int, uri: str, *, html: str, meta: dict) -> str:
     (§Security 3, "Generate hash/signature for resources"). Returns the sha256.
 
     The cache exists for one reader: a viewer with no live grant, who still gets
-    the View read-only (owner decision 4) — the View itself is the host's code,
+    the View read-only — the View itself is the host's code,
     not the viewer's data, so showing a copy fetched under someone else's grant
     leaks nothing that viewer could not already see in the transcript.
     """
@@ -351,7 +351,7 @@ def decode_csp(value: str) -> dict:
 def sandbox_src(csp: dict) -> str:
     """Where the host frames the proxy for a View with this (effective) CSP.
 
-    `MCP_APPS_SANDBOX_URL` (a canopy sub-path by default, owner decision 1) is a
+    `MCP_APPS_SANDBOX_URL` (a canopy sub-path by default) is a
     setting so moving the proxy to a dedicated origin later is config only.
     """
     from django.conf import settings

@@ -1,9 +1,8 @@
 """Which emdash project owns the session a human acted on from the phone?
 
-emdash task names are unique per PROJECT, not per emdash. Turn 22662f53
-(2026-10-04) showed what driving a session by name alone costs: eva's chat
-message was typed into ada's session, because both were called "editing" and
-the sidecar took the first row with that label. A DELETE aimed the same way
+emdash task names are unique per PROJECT, not per emdash. Driving a session by name alone
+has a cost: one agent's chat message can be typed into another's session, because
+both were called "editing" and the sidecar took the first row with that label. A DELETE aimed the same way
 removes another agent's session outright, and an ANSWER presses keys in it.
 
 So every phone-triggered action is aimed by (project, task). The server sends

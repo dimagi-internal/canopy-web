@@ -58,7 +58,7 @@ ALLOWED_EVENT_KINDS = {
     "heartbeat",
     "cancel_requested",
     # A caller's turn's `For <Agent>'s owner:` line, lifted into result_note
-    # (owner_ask.py, canopy-web#1416).
+    # (owner_ask.py).
     "owner_ask",
     # A runner's record of what it did with the turn — claimed, started, adopted
     # after a restart, lease renewal failing, exited, reported, lost — one per
@@ -73,8 +73,7 @@ ALLOWED_EVENT_KINDS = {
 # unbounded body straight into a gzip+DB write under the turn row lock.
 #
 # Deliberately well under settings.DATA_UPLOAD_MAX_MEMORY_SIZE (pinned
-# explicitly to 2.5MB, config/settings/base.py — security review 2026-07-26,
-# F8) rather than close to it: a request whose JSON-encoded body crosses THAT
+# explicitly to 2.5MB, config/settings/base.py) rather than close to it: a request whose JSON-encoded body crosses THAT
 # ceiling never reaches this view at all — request.body raises
 # RequestDataTooBig, a 413, before Ninja even parses the payload.
 # Keeping this cap well below it means an oversized batch always surfaces as
@@ -87,8 +86,8 @@ def runner_admin_or_404(request: HttpRequest, runner_id: uuid.UUID) -> Runner:
     it, and deliberately not the same predicate.
 
     Reached from the operator-facing routes only: setting credentials, the
-    browser sign-in, and STARTING a readiness drill (owner decision 2026-10-04:
-    "let admins of a runner also run readiness checks"). Everything that speaks
+    browser sign-in, and STARTING a readiness drill (admins of a runner may also run readiness
+    checks). Everything that speaks
     FOR the runner — heartbeat, claim, executing a drill's turns, the runner's
     own credential fetch and its half of a mint — keeps `runner_or_404`,
     because those act with the owner's memberships.
@@ -159,10 +158,10 @@ def reporting_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     write access to the chat on a session turn). Same uniform 404 otherwise.
     """
     # The box that CLAIMED the turn reports on it, even when its owner cannot READ
-    # it (canopy-web#1210). The claim is tenant- and routing-gated already, and it
-    # handed the box the prompt; refusing the report then only stranded the turn
-    # CLAIMED until its lease ran out — observed when a runner paired by one person
-    # claimed a private chat another member created. Not for a host site
+    # it The claim is tenant- and routing-gated already, and it
+    # handed the box the prompt; refusing the report then only strands the turn
+    # CLAIMED until its lease runs out (a runner paired by one person can claim a
+    # private chat another member created). Not for a host site
     # acting for a visitor: a site never reports as a runner.
     from apps.embedding import delegation
 
@@ -220,7 +219,7 @@ def _tenant_turn_or_404(request: HttpRequest, turn_id: uuid.UUID, *,
 
     Every rejection here raises the SAME uniform `HttpError(404, "turn not
     found")` — including the agent-turn branch, which delegates to
-    `agent_for_read` (security review 2026-07-26, F4): that helper's own 404
+    `agent_for_read`: that helper's own 404
     names the agent (`"agent 'ada' not found"`), and the shared error handler
     copies an HttpError's message into both `title` and `detail`. Left
     un-caught, a caller holding a stale/guessed turn UUID would learn not just
@@ -267,12 +266,10 @@ def _tenant_turn_or_404(request: HttpRequest, turn_id: uuid.UUID, *,
     # Project turn: gate on its own workspace, mirroring agent_for_read's checks.
     if ws and turn.workspace_id != ws:
         raise HttpError(404, "turn not found")  # wrong tenant
-    # Fails CLOSED on a workspace-less project turn (security review
-    # 2026-07-26, adjacent to F1): `enqueue_turn` always assigns a real
-    # workspace to a project turn, so this is practically unreachable today —
-    # but matches the invariant F1 established for the agent-turn branch
-    # above, rather than leaving one fail-open gate three lines below a
-    # fail-closed one.
+    # Fails CLOSED on a workspace-less project turn: `enqueue_turn` always
+    # assigns a real workspace to a project turn, so this is practically
+    # unreachable — but it matches the invariant of the agent-turn branch above,
+    # rather than leaving one fail-open gate three lines below a fail-closed one.
     if not turn.workspace_id or not wsvc.is_member(request.user, turn.workspace_id):
         raise HttpError(404, "turn not found")
     return turn
@@ -321,27 +318,22 @@ def _runner_schedule_qs(runner: Runner):
     claim_next_turn DERIVES FROM THE SAME TWO FUNCTIONS this does —
     services.runner_tenant_slugs and services.agent_tenant_q — so the two rules
     AGREE BY CONSTRUCTION: every schedule this runner may fire produces a turn
-    that same runner may claim. They are no longer two hand-written predicates
-    that happen to match; there is one predicate with two callers.
+    that same runner may claim. There is one predicate with two callers, not two
+    hand-written predicates that happen to match.
 
-    That matters because they briefly diverged, and the divergence was an
-    outage, not a nicety. claim_next_turn shipped scoped to the Runner.workspace
-    FK while this predicate derived from owner — so a runner homed to
-    `alpha` whose owner also belongs to `beta` could SEE and FIRE beta's
-    schedules here but could not CLAIM the resulting turns, leaving them QUEUED
-    forever. Because one laptop runner serves a fleet that deliberately spans
-    workspaces, that stopped 4 of 5 production agents from executing at all. The
-    resolution was to converge the CLAIM onto owner (this predicate's rule),
-    NOT to narrow this one onto the FK: the FK records where a runner lives, not
-    who it may work for. tests/test_claim_schedule_parity.py fails if the two
+    That matters because a divergence is an outage, not a nicety: if the claim
+    were scoped to the Runner.workspace FK while this predicate derived from
+    owner, a runner homed to `alpha` whose owner also belongs to `beta` could SEE
+    and FIRE beta's schedules here but could not CLAIM the resulting turns,
+    leaving them QUEUED forever. One laptop runner serves a fleet that
+    deliberately spans workspaces, so both derive from owner, NOT from the FK:
+    the FK records where a runner lives, not who it may work for. tests/test_claim_schedule_parity.py fails if the two
     ever disagree again.
 
     NULL owner fails closed inside runner_tenant_slugs (empty slug set →
     `__in=set()` matches nothing), which is stricter than _runner_visibility_q's
     legacy-ungated allowance — an orphaned runner can be operated, but can never
-    sync or fire a schedule. That used to be a separate `.none()` branch here; it
-    was folded into the shared helper so there is one mechanism, not two that
-    can drift.
+    sync or fire a schedule. There is one mechanism, in the shared helper, not two that can drift.
     """
     # Cron triggers only: an inbound_mail trigger has no cron for a runner to evaluate.
     qs = AgentSchedule.objects.filter(enabled=True, kind=AgentSchedule.CRON).select_related("agent")
@@ -403,7 +395,7 @@ def fire_schedule_route(
 # --------------------------------------------------------------------------------------
 # Readiness drills — a hard-pinned, read-only doctor turn per (runner, agent), resolved
 # by the drilled agent's own report callback or by the turn failing (see
-# services.start_drill / finish_turn). Spec 2026-07-24-directed-runner-routing, Task 7.
+# services.start_drill / finish_turn).
 # --------------------------------------------------------------------------------------
 
 
@@ -478,9 +470,9 @@ def report_drill(request: HttpRequest, drill_id: int, payload: DrillReportIn, t:
     # Two callers, both legitimate. An agent with its own canopy login
     # (`Agent.user`, per-agent PATs) reports AS ITSELF and correctly refuses to
     # borrow the operator's token — gating on the runner owner alone 404'd that
-    # report and stranded the drill (cloud-ec2-1, 2026-09-22). The owner leg stays
+    # report and stranded the drill. The owner leg stays
     # for agents with no login, which run on the owner's token. Anyone else gets
-    # the same 404 as before, so a drill's existence never leaks.
+    # the same 404, so a drill's existence never leaks.
     drill = get_object_or_404(
         RunnerDrill.objects.select_related("runner", "agent"), pk=drill_id
     )

@@ -243,17 +243,17 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
         # the session's terminal; the server never touches a terminal itself.
         # Relayed field by field, so anything added to the published frame has to
         # be added HERE too or it is silently dropped — which is exactly what
-        # happened to both fields below on 2026-08-12:
+        # would happen to both fields below:
         #
-        #   `selections` missing -> the runner fell back to the single-key
+        #   `selections` missing -> the runner falls back to the single-key
         #   `option` path and pressed a NUMBER at a multi-select, toggling one
         #   checkbox and answering nothing.
-        #   `answer_id` missing  -> the runner's retire call carried an empty id,
-        #   the server's id match refused it, the answer stayed queued and the
-        #   poll tick pressed it a second time.
+        #   `answer_id` missing  -> the runner's retire call carries an empty id,
+        #   the server's id match refuses it, the answer stays queued and the
+        #   poll tick presses it a second time.
         #
-        # Both were invisible to the unit tests because those built the frame by
-        # hand. `test_realtime_menu_answer.py` now asserts this relay against
+        # Unit tests that build the frame by hand would not see either, so
+        # `test_realtime_menu_answer.py` asserts this relay against
         # what `answer_menu` actually publishes.
         await self.send_json({
             "type": "menu_answer",
@@ -351,9 +351,8 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
         if turn is None:
             return None
         # THE claim payload — the one the REST route returns, credentials and
-        # caller envelope included. This socket used to build its own subset,
-        # and a confined turn arrived without the envelope the runner confines
-        # by (apps/harness/claim_payload.py).
+        # caller envelope included. A subset built here would let a confined turn arrive without the
+        # envelope the runner confines by (apps/harness/claim_payload.py).
         from apps.harness.claim_payload import claim_payload
 
         return claim_payload(turn)

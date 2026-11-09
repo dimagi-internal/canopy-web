@@ -106,7 +106,7 @@ export function CanopyWidget() {
   searchRef.current = location.search
   const handleRef = useRef<WidgetHandle | null>(null)
   // canopy is a host like any other, and its pages have a light/dark toggle.
-  // The panel used to be dark regardless, so switching canopy to light left a
+  // The panel follows the theme, so switching canopy to light does not leave a
   // dark assistant floating on it. Read through a ref inside the mount effect,
   // which deliberately runs once; the effect below follows later toggles.
   const { theme } = useTheme()
@@ -165,10 +165,10 @@ export function CanopyWidget() {
       // The context block that rides the FIRST message carries the page STATE
       // too, not just the route.
       //
-      // Found live on 2026-09-16: the agent replied "the canopy-web MCP server
-      // is still connecting, its tools aren't loaded" and could not call
-      // `current_page` — so all it had was `{surface, path}`. It refused to
-      // guess, correctly, and was blind to the twenty rows on screen.
+      // Without it the agent can reply "the canopy-web MCP server is still
+      // connecting, its tools aren't loaded" and be unable to call
+      // `current_page` — so all it has is `{surface, path}`. It refuses to
+      // guess, correctly, and is blind to the twenty rows on screen.
       //
       // MCP servers connect asynchronously, and the widget creates a FRESH
       // session per conversation — so the runner spawns a new process and the

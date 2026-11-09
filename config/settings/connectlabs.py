@@ -1,9 +1,8 @@
 """Django settings for canopy-web deployed to the connect-labs AWS environment.
 
-canopy-web is served at the ROOT of https://canopy.dimagi.com (since 2026-10-05),
-through the shared labs ALB (a host-header rule). It was the third tenant on
-labs.connect.dimagi.com, at /canopy — connect-labs at the root, ace-web at /ace —
-and that old address still reaches this container: machine traffic (API, OAuth,
+canopy-web is served at the ROOT of https://canopy.dimagi.com,
+through the shared labs ALB (a host-header rule). The old address
+labs.connect.dimagi.com/canopy still reaches this container: machine traffic (API, OAuth,
 well-known, health; WebSockets) keeps working there, and browser pages are
 redirected to the new address (apps/common/legacy_prefix.py).
 
@@ -40,10 +39,9 @@ FORCE_SCRIPT_NAME = env("FORCE_SCRIPT_NAME", default="") or None
 CANOPY_PUBLIC_BASE_URL = env("CANOPY_PUBLIC_BASE_URL", default="https://canopy.dimagi.com")
 
 # canopy's protocol identity — its CIMD client_id, the audience a site signs
-# visitor assertions for, its own issuer and MCP resource. It stayed on the old
-# address after the move until ace-web and connect-labs were re-pointed in the
-# same change (2026-10-06); they pin CANOPY_CLIENT_ID and the audience, so moving
-# it again is a coordinated change with every host site.
+# visitor assertions for, its own issuer and MCP resource. ace-web and
+# connect-labs pin CANOPY_CLIENT_ID and the audience, so moving
+# it is a coordinated change with every host site.
 CANOPY_IDENTITY_BASE_URL = env("CANOPY_IDENTITY_BASE_URL", default="https://canopy.dimagi.com")
 
 # Addresses canopy has left. Machine traffic there is still served

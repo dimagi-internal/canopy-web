@@ -107,15 +107,14 @@ export type ParkedGroup = {
  * The parked sessions grouped by the runner holding them, busiest first.
  *
  * "Parked" is never "idle on a paused box": the server only parks a session it
- * has evidence is held up (a dialog, or a queued turn). Four idle emdash tasks
- * on a deliberately paused laptop were once banner-ed as "4 sessions are
- * waiting" (2026-10-12) — the banner says what is actually waiting instead.
+ * has evidence is held up (a dialog, or a queued turn). Idle emdash tasks
+ * on a deliberately paused laptop are not counted as "4 sessions are
+ * waiting" — the banner says what is actually waiting.
  *
  * A bare count ("+ 7 more waiting on a paused or offline runner") reads fine
  * when one box of many is down, and wrong when the box that is down is the
- * viewer's own laptop: on 2026-10-04 every one of a person's sessions dropped
- * off the feed because emdash had been relaunched without CDP, and the only
- * clue was that link. Naming the runner and its own note — `paused_note` for a
+ * viewer's own laptop: if emdash is relaunched without CDP, every one of a
+ * person's sessions drops off the feed and the only clue is that link. Naming the runner and its own note — `paused_note` for a
  * pause, else `status_note`, else `ready_note` (where "emdash CDP unreachable"
  * lands) — says what to go and fix.
  */

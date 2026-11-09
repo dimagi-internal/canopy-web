@@ -93,7 +93,7 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         raw = (self.scope.get("query_string") or b"").decode("utf-8", "replace")
         self.agui_mode = f"protocol={AGUI_PROTOCOL}" in raw
         # The evidence for deleting the native wire. canopy's own clients ask
-        # for AG-UI as of 2026-09-18, but a tab open across that deploy, an
+        # for AG-UI, but a tab open across a deploy, an
         # un-upgraded ace-web, or any `canopy-ui` consumer below 0.9 still asks
         # for native. When this line has said `native` for nobody over a full
         # week, the native branch of `send_json` has no callers and can go —
@@ -281,7 +281,7 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
             # Re-asked on EVERY acting frame, never trusted from connect: a
             # member removed or demoted mid-session kept sending until they
             # closed the tab. `chat.stop` is an edit too — REST `POST /stop`
-            # requires write, and the socket used to handle it before this check.
+            # requires write, and the socket applies the same check.
             self.role = await database_sync_to_async(access.role_for)(self.user, self.session)
             if self.role is None:
                 await self._error("forbidden", "You no longer have access to this session.")
@@ -296,7 +296,7 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         if action == "draft.update":
             await self._draft_update(data)
         elif action == "draft.take_over":
-            # Nothing to take: everyone has their own draft (spec 2026-09-26).
+            # Nothing to take: everyone has their own draft.
             # Still accepted because canopy-ui <= 0.12 sends it.
             return
         elif action == "draft.discard":
@@ -317,10 +317,10 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
 
     async def _draft_update(self, data):
         try:
-            # `visibility` is deliberately NOT read here any more. It used to
-            # ride this version-guarded frame, which meant a stale keystroke
+            # `visibility` is deliberately NOT read here. Riding
+            # this version-guarded frame, a stale keystroke
             # echo could race a mode change and downgrade it server-side
-            # (canopy-ui#… "hidden->live->hidden" regression) — the version
+            # ("hidden->live->hidden") — the version
             # check that protects the BODY has nothing to do with a choice
             # the user makes independently of typing. See `draft.set_visibility`.
             # An in-flight 0.14 client that still sends the field is simply
@@ -377,7 +377,7 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         # them the send depended on an earlier `draft.update` frame having
         # landed, and a phone resuming from the background can hold a socket
         # that reads OPEN but is dead: the frames vanished and the prompt was
-        # lost (2026-09-23). With them the client can resend over HTTP under the
+        # lost. With them the client can resend over HTTP under the
         # SAME client_id, and the turn's idempotency key (built from it) makes
         # the retry a no-op if this frame did arrive after all. A frame without
         # them (an older client) commits the server draft, as before.
@@ -424,7 +424,7 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         if route == "session":
             # NOT `chat.stream_cancelled`. All that has happened is that a frame was
             # published to the runner; nothing has pressed Escape yet, and it may
-            # well fail (#649 exists because it often did). Claiming "cancelled"
+            # well fail (a stop often does fail). Claiming "cancelled"
             # here would be the same false green that bug was about, moved onto the
             # new path. Say what is actually true — we asked — and let the runner
             # report whether it landed (`stop:stopped` / `stop:failed`).
@@ -485,7 +485,7 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         THEN THE SESSION. If no turn moved, the work is not turn-shaped — which is
         the normal state of an agent, board or scheduled turn, because those are
         fire-and-continue and go terminal seconds after the prompt is delivered
-        (runner execute.py). Stop used to end here, find nothing, and return False:
+        (runner execute.py). A stop must not end here, find nothing, and return False:
         no interrupt, no broadcast, not even a flicker, while the agent worked on
         for another ten minutes. They are all sessions, so stop them as sessions.
 
@@ -495,7 +495,7 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
 
         The logic lives in `control.stop_session`, shared with REST/MCP
         `POST /canopy-sessions/{id}/stop` so the two can never disagree again
-        (canopy-web#1226: REST stopped at the turns and did nothing to an agent).
+        (REST must not stop at the turns and do nothing to an agent).
         """
         return chat_control.stop_session(
             self.session, by=chat_control.person_name((getattr(self, "scope", None) or {}).get("user")))
@@ -758,7 +758,7 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         """The joining user as the same DTO the snapshot uses, so a client can
         append it to `participants` without a second shape to reconcile.
 
-        Read, never written: this used to `ensure_participant`, which made
+        Read, never written: `ensure_participant` would make
         merely connecting a durable access grant."""
         row = session.participants.select_related("user").filter(user=user).first()
         if row is not None:

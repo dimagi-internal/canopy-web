@@ -2,9 +2,8 @@
 
 A `SessionParticipant` row is an EXPLICIT grant: the creator (as owner, in
 `create_session`) and a member who joins a Slack thread they can already read
-(`apps.slack.services`). Opening a chat never creates one — it used to, which
-let any co-tenant turn a private conversation into a durable grant by
-connecting a socket to its id. `tests/test_session_acl.py` pins the callers.
+(`apps.slack.services`). Opening a chat never creates one: that would let any co-tenant turn a private
+conversation into a durable grant by connecting a socket to its id. `tests/test_session_acl.py` pins the callers.
 
 Never implicitly into a SENSITIVE conversation (`harness.sensitivity`): being one
 of its people is what `reads_content` admits, so a person joins one only by its

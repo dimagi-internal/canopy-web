@@ -115,9 +115,9 @@ def email_invite(*, invite: WorkspaceInvite) -> str:
 def notify_root_created(ws: Workspace, by_user) -> dict:
     """A new TOP-LEVEL workspace was created by someone an organisation counts as
     its own: email that organisation's root owners, so a team does not quietly
-    end up outside its org's tree (Jonathan, 2026-10-16: two divisions' agents
-    turned out to live in root workspaces nobody meant to create, invisible to
-    the fleet conductor, who is an admin of the dimagi tree only).
+    end up outside its org's tree (agents in a root workspace nobody meant to
+    create are invisible to the fleet conductor, who is an admin of the dimagi
+    tree only).
 
     "Its own" = the creator's email domain is on a root workspace's
     `access_request_domains` (dimagi: dimagi.com, dimagi-associate.com). The

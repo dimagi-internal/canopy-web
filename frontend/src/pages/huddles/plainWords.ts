@@ -347,7 +347,7 @@ export function gistOf(s: string, max = 110): string {
 }
 
 /** The first sentence of a paragraph, for "Why: …" and a quoted note. */
-/** A parenthetical that only carries refs ("(ace#2735, PRs #2737/#2738)"). */
+/** A parenthetical that only carries issue or PR refs. */
 const REF_PAREN = /\s*\([^()]*(?:#\d|\b[TP]-?\d|\bPRs?\b|\d{4}-\d{2}-\d{2})[^()]*\)/g
 
 export function firstSentence(s: string, max = 240, min = 50): string {

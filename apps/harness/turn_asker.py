@@ -7,8 +7,7 @@ judges the decisions below on their access. Whatever turn the agent starts from 
 (a dispatch, a send into another session, a new session) is stamped with them
 (`origin_ref["on_behalf_of"]`, `services.enqueue_turn`), and the next agent's envelope
 names them (`initiator.describe`). Nothing depends on an agent remembering to say it:
-2026-10-26, ada re-ran ACE turns Jonathan had asked for, and ACE was told only "ada,
-admin".
+otherwise the next agent would be told only "ada, admin" for work a person asked for.
 
 The person is found only when ALL of these hold (`_check`); otherwise the request is the
 agent acting for itself, exactly as before:

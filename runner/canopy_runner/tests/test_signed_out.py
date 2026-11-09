@@ -1,8 +1,8 @@
 """A laptop whose Claude login is gone stops claiming and says why.
 
-2026-10-22: acedimagi-mbp-cdp had no Claude sign-in. Each message it took
-"answered" with `Not logged in · Please run /login`, and since the turn finishes
-at delivery the box stayed ready and kept claiming. Now the hook listener reads
+A box with no Claude sign-in would "answer" each message it takes with
+`Not logged in · Please run /login`, and since the turn finishes
+at delivery the box would stay ready and keep claiming. So the hook listener reads
 the CLI's own API-error record, the box marks itself signed out, raises the
 `claude_auth_required` alert once, and clears the mark the moment Claude answers
 anything on the box again.

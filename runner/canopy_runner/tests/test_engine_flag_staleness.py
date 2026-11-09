@@ -27,7 +27,7 @@ def _touch(path, when):
 
 
 def _bump_mtime(path, when):
-    """What was actually happening on 2026-10-05: the mtime moves, the file does not."""
+    """What actually happens: the mtime moves, the file does not."""
     os.utime(path, (when, when))
 
 
@@ -171,7 +171,7 @@ def test_activity_bytes_sums_parent_and_subagents(tmp_path):
 
 
 def test_an_mtime_bump_without_new_records_is_not_writing(tmp_path, monkeypatch):
-    """The 2026-10-05 false badge: `lost-message` was idle (emdash: awaiting-input,
+    """The false badge: a session was idle (emdash: awaiting-input,
     newest record 17:18) but its file's mtime moved to 18:21 with the size
     unchanged, and the runner reported it running."""
     sessions_mod._ENGINE_FLAG.clear()
@@ -211,8 +211,7 @@ def _interrupted_transcript(path):
 def test_a_stopped_session_is_not_reported_working(tmp_path, monkeypatch):
     """Escape ends the turn with no `Stop` hook, so emdash's flag stays "working"
     until the next prompt, and the chat says "Thinking… stopping…" over a stopped
-    agent. Measured 2026-11-03 on `canopy`: marker at 15:31:14, flag still set
-    minutes later."""
+    agent. The flag is still set minutes after the stop marker."""
     sessions_mod._ENGINE_FLAG.clear()
     parent = tmp_path / "sess.jsonl"
     _interrupted_transcript(parent)

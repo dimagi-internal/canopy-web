@@ -2,10 +2,9 @@
 
 The cloud runner (`runner/ec2/cloud_runner.py`) is one stdlib-only file seeded
 whole onto a box, so it cannot import `execute._thread_key`; it carries its own
-`_agent_thread_key`. This pins the two together. When they disagreed (until
-2026-10-29), one Hal alarm thread re-dispatched four times kept one session on
-the laptop (keyed by its Gmail thread) and opened four cold ones on
-cloud-ec2-live (keyed `hal:<turn id>`).
+`_agent_thread_key`. This pins the two together. If they disagreed, one Hal alarm thread re-dispatched four times would keep one session on
+the laptop (keyed by its Gmail thread) and open four cold ones on
+a cloud box (keyed `hal:<turn id>`).
 """
 from __future__ import annotations
 

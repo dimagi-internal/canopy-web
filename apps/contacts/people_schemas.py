@@ -1,4 +1,4 @@
-"""Pydantic schemas for /api/people — what agents know about a person (canopy#804)."""
+"""Pydantic schemas for /api/people — what agents know about a person."""
 from __future__ import annotations
 
 import datetime as dt

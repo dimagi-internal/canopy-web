@@ -1,4 +1,4 @@
-"""The cloud runner's IAM-role device proof (Canopy Vault Phase 1b, canopy-web#1549).
+"""The cloud runner's IAM-role device proof (Canopy Vault Phase 1b).
 
 An EC2 box proves its instance role by SigV4-signing — not sending — an
 sts:GetCallerIdentity and sending it base64'd in X-Canopy-Aws-Proof. The signer is the
@@ -30,7 +30,7 @@ def _no_imds(monkeypatch, tmp_path):
 @pytest.fixture(autouse=True)
 def _no_canopy_cli(cloud_runner, monkeypatch):
     """No test may run this machine's real canopy CLI to make an ECDH key; the default is
-    an older canopy that cannot (the enrollment is then exactly the pre-#1550 one).
+    an older canopy that cannot (the enrollment then carries no ECDH key).
     Returns the real function for the test that drives it with a faked subprocess."""
     real = cloud_runner._ecdh_public_key
     monkeypatch.setattr(cloud_runner, "_ecdh_public_key", lambda: {})
@@ -201,7 +201,7 @@ def test_enrollment_survives_an_older_canopy_web(cloud_runner, monkeypatch):
     assert cloud_runner.enroll_aws_device_key("r-1") == {"error": "HTTP 422"}
 
 
-# ── the zero-knowledge vault's ECDH key (canopy-web#1550) ─────────────────────
+# ── the zero-knowledge vault's ECDH key ─────────────────────
 
 ECDH_JWK = {"kty": "EC", "crv": "P-256", "x": "a_hdX-hFmLEMphmewJzNfTXc1xlf3R3Hc3oMZwBu8lE",
             "y": "uVLyXuwd7tH8oZGDiZBGY1fTFK37fpdguNmvyPOala0"}
@@ -285,7 +285,7 @@ def test_a_zk_agent_without_a_wrap_is_a_named_health_failure(cloud_runner, monke
 def test_a_probe_with_no_proof_to_attach_is_not_sent(cloud_runner, monkeypatch):
     # A runner sharing its machine cannot sign as the box. Unsigned, the probe learns
     # nothing and, for a device-bound agent, emails its owner a "no device proof"
-    # alert in their name (trellis on cloud-ec2-live, 2026-10-30).
+    # alert in their name.
     calls = []
     monkeypatch.setattr(cloud_runner, "_api", lambda *a, **k: calls.append(a) or (200, {}))
     monkeypatch.setattr(cloud_runner, "_aws_proof_headers", lambda url: {})

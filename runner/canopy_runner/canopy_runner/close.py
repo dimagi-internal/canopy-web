@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 class CloseRefused(Exception):
     """The session could not be placed in exactly one emdash project, so it was
     NOT deleted. A delete is irreversible; by name alone it can take another
-    agent's same-named session (ada's and eva's "editing", 2026-10-04).
+    agent's same-named session (ada's and eva's "editing").
 
     `reason` is session_target's word for why (ambiguous / unknown / …)."""
 
@@ -99,7 +99,7 @@ _warned: set[str] = set()
 
 # Closes under way, by task name. A close from the web arrives twice — the
 # control frame (wake-listener thread) and `close_requested` on the next poll
-# tick (streams.drain_closes) — and the second used to run alongside the first:
+# tick (streams.drain_closes) — and the second must not run alongside the first:
 # its sidebar search missed the row the first was deleting while emdash's DB
 # still held it, so it reported CloseFailed for a close that then succeeded.
 _IN_FLIGHT: set[str] = set()
@@ -178,7 +178,7 @@ def _close_session(session_key: str, *, project: str, cdp_port: int,
     action = str(result.get("action") or "deleted")
     if action == "absent" and target.project in (emdash.task_projects(emdash_db or "", session_key) or []):
         # The sidebar could not find a row emdash's own DB still holds (a collapsed
-        # project hid it, 2026-10-12). That is a close that did not happen, not one
+        # project hid it). That is a close that did not happen, not one
         # that already had: reporting it as gone archives the row for ~10s until the
         # next report revives it, and tells the human it closed.
         raise CloseFailed(f"{session_key}: emdash still has this task under {target.project!r} "

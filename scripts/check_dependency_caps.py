@@ -17,7 +17,7 @@ plus `pytest<9` and `pytest-asyncio<1.0`, found the same way.
 the latest stable release and fails if the cap excludes it. A cap you mean to
 keep is marked on the line(s) directly above the requirement:
 
-    # cap-hold: 2.0 drops the sync client we still use (see #1234)
+    # cap-hold: 2.0 drops the sync client we still use
     "somepkg>=1.4,<2.0",
 
 A hold must carry a reason, and a hold that no longer holds anything back — the

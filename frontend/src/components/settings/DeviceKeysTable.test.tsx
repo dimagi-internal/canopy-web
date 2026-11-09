@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 //
-// Runner device keys (Canopy Vault, canopy-web#1538): a pending key is approved
+// Runner device keys (Canopy Vault): a pending key is approved
 // from here, an active one revoked, and only by someone who manages its runner.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'

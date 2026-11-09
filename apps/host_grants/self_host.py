@@ -99,8 +99,7 @@ SCOPE_TOOLS: dict[str, tuple[str, ...]] = {
 }
 
 #: The scopes that may write, each one decided on purpose. `sessions:close`:
-#: owner decision 2026-10-16 (the panel on /ide may close sessions the person
-#: confirms in the review View).
+#: the panel on /ide may close sessions the person confirms in the review View.
 WRITABLE_SCOPES: frozenset[str] = frozenset({"sessions:close"})
 
 #: Page key → the scopes a visitor on that page grants. Keys are what the

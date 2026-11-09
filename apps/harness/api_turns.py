@@ -183,9 +183,9 @@ def list_turns(
                 request, slugs=wsvc.tree_scope(request.user, target.workspace_id))
         # An email or Slack thread targets a SESSION, not the agent (enqueue_turn
         # converts it — the XOR check constraint allows only one), so the agent
-        # sits on `chat_session.agent`. Filtering on `agent` alone dropped every
-        # one of them: `?agent=ace` listed no ACE email turn after 2026-09-10, for
-        # every caller, and hal's routing audit read that as "0 turns" (#1087).
+        # sits on `chat_session.agent`. Filtering on `agent` alone would drop every
+        # one of them: `?agent=ace` would list no ACE email turn, for every
+        # caller.
         qs = qs.filter(agent_turns_q(target))
     if status:
         qs = qs.filter(status__in=status.split(","))

@@ -565,7 +565,7 @@ def list_tasks(agent: Agent) -> list[AgentTask]:
 # agent's to-do: it drains pending rows on its next turn and marks each applied.
 #
 # An action that hands the agent work STARTS a turn rather than leaving a row
-# for whenever the agent next runs (Jonathan, 2026-10-08): approve always does,
+# for whenever the agent next runs: approve always does,
 # nudge always does, answering an open question does (whoever answers), and any
 # other reply does when an editor writes it. The task's own `on_approve` specs
 # run when it has them; otherwise canopy-web writes the one turn from the card

@@ -138,7 +138,7 @@ def test_a_NEW_agent_needs_no_stack_change(tmp_path):
 
 def test_a_token_in_two_tenant_trees_names_each_workspace(tmp_path):
     """canopy-web refuses a flat list (422) when the token's workspaces span more
-    than one tenant tree (2026-10-11); the roster then asks each workspace."""
+    than one tenant tree; the roster then asks each workspace."""
     out = _run(
         tmp_path, "agent_registry", "agent_registry",
         slugs=[], repos={"ace": "u1", "nanny": "u2"},
@@ -185,7 +185,7 @@ def test_an_empty_registry_falls_back_rather_than_provisioning_nothing(tmp_path)
     assert out == "ace,ada,echo,eva,hal"
 
 
-# --- only the agents this box serves (canopy-web#1563) --------------------------
+# --- only the agents this box serves --------------------------
 
 def _paired(tmp: pathlib.Path) -> dict:
     state = tmp / "runner.json"
@@ -216,9 +216,9 @@ def test_an_unknown_answer_keeps_the_whole_registry(tmp_path, served, paired):
 
 
 def test_empty_served_answer_provisions_nothing(tmp_path):
-    """cloud-ec2-fork, 2026-10-18: a new box serves nothing, and reading that
-    empty answer as "unknown" sent it down the whole registry — every resolve
-    403'd ("does not run echo"). An answer is final, even an empty one."""
+    """A new box serves nothing, and reading that empty answer as "unknown" would
+    send it down the whole registry — every resolve 403s ("does not run echo").
+    An answer is final, even an empty one."""
     out = _run(tmp_path, "resolve_roster", "resolve_roster",
                slugs=["ace", "fizzy"], repos={}, served=[], env_extra=_paired(tmp_path))
     assert out == ""
@@ -242,8 +242,8 @@ def test_the_served_list_is_the_roster_even_beyond_the_registry(tmp_path):
 
 
 def test_a_refused_fleet_list_still_uses_what_the_box_serves(tmp_path):
-    """2026-10-17: runner.env's PAT was revoked, the registry came back empty, and
-    the box provisioned the AGENT_SLUGS fallback — never an agent added since."""
+    """With runner.env's PAT revoked the registry comes back empty; the box must
+    still provision what it serves, not only the AGENT_SLUGS fallback."""
     out = _run(tmp_path, "resolve_roster", "resolve_roster",
                slugs=["ace"], repos={}, served=["eva", "family-helper"], list_fail=True,
                env_extra=_paired(tmp_path))

@@ -1,13 +1,13 @@
 """The sidecar finds a task under ITS project's sidebar section, not by name alone.
 
-Turn 22662f53 (2026-10-04): ada and eva each had an emdash task called "editing".
-The sidebar then held two buttons labelled "Open task editing", the sidecar clicked
-the first (ada's), and eva's chat message was typed into ada's session four times.
+If ada and eva each have an emdash task called "editing", the sidebar holds two
+buttons labelled "Open task editing"; clicking the first (ada's) would type eva's chat
+message into ada's session.
 
-`sidebar_section.mjs` is the pure rule the sidecar now applies (a task row belongs
+`sidebar_section.mjs` is the pure rule the sidecar applies (a task row belongs
 to the nearest "New task for <project>" header above it). It runs under node, so
 these tests drive it through node; the label lists are the real sidebar order read
-from a live emdash on 2026-10-04.
+from a live emdash.
 """
 import json
 import shutil

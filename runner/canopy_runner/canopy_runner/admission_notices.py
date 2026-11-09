@@ -1,12 +1,12 @@
 """Send the automatic replies canopy-web could not send itself.
 
 When an admission rule rejects an email turn, the sender is owed a fixed-text
-reply on their thread from the agent's mailbox (canopy-web#1400). canopy-web
+reply on their thread from the agent's mailbox. canopy-web
 sends it when it can refresh the mailbox's token; most agents' tokens are on the
 fleet's desktop `canopy` client, which only a box with gog can use. Those
 notices wait as PENDING on canopy-web (`apps/admission/runner_notices.py`), and
 this module — on the same tick that polls the mailbox — leases them, sends each
-through gog, and reports what happened (canopy-web#1416).
+through gog, and reports what happened.
 
 The text is canopy-web's, never written here or by a model. What this module
 adds is only what a box can see and canopy-web cannot:

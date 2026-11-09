@@ -421,7 +421,7 @@ class AgentRunnerRuleIn(StrictModel):
     `runners` reuses the default list's row schema, and its ORDER is the rule's
     rank order. A rule names several runners because the operator's own boxes are
     two macOS accounts alternated as each runs out of tokens: "either of mine,
-    never cloud" cannot be said with one runner (spec 2026-09-05). Per-runner
+    never cloud" cannot be said with one runner. Per-runner
     `enabled` lives on the row, which is why this schema has no rule-level
     `enabled` — a change from the pre-actor shape, safe because canopy-web's own
     frontend is the only caller and no rules exist in production yet.
@@ -857,7 +857,7 @@ class AgentSyncOut(StrictModel):
 
 # ---- Turns (a packaged unit of work + optional transcript link) ----
 #
-# Backed by harness.Turn since 2026-08-11 — the dispatch record and the close-out
+# Backed by harness.Turn — the dispatch record and the close-out
 # report are one row. The wire names here are the CLOSE-OUT's names (`title`,
 # `summary`, `source`), aliased onto the model's `report_*` fields so the whole
 # fleet's `canopy agent turn` keeps working unchanged; on the model they need the
@@ -905,7 +905,7 @@ class AgentTurnOut(StrictModel):
     session_slug: str
     share_token: str
     # The transcript's page, under the workspace it was shared from — the only
-    # address it has (canopy-web#1337). None when there is no transcript, its
+    # address it has. None when there is no transcript, its
     # token is not a live share, or the content is hidden from this reader.
     share_url: str | None = None
     started_at: dt.datetime | None = None

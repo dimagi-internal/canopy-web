@@ -1,12 +1,10 @@
 """A cloud chat's agent can ask the person, and the person's tap reaches it.
 
-2026-10-19, cloud-ec2-2: the live e2e's `answer_from_the_web` timed out — the
-agent was told to use AskUserQuestion and no dialog ever reached the web. The
-ACP client never advertised form elicitation, so claude-agent-acp disabled the
-tool outright (`disallowedTools`), and every permission request was answered
-"allow" by policy without anyone seeing it.
+An ACP client that does not advertise form elicitation makes claude-agent-acp
+disable AskUserQuestion outright (`disallowedTools`), and every permission request
+is answered "allow" by policy without anyone seeing it.
 
-Now a chat turn's agent is built with someone to ask: the ask is posted to the
+So a chat turn's agent is built with someone to ask: the ask is posted to the
 session's binding (`/session-menu`), the answer is drained from `/menu-answers`
 — the same durable record a laptop's tap rides — and retired with its outcome.
 A turn with no chat behind it keeps the unattended policy: nobody would see it.

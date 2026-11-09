@@ -1,6 +1,6 @@
 import { CanopyMark } from './CanopyMark'
 
-/** The mark beside the name: what every header shows where "Canopy." used to be. */
+/** The mark beside the name: what every header shows in place of a plain-text name. */
 export function CanopyWordmark() {
   return (
     <span className="inline-flex items-center gap-2">

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Live red team for sensitive-data agents on sensitive-data runners (spec 2026-10-22, Rollout step 8).
+"""Live red team for sensitive-data agents on sensitive-data runners.
 
 **In one line:** it tries every way a host's real data could leave canopy's sensitive-data
 boundary — against the real server, the real sensitive-data box and the real `labsdata` agent

@@ -1,4 +1,4 @@
-"""Who takes part in an agent's project (fleet brain v1.1, canopy#804).
+"""Who takes part in an agent's project (fleet brain v1.1).
 
 A project used to know one human — its `owner_user` — and nothing about the
 people the work actually involves. The brain already sees them: a fact filed

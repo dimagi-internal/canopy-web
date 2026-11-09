@@ -1,6 +1,6 @@
 """Which workspace a session is FILED in — the default for a new one, and moving one.
 
-The owner's ask (Jonathan, 2026-10-11): "I still want all my sessions that I do in
+The owner's ask: "I still want all my sessions that I do in
 emdash to be associated with a default I can set, which is Dimagi, and then if I
 belong to more than one workspace, I could move the session's association if I
 want."

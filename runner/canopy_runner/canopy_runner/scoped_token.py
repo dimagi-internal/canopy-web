@@ -3,7 +3,7 @@
 A FULL-profile turn asked by someone who is not the agent's owner, an admin or
 canopy (an editor line on the access list) is not a confined turn, but
 its canopy tools must still run as the ASKER, never as this box's owner
-(who-is-asking phase 5, canopy-web#1332). canopy hands such a turn a caller token
+(who-is-asking). canopy hands such a turn a caller token
 with the claim (`mcp_token`, `scoped` server-side).
 
 A laptop runner does not spawn the session — emdash does — so it cannot set the

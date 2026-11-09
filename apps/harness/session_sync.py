@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 def _binding_for_thread(agent, project, workspace, thread_key):
     """The RunnerBinding for a (target, thread_key), or None. Enforces the
-    agent-XOR-project rule the way _link_target used to: an agent thread matches on
+    agent-XOR-project rule as follows: an agent thread matches on
     session.agent and ignores workspace (derived via the agent); a project thread
     matches on session.project AND session.workspace (its identity, so a guessed
     thread_key from another tenant lands on its own row, never the victim's)."""
@@ -182,8 +182,8 @@ def email_thread_session(agent, thread_id: str, subject: str = ""):
         return existing
     # Find-or-create under the agent's row lock. The same message arrives twice at
     # once — Gmail push and the runner's poll both discover it — and without the
-    # lock each made a session in the same second, leaving one with no turns
-    # beside its sibling (3ee01ce9 / afe51b3c, 2026-10-29).
+    # lock each would make a session in the same second, leaving one with no turns
+    # beside its sibling.
     with transaction.atomic():
         Agent.objects.select_for_update().filter(pk=agent.pk).first()
         existing = found.first()
@@ -211,7 +211,7 @@ def _create_email_thread_session(agent, key: str, subject: str):
 def _busy_reason(binding, turn_id) -> str:
     """Why the session `binding` points at must not take a prompt right now, or "".
 
-    A prompt is only ever sent into an IDLE session (#309): typing into one that is
+    A prompt is only ever sent into an IDLE session: typing into one that is
     mid-turn lands in the live turn's conversation and corrupts it. Two observations
     say busy, and neither is inferred from write recency (which would also fire for a
     session whose last turn ended a minute ago, forking every quick follow-up):
@@ -257,10 +257,10 @@ def resolve_session(agent, thread_key: str, runner: Runner, *, project: str = ""
     runner + macOS host match the caller (the two-account failover invariant).
 
     `turn_id` names the agent/project turn asking. With it, reuse is also refused
-    when the session is mid-turn (`_busy_reason`, #309) and `busy` says why; the
+    when the session is mid-turn (`_busy_reason`) and `busy` says why; the
     runner then creates a fresh session, as it does for one that is gone. A CHAT
     turn is exempt: its session IS the conversation, which claim already
-    serializes and a rider (#1153) joins on purpose. Without `turn_id` (a runner
+    serializes and a rider joins on purpose. Without `turn_id` (a runner
     predating it) the answer is unchanged.
 
     `fork` ({session_key, records} or None) is set for a forked chat that has no
@@ -321,8 +321,8 @@ TITLE_CAP = 80
 def readable_title(text: str) -> str:
     """A name a person can read, from a prompt's first line — or "" when the line
     is nothing but a command. A cloud turn's prompt is often a slash command
-    ("/ace:turn --thread 1a0f24bf9b830273"), which made a session's title the
-    command itself (2026-10-03); the words after it, if any, are the name."""
+    ("/ace:turn --thread 1a0f24bf9b830273"), which would make a session's title the
+    command itself; the words after it, if any, are the name."""
     line = next((ln.strip() for ln in (text or "").splitlines() if ln.strip()), "")
     if line.startswith("/"):
         rest = _COMMAND.sub("", line, count=1).strip()
@@ -418,9 +418,9 @@ def record_session(
         #
         # The autotitle case is why this is more than an equality check: a
         # phone-created session gets autotitled before any emdash task exists, so
-        # the old `title == thread_key` guard never matched and the session kept a
-        # sentence for a name while the sidebar showed the task
-        # (observed 2026-07-27). A human-set title is still never clobbered — it
+        # a `title == thread_key` equality guard would never match and the session
+        # would keep a sentence for a name while the sidebar showed the task.
+        # A human-set title is still never clobbered — it
         # won't match the fallback and won't match the first message either.
         #
         # A runner-supplied `title` beats the key: a cloud runner's key is a
@@ -562,7 +562,7 @@ def stamp_turn_session(turn_id, runner: Runner, session_key: str) -> bool:
     (apps/harness/agent_report.py::_claim_dispatch_row). A laptop finishes seconds in
     (emdash runs the work after), so it never noticed; a cloud runner finishes
     when the work does, so every cloud close-out found no turn and became a
-    second, report-only row (labs, echo, 2026-10-02 17:00).
+    second, report-only row.
 
     Only the runner that claimed the turn may stamp it, only while it runs, and
     only an empty key — the same first-write-wins rule `finish` keeps, so the
@@ -754,8 +754,7 @@ def _unlinked_chat_binding(runner: Runner, s, project: str):
 
     The runner creates the emdash task and then links it with record-session; when
     that call fails (a 500 mid-deploy) the task is first seen here, unbound, and
-    used to be filed as a session of its own beside the chat it belongs to (Slack
-    turn f7cb8694, 2026-10-23). The turn names its task (`Turn.session_key`, from
+    would be filed as a session of its own beside the chat it belongs to. The turn names its task (`Turn.session_key`, from
     its finish), so the task is bound to that turn's chat instead. Only a chat this
     runner's turn ran in, whose worktree project is the task's, and that is not
     already bound to a task — never a second conversation's."""
@@ -826,7 +825,7 @@ def replace_reported_sessions(
     # (see task_state's "Names aren't unique in emdash's schema" note). Collapse
     # duplicates before upserting; the runner sends newest-first, so the first
     # occurrence is the live session and an older namesake is stale and correctly
-    # dropped (observed 2026-07-20 with two "mobile" tasks).
+    # dropped.
     #
     # Keyed on (PROJECT, name), not the bare name. A name is only reused-and-stale
     # within ONE project; the same name in two projects is two live conversations,
@@ -868,19 +867,18 @@ def replace_reported_sessions(
 
     # The loop takes select_for_update locks, which Django REJECTS outside a
     # transaction — "select_for_update cannot be used outside of a transaction".
-    # That was latent from #350: nothing in the loop wrote after taking the lock,
-    # so the error was never raised. Adding a `.save()` (the title repair) made it
-    # fire, 500ing the endpoint the runner calls every ~10s to report which
-    # sessions are alive — the whole machine went dark on liveness.
+    # Any `.save()` in the loop (the title repair) would otherwise fire it, 500ing
+    # the endpoint the runner calls every ~10s to report which sessions are alive —
+    # the whole machine would go dark on liveness.
     #
-    # Wrapping the loop is the real fix: the lock was always meant to serialize
-    # concurrent reports for a task, and without a transaction it never did.
+    # The lock is there to serialize concurrent reports for a task, and without a
+    # transaction it would not.
     with transaction.atomic():
         # Every candidate binding for this report, locked and loaded in ONE query
         # with its session, instead of up to two locked lookups plus a lazy
-        # session load per reported task — that loop was ~8 queries a session,
+        # session load per reported task — that loop would be ~8 queries a session,
         # ~160 a report, from every box every ~10s, all on the one process that
-        # also serves every page (SLOW_REQUEST, 2026-10-03). Same predicate as the
+        # also serves every page. Same predicate as the
         # per-task lookup below, keyed by (task, project) for the same reason.
         candidates: dict[tuple[str, str], RunnerBinding] = {}
         from apps.canopy_sessions.handoff import suppressed_tasks  # noqa: PLC0415 — cycle: handoff -> harness.services -> channels.email -> session_sync
@@ -973,20 +971,19 @@ def replace_reported_sessions(
                 binding.task_uid = str(getattr(s, "task_uid", "") or "")[:100]
             else:
                 # The NAME matched; is it the same TASK? A new emdash task that reused
-                # a name gets its own session here, and the old record keeps its rows
-                # (board task T74). getattr: lightweight session objects reach this
+                # a name gets its own session here, and the old record keeps its rows.
+                # getattr: lightweight session objects reach this
                 # service too, and an old runner sends no id — which forks nothing.
                 from apps.canopy_sessions.transcript_ingest import fork_if_task_changed
 
                 fork_if_task_changed(binding, str(getattr(s, "task_uid", "") or "")[:100])
                 # Correct a GENERATED title on an existing session. A brand-new
                 # session above is titled from the emdash task, but an existing one
-                # never was — so a session created on the phone kept its autotitle
+                # never was — so a session created on the phone would keep its autotitle
                 # (the first user message, truncated) forever, while emdash's own
-                # sidebar showed the task name. The first fix went into
-                # `record_session`, which only runs when a TURN is routed; this is
-                # the path that runs every ~10s, which is why the repair never
-                # actually happened (observed 2026-07-27, after shipping it).
+                # sidebar showed the task name. `record_session` only runs when a
+                # TURN is routed; this is the path that runs every ~10s, so the
+                # repair lives here.
                 #
                 # `_title_is_derived` recognises only titles WE generated, so a title
                 # a human chose is still never touched.
@@ -1090,8 +1087,8 @@ def replace_reported_sessions(
                 # Whether this is a NEW ask, not the same one seen again. Every
                 # producer re-stamps `observed_at` on each read, so the raw dicts
                 # differ on every ~10s report for as long as a dialog is up —
-                # comparing them is what buzzed a phone every ten seconds
-                # (2026-09-22). The frame above still goes out (it carries the
+                # comparing them would buzz a phone every ten seconds.
+                # The frame above still goes out (it carries the
                 # fresh stamp); the push is for the ask itself.
                 if binding.pending_question and (
                         _ask_identity(was_asking) != _ask_identity(binding.pending_question)):
@@ -1184,9 +1181,9 @@ def replace_reported_sessions(
     # A menu, unlike the runner FK below, MUST be cleared when its session stops
     # being reported. `pending_question` is only written inside the loop above,
     # which walks the sessions IN this report — so a session whose emdash task is
-    # gone keeps its last dialog forever. Observed 2026-08-01: `7891` was absent
-    # from emdash's open set entirely and the API still served a phone six
-    # buttons, every one of which could only fail. The runner cannot fix this
+    # gone keeps its last dialog forever: a session absent from emdash's open set
+    # entirely would still have the API serve a phone buttons, every one of which
+    # could only fail. The runner cannot fix this
     # from its side: it prunes its own copy, but it has no way to say anything
     # about a session it can no longer see.
     #
@@ -1632,8 +1629,7 @@ def _ingest(session, *, transcript_id, events, live, epoch=None, fan_out_held=Tr
 
     from . import sensitivity
 
-    # The live frame carries what the row stores (spec 2026-10-22-sensitive-data-agents
-    # §4): a watcher and a reload see the same withheld result.
+    # The live frame carries what the row stores: a watcher and a reload see the same withheld result.
     withhold = sensitivity.is_sensitive(session)
 
     for e in events:

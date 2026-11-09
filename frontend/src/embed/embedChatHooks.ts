@@ -10,8 +10,8 @@ import type { HostLink } from './hostLink'
 import { type PageGrant } from './pageGrant'
 import { declarePage, sessionBase } from './session'
 
-// Pieces of `EmbedChat`, one hook per concern. Each is called where the inline
-// code used to sit, so the component's hook order is unchanged.
+// Pieces of `EmbedChat`, one hook per concern. Each is called in a fixed order,
+// so the component's hook order is stable.
 
 export function usePageGrantActions({ pageGrant, client, link, isContact, sessionId }: {
   pageGrant: PageGrant | undefined
@@ -213,10 +213,10 @@ export function usePageDeclarations(client: CanopyClient, link: HostLink, sessio
 
   // Tell canopy what this page is SHOWING, and keep telling it.
   //
-  // The other half of the page contract, and the one that was missing. Context
-  // used to be read once when the frame initialised and pasted onto the first
-  // message as prose, so a user who filtered the page after opening the chat
-  // left the agent acting on a screen that no longer existed. Here the view is
+  // The other half of the page contract. Context read once when the frame
+  // initialised and pasted onto the first message as prose would leave the agent
+  // acting on a screen that no longer exists after the user filtered the page
+  // mid-chat. Here the view is
   // pushed on every change and the agent re-reads it with `page_state`, so
   // "close the ones I'm looking at" is answerable on turn nine, not only turn
   // one.

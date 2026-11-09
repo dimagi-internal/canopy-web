@@ -213,7 +213,7 @@ export function MessageItem({
     // `overflow-wrap:anywhere` so one unbreakable token — a long path, a URL,
     // inline code — wraps inside the bubble. Without it the token overflowed
     // `max-w-[80%]` and made the whole transcript scroll sideways into empty
-    // space on a phone (2026-09-24). Tables and code blocks keep their own
+    // space on a phone. Tables and code blocks keep their own
     // horizontal scroll; this only affects running text.
     <div
       data-testid="message-row"

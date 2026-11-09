@@ -1,21 +1,21 @@
 """A phone-triggered DELETE or ANSWER can never act on another agent's same-named session.
 
-emdash task names are unique per PROJECT, not per emdash. On 2026-10-04 ada and
-eva each had a session called "editing", and a chat message meant for eva's was
-typed into ada's (turn 22662f53) — the sidecar took the first sidebar row with
-that label. The send path was fixed (#1115); the two phone-triggered verbs that
-still drove a session by name alone were:
+emdash task names are unique per PROJECT, not per emdash. If ada and
+eva each have a session called "editing", a chat message meant for eva's must not be
+typed into ada's, as happens if the sidecar takes the first sidebar row with
+that label. The send path aims by project; the two phone-triggered verbs that
+could otherwise drive a session by name alone are:
 
   * CLOSE  — deletes the emdash task. Irreversible. By name alone it deleted the
              FIRST "editing" in the sidebar: ada's, when eva's was meant.
   * ANSWER — presses keys in the session's terminal. In the wrong session a
              number lands in its prompt as an instruction.
 
-Both now aim by (project, task): the server sends the project, emdash's DB checks
+Both aim by (project, task): the server sends the project, emdash's DB checks
 it, and with no project the name is only trusted when exactly one project holds
 it. A delete that cannot be placed is REFUSED, never done by name.
 
-The fake sidecar here behaves exactly like the real one did: with a project it
+The fake sidecar here behaves exactly like the real one: with a project it
 acts on that project's row; without one, on the first row with the label — ada's,
 which sits above eva's in the live sidebar.
 """
@@ -28,7 +28,7 @@ from canopy_runner import close, hooks, sessions, streams
 from canopy_runner.main import make_control_handler
 from canopy_runner.wake import WakeListener
 
-SIDEBAR_ORDER = ["ada", "eva"]          # as read from the live emdash, 2026-10-04
+SIDEBAR_ORDER = ["ada", "eva"]          # as read from a live emdash
 
 DIALOG = """\
  Bash command

@@ -59,7 +59,7 @@ def _project_messages(sender, turn, rows, **kwargs):
     # The session's LATEST turn, not necessarily this one: when the previous
     # message ends with a follow-up queued behind it, the follow-up is what the
     # page is waiting on, and pushing the finished turn's "done" would drop the
-    # bubble over a reply that is still coming (#1147).
+    # bubble over a reply that is still coming.
     if any(r.kind == "status" for r in rows):
         from .status_feed import publish_for_session
 

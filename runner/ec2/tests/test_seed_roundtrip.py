@@ -1,9 +1,8 @@
 """The first-boot seed must fit Secrets Manager AND decode on the box, byte for byte.
 
-On 2026-10-04 `up.sh` could not build a runner at all: it published
-cloud_runner.py as ONE gzip+base64 secret, the file had grown to 210 KB (91 KB
-encoded), and Secrets Manager caps a value at 65536 bytes — PutSecretValue
-failed on every run. The seed is now a manifest plus parts (seed.py).
+Publishing cloud_runner.py as ONE gzip+base64 secret cannot work: the file is
+about 210 KB (91 KB encoded) and Secrets Manager caps a value at 65536 bytes —
+PutSecretValue fails on every run. The seed is a manifest plus parts (seed.py).
 
 What has to hold, and what these pin:
   * every value up.sh writes is under the cap, for the REAL cloud_runner.py;

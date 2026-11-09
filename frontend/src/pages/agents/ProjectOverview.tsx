@@ -12,8 +12,7 @@ import { ApiError } from '@/api/problem'
 // what it is, where it stands, the ideas (with "Add your idea"), the people.
 // No task cards, approve / decline / nudge, rationale or review logs here; the
 // agent's work on the project sits below it on the same page (AgentProjectPage).
-// There used to be a separate "team view" address carrying this alone; it now
-// redirects to the project page, so there is one place to go and one link to share.
+// The separate "team view" address redirects to the project page, so there is one place to go and one link to share.
 
 const ORDER: Stage[] = ['started', 'proposed', 'shipped', 'declined']
 

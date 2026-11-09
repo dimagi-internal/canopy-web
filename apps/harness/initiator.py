@@ -47,7 +47,7 @@ SESSION = "session"            # signed in to canopy in this very request
 PAT = "pat"                    # a personal access token (a machine acting as its owner)
 RUNNER_KEY = "runner-key"      # a runner's own token, bought with its approved device key
 PRIVATE_RUNNER_KEY = "private-runner-key"  # its owner's direct session, signed in with their
-                               # OWN private runner's device key (canopy-web#1705)
+                               # OWN private runner's device key
 DELEGATED = "delegated"        # a token minted FOR the user by an app (the widget)
 HOST_SIGNED = "host_signed"    # a host site signed for its visitor; canopy resolved
                                # them to an existing account (a weaker claim — not "verified")
@@ -210,16 +210,15 @@ def describe(turn) -> dict:
         }
         # AN AGENT'S OWN LOGIN is not a person either: a turn it started (an agent
         # driving a widget to test itself, calling canopy as itself) must never be
-        # read as someone's request. 2026-10-08: ACE saw its own Labs-widget test
-        # runs as `ace@dimagi-ai.com`, decided the widget hides who asks, and
-        # attributed them to a person in a shared Slack thread. Say it outright.
+        # read as someone's request (an agent that saw its own widget test runs under its own
+        # login could conclude the widget hides who asks). Say it outright.
         login_of = _agent_login_of(user)
         if login_of:
             out["agent_login"] = login_of
             out["self"] = bool(turn.agent_id) and login_of == getattr(turn.agent, "slug", None)
             # WHO THE AGENT WAS WORKING FOR. Always present on an agent's turn — the
             # person, or null when it acted on its own — so the agent receiving the work
-            # never has to guess whether a human is behind it (turn_asker; 2026-10-26).
+            # never has to guess whether a human is behind it (turn_asker).
             out["on_behalf_of"] = _on_behalf_of(turn)
     if contact is not None:
         out["contact"] = {

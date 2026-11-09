@@ -1,9 +1,9 @@
 """The credential probe: "ready" means a credential just answered a prompt.
 
-A box used to report ready the moment a value was STORED, so a capped or
-signed-out token read as healthy until a real turn failed on it (cloud-ec2-fork,
-2026-10-18). Each credential is now asked one short question with no tools, and
-the answer is what the runner page and readiness show.
+Reporting ready the moment a value is STORED would let a capped or signed-out
+token read as healthy until a real turn failed on it. Each credential is asked one
+short question with no tools, and the answer is what the runner page and readiness
+show.
 """
 from __future__ import annotations
 
@@ -464,10 +464,10 @@ def test_the_tick_reprobes_a_cap_once_its_reset_passes(cr, monkeypatch):
 
 # ── a re-probe never reads as a pass ───────────────────────────────────────
 #
-# cloud-ec2-2, 2026-10-23: the box dropped a replaced token's failing check while
-# it re-probed, canopy-web read the missing check as fixed and resolved the
-# alert, and the probe found the new token dead three seconds later. The old
-# check now stays until the new answer overwrites it.
+# If the box dropped a replaced token's failing check while it re-probed,
+# canopy-web would read the missing check as fixed and resolve the alert, and the
+# probe could find the new token dead seconds later. The old check stays until the
+# new answer overwrites it.
 
 def test_a_replaced_value_keeps_its_failing_check_until_reprobed(cr, monkeypatch):
     monkeypatch.setattr(cr, "_CLAUDE_CRED_RUNNER_ID", "rid")

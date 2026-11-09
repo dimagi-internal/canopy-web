@@ -1,15 +1,14 @@
 """This runner signs in as itself — with its device key, not its owner's PAT.
 
 canopy-web hands a runner an hour-long token for a fresh proof of its APPROVED
-device key (`POST /api/runner-sessions/`, canopy-web#1594); the token opens the
+device key (`POST /api/runner-sessions/`); the token opens the
 runner protocol only. The proof is signed by this machine's key — the Secure
 Enclave on a Mac, the TPM on Windows — which canopy holds, so the exchange is
 canopy's `canopy vault runner-session`, run here the way `device_key.enroll` runs
 `canopy vault device --enroll`.
 
-Why: a runner on its owner's PAT is stranded the moment that PAT is revoked — on
-2026-10-17 one was, in a token cleanup, and a box silently lost every turn it
-claimed. The PAT (`cfg.token`) remains only as the fallback while no approved key
+Why: a runner on its owner's PAT is stranded the moment that PAT is revoked (say,
+in a token cleanup), and the box silently loses every turn it claims. The PAT (`cfg.token`) remains only as the fallback while no approved key
 can get a token: a key still pending, an older canopy without the command. Opt out
 entirely with CANOPY_DEVICE_KEY=0.
 
@@ -46,8 +45,8 @@ RENEW_SECONDS = 600
 RETRY_SECONDS = 300
 #: ...but when the exchange never reached canopy-web (no network — a laptop asleep
 #: or just woken), ask again soon: the key is fine, and a runner with no PAT sends
-#: NOTHING meanwhile, so every call 401s until it does (2026-11-01: a Mac woke from
-#: sleep and crash-looped on 401s for the rest of a 300s back-off it took while offline).
+#: NOTHING meanwhile, so every call 401s until it does (a Mac that wakes from
+#: sleep would otherwise crash-loop on 401s for the rest of a 300s back-off it took while offline).
 UNREACHABLE_RETRY_SECONDS = 20
 TIMEOUT = 60
 PREFIX = "crt_"

@@ -1,9 +1,8 @@
 """`list_projects` — the repos this box can actually drive.
 
-`capabilities["projects"]` was typed by a human at pairing and nothing kept it
-true, so a turn at a repo the box HAS but nobody listed sat QUEUED forever (labs
-2026-07-28, repo `canopy`). The answer was in emdash's own `projects` table the
-whole time; this read is what lets the runner report it instead.
+`capabilities["projects"]` typed by a human at pairing would go stale, and a turn at
+a repo the box HAS but nobody listed would sit QUEUED forever. The answer is in
+emdash's own `projects` table; this read is what lets the runner report it instead.
 
 Same fail-soft contract as the two neighbouring session reads, for the same reason
 one notch worse: a MISSING db is a legitimate "no emdash here" and returns [],

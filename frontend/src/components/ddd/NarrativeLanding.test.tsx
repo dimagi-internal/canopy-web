@@ -7,9 +7,9 @@ import { NarrativeLanding } from './NarrativeLanding'
 import { cutRows } from './CutVideoList'
 
 /**
- * A recorded narrative (canopy#796) is several short videos, one per cut. Its
+ * A recorded narrative is several short videos, one per cut. Its
  * narrative page shows each cut's video beside what that cut says, in one
- * place (canopy-web#1293); every other narrative keeps the one-paragraph story.
+ * place; every other narrative keeps the one-paragraph story.
  */
 
 const detail = vi.hoisted(() => ({ current: null as unknown }))

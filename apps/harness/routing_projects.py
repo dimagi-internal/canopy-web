@@ -9,12 +9,12 @@ from .models import (
 )
 from .routing_orders import _cascade_allows, order_for
 
-# ---- project chats: a chat with no agent, only a repo (spec 2026-10-19 #6) ----
+# ---- project chats: a chat with no agent, only a repo ----
 #
 # Its UNBOUND turns follow the rules a repo turn follows, plus one: with no
-# workspace order, only a box the chatting person administers. Before, any
-# session-capable box in the tenant took them, so a teammate's new project chat
-# landed on someone else's laptop. A bound session still claims only on its
+# workspace order, only a box the chatting person administers. (Otherwise any
+# session-capable box in the tenant would take them, and a teammate's new project chat
+# would land on someone else's laptop.) A bound session still claims only on its
 # holder, and a pin still bypasses all of this. The claim asks
 # `project_session_allows`; every reader that mirrors it (`claim._refined_allows`,
 # so turn_reach, the unclaimable report and the topology) asks

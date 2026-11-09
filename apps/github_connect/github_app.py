@@ -101,10 +101,9 @@ class Installation:
     call is aimed at; `is_org` distinguishes a personal account from an org.
 
     `repository_selection` and `repositories` exist so a user can VERIFY the
-    grant they made. The panel used to report only the account — "access
-    granted on dimagi-internal" — for an installation scoped to a single repo,
-    which reads like the whole organisation and overstates the grant to the
-    person reading it. Since the advice canopy gives is "pick only the repos you
+    grant they made. Reporting only the account — "access granted on dimagi-internal" — for an
+    installation scoped to a single repo reads like the whole organisation and
+    overstates the grant to the person reading it. Since the advice canopy gives is "pick only the repos you
     want agents in", it has to then show what was picked, or that advice is
     unverifiable.
     """
@@ -170,11 +169,10 @@ def install_url() -> str:
       do you grant?" is a phishing surface, so GitHub owns that boundary.
 
     A user who only authorizes ends up with a working token and access to ZERO
-    repositories — which looks like success and pushes nothing. Measured on
-    labs 2026-09-13: `@jjackson` authorized cleanly, the panel reported
-    "connected", and `list_installations` returned 0.
+    repositories — which looks like success and pushes nothing. The panel would report
+    "connected" while `list_installations` returns 0.
 
-    And since canopy no longer creates repositories, nothing is ever added to an
+    And since canopy does not create repositories, nothing is ever added to an
     installation automatically — GitHub only auto-grants access to repos the app
     itself created. Every repository an agent touches, including each new agent
     repo, is one the user picked on this screen.
@@ -215,7 +213,7 @@ def begin_connection(session, *, redirect_uri: str, reauthorize: bool = False) -
     which repositories to grant — and with "Request user authorization (OAuth)
     during installation" enabled on the app, it authorizes in the same pass and
     returns a `code` to the callback. Sending people to the bare authorize URL
-    (which this used to do) produced a connection with access to nothing.
+    produces a connection with access to nothing.
 
     `reauthorize=True` picks the plain authorize flow instead, for the one case
     where it is right: an existing installation whose TOKEN went stale. Those
@@ -373,10 +371,9 @@ def access_token_for(user) -> str:
     fail at exactly the moment someone pressed a button.
 
     WHY THE CACHE AND THE LOCK. GitHub rotates the refresh token on every
-    refresh and invalidates the old one. Refreshing on EVERY call (which this
-    used to do) meant two concurrent callers both spent the same refresh
-    token; the loser's exchange was rejected, `refresh_failed_at` was stamped,
-    and the grant was dead for every feature until the user reconnected. So
+    refresh and invalidates the old one. Refreshing on EVERY call would mean two concurrent callers both spend the
+    same refresh token; the loser's exchange is rejected, `refresh_failed_at` is
+    stamped, and the grant is dead for every feature until the user reconnects. So
     the access token is reused until `ACCESS_TOKEN_MARGIN` before it expires,
     and a refresh happens inside a transaction holding `select_for_update` on
     the row — re-read AFTER the lock is taken, so a caller that queued behind

@@ -64,7 +64,7 @@ def env(tmp_path, monkeypatch):
     The account is pinned to `newbie` too. `pair` names a runner after the real
     account (the UID, deliberately not $USER), so without the pin these tests
     pair as whoever runs them, and on the `acedimagi` account that collides with
-    the fake server's existing `acedimagi-mbp-cdp` (2026-10-05)."""
+    the fake server's existing `acedimagi-mbp-cdp`."""
     monkeypatch.setattr(pair, "macos_user", lambda: "newbie")
     home = tmp_path / "Users" / "newbie"
     (home / ".claude" / "canopy").mkdir(parents=True)
@@ -115,7 +115,7 @@ def test_fresh_account_pairs_once_and_writes_config(env, monkeypatch):
         "capabilities": {"agents": ["ace", "ada", "echo", "hal"], "sessions": True},
     }, False)  # never retried: a re-sent POST would pair a duplicate
     # sessions: a laptop runner takes Slack/chat turns; without it every chat turn
-    # for its agents sits UNROUTED (2026-10-02, a second ACE laptop).
+    # for its agents sits UNROUTED.
     assert fake.init_args == (pair.DEFAULT_BASE_URL, "pat-123")
 
     cfg = json.loads(env["config"].read_text())
@@ -327,7 +327,7 @@ def test_launcher_skipped_off_macos(tmp_path):
     assert pair.ensure_launcher(9224, tmp_path, system="Linux").startswith("skipped")
 
 
-# --- re-pairing with emdash already running (2026-10-02) ----------------------
+# --- re-pairing with emdash already running ----------------------
 
 
 def _devtools(env, port):

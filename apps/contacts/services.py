@@ -156,7 +156,7 @@ def user_for_verified_email(email: str):
       1. Exactly one user holds it as a VERIFIED allauth `EmailAddress` — the
          record a human's login proves. (Several holders: ambiguous, None.)
       2. When NOBODY holds it that way: exactly one user that is some agent's
-         own login (`Agent.user`, #983) whose `User.email` is that address.
+         own login (`Agent.user`) whose `User.email` is that address.
 
     Why (2) exists: agent logins are minted by `create_token --create-user`
     (and bound by an operator through `Agent.user`), never through an allauth
@@ -210,11 +210,9 @@ def resolve_arrival(*, app, contact: Contact, claims: dict):
 
     Either way the user must be a member of the site's workspace, and that is
     the gate: someone allowed in this tenant arrives as themselves, anyone else
-    is a contact. There used to be a second, per-site opt-in on top of it — a
-    list of email domains the site could resolve, empty by default — which
-    meant every member arrived as a contact until an owner found the setting
-    (2026-09-24, Jonathan: "they should always arrive as themselves if they are
-    allowed to"). What it bounded was a stolen site key speaking for existing
+    is a contact. There is deliberately no second, per-site opt-in on top of it (a
+    list of email domains the site could resolve): members arrive as themselves
+    if they are allowed to. What such a list would bound was a stolen site key speaking for existing
     users; membership bounds that to this tenant's members, through this one
     site, as short-lived `host_signed` tokens the site's revocation ends.
     Linking grants nothing (see `promote_to_user`); arriving as a user means
@@ -419,7 +417,7 @@ def person_for(*, app=None, external_id: str = "", email: str = "", user=None, c
     them — a site's own id, or an address that IS the identity — never on an
     address a site merely asserted.
 
-    `user=` / `contact=` (fleet brain v1, canopy#804) answer it for a turn's
+    `user=` / `contact=` (fleet brain) answer it for a turn's
     initiator, whichever kind it is, and are idempotent: the same account or
     contact always comes back as the same person.
     """

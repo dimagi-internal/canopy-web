@@ -1,9 +1,9 @@
 """Creating an agent's OWN canopy login — a deliberate way into a workspace.
 
 An agent calls canopy-web as itself (`Agent.user`, signed in with its `canopy-pat`), and a
-login must be a workspace member to act there. Until 2026-10-15 such logins were made only
-by `manage.py create_token --create-user` on the server, so an agent created in the browser
-never got one and its turns ran on a person's token.
+login must be a workspace member to act there. Without this module such logins would be
+made only by `manage.py create_token --create-user` on the server, so an agent created in the
+browser would never get one and its turns would run on a person's token.
 
 This is the one place that makes such a member, and it is listed among the ways in in
 `docs/architecture/roles.md` ("How you get into a workspace") and in

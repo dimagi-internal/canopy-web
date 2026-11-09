@@ -1,8 +1,8 @@
 """The Claude credential cascade: subscription-1 -> subscription-2 -> API key.
 
 A subscription's weekly cap takes out EVERY agent on the box at once, and an
-unattended agent has nobody to tell (2026-08-01: the whole fleet sat dead on one
-exhausted login). These tests pin the behaviour that fixes it, and — just as
+unattended agent has nobody to tell (the whole fleet would sit dead on one
+exhausted login). These tests pin the behaviour that prevents it, and — just as
 important — the behaviour that must NOT happen: an ordinary turn failure being
 re-run against every credential in turn, spending real money on a plain bug.
 """
@@ -152,7 +152,7 @@ def test_exhausting_every_credential_says_so_in_the_turn_text(cr, monkeypatch):
 
 
 def test_retry_resumes_the_callers_session_not_a_fresh_one(cr, monkeypatch):
-    """A cap must not cost a session its conversation (Hal f6e30263, 2026-10-19):
+    """A cap must not cost a session its conversation:
     every retry resumes the session the caller named, and a turn whose attempts
     all fail still reports that session, not the fresh one a failed attempt opened."""
     monkeypatch.setattr(cr, "_notify_api_key_fallback", lambda *a, **k: None)
@@ -337,9 +337,9 @@ def _two_creds_after_a_cap(cr, monkeypatch, second_text):
 
 
 def test_a_bare_acp_refusal_after_a_cap_is_out_of_usage_not_signed_out(cr, monkeypatch):
-    """Investigation 9 (turn 7d230f39, ACE on cloud-ec2-2, 2026-10-18): every
-    credential was out of usage, but the setup-token's cap came back as ACP's bare
-    "Authentication required" and the note called the box "not signed in"."""
+    """When every credential is out of usage but the setup-token's cap comes back as
+    ACP's bare "Authentication required", the note must not call the box "not
+    signed in"."""
     ok, text, calls, alerts = _two_creds_after_a_cap(
         cr, monkeypatch, "runner error (acp): Authentication required")
 

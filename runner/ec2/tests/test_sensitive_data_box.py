@@ -254,7 +254,6 @@ def test_a_sensitive_turn_does_not_update_the_plugin(load_cloud_runner, monkeypa
 
 
 # ── a sensitive conversation keeps its own session between turns ─────────────
-# (spec 2026-10-23-sensitive-conversations-sealed-to-their-people §1)
 CONV = "5e55a0b1-0000-4000-8000-00000000c0de"
 
 

@@ -19,7 +19,7 @@ enabled and `discoveryengine.rankingConfigs.rank` on the service account.
 Calls go to the US multi-region (`us-discoveryengine.googleapis.com`, `locations/us`;
 `KB_RERANK_LOCATION`): "Agent Search on Gemini Enterprise Agent Platform" is on Google's
 HIPAA BAA list with the footnote "Use regional APIs and resource locations for PHI",
-which `global` is not. Same scores and latency as `global` (checked 2026-10-19, 50
+which `global` is not. Same scores and latency as `global` (measured on 50
 passages: ~0.45 s both). `semantic-ranker-default@latest` beat `-fast` on paraphrased
 questions (GiveWell KB, 312 questions: MRR 0.588 against 0.545). About 0.5 s a call.
 """

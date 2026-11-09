@@ -4,8 +4,7 @@
 else, and canopy's own frames are never replaced by them — this is a projection
 alongside `WsEvent`, not a migration of it. canopy's frames stay the in-memory
 model at both ends; AG-UI is the wire between them. That was a hedge while the
-protocol was a 0.1.x draft, and it still earns its keep on 1.0 (frozen
-2026-09-17, adopted here the next day): `canopy-ui` is on public npm with
+protocol was a 0.1.x draft, and it still earns its keep on 1.0 (frozen): `canopy-ui` is on public npm with
 ace-web downstream, so a 2.0 must cost one module, not a protocol migration
 across two repos.
 
@@ -280,7 +279,7 @@ def project(frame: dict, *, thread_id: str, run_id: str = "") -> list[E.BaseEven
                 role="user",
                 delta=data.get("plaintext") or "",
                 # `author` survives here for the same reason it exists at all
-                # (spec 2026-09-26): a transcript-sourced session's durable row
+                #: a transcript-sourced session's durable row
                 # carries no user beyond the runner's own login, so canopy's
                 # only chance to say WHO typed this is this metadata, on this
                 # frame, once.
@@ -329,7 +328,7 @@ def project(frame: dict, *, thread_id: str, run_id: str = "") -> list[E.BaseEven
                     turn_index=data.get("turn_index"),
                     parent_message_id=data.get("parent_message_id"),
                     block=block,
-                    # MCP Apps (spec 2026-10-08 §3): this result has a View.
+                    # MCP Apps: this result has a View.
                     app=data.get("app"),
                     # It asked for one of the agent's secrets: the seal card.
                     secret_request=data.get("secret_request"),
@@ -468,12 +467,11 @@ def project(frame: dict, *, thread_id: str, run_id: str = "") -> list[E.BaseEven
 
     # The connect snapshot — the frame a client cannot live without.
     #
-    # Until 2026-09-18 this returned nothing, and a test allowlist
-    # (`KNOWN_UNMAPPED`) recorded that as a decision. It was not a safe one: an
-    # AG-UI client opened every conversation EMPTY, and lost its history again
-    # on every reconnect. Nothing noticed because no client spoke AG-UI yet —
-    # the round-trip fixture covered streaming frames only, and a reply
-    # streaming correctly into an empty conversation looks like a working chat.
+    # It must not return nothing (a test allowlist, `KNOWN_UNMAPPED`, must not
+    # record that as a decision): an AG-UI client would open every conversation
+    # EMPTY, and lose its history again on every reconnect. A reply streaming
+    # correctly into an empty conversation looks like a working chat, and the
+    # round-trip fixture covers streaming frames only.
     #
     # Two audiences, so two halves. A third-party AG-UI client gets the history
     # in the protocol's own vocabulary (`MESSAGES_SNAPSHOT`, user and assistant
@@ -508,15 +506,14 @@ def project(frame: dict, *, thread_id: str, run_id: str = "") -> list[E.BaseEven
     # canopy asking the PAGE to run something (`page_actions.py`). The host↔frame
     # contract, not the agent↔UI one — but the frame IS the client reading this
     # stream, and it is the party that relays the action to its host. Dropping
-    # it (as this did until 2026-09-18) would have silently disabled every page
-    # action the moment the widget switched protocol.
+    # it would silently disable every page action once the widget speaks AG-UI.
     if event == "session.page_action":
         return [_custom(event, data)]
 
     # Whether the stop a human asked for actually LANDED — `requested` from the
     # consumer, then `stopped` or `failed` from the runner. The frame exists
-    # because a stop used to fail silently (#649), and it was dropped here on the
-    # belief that it travelled client→server; it does not. AG-UI's cancellation
+    # because a stop can fail silently, and it travels server→client, so it
+    # must not be dropped here. AG-UI's cancellation
     # is a run outcome (`chat.stream_cancelled` already maps onto it), which has
     # no way to say "we asked and it did not work" — so it rides CUSTOM.
     if event == "session.stop":
@@ -529,12 +526,12 @@ def project(frame: dict, *, thread_id: str, run_id: str = "") -> list[E.BaseEven
     #
     # Dropping it here would be silent, and would disable the status on BOTH
     # surfaces at once: canopy's chat page and the embedded widget are both on
-    # ag-ui. That is how page actions were lost until 2026-09-18.
+    # ag-ui.
     if event == "session.turn_status":
         return [_custom(event, data)]
 
     # Human sends that have not reached the transcript yet, visible to every
-    # watcher (spec 2026-09-26). No AG-UI spelling for "the ask isn't even a run
+    # watcher. No AG-UI spelling for "the ask isn't even a run
     # yet", so it rides CUSTOM like its `session.turn_status` sibling — and for
     # the identical reason: dropping it here would be silent, on both surfaces
     # that ride ag-ui at once.

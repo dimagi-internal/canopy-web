@@ -10,7 +10,7 @@ class GitHubConnection(models.Model):
 
     WHY THIS IS NOT AN AgentCredential. The credentials design puts per-user
     secrets explicitly out of scope — an agent vault holds what the AGENT is,
-    and "Jonathan's GitHub token" is not that. This is the `chrome-sales` case
+    and "a person's GitHub token" is not that. This is the `chrome-sales` case
     named there: a credential that acts on behalf of the dispatching human. So
     it gets its own per-user row and none of the vault's semantics. It also
     satisfies that design's rule for what canopy-web may hold at all — only
@@ -23,12 +23,12 @@ class GitHubConnection(models.Model):
     is on — with it off GitHub issues no refresh token at all and we would be
     holding a credential that never expires).
 
-    The access token used to be deliberately NOT stored, and every use
-    refreshed. That was a race, not a simplification: GitHub rotates the
-    refresh token on every refresh, so two concurrent uses (two web workers,
-    say a history sync and a diff) both spent the SAME refresh token — the
-    loser's exchange was rejected, `refresh_failed_at` was stamped, and the
-    owner's grant was dead for every feature until they pressed Connect again.
+    The access token is stored; not storing it and refreshing on every use would
+    be a race, not a simplification: GitHub rotates the refresh token on every
+    refresh, so two concurrent uses (two web workers, say a history sync and a
+    diff) would both spend the SAME refresh token — the loser's exchange is
+    rejected, `refresh_failed_at` is stamped, and the owner's grant is dead for
+    every feature until they press Connect again.
     Caching the access token makes a refresh rare (once per ~8 hours), and the
     refresh that does happen runs under a row lock (`github_app.access_token_for`).
     Holding it costs little: a stolen row plus the encryption key already

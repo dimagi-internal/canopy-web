@@ -1,5 +1,5 @@
 """The AWS IAM identity proof — an EC2 cloud runner's device binding (Canopy
-Vault Phase 1b, canopy-web#1549). The HashiCorp Vault AWS-auth pattern.
+Vault). The HashiCorp Vault AWS-auth pattern.
 
 An EC2 box has no Secure Enclave; its strongest machine identity is its
 instance ROLE. So instead of a DPoP proof it sends a signed-but-unsent
@@ -21,7 +21,7 @@ The contract (the runner half, canopy's CLI, builds against it):
 * Each proof is single-use: its signature is remembered for the window. So
   clients also sign a random `X-Canopy-Proof-Jti`: without it a proof is a
   pure function of (credentials, htu, second), and two honest resolves of one
-  URL in the same second collided here as a "replay" (2026-10-17). It is not
+  URL in the same second would collide here as a "replay". It is not
   required — any extra signed header is checked by STS, not by us.
 
 Server side, nothing about WHERE the request goes comes from the client: it is

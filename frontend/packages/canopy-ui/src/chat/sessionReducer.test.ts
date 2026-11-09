@@ -548,7 +548,7 @@ describe("sessionReducer — pending → complete lifecycle", () => {
 
 describe("sessionReducer — a web send arriving twice", () => {
   it("does not render the same message twice at two different ordinals", () => {
-    // THE live bug (2026-07-27): a web send writes its row at a DENSE index
+    // THE live bug: a web send writes its row at a DENSE index
     // (_next_index), then the agent reads it and the transcript re-ships the
     // same text at a COMPOSITE ordinal. Different index, different id, so
     // matching on turn_index alone missed and the message appeared twice — while
@@ -570,7 +570,7 @@ describe("sessionReducer — a web send arriving twice", () => {
   })
 
   it("meets its echo when the runner appended the attachment note and dropped the line breaks", () => {
-    // The live bug (2026-10-24): a send with a screenshot stayed at the bottom
+    // The live bug: a send with a screenshot stayed at the bottom
     // as "pending" while its echo rendered above, because the echo carried the
     // runner's attachment note, glued on with no line break.
     const seeded = makeState({
@@ -711,7 +711,7 @@ describe("the dialog an agent is blocked on", () => {
 
   it("survives a blocked frame that carries no menu", () => {
     // The hook path reports `blocked` WITHOUT a menu — it deliberately does not
-    // read the screen (#510: doing so stole emdash's focus). Treating that as a
+    // read the screen. Treating that as a
     // retraction would erase a menu the snapshot or the session report had
     // already supplied, which is every menu we now have.
     const blocked = sessionReducer(makeState(), {
@@ -929,7 +929,7 @@ describe("sessionReducer — two people saying the same thing (final review I5)"
   })
 
   it("an echo carrying the send's client_id meets its row even past the recent-text window", () => {
-    // 2026-10-30: words alone are a guess, and the guess only looks at the last
+    // Words alone are a guess, and the guess only looks at the last
     // few user rows. The nonce is exact wherever the row sits.
     const mine = yes({ id: "local:c1", turn_index: 3, status: "pending", content: { client_id: "c1" } })
     const later = Array.from({ length: 8 }, (_, i) =>

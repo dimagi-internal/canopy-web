@@ -105,8 +105,8 @@ class KbVersion(models.Model):
     """One published state of a workspace project's knowledge base: the version log.
 
     A FULL publish is a whole kb.sqlite its steward built; canopy-web never builds one
-    (#1971: the DELTA kind, which canopy-web built in its web process, is kept only in
-    the log of versions made before). Each carries the curation state it was built from
+    (the DELTA kind, which canopy-web once built in its web process, is kept only in
+    the log of earlier versions). Each carries the curation state it was built from
     (`curation_sha`), which the next refresh starts from. A ROLLBACK points the project
     back at an earlier version's file and state. What changed is the file's own history
     (`whats_new`); `added`, `changed` and `removed` count it.

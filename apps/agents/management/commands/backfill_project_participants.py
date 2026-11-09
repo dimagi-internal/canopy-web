@@ -1,4 +1,4 @@
-"""Link people to the projects they take part in (fleet brain v1.1, canopy#804).
+"""Link people to the projects they take part in (fleet brain v1.1).
 
     manage.py backfill_project_participants
 

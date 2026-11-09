@@ -225,7 +225,7 @@ def _merge_metadata(session: Session, updates: dict) -> None:
 def add_runner_requirements(session: Session, reqs, *, refuse_keyless: bool = False) -> None:
     """Union `reqs` into the session's requirements. Never removes one: a
     conversation that held a host's data keeps the host's floor, whatever token
-    touches it next (spec 2026-09-30-zdr-runners).
+    touches it next.
 
     `refuse_keyless` (a person's send, `send_paths.send_from`): when this would make the
     conversation sensitive and it can get no key — its starter has no vault key, or it
@@ -430,10 +430,9 @@ def _inherit_participants(session: Session, created_by) -> None:
 
     The person who asked joins too, even when the parent has no participant
     rows: a session started in emdash is runner-discovered, so its person
-    reads it through the tenant leg and typing into it never writes a row
-    (#926). The asker is the parent TURN's initiator — only a turn in that
-    same parent, so naming some other turn is not a way in either
-    (2026-10-19: ACE's handover of a run from emdash task `fi` reached no one).
+    reads it through the tenant leg and typing into it never writes a row.
+    The asker is the parent TURN's initiator — only a turn in that
+    same parent, so naming some other turn is not a way in either.
 
     The parent is reachable two ways: the creator can read it, or the creator is
     the agent's own login running a live turn IN it (`access.own_turn_session`
@@ -522,9 +521,8 @@ def _reset_blocker(session) -> tuple[str, object]:
     Deliberately NOT "is the emdash task still open?". A backfill resolves the
     transcript by WORKTREE PATH under ~/.claude/projects, never by asking emdash,
     and Claude Code never deletes those files — so a task emdash deleted months
-    ago still ships its full history (verified against the live fleet 2026-07-26:
-    tasks absent from emdash's DB entirely, transcripts resolved, 545 and 607
-    records). Falling off the session report ends a session's LISTING, not its
+    ago still ships its full history (tasks absent from emdash's DB entirely
+    still resolve their transcripts). Falling off the session report ends a session's LISTING, not its
     recoverability; conflating the two is what made this look dangerous.
 
     What actually blocks a reset is having no pointer to a transcript at all (no

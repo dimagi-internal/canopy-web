@@ -1,17 +1,16 @@
 """A cloud runner clears the scratch its turns leave behind, on its own.
 
-cloud-ec2-2's root reached 100% on 2026-10-19 15:22 — a CLI could not write
-its session file under /tmp, so ada's vault refresh failed and turn 86535ffc
-crashed. The caches bootstrap prunes were not the cause: /tmp held ~3.4 GB of
-week-old scratch clones agents made themselves (/tmp/tmp.*, /tmp/ada-*,
-/tmp/sweep, ...), and WORK_DIR/sessions held 37 chat worktrees (one 1.1 GB);
-nothing removed either, and the only remedy the box offered was a human refresh.
+A full root disk stops a CLI writing its session file under /tmp, so a vault
+refresh fails and a turn crashes. The caches bootstrap prunes are not the only
+cause: /tmp fills with week-old scratch clones agents make themselves
+(/tmp/tmp.*, /tmp/ada-*, /tmp/sweep, ...), and WORK_DIR/sessions with chat
+worktrees; nothing else removes either.
 
 So the runner sweeps, when idle, every few hours and whenever the disk check
 reads warn: old scratch in /tmp, old chat-session worktrees, then the caches if
 the disk is still full. It NEVER deletes work that exists nowhere else — a git
 clone with uncommitted changes or commits on no remote is kept, and named in a
-`scratch` health check (two such clones were on that box).
+`scratch` health check.
 """
 from __future__ import annotations
 
@@ -50,7 +49,7 @@ def box(cloud_runner, monkeypatch, tmp_path):
     """A /tmp, a WORK_DIR, an origin repo and an agent clone, all under tmp_path."""
     # No background gc / maintenance: a commit can start one, detached, and its
     # write into .git/objects lands after _age() — so the sweep reads the clone as
-    # touched just now and skips it. Seen in CI only (#1770 named it):
+    # touched just now and skips it. Seen in CI only:
     # "touched=True newest=…/ada-cw-inv7/.git/objects 0s ago".
     for i, (key, value) in enumerate((("gc.auto", "0"), ("maintenance.auto", "false"))):
         monkeypatch.setenv(f"GIT_CONFIG_KEY_{i}", key)
@@ -92,8 +91,7 @@ def _health(cr):
 def _seen(cr, path: pathlib.Path) -> str:
     """What a sweep would see at `path`, taken BEFORE it runs (its own `git status`
     rewrites files under .git). For the failure message: the clone-with-commits case
-    has failed intermittently in CI only (canopy-web#1756's merge queue, main push
-    39628295690) with an empty `kept` and nothing logged, which leaves three silent
+    can fail intermittently in CI only, with an empty `kept` and nothing logged, which leaves three silent
     skips — not a candidate, touched recently, or no unsaved work found."""
     now = time.time()
     newest = max(((os.lstat(os.path.join(r, n)).st_mtime, os.path.join(r, n))

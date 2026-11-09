@@ -1,7 +1,7 @@
 """Runner readiness — the 'can I fire a turn' self-assessment reported in the heartbeat.
 
 Two halves:
-- proactive: cdp_control.cdp_healthy() — is emdash up with its debug port (the #277/#278
+- proactive: cdp_control.cdp_healthy() — is emdash up with its debug port (the
   preflight).
 - reactive: a marker file next to the runner's state. A failed turn writes it (with the
   reason); a clean turn clears it. This is how "online but not logged in" — invisible to a

@@ -6,7 +6,7 @@ import { defaultLabel, webauthnSupported } from '@/auth/webauthn'
 import { relativeAge } from '@/lib/relativeAge'
 
 /**
- * Your passkeys (canopy-web#1538) — never a way to sign in; the confirmation
+ * Your passkeys — never a way to sign in; the confirmation
  * canopy asks for before an action that handles a secret (revealing or setting
  * an agent credential, approving a runner's device key).
  *

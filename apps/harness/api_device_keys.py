@@ -166,7 +166,7 @@ def checked_ecdh(payload: RunnerDeviceKeyIn) -> tuple[dict | None, str]:
 
 
 def set_ecdh(key: RunnerDeviceKey, jwk: dict | None, jkt: str) -> None:
-    """Attach or change a known key's ECDH key (canopy-web#1550). The new ECDH
+    """Attach or change a known key's ECDH key. The new ECDH
     key waits for a person (`ecdh_approved_at` cleared): which key receives an
     agent's vault key is a trust decision a person makes, not one the box makes
     by re-posting. The SIGNING key keeps its status — an active box goes on
@@ -191,7 +191,7 @@ def set_ecdh(key: RunnerDeviceKey, jwk: dict | None, jkt: str) -> None:
 
 def verified_role(request: HttpRequest, payload: RunnerDeviceKeyIn) -> tuple[str, str]:
     """`(canonical role ARN, jkt)` for an aws-iam registration, after its proof
-    — signed for THIS URL — came back from STS as `role_arn` (canopy-web#1549).
+    — signed for THIS URL — came back from STS as `role_arn`.
     Registering a role you cannot sign as is refused, so a pending row always
     names an identity the registering box actually holds."""
     from . import aws_iam_proof
@@ -231,7 +231,7 @@ def list_runner_device_keys(request: HttpRequest, runner: uuid.UUID | None = Non
         ).exclude(runner__status=Runner.RETIRED)
     qs = qs.select_related("runner__owner", "approved_by").order_by("-created_at")
     # Read once for every key in the list: the agents, and the fleet's facts about which
-    # box serves which (each helper below used to rebuild them per key and agent).
+    # box serves which (so no helper below rebuilds them per key and agent).
     everyone = list(Agent.objects.select_related("workspace", "owner"))
     facts = device_keys.serving_facts(everyone)
     agents = [a for a in sorted(everyone, key=lambda a: (a.name, a.slug)) if a.is_admin(request.user)]
@@ -241,7 +241,7 @@ def list_runner_device_keys(request: HttpRequest, runner: uuid.UUID | None = Non
         row.can_open = agents_key_opens(k, agents, facts=facts)
         # What it waits on a vault-key wrap for: for a key not yet approved, what
         # approving it will leave waiting, so the browser approves AND wraps in one
-        # passkey touch (canopy-web#1550); for an approved key, what it came to
+        # passkey touch; for an approved key, what it came to
         # serve since (a runner made private, a new license) — "Give access".
         row.zk_pending_agents = zk_agents_waiting_on(request.user, k, assume_active=not k.ecdh_ready,
                                                      agents=everyone, facts=facts)
@@ -265,7 +265,7 @@ def approve_runner_device_key(request: HttpRequest, key_id: uuid.UUID):
     # while the box was shared stays pending once it is made private, and must not
     # then be approved by them.
     _may_trust_or_403(request, key.runner)
-    # A fresh passkey confirmation (canopy-web#1538): an active key unlocks an
+    # A fresh passkey confirmation: an active key unlocks an
     # agent's secrets for that box, so a stolen session cookie must not suffice.
     # 403 `step_up_required` → the SPA prompts for the passkey and retries.
     stepup.require_recent_step_up(request)

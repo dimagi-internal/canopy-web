@@ -172,8 +172,8 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
     #
     # A new agent homes in the explicit `workspace` when given (the caller must
     # be a member — same 404 as below), else in `wsvc.creation_workspace`: the
-    # membership-bound resolver every other create uses. It used to fall back to
-    # `ensure_default_workspace()`, which guessed the org default for any flat
+    # membership-bound resolver every other create uses. It never falls back to
+    # `ensure_default_workspace()`, which would guess the org default for any flat
     # caller whether or not they were in it; now an unpinned create lands in a
     # workspace the caller is actually in, or 422s when that is ambiguous.
     existing = services.get_agent(payload.slug)
@@ -282,7 +282,7 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
         # Explicit home: MOVES an already-homed agent — the whole move, through
         # the same operation as POST /{slug}/move, so its turns, sessions, mail
         # and grants go with it. Setting the pointer alone left all of that in
-        # the old tenant (#1532). The gate is the move's own (`agent_move.check`):
+        # the old tenant. The gate is the move's own (`agent_move.check`):
         # a missing workspace and a non-member get the same 404, and the
         # destination needs editor or above. A refusal raises inside this
         # route's transaction, so the fields written above roll back with it.
@@ -613,7 +613,7 @@ def give_agent_canopy_login(request: HttpRequest, slug: str, payload: AgentCanop
 # The owner is whose GitHub grant the agent's GitHub-backed features read
 # through, so moving it is held to the agent's owner or a workspace owner. A
 # token (PAT, MCP client) acts as its user and may do it too: anything the web
-# app can do, MCP can (2026-10-02 — browser-only gates were tried and removed).
+# app can do, MCP can (browser-only gates are not used).
 # Resolve first so a non-member still gets 404, never 403.
 @router.put("/{slug}/owner", response=AgentDetailOut,
             summary="Transfer the agent's ownership to a member of its workspace")
@@ -714,7 +714,7 @@ def _license_rows(agent) -> list[dict]:
 
 @router.get("/{slug}/licenses", response=list[AgentLicenseOut],
             summary="Who uses this agent directly: its license holders")
-@gate("member")  # licenses to use the agent directly (apps/agents/credentials/licenses.py, canopy-web#1704)
+@gate("member")  # licenses to use the agent directly (apps/agents/credentials/licenses.py)
 def list_agent_licenses(request: HttpRequest, slug: str):
     """Every license to use the agent in someone's own Claude Code — active,
     requested (the caller list did not allow it yet) or revoked — with the

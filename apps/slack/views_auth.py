@@ -32,7 +32,7 @@ from .models import SlackInstallation, SlackUserLink, SlackWorkspaceLink
 
 logger = logging.getLogger(__name__)
 
-# Only what PR 1 uses, plus the history scopes the channel-window context read
+# The scopes in use, plus the history scopes the channel-window context read
 # (spec § "Feeding it context") will need, so the one human install step does
 # not have to be repeated for it. `im:history` is DMs *with the bot* only.
 BOT_SCOPES = [
@@ -106,8 +106,8 @@ def oauth_callback(request: HttpRequest) -> HttpResponse:
     # One Slack serves many canopy workspaces. Connecting another one ADDS a
     # link beside the ones already there — it moves nobody's messages and
     # grants this workspace nothing of theirs — so it takes only this
-    # workspace's owner plus Slack's own install consent. It used to refuse unless
-    # the caller owned the workspace the Slack was already connected to.
+    # workspace's owner plus Slack's own install consent, not ownership of the workspace the
+    # Slack was already connected to.
     with transaction.atomic():
         inst = SlackInstallation.objects.select_for_update().filter(team_id=team_id).first() \
             or SlackInstallation(team_id=team_id)

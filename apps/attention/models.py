@@ -73,14 +73,12 @@ class Alert(models.Model):
     # one is emailed or pushed while an agent works it. Handing it to a person
     # tells that one person, once (`alerts._assign`), and is an `assigned` event.
     #
-    # Why (Jonathan, 2026-10-23): a turn failure used to be an alert only once it
-    # was a person's, and before that it lived in a separate FailureInvestigation
-    # with its own lifecycle; the only verb the debugger had was "resolve", so
-    # even "needs Jonathan" resolved it, which cleared the alert and re-armed the
-    # next escalation — investigation 10 ran two debug turns two minutes apart
-    # (2026-10-22 15:02 / 15:04), each one emailing him. One alert, assigned to
-    # whoever is working it, is the lifecycle he asked for: "in a clean alert ->
-    # ada fix -> resolved, I don't want to be notified at all".
+    # Why: a turn failure is one alert for its whole life. If the only verb the
+    # debugger had were "resolve", even "needs a person" would resolve it, which
+    # clears the alert and re-arms the next escalation (two debug turns minutes
+    # apart, each one emailing the owner). One alert, assigned to whoever is
+    # working it, gives a clean alert -> agent fix -> resolved lifecycle with
+    # no notification at all.
     handler_agent = models.ForeignKey(
         "agents.Agent", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )

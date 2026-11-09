@@ -2,8 +2,7 @@
 
 A private conversation's words reach the agent as its turn's prompt, in clear, in
 transit: canopy-web holds the prompt only until the turn ends. A file is treated the
-same way, not as an archive (spec
-2026-10-23-sensitive-conversations-sealed-to-their-people §2, "Files"):
+same way, not as an archive:
 
 * **The agent's copy is transient.** The person's browser uploads the file for one
   turn (`api.upload_attachment`). canopy-web stores it, under a key that names no file

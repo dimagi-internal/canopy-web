@@ -16,8 +16,8 @@ import { listAgents, type AgentOut } from '@/api/agents'
 import { ApiError } from '@/api/problem'
 import { Td, Th, Tr } from '@/components/DataTable'
 
-// Which turns this workspace refuses before any session starts (apps/admission,
-// canopy-web#1400). Any member reads the rules; admins change them, and the
+// Which turns this workspace refuses before any session starts (apps/admission).
+// Any member reads the rules; admins change them, and the
 // server says which via `can_manage`. The owner's notice links here with
 // `?rule=<id>`, so the rule that fired is highlighted and scrolled to.
 

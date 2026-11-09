@@ -3,10 +3,9 @@ instance stopped) is not reported failed: it is left running, so canopy-web queu
 it again for another box (`fleets.requeue_lost`). A restart of the runner alone (an
 update), a person's stop and a turn that really failed are reported as before.
 
-#2148 put this guard in `_finish_turn`, which nothing called: the worker finishes
-over REST in `_run_turn`. Turn 2087c077 (canopy-web on demo-0fc9c7b1efb87c5c3,
-2026-10-26, failure investigation 13) ran #2148 and was still reported failed with
-"turn ended: cancelled". These tests drive `_run_turn` itself.
+The guard lives in `_run_turn`, where the worker finishes over REST (a guard in
+`_finish_turn` would never run, and the turn would be reported failed with "turn
+ended: cancelled"). These tests drive `_run_turn` itself.
 """
 from __future__ import annotations
 

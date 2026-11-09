@@ -1,6 +1,6 @@
 /**
- * The HOST side of an MCP Apps View (SEP-1865, `io.modelcontextprotocol/ui`,
- * spec 2026-01-26 §Communication Protocol, §Sandbox proxy, §Lifecycle).
+ * The HOST side of an MCP Apps View (SEP-1865, `io.modelcontextprotocol/ui`:
+ * Communication Protocol, Sandbox proxy, Lifecycle).
  *
  * canopy frames a sandbox proxy (`/mcp-apps/sandbox/`, opaque origin); the proxy
  * frames the View and relays JSON-RPC both ways. This module is the host's end
@@ -249,7 +249,7 @@ export class AppBridge {
           return;
         case "ui/request-display-mode": {
           // The answer is always the mode in force: inline unless the host
-          // offers more (spec 2026-10-08 §7) and grants this request.
+          // offers more and grants this request.
           const wanted = typeof params.mode === "string" ? params.mode : "";
           const mode = h.requestDisplayMode ? await h.requestDisplayMode(wanted) : "inline";
           this.respond(id, { mode });

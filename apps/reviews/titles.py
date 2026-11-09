@@ -1,9 +1,8 @@
 """A narrative's human name, and its review state in plain words.
 
-One place, because two copies of "the story's first line, cut at 140 chars"
-had drifted into the narratives list, the narrative page and the reviews list,
-and an H1 like "…registers each one on their phone, with its name, village, a
-GPS poi" is what a first-time visitor read as the page's name (canopy-web#1271).
+One place, so the narratives list, the narrative page and the reviews list agree:
+an H1 like "…registers each one on their phone, with its name, village, a
+GPS poi" is not a page name a first-time visitor can read.
 """
 from __future__ import annotations
 

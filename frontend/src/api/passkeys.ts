@@ -1,5 +1,5 @@
 /**
- * A person's passkeys and the step-up they earn (`/api/passkeys/`, canopy-web#1538).
+ * A person's passkeys and the step-up they earn (`/api/passkeys/`).
  *
  * `registerThisDevice` and `performStepUp` run the whole two-call ceremony,
  * including the browser prompt; everything else is a plain call.
@@ -45,7 +45,7 @@ export async function registerThisDevice(label: string, opts: { upgrade?: boolea
     'Could not start registering a passkey',
   )
   const publicKey = toCreationOptions(begin.options as Record<string, unknown>)
-  // Ask for the PRF extension (canopy-web#1550): the answer, `prf.enabled`,
+  // Ask for the PRF extension: the answer, `prf.enabled`,
   // says whether this passkey can seal a zero-knowledge vault key. Nothing is
   // evaluated here, so no PRF output exists to leak.
   publicKey.extensions = { ...(publicKey.extensions ?? {}), prf: {} } as AuthenticationExtensionsClientInputs

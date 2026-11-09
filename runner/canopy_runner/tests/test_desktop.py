@@ -1,4 +1,4 @@
-"""The Claude desktop session runtime (canopy_runner/desktop.py, canopy-web#1188).
+"""The Claude desktop session runtime (canopy_runner/desktop.py).
 
 Which backend a turn gets, and one turn's whole loop with the mod's half of the
 file protocol simulated — no Claude app. The live half (a real app importing the
@@ -260,7 +260,7 @@ def test_a_chat_turn_runs_to_completion_in_a_new_session(cfg, tmp_path, no_app):
 
 
 def _host(cfg, tmp_path) -> Path:
-    """A live desktop session whose mod can start sessions (canopy-web#1238)."""
+    """A live desktop session whose mod can start sessions."""
     wt = tmp_path / "wt-host"
     channel = wt / desktop.CHANNEL
     channel.mkdir(parents=True)
@@ -293,7 +293,7 @@ def _host_mod(host: Path, cfg, sid: str, ok: bool = True):
 
 def test_a_new_session_opens_with_start_session_and_no_deep_link(cfg, tmp_path, no_app, monkeypatch):
     """The deep link brings Claude.app to the front; start_session from a live
-    session's mod does not (canopy-web#1238)."""
+    session's mod does not."""
     monkeypatch.setenv("CANOPY_DESKTOP_START_SESSION", "1")
     cfg.project_paths = {"scratch": str(_repo(tmp_path))}
     monkeypatch.setattr(desktop, "app_features", lambda: {"start_session": True})
@@ -335,7 +335,7 @@ def test_no_host_or_gate_off_means_no_start_request(cfg, tmp_path, monkeypatch):
     wt = tmp_path / "wt"
     (wt / desktop.CHANNEL).mkdir(parents=True)
     host = _host(cfg, tmp_path)
-    # Off by default: the app refuses automated starts (#1238), so no request is made.
+    # Off by default: the app refuses automated starts, so no request is made.
     assert desktop.start_in_app(cfg, wt, "t", features={"start_session": True}) is None
     assert not list(host.glob("start-*.json"))
     monkeypatch.setenv("CANOPY_DESKTOP_START_SESSION", "1")
@@ -347,7 +347,7 @@ def test_no_host_or_gate_off_means_no_start_request(cfg, tmp_path, monkeypatch):
 
 def test_a_chat_turns_attachments_reach_the_desktop_session(cfg, tmp_path, monkeypatch):
     """A screenshot sent from the web was dropped on this runtime: the session got
-    the words alone (live 2026-10-06, a supervisor request whose image never
+    the words alone (a supervisor request whose image never
     arrived). It must be downloaded and named in the prompt, as on emdash."""
     from canopy_runner import execute
 
@@ -652,7 +652,7 @@ def test_a_new_desktop_session_is_recorded_with_its_task_name(cfg, tmp_path, no_
     assert title and title != "sid-1"
 
 
-# ── opening a session gives focus back (canopy-web#1188, Focus round 2) ──────
+# ── opening a session gives focus back ──────────────────────────────
 
 def _record_runs(monkeypatch, results):
     # These drive the macOS branch (osascript, `open`); a Windows test turns
@@ -733,7 +733,7 @@ def test_windows_ensure_app_leaves_the_start_to_the_protocol_handler(monkeypatch
 
 
 def test_windows_stop_kills_the_turns_shells_with_taskkill(monkeypatch):
-    """No SIGKILL on Windows (reaching for it raised mid-stop), so a stop used to
+    """No SIGKILL on Windows (reaching for it raised mid-stop), so a stop would
     leave the turn's shells running: taskkill ends each one's tree instead."""
     from canopy_runner import platform_jobs
 
@@ -823,8 +823,8 @@ def _desktop_session(cfg, tmp_path, sid="sid-c1"):
 
 
 def test_close_retires_a_desktop_session_and_keeps_its_branch(cfg, tmp_path, monkeypatch):
-    """Close used to look the id up in emdash, find nothing, call it 'already
-    gone' — and the session kept running and came back on the next report."""
+    """Close must not look the id up in emdash, find nothing and call it 'already
+    gone' — the session would keep running and come back on the next report."""
     from canopy_runner import close as close_mod, sessions
 
     monkeypatch.setattr(sessions, "_PENDING_CLOSED", set())
@@ -866,9 +866,9 @@ def test_a_turn_on_a_closed_sessions_thread_opens_a_new_desktop_session(cfg, tmp
 
 
 def test_closing_a_desktop_session_drops_it_from_the_report(cfg, tmp_path, monkeypatch):
-    """There is no emdash task to delete, so the old close found none, said "already
-    gone", and the next report named the session open again — retried every tick,
-    forever, with the session stuck on the feed (2026-10-07)."""
+    """There is no emdash task to delete, so a close that looks one up finds none, says
+    "already gone", and the next report names the session open again — retried every
+    tick, forever, with the session stuck on the feed."""
     from canopy_runner import close, sessions
 
     wt = tmp_path / "wt"
@@ -886,7 +886,7 @@ def test_closing_a_desktop_session_drops_it_from_the_report(cfg, tmp_path, monke
     assert wt.exists()  # not a git checkout git can vouch for: never removed
 
 
-# ── the app's feature gates (canopy-web#1238) ────────────────────────────────
+# ── the app's feature gates ──────────────────────────────────────────────────
 
 def _write_fcache(path: Path, features: dict, ts_ms: int = 1_791_000_000_000) -> Path:
     import gzip
@@ -898,7 +898,7 @@ def _write_fcache(path: Path, features: dict, ts_ms: int = 1_791_000_000_000) ->
 
 
 def test_app_features_reads_both_gates_as_the_app_caches_them(tmp_path):
-    # The shape observed on haldimagi 2026-10-07 (Claude 2.26454.2): start_session
+    # The shape observed on Claude 2.26454.2: start_session
     # off by default, the idle timeout forced to 0.
     p = _write_fcache(tmp_path / "fcache", {
         desktop.GATE_START_SESSION: {"value": False, "on": False, "off": True, "source": "defaultValue"},
@@ -935,8 +935,7 @@ def test_app_features_unreadable_cache_is_none(tmp_path, content):
 
 
 def test_a_long_reply_is_cut_with_a_marker_linking_the_turn(cfg):
-    """canopy-web#1955: the note used to be a bare `[:2000]`, so a cut reply read as
-    a whole one and its reader dispatched follow-ups to get the rest."""
+    """A cut reply must not read as a whole one (a bare `[:2000]` note would) and its reader dispatched follow-ups to get the rest."""
     cfg.base_url = "https://canopy.example.org"
     client = FakeClient()
     turn = _turn(agent_slug="ace")

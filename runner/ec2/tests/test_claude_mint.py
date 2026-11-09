@@ -227,11 +227,10 @@ def test_the_verdict_survives_the_length_cap(cm):
     """The LAST thing the CLI said is the reason this function exists, so the
     cap must eat the oldest lines, never the newest.
 
-    Regression: the tail was joined oldest-first and then sliced `[:limit]`,
-    which trims the end — the newest line. On 2026-09-08 a real failure detail
-    ended with the single character "O", the decapitated head of "OAuth error:
-    Request failed with status code 400", and was read as "the CLI printed
-    nothing at all"."""
+    A tail joined oldest-first and sliced `[:limit]` trims the end — the newest
+    line — leaving a failure detail that ends with the single character "O", the
+    decapitated head of "OAuth error: Request failed with status code 400", read as
+    "the CLI printed nothing at all"."""
     noise = b"".join(b"\r\n" + f"chatter line {i} that is here only to fill the budget".encode()
                      for i in range(40))
     out = noise + b"\r\nOAuth error: Request failed with status code 400\r\n"
@@ -251,12 +250,12 @@ def test_a_single_over_long_line_is_still_reported(cm):
 
 # ── the token's format is Anthropic's to choose, not ours to pin ───────────
 #
-# 2026-09-08, live: a sign-in COMPLETED. The CLI printed "Long-lived
-# authentication token created successfully!" and rendered the credential. The
-# runner discarded it and reported "setup-token never printed a token", because
-# `\bsk-ant-oat…` did not match. The token is returned by Anthropic's token
-# endpoint and merely displayed by the CLI, so pinning the prefix bound this
-# runner to a taxonomy nobody promised us — and cost a human a real sign-in.
+# A sign-in can COMPLETE: the CLI prints "Long-lived authentication token created
+# successfully!" and renders the credential. Discarding it because `\bsk-ant-oat…`
+# did not match would report "setup-token never printed a token". The token is
+# returned by Anthropic's token endpoint and merely displayed by the CLI, so pinning
+# the prefix would bind this runner to a taxonomy nobody promised us — and cost a
+# human a real sign-in.
 
 #: The success screen as `strip_terminal` renders it. Spaces are largely absent
 #: on purpose: the TUI positions text with cursor moves, which the CSI strip
@@ -297,12 +296,10 @@ def test_an_unannounced_api_key_is_still_refused(cm):
 
 # ── a created token we cannot read is NOT a missing token ──────────────────
 #
-# 2026-09-08: a human signed in correctly, Claude issued a year-long token, the
-# runner failed to match its prefix, and the operator was told "setup-token
-# never printed a token". That sentence pointed the debugging at the sign-in —
-# which had worked perfectly — instead of at the parser, and cost a second
-# attempt to notice. The two faults need opposite responses, so they get
-# different exceptions.
+# If a human signs in correctly, Claude issues a year-long token and the runner
+# fails to match its prefix, telling the operator "setup-token never printed a
+# token" points the debugging at the sign-in — which worked — instead of at the
+# parser. The two faults need opposite responses, so they get different exceptions.
 
 def _submit_expecting(cm, monkeypatch, buf: bytes):
     monkeypatch.setattr(cm.os, "write", lambda fd, data: len(data))
@@ -338,8 +335,8 @@ def test_a_genuine_failure_is_still_a_plain_timeout(cm, monkeypatch):
 def test_the_banner_outranks_our_prefix_opinion(cm):
     """DELIBERATE, and load-bearing: under the CLI's own "Your OAuth token"
     label the value IS the token, so pass 1 does not apply pass 3's api/admin
-    exclusion. Applying it there would re-create the 2026-09-08 bug — our
-    taxonomy overruling the tool that owns the credential. Documented as a test
+    exclusion. Applying it there would let our
+    taxonomy overrule the tool that owns the credential. Documented as a test
     so it is not "tidied up" into a regression."""
     announced = b"YourOAuthtoken(validfor1year):\nsk-ant-api03-0123456789abcdefghij\n"
     assert cm.extract_token(announced) == "sk-ant-api03-0123456789abcdefghij"
@@ -349,12 +346,11 @@ def test_the_banner_outranks_our_prefix_opinion(cm):
 
 # ── a renderer that only redraws what changed ──────────────────────────────
 #
-# cloud-ec2-2, 2026-10-16 to 10-23: from Claude Code 2.1.301 every setup-token
-# was stored as `sk-ant-at01-…` and was dead on its first probe. The CLI draws
-# its screen by moving the cursor and rewriting only the cells that changed; the
-# old strip deleted the moves, so a token character that matched what was
-# already on screen at that cell was simply never in the stream. The `o` of
-# `oat01` was. The token is now read off a replayed screen.
+# From Claude Code 2.1.301 the CLI draws its screen by moving the cursor and
+# rewriting only the cells that changed. Stripping the moves would delete a token
+# character that matched what was already on screen at that cell (the `o` of
+# `oat01` was one), storing `sk-ant-at01-…`, dead on its first probe. So the token
+# is read off a replayed screen.
 
 _FIXTURE_2_1_309 = _HERE / "fixtures" / "setup_token_2_1_309_pty.bin"
 

@@ -1,10 +1,10 @@
-"""Enroll this machine's device key at runner start (Canopy Vault, dimagi-internal/canopy#946).
+"""Enroll this machine's device key at runner start (Canopy Vault).
 
 canopy-web can hand an agent's credentials only to an APPROVED device
-(zero-knowledge reads need a device proof, canopy-web#1538). The key and its enrollment live in
+(zero-knowledge reads need a device proof). The key and its enrollment live in
 canopy — `canopy vault device --enroll` makes the key (the Secure Enclave via
 `~/.canopy/bin/canopy-device-key`, built by install-runner.sh, on a Mac; the TPM through
-the "Microsoft Platform Crypto Provider" on Windows, canopy-web#1549; a software key where
+the "Microsoft Platform Crypto Provider" on Windows; a software key where
 there is neither), registers it for this runner (`POST /api/runner-device-keys/`, idempotent
 on the key's thumbprint) and caches the status beside it. This module only runs that, once
 per start, in the background, as this runner's identity — and says what a person must do:
@@ -12,7 +12,7 @@ while the key is `pending` it logs the approve URL and, on macOS, shows ONE noti
 per key. `canopy vault status` / `canopy vault device` show the same URL.
 
 The same enrollment registers this machine's ECDH key (``ecdh_public_jwk``) for the
-zero-knowledge vault (canopy-web#1550) — canopy makes it beside the signing key. Adding or
+zero-knowledge vault — canopy makes it beside the signing key. Adding or
 changing it sends an active key back to ``pending``, so the notification marker is keyed by
 both thumbprints and a re-approval is announced like a first one.
 
@@ -120,7 +120,7 @@ def enroll(cfg, *, runner: Runner = subprocess.run, home: Optional[Path] = None,
     ecdh_jkt = st.get("ecdh_jkt") or ""
     logger.info("device key: %s key %s… for runner %s — %s", st.get("kind"), jkt[:12],
                 cfg.runner_id, status)
-    # The zero-knowledge vault's ECDH key (canopy-web#1550) rides the same enrollment.
+    # The zero-knowledge vault's ECDH key rides the same enrollment.
     if ecdh_jkt:
         logger.info("device key: ECDH key %s… (%s) registered beside it", ecdh_jkt[:12],
                     st.get("ecdh_kind") or "?")

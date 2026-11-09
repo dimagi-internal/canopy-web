@@ -6,7 +6,7 @@ import uuid
 
 # --- nothing from a sensitive conversation is ever written ------------------------------
 #
-# Owner rule (Jonathan, 2026-10-08): nothing should ever be written here from a session on a
+# Rule: nothing should ever be written here from a session on a
 # box set up for sensitive data. A sensitive conversation exists so that what is said in it is
 # not kept; an entry, or an agent's inference from it, would keep it here.
 #

@@ -139,9 +139,9 @@ def test_fire_schedule_posts_slot_with_runner_id(server):
     assert body == {"slot": "2026-07-10T13:00:00+00:00"}
 
 
-# --- transient-fault retry (issue #281) ------------------------------------
+# --- transient-fault retry ---------------------------------------------------
 # These calls run AFTER an emdash session has launched, so a one-off 5xx or
-# network blip used to mark a turn `failed` while its work was already running.
+# network blip must not mark a turn `failed` while its work is already running.
 
 
 def test_transient_5xx_is_retried_then_succeeds(server):
@@ -198,8 +198,8 @@ def test_network_fault_is_transient(server):
     lambda: http.client.BadStatusLine("garbage"),
 ])
 def test_a_connection_cut_mid_response_is_transient_and_retried(monkeypatch, make):
-    # Neither IncompleteRead nor BadStatusLine is an OSError: they used to escape
-    # `_attempt` raw and unretried — and a finish that raised was a finish lost.
+    # Neither IncompleteRead nor BadStatusLine is an OSError: they would escape
+    # `_attempt` raw and unretried — and a finish that raised is a finish lost.
     calls = []
 
     def boom(*a, **k):

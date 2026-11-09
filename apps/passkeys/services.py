@@ -108,7 +108,7 @@ def begin_registration(request: HttpRequest, *, upgrade: bool = False) -> dict[s
     already has is excluded — except, on an UPGRADE, the ones that cannot hold
     a vault key (no PRF): the point is to replace such a passkey with one that
     can, and a password manager asked to exclude it refuses to make the new one
-    for the same account (canopy-web#1550)."""
+    for the same account."""
     from webauthn import generate_registration_options
     from webauthn.helpers import options_to_json_dict
     from webauthn.helpers.structs import (
@@ -156,7 +156,7 @@ def finish_registration(request: HttpRequest, credential: dict, label: str = "")
     if Passkey.objects.filter(credential_id=cred_id).exists():
         raise CeremonyError("that passkey is already registered")
     transports = credential.get("response", {}).get("transports") if isinstance(credential, dict) else None
-    # The PRF extension (canopy-web#1550): registration asks `extensions.prf`,
+    # The PRF extension: registration asks `extensions.prf`,
     # and the browser answers `prf.enabled`. Absent = it was not reported.
     ext = credential.get("clientExtensionResults") if isinstance(credential, dict) else None
     prf = ext.get("prf") if isinstance(ext, dict) else None

@@ -2,7 +2,7 @@ import { useState, type JSX } from 'react'
 import { setRunnerPrivate, type RunnerOut } from '@/api/harness'
 import { SettingRow, Switch } from '@/components/supervisor/SettingRow'
 
-// A runner as its owner's PRIVATE runner (canopy-web#1705). Shared: the box takes
+// A runner as its owner's PRIVATE runner. Shared: the box takes
 // fleet work as routed. Private: only what its owner pins or binds to it, plus the
 // Claude Code sessions opened on that machine (recorded as the owner's direct turns —
 // the runner writes the registration itself, no CLI). Owner only.

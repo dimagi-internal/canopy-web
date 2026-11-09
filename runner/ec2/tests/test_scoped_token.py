@@ -63,8 +63,8 @@ def test_a_remembered_canopy_needs_auth_is_forgotten_before_a_turn(cloud_runner,
 
 
 def test_a_remembered_projects_needs_auth_is_forgotten_too(cloud_runner, monkeypatch, tmp_path):
-    """The project gateway authenticates like canopy-web; a stale 401 on it cost a Trellis turn its
-    `open_project` (cloud-ec2-live, 2026-11-04), so it is cleared with canopy-web, nothing else."""
+    """The project gateway authenticates like canopy-web; a stale 401 on it would cost a turn its
+    `open_project`, so it is cleared with canopy-web, nothing else."""
     import json
 
     monkeypatch.setattr(cloud_runner, "_login_dir", lambda key="default": tmp_path)

@@ -12,7 +12,7 @@ fails the build on a role constant, a `member_role(...)` comparison, or a role
 set anywhere else.
 
 Why a table rather than `has_role_at_least(..., EDITOR)` at each call site: the
-audit of 2026-10-02 found the same tier spelled five ways (`role in {editor,
+same tier was found spelled five ways (`role in {editor,
 owner}`, `!= OWNER`, `filter(role=OWNER)`, `_require_role(OWNER)`, rank), and
 two of them silently changed meaning the moment a role was inserted between
 editor and owner. With the table, adding or moving a role is one edit here,
@@ -71,12 +71,11 @@ INTEGRATIONS = "integrations"
 
 #: The workspace's default runner order: which box takes repo turns, and every
 #: agent here (and in workspaces below) that has no order of its own. Routing
-#: work to boxes the workspace can already use — not a key (owner decision
-#: 2026-10-05).
+#: work to boxes the workspace can already use — not a key.
 RUNNERS_ROUTE = "runners.route"
 
 #: How long the CONTENT of this workspace's chats and turns is kept
-#: (apps/retention). Admin, not owner, by owner decision (2026-10-05): it is
+#: (apps/retention). Admin, not owner: it is
 #: running the workspace, the same tier that already reads every turn's
 #: content. Every change is written to the event log.
 RETENTION_MANAGE = "retention.manage"
@@ -88,7 +87,7 @@ ADMISSION_MANAGE = "admission.manage"
 
 #: Start or decline a PROPOSED project (its decision card, `apps/agents/
 #: proposals.py`) — the workspace's call, beside the project's own
-#: `owner_user`, who may too (decision 4(b), 2026-10-16). Backing it is any
+#: `owner_user`, who may too. Backing it is any
 #: member's; deciding it is not.
 PROJECTS_DECIDE = "projects.decide"
 

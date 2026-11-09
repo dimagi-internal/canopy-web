@@ -67,11 +67,10 @@ describe('pairNarrationScenes', () => {
 })
 
 describe('legacy histories whose ids were derived from titles', () => {
-  // Real ids from verified-monitoring on labs, 2026-07-26. The author reworded
+  // Real ids from verified-monitoring on labs. The author reworded
   // every scene title between v16 and v17, and because pre-L0 ids were derived
-  // from the title, ZERO of six ids overlap — so id-matching reported six
-  // "New" scenes and no before/after, on the one narrative a domain expert had
-  // just iterated. This is the case the positional fallback exists for.
+  // from the title, ZERO of six ids overlap — so id-matching would report six
+  // "New" scenes and no before/after. This is the case the positional fallback exists for.
   const v16 = [
     { id: 'the-survey-verifies-the-program-now-maya-verifies-the-survey', text: 'Old beat one.' },
     { id: 'the-gap-is-real-where-delivery-happened-vs-where-the-survey-checked', text: 'Old beat two.' },

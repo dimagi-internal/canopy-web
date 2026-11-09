@@ -2,8 +2,7 @@
 
 CI builds every runner-source sha that reaches main and uploads, under
 `s3://<CANOPY_RUNNER_RELEASES_BUCKET>/<RUNNER_RELEASES_PREFIX><sha>/`, the
-artifacts and then `manifest.json` (spec 2026-10-19-runner-installers,
-"Releases"). What is CURRENT is the sha this deployment's image names
+artifacts and then `manifest.json` ("Releases"). What is CURRENT is the sha this deployment's image names
 (`settings.RUNNER_CODE_SHA`); a sha with no manifest has no release.
 
 The bucket is private. canopy-web decides who may download (a signed-in person,

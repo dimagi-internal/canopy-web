@@ -290,9 +290,8 @@ describe('ChatSessionsPanel — Run on picker', () => {
 
     renderPanel([])
 
-    // Flaky for a reason no timeout could fix — and the three earlier rounds
-    // (#391 → 20s budget, #419 → 15s per-await, #434 → click inside act())
-    // all missed the actual mechanism, so it kept failing on main.
+    // Flaky for a reason no timeout could fix: a longer budget, a longer
+    // per-await wait or a click inside act() all miss the actual mechanism.
     //
     // The trigger is `disabled={creating || (agents.length === 0 && projects.length === 0)}`.
     // This test renders with agents=[], so the button is disabled until

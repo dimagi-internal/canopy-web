@@ -6,17 +6,16 @@
 The migrate step runs before the service rolls, so the old task keeps serving for
 about 3.5 minutes against the new schema. New columns don't bother it. A dropped
 column does: Django SELECTs every column of a model, so on a table read on most
-requests 30-40% of ALL requests fail for the whole window (canopy-web#2447; 10-30
-had four such deploys, 119-332 errors each). A failed rollout is worse: it rolls
+requests 30-40% of ALL requests fail for the whole window (hundreds of errors per deploy). A failed rollout is worse: it rolls
 back to old code against a column that is gone.
 
 Authors still write migrations the obvious way, with no expand/contract PRs
 (CLAUDE.md). The pipeline does that split instead:
 
 - A migration holding a RemoveField/DeleteModel is held back, along with anything
-  that depends on it. New code no longer reads those columns, so it runs fine
+  that depends on it. New code does not read those columns, so it runs fine
   while they still exist, and old code keeps them until it is gone.
-- The columns about to go are made nullable first. New code no longer writes them,
+- The columns about to go are made nullable first. New code does not write them,
   and without this its INSERTs would fail NOT NULL until the drop runs.
 - If anything held back is not itself a pure drop (an AddField or RunPython behind
   a drop in the same app), new code may need it before cutover, so nothing is held

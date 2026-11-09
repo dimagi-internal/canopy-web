@@ -1,9 +1,9 @@
 """A turn's session is created once, whatever canopy does after the create.
 
-Slack turn f7cb8694 (2026-10-23): emdash made the session, record-session 500'd
-mid-deploy, the crash failed the turn with no session key, the server requeued it,
-and the re-claim made a second session with the same prompt — while the web listed
-the first as a session of its own beside the chat it belonged to."""
+The failure shape: emdash makes the session, record-session 500s mid-deploy, the
+crash fails the turn with no session key, the server requeues it, and the re-claim
+would make a second session with the same prompt — while the web lists the first as
+a session of its own beside the chat it belongs to."""
 import types
 
 import pytest

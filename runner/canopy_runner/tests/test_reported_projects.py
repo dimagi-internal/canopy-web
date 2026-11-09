@@ -1,8 +1,7 @@
 """The runner reports the repos it can drive on its healthy heartbeat.
 
-`capabilities["projects"]` used to be typed by a human at pairing and never
-revisited, so a turn at a repo the box HAS sat QUEUED forever (labs 2026-07-28,
-repo `canopy`). Now the box answers for itself.
+The box answers for itself: a `capabilities["projects"]` typed by a human at pairing
+and never revisited would leave a turn at a repo the box HAS queued forever.
 
 The property under test everywhere below is the absent-vs-empty distinction:
 `None` means "I could not tell" and the server leaves its stored list alone;

@@ -6,7 +6,7 @@ import { scopedPath } from '../../lib/scopedLinks'
 
 /**
  * /w/:workspace/huddles/groups/:slug — a work group's old page. Work groups
- * became project check-ins (2026-10-17): send the reader to the project the
+ * became project check-ins: send the reader to the project the
  * group became (matched on the check-in's `legacy_slug`), or to the Huddles
  * page when there is no such check-in any more.
  */

@@ -15,11 +15,10 @@ const OWNER_OPTIONS: RoleOption[] = [{ value: 'owner', label: 'Owner' }]
 
 // Who may administer this box, and the form to say so.
 //
-// `GET/POST/DELETE /runners/{id}/admins` shipped with the grant itself and had no
-// page, so the only way to add someone was a curl with the owner's token — which
-// is exactly the shape of thing that does not happen, and then a box has one
-// human who can fix it. The grant exists because that single point of failure
-// already bit once (2026-09-08, a signed-out cloud runner).
+// `GET/POST/DELETE /runners/{id}/admins` back this form, so adding an
+// administrator never needs a curl with the owner's token. The grant exists so a
+// box does not have a single human who can fix it (a signed-out cloud runner is
+// the typical case).
 //
 // Two tiers, mirrored here rather than guessed at:
 //   * LISTING is open to anyone who already administers the box. A non-admin gets

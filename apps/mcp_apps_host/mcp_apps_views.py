@@ -1,6 +1,6 @@
 """MCP Apps: which transcript rows get a View, and what a View may do — as the VIEWER.
 
-Spec 2026-10-08 §3-6 (owner decisions in its last section). The browser routes
+The browser routes
 that serve a rendered View (`canopy_sessions/app_views_api.py` for canopy users,
 `contacts/contact_api.py` for contacts) are thin; this module is the whole rule.
 
@@ -207,8 +207,8 @@ def annotate(session, messages) -> None:
             uses[use.get("id")] = use
     for m, call_id in zip(results, wanted):
         # A call the host refused gets no View: there is nothing to show or act on, and
-        # an empty card beside the agent's corrected retry is noise (2026-10-09: the agent
-        # named the action by its type, Labs refused, and a second, failed card appeared).
+        # an empty card beside the agent's corrected retry is noise (e.g. the agent
+        # names the action by its type, the host refuses, and a second, failed card appears).
         if (getattr(m, "content", None) or {}).get("is_error"):
             continue
         use = uses.get(call_id)
@@ -273,8 +273,8 @@ def find(session, tool_call_id: str) -> ViewRow:
         content, plaintext = found
         result = dict(content or {})
         # The runner's transcript rows keep a result's TEXT in `plaintext`, with only
-        # {is_error, tool_use_id} in `content` -- so a path-D View got an empty result
-        # and fell back on a depth-elided input copy (Labs' coaching card, 2026-10-09).
+        # {is_error, tool_use_id} in `content` -- so a path-D View would get an empty result
+        # and fall back on a depth-elided input copy (e.g. a host's coaching card).
         if not result.get("content") and plaintext:
             result["content"] = plaintext
     if ref is None or result is None:
@@ -464,7 +464,7 @@ def _refuse(session, viewer, ref, what, tool, exc: ViewRefusal):
 def resource(session, viewer: Viewer, tool_call_id: str) -> dict:
     """Everything the host page needs to mount one View, read as the viewer.
 
-    The HTML is fetched with the viewer's grant; without one (owner decision 4)
+    The HTML is fetched with the viewer's grant; without one
     the cached copy renders READ-ONLY, with a sign-in link and no server tools.
     """
     row = find(session, tool_call_id)
@@ -500,9 +500,9 @@ def resource(session, viewer: Viewer, tool_call_id: str) -> dict:
         "read_only_reason": ("" if can_write else "You can read this conversation but not act in it.")
         or reason,
         "sign_in_url": (row.app.frame_origins() or [""])[0] if (reason and can_write) else "",
-        # A sensitive conversation stores no result (spec 2026-10-22-sensitive-data-agents
-        # §4): the View fetches its data as the viewer, from the input. That input is
-        # sealed to the conversation's people (spec 2026-10-23 §2), so canopy-web sends
+        # A sensitive conversation stores no result (the sensitive-data rule):
+        # the View fetches its data as the viewer, from the input. That input is
+        # sealed to the conversation's people, so canopy-web sends
         # it sealed — to a reader `reads_content` admits — and their browser decrypts
         # it (`tool_input_sealed`; `tool_input_path` says where the arguments sit) and
         # hands it to the View. An ordinary conversation's input goes as it is.
@@ -514,7 +514,7 @@ def resource(session, viewer: Viewer, tool_call_id: str) -> dict:
         # A sensitive conversation keeps no result, only the host's resource links
         # (`sensitivity.strip_result`): the View gets those — addresses it reads back
         # from the host as the viewer — and `canopy/withheld` says the rest was not
-        # kept (spec 2026-10-23-host-held-results §3). An ordinary conversation's
+        # kept. An ordinary conversation's
         # result goes as the transcript holds it, links included.
         "tool_result": withheld_result(row) if sensitivity.is_sensitive(session) else tool_result(row),
         "receipts": receipts_for(session, tool_call_id),
@@ -582,7 +582,7 @@ def call(session, viewer: Viewer, tool_call_id: str, name: str, arguments: dict)
     _audit(session, viewer, ref, what="call", tool=tool, ok=True, extra=f"is_error={is_error}")
     # A receipt is canopy's witness of a person CHANGING something from a View. A call the
     # host declares read-only (MCP readOnlyHint) -- a status poll -- is audited but not
-    # recorded in the chat (2026-10-09: "Done: workflow_action_status" beside each send).
+    # recorded in the chat (otherwise a "Done: workflow_action_status" line appears beside each send).
     if mcp_apps.model_visible(getattr(check, "meta", {})) and not getattr(check, "read_only", False):
         _receipt(session, viewer, ref, tool, result)
     return result

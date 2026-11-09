@@ -40,7 +40,7 @@ ALWAYS_RELEVANT = frozenset({PersonFact.CORRECTION})
 ROLE_FLOOR = 2
 # The tunable knobs are settings (HCP_SEMANTIC_FLOOR, HCP_SEMANTIC_WEIGHT,
 # HCP_PROJECT_BOOST in config/settings/base.py), set in canopy-web.cfn.yaml. The
-# floor was measured on gemini-embedding-001 against live memory (2026-10-18):
+# floor was measured on gemini-embedding-001 against live memory:
 # unrelated questions score 0.45-0.55 against every entry, the right entry
 # 0.66-0.73. Re-measure (`manage.py hcp_explain`) before changing the model.
 

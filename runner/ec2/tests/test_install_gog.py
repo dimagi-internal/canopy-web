@@ -3,20 +3,17 @@
 Same approach as test_update_runner_sh.py: run the real bash against real tarballs,
 because the whole content of this function is which commands run against what.
 
-THE INCIDENT. A from-scratch cloud rebuild on 2026-08-12 died here:
+THE FAILURE MODE. gogcli 0.35.0 stores the binary as `./gog`, and
+`tar -xzf … gog` does not match that member:
 
     tar: gog: Not found in archive
     FAIL: could not extract 'gog' from .../gogcli_0.35.0_linux_amd64.tar.gz
     WARN: gog install failed — per-agent gmail steps below will be skipped
 
-gogcli 0.35.0 stores the binary as `./gog`, and `tar -xzf … gog` does not match
-that member. gog never installed, so step 2 skipped the keyring and the
-account->client map, and step 3 skipped the gmail-token import for ALL FIVE
-agents. The box came up online, ready, claiming turns, and unable to send a
-single email. It had gone unnoticed because the previous box was built on
-2026-07-26, when the layout still happened to match — a latent break that only
-fires on a rebuild, which is exactly the property that makes rebuilding worth
-testing.
+gog never installs, so step 2 skips the keyring and the account->client map, and
+step 3 skips the gmail-token import for every agent. The box comes up online,
+ready, claiming turns, and unable to send a single email — a latent break that
+only fires on a rebuild, which is exactly what makes rebuilding worth testing.
 
 So: never name the member. Extract, then find the binary wherever it landed.
 """
@@ -99,7 +96,7 @@ def _run_install_gog(tmp_path: pathlib.Path, tarball: pathlib.Path) -> subproces
 # pass either way. The nested case fails everywhere, which is what makes the trio
 # honest — do not prune it as redundant with `./gog`.
 @pytest.mark.parametrize("member", [
-    "gog",              # the layout that used to ship
+    "gog",              # a bare member name
     "./gog",            # gogcli 0.35.0 — what actually broke the rebuild (GNU tar only)
     "gogcli_9.9.9_linux_amd64/gog",   # a plausible next layout: nested in a dir
 ])

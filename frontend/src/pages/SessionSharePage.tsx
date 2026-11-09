@@ -80,7 +80,7 @@ const SHELL = "mx-auto max-w-3xl px-4 py-8";
  */
 export default function SessionSharePage() {
   // Mounted only at /w/:workspace/share/:token — the API confirms the share
-  // lives there. There is no flat route (canopy-web#1337).
+  // lives there. There is no flat route.
   const { token = "", workspace } = useParams();
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [selected, setSelected] = useState<number | null>(null);

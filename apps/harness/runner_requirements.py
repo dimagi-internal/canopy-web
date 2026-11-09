@@ -1,5 +1,5 @@
 """What a conversation requires of the runner it runs on, and whether a runner
-satisfies it (spec 2026-09-30-zdr-runners).
+satisfies it.
 
 The requirement is written by the HOST (a signed arrival claim), copied onto the
 session's server-owned metadata, and read here — by claiming, the unclaimable
@@ -126,8 +126,8 @@ def satisfies(flags: frozenset[str], reqs: frozenset[str]) -> bool:
     return reqs <= flags
 
 
-#: The data mode a box must REPORT for a person's declaration of each flag to count
-#: (spec 2026-10-22-sensitive-data-agents §2). canopy cannot see a box's keys;
+#: The data mode a box must REPORT for a person's declaration of each flag to count.
+#: canopy cannot see a box's keys;
 #: what it can see is whether the box says it is running in the mode that makes the
 #: declaration true, and a declaration the box contradicts is not in force.
 FLAG_NEEDS_DATA_MODE = {SENSITIVE_DATA: SENSITIVE_DATA}

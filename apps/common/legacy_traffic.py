@@ -1,6 +1,6 @@
 """Who still calls canopy on its OLD address — the evidence for retiring it.
 
-canopy moved to canopy.dimagi.com on 2026-10-05, and the old address
+canopy is served at canopy.dimagi.com, and the old address
 (labs.connect.dimagi.com/canopy) still serves machine traffic because clients
 hold it: runner configs, agent scripts, hand-added MCP connections, a cloud
 runner's stack parameter. None of those can be listed from here, so before the

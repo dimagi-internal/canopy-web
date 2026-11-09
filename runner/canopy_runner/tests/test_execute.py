@@ -81,7 +81,7 @@ def test_reuse_sends_into_existing_session(monkeypatch):
 
 
 def test_resolve_names_the_turn_and_a_busy_session_is_never_typed_into(monkeypatch):
-    """#309: the runner names its turn on resolve so the server can refuse reuse of
+    """The runner names its turn on resolve so the server can refuse reuse of
     a session that is mid-turn; a refused (busy) plan creates fresh, never sends."""
     monkeypatch.setattr(cdp_control, "open_and_send",
                         lambda *a, **k: pytest.fail("must NOT type into a busy session"))
@@ -114,7 +114,7 @@ def test_db_says_gone_creates_fresh_without_asking_the_dom(monkeypatch, state):
 
 
 def test_dom_not_found_never_duplicates_a_task_sqlite_says_is_live(monkeypatch):
-    """THE eva org-research bug (2026-07-15). The sidebar virtualizes, so a live task
+    """The sidebar virtualizes, so a live task
     scrolled out of view reports TASK_NOT_FOUND. Trusting that spawned a cold duplicate
     and orphaned the real session's context. sqlite outranks the DOM: fail, don't fork."""
     def not_found(task, text, port=9222, project=""):
@@ -245,10 +245,10 @@ def test_finish_reports_the_emdash_session_as_the_close_out_join_key(monkeypatch
 
 
 def test_launched_turn_survives_a_dead_post_events(monkeypatch):
-    """issue #281 — the session is already live, so a control-plane blip on a purely
+    """The session is already live, so a control-plane blip on a purely
     informational status event must not turn a working turn into a `failed` one.
-    Before this, the ClientError propagated to main._claim_and_execute's
-    `except Exception` and the turn was reported failed while its work ran on."""
+    A ClientError must not propagate to main._claim_and_execute's
+    `except Exception`, which would report the turn failed while its work ran on."""
     monkeypatch.setattr(cdp_control, "create_task",
                         lambda project, prompt, task_name="", port=9222: {"task": "fresh"})
     client = FakeClient({"reuse": False, "new_thread": True, "summary": ""})
@@ -291,7 +291,7 @@ def test_create_failure_fails_the_turn(monkeypatch):
 
 
 def test_create_that_never_landed_in_emdash_fails_the_turn(monkeypatch):
-    """2026-10-11, emdash 1.2.8: the sidecar clicked a "Create new worktree" dropdown,
+    """With emdash 1.2.8 the sidecar clicked a "Create new worktree" dropdown,
     returned the asked-for name, and the turn was logged created for a task that never
     existed. emdash's DB is the check."""
     monkeypatch.setattr(cdp_control, "create_task", lambda *a, **k: {"task": "fresh"})
@@ -402,7 +402,7 @@ def test_the_naming_modules_thread_key_matches_executes():
 
 
 def test_create_for_an_agent_this_box_has_no_project_for(monkeypatch):
-    """2026-10-15, turn f60e3ab4 (failure investigation 4): `fizzy` was claimed by a
+    """`fizzy` is claimed by a
     runner whose emdash had no `fizzy` project. The turn must fail with what to fix,
     never reach the sidebar, and never mark the whole runner not-ready."""
     from canopy_runner import readiness

@@ -132,8 +132,8 @@ def test_clear_and_send_resends_with_clear_first(monkeypatch):
 def test_a_collision_is_not_an_exception_so_it_must_be_inspected(monkeypatch):
     """The bug this guards: `open_and_send` returns ok:true with
     action="collision" and delivers NOTHING. Code that only catches exceptions
-    reports the turn as sent while the message went nowhere — observed live
-    2026-07-28, where the text was instead APPENDED to what the human typed."""
+    reports the turn as sent while the message went nowhere (the text is instead
+    APPENDED to what the human typed)."""
     _collision(monkeypatch, execute.dialog.NEW)
     res = execute.cdp_control.open_and_send("task-1", "the message")
     assert res["ok"] is True             # NOT an error
@@ -180,7 +180,7 @@ def test_composer_not_visible_ships_the_dialog_the_agent_is_waiting_on(monkeypat
     menu is free to read — no focus steal, which is what rules reading one out on a
     hook signal. Without this the phone gets a bare failed turn: no question, no
     buttons, and no way to tell "the agent asked you something" from "the send
-    broke". That is the silence that cost 2026-07-30 two hours.
+    broke". That silence is what this guards against.
     """
     res, client = _bounce_off_a_dialog(monkeypatch, PERMISSION)
 
@@ -215,9 +215,9 @@ def test_a_bounce_with_no_dialog_on_screen_stays_a_plain_failure(monkeypatch):
 
 
 def test_a_bounce_with_no_dialog_records_what_was_on_screen(monkeypatch):
-    """Failure investigation #1 (turn a225d132, 2026-10-12): four sends bounced
-    COMPOSER_NOT_VISIBLE with no dialog the parser knew, and nothing recorded what
-    WAS drawn where the input line should be — so the cause could not be decided.
+    """Four sends bounce
+    COMPOSER_NOT_VISIBLE with no dialog the parser knows; unless something records what
+    WAS drawn where the input line should be, the cause cannot be decided.
     The frame the decision was made on must reach the turn's events."""
     screen = BUSY + "\n\u00a0\n" + "\n".join(f"row {i}" for i in range(40))
     _res, client = _bounce_off_a_dialog(monkeypatch, screen)
@@ -244,10 +244,9 @@ def test_a_stop_before_delivery_sends_nothing_at_all(monkeypatch, tmp_path):
     """The cheapest cancel there is: the human pressed stop between the claim and the
     send, so the message must never reach the agent's session.
 
-    `cancel_check` used to be "accepted for signature compatibility and is no longer
-    read here", which made this cancel impossible — the only consumer of the signal
-    was the pump, and at this point there is no bridge for it to pump. The message was
-    typed into the agent regardless, and the turn then ran to completion."""
+    `cancel_check` is read here: the only other consumer of the signal is the pump,
+    and at this point there is no bridge for it to pump. Without the check the message
+    would be typed into the agent regardless, and the turn would run to completion."""
     sent = []
     monkeypatch.setattr(execute.cdp_control, "create_task",
                         lambda *a, **k: sent.append(a) or {"task": "echo-1234"})
@@ -312,7 +311,7 @@ def _requeued_into_collision(monkeypatch, choice, lines, *, distinct_turns=False
 def test_a_requeued_turn_does_not_ask_again_about_the_same_text(
     monkeypatch, _fresh_collision_answers
 ):
-    """2026-09-18: one deferred chat turn re-claimed 4 times put up 4 thirty-second
+    """One deferred chat turn re-claimed 4 times would put up 4 thirty-second
     popups, and nothing else on the box could be claimed while each was up."""
     asked, results = _requeued_into_collision(
         monkeypatch, execute.dialog.NEW, ["half typed"] * 4
@@ -388,7 +387,7 @@ def test_the_undelivered_note_tells_the_person_what_to_do(
     assert "deferred" not in note           # not runner jargon
 
 
-# -- a follow-up delivered into the running turn (canopy-web#1153) ------------
+# -- a follow-up delivered into the running turn ------------
 
 def test_a_rider_is_typed_into_the_running_turns_session_and_rides_its_bridge(monkeypatch):
     host = chat_bridge.LiveBridge(turn_id="h1", task="ace-chat-1", reader=None, project="ace")

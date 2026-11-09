@@ -6,14 +6,13 @@ against the real server — and checks each step actually worked, rather than
 that it returned a success code.
 
 **Why this is a script and not a pytest.** The sibling of
-`e2e_session_chat.py`, and for the same reason, restated by this feature's own
-history. Between 2026-09-13 and 2026-09-15 the widget shipped with a full green
+`e2e_session_chat.py`, and for the same reason. A widget can ship with a full green
 suite and a dozen silent failures in it: a CSRF cookie read under the wrong
 name, an API base missing the deployment prefix, sessions created against the
-wrong tenant, an MCP provider no module imported, a session-cookie that hid the
-frame's bearer token, and a session created on every page load. Every one was
-found by driving the real thing, and none of them could have been found by a
-test that constructs both ends.
+wrong tenant, an MCP provider no module imports, a session-cookie that hides the
+frame's bearer token, and a session created on every page load. Each is found
+only by driving the real thing, and none can be found by a test that constructs
+both ends.
 
 What it checks, in the order a browser does it:
 
@@ -21,8 +20,8 @@ What it checks, in the order a browser does it:
   2. `/api/embed/self`    — canopy offers the panel on its own pages
   3. `/embed/chat`        — the shell serves AND carries frame-ancestors
   4. `/api/embed/token`   — a delegated token, short-lived
-  5. `/api/embed/agents`  — the SAME token lists agents (the 403 of #788)
-  6. nothing was created  — loading the widget creates no session (#799)
+  5. `/api/embed/agents`  — the SAME token lists agents (no 403)
+  6. nothing was created  — loading the widget creates no session
 
 Read-only by default: it creates nothing and leaves nothing behind. Pass
 `--send "text"` to also start a real conversation, which enqueues a turn and
@@ -170,15 +169,14 @@ def main() -> int:
 
     # THE one that was broken in production: same-origin means the browser
     # attaches canopy's session cookie alongside the bearer token, and the
-    # middleware used to stop reading the header when it saw one (#788).
+    # middleware must not stop reading the header when it sees one.
     status, agents, _ = call(base, "/api/embed/agents", minted["token"])
     report("the frame's own token lists agents",
            status == 200 and isinstance(agents, list),
            f"{status}: {[a.get('slug') for a in agents] if isinstance(agents, list) else agents}")
 
     # Everything above is what a browser does when the frame loads. If any of
-    # it created a session, the count moved — which is the bug #799 fixed, one
-    # empty session per page view.
+    # it created a session, the count moved — one empty session per page view.
     after = count_empty_sessions(base, token)
     report("loading the widget created no session", after == before,
            f"{before} empty before, {after} after")

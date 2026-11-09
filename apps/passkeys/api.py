@@ -110,7 +110,7 @@ def delete_passkey(request: HttpRequest, passkey_id: int) -> Status:
         raise ProblemError(404, "Passkey not found", type_=TYPE_NOT_FOUND)
     from apps.passkeys.models import UserVaultKeyset
 
-    # Its vault-key seal (canopy-web#1550) opens with nothing once it is gone.
+    # Its vault-key seal opens with nothing once it is gone.
     ks = UserVaultKeyset.objects.filter(user=request.user).first()
     if ks is not None and any(s.get("cred") == passkey.credential_id for s in ks.seals):
         ks.seals = [s for s in ks.seals if s.get("cred") != passkey.credential_id]

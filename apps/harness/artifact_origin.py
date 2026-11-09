@@ -1,10 +1,9 @@
 """Which session, turn and agent project MADE an artifact — resolved once, at create.
 
-Why (board task hal/T76, 2026-10-09): walkthroughs, narratives and storyboards
-carried no link to the work that produced them — 0 of 63 post-OES supply
-walkthroughs and 0 of 11 narratives had even a project. So canopy could not say
-which turn made a video, which project a narrative served, or (with the
-reaction signal beside it) whether that work was any good.
+Why: walkthroughs, narratives and storyboards need a link to the work that
+produced them, so canopy can say which turn made a video, which project a
+narrative served, or (with the reaction signal beside it) whether that work was
+any good.
 
 The client already says where it is running: every canopy uploader sends the
 ``X-Canopy-Parent-{Turn,Session}`` / ``X-Canopy-Claude-Session`` provenance

@@ -158,7 +158,7 @@ class ArtifactView(models.Model):
     say nothing; the one signal they always leave is that they looked. Without
     this row canopy could not tell "the human never opened it" from "the human
     opened it twice and moved on" — and a "useful artifact" is defined as one the
-    agent judged good OR one the human responded to (T76, 2026-10-09).
+    agent judged good OR one the human responded to.
 
     Same discipline as ``Feedback``: generic over its target by string
     (``target_kind`` + ``target_ref``), never an FK, so this framework app never

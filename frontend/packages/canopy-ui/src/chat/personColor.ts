@@ -2,7 +2,7 @@
  *  chip, the name on their lines, and the box their live draft is drawn in —
  *  so "the violet one" is the same somebody across the whole chat.
  *
- *  Every chip used to be `bg-muted`, which meant identity rested entirely on
+ *  A plain `bg-muted` chip would leave identity resting entirely on
  *  two initials — and initials collide constantly on a small team (two J.K.s
  *  render identically). Hue is derived from the id so a given person is the
  *  same colour in every session, for everyone, with no state to keep.

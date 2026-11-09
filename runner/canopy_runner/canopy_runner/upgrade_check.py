@@ -21,8 +21,8 @@ diagnostic first, so a box with no emdash at all reports that rather than a casc
 downstream failures caused by it.
 
 **Every check here is READ-ONLY.** Nothing clicks, opens, selects a tab, or writes a
-row. A check that perturbs the fleet is a check nobody runs on the fleet, and the one
-time canopy read emdash's UI on a signal it stole focus from a human (#510). It is
+row. A check that perturbs the fleet is a check nobody runs on the fleet, and reading
+emdash's UI on a signal steals focus from a human. It is
 therefore safe to run mid-turn, on a working box, as often as you like.
 
 Exit codes are the same three `verify-emdash` always used: 0 intact, 1 drifted, 2 the
@@ -109,8 +109,8 @@ def installed_version(*, windows: bool | None = None, entries=None) -> str | Non
     """emdash's installed version, or None if it isn't installed here.
 
     macOS reads `CFBundleShortVersionString` from the bundle. Windows reads the
-    installer's Uninstall entry: before this, the check looked only in
-    /Applications and so was skipped on every Windows box (2026-10-15)."""
+    installer's Uninstall entry: a check that looked only in
+    /Applications would be skipped on every Windows box."""
     if windows is None:
         windows = platform_jobs.is_windows()
     if windows:
@@ -272,10 +272,10 @@ def check_worktrees(db_path: str) -> Check:
 
     `emdash.task_worktree` is where the runner writes a confined (`cx-`) session's
     SECOND permission layer. When it cannot answer, that layer is silently skipped and
-    `profile_guard` confines the session alone. On 2026-10-02 it could not answer on
-    ANY emdash 1.1.x — its query named `tasks.deleted_at`, a 1.2 column — while this
-    command reported OK, because the only check near it (transcripts) skips on pre-1.2
-    for an unrelated reason. So this one runs on every version and is never skipped
+    `profile_guard` confines the session alone. A query naming a column that an
+    emdash version lacks (`tasks.deleted_at` is a 1.2 column) cannot answer on the
+    older versions, and this command must not report OK then, but the only check
+    near it (transcripts) skips on pre-1.2 for an unrelated reason. So this one runs on every version and is never skipped
     while there is a session to try: it asks `task_worktree` itself, exactly as a
     caller turn would, so it cannot pass while the real read fails.
     """

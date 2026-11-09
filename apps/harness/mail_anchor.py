@@ -5,8 +5,8 @@ and each mail on it becomes a turn whose `chat_session` is that session. The run
 that claims such a turn does not run IN it: it keys its own work on the Gmail thread
 id and creates (or reuses) a separate WORK session with its own RunnerBinding
 ("created session 'c-alarm-…'"). The work session is archived when its task closes;
-the anchor has no binding, so nothing ever reports it closed, and it stayed `active`
-forever (25 open alarm anchors on 2026-10-29, back to 2026-09-16).
+the anchor has no binding, so nothing ever reports it closed, and it would stay `active`
+forever.
 
 An anchor retires when BOTH hold:
 

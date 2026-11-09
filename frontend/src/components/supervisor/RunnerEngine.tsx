@@ -2,7 +2,7 @@ import { useState, type JSX } from 'react'
 import { setRunnerEngine, type RunnerEngine as Engine, type RunnerOut } from '@/api/harness'
 import { Choice, SettingRow } from '@/components/supervisor/SettingRow'
 
-// The session runtime switch (canopy-web#1188): whether this laptop runner opens
+// The session runtime switch: whether this laptop runner opens
 // NEW sessions in emdash, in the Claude desktop app's Code tab, or runs them
 // itself headless (`claude-cli`, which a person can later open in the desktop
 // app). The runner reads the setting off its next heartbeat (a few seconds), so

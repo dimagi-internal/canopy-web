@@ -30,7 +30,7 @@ export interface DddNarration {
 export type DddNarrativeListItem = Schemas['NarrativeListItemOut']
 export type DddNarrativeRun = Schemas['NarrativeRunOut']
 export type DddNarrativeStory = Schemas['NarrativeStoryOut']
-/** One recorded-narrative cut and its pinned video (canopy-web#1288). */
+/** One recorded-narrative cut and its pinned video. */
 export type DddNarrativeCut = Schemas['NarrativeCutOut']
 // Per-scene narration is carried so the client can render a plain-language
 // before/after (vN -> vN+1) diff without a second fetch.

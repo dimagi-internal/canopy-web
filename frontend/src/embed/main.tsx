@@ -12,7 +12,7 @@ import { applyFrameTheme } from './theme'
  * Deliberately NOT the app's entry: no router, no AuthProvider, no service
  * worker, no PWA registration. A widget that registered canopy's service
  * worker inside a third-party page would drag the whole SPA in with it — the
- * shape of issue #345, where an iframe rendered the entire app inside itself.
+ * failure where an iframe renders the entire app inside itself.
  *
  * `window.CANOPY_EMBED` is injected by the server that rendered the shell
  * (apps/embedding/views_embed.py), which is the only party that can be trusted to

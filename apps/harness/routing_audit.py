@@ -8,9 +8,6 @@ routing change and through what, the same as every other setting; this module
 adds what only the handler knows — the rows before and after — via
 `audit.note_change`. A save that changes nothing (re-sending a rule unchanged)
 notes a no-op, and the audit then records nothing.
-
-Origin, 2026-10-12: ACE carried a strict rule sending every API turn ada@
-requested to one cloud box, and nobody could say who had set it.
 """
 from __future__ import annotations
 

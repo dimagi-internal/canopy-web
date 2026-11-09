@@ -243,7 +243,7 @@ def parse(doc) -> dict:
             "tools": _strings(cap.get("tools"), "tools", name),
             "bash": _strings(cap.get("bash"), "bash", name),
             "read_paths": _strings(cap.get("read_paths"), "read_paths", name),
-            # Separate from read_paths on purpose (2026-09-26): with one list, a
+            # Separate from read_paths on purpose: with one list, a
             # caller who may Write anywhere they may Read could overwrite the very
             # script their `bash` allowlist lets them run (`bin/ace-email`), and
             # then run it. The guard refuses Write/Edit outside these; none → no
@@ -264,7 +264,7 @@ _SITE = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
 def _data(value, name: str, cap: dict) -> str:
     """`data:` — what a profile may serve. `sensitive` is an author's
     declaration that it handles sensitive data, refused when its profile shows it
-    cannot (spec 2026-10-22-sensitive-data-agents §5; `apps/agents/sensitive_data.py`)."""
+    cannot (`apps/agents/sensitive_data.py`)."""
     from . import sensitive_data
 
     if value not in sensitive_data.DATA_VALUES:

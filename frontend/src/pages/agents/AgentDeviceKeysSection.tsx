@@ -3,7 +3,7 @@ import { getAgentDeviceKeys, type RunnerDeviceKeyOut } from '@/api/deviceKeys'
 import { LoadFailed } from '@/components/vault/LoadFailed'
 import { DeviceKeysTable } from '@/components/settings/DeviceKeysTable'
 
-// The machines that can read this agent's secrets (Canopy Vault, canopy-web#1538).
+// The machines that can read this agent's secrets (Canopy Vault).
 // Each holds a key made inside its own hardware; approving one (a passkey touch)
 // gives it a copy of the vault's key, and a read needs the machine to prove it holds
 // that key — a login token alone opens nothing. The keys listed are those on runners

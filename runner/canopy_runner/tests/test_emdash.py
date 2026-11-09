@@ -251,7 +251,7 @@ def test_without_working_the_newest_conversation_answers(db):
 def test_a_null_activity_stamp_still_orders_by_updated_at(db):
     """emdash 1.2 dropped `conversations.last_interacted_at` and its migration train
     (0036) copied the values into `last_session_activity_at` — but that successor is
-    NULLABLE and sparsely written (10 of 26 rows, fleet laptop 2026-08-28). Ordering
+    NULLABLE and sparsely written (10 of 26 rows on a fleet laptop). Ordering
     by it alone is therefore not an ordering: the 16 NULL rows sort together and the
     newest-wins rule silently picks an arbitrary one. The read COALESCEs onto
     `updated_at`, which emdash declares NOT NULL, so a row with no activity stamp
@@ -328,7 +328,7 @@ def test_a_soft_deleted_task_is_not_reported_as_archived(db):
 # emdash, so it is routinely mixed-version — and a read that names a 1.2 column
 # unconditionally does not degrade on the older box, it RAISES. `list_open_sessions`
 # raising means the caller skips the whole session report (reporting empty would clear
-# every RunnerBinding), so the phone's list silently goes stale and stays stale (#641).
+# every RunnerBinding), so the phone's list silently goes stale and stays stale.
 #
 # Every fixture above was moved to 1.2's shape when those columns were added, which is
 # exactly why nothing caught it. These pin the older shape.

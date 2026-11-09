@@ -1,4 +1,4 @@
-"""Read-anomaly alerts on an agent's secrets (Canopy Vault Phase 1b, canopy-web#1549).
+"""Read-anomaly alerts on an agent's secrets (Canopy Vault Phase 1b).
 
 When an agent resolves its secrets from canopy-web, `/credentials/resolve` is
 the only way to their values, so it is where a misuse shows. Three things are
@@ -8,38 +8,37 @@ request: an email and a Web Push, each linking to the agent's Credentials.
 
 * `no-turn` — a read by a BOX (resolve's `via == "runner"`: the caller pairs a
   runner this agent routes to AND the request names that box — a device proof
-  or an owned `X-Canopy-Runner`; a bare token names no box and is an admin read,
-  canopy-web#1563) that names no `X-Canopy-Turn-Id`. The issue's
-  wording is "not from an owner or admin at a browser"; read against the code:
-  every resolve caller is already an agent admin (`caller_runs_agent` requires
+  or an owned `X-Canopy-Runner`; a bare token names no box and is an admin read)
+  that names no `X-Canopy-Turn-Id`. The intent is "not from an owner or admin at a
+  browser"; in the code, every resolve caller is already an agent admin (`caller_runs_agent` requires
   it), resolve is bearer-only, and the owner/admin-at-a-browser read is a
   Reveal, which never comes through resolve. So the two non-browser readers
   are a box (should be inside a turn) and an admin resolving by hand for their
-  own Claude Code session (`via == "admin"`, canopy#850 — expected without a
+  own Claude Code session (`via == "admin"` — expected without a
   turn, and alerting on it would email the owner about themselves hourly).
   A box that names itself AND sends `X-Canopy-Read-Purpose: runner-refresh` is
   its own scheduled credential refresh, also expected without a turn. The owner's
   own token proved by their own laptop's device key is the owner opening a
-  session there — an `admin` read, not a box (2026-10-18).
-* `undeclared-ref` — retired 2026-11-06. It compared a read against a second list of
-  names (`Agent.runtime_secrets`) that only ever repeated what was stored, so it fired on
+  session there — an `admin` read, not a box.
+* `undeclared-ref` — never raised. Comparing a read against a second list of
+  names (`Agent.runtime_secrets`) only repeats what is stored, so it would fire on
   nothing but the writers that skipped that list (the Google mint, a delegated token).
-  Old rows still show; nothing raises a new one.
+  Old rows still show.
 * `burst` — more than CANOPY_VAULT_READ_BURST_LIMIT resolves (default 50) of one
   agent inside a 5-minute window. Counted per resolve request, not per ref: one
   unscoped resolve of ACE hands out 45 refs and is one read.
 * `device-proof` — a resolve refused for a bad or missing device proof. NOT a
   good proof from an approved box that does not run the agent: that is routing,
   recorded as an `agent.credentials.refused` event with no alert
-  (`unrouted_box_refused`, canopy-web#1563).
+  (`unrouted_box_refused`).
 
 Debounced to one alert per kind per agent per hour: a repeat inside the hour
 bumps the open alert's `occurrences` and tells no one again. One RUNNER fault
 reaches every agent that box runs, so the email is debounced per runner too: a
 person already emailed this hour about this kind on this runner (for any agent)
 is not emailed again; the row is still recorded on its own agent's list
-(`_already_told`; Jonathan, 2026-10-30, after the same cloud-ec2-live fault mailed
-him once for Trellis and once for Ada, and each forward started its own session). Every alert is an
+(`_already_told`: one fault on a box would otherwise mail the same person once per
+agent, and each forward would start its own session). Every alert is an
 `AgentCredentialAlert` row, shown beside the credential read history, and an
 `agent.credentials.alert` event.
 
@@ -93,7 +92,7 @@ def after_read(agent, request, *, via: str, turn_id: str,
         # outside any turn by design and says so. It cannot hide a misuse the turn
         # id would have caught: a turn id is not checked against a live turn either,
         # so this alert only ever catches an honest caller nobody expected
-        # (canopy-web#1563). The read is still logged; the other checks still run.
+        #. The read is still logged; the other checks still run.
         purpose = request.META.get("HTTP_X_CANOPY_READ_PURPOSE", "")
         refresh = runner is not None and purpose == REFRESH_PURPOSE
         if not turn_id and via == "runner" and not refresh:
@@ -131,8 +130,7 @@ def device_proof_refused(agent, request, *, reason: str, runner=None):
 
     The detail says WHO sent it in words an owner can act on. A runner token signs in
     as the runner's owner, so "resolve by <owner>" read as something the owner had done
-    and "resolve" as "resolved" (Jonathan, 2026-10-30: "why is this saying resolved by
-    jjackson@dimagi.com, I don't think I took any actions")."""
+    and "resolve" as "resolved" (an owner reading "resolved by <owner>" took no action)."""
     try:
         who = _who(request.user)
         if getattr(request, "runner_token", None) is not None and runner is not None:
@@ -158,7 +156,7 @@ def unrouted_box_refused(agent, request, *, runner) -> None:
     run this agent. Logged and recorded as an `agent.credentials.refused` event,
     never an owner alert: nothing was handed out, the box is a known one, and the
     old alert's advice ("approve its device key") was wrong for it — routing, not
-    the key, is what said no (fizzy, 2026-10-17, canopy-web#1563). A box that
+    the key, is what said no. A box that
     keeps asking shows on the event's count, and its owner can see it there."""
     try:
         logger.info("resolve of %s refused: %s does not run it", agent.slug, runner.name)
@@ -273,9 +271,8 @@ def request_context(request, turn_id: str = "") -> dict:
 
 def runner_software(runner) -> dict:
     """What `runner` was running when the alert fired, and what canopy-web expected it
-    to run — so a stale box is visible in the alert itself (Jonathan, 2026-10-30, after
-    cloud-ec2-live kept refusing on 45-hour-old code: "make sure messages like this
-    include the canopy versions in case that's the source of the issue").
+    to run — so a stale box is visible in the alert itself (a box refusing on old code is
+    easier to diagnose with the versions shown).
     `{"reported": {name: version}, "expected": {name: version}, "stale": [names]}`;
     {} with no runner. Best-effort, never raises."""
     if runner is None:
@@ -319,7 +316,7 @@ def turn_summary(turn_id: str) -> dict:
         return {"id": raw, "found": False}
     # A chat turn targets its conversation, not the agent (turn_targets_agent_xor_
     # project_xor_session), so the agent is the conversation's — else the email said
-    # "a session's canopy_web_chat turn" (2026-10-30).
+    # "a session's canopy_web_chat turn".
     agent = t.agent if t.agent_id else (t.chat_session.agent if t.chat_session_id else None)
     out = {"id": raw, "found": True, "origin": t.origin, "status": t.status,
            "agent": agent.slug if agent is not None else "",
@@ -411,7 +408,7 @@ def _link_label(agent, kind: str) -> str:
 
 #: What each kind watches for and what the owner should do, in plain words. The
 #: detail line says what was seen; without this an owner cannot tell a misused
-#: token from a config gap (canopy-web#1563).
+#: token from a config gap.
 _WHY = {
     "no-turn": ("Canopy watches for this because a runner box should only read an agent's "
                 "secrets while it is running one of the agent's turns; a box reading them "
@@ -440,7 +437,7 @@ _WHY = {
                      "not recognise any of these, revoke the token. (A known box that simply does "
                      "not run the agent is refused without this alert.)"),
     # The same refusal when the caller was a runner on its own token: the box's
-    # software, not the person it signs in as (trellis on cloud-ec2-live, 2026-10-30).
+    # software, not the person it signs in as (trellis on cloud-ec2-live).
     "device-proof:runner": ("What this means: this agent only hands its secrets to "
                             "machines that prove which machine they are. A runner asked without that "
                             "proof, so Canopy refused it. Nothing was handed out, and you did "
@@ -573,9 +570,9 @@ def _record_event(agent, alert) -> None:
 
 
 def alerts_for(agent, *, limit: int = 50) -> list[dict]:
-    # Only kinds the API can describe: a row from a reverted feature (`github-expiry`,
-    # #2395/#2403) failed response validation and turned hal's whole list into a 500,
-    # the page every alert email links to (2026-11-03).
+    # Only kinds the API can describe: a row of a kind that no longer exists (`github-expiry`)
+    # fails response validation and would turn the whole list into a 500,
+    # the page every alert email links to.
     known = [kind for kind, _ in AgentCredentialAlert.KIND_CHOICES]
     qs = (AgentCredentialAlert.objects.filter(agent=agent, kind__in=known)
           .select_related("user", "runner").order_by("-created_at")[:limit])

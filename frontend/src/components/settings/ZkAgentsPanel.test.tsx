@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// "Your agents" on the Security card (canopy-web#1550): status only. Keeping an
+// "Your agents" on the Security card: status only. Keeping an
 // agent's secrets private is never a per-agent step, so there is no button —
 // only who is waiting, and where to let them in.
 import { afterEach, describe, expect, it, vi } from 'vitest'

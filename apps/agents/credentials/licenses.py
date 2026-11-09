@@ -1,4 +1,4 @@
-"""Licenses: who uses an agent DIRECTLY, in their own Claude Code (canopy-web#1704).
+"""Licenses: who uses an agent DIRECTLY, in their own Claude Code.
 
 The caller list decides who MAY — `turn_context.resolve_turn_context`, asked as the person on a signed-in
 request. A license records who DOES, since when, from which private runner, and what
@@ -126,7 +126,7 @@ def credential_principal(agent, user, turn_id: str, *, runner=None):
     `X-Canopy-Turn-Id`), and only on an ACTIVE license the caller list still backs.
     No turn, no secrets: reads always go against a turn. The turn is their open local
     turn, or — when the read comes from their PRIVATE runner (`runner`, its runner
-    token) — a turn of theirs that runner claimed (canopy-web#1705)."""
+    token) — a turn of theirs that runner claimed."""
     import uuid
 
     from django.db.models import Q

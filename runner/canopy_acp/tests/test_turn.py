@@ -173,8 +173,8 @@ class Versioned(Agent):
 
 
 def test_a_cancel_canopy_never_sent_is_named_the_adapters_with_its_version():
-    # Investigation 14 (turn 068076b8, 2026-10-26): "turn ended: cancelled" with no
-    # stop requested could not say who cancelled, or which adapter build the box ran.
+    # "turn ended: cancelled" with no stop requested must say who cancelled, and
+    # which adapter build the box ran.
     logged = []
     res = drive_turn("go", make_agent=lambda cwd, env, on_update: Versioned(
                          cwd, env, on_update, updates=[chunk("Running it in the background.")],
@@ -225,10 +225,9 @@ class AliveAgent(Agent):
 
 
 def test_an_error_from_a_live_adapter_says_the_prompt_was_sent_and_logs_its_stderr():
-    # 2026-11-06, turn 735292d3 (fizzy on shayoni-win-cdp, failure investigation 33):
     # "Internal error: The Claude Agent process exited unexpectedly." with no
-    # exit report (the adapter was alive) and no way to tell whether the prompt
-    # had reached the session, nor what the Claude process said as it died.
+    # exit report (the adapter was alive): the note must say whether the prompt
+    # had reached the session, and what the Claude process said as it died.
     lines = []
     err_agent = {}
 

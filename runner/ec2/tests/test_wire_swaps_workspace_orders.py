@@ -1,6 +1,6 @@
 """A rebuild swaps the new box into every workspace default order that named the old.
 
-Agents with no order of their own FOLLOW their workspace's (2026-10-03), so the
+Agents with no order of their own FOLLOW their workspace's, so the
 fleet's cloud routing lives mostly there. Retiring the predecessor drops it from
 those orders; without the swap, every following agent loses the cloud box on each
 rebuild and nothing says so. An order that never named the predecessor is left

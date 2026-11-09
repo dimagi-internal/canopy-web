@@ -156,10 +156,10 @@ def test_an_explicit_value_still_wins(monkeypatch):
 
 # --- code_committed_at: the ORDER a sha cannot carry -----------------------------
 #
-# `code_sha != expected` means DIFFERENT. The supervisor rendered that as
-# "behind", which is one of three possibilities stated as if it were the only
-# one — and on 2026-07-29 it told the operator to update the most current box in
-# the fleet, because that box had been installed from main ahead of the deploy.
+# `code_sha != expected` means DIFFERENT. Rendering that as
+# "behind" states one of three possibilities as if it were the only one, and would
+# tell the operator to update the most current box in the fleet (one installed from
+# main ahead of the deploy).
 # This is the quantity that makes the direction knowable, taken from the same
 # `git log -1` that already yields the sha.
 

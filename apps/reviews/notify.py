@@ -1,7 +1,7 @@
-"""Email when someone sends suggested edits on a review (canopy-web#1269).
+"""Email when someone sends suggested edits on a review.
 
-Before this, POST /suggest/ only appended to ``suggestions_json``: the guest saw
-"✓ Thanks — your suggestions were sent" and nobody was told.
+POST /suggest/ appends to ``suggestions_json`` and also emails, because the guest
+sees "✓ Thanks — your suggestions were sent" and someone has to be told.
 
 Who hears about it: ``settings.REVIEW_SUGGESTION_NOTIFY_TO`` — ACE, for now,
 because ACE runs the DDD loops that post these reviews — with the person who

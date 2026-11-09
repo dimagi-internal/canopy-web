@@ -20,8 +20,7 @@ def scoped_path(workspace, path: str) -> str:
 
     Every page that shows tenant data lives under `/w/:workspace/` — the share
     links too, and the bytes behind a walkthrough. There is ONE address per
-    artifact and no flat form to fall back to (owner decision, 2026-10-08;
-    canopy-web#1337): a flat link is a 404, so building one is a bug. A row with
+    artifact and no flat form to fall back to: a flat link is a 404, so building one is a bug. A row with
     no workspace raises `Unhomed`; a caller that may hold one asks
     `scoped_path_or_none`."""
     slug = getattr(workspace, "slug", workspace)
@@ -42,8 +41,8 @@ def scoped_url(workspace, path: str) -> str:
     """Absolute `scoped_path`, on this deployment's public base URL.
 
     Never `request.build_absolute_uri`: an MCP tool call reaches the route
-    in-process with no real Host, so that minted `https://localhost/…` links
-    (canopy-web#1289). CANOPY_PUBLIC_BASE_URL is the address people visit."""
+    in-process with no real Host, so that would mint `https://localhost/…` links.
+    CANOPY_PUBLIC_BASE_URL is the address people visit."""
     return f"{base_url()}{scoped_path(workspace, path)}"
 
 

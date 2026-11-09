@@ -116,7 +116,7 @@ def test_a_read_tool_with_no_read_paths_reaches_only_its_worktree(tmp_path):
     assert "Read(~/.claude/projects/**/*.jsonl)" in perms["deny"]
 
 
-# ACE's live read-mode profile (2026-10-02): Write granted, Edit not, writes confined
+# ACE's live read-mode profile: Write granted, Edit not, writes confined
 # to `.ace-ask/` while reads cover the worktree.
 ACE_ASK = {"name": "ask", "entry": "/ace:ask --thread {thread_id}",
            "tools": ["Read", "Grep", "Glob", "Write", "mcp__*canopy-web__who_is_asking"],
@@ -132,7 +132,7 @@ def _all_rules(p):
                                  {**ACE_ASK, "tools": ["*"]}, {"name": "none"}])
 def test_no_write_path_rule_is_ever_emitted(cap):
     """Claude Code ignores `Write(path)` (allow AND deny) and warns at startup; only
-    `Edit(path)` scopes file writes (#1058)."""
+    `Edit(path)` scopes file writes."""
     assert not [r for r in _all_rules(_perms(cap)) if r.startswith("Write(")]
     assert not [r for r in _all_rules(_perms(cap)) if r.startswith("NotebookEdit(")]
 
@@ -312,9 +312,9 @@ def test_emdash_names_the_worktree_from_its_own_db(tmp_path):
 
 
 def test_the_worktree_is_named_on_emdash_1_1_too(tmp_path):
-    """emdash 1.1.x has no `tasks.deleted_at`. The query used to name it, raise, and
-    return None — so on every 1.1 box a caller's session silently ran without its
-    native permission layer (2026-10-02, emdash 1.1.40 on a second ACE laptop)."""
+    """emdash 1.1.x has no `tasks.deleted_at`. The query must not name it: raising and
+    returning None would leave every 1.1 box's caller session silently running without
+    its native permission layer."""
     import sqlite3
 
     db = tmp_path / "emdash4.db"

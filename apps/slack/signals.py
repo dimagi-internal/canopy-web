@@ -62,7 +62,7 @@ def _relay_replies(sender, turn, rows, **kwargs):
             on_status(turn)
             # A follow-up queued behind this turn says so; once this turn moves
             # (ends, above all) its line is stale — "picking up" now, not
-            # "queued behind" (#1147). Its own claim edits it again.
+            # "queued behind". Its own claim edits it again.
             for queued in waiting_behind(turn):
                 refresh(queued)
         except Exception:  # noqa: BLE001

@@ -6,7 +6,7 @@ import { passphraseProblem } from './zk'
 
 /**
  * Create a vault key sealed by a passphrase + Secret Key, inline, wherever a
- * flow needs one (canopy-web#1550). The common route for a passkey kept in a
+ * flow needs one. The common route for a passkey kept in a
  * password manager, which gives no PRF. Shows the Secret Key ONCE, then hands
  * the new key back unlocked through `onReady`, so the flow continues without
  * asking for the passphrase it was just given.

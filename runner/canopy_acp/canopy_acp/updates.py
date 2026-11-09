@@ -17,7 +17,7 @@ absent field means "unchanged", never "cleared".
 
 Live rows carry `index = -1`, exactly as the hook path does — the durable record
 stays the transcript, which an ACP session writes normally
-(`~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl`, verified 2026-07-27). So
+(`~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl`, verified against claude-agent-acp 0.63.0). So
 this whole module is a view concern and is allowed to drop anything.
 """
 from __future__ import annotations

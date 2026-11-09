@@ -2,8 +2,7 @@
 
 `canopy vault zk keep` asks canopy-web who is waiting for a vault key this machine holds
 (a new member of an agent's vault, a machine a trusted person approved) and wraps the key
-to each one it trusts (canopy-web spec 2026-10-22-vault-access-follows-canopy-access-
-design.md §1). Running it here means a laptop that holds a key passes it on without
+to each one it trusts (vault access follows canopy access). Running it here means a laptop that holds a key passes it on without
 anyone being asked. The cloud runner does the same from its loop (`maybe_keep_vaults`).
 
 In the background, every EVERY seconds; fail-open (each failure is one log line, and

@@ -101,7 +101,7 @@ def rotate_pat_now(request: HttpRequest, slug: str) -> PatRotationOut:
              summary="An agent rotates its OWN canopy token because it may have leaked")
 # the agent's own login only: rotating its own credential can only shorten the old
 # one's life, so it needs no admin — and an agent that leaked its token must be able
-# to act at once, not wait for a person (Jonathan, 2026-10-24)
+# to act at once, not wait for a person
 @gate("agent-login", setting=True, step_up="a token call by the agent's own login; carries no secret")
 def rotate_own_pat(request: HttpRequest, slug: str, payload: OwnPatRotateIn) -> OwnPatRotateOut:
     """Call this the moment you think your canopy token (CANOPY_WEB_PAT) left

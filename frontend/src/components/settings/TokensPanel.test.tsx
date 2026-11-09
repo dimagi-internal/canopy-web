@@ -102,8 +102,8 @@ describe('TokensPanel — what is using a token', () => {
     vi.clearAllMocks()
   })
 
-  // 2026-10-17: a cloud runner's token showed only a date, read as unused, and
-  // was revoked in a cleanup — the box then lost every turn it claimed.
+  // A cloud runner's token that shows only a date reads as unused and gets
+  // revoked in a cleanup — the box then loses every turn it claims.
   it('shows how recently and by what, and names it in the revoke confirm', async () => {
     const used = new Date(Date.now() - 14_000).toISOString()
     listTokens.mockResolvedValue([

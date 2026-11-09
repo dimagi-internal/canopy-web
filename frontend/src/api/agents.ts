@@ -660,7 +660,7 @@ export type RunnerRuleEdit = {
 // rule it dropped is deleted. Each rule belongs to one (source, person), and its
 // boxes can be someone else's: saving them all at once made every save depend on
 // rights over every box any rule names, which nobody holds once two people's
-// boxes are involved (ACE, 2026-10-05, #1143). `prev` is the list as loaded.
+// boxes are involved. `prev` is the list as loaded.
 export async function saveAgentRunnerRules(
   slug: string,
   prev: readonly AgentRunnerRuleOut[],
@@ -1036,7 +1036,7 @@ export async function setAgentClis(
 
 export type AgentLicenseOut = Schemas['AgentLicenseOut']
 
-// Who uses this agent DIRECTLY, in their own Claude Code (canopy-web#1704): every
+// Who uses this agent DIRECTLY, in their own Claude Code: every
 // license — active, requested (the caller list does not allow it yet) or revoked —
 // with the private_runners it ran on and when it was last used. Any member may read.
 export async function listAgentLicenses(slug: string): Promise<AgentLicenseOut[]> {

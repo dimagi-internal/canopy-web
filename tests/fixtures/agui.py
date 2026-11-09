@@ -41,9 +41,8 @@ ROUND_TRIP_FRAMES = [
     {"event": "presence.joined", "data": {"user_id": 7}},
     {"event": "presence.left", "data": {"user_id": 7}},
     # --- every other frame a canopy client can receive ------------------------
-    # Added 2026-09-18, when `test_every_frame_the_consumer_emits_is_in_the_
-    # round_trip_fixture` arrived and found twelve frames that had never been
-    # proven to survive the trip. Shapes copied from the producers
+    # `test_every_frame_the_consumer_emits_is_in_the_round_trip_fixture` requires
+    # each of these to be proven to survive the trip. Shapes copied from the producers
     # (`consumers.py`, `stream_map.py`, `page_actions.py`), not invented, so a
     # producer changing its payload shows up here as a stale example.
     {"event": "session.state",
@@ -111,10 +110,9 @@ def _build_fixture() -> list[dict]:
     return [
         {"canopy": frame,
          # NO run id, because the live socket passes none
-         # (`SessionConsumer.send_json`). This passed `run_id="r1"` until
-         # 2026-09-18, so the round trip proved a path production never takes —
-         # and missed that the path it does take renamed a cancelled stream to
-         # an event the reducer does not know.
+         # (`SessionConsumer.send_json`). Passing `run_id="r1"` would prove a path
+         # production never takes — and miss that the path it does take renames a
+         # cancelled stream to an event the reducer does not know.
          "agui": [agui.encode(e) for e in agui.project(frame, thread_id="t1")]}
         for frame in ROUND_TRIP_FRAMES
     ]

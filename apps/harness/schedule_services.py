@@ -502,11 +502,10 @@ def week_schedules(workspace_ids: set, start: dt.datetime, *, created_by=None) -
     visible-workspace set (the route computes it from apps.workspaces.services),
     so this stays request-free.
 
-    The set used to be allowed to contain `None`, meaning "also match legacy
-    unhomed agents", which this turned into an OR'd
-    `Q(agent__workspace_id__isnull=True)` — leaking an unhomed agent's schedule,
+    The set must not contain `None`: that would OR in
+    `Q(agent__workspace_id__isnull=True)` and leak an unhomed agent's schedule,
     cron and timezone to every authenticated flat-route caller. `Agent.workspace`
-    is NOT NULL as of agents/0013, so there is no such agent and no such leg:
+    is NOT NULL, so there is no such agent and no such leg:
     membership is the whole rule.
 
     `created_by` (a User) narrows to schedules that person set up — this is what

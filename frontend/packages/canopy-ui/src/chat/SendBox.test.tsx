@@ -2,13 +2,13 @@
  * The composer is LOCAL-FIRST: what you are typing is local component state,
  * never server state.
  *
- * It used to render `value={draft.body}` straight off the websocket reducer, so
- * every inbound frame was a chance to overwrite the user mid-keystroke — and in
- * SINGLE-PLAYER that trade bought nothing, because there is no co-editor to
- * reconcile with. Three ways it went wrong, all reproduced below:
+ * Rendering `value={draft.body}` straight off the websocket reducer would make
+ * every inbound frame a chance to overwrite the user mid-keystroke — and in
+ * SINGLE-PLAYER that buys nothing, because there is no co-editor to
+ * reconcile with. Three ways that goes wrong, all reproduced below:
  *   * `session.state` replaces state wholesale on every reconnect, reverting
  *     anything typed since the last 150ms flush;
- *   * a stale echo of your OWN debounced update rewound the textarea;
+ *   * a stale echo of your OWN debounced update rewinds the textarea;
  *   * two clients on one account (phone + desktop, which this app encourages)
  *     fight over the draft version until a mismatch clears the pending body.
  */
@@ -129,8 +129,8 @@ describe("SendBox — local-first composer", () => {
   });
 
   it("lets you type before the draft has arrived", () => {
-    // The textarea used to be disabled until session.state landed, so every
-    // reconnect locked you out of your own composer.
+    // A textarea disabled until session.state lands would lock you out of your
+    // own composer on every reconnect.
     const { textarea } = setup({ draft: null });
     expect(textarea().disabled).toBe(false);
 
@@ -140,7 +140,7 @@ describe("SendBox — local-first composer", () => {
 
   it("holds a send made while connecting, says so, and sends once the chat connects", () => {
     // chat.send commits the server's copy of the draft, so nothing can go before
-    // the socket and the draft exist. Enter used to be dropped there, leaving the
+    // the socket and the draft exist. Enter must not be dropped there, leaving the
     // words in the box with nothing saying they were never sent.
     const { textarea, onSend, rerender, onUpdate } = setup({ draft: null, connected: false });
     fireEvent.change(textarea(), { target: { value: "typed while connecting" } });
@@ -556,8 +556,7 @@ describe("SendBox — attaching files", () => {
   });
 
   it("does not offer attaching while sending is blocked", () => {
-    // Attaching used to be gated on a teammate's draft lock, which no longer
-    // exists; the one real reason to withhold it now is `disabledReason`.
+    // The one reason to withhold attaching is `disabledReason`.
     render(
       <SendBox
         {...attachProps}

@@ -4,8 +4,7 @@ Claude Code reads a burst of input containing a newline as a paste, and an Enter
 arriving inside that burst becomes part of it — a newline in the composer, not a
 submit. `insertText` followed at once by `press('Enter')` is that burst, so every
 multi-line send (a Slack reply with an attachment note, a web chat with a
-screenshot path) sat typed-but-unsent and failed as undelivered (turn fe0a0280,
-2026-10-05). Reproduced on a raw pty against `claude`: text + Enter in one write
+screenshot path) sat typed-but-unsent and failed as undelivered. Reproduced on a raw pty against `claude`: text + Enter in one write
 never submits; a gap of >= 50ms always does.
 
 The sidecar needs a live emdash to exercise, so this is a static guard: in the
@@ -56,11 +55,11 @@ def test_a_multiline_body_is_rechecked_by_emptiness_not_text():
     assert "if (/\\n/.test(body)) return true;" in src
 
 
-# ── 2026-10-07 (ACE): a single-line Enter swallowed, focus stolen mid-send ──────
+# ── a single-line Enter swallowed, focus stolen mid-send ─────────────────────────
 
 def test_a_single_line_body_is_rechecked_too():
-    """It used to press Enter once and return, so a swallowed Enter left a one-line
-    message sitting in the composer. The recheck loop now runs for every body."""
+    """Pressing Enter once and returning would leave a swallowed Enter's one-line
+    message sitting in the composer. The recheck loop runs for every body."""
     branch = _open_send_branch()
     body = branch[branch.index("const submit = async"):branch.index("if (clearFirst)")]
     assert "if (!/\\n/.test(body)) return;" not in body
@@ -91,7 +90,7 @@ def test_focus_is_confirmed_immediately_before_every_keystroke_burst():
     assert "FOCUS_LOST" in ensure
 
 
-# ── 2026-10-14 (ACE, turn 50bfdf45, investigation 2): a long one-liner collapses ──
+# ── a long one-liner collapses ───────────────────────────────────────────────────
 
 def test_every_body_waits_before_enter():
     """A long one-liner is read as a paste too, so the pause is unconditional."""

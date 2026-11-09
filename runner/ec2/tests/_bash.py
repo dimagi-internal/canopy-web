@@ -1,7 +1,5 @@
 """Shared helpers for tests that run single functions out of bootstrap_agents.sh:
-a bash with associative arrays (macOS ships 3.2), and `_fn` to extract one function.
-Moved here from test_readiness_is_observed.py when the per-agent bash it tested moved to
-canopy (`canopy agent prepare`, 2026-10-15)."""
+a bash with associative arrays (macOS ships 3.2), and `_fn` to extract one function."""
 from __future__ import annotations
 
 import pathlib

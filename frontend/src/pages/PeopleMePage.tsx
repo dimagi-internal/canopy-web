@@ -63,7 +63,7 @@ export function PersonPageView() {
  *  what changed. Every entry can be corrected or removed in place; every agent's
  *  access can be taken back; settings and the ranking tools stay below, out of the
  *  way. With `viewing`, the page of that person as they let this agent see it:
- *  read-only. Fleet brain v1 (canopy#804), on HCP v1 (hcp_api.py). */
+ *  read-only. Fleet brain v1, on HCP v1 (hcp_api.py). */
 export function PeopleMePage({ viewing }: { viewing?: number } = {}) {
   const readOnly = viewing !== undefined
   const facts = usePersonFacts(viewing)

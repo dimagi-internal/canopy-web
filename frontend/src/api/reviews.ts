@@ -277,7 +277,7 @@ export interface ReviewSuggestion {
   created_at: string
 }
 
-/** A video pinned to the review's narrative version (canopy-web#1288). For a
+/** A video pinned to the review's narrative version. For a
  *  recorded narrative there is one per cut, named by the recipe's cut id;
  *  `video_url` is null when the video is private and the reader is not a member
  *  of its workspace. */

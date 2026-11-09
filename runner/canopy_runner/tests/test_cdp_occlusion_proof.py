@@ -12,11 +12,10 @@ the call hangs for its full timeout — while CDP answers perfectly, so nothing 
 looks wrong. Separate debug ports isolate the two runners from each other; the SCREEN
 is machine-wide and cannot be split.
 
-One such call survived in the `create` path and cost two turns on 2026-08-10, ~6
-minutes after the other account logged in; each failure wrote `~/.canopy/not-ready`
-and took the box out of routing. It had been in the file the whole time and fired
-three times in two weeks, because it only bites when a turn starts while the display
-is elsewhere — rare enough to look like a fluke, frequent enough to keep happening.
+One such call in the `create` path costs a turn minutes after the other account logs
+in; each failure writes `~/.canopy/not-ready` and takes the box out of routing. It
+only bites when a turn starts while the display is elsewhere — rare enough to look
+like a fluke, frequent enough to keep happening.
 
 The sidecar needs a live emdash to exercise (see test_cdp_control.py), so behaviour
 here cannot be unit-tested. Reading the source can still hold the line.

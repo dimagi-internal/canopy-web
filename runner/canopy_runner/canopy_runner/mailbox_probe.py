@@ -1,10 +1,9 @@
 """Which mailboxes this box can READ — discovered, not configured.
 
-Reading an agent's inbox used to need a hand-kept ``mailboxes`` map in
-~/.canopy/runner.json. The owner did not know it existed, pairing wrote ``{}``,
-and a box with ``{}`` was still rung by the push doorbell for every mail and
-silently ignored each ring (canopy-web#1087). So the runner now asks the only
-authority there is — the token:
+A hand-kept ``mailboxes`` map in ~/.canopy/runner.json would be easy to forget:
+the owner may not know it exists, pairing writes ``{}``, and a box with ``{}`` would
+still be rung by the push doorbell for every mail and silently ignore each ring. So
+the runner asks the only authority there is — the token:
 
   1. candidates: every mailbox canopy-web serves this caller
      (``GET /api/inbound/runner-mailboxes`` — address + agent slug);

@@ -73,7 +73,7 @@ export function TokensPanel() {
 
   async function onRevoke(t: PersonalToken) {
     // A date alone let a cloud runner's token pass for an unused one and get
-    // revoked in a cleanup (2026-10-17): name what is on it before it goes.
+    // revoked in a cleanup: name what is on it before it goes.
     const inUse = recentlyUsed(t)
       ? `\n\nIt was used ${relativeAge(t.last_used_at!)}${t.last_used_client ? ` by ${t.last_used_client}` : ''} — that will stop.`
       : ''

@@ -48,8 +48,8 @@ def test_a_failure_stops_holding_the_box_out_after_a_while(tmp_path, monkeypatch
     give a not-ready runner a turn — so a latching marker removed a box from the
     fleet permanently, escapable only by a human deleting a file.
 
-    Observed 2026-08-01: a laptop shut down mid-turn, the in-flight POST failed
-    with a DNS error, and the box came back online-but-unroutable. A network blip
+    Example: a laptop shuts down mid-turn, the in-flight POST fails
+    with a DNS error, and the box comes back online-but-unroutable. A network blip
     during shutdown says nothing about whether it can run anything.
     """
     import os

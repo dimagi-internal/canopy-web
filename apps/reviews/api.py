@@ -97,10 +97,9 @@ def _is_owner(request: HttpRequest, review: ReviewRequest) -> bool:
 def _in_caller_workspaces(request: HttpRequest, review: ReviewRequest) -> bool:
     """The hard tenant boundary: a review is reachable only by a member of its
     workspace. A null-workspace review is reachable by no member at all."""
-    # This used to fall back to "any authenticated user" for a NULL workspace —
-    # the NULL-means-allow leg. `reviews/0007` homed every row that existed, and
-    # every create since assigns one, so the leg guarded nothing but the next
-    # unhomed row. A `link` review is still readable by anyone (`_can_read`);
+    # There is no "any authenticated user" fallback for a NULL workspace (the
+    # NULL-means-allow leg): `reviews/0007` homed every existing row and every create
+    # assigns one, so the leg would guard nothing but the next unhomed row. A `link` review is still readable by anyone (`_can_read`);
     # that is a property of the review, not of its tenant.
     if review.workspace_id is None:
         return False
@@ -435,9 +434,9 @@ def create_review(request: HttpRequest, payload: ReviewCreateIn) -> Status:
                 422, f"{field} exceeds the {limit}-character limit", type_=TYPE_VALIDATION
             )
 
-    # Assign the owning workspace — one the caller is ALREADY in. This used to
-    # `ensure_member` them into the org default, making a review create a way to
-    # gain EDITOR of it; see wsvc.creation_workspace.
+    # Assign the owning workspace — one the caller is ALREADY in. They are never
+    # `ensure_member`ed into the org default (that would make a review create a way
+    # to gain EDITOR of it); see wsvc.creation_workspace.
     ws = wsvc.creation_workspace(request)
     if ws is None:
         raise ProblemError(

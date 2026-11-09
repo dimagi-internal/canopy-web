@@ -1,4 +1,4 @@
-"""Refresh on request — the laptop half of the runner page's Refresh (canopy-web#1763).
+"""Refresh on request — the laptop half of the runner page's Refresh.
 
 A cloud box refreshes by restarting, because its bootstrap is what updates its plugins,
 the canopy CLI and Claude Code (cloud_runner `maybe_self_refresh`). A laptop has no

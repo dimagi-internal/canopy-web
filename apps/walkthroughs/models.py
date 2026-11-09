@@ -49,7 +49,7 @@ class Walkthrough(models.Model):
     # plugin at upload; lets a run link to its exact story version instead of
     # being matched by run_id. Null for one-off / legacy uploads.
     narrative_review_id = models.UUIDField(blank=True, null=True, db_index=True)
-    # One cut of a `style: recorded` narrative (canopy#796): the recipe's
+    # One cut of a `style: recorded` narrative: the recipe's
     # ``cuts[].id``. A recorded narrative renders one mp4 per cut, so a version
     # holds one video PER CUT rather than one video — re-uploading a cut id
     # replaces that cut's video (latest wins). Blank for every other upload.
@@ -161,9 +161,9 @@ class Walkthrough(models.Model):
     def readable_by(self, request) -> bool:
         """The read gate for detail + content: a MEMBER of the walkthrough's
         workspace, or anyone presenting a matching ?t=<share_token> (visibility=
-        link). Being merely authenticated is NOT enough — that was a cross-workspace
+        link). Being merely authenticated is NOT enough — that would be a cross-workspace
         read leak. A null-workspace row has no members: only its token reads it
-        (it used to fall back to any authenticated user — NULL-means-allow)."""
+        (no NULL-means-allow fallback to any authenticated user)."""
         from apps.workspaces import services as wsvc
 
         member = (
@@ -181,9 +181,9 @@ class NarrativeSource(models.Model):
     ``ReviewRequest`` and the rendered videos are ``Walkthrough`` rows. What
     re-recording or re-rendering also needs — the recipe (``style``, ``cuts``,
     actions, setup), the master recording and the capture report the cut specs
-    are derived from — used to live only in the machine that made the render,
+    are derived from — would live only in the machine that made the render,
     so a narrative could be published with no way to keep iterating it from
-    anywhere else. This is where those files live instead: canopy pushes them
+    anywhere else. This is where those files live: canopy pushes them
     with every narrative post and video upload, and ``narrative pull`` restores
     them into a fresh working directory.
     """

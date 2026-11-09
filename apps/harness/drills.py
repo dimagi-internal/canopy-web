@@ -161,7 +161,7 @@ def start_drill(runner: Runner, agents: list, *, started_by=None) -> list[Runner
         )
         # The link authorizes the report, not the reporter's identity: an agent
         # reporting as its own canopy login was 404'd whenever that login was
-        # not linked to the agent row (echo/ace/eva, 2026-09-26), and a drill
+        # not linked to the agent row, and a drill
         # that cannot report reads exactly like a box that cannot reach canopy.
         report_url = (f"{settings.CANOPY_PUBLIC_BASE_URL}/api/harness/drills/{drill.id}/report"
                       f"?t={drill_report_token(drill)}")

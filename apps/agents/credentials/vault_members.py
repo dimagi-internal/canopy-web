@@ -82,7 +82,7 @@ def _linked(link: VaultLink, out: dict[int, Membership]) -> None:
                 continue
             role = {access.OWNER: OWNER, access.ADMIN: ADMIN}.get(row["agent_role"], link.role)
             _add(out, _UserRef(row["user_id"], row["email"]), role, source)
-        # A person licensed to use the agent directly (`AgentLicense`, canopy-web#1704)
+        # A person licensed to use the agent directly (`AgentLicense`)
         # runs its tools on their own machine, so the link counts them too — an
         # admin may approve a license for someone the caller list alone would not.
         for lic in AgentLicense.objects.filter(agent=link.agent, status=AgentLicense.ACTIVE).select_related("user"):
@@ -96,7 +96,7 @@ def _linked(link: VaultLink, out: dict[int, Membership]) -> None:
         agents = _agents_by_name(rows)
         # One read of each workspace's members and of everyone's standing, for every agent:
         # a vault attached to a whole workspace serves dozens, and a roster each re-read
-        # them per agent (Shared, 2026-11-06).
+        # them per agent.
         people = {ws: wsvc.effective_memberships(ws) for ws in {a.workspace_id for a in agents}}
         standings = access.Standings([m.user for ms in people.values() for m in ms], agents) if agents else None
         for agent in agents:

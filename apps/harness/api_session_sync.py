@@ -147,9 +147,7 @@ def record_session(request: HttpRequest, runner_id: uuid.UUID, payload: RecordSe
     except HttpError:
         raise
     except Exception:
-        # Failure investigation 3 (2026-10-15, turn 282f825e): a transferred chat
-        # turn (ace, haldimagi-mbp-cdp) 500'd here on all four attempts, and the
-        # response is the generic problem body with nothing to tell which line
+        # The response is the generic problem body with nothing to tell which line
         # raised. Name the inputs that pick the branch, then re-raise unchanged.
         logger.exception(
             "record-session failed: runner=%s agent=%s project=%r thread_key=%r "
@@ -186,7 +184,7 @@ def _record_session(request: HttpRequest, runner: Runner, payload: RecordSession
     if turn is not None:
         # The server names the session from the turn when it knows it: the email's
         # subject, the schedule's name — never the raw command a cloud turn's
-        # prompt often is ("/ace:turn --thread …", 2026-10-03).
+        # prompt often is ("/ace:turn --thread …").
         title = session_sync.turn_session_title(turn, payload.title)
     try:
         session_sync.record_session(
@@ -284,9 +282,8 @@ def list_streams(request: HttpRequest, runner_id: uuid.UUID):
         #   - the filter, because rows inherited from the previous box are not in
         #     this runner's transcript at all. An unfiltered Min/Max would hand it
         #     a high-water mark it can never reach, so every record of the live
-        #     conversation would sit BELOW the marker and never ship — issue #615's
-        #     failure exactly, reintroduced by preserving history rather than by
-        #     reusing a task name.
+        #     conversation would sit BELOW the marker and never ship — the same
+        #     failure as reusing a task name, reached by preserving history.
         #   - the subtraction, because the runner compares these against ordinals
         #     it computes from its OWN file. It needs no knowledge of the offset:
         #     the shift is applied on write (persist_transcript_rows) and undone
@@ -327,7 +324,7 @@ def list_streams(request: HttpRequest, runner_id: uuid.UUID):
          "live": b.stream_desired,
          # What the markers above are markers INTO. They are per-file ordinals, so
          # a runner reading a different transcript must discard them rather than
-         # resume against them (issue #615).
+         # resume against them.
          "transcript_id": b.transcript_id,
          # Coaching: ship this session's whole history (once) and keep it current.
          # `archived` lets the runner stop re-reading a retired one once caught up.
@@ -715,7 +712,7 @@ def claim_admission_notices(request: HttpRequest, runner_id: uuid.UUID,
                             payload: AdmissionNoticeClaimIn):
     """Automatic replies to rejected senders that canopy-web could not send,
     leased to this runner to send from the mailboxes it reads."""
-    # The other half of an admission rule's sender notice (canopy-web#1416):
+    # The other half of an admission rule's sender notice :
     # canopy-web cannot refresh a desktop-client token, the runner's gog can.
     # Polled from the runner's mailbox tick; `apps/admission/runner_notices.py`.
     from apps.admission import runner_notices
