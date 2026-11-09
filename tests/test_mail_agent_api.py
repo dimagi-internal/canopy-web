@@ -294,8 +294,8 @@ def test_thread_detail_counterpart_matches_the_list(w):
 
 # SES replaces the Message-ID canopy writes on an outbound message with its own
 # (<ses-id@email.amazonses.com>), so that is what the recipient's client cites when they
-# reply, and what canopy must cite when it replies again (2026-10-20: Jonathan's reply to
-# Ada's first mail from ada@dimagi.ai opened a new thread).
+# reply, and what canopy must cite when it replies again (otherwise a reply to an agent's
+# first mail opens a new thread).
 def test_a_reply_citing_the_ses_message_id_joins_the_thread(w, settings):
     from types import SimpleNamespace
 

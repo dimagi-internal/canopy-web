@@ -1,10 +1,10 @@
-"""A follow-up is delivered INTO a conversation's running turn (canopy-web#1153).
+"""A follow-up is delivered INTO a conversation's running turn.
 
-Before this, a message sent while the agent was busy waited in the queue until
-the turn ended — in the #1147 incident, 15+ minutes behind a `gh pr checks
+Otherwise a message sent while the agent is busy waits in the queue until
+the turn ends — possibly 15+ minutes behind a `gh pr checks
 --watch`, which is long after a correction like "skip that" stops mattering.
 Claude Code already takes a message typed into a busy session (it queues it and
-hands it to the model at its next step), so the runner holding the turn now
+hands it to the model at its next step), so the runner holding the turn
 claims the follow-up at once as a RIDER (`Turn.rides_turn`), types it in, and
 the two finish together.
 
@@ -206,10 +206,9 @@ def test_a_follow_up_waits_while_a_dialog_is_up():
 
 
 def test_a_follow_up_that_cannot_be_typed_mid_turn_waits_for_the_turn_instead():
-    """Measured live 2026-10-05: the rider was claimed, every send failed
-    COMPOSER_NOT_VISIBLE, and the follow-up ended FAILED — lost, where before
-    mid-turn delivery it would only have been late. It now waits, exactly as it
-    did before, and is delivered when the running turn ends."""
+    """If the rider is claimed and every send fails COMPOSER_NOT_VISIBLE, the
+    follow-up must not end FAILED (lost, where it would only have been late). It
+    waits for the turn and is delivered when the running turn ends."""
     _user, _ws, _agent, session, runner = _ctx()
     first = _running(session, runner)
     _send(session, "k2", "skip the PR checks")

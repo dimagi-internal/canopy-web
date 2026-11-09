@@ -4,7 +4,7 @@ project's toolbox through the same small set of tools.
 Driven the way Claude Code drives it — streamable HTTP with a real personal token,
 through the dispatcher `config/asgi.py` mounts. The tool list is the same whatever
 projects exist; a project's contents arrive only when a call asks for them, and
-every knowledge-base call names its project, since MCP 2026-07-28 keeps no session.
+every knowledge-base call names its project, since the MCP protocol keeps no session.
 """
 from __future__ import annotations
 

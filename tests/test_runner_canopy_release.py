@@ -1,10 +1,9 @@
 """A box behind the canopy release is asked to refresh, on its next heartbeat.
 
-cloud-ec2-2 sat on canopy 0.2.804 for hours on 2026-10-27 after 0.2.805 stopped
-an hourly owner alert: a cloud box re-runs bootstrap (which updates the plugin and
-the CLI) only on a runner-code deploy, an operator's Refresh, or 24h of age. The
-doorbell keyed on the runner's code sha alone, so a canopy-only release rang
-nothing. canopy-web now knows the release (`canopy_release.expected`) and turns
+A cloud box can sit on an old canopy release for hours: a cloud box re-runs bootstrap (which updates the plugin and
+the CLI) only on a runner-code deploy, an operator's Refresh, or 24h of age. A
+doorbell keyed on the runner's code sha alone would ring nothing for a canopy-only
+release. canopy-web knows the release (`canopy_release.expected`) and turns
 "behind it" into the heartbeat reply's `refresh_pending` — the box's existing,
 idle-gated, floor-limited self-refresh.
 """

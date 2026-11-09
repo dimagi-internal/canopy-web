@@ -1,6 +1,6 @@
-"""Per-cut videos on a narrative version (canopy-web#1288).
+"""Per-cut videos on a narrative version.
 
-A ``style: recorded`` narrative renders one mp4 per cut (canopy#796). Each is
+A ``style: recorded`` narrative renders one mp4 per cut. Each is
 uploaded with the recipe's ``cuts[].id`` and the scene ids it plays, and lands
 in its own slot on the version: on the narrative page (``build_narrative``) and
 on the review link's Cuts tab, for guests as well as members.

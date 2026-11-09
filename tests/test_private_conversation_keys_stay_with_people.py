@@ -2,8 +2,7 @@
 makes it, a person given the conversation before it became private is given a copy by
 someone in it, a person who replaces their vault key carries their copies over, and the
 live socket hears only someone who holds one. Plus what such a conversation does not
-take: a file, a draft kept on the server (spec
-2026-10-23-sensitive-conversations-sealed-to-their-people §2).
+take: a file, a draft kept on the server.
 
 The tests stand in for the browser with the vault private key only it holds
 (`tests/fixtures/sensitive.py::vault_key`).

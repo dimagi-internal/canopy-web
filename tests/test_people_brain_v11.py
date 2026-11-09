@@ -1,6 +1,6 @@
-"""Fleet brain v1.1 (canopy#804): project participants, the coverage metric, and
-Contact.notes mirrored into a fact. (The per-agent digest opt-out went with the
-digest turn, 2026-10-09.)
+"""Fleet brain v1.1: project participants, the coverage metric, and
+Contact.notes mirrored into a fact. (There is no digest turn, so no per-agent
+digest opt-out.)
 
 Privacy rules pinned here, beside v1's in `test_people_brain.py`:
 

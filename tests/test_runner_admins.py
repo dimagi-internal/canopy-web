@@ -1,9 +1,8 @@
 """Administering a runner vs speaking FOR one.
 
 `owner` was doing both jobs, which made the human who happened to run the
-pairing command the only person who could ever fix the box. On 2026-09-08 that
-bit for real: a signed-out cloud runner could not be re-authenticated by the
-identity it actually runs as.
+pairing command the only person who could ever fix the box. A signed-out cloud runner
+must be re-authenticable by the identity it actually runs as.
 
 Neither existing tier could take over. Workspace OWNER is too narrow — the
 workspace in question has exactly one, which IS the single point of failure.
@@ -117,14 +116,14 @@ def test_an_ungranted_member_still_gets_nothing(runner, runner_owner, agent_iden
 def test_an_administrator_cannot_speak_as_the_runner(runner, runner_owner, agent_identity):
     """Administration is not impersonation: an administrator may not read the
     box's actual secret values, which only the runner fetches. (Starting and
-    reading drills IS administration since 2026-10-04 — see the drill tests
+    reading drills IS administration — see the drill tests
     below.)"""
     _post(client_for(runner_owner), f"{base(runner)}/admins", {"email": "ace@dimagi-ai.com"})
     c = client_for(agent_identity)
     assert c.get(f"{base(runner)}/credential").status_code == 404
 
 
-# ── readiness drills: a runner-ADMIN feature (owner decision 2026-10-04) ────
+# ── readiness drills: a runner-ADMIN feature ────
 
 @pytest.fixture()
 def drilled_agent(runner, workspace):

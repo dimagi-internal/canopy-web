@@ -1,4 +1,4 @@
-"""WS auth — delegated Bearer + `?token=` query param (SP4 PR 2, Task 4).
+"""WS auth — delegated Bearer + `?token=` query param.
 
 Extends RealtimeAuthMiddleware's bearer resolver to fall back to DelegatedToken
 after a PersonalToken miss, and adds a query-string `?token=` resolver for

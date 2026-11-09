@@ -48,8 +48,7 @@ def _seed():
 def _emdash_db(tmp_path, *projects: str) -> str:
     """A real (tiny) emdash DB holding the projects this box can drive.
 
-    The runner REPORTS its project list from this table on every healthy heartbeat
-    (spec 2026-07-28), so a test that stubs emdash as healthy while leaving no DB
+    The runner REPORTS its project list from this table on every healthy heartbeat, so a test that stubs emdash as healthy while leaving no DB
     behind is simulating a box that can drive nothing — and the turn it enqueues
     would correctly never be claimed. The fake has to be as real as the claim it
     makes.

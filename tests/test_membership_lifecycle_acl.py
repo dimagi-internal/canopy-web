@@ -1,6 +1,6 @@
 """Leaving a workspace, and the people the workspace tree adds to it.
 
-The 2026-10-02 ACL audit, second pass. Two shapes of the same mistake:
+The ACL audit, second pass. Two shapes of the same mistake:
 
 - **A grant outliving the membership it hung off.** Removing someone deleted
   their membership row and nothing else. An agent's owner kept `is_admin` (the
@@ -271,8 +271,8 @@ def test_the_members_list_shows_inherited_owners(tree):
 
 
 def test_the_members_list_names_people_whose_address_does_not(tree):
-    """2026-11-03: `ltse@` is Lucina Tse. A search of the addresses reported that no such member
-    existed, and the owner was told an admin probably needed an invite."""
+    """`ltse@` is Lucina Tse. A search of the addresses must not report that no such member
+    exists (the owner would be told an admin probably needs an invite)."""
     tree["boss"].first_name, tree["boss"].last_name = "Lucina", "Tse"
     tree["boss"].save()
     rows = _client(tree["owner"]).get(f"/api/workspaces/{WS}/members/").json()
@@ -328,7 +328,7 @@ def test_the_last_owner_with_no_parent_still_cannot_step_down(life):
 # --- 6. detaching a workspace from its parent ---------------------------------
 
 def test_an_inherited_owner_cannot_detach_a_workspace(tree):
-    """It used to save, then 500 — leaving a root nobody was in to describe."""
+    """Saving it would 500 — leaving a root nobody is in to describe — so it is refused."""
     res = _client(tree["boss"]).put(f"/api/workspaces/{WS}/parent",
                                     data={"parent": None}, content_type="application/json")
     assert res.status_code == 409, res.content

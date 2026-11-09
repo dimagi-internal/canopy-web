@@ -1,4 +1,4 @@
-"""The fleet brain v1 (canopy#804): facts, the envelope `person` block, and the
+"""The fleet brain v1: facts, the envelope `person` block, and the
 /api/people routes and their privacy gates.
 
 The privacy tests are the point of this file. The rules they pin:
@@ -9,8 +9,8 @@ The privacy tests are the point of this file. The rules they pin:
 * the person can see — and retract — everything held about them;
 * conversations are readable by the agent they were with (its own login) and
   nobody new: another agent's login is refused;
-* a finished turn starts no other turn: facts are recorded in-session (the
-  people-digest turn was removed 2026-10-09).
+* a finished turn starts no other turn: facts are recorded in-session (there is
+  no people-digest turn).
 """
 from __future__ import annotations
 
