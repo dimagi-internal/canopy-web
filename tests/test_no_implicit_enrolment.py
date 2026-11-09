@@ -187,10 +187,10 @@ def test_a_member_posting_flat_still_lands_in_the_default_workspace(insider, def
 
 
 def test_a_member_of_only_one_other_workspace_lands_there_not_in_the_default(default_workspace):
-    """The leg that used to be silently wrong even for a legitimate caller.
+    """The leg that would be silently wrong even for a legitimate caller.
 
-    Someone whose sole membership is `acme` posting flat used to have their row
-    filed into `dimagi` — and be enrolled there to make it work. Their own
+    Someone whose sole membership is `acme` posting flat must not have their row
+    filed into `dimagi` and be enrolled there to make it work. Their own
     unambiguous workspace is the only defensible answer.
     """
     other = a_workspace("acme")

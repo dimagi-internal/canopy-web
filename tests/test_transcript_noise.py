@@ -2,8 +2,8 @@
 
 Claude Code writes task notifications, system reminders and local command output
 as records of `type: "user"`, so the bridge that turns a transcript into Message
-rows cannot tell them apart by shape. Observed on labs 2026-07-26: a session's
-own deploy-monitor notifications were showing on the user's side of the chat.
+rows cannot tell them apart by shape. A session's own deploy-monitor
+notifications must not show on the user's side of the chat.
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ pytestmark = pytest.mark.django_db
         "   <task-notification> leading whitespace still counts",
         # A Skill invocation: the harness injects the skill body as a user record.
         "Base directory for this skill: /Users/jj/.claude/plugins/cache/superpowers/…",
-        # Reading an image, and a blocking Stop hook's feedback (labs 2026-09-26).
+        # Reading an image, and a blocking Stop hook's feedback .
         "[Image: original 1440x3214, displayed at 896x2000. Multiply coordinates by 1.61 to map to original image.]",
         "Stop hook feedback:\nYou ended by OFFERING to do something rather than doing it",
     ],
@@ -203,8 +203,8 @@ def test_a_human_quoting_the_interrupt_marker_still_survives():
 # renders `RunnerBinding.tail` until its backfill lands, and the runner filters
 # that tail itself. So for as long as the rule was enforced only on the durable
 # paths, a runner on a lagging checkout could put anything in a user bubble —
-# and did (2026-07-30: a superpowers/brainstorming skill body, injected as a
-# `type: "user"` record, rendered as the human's own message on an ada session).
+# (e.g. a skill body, injected as a
+# `type: "user"` record, rendering as the human's own message).
 
 
 def _binding_with_tail(session, tail):

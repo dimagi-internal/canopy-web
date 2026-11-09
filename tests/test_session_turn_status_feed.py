@@ -6,7 +6,7 @@ gets a frame, and the connect snapshot carries the same answer for a client
 that was not watching when it changed.
 
 The case driven throughout is a turn queued behind an OFFLINE runner, because
-it is the one a client cannot derive for itself and the one that used to render
+it is the one a client cannot derive for itself and the one that would render
 as an empty panel indistinguishable from a reply being written.
 """
 from __future__ import annotations
@@ -330,7 +330,7 @@ def test_not_for_a_session_just_typed_into_on_its_laptop(monkeypatch):
     assert _idles(sent, session) == []
 
 
-# -- queued behind the turn ahead (canopy-web#1147) ---------------------------
+# -- queued behind the turn ahead ---------------------------
 #
 # The status and the claim must give the same answer, so these drive the real
 # claim beside the real status: "queued behind" exactly when `claim_next_turn`
@@ -414,8 +414,7 @@ def _driven_turn(session, ws, agent, *, status, note="", key="d1"):
 
 
 def test_a_failed_turn_says_why_on_the_session_it_ran_in():
-    """Ada's debug turn 05590519 (2026-11-03) was aborted, and its session's page said nothing
-    about it: the note was on the turn, which only `canopy_session` links to that session."""
+    """An aborted turn's session page must say why, not stay silent: the note was on the turn, which only `canopy_session` links to that session."""
     _, ws, agent, session = _ctx()
     _driven_turn(session, ws, agent, status=Turn.FAILED, note="Aborted by canopy: because.")
 

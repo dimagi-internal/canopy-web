@@ -374,8 +374,8 @@ def test_revoking_the_read_deletes_the_runs_copy_too(checkin, slack, channel):
 
 
 def test_the_read_covers_exactly_what_the_announcement_said(checkin, slack, channel):
-    """2026-10-17: the announcement said "since yesterday 7:44 PM" (dated from a
-    revoked read) and the Confirm read the whole channel. One start, both places."""
+    """The announcement and the Confirm read start from the same point (not "since
+    yesterday 7:44 PM" from a revoked read in one and the whole channel in the other)."""
     since = datetime.fromtimestamp(1700000350, tz=UTC)
     run = _fire(checkin, since=None)
     CheckinRun.objects.filter(pk=run.pk).update(read_since=since)
@@ -423,7 +423,7 @@ def test_a_read_channel_in_between_does_not_hide_messages_from_the_check_in(chec
 
 
 def test_canopys_own_posts_are_not_material(checkin, slack, channel):
-    """2026-10-17 run 2: the only "message" read was canopy's own "Confirmed by…"."""
+    """A read whose only "message" was canopy's own "Confirmed by…"."""
     from tests.fixtures.slack import BOT
 
     channel.history.insert(0, {"ts": "1700000600.000000", "user": BOT, "bot_id": "B1",

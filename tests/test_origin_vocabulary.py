@@ -1,6 +1,6 @@
 """The source vocabulary: six values, legacy aliases normalized at the boundary.
 
-`origin` is now a ROUTING input (spec 2026-07-27), so the set of values a caller
+`origin` is now a ROUTING input, so the set of values a caller
 may supply is deliberately narrower than the set the column holds.
 """
 from __future__ import annotations

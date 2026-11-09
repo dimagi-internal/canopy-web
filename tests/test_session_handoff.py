@@ -1,8 +1,7 @@
 """A transfer carries the WORK, not just the conversation (`canopy_sessions/handoff.py`).
 
-The motivating day (2026-10-23): an account out of tokens with 9 open sessions,
-moved by reading another macOS user's disk — which works only on one laptop, gave
-the new session a cold brief, and left 3 of 11 ghost tasks behind. Here the
+Moving a session by reading another macOS user's disk works only on one laptop,
+gives the new session a cold brief, and leaves ghost tasks behind. Here the
 source runner packs its own worktree (it still has a working runner when its
 Claude account is out of tokens), the target restores it before its agent acts,
 and the source's task is closed only once the work is safely elsewhere.
@@ -369,9 +368,8 @@ def test_handoffs_route_reports_each_transfer(ctx):
 
 def test_a_session_the_engine_says_is_working_is_not_moved(ctx):
     """Typed straight into (the chat, /ide, emdash), a session runs Claude with no
-    executing Turn at all; its runner's report is the only witness. Found live
-    2026-10-24: a dry run offered three `running` sessions, one of them the very
-    session asking."""
+    executing Turn at all; its runner's report is the only witness. A dry run
+    must not offer such `running` sessions, including the one asking."""
     from apps.canopy_sessions import transcript_read
 
     s = _session(ctx, "live")

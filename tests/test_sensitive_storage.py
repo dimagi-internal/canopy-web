@@ -94,7 +94,7 @@ def test_a_tool_end_event_keeps_the_call_and_status_never_the_result(
                                              "content": [{"type": "text", "text": ROW}]}},
         ])
     start, end = TurnEvent.objects.filter(turn=t).order_by("seq")
-    # Metadata only (Jonathan, 2026-10-22): which tool, the names of its arguments and
+    # Metadata only: which tool, the names of its arguments and
     # the host tool reached are kept; the arguments are not.
     assert "input" not in start.payload
     assert start.payload["name"] == "mcp__canopy-web__site_call" and start.payload["input_tool"] == "data_query"
@@ -123,7 +123,7 @@ def test_a_runner_sessions_tool_result_row_keeps_no_result(w):
     assert rows[Message.TOOL_RESULT].plaintext == ""
     assert rows[Message.TOOL_RESULT].content == {"tool_use_id": "tu1", "is_error": False,
                                                  "withheld": True}
-    # Metadata only (Jonathan, 2026-10-22): the rows record that each was said, never
+    # Metadata only: the rows record that each was said, never
     # the words or a tool's arguments.
     assert "input" not in rows[Message.TOOL_USE].content
     assert rows[Message.TOOL_USE].content["input_tool"] == "data_query"
@@ -397,7 +397,7 @@ def test_the_creation_log_line_keeps_no_prompt(w):
 
 def test_the_envelope_never_hands_the_words_on(w):
     """A sensitive conversation's agent resumes the session its box kept; canopy-web
-    never reads the sealed words back to give the next turn (spec 2026-10-23 §1)."""
+    never reads the sealed words back to give the next turn."""
     from apps.harness import caller_context
 
     _converse(w["hot"])
@@ -432,8 +432,8 @@ def _ship(w, runner, transcript_id, rows):
 
 def test_a_confined_turns_reply_arrives_with_no_binding_and_each_turn_lands_after_the_last(w):
     """A confined turn is never the session's binding; its runner ships the turn's rows
-    at its end, and they are the only way the reply reaches the asker (seen live
-    2026-10-23: `session not bound to this runner`, and the visitor got nothing)."""
+    at its end, and they are the only way the reply reaches the asker (without
+    them: `session not bound to this runner`, and the visitor gets nothing)."""
     from apps.canopy_sessions.services import TRANSCRIPT_SOURCED
 
     w["hot"].metadata = {**w["hot"].metadata, TRANSCRIPT_SOURCED: True}
@@ -456,8 +456,8 @@ def test_a_confined_turns_reply_arrives_with_no_binding_and_each_turn_lands_afte
 
 
 def test_a_resumed_session_reships_its_transcript_and_only_the_new_turn_lands(w):
-    """A sensitive conversation's next turn resumes the SAME Claude session (spec
-    2026-10-23 §1), so its turn-end ship carries the whole transcript again, under the
+    """A sensitive conversation's next turn resumes the SAME Claude session,
+    so its turn-end ship carries the whole transcript again, under the
     same id and with the same ordinals for the earlier turns. Those are already held:
     only the new turn's rows are added, and nothing is doubled."""
     from apps.canopy_sessions.services import TRANSCRIPT_SOURCED
@@ -559,8 +559,8 @@ def test_only_the_runner_that_ran_a_confined_turn_may_ship_its_rows_and_only_for
 
 
 def test_a_sensitive_turns_ledger_reads_as_a_log_of_metadata(w):
-    """What troubleshooting needs is readable; the words are not (2026-10-23: a
-    sensitive turn's events 404'd, and its reply could not be debugged)."""
+    """What troubleshooting needs is readable; the words are not (a
+    sensitive turn's events must not 404, or its reply cannot be debugged)."""
     t = _turn(w["hot"], prompt=ASKED)
     ledger.append_events(t, [{"kind": "assistant_text", "payload": {"text": REPLY}},
                              {"kind": "tool_start", "payload": {"name": "site_call",

@@ -370,7 +370,7 @@ def test_suggested_name_is_a_runner_name(account, host, expected):
     assert name == expected and re.match(RUNNER_NAME_PATTERN, name)
 
 
-# --- a box whose token stopped working gets its own runner back (canopy-web#1705) ---
+# --- a box whose token stopped working gets its own runner back ---
 
 def _dead_box(org, name="jj-mbp-cdp"):
     return Runner.objects.create(name=name, kind=Runner.EMDASH, owner=org["user"], workspace=org["ws"],

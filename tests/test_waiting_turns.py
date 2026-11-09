@@ -1,8 +1,8 @@
 """A queued turn says why it is queued.
 
-The incident (2026-10-30): an ACE dispatch pinned to an online, ready laptop sat queued five
-hours while every surface said a live runner was about to take it. They were reading the
-heartbeat; nothing recorded whether the runner was asking for work at all.
+A dispatch pinned to an online, ready laptop must not sit queued for hours while every
+surface says a live runner is about to take it. The heartbeat alone does not show whether
+the runner is asking for work at all.
 """
 from __future__ import annotations
 

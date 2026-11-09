@@ -1,8 +1,7 @@
-"""Tasks get subtasks and a Drive folder, instead of subprojects (T72).
+"""Tasks get subtasks and a Drive folder, instead of subprojects .
 
-Jonathan asked (2026-10-09) whether a big piece of work inside a product area
-should be a "sub project or tasks (and eventually subtasks)". Tasks plus
-subtasks: one board per product area. A subtask lives in its parent's project,
+A big piece of work inside a product area is tasks plus subtasks: one board
+per product area. A subtask lives in its parent's project,
 under the same agent, never in a cycle, and at most three levels deep.
 """
 from __future__ import annotations

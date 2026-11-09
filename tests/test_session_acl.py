@@ -1,12 +1,11 @@
 """The chat-session ACL, pinned end to end. The rule lives in
 `apps/canopy_sessions/access.py`; this file makes every surface agree with it.
 
-It exists because three surfaces used to answer "may this person see this
-chat?" three ways. REST used `visible_session_q`, the socket admitted any
-workspace member and auto-joined them as an editor, and attachments checked the
-tenant alone. The visible symptom was a push notification that opened on a 404
-and then worked on reload (2026-09-23). The real bug was that one socket
-connection made a private conversation permanently yours.
+It exists so every surface answers "may this person see this chat?" the same
+way: REST, the socket and attachments all go through the one rule. A surface
+that admitted any workspace member and auto-joined them as an editor would open
+a push notification on a 404 that works on reload, and one socket connection
+would make a private conversation permanently yours.
 """
 from __future__ import annotations
 

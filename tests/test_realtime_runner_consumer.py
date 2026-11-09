@@ -152,8 +152,8 @@ async def _connect_with_pat(runner_id, raw):
 
 
 async def test_revoking_the_pat_closes_the_socket_before_it_claims():
-    """2026-10-17: a revoked PAT kept claiming over its open socket while every
-    REST call failed, so each turn it took was lost. The next frame after the
+    """A revoked PAT must not keep claiming over its open socket while every
+    REST call fails (each turn it took would be lost). The next frame after the
     revoke must be refused, and the queued turn left for a runner that can run it."""
     from apps.tokens.models import PersonalToken
 
@@ -353,7 +353,7 @@ async def test_send_during_running_turn_only_queues():
 
     await _send("actually, stop and do X", "c9")
     # A second send while a turn runs is QUEUED behind it and never pushed into
-    # the running turn (spec 2026-09-26: messages land in send order).
+    # the running turn (messages land in send order).
     frames = await _received_frames(comm)
     assert not any(f.get("type") == "interject" for f in frames)
     queued = await database_sync_to_async(
@@ -372,7 +372,7 @@ async def test_send_during_running_turn_only_queues():
 
 
 # --- a SESSION turn over the socket ------------------------------------------
-# Observed on the live cloud runner 2026-07-28: a session-targeted turn claimed
+# A session-targeted turn claimed
 # over the WS ran and finished, but wrote ZERO durable Message rows and
 # cold-started in a per-turn scratch dir. Both because `_serialize_turn`
 # reimplemented a subset of TurnOut and lost the two fields a session turn is
@@ -447,8 +447,8 @@ async def test_ws_claim_agrees_with_the_rest_claim_payload():
 # --- heartbeat provenance ----------------------------------------------------
 # `services.heartbeat` assigns code_sha/code_branch/code_version/code_committed_at
 # UNCONDITIONALLY, so a call that omits them clears them. This is the cloud
-# runner's primary heartbeat (every 20s), so before spec 2026-07-30 anything it
-# reported over REST was erased moments later and `code_sha` read empty forever —
+# runner's primary heartbeat (every 20s), so anything it
+# reported over REST would be erased moments later and `code_sha` read empty forever —
 # indistinguishable from a runner that never reported one.
 async def test_ws_heartbeat_records_code_provenance():
     user, _ws, _a, runner = await database_sync_to_async(_setup)()
@@ -504,7 +504,7 @@ async def test_ws_heartbeat_survives_a_malformed_committed_at():
 
 # --- heartbeat confinement capabilities --------------------------------------
 # `services.heartbeat` writes `profiles`/`envelope` on every beat, absent = 0. This
-# path used to drop them, so on 2026-10-05 cloud-ec2-1 flipped between 2/3 (its
+# path must not drop them, or a box flips between 2/3 (its
 # REST beats) and 0/0 (this one, every 20s) — and at 0/0 `profile_q` refuses it
 # every caller's turn.
 async def test_ws_heartbeat_records_confinement_capabilities():
@@ -544,7 +544,7 @@ async def test_ws_heartbeat_without_confinement_capabilities_reports_zero():
 
 # --- the menu_answer relay must carry EVERY field it is published with ------
 #
-# REGRESSION, 2026-08-12. `runner_menu_answer` relays field by field, and two
+# REGRESSION. `runner_menu_answer` relays field by field, and two
 # fields added to the published frame were never added here, so the socket
 # quietly delivered a frame missing both:
 #
@@ -608,7 +608,7 @@ async def _noop_store(target, payload):
 
 # --- health + the refresh request ride the WS beat ---------------------------
 # The WS beat is the cloud runner's primary heartbeat, so it is the path that has
-# to carry `health` in and `refresh_pending` back out (2026-09-22).
+# to carry `health` in and `refresh_pending` back out.
 async def test_ws_heartbeat_records_health_and_acks_refresh():
     user, _ws, _a, runner = await database_sync_to_async(_setup)()
     comm = await _connect(runner.id, user)
@@ -674,9 +674,8 @@ async def test_ws_heartbeat_survives_malformed_health():
 # things to the turn that `_serialize_turn` never did: the caller envelope, a
 # confined turn's caller token, and a chat's key. The runner decides whether to
 # CONFINE a turn from `caller_context` — so a confined turn claimed here arrived
-# looking like an ordinary one and ran in the agent's full profile (found
-# 2026-09-26 while a chat key failed to reach cloud-ec2-1). Both channels now
-# return the one claim payload.
+# looking like an ordinary one and ran in the agent's full profile (a chat key
+# could also fail to reach the box). Both channels return the one claim payload.
 async def test_a_confined_turn_claimed_over_ws_carries_its_confinement():
     user, ws, agent, runner = await database_sync_to_async(_setup)()
 

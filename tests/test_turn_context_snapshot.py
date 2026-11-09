@@ -630,7 +630,7 @@ def test_the_view_is_an_allowlist_of_named_fields(world):
 
 
 def test_a_turn_recorded_under_the_removed_session_writer_rule_still_reads(world):
-    """`session_writer` went on 2026-11-06. A turn stored before then says so, and is served as it was stored."""
+    """`session_writer` is a removed rule. A turn stored under it says so, and is served as it was stored."""
     session = _chat(world)
     turn = _enqueue(world.owner, session, box=world.box)
     _claim(turn, world.box)

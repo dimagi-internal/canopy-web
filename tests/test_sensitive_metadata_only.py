@@ -2,8 +2,7 @@
 
 Beyond `test_sensitive_storage.py` (tool results, transcripts, re-exposure): what the
 person types, what the agent says and a tool's arguments are stored as metadata only
-(kinds, tool names, argument names, ids, sizes, hashes, lifecycle) -- Jonathan,
-2026-10-22. The live frame still carries the words to the person watching.
+(kinds, tool names, argument names, ids, sizes, hashes, lifecycle). The live frame still carries the words to the person watching.
 """
 from __future__ import annotations
 

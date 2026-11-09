@@ -212,11 +212,10 @@ def test_a_stranger_cannot_drive_someone_elses_runner(client, runner):
 # ── expiry: a dead link must stop being offered as live ────────────────────
 
 def test_a_sign_in_left_open_too_long_expires(client, runner, monkeypatch):
-    """The failure this prevents, measured 2026-09-08: a mint started at 17:56
-    was completed at 19:04 and failed with "setup-token never printed a token".
-    The authorize URL's PKCE state and the CLI process waiting on the box had
-    both expired an hour earlier; nothing said so, and the only clue was the
-    clock. An aged-out mint now says what happened."""
+    """The failure this prevents: a mint completed an hour late fails with
+    "setup-token never printed a token". The authorize URL's PKCE state and the
+    CLI process waiting on the box have both expired; nothing says so and the only
+    clue is the clock. An aged-out mint says what happened."""
     from django.utils import timezone
 
     from apps.harness import runners

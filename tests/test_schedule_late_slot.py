@@ -26,7 +26,7 @@ def schedule():
 
 
 def test_a_slot_past_the_window_is_skipped_as_missed(schedule):
-    """The 2026-09-23 case: laptop reopened hours after the slot."""
+    """The late case: laptop reopened hours after the slot."""
     turn, _ = schedule_turns.fire_schedule(schedule, SLOT)
 
     assert schedule_turns.skip_late_scheduled_turns(now=SLOT + dt.timedelta(hours=5)) == 1

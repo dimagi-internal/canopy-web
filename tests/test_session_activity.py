@@ -246,7 +246,7 @@ def test_rows_and_stream_events_carry_record_context():
     assert "cwd" not in stream_event(rows[1])
 
 
-# --- noise (prod backfill, 2026-10-09: `$r` repos, one "repo" per worktree topic) --
+# --- noise (`$r` repos, one "repo" per worktree topic) --
 
 def test_unexpanded_shell_tokens_are_never_repos_remotes_or_branches():
     d = _fold([

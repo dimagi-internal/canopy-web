@@ -1,6 +1,6 @@
 """Direct use of an agent: a private runner, and the turn a session there opens.
 
-canopy-web#1704. A person runs an agent in their own Claude Code; canopy records
+A person runs an agent in their own Claude Code; canopy records
 it as a real turn (`origin=local`) on their private runner, with the same envelope
 and turn mode a runner turn would get — and it must never hold up the agent's
 runner queue.
@@ -217,7 +217,7 @@ def test_a_local_turn_alone_leaves_the_agent_free(world):
 
 
 def test_two_runner_turns_of_one_agent_can_execute_at_once(world):
-    """An agent is not a lane: its turns run side by side (the lane was removed 2026-10-30)."""
+    """An agent is not a lane: its turns run side by side."""
     Turn.objects.create(agent=world["agent"], origin="api", idempotency_key="r1", status=Turn.RUNNING)
     Turn.objects.create(agent=world["agent"], origin="api", idempotency_key="r2", status=Turn.RUNNING)
     assert Turn.objects.filter(agent=world["agent"], status=Turn.RUNNING).count() == 2

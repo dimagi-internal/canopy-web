@@ -1,6 +1,6 @@
 """MCP Apps Views: which rows get one, and what a View may do — as the VIEWER.
 
-Spec 2026-10-08 §3-6 and the owner decisions in its last section. Driven through
+Driven through
 the real REST routes (Django test client, real auth) against a real FastMCP host
 (`tests/mcp_apps_host.py`) reached in-process. Each fake grant carries its own
 token, so every assertion about WHOSE grant a call used is checked at the host.
@@ -196,7 +196,7 @@ def test_the_widget_snapshot_keeps_only_the_view_row_stripped(w):
 def test_a_runner_rows_result_text_reaches_the_view(w, labs):
     """The runner's transcript keeps a result's text in `plaintext`, with only
     {is_error, tool_use_id} in `content`. A View must still get that text: Labs'
-    coaching card reads the caller's arguments from it (2026-10-09)."""
+    coaching card reads the caller's arguments from it."""
     text = '{"arguments": {"workers": [{"key": "10::a", "picture": {"params": {"topics": ["X1"]}}}]}}'
     Message.objects.filter(session=w["session"], role=Message.TOOL_RESULT).update(
         plaintext=text, content={"is_error": False, "tool_use_id": CALL_ID})
@@ -252,7 +252,7 @@ def test_the_viewers_grant_is_used_not_the_initiators(w, labs):
 
 def test_a_read_only_call_from_a_view_leaves_no_receipt(w, labs):
     """A View's status poll is audited but not recorded in the chat: a receipt witnesses a
-    person changing something (2026-10-09: "Done: workflow_action_status" beside a send)."""
+    person changing something (no "Done: workflow_action_status" beside a send)."""
     c = client_for(w["editor"])
     polled = through(labs, lambda: post(c, base(w) + "/call", {
         "name": "workflow_action_status", "arguments": {"run_id": 5, "execution_id": 77}}))
@@ -492,7 +492,7 @@ def test_slack_gets_the_result_text_and_a_link_for_a_view_and_nothing_for_other_
     assert _message_for(other, turn) == ""
 
 
-# --- a sensitive conversation (spec 2026-10-22-sensitive-data-agents §4) ------------------
+# --- a sensitive conversation ------------------
 
 
 def _sensitive(w):

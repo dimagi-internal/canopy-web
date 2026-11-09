@@ -234,8 +234,7 @@ def test_unlinking_the_last_owner_and_admins_is_refused(world, client):
 
 def test_an_agents_login_is_never_a_member(world):
     """It holds no vault key, and an agent able to change its own vault's membership
-    could hand its key to anyone. 2026-10-22: in production ACE's own login and Ada's were
-    listed as managers of ACE's vault."""
+    could hand its key to anyone."""
     login = _user("ace-login")
     _member(world.ws, login, WorkspaceMembership.EDITOR)
     world.agent.user = login

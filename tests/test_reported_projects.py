@@ -3,13 +3,12 @@
 Declared at pairing, that list drifted silently and only ever toward "cannot run":
 a turn dispatched at repo `canopy` sat QUEUED forever because nobody had typed
 `canopy` into it, while the repo sat in emdash's own projects table the whole time
-(labs, 2026-07-28). Measured that day: emdash held 21 projects, the runner declared
-10, and every declared one was also in emdash — the declaration was an arbitrary
-subset of an observable fact.
+(emdash can hold 21 projects while the runner declares 10, every one of them also
+in emdash — the declaration is an arbitrary subset of an observable fact).
 
 So the runner reports it on every heartbeat. Routing is untouched —
 `claim_next_turn` still matches `Q(project__in=runner.project_names())`; only the
-WRITER changed.
+WRITER differs.
 
 The absent-vs-empty distinction carries the whole safety property, and it is the
 `replace_reported_sessions` lesson with a bigger blast radius: a runner that cannot
@@ -150,7 +149,7 @@ def test_patching_other_capabilities_still_works(client, runner):
 # Not about projects, but the same failure shape and the same heartbeat: an
 # indicator asserting more than its data supports. `code_sha != expected` means
 # DIFFERENT, and the supervisor rendered it as "behind" — telling the operator to
-# update the most current box in the fleet (2026-07-29), which is how a real
+# update the most current box in the fleet, which is how a real
 # staleness alert gets trained into noise.
 
 

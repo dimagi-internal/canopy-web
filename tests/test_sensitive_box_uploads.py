@@ -1,7 +1,6 @@
 """Nothing of a sensitive-data box's transcripts reaches canopy-web except the
 sealed turn-end stream: its usage carries token counts only, a session canopy has
-no record of is never kept, and nothing is backfilled or reset from it (spec
-2026-10-22-sensitive-data-agents §1, §4).
+no record of is never kept, and nothing is backfilled or reset from it.
 """
 from __future__ import annotations
 

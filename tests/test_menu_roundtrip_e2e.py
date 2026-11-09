@@ -6,7 +6,7 @@ keystroke list coming out — because every bug this feature can have lives in a
 seam: the runner reading a screen, the hook payload shape, the server frame, the
 client-visible data, and the answer travelling back to a keystroke.
 
-The screen below was captured from a live `claude` on 2026-07-28 and answered
+The screen below was captured from a live `claude` and answered
 for real (the file it asked about was deleted), so what enters here is what a
 terminal actually renders.
 """
@@ -147,7 +147,7 @@ def test_an_option_the_dialog_does_not_offer_is_never_pressed():
 
 # --- the tabbed / multi-select ask, across the same seams -------------------
 #
-# Captured from a live `claude` on 2026-08-12 driving a two-question
+# Captured from a live `claude` driving a two-question
 # AskUserQuestion with `multiSelect` on the first. The keystroke expectations
 # below were verified against that real TUI, not reasoned about: a number
 # TOGGLES a checkbox, Tab moves tab, a single-select tab auto-advances, and
@@ -348,9 +348,8 @@ def test_a_dialog_that_is_not_the_declared_ask_is_never_guessed_at():
 
 
 def test_the_schema_accepts_the_exact_body_the_browser_sends():
-    """REGRESSION, 2026-08-13. `texts` was typed `list[str]`, so a PARTIAL answer
-    — the whole point of the partial-submit change — was rejected 422 by the API
-    the moment it reached the live site. The list is POSITIONAL against the
+    """REGRESSION. A `texts` typed `list[str]` would reject a PARTIAL answer
+    — the whole point of partial submit — with 422 from the API. The list is POSITIONAL against the
     declared questions, so a hole has to be expressible: without None the runner
     would have to guess which question a shorter list belonged to.
 
@@ -365,7 +364,7 @@ def test_the_schema_accepts_the_exact_body_the_browser_sends():
 
 
 def test_a_step_that_changes_nothing_stops_instead_of_thrashing():
-    """REGRESSION, 2026-08-13. A free-text step that silently missed its row left
+    """REGRESSION. A free-text step that silently missed its row left
     the driver toggling a checkbox on and off until its step cap — 60 presses
     into somebody's terminal to accomplish nothing, and the answer lost anyway.
 

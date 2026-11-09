@@ -417,11 +417,11 @@ def test_the_reader_gets_current_and_previous_narration(board, ws):
 def test_the_share_url_is_on_the_public_base_url(member, board, settings):
     """The link is built on CANOPY_PUBLIC_BASE_URL, prefix and all — never the
     request's host, which an in-process MCP call reports as localhost
-    (canopy-web#1289). Under a path prefix it once shipped dropping the
-    prefix, minting a link that 404s; the base URL carries it."""
+    . Under a path prefix the
+    link must keep the prefix, or it 404s; the base URL carries it."""
     settings.CANOPY_PUBLIC_BASE_URL = "https://labs.example.org/canopy"
     url = member.post(f"/api/storyboards/{board.slug}/share").json()["share_url"]
-    # Under the board's workspace like every artifact (canopy-web#1337).
+    # Under the board's workspace like every artifact.
     assert url.startswith(f"https://labs.example.org/canopy/w/{board.workspace_id}/storyboard/"), url
     assert "?t=" in url
 
@@ -558,8 +558,8 @@ def test_the_board_read_does_not_tell_a_token_holder_that(board):
 
 
 def test_a_wordless_row_is_not_shown_as_a_note(member, board):
-    """Ingest refuses to create one now (#451), but rows that predate that guard
-    still exist on labs and would render as an empty card attributed to
+    """Ingest refuses to create one, but rows that predate that guard
+    may exist and would render as an empty card attributed to
     "Anonymous" — a reviewer who appears to have said nothing."""
     from apps.feedback.models import Feedback
 
@@ -649,7 +649,7 @@ def test_notes_never_include_another_tenants_feedback_on_the_same_slug(member, b
 
 
 def test_a_board_is_read_at_its_own_workspace_only(member, board, ws):
-    """The page is `/w/<ws>/storyboard/<slug>` (canopy-web#1337) and passes `ws`:
+    """The page is `/w/<ws>/storyboard/<slug>` and passes `ws`:
     a board in another workspace is not at that address. Slugs are unique per
     workspace, so `ws` also picks WHICH board a shared slug means."""
     assert member.get(f"/api/storyboards/{board.slug}?ws={ws.slug}").status_code == 200

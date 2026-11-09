@@ -1,15 +1,14 @@
-"""An unpinned LIST must not mix organisations (owner decision, 2026-10-11).
+"""An unpinned LIST must not mix organisations .
 
-"Workspaces should need to be specified — workspace confusion shouldn't be
-possible." A new root workspace (`marshellis`, a family) sits beside the
-`dimagi` tree (dimagi → connect). A caller in both — ada@, Jonathan — used to
-get the UNION of every membership from a flat `/api/…` list or an MCP tool
-called without `workspace`, so family rows landed in Dimagi work.
+Workspaces must be specified — workspace confusion must not be possible. A root
+workspace (`marshellis`, a family) sits beside the `dimagi` tree (dimagi → connect).
+A caller in both must not get the UNION of every membership from a flat `/api/…`
+list or an MCP tool called without `workspace`, or family rows land in Dimagi work.
 
 The rule (`apps.workspaces.services.read_scope`):
 
 * pinned (`/api/w/<ws>/…`, the MCP `workspace` arg) → that workspace and the
-  caller's workspaces below it (2026-10-12; `tests/test_pinned_read_covers_subtree.py`);
+  caller's workspaces below it (`tests/test_pinned_read_covers_subtree.py`);
 * unpinned, every membership in ONE tree (dimagi + connect) → the union, as before;
 * unpinned, memberships in more than one tree → 422 naming them.
 

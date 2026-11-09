@@ -7,8 +7,8 @@ afterwards is a task-notification, not a prompt. So from the first background di
 onward the flag is pinned at "completed" while the session churns on, and a server that
 trusts a non-blank flag outright calls a working session finished.
 
-Measured 2026-08-27 on `hh4`: background Agent dispatched 12:59:34, wake-ups at 13:06
-and 13:22, transcript still growing at 13:23:33, API saying running=False throughout.
+Example: a background Agent is dispatched, wake-ups follow, the transcript keeps
+growing, and the API must not say running=False throughout.
 """
 import datetime as dt
 
