@@ -224,8 +224,8 @@ export function AgentRouting({
         {error && <span className="text-[11px] text-destructive">{error}</span>}
       </div>
 
-      {/* One line, and the detail behind a disclosure: it was two
-          paragraphs under the table, read once and skipped ever after. */}
+      {/* One line, and the detail behind a disclosure: two
+          paragraphs under the table would be read once and skipped ever after. */}
       <p className="text-[11px] text-muted-foreground" data-testid="routing-footer">
         The first row that matches a turn picks its runners and mode.
         {namedAuto && (

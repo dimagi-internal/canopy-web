@@ -5,8 +5,7 @@ act on anything; its procedure ends the final message with
 `For <Agent>'s owner: <the ask, one line>` (hal's `answer-caller`, ace's `ask`).
 The transcript holding that line is the caller's conversation, and nobody
 reviews it, so the runner lifts the line out and canopy-web puts it in the
-turn's `result_note`, the part of a turn the owner reads (canopy-web#1400 item 5,
-#1416). This module finds it; it reads nothing else and judges nothing.
+turn's `result_note`, the part of a turn the owner reads. This module finds it; it reads nothing else and judges nothing.
 """
 from __future__ import annotations
 

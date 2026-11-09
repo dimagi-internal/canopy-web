@@ -307,8 +307,8 @@ class _Facts:
     """What one read of a workspace vault asks about it again and again, read once: its
     members, the agents and runners it serves, and the fleet's serving facts. Without it
     every machine holding a copy re-read all of these and asked "does this box serve this
-    agent" with a fresh read of the fleet per pair — Shared's page took 19-45 s on labs
-, thousands of queries growing with machines x agents. Built per call and
+    agent" with a fresh read of the fleet per pair — Shared's page took 19-45 s on labs,
+    thousands of queries growing with machines x agents. Built per call and
     dropped with it: not a cache, nothing to invalidate."""
 
     def __init__(self, vault: Vault) -> None:

@@ -69,8 +69,7 @@ _GDOC_VOLATILE = re.compile(rb'<style[^>]*>.*?</style>|\sclass="[^"]*"|&(?:amp;)
 def _stable(url: str, ctype: str, body: bytes) -> bytes | None:
     """The part of an export that changes only when its content does, or None when the
     whole body is that. Google re-exports an unchanged Sheet with new comment-shape VML
-    and an unchanged Doc with reshuffled CSS class names and re-stamped links (measured
-    2026-10-22), so
+    and an unchanged Doc with reshuffled CSS class names and re-stamped links, so
     comparing bytes would call every sheet and doc changed on every refresh."""
     if body[:2] == b"PK" and "spreadsheetml" in ctype:
         try:

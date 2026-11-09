@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # runner/ec2/wire.sh — operator side of standing up a cloud runner: script
-# what was done by hand on 2026-07-25 (design spec §3) so `./up.sh && ./wire.sh
+# the steps once done by hand, so `./up.sh && ./wire.sh
 # [--drill]` is the whole lifecycle, no runbook required.
 #
 #   1. discover the fresh cloud runner `up.sh` just paired (or take --runner-id)
@@ -155,7 +155,7 @@ api() {
 
 # Every agent the token can see, as {"items": [...]}. The flat list first; a
 # token whose workspaces span more than one tenant tree gets a 422 there
-# (canopy-web's read rule, 2026-10-11), so then ask each workspace by name.
+# (canopy-web's read rule), so then ask each workspace by name.
 agents_json() {
   local flat
   flat="$(api GET "/api/agents/?limit=200")"
@@ -286,9 +286,9 @@ if [[ -z "$RUNNER_ID" ]]; then
     api GET /api/harness/runners/ > "$TMP/runners.json"
     # The fresh box is the one with NO CREDENTIAL STAGED: on boot it pairs
     # (creating this row) and waits in fetch_and_stage_credential for the bundle
-    # we are about to POST. It used to be found as "never heartbeated", which
-    # stopped being true when that wait started heartbeating (online, not ready),
-    # and a paired-but-unstaged cloud-ec2-fork was never discovered (2026-10-18).
+    # we are about to POST. It is not found as "never heartbeated": that wait
+    # heartbeats (online, not ready), so a paired-but-unstaged box would never be
+    # discovered that way.
     # A dead predecessor left by down.sh --keep-runner has its bundle staged, so
     # it is never mistaken for the new box. Most recent heartbeat first.
     # Live only: online, and heartbeating within the last 2 minutes (the wait
@@ -362,8 +362,8 @@ echo "    1. Make its key — or, on a shared vault, give this box its copy"
 echo "    2. + Token (signs in on the box) and/or + Login; or + API key"
 
 # ── Prove a credential works, before anything routes to it ──────────────────────
-# A stored value is not a working one: cloud-ec2-fork was wired onto a token at
-# its weekly cap and failed every turn as "not signed in" (2026-10-18). The box
+# A stored value is not a working one: a box can be wired onto a token at
+# its weekly cap and fail every turn as "not signed in". The box
 # asks each credential one short question when it gets one (its claude.probe.<label>
 # health checks); nothing below runs until one has answered.
 if [[ "$PROBE_MINUTES" != "0" ]]; then
@@ -551,8 +551,8 @@ fi
 # anything is retired. Retiring a runner drops its assignment rows, so a snapshot
 # taken afterwards no longer contains the predecessor — step 4 then finds nothing
 # to swap, takes its append path, and appends the new runner with a hardcoded
-# `enabled: True`. On 2026-08-12 that silently re-enabled the cloud runner for all
-# five agents, which had been deliberately disabled. A rebuild must return the box
+# `enabled: True`. That would silently re-enable the cloud runner for all
+# five agents, which may have been deliberately disabled. A rebuild must return the box
 # to the fleet on exactly the terms it left, so the state step 4 reasons about has
 # to be read while it still exists.
 if [[ -n "$AGENTS" ]]; then
@@ -575,13 +575,13 @@ for slug in "${AGENT_SLUGS[@]}"; do
   # the predecessor cascades them exactly as it cascades the default rows — and
   # they must be snapshotted here, pre-retire, for the same reason. Losing them
   # silently reverts the fleet to "everything runs on the operator's laptop",
-  # which is the state actor rules exist to end (spec 2026-09-05).
+  # which is the state actor rules exist to end.
   api GET "/api/agents/${slug}/runner-rules" > "$TMP/rules-${slug}.json" 2>/dev/null || true
 done
 
 # Workspace default orders too: agents with no order of their own FOLLOW their
-# workspace's, so this is where most of the fleet's cloud routing lives now
-# (2026-10-03). Retiring drops the predecessor from every order, so snapshot first.
+# workspace's, so this is where most of the fleet's cloud routing lives.
+# Retiring drops the predecessor from every order, so snapshot first.
 api GET "/api/workspaces/" > "$TMP/workspaces.json"
 WS_SLUGS=($(python3 -c "
 import json

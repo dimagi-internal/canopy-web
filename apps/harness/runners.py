@@ -50,7 +50,7 @@ class CredentialRefused(ValueError):
 
 
 LAST_FALLBACK_REFUSAL = (
-        "That is this runner's last token or API key, and a runner needs at least one. "
+    "That is this runner's last token or API key, and a runner needs at least one. "
     "A full login renews itself, and when that renewal fails a runner with no token "
     "or API key to fall back on cannot run anything. Add another first, then remove "
     "this one.")

@@ -133,8 +133,8 @@ _OWNER_ASSURANCES = ("session", "pat", "private-runner-key")
 def _creating_owner(request: HttpRequest, home):
     """Who owns an agent this request creates: the caller — unless the caller is an
     AGENT's own login registering it from inside one of its live turns, when it is the
-    person who asked for that turn. Ada creating an agent for Jonathan made Ada the
-    owner (2026-10-25), and he had to transfer it by hand.
+    person who asked for that turn. Otherwise an agent creating an agent for a person
+    would own it, and the person would have to transfer it by hand.
 
     The parent turn (`X-Canopy-Parent-Turn`, which the canopy CLI sends) is checked, not
     taken on trust: it must be live, belong to the caller's own agent, and have been

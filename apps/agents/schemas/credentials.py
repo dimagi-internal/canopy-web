@@ -216,8 +216,8 @@ class OwnPatRotateOut(StrictModel):
 class AgentCredentialAccessOut(StrictModel):
     """Whether the CALLER may resolve this agent's secrets — never the values.
 
-    The cheap check `canopy cred` makes before deciding how to resolve
-. `may_resolve` mirrors GET /credentials/resolve exactly, minus
+    The cheap check `canopy cred` makes before deciding how to resolve.
+    `may_resolve` mirrors GET /credentials/resolve exactly, minus
     its bearer requirement (that is a property of the request, not of the
     caller): `via` is `runner` when the caller pairs a live runner this agent
     routes to, `admin` when they are the agent's owner or an admin, `license`

@@ -33,7 +33,7 @@ AWSTemplateFormatVersion: '2010-09-09'
 #
 # Removing the feature: deactivate the rule set (aws ses set-active-receipt-rule-set with
 # no --rule-set-name), then delete this stack. The inbound bucket is retained
-# (DeletionPolicy: Retain): once kept/ is no longer needed, empty and delete it by hand.
+# (DeletionPolicy: Retain): empty and delete it by hand once kept/ has nothing worth keeping.
 Parameters:
   TaskRoleName:
     Type: CommaDelimitedList

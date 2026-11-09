@@ -1,17 +1,15 @@
 """``forked_from`` on Drive is not always a bare run-id string.
 
-ace-web's opp_forker wrote it as a dict block
-(``{run_id, phase, forked_at}``) for a long time, on the reasoning that
-the plugin didn't read the field. The framework read model DOES read it
-(``RunSummary.forked_from: str | None``), so those runs raised
-pydantic ValidationError inside ``list_runs`` — which 500s every
+ace-web's opp_forker writes it as a dict block
+(``{run_id, phase, forked_at}``) in some run_state.yaml files. The framework
+read model reads it (``RunSummary.forked_from: str | None``), so a dict would
+raise pydantic ValidationError inside ``list_runs`` — which 500s every
 uncached read of the whole opp, not just the forked run.
 
-Measured 2026-08-14: 10 of 51 run_state.yaml under the ACE Drive root
-carry the dict, across 3 opps. The rows live in Google Docs holding live
-run state, so rewriting them in place is riskier than reading them
-tolerantly. Every sibling header field is already coerced (``str(...)``,
-``_coerce_dt(...)``); ``forked_from`` was the one read raw.
+The rows live in Google Docs holding live run state, so rewriting them in
+place is riskier than reading them tolerantly. Every sibling header field is
+coerced (``str(...)``, ``_coerce_dt(...)``), and ``forked_from`` is coerced the
+same way.
 """
 
 import yaml

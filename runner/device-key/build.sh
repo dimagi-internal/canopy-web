@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Build canopy-device-key — this Mac's Secure Enclave device key for Canopy Vault
-# (canopy#946). A plain CLI, not an app: compiled with swiftc (like runner/menubar) and
+# Build canopy-device-key — this Mac's Secure Enclave device key for Canopy Vault.
+# A plain CLI, not an app: compiled with swiftc (like runner/menubar) and
 # installed to ~/.canopy/bin/canopy-device-key, where canopy's orchestrator/device_key.py
 # looks for it. Ad-hoc signed; it needs no entitlement (the key lives as an enclave
 # dataRepresentation blob in ~/.canopy/device-key/se.key, not in the keychain).

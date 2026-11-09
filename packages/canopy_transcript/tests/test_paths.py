@@ -29,10 +29,9 @@ def test_encoding_collapses_every_separator_it_knows():
 def test_windows_path_encodes_like_claude_code_and_has_no_anchor():
     """Claude Code on Windows stores `C:\\Users\\x\\repo` as `C--Users-x-repo`.
 
-    Before 2026-10-16 the `C:\\` survived the encoding, and globbing it under
-    ~/.claude/projects raised pathlib's "Non-relative patterns are unsupported",
-    crashing fizzy's Slack turn 2f115d03 on shayoni-win-cdp (failure
-    investigation 6). The encoded name must never carry an anchor.
+    If the `C:\\` survived the encoding, globbing it under
+    ~/.claude/projects would raise pathlib's "Non-relative patterns are unsupported",
+    crashing a Slack turn on a Windows runner. The encoded name must never carry an anchor.
     """
     from pathlib import PureWindowsPath
 
@@ -43,7 +42,7 @@ def test_windows_path_encodes_like_claude_code_and_has_no_anchor():
 
 
 # ---------------------------------------------------------------------------
-# resolve_emdash_transcript — a project dir outlives its worktree (issue #615)
+# resolve_emdash_transcript — a project dir outlives its worktree
 # ---------------------------------------------------------------------------
 
 import os
@@ -71,7 +70,7 @@ def _plant(home, claude_home, repo, worktree_name, stem, *, mtime, make_worktree
 
 def test_a_live_worktree_beats_a_newer_orphan(tmp_path):
     """The de-dupe suffix means one reused task name accumulates project dirs —
-    four `bednet*` existed locally on 2026-08-14, three of them orphans of deleted
+    a laptop can hold four `bednet*`, three of them orphans of deleted
     worktrees. Newest-mtime alone will happily return an orphan the moment anything
     touches it, which is a silently wrong conversation, not an error."""
     home, claude_home = tmp_path / "home", tmp_path / "home" / ".claude" / "projects"
@@ -113,7 +112,7 @@ def test_a_sibling_task_is_never_borrowed(tmp_path):
 # --------------------------------------------------------------------------------------
 # emdash 1.2's worktree layout. Both the repo root and the leaf changed shape:
 # `worktrees/<repo>-<8 hex>/emdash-<task>-<suffix>` replaced
-# `worktrees/<repo>/emdash/<task>-<suffix>`. Verified on the fleet laptop 2026-08-28 —
+# `worktrees/<repo>/emdash/<task>-<suffix>`. On the fleet laptop,
 # every worktree created after 1.2 first ran uses it, every older one does not.
 # --------------------------------------------------------------------------------------
 

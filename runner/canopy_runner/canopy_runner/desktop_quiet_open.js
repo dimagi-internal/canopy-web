@@ -5,8 +5,7 @@ ObjC.import('AppKit');
 //
 // The app's own `open-url` handler calls show() + focus() on its main window for
 // every claude:// link it handles, whatever the opener asks; NSWorkspace's
-// `activates = false` and `open -g` are both overridden (canopy-web#1188, "Focus
-// round 2"). So this does not prevent the activation, it undoes it: it watches
+// `activates = false` and `open -g` are both overridden. So this does not prevent the activation, it undoes it: it watches
 // for Claude becoming frontmost and re-activates the app the person was in,
 // re-hiding Claude if it was hidden. Measured on haldimagi: Claude held the front
 // ~60ms per open. A mitigation, not a fix: a keystroke typed in that window can

@@ -1,4 +1,4 @@
-"""Every cloud turn that works on a repo gets its OWN worktree of it .
+"""Every cloud turn that works on a repo gets its OWN worktree of it.
 
 Turns sharing one checkout (/opt/canopy-web) strand a project session's commit
 there, stack a turn's uncommitted change on top of it, cross stashes and move

@@ -1,18 +1,16 @@
 # .github/workflows/infra-drift.yml
 name: Infra drift
 
-# Nothing detected drift until someone ran detect-stack-drift by hand on
-# 2026-09-09 and found labs-jj-audit-analytics had a task-definition environment
-# variable changed out-of-band — a change the next `cloudformation deploy` would
+# Without a scheduled check, nothing detects drift: a task-definition environment
+# variable changed out-of-band is a change the next `cloudformation deploy` would
 # have silently reverted. A stack that has drifted is a stack whose template no
 # longer describes what is running, which makes every review of that template a
 # review of the wrong thing.
 #
 # Read-only: detect-stack-drift inspects, it does not reconcile.
 #
-# Runs on a SCHEDULE as of 2026-09-09. It shipped dispatch-only because the
-# deploy role had implicitDeny on all three drift actions, which would have
-# failed every night. Those grants are now in place:
+# Runs on a SCHEDULE. That needs the deploy role to hold all the drift actions
+# (without them it would fail every night):
 #
 #     cloudformation:DetectStackDrift            (stack-scoped)
 #     cloudformation:DetectStackResourceDrift    (stack-scoped) -- the stack's
@@ -21,8 +19,7 @@ name: Infra drift
 #     cloudformation:DescribeStackResourceDrifts (stack-scoped)
 #     cloudformation:DescribeStackDriftDetectionStatus  on "*" -- it takes a
 #       DETECTION ID, not a stack ARN, so a stack-scoped grant matches nothing
-#       and silently denies. That cost one debugging round; do not "tidy" it
-#       back to a stack scope.
+#       and silently denies. Do not "tidy" it back to a stack scope.
 #
 # They are still HAND-MADE on the shared role and tracked nowhere. Moving them
 # into the canopy-web bootstrap stack is the outstanding work.

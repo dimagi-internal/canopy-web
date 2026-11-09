@@ -158,7 +158,7 @@ def reporting_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     write access to the chat on a session turn). Same uniform 404 otherwise.
     """
     # The box that CLAIMED the turn reports on it, even when its owner cannot READ
-    # it The claim is tenant- and routing-gated already, and it
+    # it. The claim is tenant- and routing-gated already, and it
     # handed the box the prompt; refusing the report then only strands the turn
     # CLAIMED until its lease runs out (a runner paired by one person can claim a
     # private chat another member created). Not for a host site

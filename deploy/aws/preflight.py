@@ -1,22 +1,22 @@
 """Refuse a deploy that would change a resource the deploying role cannot write.
 
-On 2026-09-09 a deploy failed five minutes into a rollout with:
+A deploy can fail five minutes into a rollout with:
 
     github-actions-labs-deploy is not authorized to perform:
     elasticloadbalancing:ModifyTargetGroup on labs-jj-canopy-web-tg
 
-The change was correct. The pipeline had only ever CREATED that target group, so
-this was the first modify in the stack's life and the grant had never existed.
-Measured afterwards: the CI role can write 2 of the 13 resources in the stack it
-deploys. The other eleven had simply never changed, so nobody found out.
+The change is correct. The pipeline had only ever CREATED that target group, so
+the first modify in the stack's life finds the grant was never written. The CI role
+can write only the resources the pipeline has already changed; the others have
+simply never changed, so nobody finds out.
 
 This asks the question up front, against the change set CloudFormation is about
 to execute, and names the missing action instead of leaving a 403 in a rollout
 log.
 
-The preflight itself calls two actions the CI role does not (yet) have —
+The preflight itself calls two actions the CI role does not have —
 iam:SimulatePrincipalPolicy and cloudformation:ListChangeSets both come back
-implicitDeny, measured against the live role on 2026-09-09. A preflight that
+implicitDeny against the live role. A preflight that
 cannot run must say so loudly rather than let a bare exception (or worse, a
 silently swallowed one) read as "no findings, safe to proceed" — that would be
 strictly worse than not having a preflight at all. See main()'s exit code 2.
@@ -100,8 +100,7 @@ RESOURCE_ACTIONS: dict[str, dict[str, tuple[str, ...]]] = {
             "elasticloadbalancing:ModifyTargetGroup",
             "elasticloadbalancing:ModifyTargetGroupAttributes",
             # ELB does not support resource-level permissions for this one, so
-            # it has to be granted on "*". Leaving it out cost a second failed
-            # deploy on 2026-09-09.
+            # it has to be granted on "*". Leaving it out fails the deploy.
             "elasticloadbalancing:DescribeTargetGroups",
         ),
         "Remove": ("elasticloadbalancing:DeleteTargetGroup",),
@@ -158,7 +157,7 @@ RESOURCE_ACTIONS: dict[str, dict[str, tuple[str, ...]]] = {
 
 
 # CloudFormation TOLERATES a failed cleanup delete, so a delete permission is
-# never what fails a deploy. Measured on this stack 2026-09-09: TaskDefinition
+# never what fails a deploy. Measured on this stack: TaskDefinition
 # reported DELETE_FAILED on ecs:DeregisterTaskDefinition while the stack
 # reported UPDATE_COMPLETE with "Update successful. One or more resources could
 # not be deleted." Checking delete actions would block every deploy here, since
@@ -289,8 +288,8 @@ def _describe_change_set_all_pages(cfn, stack_name: str, change_set: str) -> dic
 
 #: Actions that take no resource: IAM can only grant them on "*", and simulating
 #: one against a specific ARN answers implicitDeny even when "*" is granted. That
-#: false refusal blocked the /health/ health-check move on 2026-10-06 and was
-#: misread as the deploy role drifting from deploy_roles.py (it had not).
+#: false refusal blocks a health-check path change and reads as the deploy role
+#: drifting from deploy_roles.py (it has not).
 UNSCOPED_ACTIONS = frozenset({"elasticloadbalancing:DescribeTargetGroups"})
 
 
@@ -301,7 +300,7 @@ def _kms_key(change, principal_arn: str, kms) -> tuple[str | None, list[dict]]:
     conditioned on the key's own tag (`deploy_roles.py`, `VaultKmsKeyManagement`).
     Simulated with neither, every grant reads implicitDeny although the real call,
     evaluated against the real key, is allowed: the first deploy to change the vault
-    key (adding a tag, 2026-10) was refused that way."""
+    key (adding a tag, say) is refused that way."""
     key_id = change.physical_id or ""
     if not key_id or key_id.startswith("arn:"):
         return (key_id or None), []
@@ -390,7 +389,7 @@ def main(argv: list[str] | None = None) -> int:
         print(str(exc))
         return 1
     except ClientError as exc:
-        # The preflight's OWN permissions are missing (measured 2026-09-09:
+        # The preflight's OWN permissions are missing (measured against the live role:
         # iam:SimulatePrincipalPolicy and cloudformation:ListChangeSets both
         # implicitDeny for the CI role). This is a THIRD outcome, distinct
         # from "ran and found problems" — silently treating it as either

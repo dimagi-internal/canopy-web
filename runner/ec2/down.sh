@@ -78,7 +78,7 @@ api() {  # METHOD PATH -> body on stdout
 
 # Every agent the token can see, as {"items": [...]}. The flat list first; a
 # token whose workspaces span more than one tenant tree gets a 422 there
-# (canopy-web's read rule, 2026-10-11), so then ask each workspace by name.
+# (canopy-web's read rule), so then ask each workspace by name.
 agents_json() {
   local flat
   flat="$(api GET "/api/agents/?limit=200")"
@@ -223,9 +223,9 @@ fi
 if [[ "$PURGE" == "1" ]]; then
   # Every secret a runner stack reads. The four a human stages via secrets.sh, the
   # first-boot seed up.sh publishes (manifest + parts), and the legacy single-value
-  # seed (runner-code + runner-code-sha) that stacks created before 2026-10-04 read.
-  # gog-keyring-password was missing here until 2026-09-05: a "full" purge left it
-  # behind, so a rebuild could pass on inherited state — the exact false green a
+  # seed (runner-code + runner-code-sha) that older stacks read.
+  # gog-keyring-password must be listed: a "full" purge that left it
+  # behind would let a rebuild pass on inherited state — the exact false green a
   # purge-then-rebuild exists to rule out. Kept in step with
   # secrets.sh/up.sh/_lib.sh/runner.cfn.yaml by tests/test_purge_secrets_is_complete.py.
   for s in canopy/cloud-runner/canopy-pat \

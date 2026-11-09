@@ -1,4 +1,4 @@
-"""A cut result note says it was cut and links the whole reply (canopy-web#1955)."""
+"""A cut result note says it was cut and links the whole reply."""
 from __future__ import annotations
 
 from canopy_transcript.result_note import MAX_CHARS, cap, turn_url
@@ -70,7 +70,7 @@ def test_only_the_former_addresses_themselves_become_canonical():
 
 
 def test_a_cut_keeps_the_runners_reason_the_turn_failed():
-    # Failure investigation 21 (turn c4dd7019, 2026-10-30): the reason was cut off.
+    # The reason must not be cut off.
     reason = ("[runner] out of Claude usage — every Claude credential on this box is "
               "exhausted (tried: a, b, c). This runner has paused itself until 21:02.")
     note = cap("Phase 4 is done. " * 300 + "\n\n" + reason, "https://x/chat/1")

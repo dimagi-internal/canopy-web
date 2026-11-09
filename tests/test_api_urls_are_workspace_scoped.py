@@ -1,4 +1,4 @@
-"""Every link the API hands out is under its workspace .
+"""Every link the API hands out is under its workspace.
 
 One URL per artifact, `/w/<workspace>/…`, and no flat form forwarded to it. A
 flat link in an external email would come from an API that still prints one, so

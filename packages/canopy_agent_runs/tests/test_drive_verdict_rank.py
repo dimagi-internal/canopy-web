@@ -1,10 +1,9 @@
 """Which verdict a step shows when its skill wrote several.
 
 The un-suffixed file is the skill's FULL evaluation; `-shallow` / `-quick`
-are one-dimension smoke passes beside it. The full file used to rank 0 —
-below both — so ACE's app-screenshot-capture step showed its shallow smoke
-("25") over its 4-dimension 9.2 on spark-facilitator/20260925-1536
-(dimagi-internal/ace-web#838 fixed ace-web's own copy of this ranking).
+are one-dimension smoke passes beside it. The full file must outrank both: ranked 0,
+ACE's app-screenshot-capture step would show its shallow smoke ("25") over its
+4-dimension 9.2. ace-web ranks its own copy the same way.
 """
 from canopy_agent_runs.drive.store import _load_verdicts
 from tests.fixtures.fake_drive import FakeDriveClient

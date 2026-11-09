@@ -1,10 +1,9 @@
 """The ``canopy-runtime`` console script. Its one subcommand is
 ``publish-capabilities`` (``canopy_runtime.publish``).
 
-It used to also be a reconciler that resolved an agent's secrets and
-provisioned a box. No runner ever called it: an agent is prepared by canopy's
-``canopy agent prepare`` and its env filled by ``canopy cred sync`` (the canopy repo's
-agent-setup-lifecycle doc), so it was retired (2026-10-15).
+It is not a reconciler: it neither resolves an agent's secrets nor provisions a box.
+An agent is prepared by canopy's ``canopy agent prepare`` and its env filled by
+``canopy cred sync`` (the canopy repo's agent-setup-lifecycle doc).
 """
 from __future__ import annotations
 

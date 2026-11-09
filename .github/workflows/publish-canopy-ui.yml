@@ -9,10 +9,10 @@ name: Publish canopy-ui
 # GitHub Actions → repo `dimagi-internal/canopy-web`, workflow `publish-canopy-ui.yml`.
 #
 # **A release is a version bump reaching main** — not a step someone has to
-# remember afterwards. It used to be "merge, then push a `canopy-ui-v<version>`
-# tag", and that second step was skipped: canopy-ui 0.10.0 sat merged and
-# unpublished while its one consumer outside this repo (ace-web) kept 0.9.0,
-# with nothing anywhere reporting the gap. CI already refuses a src change that
+# remember afterwards. A "merge, then push a `canopy-ui-v<version>` tag" step
+# gets skipped: the merged version sits unpublished while the one consumer
+# outside this repo (ace-web) keeps the old one, with nothing anywhere
+# reporting the gap. CI already refuses a src change that
 # does not move the version, so "the version moved on main" is exactly "there
 # is something to release".
 #

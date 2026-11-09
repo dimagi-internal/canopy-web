@@ -93,7 +93,7 @@ function activeTerm() {
 // the status bar under that); historical `❯` user messages in scrollback never
 // have that rule. The scan covers the WHOLE viewport, top-bounded by nothing and
 // bottom-bounded by the status bar when one is rendered, because a FRESH session
-// draws its TUI at the TOP of the pane (measured live, #521: composer at row 13
+// draws its TUI at the TOP of the pane (measured live: composer at row 13
 // of 38, rows 24–37 all empty) — any "last N rows" window reads exactly those
 // sessions as empty and blind-appends. Returns {found, text}:
 //   found:false  = no composer in the rendered frame (mid-redraw, a menu is up,
@@ -133,7 +133,7 @@ function composerText(rows) {
 // bare textContent threw that distinction away, so an offered suggestion read
 // exactly like a half-typed thought and every send into that session came back
 // `collision` — a dialog nobody was there to answer, defaulting to "don't deliver".
-// Measured on a live emdash 2026-08-28: three chat turns deferred inside 40 minutes
+// Measured on a live emdash: three chat turns deferred inside 40 minutes
 // with the composer empty in all three, the whole line dim, cursor on its first char.
 //
 // Input is one descriptor per row, `{ text, spans: [{ text, dim }] }`. Dim runs are
@@ -226,8 +226,8 @@ const openInProject = async (task, project, action = 'click') => {
   await page.waitForTimeout(160);
   // A COLLAPSED project keeps its header but renders none of its task rows, so the
   // section reads as empty and every task in it looks deleted — close-task then
-  // reported "absent" (success) for a task emdash still held, and it came straight
-  // back on the next report (hal's box, 2026-10-12). The header's toggle says which
+  // reports "absent" (success) for a task emdash still holds, and it comes straight
+  // back on the next report. The header's toggle says which
   // state it is in ("Expand <p>" collapsed, "Collapse <p>" open — read live off emdash
   // 1.2.8): open it, and leave it open, before reading the section.
   if (await clickLabel(`Expand ${project}`)) await page.waitForTimeout(400);
@@ -294,10 +294,10 @@ const openTask = async (task, project) => {
 //
 // The confirmation is the point. `keyboard.insertText` and `keyboard.press` go to
 // whatever element holds focus at the instant they arrive, not to the terminal we
-// meant. On 2026-10-07 a Slack message to ACE was typed into an existing session
-// while Jonathan was using emdash; nothing reached that session's transcript, and
-// the likeliest cause is a click of his landing between our focus and our insert,
-// so the text went wherever he had clicked. The New Task path already checks focus
+// meant. A Slack message can be typed into an existing session
+// while a person is using emdash; nothing reaches that session's transcript, and
+// the likeliest cause is a click of theirs landing between our focus and our insert,
+// so the text goes wherever they clicked. The New Task path already checks focus
 // moved before it inserts (see `create`); this is the same check for the terminal,
 // and every keystroke-sending site calls it immediately before it types.
 const focusTerminal = () => page.evaluate(String.raw`(() => { ${ACTIVE_TERM_FN}; return (() => {
@@ -328,7 +328,7 @@ const ensureFocus = async (task) => {
 // window read a FRESH session as empty every time, because a fresh session
 // draws its composer near the TOP of the pane (measured: row 13 of 38, the
 // whole scanned window blank) — which is exactly the state every new chat
-// session is in (#521).
+// session is in.
 // Returns {found, text, typed}: `text` is everything rendered in the composer,
 // `typed` only the part the HUMAN put there (see BRIGHT_FN — dim cells are the
 // suggestion claude is offering, not keystrokes). `found` comes from the full
@@ -356,10 +356,10 @@ const readComposer = () => page.evaluate(String.raw`(() => { ${ACTIVE_TERM_FN}; 
 // Bring the active terminal's view back to its live bottom, if someone scrolled
 // it up. `.xterm-rows` is only what the view shows, so a pane scrolled up to read
 // a long reply shows that reply and no composer, and every send bounced
-// COMPOSER_NOT_VISIBLE however often it was retried (turn 6c185edd, 2026-10-26:
-// four claims over 90s read the identical mid-reply frame).
+// COMPOSER_NOT_VISIBLE however often it is retried (four claims over 90s read the
+// identical mid-reply frame).
 //
-// Measured against emdash's xterm (2026-10-26): it scrolls only for a TRUSTED
+// Measured against emdash's xterm: it scrolls only for a TRUSTED
 // wheel — a WheelEvent dispatched from the page is ignored — so this goes
 // through `page.mouse`. And its scrollbar slider cannot say "at the bottom": with
 // a long scrollback one pixel of slider is many lines. So no guess about where
@@ -483,15 +483,15 @@ try {
     // paints nothing, no frames arrive, and the click hangs for its full 30s even
     // though CDP answers perfectly. This was the file's last actionability-gated
     // call and so its only occlusion-sensitive one, against the promise made at the
-    // top of this file; it cost two turns and marked the box not-ready on
-    // 2026-08-10, ~6 minutes after the other account logged in. Separate CDP ports
+    // top of this file; with a second account logged in it can cost turns and mark
+    // the box not-ready. Separate CDP ports
     // isolate the two runners, but the SCREEN is machine-wide and cannot be split.
     // `keyboard.insertText` dispatches to the focused element with no actionability
     // check, so it needs no equivalent.
     const CE_SELECTOR = '[role=dialog] [contenteditable="true"], [class*=Dialog] [contenteditable="true"]';
     // The wait still has to exist — the dialog is React-rendered and the 1s above is
-    // not a guarantee. On 2026-07-30 this call site spent its 30s because the dialog
-    // never appeared AT ALL, which must stay a legible failure rather than become an
+    // not a guarantee. This call site can spend its 30s because the dialog
+    // never appears AT ALL, which must stay a legible failure rather than become an
     // instant false negative. It polls on a TIMER because Playwright's default
     // polling is 'raf', which would reintroduce the exact dependency this removes.
     try {
@@ -511,10 +511,10 @@ try {
     }, CE_SELECTOR);
     if (!focusedPrompt) fail('could not focus the New Task dialog prompt editor');
     await page.keyboard.insertText(prompt);   // atomic commit, not char-by-char
-    // The SUBMIT button, matched exactly. A loose /create/i match is what broke on
-    // emdash 1.2.8 (2026-10-11): the dialog grew a "Create new worktree" select and a
-    // "Create new branch" tab ahead of the submit, so the click opened a dropdown, the
-    // dialog sat there filled-in, and this reported "created" for a task that never
+    // The SUBMIT button, matched exactly. A loose /create/i match breaks on
+    // emdash 1.2.8: the dialog has a "Create new worktree" select and a
+    // "Create new branch" tab ahead of the submit, so the click opens a dropdown, the
+    // dialog sits there filled-in, and this would report "created" for a task that never
     // existed. The submit carries aria-label="Create"; its text is "Create" plus the
     // ⌘⏎ shortcut glyphs.
     const created = await page.evaluate(() => {
@@ -552,15 +552,15 @@ try {
     // REUSE: open an EXISTING task and send text into its live terminal. Scroll the
     // virtualized sidebar to reach it — a one-shot query only sees the ~visible rows,
     // so with dozens of tasks the target is usually absent from the DOM despite being
-    // live (observed 2026-07-15: eva's org-research session, present in emdash's DB,
-    // reported TASK_NOT_FOUND and duplicated).
+    // live (a session present in emdash's DB then
+    // reports TASK_NOT_FOUND and is duplicated).
     const { task, text, clearFirst, project } = args;
     await openTask(task, project);
 
     // Read whatever is ALREADY sitting in the composer. Non-empty means the human
     // was typing when emdash switched to this task and their keystrokes leaked in —
     // a COLLISION we must NOT clobber blindly (insertText APPENDS and Enter submits
-    // the concatenation; verified live 2026-07-28, a half-typed thought and a chat
+    // the concatenation; verified live: a half-typed thought and a chat
     // message reached the agent as ONE line). See readComposer for how.
     //
     // The runner treats a CDPError as "task exists but undrivable" and retries the
@@ -575,17 +575,17 @@ try {
     // a newline as a PASTE, and an Enter arriving inside that same burst becomes
     // part of the paste — a newline in the composer, not a submit. insertText and
     // an immediate Enter are exactly that burst, so a multi-line message (a Slack
-    // reply carrying an attachment note, a web chat with a screenshot path) sat
-    // typed-but-unsent in the composer and the turn failed as undelivered
-    // (turn fe0a0280, 2026-10-05). Reproduced against `claude` on a raw pty: text
+    // reply carrying an attachment note, a web chat with a screenshot path) sits
+    // typed-but-unsent in the composer and the turn fails as undelivered.
+    // Reproduced against `claude` on a raw pty: text
     // then Enter in one write never submits; any gap of 50ms or more always does.
     // So: pause before Enter, then LOOK — if the composer still holds the message,
     // the Enter was swallowed and pressing it again cannot send it twice.
     //
-    // A SINGLE-line message gets the same look, after the same pause. It used to be
-    // Enter-and-return, so a swallowed Enter (a keystroke lost to a human's click,
-    // or a TUI mid-redraw) left the message sitting in the composer with nobody the
-    // wiser until the transcript check gave up (2026-10-07, ACE). There the match is
+    // A SINGLE-line message gets the same look, after the same pause. Enter-and-return
+    // would let a swallowed Enter (a keystroke lost to a human's click,
+    // or a TUI mid-redraw) leave the message sitting in the composer with nobody the
+    // wiser until the transcript check gives up. There the match is
     // by TEXT rather than emptiness: a short one-liner is never collapsed, and a slash
     // command's first Enter can legitimately REPLACE the text with an autocomplete
     // pick — pressing again then would send something we never typed.
@@ -594,8 +594,8 @@ try {
     // claude in more than one chunk: the first is read as a paste and collapsed,
     // the rest lands as typed text, and the composer shows "[Pasted text #1] …the
     // end of the message". The Enter was swallowed and the recheck, matching only
-    // the whole text or a lone placeholder, never pressed it again: ACE's chat
-    // follow-up sat unsent, twice (turn 50bfdf45, 2026-10-14, investigation 2).
+    // the whole text or a lone placeholder, never pressed it again: a chat
+    // follow-up then sits unsent.
     const PASTE_SETTLE_MS = 500;
     const PASTED = /^\[Pasted text #\d+[^\]]*\]$/;
     const PASTED_LEAD = /^(?:\[Pasted text #\d+[^\]]*\]\s*)+/;
@@ -636,8 +636,8 @@ try {
     const submit = async (body, guard) => {
       await ensureFocus(task);
       if (guard) {
-        // The first read can see an empty composer that is not (turn 64cada76,
-        // 2026-10-23: Jonathan's draft, missed). Look again at the last moment.
+        // The first read can see an empty composer that is not (a person's draft,
+        // missed). Look again at the last moment.
         const now = await readComposer();
         if (now.found && !isEmpty(now.typed)) return { line: now.typed, when: 'before-type' };
       }
@@ -707,11 +707,11 @@ try {
     // but instead of inserting text just press Escape — Claude Code's TUI treats Esc
     // as "stop the current turn" mid-flight.
     //
-    // AND THEN CHECK. This used to be `press('Escape'); out({ok:true})` — a keypress
+    // AND THEN CHECK. A bare `press('Escape'); out({ok:true})` would be a keypress
     // fired at a pane and reported as a stop, with no readback of any kind. Every
-    // send site in this file verifies what it did; the one command whose entire job
-    // is "make the agent stop" did not, so a stop that missed was indistinguishable
-    // from one that landed, all the way up to a web UI that said "cancelled".
+    // send site in this file verifies what it did, and so does the one command whose
+    // entire job is "make the agent stop"; otherwise a stop that missed would be
+    // indistinguishable from one that landed, all the way up to a web UI that says "cancelled".
     //
     // The running-state signal is Claude Code's own status line, `esc to interrupt`
     // — the same marker `activeTerm`, `composerText` and the send-keys pane check
@@ -768,7 +768,7 @@ try {
     // already is — a double-tap from the phone and a human who just deleted it in
     // emdash both land here.
     //
-    // Found by probe-close.mjs against a live emdash 1.1.40, 2026-07-31: the row's
+    // Found by probe-close.mjs against a live emdash 1.1.40: the row's
     // "Open task {task}" button offers no visible per-row control on hover — the
     // delete affordance is a right-click CONTEXT MENU (contextmenu on that same
     // button) with items "Pin task" / "Rename" / "Archive" / "Copy branch name" /
@@ -842,7 +842,7 @@ try {
     // reached through the button's React fiber. Everything after that is
     // emdash's normal flow: its path inspection enables Create, and Create runs
     // its own createProject. Read out of emdash 1.2.8's bundle (DirectoryField,
-    // AddProjectModal) and checked live 2026-10-24: the path lands in the field,
+    // AddProjectModal) and checked live: the path lands in the field,
     // the name placeholder becomes the folder's basename, Create enables.
     //
     // Output: {ok, action:"submitted", name, path}. Never leaves the dialog up:
@@ -1003,11 +1003,11 @@ try {
     await openTask(task, project);
     // A task can hold several terminals — a Claude pane plus shell tabs the human
     // opened — and only the SELECTED one is rendered at full size. With a shell
-    // tab selected, every answer to a real dialog died here (labs, 2026-08-01:
-    // 45 minutes of taps refused, correctly and invisibly). The human asked for
+    // tab selected, every answer to a real dialog dies here (taps are
+    // refused, correctly and invisibly). The human asked for
     // this keystroke, so selecting the Claude tab for them is the on-demand case
-    // that is allowed to move emdash's UI — unlike a read on a signal, which is
-    // what #510 was reverted for.
+    // that is allowed to move emdash's UI — unlike a read on a signal, which
+    // never moves it.
     //
     // Two rules make this safe to do blind:
     //   * The tab is matched by `title` starting "Claude (" — never by position
@@ -1072,8 +1072,8 @@ try {
     // ("Unknown key: \t"). Every control character the answer path can emit has
     // to be mapped here or the sequence dies part-way — having already pressed
     // the keys before it, which on a multi-select leaves checkboxes toggled and
-    // nothing submitted. Tab was missing, so answering a TABBED dialog failed
-    // right after its first tab (observed live 2026-08-12). It survived a PTY
+    // nothing submitted. Tab must be mapped, or answering a TABBED dialog fails
+    // right after its first tab. It survives a PTY
     // harness because that writes the raw byte and a terminal interprets it;
     // this transport does not.
     const NAMED_KEYS = { '\r': 'Enter', '\n': 'Enter', '\u001b': 'Escape', '\t': 'Tab',
@@ -1095,9 +1095,9 @@ try {
         await page.keyboard.type(key.slice(TEXT_PREFIX.length), { delay: 60 });
         // Longer than a keypress needs. The TUI re-renders the row it just took
         // text into, and the Enter that COMMITS that text has to arrive after
-        // that settles — at 120ms it landed mid-render and toggled the row off
+        // that settles — at 120ms it lands mid-render and toggles the row off
         // instead, leaving the answer typed but unticked and the dialog stuck on
-        // the same tab (observed live 2026-08-13).
+        // the same tab.
         await page.waitForTimeout(700);
       } else {
         await page.keyboard.press(NAMED_KEYS[key] || key);
@@ -1110,7 +1110,7 @@ try {
     // READ-ONLY upgrade probe: does every DOM contract this sidecar depends on still
     // resolve? Clicks NOTHING and opens NOTHING — an upgrade check that stole focus
     // or selected a tab would be a check nobody dares run on a working fleet, and
-    // #510 is the record of what a read-on-a-signal costs.
+    // a read on a signal is exactly what costs a fleet its focus.
     //
     // It reports what it can SEE, so a contract is only meaningful when the UI is
     // showing that part of itself: with no task open there is no terminal, which is

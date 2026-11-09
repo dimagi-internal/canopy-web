@@ -181,12 +181,11 @@ def remove_runner_login(request: HttpRequest, runner_id: uuid.UUID, key: str):
 @gate("runner-admin")
 def get_runner_credential_status(request: HttpRequest, runner_id: uuid.UUID):
     """The operator's read: which slots are filled, without putting a secret on a
-    screen. Separate from the GET below, which returns REAL VALUES for the runner
-    to consume.
+    screen. Separate from the GET below, which returns the credential list (no
+    values) for the runner to stage its credentials from.
 
-    Exists because the only way to read this used to be a no-op POST — and that
-    WROTE, bumping `updated_at`/`updated_by` and destroying the one signal that
-    says when a credential was last actually rotated."""
+    A read must not write: a no-op POST would bump `updated_at`/`updated_by` and
+    destroy the one signal that says when a credential was last actually rotated."""
     runner = runner_admin_or_404(request, runner_id)
     return harness_runners.runner_credential_status(runner)
 

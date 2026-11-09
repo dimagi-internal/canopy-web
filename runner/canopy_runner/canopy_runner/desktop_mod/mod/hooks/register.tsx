@@ -13,7 +13,7 @@ import type { Register } from 'claude-code'
 //                   fu-<n>.txt        a follow-up, submitted once (fu-<n>.done marks it)
 //                   stop-<n>.txt      stop the running turn (stop-<n>.done marks it)
 //                   start-<n>.json    start ANOTHER session with the app's start_session
-//                                     tool (canopy-web#1238); the result goes to start-<n>.done
+//                                     tool; the result goes to start-<n>.done
 //                   seeded = "start"  this folder waits for a session start_session is
 //                                     opening: the first one to start here claims it
 //   mod -> runner   alive             a timestamp, rewritten every poll: "this session's process is up"
