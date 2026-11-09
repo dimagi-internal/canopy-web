@@ -1,0 +1,706 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Canopy Listen</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='15' fill='%232e7d5b'/%3E%3Cpath d='M9 18c2-6 12-6 14 0' stroke='white' stroke-width='2.4' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='16' cy='21' r='2.2' fill='white'/%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #f6f5f1; --surface: #ffffff; --surface-2: #f1efe9; --surface-3: #e9e6de;
+  --ink: #1c1f1b; --ink-2: #565c55; --ink-3: #8b9089; --line: #e4e1d8; --line-2: #d6d2c7;
+  --accent: #2e7d5b; --accent-hover: #276b4e; --accent-ink: #ffffff; --accent-soft: #e2efe7;
+  --danger: #b3412e; --danger-soft: #f8e5df; --rec: #d9473a; --warn: #a66a12; --warn-soft: #fbf0dc;
+  --shadow: 0 1px 2px rgba(28,31,27,.04), 0 8px 24px -12px rgba(28,31,27,.12);
+  --s0: #2e7d5b; --s1: #3567d0; --s2: #b5562b; --s3: #8550c0; --s4: #0e8584; --s5: #bf3a78; --s6: #7d7a17; --s7: #5c6676;
+  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", system-ui, sans-serif;
+  --display: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --r: 16px; --r-sm: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111311; --surface: #191c19; --surface-2: #202420; --surface-3: #2a2f2a;
+    --ink: #ecefe9; --ink-2: #a8afa6; --ink-3: #747b73; --line: #2a2f2a; --line-2: #363c36;
+    --accent: #62c194; --accent-hover: #7bd0a7; --accent-ink: #0b1a12; --accent-soft: #1d3127;
+    --danger: #f08b75; --danger-soft: #3a211b; --rec: #ff6b5e; --warn: #e3b25e; --warn-soft: #33281a;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px -14px rgba(0,0,0,.6);
+    --s0: #62c194; --s1: #7ea6ff; --s2: #f09a6c; --s3: #bf95f2; --s4: #4fcfc9; --s5: #f283b5; --s6: #cfc86a; --s7: #a3adbd;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.5 var(--sans); -webkit-font-smoothing: antialiased; }
+button, input, select { font: inherit; color: inherit; }
+.hidden { display: none !important; }
+.wrap { max-width: 1120px; margin: 0 auto; padding: 28px 28px 48px; }
+
+/* header */
+.top { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 28px; flex-wrap: wrap; }
+.brand { display: flex; align-items: center; gap: 14px; }
+.mark { width: 40px; height: 40px; border-radius: 12px; background: var(--accent); display: grid; place-items: center; box-shadow: var(--shadow); }
+.mark svg { width: 24px; height: 24px; }
+h1 { font: 600 20px/1.2 var(--display); letter-spacing: -0.015em; margin: 0; }
+.sub { margin: 2px 0 0; color: var(--ink-2); font-size: 13.5px; }
+.models { display: flex; align-items: center; gap: 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 7px 8px 7px 14px; cursor: pointer; font-size: 13px; color: var(--ink-2); transition: border-color .15s; }
+.models:hover { border-color: var(--line-2); }
+.models .chip { background: var(--surface-2); padding: 3px 10px; border-radius: 999px; color: var(--accent); font-weight: 550; }
+.models b { color: var(--ink); font-weight: 550; }
+
+/* layout */
+.grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 24px; align-items: start; }
+@media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--shadow); }
+.main { padding: 32px; }
+@media (max-width: 600px) { .main { padding: 22px; } .wrap { padding: 20px 16px 40px; } }
+.side { display: grid; gap: 24px; }
+.side .card { padding: 22px; }
+h2 { font: 600 26px/1.15 var(--display); letter-spacing: -0.02em; margin: 0 0 8px; }
+h3 { font: 600 15px/1.3 var(--display); margin: 0; letter-spacing: -0.005em; }
+.lede { color: var(--ink-2); margin: 0 0 24px; max-width: 54ch; }
+.muted { color: var(--ink-2); }
+.small { font-size: 13px; }
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+
+/* buttons */
+.btn, button.primary, button.ghost, button.small { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: 11px; border: 1px solid var(--line-2); background: var(--surface); padding: 10px 16px; font-weight: 550; font-size: 14px; cursor: pointer; text-decoration: none; color: var(--ink); transition: background .15s, border-color .15s, transform .05s, opacity .15s; white-space: nowrap; }
+.btn:hover, button.ghost:hover, button.small:hover { background: var(--surface-2); }
+button:active { transform: translateY(1px); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+button.primary:disabled { opacity: .4; cursor: not-allowed; transform: none; }
+button.big { padding: 14px 26px; font-size: 15.5px; border-radius: 13px; }
+button.ghost { background: transparent; }
+button.danger { color: var(--danger); border-color: transparent; }
+button.danger:hover { background: var(--danger-soft); }
+button.danger.solid { background: var(--danger); color: #fff; border-color: var(--danger); }
+button.small { padding: 6px 12px; font-size: 13px; border-radius: 9px; }
+button.icon { background: none; border: none; padding: 6px; border-radius: 8px; cursor: pointer; color: var(--ink-3); line-height: 0; }
+button.icon:hover { background: var(--surface-2); color: var(--danger); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* start */
+.inputs { display: grid; gap: 10px; margin-bottom: 14px; }
+.choice { position: relative; display: grid; grid-template-columns: 44px 1fr 20px; gap: 14px; align-items: center; padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; cursor: pointer; transition: border-color .15s, background .15s, box-shadow .15s; }
+.choice:hover { border-color: var(--line-2); }
+.choice input { position: absolute; opacity: 0; pointer-events: none; }
+.choice .ic { width: 44px; height: 44px; border-radius: 12px; background: var(--surface-2); display: grid; place-items: center; color: var(--ink-2); transition: background .15s, color .15s; }
+.choice .ic svg { width: 22px; height: 22px; }
+.choice b { display: block; font-weight: 600; }
+.choice small { display: block; color: var(--ink-2); font-size: 13px; margin-top: 1px; }
+.choice .radio { width: 20px; height: 20px; border-radius: 50%; border: 1.5px solid var(--line-2); display: grid; place-items: center; }
+.choice:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); box-shadow: 0 0 0 1px var(--accent) inset; }
+.choice:has(input:checked) .ic { background: var(--accent); color: var(--accent-ink); }
+.choice:has(input:checked) .radio { border-color: var(--accent); }
+.choice:has(input:checked) .radio::after { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+.choice:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mix { display: flex; align-items: center; gap: 10px; margin: 0 0 18px 4px; color: var(--ink-2); font-size: 14px; cursor: pointer; }
+input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); margin: 0; flex: none; }
+.agent { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 12px; background: var(--surface-2); color: var(--ink-2); font-size: 14px; margin-bottom: 14px; }
+.agent .av { width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; font-weight: 650; font-size: 13px; flex: none; }
+.agent b { color: var(--ink); font-weight: 600; }
+.notice { border: 1px solid var(--warn); background: var(--warn-soft); border-radius: 14px; padding: 16px 18px; margin-bottom: 22px; }
+.notice-head { display: flex; align-items: center; gap: 8px; font-weight: 650; color: var(--warn); margin-bottom: 4px; }
+.notice-head svg { width: 18px; height: 18px; }
+.notice p { margin: 0 0 12px; color: var(--ink); }
+.notice label { display: flex; align-items: center; gap: 10px; font-weight: 550; cursor: pointer; }
+.actions { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.hint { color: var(--ink-2); font-size: 13.5px; }
+.hint.err { color: var(--danger); }
+.phone-hint { margin: 22px 0 0; padding-top: 18px; border-top: 1px solid var(--line); font-size: 13.5px; color: var(--ink-2); display: flex; gap: 10px; align-items: flex-start; }
+.phone-hint svg { width: 18px; height: 18px; flex: none; margin-top: 2px; color: var(--ink-3); }
+
+/* live */
+.live-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; flex-wrap: wrap; }
+.pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px 6px 10px; border-radius: 999px; background: var(--surface-2); font-weight: 600; font-size: 13.5px; }
+.pill .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--ink-3); }
+.pill.rec { background: color-mix(in srgb, var(--rec) 13%, transparent); color: var(--rec); }
+.pill.rec .dot { background: var(--rec); animation: pulse 1.6s ease-in-out infinite; }
+.pill.ok { background: var(--accent-soft); color: var(--accent); }
+.pill.ok .dot { background: var(--accent); }
+.pill.bad { background: var(--danger-soft); color: var(--danger); }
+.pill.bad .dot { background: var(--danger); }
+.pill.busy .dot { background: var(--warn); animation: pulse 1s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.8); } }
+.src { display: block; color: var(--ink-2); font-size: 13.5px; margin: 10px 0 0 2px; }
+.timer { font: 250 64px/1 var(--display); letter-spacing: -0.03em; font-variant-numeric: tabular-nums; color: var(--ink); }
+.meter { display: flex; align-items: center; gap: 3px; height: 40px; margin: 22px 0 6px; }
+.meter i { flex: 1; min-width: 2px; max-width: 8px; height: 6%; border-radius: 3px; background: var(--accent); opacity: .85; transition: height .12s ease-out; }
+.meter.quiet i { background: var(--line-2); }
+.meter.breathe i { animation: breathe 2.4s ease-in-out infinite; }
+@keyframes breathe { 0%,100% { height: 8%; } 50% { height: 22%; } }
+.status-line { color: var(--ink-2); margin: 6px 0 18px; min-height: 1.5em; }
+.live-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 24px; }
+.live-actions .spacer { flex: 1; }
+.transcript-wrap { position: relative; }
+.transcript { height: min(52vh, 560px); overflow-y: auto; border: 1px solid var(--line); border-radius: 14px; background: var(--bg); padding: 8px 22px 22px; scroll-behavior: smooth; }
+.empty { color: var(--ink-3); text-align: center; padding: 64px 0; }
+.turn { padding: 16px 0 4px; border-bottom: 1px solid var(--line); }
+.turn:last-child { border-bottom: 0; }
+.who { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+.spk { display: inline-flex; align-items: center; gap: 7px; font-weight: 650; font-size: 13.5px; color: var(--c, var(--ink)); background: none; border: 0; padding: 2px 6px 2px 0; border-radius: 6px; cursor: pointer; }
+.spk::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--c, var(--ink)); }
+.spk:hover { text-decoration: underline; text-underline-offset: 3px; text-decoration-style: dotted; }
+.spk-edit { font-weight: 600; font-size: 13.5px; padding: 3px 8px; border-radius: 7px; border: 1px solid var(--accent); background: var(--surface); width: 180px; outline: none; }
+.when { color: var(--ink-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+.turn p { margin: 0 0 8px; font-size: 15.5px; line-height: 1.6; }
+.jump { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); border-radius: 999px; padding: 8px 16px; background: var(--ink); color: var(--bg); border: 0; font-weight: 600; font-size: 13px; cursor: pointer; box-shadow: var(--shadow); }
+.banner { display: flex; gap: 12px; align-items: center; padding: 14px 16px; border-radius: 12px; margin-bottom: 18px; background: var(--accent-soft); color: var(--ink); }
+.banner.bad { background: var(--danger-soft); }
+.banner svg { width: 20px; height: 20px; flex: none; color: var(--accent); }
+.banner.bad svg { color: var(--danger); }
+
+/* side lists */
+.list { list-style: none; margin: 12px 0 0; padding: 0; }
+.list li { display: flex; align-items: center; gap: 12px; padding: 10px 4px; border-top: 1px solid var(--line); }
+.list li:first-child { border-top: 0; }
+.list .grow { flex: 1; min-width: 0; }
+.list .t { font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.list .m { color: var(--ink-3); font-size: 12.5px; }
+.list .open { all: unset; cursor: pointer; display: block; border-radius: 8px; }
+.list .open:hover .t { color: var(--accent); }
+.list .open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.list .none { color: var(--ink-3); font-size: 13.5px; padding: 8px 4px; border: 0; }
+.ph { width: 32px; height: 32px; border-radius: 10px; background: var(--surface-2); display: grid; place-items: center; color: var(--ink-2); flex: none; }
+.ph svg { width: 17px; height: 17px; }
+.pair { margin-top: 14px; padding: 16px; border-radius: 14px; background: var(--surface-2); }
+.qr { width: 100%; max-width: 236px; margin: 0 auto 14px; background: #fff; border-radius: 12px; padding: 6px; box-shadow: 0 0 0 1px var(--line); }
+.qr svg { display: block; width: 100%; height: auto; }
+.pair p { margin: 4px 0; font-size: 13.5px; color: var(--ink-2); }
+.pair .countdown { font-variant-numeric: tabular-nums; color: var(--ink-3); }
+.paired { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px; padding: 18px 0 6px; }
+.paired .tick { width: 52px; height: 52px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; animation: pop .35s cubic-bezier(.2,1.4,.5,1); }
+.paired .tick svg { width: 26px; height: 26px; }
+@keyframes pop { from { transform: scale(.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+footer { color: var(--ink-3); font-size: 12.5px; text-align: center; margin-top: 36px; }
+
+/* dialogs */
+dialog { border: 1px solid var(--line); border-radius: 18px; padding: 0; background: var(--surface); color: var(--ink); box-shadow: 0 30px 80px -20px rgba(0,0,0,.35); width: min(520px, calc(100vw - 32px)); }
+dialog::backdrop { background: rgba(15,18,15,.38); backdrop-filter: blur(2px); }
+.dlg { padding: 24px; }
+.dlg h3 { font-size: 18px; margin-bottom: 6px; }
+.dlg .row { display: grid; gap: 6px; margin: 16px 0; }
+.dlg label { font-weight: 600; font-size: 13.5px; }
+.dlg select { padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line-2); background: var(--surface); }
+.dlg .note { color: var(--ink-2); font-size: 12.5px; min-height: 1.4em; }
+.dlg .btns { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
+.view { width: min(760px, calc(100vw - 32px)); }
+.view .transcript { height: min(60vh, 600px); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <div class="mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="color:var(--accent-ink)"><path d="M5 13.5c1.6-5 12.4-5 14 0"/><path d="M8.5 16c1-2.2 6-2.2 7 0"/><circle cx="12" cy="18.6" r="1.3" fill="currentColor" stroke="none"/></svg></div>
+      <div>
+        <h1>Canopy Listen</h1>
+        <p class="sub"><span id="macName">This Mac</span> · transcribed on this Mac</p>
+      </div>
+    </div>
+    <button class="models" id="modelsBtn" type="button" title="Change the models">
+      <span id="modelsText">Models</span><span class="chip">Change</span>
+    </button>
+  </header>
+
+  <main class="grid">
+    <div>
+      <section class="card main" id="startCard">
+        <h2>Start a meeting</h2>
+        <p class="lede">Your Mac records and transcribes as people talk, with open models that run right here. Meeting assistant shares the words with your agent's chat.</p>
+        <div class="inputs" role="radiogroup" aria-label="What to record">
+          <label class="choice"><input type="radio" name="input" value="microphone" checked>
+            <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></span>
+            <span><b>This Mac's microphone</b><small>For people in the room with you.</small></span><span class="radio"></span></label>
+          <label class="choice"><input type="radio" name="input" value="browser-tab">
+            <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="14" rx="2.5"/><path d="M3 9h18M7 6.8h.01M9.5 6.8h.01"/><path d="M10 12.5l4 2-4 2z"/></svg></span>
+            <span><b>A browser tab</b><small>A Meet, Zoom or Teams call in this browser: hears everyone on it.</small></span><span class="radio"></span></label>
+          <label class="choice"><input type="radio" name="input" value="browser-mic">
+            <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3.5 9h17M3.5 15h17M12 3c2.5 2.6 2.5 15.4 0 18M12 3c-2.5 2.6-2.5 15.4 0 18"/></svg></span>
+            <span><b>Microphone in this browser</b><small>Uses this browser's microphone, if the Mac's isn't allowed.</small></span><span class="radio"></span></label>
+        </div>
+        <label class="mix hidden" id="mixRow"><input type="checkbox" id="mixMic" checked> Also record my microphone, so I'm in the transcript too</label>
+        <div class="agent hidden" id="agentRow"><span class="av" id="agentAv">?</span><span><b id="agentName"></b> listens and comments in a chat while you talk.</span></div>
+        <div class="notice">
+          <div class="notice-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9.5 17H2.5z"/><path d="M12 10v4M12 17.2h.01"/></svg>Tell the people in the meeting</div>
+          <p id="noticeText">What's said in this meeting leaves your Mac. Tell the people in it.</p>
+          <label><input type="checkbox" id="told"> I've told them</label>
+        </div>
+        <div class="actions">
+          <button class="primary big" id="startBtn" type="button" disabled>Start recording</button>
+          <span class="hint" id="startHint"></span>
+        </div>
+        <p class="phone-hint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="6.5" y="2.5" width="11" height="19" rx="2.5"/><path d="M11 18.5h2"/></svg><span>Away from your desk? A paired phone can record too: its audio comes to this Mac end-to-end encrypted, and is transcribed here.</span></p>
+      </section>
+
+      <section class="card main hidden" id="liveCard">
+        <div class="live-head">
+          <div>
+            <span class="pill" id="pill"><i class="dot"></i><span id="phaseText">Starting</span></span>
+            <span class="src" id="srcText"></span>
+          </div>
+          <div class="timer" id="timer" aria-label="Recording time">0:00</div>
+        </div>
+        <div class="meter quiet" id="meter" aria-hidden="true"></div>
+        <p class="status-line" id="statusLine"></p>
+        <div id="banner" class="banner hidden"></div>
+        <div class="live-actions">
+          <a class="btn hidden" id="chatBtn" target="_blank" rel="noopener noreferrer">Open chat <span aria-hidden="true">↗</span></a>
+          <span class="spacer"></span>
+          <button class="ghost danger" id="discardBtn" type="button">Discard</button>
+          <button class="primary" id="endBtn" type="button">End meeting</button>
+          <button class="primary hidden" id="againBtn" type="button">Start another</button>
+        </div>
+        <div class="transcript-wrap">
+          <div class="transcript" id="transcript" aria-live="polite"><div class="empty">The transcript appears here as people talk.</div></div>
+          <button class="jump hidden" id="jumpBtn" type="button">Jump to live ↓</button>
+        </div>
+      </section>
+    </div>
+
+    <aside class="side">
+      <section class="card" id="phonesCard">
+        <div class="card-head"><h3>Phones</h3><button class="small" id="pairBtn" type="button">Pair a phone</button></div>
+        <p class="muted small" style="margin:0" id="phonesLede">Record on your phone at canopy.dimagi.com/listen; the audio is transcribed here.</p>
+        <div class="pair hidden" id="pairPanel"></div>
+        <ul class="list" id="phoneList"></ul>
+      </section>
+      <section class="card">
+        <div class="card-head"><h3>Past meetings</h3></div>
+        <ul class="list" id="pastList"><li class="none">Nothing recorded yet.</li></ul>
+      </section>
+    </aside>
+  </main>
+  <footer>Audio stays on this Mac. Only Meeting assistant sends the words on, to your agent's chat and your Meetings page.</footer>
+</div>
+
+<dialog id="modelsDlg"><form class="dlg" method="dialog" id="modelsForm">
+  <h3>Models</h3>
+  <p class="muted small" style="margin:0">They run on this Mac. A change applies from the next meeting.</p>
+  <div class="row"><label for="mAsr">Speech</label><select id="mAsr"></select><span class="note" id="nAsr"></span></div>
+  <div class="row"><label for="mSpk">Who spoke, live</label><select id="mSpk"></select><span class="note" id="nSpk"></span></div>
+  <div class="row"><label for="mFin">Who spoke, after the meeting</label><select id="mFin"></select><span class="note" id="nFin"></span></div>
+  <div class="btns"><button class="ghost" value="cancel" type="submit">Cancel</button><button class="primary" id="modelsSave" type="button">Save</button></div>
+</form></dialog>
+
+<dialog id="confirmDlg"><form class="dlg" method="dialog">
+  <h3 id="cTitle"></h3><p class="muted" id="cText" style="margin:0"></p>
+  <div class="btns"><button class="ghost" value="no" type="submit">Cancel</button><button class="primary danger solid" value="yes" type="submit" id="cOk">OK</button></div>
+</form></dialog>
+
+<dialog id="viewDlg" class="view"><div class="dlg">
+  <div class="card-head" style="margin-bottom:14px"><div><h3 id="vTitle"></h3><span class="muted small" id="vMeta"></span></div><form method="dialog"><button class="small" type="submit">Close</button></form></div>
+  <div class="transcript" id="vTranscript"></div>
+</div></dialog>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const SOURCE_LABEL = { microphone: "This Mac's microphone", "browser-tab": "A browser tab", "browser-mic": "Microphone in this browser", phone: "A paired phone", file: "An audio file", relay: "Relayed audio" };
+const LIVE = ["starting", "recording", "listening", "ending"];
+const S = { status: null, phase: "idle", meetingId: null, count: 0, speakers: new Map(), heard: 0, polledAt: 0, capture: null, levels: [], lastTurn: null, lastSpeaker: null, starting: false, pair: null };
+
+function h(tag, attrs = {}, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") el.className = v; else if (k === "text") el.textContent = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v); else if (v !== null && v !== undefined) el.setAttribute(k, v);
+  }
+  for (const kid of kids) if (kid !== null && kid !== undefined) el.append(kid);
+  return el;
+}
+async function api(path, opts = {}) {
+  const init = { method: opts.method || "GET", headers: {} };
+  if (opts.body !== undefined) { init.method = opts.method || "POST"; init.headers["Content-Type"] = "application/json"; init.body = JSON.stringify(opts.body); }
+  const res = await fetch(path, init);
+  let data = {}; try { data = await res.json(); } catch (_) {}
+  return { ok: res.ok, status: res.status, data };
+}
+const clock = (s) => { s = Math.max(0, Math.floor(s)); const hh = Math.floor(s / 3600), mm = Math.floor(s / 60) % 60, ss = s % 60; return hh ? `${hh}:${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}` : `${mm}:${String(ss).padStart(2, "0")}`; };
+const utc = (s) => new Date(String(s).replace(" ", "T") + "Z");
+const color = (n) => `var(--s${((n % 8) + 8) % 8})`;
+const prettyModel = (n) => ({ "parakeet-v3": "Parakeet v3", "parakeet-v2": "Parakeet v2", "whisper-turbo": "Whisper turbo", "qwen3-asr-1.7b": "Qwen3-ASR 1.7B", "qwen3-asr-0.6b": "Qwen3-ASR 0.6B", "cohere-transcribe": "Cohere Transcribe", "granite-speech-1b": "Granite Speech", titanet: "TitaNet", sortformer: "Sortformer", pyannote: "pyannote", none: "none" }[n] || n);
+const ICON = {
+  phone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="6.5" y="2.5" width="11" height="19" rx="2.5"/><path d="M11 18.5h2"/></svg>',
+  trash: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>',
+  tick: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+  ok: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l3 3 5-6"/></svg>',
+  bad: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.4h.01"/></svg>',
+};
+function svgEl(markup) { const t = document.createElement("template"); t.innerHTML = markup.trim(); return t.content.firstChild; }
+
+function confirmBox(title, text, ok) {
+  $("cTitle").textContent = title; $("cText").textContent = text; $("cOk").textContent = ok;
+  const dlg = $("confirmDlg"); dlg.returnValue = ""; dlg.showModal();
+  return new Promise((resolve) => dlg.addEventListener("close", () => resolve(dlg.returnValue === "yes"), { once: true }));
+}
+
+/* ---------- status, models ---------- */
+async function loadStatus() {
+  const { ok, data } = await api("/api/status");
+  if (!ok) return;
+  S.status = data;
+  $("macName").textContent = data.name;
+  document.querySelectorAll(".mac").forEach((el) => (el.textContent = data.name));
+  const m = data.models;
+  const modelsText = $("modelsText"); modelsText.textContent = "";
+  modelsText.append(h("b", { text: prettyModel(m.asr) }), " · ", prettyModel(m.speakers), m.final !== "none" ? ` · then ${prettyModel(m.final)}` : "");
+  $("noticeText").textContent = data.notice;
+  const agent = data.app && data.app.agent;
+  $("agentRow").classList.toggle("hidden", !agent);
+  if (agent) { $("agentName").textContent = agent; $("agentAv").textContent = agent.trim().charAt(0).toUpperCase(); }
+  $("pairBtn").disabled = !data.runner.ok || !!S.pair;
+  if (!data.runner.ok) $("phonesLede").textContent = "Pairing needs Canopy Runner set up on this Mac.";
+  else $("phonesLede").textContent = `Record on your phone at ${data.runner.base_url.replace("https://", "")}/listen; the audio is transcribed here.`;
+}
+function fillSelect(sel, note, items, chosen) {
+  sel.textContent = "";
+  for (const it of items) sel.append(h("option", { value: it.name, text: prettyModel(it.name) + (it.languages ? ` · ${it.languages} languages` : "") }));
+  sel.value = chosen;
+  const show = () => { const it = items.find((x) => x.name === sel.value); note.textContent = it ? it.note : ""; };
+  sel.onchange = show; show();
+}
+$("modelsBtn").onclick = () => {
+  if (!S.status) return;
+  const c = S.status.choices, m = S.status.models;
+  fillSelect($("mAsr"), $("nAsr"), c.asr, m.asr); fillSelect($("mSpk"), $("nSpk"), c.speakers, m.speakers); fillSelect($("mFin"), $("nFin"), c.final, m.final);
+  $("modelsDlg").showModal();
+};
+$("modelsSave").onclick = async () => {
+  const r = await api("/api/config", { body: { asr: $("mAsr").value, speakers: $("mSpk").value, final: $("mFin").value } });
+  if (r.ok) { $("modelsDlg").close(); loadStatus(); } else $("nAsr").textContent = r.data.reason || "Couldn't save.";
+};
+
+/* ---------- start ---------- */
+function chosenInput() { return document.querySelector("input[name=input]:checked").value; }
+function syncStart() {
+  const input = chosenInput();
+  $("mixRow").classList.toggle("hidden", input !== "browser-tab");
+  $("startBtn").disabled = !$("told").checked || S.starting;
+  const hint = $("startHint"); hint.classList.remove("err");
+  hint.textContent = input === "browser-tab" ? "Your browser asks which tab to share: pick the call, and keep “Share tab audio” on. Keep this page open." :
+    input === "browser-mic" ? "Keep this page open while you record." : "";
+}
+document.querySelectorAll("input[name=input]").forEach((r) => r.addEventListener("change", syncStart));
+$("told").addEventListener("change", syncStart);
+
+const WORKLET = `
+class Pcm16 extends AudioWorkletProcessor {
+  constructor(o) { super(); this.ratio = o.processorOptions.inRate / 16000; this.pos = 0; this.acc = 0; this.cnt = 0; this.buf = new Int16Array(1600); this.n = 0; }
+  process(inputs) {
+    const ch = inputs[0]; if (!ch || !ch.length) return true;
+    const len = ch[0].length, k = ch.length;
+    for (let i = 0; i < len; i++) {
+      let v = 0; for (let c = 0; c < k; c++) v += ch[c][i];
+      this.acc += v / k; this.cnt++; this.pos += 1;
+      if (this.pos >= this.ratio) {
+        this.pos -= this.ratio;
+        let s = this.acc / this.cnt; this.acc = 0; this.cnt = 0;
+        s = Math.max(-1, Math.min(1, s));
+        this.buf[this.n++] = s < 0 ? s * 32768 : s * 32767;
+        if (this.n === this.buf.length) { this.port.postMessage(this.buf.buffer, [this.buf.buffer]); this.buf = new Int16Array(1600); this.n = 0; }
+      }
+    }
+    return true;
+  }
+}
+registerProcessor("pcm16", Pcm16);`;
+
+async function openCapture(kind, withMic) {
+  const md = navigator.mediaDevices;
+  if (!md) throw new Error("This browser can't capture audio here.");
+  const streams = [];
+  if (kind === "browser-tab") {
+    if (!md.getDisplayMedia) throw new Error("This browser can't share a tab's audio. Try Chrome or Edge.");
+    const display = await md.getDisplayMedia({ video: true, audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }, preferCurrentTab: false, selfBrowserSurface: "exclude", systemAudio: "include" });
+    if (!display.getAudioTracks().length) { display.getTracks().forEach((t) => t.stop()); throw new Error("That share has no audio. Share a tab, and keep “Share tab audio” on."); }
+    streams.push(display);
+    if (withMic) {
+      try { streams.push(await md.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })); }
+      catch (_) { /* the tab alone, then */ }
+    }
+  } else {
+    streams.push(await md.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }));
+  }
+  let ctx;
+  try { ctx = new AudioContext({ sampleRate: 16000 }); } catch (_) { ctx = new AudioContext(); }
+  const url = URL.createObjectURL(new Blob([WORKLET], { type: "application/javascript" }));
+  await ctx.audioWorklet.addModule(url);
+  URL.revokeObjectURL(url);
+  const node = new AudioWorkletNode(ctx, "pcm16", { processorOptions: { inRate: ctx.sampleRate }, channelCountMode: "explicit", channelCount: 1 });
+  for (const s of streams) if (s.getAudioTracks().length) ctx.createMediaStreamSource(s).connect(node);
+  const mute = ctx.createGain(); mute.gain.value = 0; node.connect(mute).connect(ctx.destination);
+  const cap = { ctx, node, streams, ws: null, stopped: false, onend: null };
+  cap.stop = () => {
+    if (cap.stopped) return; cap.stopped = true;
+    streams.forEach((s) => s.getTracks().forEach((t) => t.stop()));
+    try { node.port.onmessage = null; ctx.close(); } catch (_) {}
+    if (cap.ws && cap.ws.readyState <= 1) { try { cap.ws.send(JSON.stringify({ type: "end" })); } catch (_) {} cap.ws.close(); }
+  };
+  // The person pressed the browser's "Stop sharing", or the mic went away: the meeting ends and is kept.
+  streams.forEach((s) => s.getTracks().forEach((t) => t.addEventListener("ended", () => cap.stop())));
+  return cap;
+}
+function streamTo(cap, inputId) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(`ws://${location.host}/ws/audio?input=${encodeURIComponent(inputId)}`);
+    ws.binaryType = "arraybuffer"; cap.ws = ws;
+    ws.onopen = () => {
+      cap.node.port.onmessage = (e) => {
+        const pcm = new Int16Array(e.data);
+        let sum = 0; for (let i = 0; i < pcm.length; i += 4) sum += pcm[i] * pcm[i];
+        pushLevel(Math.min(1, Math.sqrt(sum / (pcm.length / 4)) / 32768 * 4));
+        if (ws.readyState === 1) ws.send(e.data);
+      };
+      resolve();
+    };
+    ws.onerror = () => reject(new Error("Couldn't reach canopy-listen on this Mac."));
+    ws.onclose = () => cap.stop();
+  });
+}
+$("startBtn").onclick = async () => {
+  const input = chosenInput(), hint = $("startHint");
+  S.starting = true; syncStart(); hint.classList.remove("err"); hint.textContent = "Starting…";
+  let cap = null;
+  try {
+    if (input !== "microphone") cap = await openCapture(input, $("mixMic").checked);  // first: the browser's prompt needs this click
+    const r = await api("/api/start", { body: { input, notice_accepted: true } });
+    if (!r.ok) throw new Error(r.data.reason === "busy" ? "A meeting is already being recorded." : "Couldn't start the meeting.");
+    if (cap) { await streamTo(cap, r.data.input); S.capture = cap; }
+    $("told").checked = false; hint.textContent = "";
+    resetLive(); await poll();
+  } catch (err) {
+    if (cap) cap.stop();
+    hint.classList.add("err");
+    hint.textContent = err && err.name === "NotAllowedError" ? "The browser wasn't allowed to capture audio." : (err && err.message) || "Couldn't start.";
+  } finally { S.starting = false; syncStart(); }
+};
+
+/* ---------- live ---------- */
+function resetLive() {
+  S.meetingId = null; S.count = 0; S.speakers = new Map(); S.lastTurn = null; S.lastSpeaker = null; S.levels = []; S.heard = 0;
+  const t = $("transcript"); t.textContent = ""; t.append(h("div", { class: "empty", text: "The transcript appears here as people talk." }));
+  $("jumpBtn").classList.add("hidden");
+}
+const METER_BARS = 36;
+(function buildMeter() { const m = $("meter"); for (let i = 0; i < METER_BARS; i++) m.append(h("i")); })();
+function pushLevel(v) { S.levels.push(v); if (S.levels.length > METER_BARS) S.levels.shift(); drawMeter(); }
+function drawMeter(mode) {
+  const m = $("meter"), bars = m.children;
+  m.classList.toggle("breathe", mode === "breathe"); m.classList.toggle("quiet", mode === "quiet");
+  if (mode) { for (const b of bars) b.style.height = ""; return; }
+  const pad = METER_BARS - S.levels.length;
+  for (let i = 0; i < METER_BARS; i++) { const v = i < pad ? 0 : S.levels[i - pad]; bars[i].style.height = `${Math.max(6, Math.min(100, v * 100))}%`; }
+}
+function speakerName(n) { return S.speakers.get(n) || `Speaker ${n + 1}`; }
+function chip(n, meetingId, renamable) {
+  const b = h("button", { class: "spk", type: "button", "data-speaker": String(n), text: speakerName(n), title: renamable ? "Rename this speaker" : "" });
+  b.style.setProperty("--c", color(n));
+  if (renamable) b.onclick = () => editSpeaker(b, n, meetingId);
+  return b;
+}
+function editSpeaker(btn, n, meetingId) {
+  const input = h("input", { class: "spk-edit", value: speakerName(n), maxlength: "60", "aria-label": "Speaker name" });
+  btn.replaceWith(input); input.focus(); input.select();
+  let done = false;
+  const finish = async (save) => {
+    if (done) return; done = true;
+    const name = input.value.trim();
+    input.replaceWith(btn);
+    if (!save || name === speakerName(n)) return;
+    S.speakers.set(n, name || `Speaker ${n + 1}`); renameChips(n);
+    const r = await api("/api/rename", { body: { meeting: meetingId, speaker: n, name } });
+    if (r.ok) applySpeakers(r.data.speakers);
+  };
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") finish(true); if (e.key === "Escape") finish(false); });
+  input.addEventListener("blur", () => finish(true));
+}
+function renameChips(n) { document.querySelectorAll(`.spk[data-speaker="${n}"]`).forEach((b) => (b.textContent = speakerName(n))); }
+function applySpeakers(list) {
+  for (const s of list || []) { if (S.speakers.get(s.number) !== s.name) { S.speakers.set(s.number, s.name); renameChips(s.number); } }
+}
+function appendSegments(container, segs, meetingId, renamable, state) {
+  const empty = container.querySelector(".empty"); if (empty && segs.length) empty.remove();
+  for (const seg of segs) {
+    if (!state.lastTurn || state.lastSpeaker !== seg.speaker) {
+      state.lastTurn = h("div", { class: "turn" }, h("div", { class: "who" }, chip(seg.speaker, meetingId, renamable), h("span", { class: "when", text: clock(seg.start) })));
+      state.lastSpeaker = seg.speaker; container.append(state.lastTurn);
+    }
+    state.lastTurn.append(h("p", { text: seg.text }));
+  }
+}
+const transcript = $("transcript");
+const nearBottom = () => transcript.scrollTop + transcript.clientHeight >= transcript.scrollHeight - 48;
+transcript.addEventListener("scroll", () => { if (nearBottom()) $("jumpBtn").classList.add("hidden"); });
+$("jumpBtn").onclick = () => { transcript.scrollTop = transcript.scrollHeight; $("jumpBtn").classList.add("hidden"); };
+
+const PHASE = {
+  starting: ["Starting", "busy", "Getting the recorder ready. The first meeting takes a minute while the speech model loads."],
+  recording: ["Recording", "rec", "Waiting for the first words."],
+  listening: ["Recording", "rec", "Transcribing as people talk."],
+  ending: ["Ending", "busy", "Finishing the transcript."],
+  saved: ["Saved", "ok", "Saved to your Meetings page in Canopy."],
+  ended: ["Ended", "ok", "The meeting ended. Its transcript is kept on this Mac."],
+  failed: ["Stopped", "bad", "The recording stopped."],
+  discarded: ["Discarded", "", "Nothing more was sent, and the recording was deleted from this Mac."],
+};
+function render(live) {
+  const phase = live.phase;
+  const showLive = phase !== "idle" || !!S.capture;
+  $("startCard").classList.toggle("hidden", showLive);
+  $("liveCard").classList.toggle("hidden", !showLive);
+  if (!showLive) { S.phase = phase; return; }
+  const [label, tone, line] = PHASE[phase] || PHASE.starting;
+  $("phaseText").textContent = label;
+  $("pill").className = `pill ${tone}`;
+  let status = line;
+  if (phase === "ending" && live.detail === "saving") status = "Meeting assistant is saving the transcript to your Meetings page.";
+  if (phase === "failed" && live.detail) status = `The recording stopped (${live.detail}).`;
+  if (phase === "listening" && S.status && S.status.app && S.status.app.agent) status = `Transcribing as people talk. ${S.status.app.agent} comments in the chat.`;
+  if (S.capture && LIVE.includes(phase)) status += " Keep this page open.";
+  $("statusLine").textContent = status;
+  $("srcText").textContent = SOURCE_LABEL[live.source] || "";
+  const live_ = LIVE.includes(phase);
+  $("endBtn").classList.toggle("hidden", !live_); $("discardBtn").classList.toggle("hidden", !live_);
+  $("endBtn").disabled = phase === "ending" || phase === "starting"; $("discardBtn").disabled = phase === "ending";
+  $("againBtn").classList.toggle("hidden", live_);
+  const chat = $("chatBtn");
+  if (live.chat_url) { chat.href = live.chat_url; chat.classList.remove("hidden"); } else chat.classList.add("hidden");
+  const banner = $("banner");
+  if (phase === "saved" || phase === "failed") {
+    banner.className = `banner ${phase === "failed" ? "bad" : ""}`; banner.textContent = "";
+    banner.append(svgEl(phase === "failed" ? ICON.bad : ICON.ok), h("span", { text: phase === "failed" ? "Nothing was saved to Canopy." : "The transcript is on your Meetings page, ready for follow-up." }));
+  } else banner.className = "banner hidden";
+  const m = live.meeting;
+  if (m) {
+    if (m.id !== S.meetingId || m.after !== S.count) { resetLive(); S.meetingId = m.id; if (m.after !== 0) { S.count = -1; } }
+    if (S.count >= 0) {
+      applySpeakers(m.speakers);
+      const stick = nearBottom();
+      appendSegments(transcript, m.segments, m.id, true, S);
+      S.count = m.count;
+      if (m.segments.length) { if (stick) transcript.scrollTop = transcript.scrollHeight; else $("jumpBtn").classList.remove("hidden"); }
+    }
+    S.heard = m.heard_seconds || 0;
+  }
+  S.polledAt = performance.now();
+  if (!S.capture) {
+    if (live.level !== null && live.level !== undefined && live_) pushLevel(live.level);
+    else drawMeter(live_ && phase !== "starting" ? "breathe" : "quiet");
+  } else if (!live_) drawMeter("quiet");
+  if (!live_ && S.capture) { S.capture.stop(); S.capture = null; }
+  if (S.phase !== phase && !live_ && phase !== "idle") loadPast();
+  S.phase = phase;
+}
+function tick() {
+  const running = ["recording", "listening"].includes(S.phase);
+  const extra = running ? Math.min(3, (performance.now() - S.polledAt) / 1000) : 0;
+  $("timer").textContent = clock(S.heard + extra);
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+let pollTimer = null;
+async function poll() {
+  clearTimeout(pollTimer);
+  try {
+    const after = S.count > 0 ? S.count : 0;
+    const { ok, data } = await api(`/api/live?after=${after}`);
+    if (ok) { if (S.count < 0) S.count = 0; render(data); }
+  } catch (_) { /* serve restarting: try again */ }
+  pollTimer = setTimeout(poll, LIVE.includes(S.phase) || S.capture ? 700 : 2500);
+}
+// Serve ends the input itself, after it has told Meeting assistant: stopping the capture
+// first would end the meeting on its own, and a discarded meeting might be saved.
+$("endBtn").onclick = async () => { $("endBtn").disabled = true; await api("/api/end", { body: {} }); poll(); };
+$("discardBtn").onclick = async () => {
+  if (!(await confirmBox("Discard this meeting?", "The recording and its transcript are deleted from this Mac, and nothing more is sent.", "Discard"))) return;
+  $("discardBtn").disabled = true; await api("/api/discard", { body: {} }); poll();
+};
+$("againBtn").onclick = async () => { await api("/api/dismiss", { body: {} }); resetLive(); S.heard = 0; await poll(); syncStart(); };
+
+/* ---------- phones ---------- */
+async function loadPhones() {
+  const { ok, data } = await api("/api/phones"); if (!ok) return;
+  const list = $("phoneList"); list.textContent = "";
+  if (!data.phones.length) { list.append(h("li", { class: "none", text: "No phones paired yet." })); return; }
+  for (const p of data.phones) {
+    const when = p.paired_at ? new Date(p.paired_at * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "";
+    const rm = h("button", { class: "icon", type: "button", title: `Remove ${p.label}`, "aria-label": `Remove ${p.label}` }); rm.append(svgEl(ICON.trash));
+    rm.onclick = async () => {
+      if (!(await confirmBox(`Remove ${p.label}?`, "It can't record to this Mac until you pair it again.", "Remove"))) return;
+      await api(`/api/phones/${encodeURIComponent(p.id)}`, { method: "DELETE" }); loadPhones();
+    };
+    const ph = h("span", { class: "ph" }); ph.append(svgEl(ICON.phone));
+    list.append(h("li", {}, ph, h("div", { class: "grow" }, h("div", { class: "t", text: p.label }), h("div", { class: "m", text: `Paired ${when}` })), rm));
+  }
+}
+function closePair() { if (S.pair) { clearInterval(S.pair.timer); S.pair = null; } $("pairPanel").classList.add("hidden"); $("pairBtn").disabled = !(S.status && S.status.runner.ok); }
+$("pairBtn").onclick = async () => {
+  const r = await api("/api/pair", { body: {} });
+  const panel = $("pairPanel"); panel.textContent = ""; panel.classList.remove("hidden");
+  if (!r.ok) { panel.append(h("p", { text: r.data.reason === "no_runner" ? "Set up Canopy Runner on this Mac first." : "Couldn't make a pairing code." })); return; }
+  $("pairBtn").disabled = true;
+  const qr = h("div", { class: "qr", role: "img", "aria-label": "Pairing QR code" }); qr.append(svgEl(r.data.svg));
+  const countdown = h("p", { class: "countdown" });
+  const cancel = h("button", { class: "ghost small", type: "button", text: "Cancel", onclick: closePair });
+  panel.append(qr, h("p", {}, h("b", { text: "Scan with your phone's camera" })), h("p", { text: `It opens Canopy Listen and pairs it with ${S.status ? S.status.name : "this Mac"}. The code works once.` }), countdown, cancel);
+  S.pair = { id: r.data.id, expires: r.data.expires };
+  const step = async () => {
+    const left = S.pair.expires - Date.now() / 1000;
+    countdown.textContent = left > 0 ? `Expires in ${clock(left)}` : "This code expired.";
+    const s = await api(`/api/pair/${encodeURIComponent(S.pair.id)}`);
+    if (!S.pair) return;
+    if (s.data.state === "paired") {
+      clearInterval(S.pair.timer); S.pair = null;
+      panel.textContent = "";
+      const tick = h("div", { class: "tick" }); tick.append(svgEl(ICON.tick));
+      panel.append(h("div", { class: "paired" }, tick, h("b", { text: `Paired: ${s.data.label}` }), h("span", { class: "muted small", text: "It can record meetings to this Mac now." })));
+      loadPhones(); setTimeout(closePair, 6000);
+    } else if (s.data.state === "expired" || left <= 0) {
+      clearInterval(S.pair.timer); S.pair = null;
+      panel.textContent = ""; panel.append(h("p", { text: "This code expired." }), h("button", { class: "small", type: "button", text: "Make a new one", onclick: () => $("pairBtn").click() }));
+      $("pairBtn").disabled = false;
+    }
+  };
+  S.pair.timer = setInterval(step, 1500); step();
+};
+
+/* ---------- past meetings ---------- */
+function meetingTitle(m) { return m.title && m.title !== "Meeting" ? m.title : `Meeting, ${utc(m.datetime).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}`; }
+async function loadPast() {
+  const { ok, data } = await api("/api/meetings"); if (!ok) return;
+  const list = $("pastList"); list.textContent = "";
+  if (!data.meetings.length) { list.append(h("li", { class: "none", text: "Nothing recorded yet." })); return; }
+  for (const m of data.meetings) {
+    const d = utc(m.datetime);
+    const mins = Math.round(m.durationMs / 60000);
+    const meta = [d.toLocaleString(undefined, { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }), mins >= 1 ? `${mins} min` : `${Math.round(m.durationMs / 1000)} s`, SOURCE_LABEL[m.source] || ""].filter(Boolean).join(" · ");
+    const live = ["recording", "starting", "loading", "finishing"].includes(m.state);
+    const open = h("button", { class: "open", type: "button", onclick: () => viewMeeting(m.id) }, h("div", { class: "t", text: meetingTitle(m) + (live ? " · recording" : "") }), h("div", { class: "m", text: meta }));
+    const rm = h("button", { class: "icon", type: "button", title: "Delete", "aria-label": "Delete this meeting" }); rm.append(svgEl(ICON.trash));
+    rm.disabled = live;
+    rm.onclick = async () => {
+      if (!(await confirmBox("Delete this meeting?", "Its recording and transcript are deleted from this Mac. A copy saved to your Meetings page in Canopy stays there.", "Delete"))) return;
+      await api(`/api/meetings/${encodeURIComponent(m.id)}`, { method: "DELETE" }); loadPast();
+    };
+    list.append(h("li", {}, h("div", { class: "grow" }, open), live ? null : rm));
+  }
+}
+async function viewMeeting(id) {
+  const { ok, data } = await api(`/api/meetings/${encodeURIComponent(id)}`); if (!ok) return;
+  $("vTitle").textContent = meetingTitle(data);
+  $("vMeta").textContent = `${utc(data.datetime).toLocaleString()} · ${clock(data.heard_seconds || 0)} · ${(data.speakers || []).length} speakers`;
+  const box = $("vTranscript"); box.textContent = "";
+  const saved = new Map(S.speakers); S.speakers = new Map((data.speakers || []).map((s) => [s.number, s.name]));
+  if (!(data.segments || []).length) box.append(h("div", { class: "empty", text: "No words were transcribed." }));
+  appendSegments(box, data.segments || [], data.id, false, { lastTurn: null, lastSpeaker: null });
+  S.speakers = saved;
+  $("viewDlg").showModal();
+}
+
+loadStatus().then(syncStart); loadPhones(); loadPast(); poll();
+setInterval(loadStatus, 60000);
+</script>
+</body>
+</html>

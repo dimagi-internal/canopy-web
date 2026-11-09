@@ -88,9 +88,94 @@ class FileSource:
         self._stop.set()
 
 
-def _speakers(segments: list) -> list:
+class RelayRefusedError(Exception):
+    """`canopy-listen serve` doesn't know the input. Its argument is a reason code."""
+
+
+class RelaySource:
+    """Audio that `canopy-listen serve` relays from elsewhere on this Mac: a browser tab, the
+    browser's microphone, or a paired phone (decrypted by serve; it never leaves the Mac).
+    Serve sends int16 PCM frames, length-prefixed, and a zero-length frame when the input ends."""
+
+    def __init__(self, input_id: str, name: str = "relay", path=None):
+        self.input_id, self.name = input_id, name
+        self.path = path
+        self.chunks: queue.Queue = queue.Queue()
+        self.done = threading.Event()
+        self.sock = None
+
+    def start(self) -> None:
+        import json
+        import socket
+
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(10)
+        sock.connect(str(self.path or store.socket_path()))
+        sock.sendall(json.dumps({"op": "audio", "input": self.input_id}).encode() + b"\n")
+        line = b""
+        while not line.endswith(b"\n"):
+            got = sock.recv(1)
+            if not got:
+                break
+            line += got
+        answer = json.loads(line or b"{}")
+        if not answer.get("ok"):
+            sock.close()
+            raise RelayRefusedError(str(answer.get("reason") or "refused"))
+        sock.settimeout(None)
+        self.sock = sock
+        threading.Thread(target=self._read, daemon=True).start()
+
+    def _read(self) -> None:
+        import struct
+
+        try:
+            while True:
+                head = self._exactly(4)
+                if head is None:
+                    break
+                (size,) = struct.unpack(">I", head)
+                if size == 0:
+                    break
+                body = self._exactly(size)
+                if body is None:
+                    break
+                usable = len(body) - len(body) % 2
+                self.chunks.put(np.frombuffer(body[:usable], dtype="<i2").astype(np.float32) / 32768.0)
+        except OSError:
+            pass
+        finally:
+            self.done.set()
+
+    def _exactly(self, n: int) -> bytes | None:
+        buf = b""
+        while len(buf) < n:
+            got = self.sock.recv(n - len(buf))
+            if not got:
+                return None
+            buf += got
+        return buf
+
+    def stop(self) -> None:
+        if self.sock is not None:
+            try:
+                self.sock.close()
+            except OSError:
+                pass
+
+
+def _speakers(segments: list, previous: list | None = None, names: dict | None = None) -> list:
+    """Everyone heard so far. A name the person gave (in names.json, or already on a speaker)
+    stays when the list is recomputed; everyone else is "Speaker N"."""
+    known = {s["number"]: s["name"] for s in previous or []
+             if s.get("name") and s["name"] != f"Speaker {s['number'] + 1}"}
+    known.update(names or {})
     numbers = sorted({s["speaker"] for s in segments})
-    return [{"name": f"Speaker {n + 1}", "number": n} for n in numbers]
+    return [{"name": known.get(n) or f"Speaker {n + 1}", "number": n} for n in numbers]
+
+
+def _name_speakers(meeting: dict) -> None:
+    meeting["speakers"] = _speakers(meeting["segments"], meeting.get("speakers"), store.names(meeting["id"]))
 
 
 def _transcript(meeting: dict) -> str:
@@ -143,6 +228,7 @@ def record(meeting_id: str, source, *, recognise=None, embed=None, keep_audio: b
             ended = source.done.is_set() and source.chunks.empty()
             if time.monotonic() >= next_step or ended:
                 _add(meeting, live.step())
+                _name_speakers(meeting)  # a rename reaches meeting.json within a step
                 meeting["heard_seconds"] = round(live.heard, 1)
                 store.save(meeting)
                 next_step = time.monotonic() + STEP_SECONDS
@@ -158,6 +244,7 @@ def record(meeting_id: str, source, *, recognise=None, embed=None, keep_audio: b
             writer = None
             _final_pass(meeting, chosen.get("final", "none"))
         meeting["state"] = "ended"
+        _name_speakers(meeting)
         meeting["transcript"] = _transcript(meeting)
         meeting["summary"] = meeting["summary"] or "Recording ended."
         store.save(meeting)
@@ -190,7 +277,8 @@ def _final_pass(meeting: dict, name: str) -> None:
 
         audio = read_audio(str(store.meeting_dir(meeting["id"]) / "audio.wav"))
         meeting["segments"] = engines.relabel(meeting["segments"], engines.final_turns(name, audio))
-        meeting["speakers"] = _speakers(meeting["segments"])
+        # Relabelling can renumber people, so a name given live is kept only where it was set by number.
+        _name_speakers(meeting)
         meeting["relabelled_by"] = name
     except Exception as exc:  # noqa: BLE001 — the live labels stand
         meeting["final_error"] = type(exc).__name__
@@ -202,7 +290,7 @@ def _add(meeting: dict, segments: list) -> None:
         return
     meeting["segments"].extend({"text": s.text, "start": s.start, "end": s.end, "speaker": s.speaker, "words": []}
                                for s in segments)
-    meeting["speakers"] = _speakers(meeting["segments"])
+    _name_speakers(meeting)
 
 
 def pid_of(meeting_id: str) -> int | None:

@@ -20,6 +20,9 @@ mac = [
     "sherpa-onnx>=1.12",
     "sounddevice>=0.5",
     "soundfile>=0.12",
+    # `canopy-listen serve`'s local page: HTTP and WebSockets in one small, pure-asyncio
+    # dependency. Serve's logic doesn't import it, so the relay is tested without it.
+    "aiohttp>=3.9,<4",
 ]
 
 [project.scripts]

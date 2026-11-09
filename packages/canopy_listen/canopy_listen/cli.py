@@ -12,6 +12,8 @@
   canopy-listen bench DIR [--asr a,b|all] [--speakers x,y|all] [--final x,y|all]
   canopy-listen bench-data DIR                    build a test set from published recordings
   canopy-listen queue-file AUDIO [--speed N]   for testing: the next start plays AUDIO
+  canopy-listen serve [--detach] [--port 7351]    the local page (http://127.0.0.1:7351) and the relay
+                                                  for a browser tab or a paired phone
 
 `meetings` and `meetings read` print what Superwhisper's command-line tool prints, so
 anything that follows a Superwhisper meeting can follow one of these.
@@ -29,9 +31,10 @@ import time
 from pathlib import Path
 
 from . import store
-from .recorder import FileSource, MicSource, pid_of, record
+from .recorder import FileSource, MicSource, RelaySource, pid_of, record
 
 START_TIMEOUT_SECONDS = 180  # the first start downloads the models
+RELAY_SOURCES = ("phone", "browser-tab", "browser-mic")
 
 
 def _print(args, data, human: str) -> None:
@@ -44,20 +47,35 @@ def cmd_start(args) -> int:
         _print(args, {"id": current, "state": "recording", "already": True}, f"Already recording {current}")
         return 0
     queued = store.home() / "next-input.json"
+    relay, source = None, "file" if args.file else "microphone"
     if not args.file and queued.exists():
-        # For testing a whole app end to end: the next start plays this file instead of the
-        # microphone, once. `canopy-listen queue-file` writes it.
+        # The next start, once, records something other than the microphone:
+        #   {"relay": id, "source": ...}: audio `canopy-listen serve` relays (a browser tab, the
+        #     browser's microphone, a paired phone), queued by serve before it starts the app;
+        #   {"file": path, "speed": n}: a file played in, for testing (`canopy-listen queue-file`).
         try:
             spec = json.loads(queued.read_text())
-            args.file, args.speed = spec["file"], float(spec.get("speed", 1.0))
+            if spec.get("relay"):
+                relay = str(spec["relay"])
+                source = spec.get("source") if spec.get("source") in RELAY_SOURCES else "relay"
+            else:
+                args.file, args.speed = spec["file"], float(spec.get("speed", 1.0))
+                source = "file"
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
         finally:
             queued.unlink(missing_ok=True)
     if args.file and not os.path.exists(args.file):
         print("no such audio file", file=sys.stderr)
         return 2
-    meeting = store.new_meeting(args.title or "", "file" if args.file else "microphone")
+    meeting = store.new_meeting(args.title or "", source)
+    if relay:
+        meeting["input"] = relay
+        store.save(meeting)
     cmd = [sys.executable, "-m", "canopy_listen", "_record", meeting["id"]]
-    if args.file:
+    if relay:
+        cmd += ["--relay", relay, "--source", source]
+    elif args.file:
         cmd += ["--file", os.path.abspath(args.file), "--speed", str(args.speed)]
     log = open(store.meeting_dir(meeting["id"]) / "recorder.log", "ab")
     subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True, close_fds=True)
@@ -238,8 +256,19 @@ def cmd_turns(args) -> int:
 
 def cmd_record(args) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    source = FileSource(args.file, args.speed) if args.file else MicSource()
+    if args.relay:
+        source = RelaySource(args.relay, args.source or "relay")
+    else:
+        source = FileSource(args.file, args.speed) if args.file else MicSource()
     return record(args.id, source)
+
+
+def cmd_serve(args) -> int:
+    from . import serve
+
+    if args.detach:
+        return serve.detach(args.port)
+    return serve.run(args.port)
 
 
 def parser() -> argparse.ArgumentParser:
@@ -297,7 +326,13 @@ def parser() -> argparse.ArgumentParser:
     r.add_argument("id")
     r.add_argument("--file")
     r.add_argument("--speed", type=float, default=1.0)
+    r.add_argument("--relay")
+    r.add_argument("--source")
     r.set_defaults(func=cmd_record)
+    sv = sub.add_parser("serve", help="the local page, and the relay for a browser tab or a paired phone")
+    sv.add_argument("--port", type=int, default=7351)
+    sv.add_argument("--detach", action="store_true", help="start it in the background if it isn't running")
+    sv.set_defaults(func=cmd_serve)
     return p
 
 
