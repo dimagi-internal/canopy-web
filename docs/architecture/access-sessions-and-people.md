@@ -25,7 +25,7 @@ their own people (`tenancy-sensitive-conversations.md` § Sensitive conversation
 
 | Where it happened | Who sees it (read + write unless noted) | Who may pull from the machine |
 |---|---|---|
-| **Laptop** (a runner-discovered session) | the box's owner (`Runner.owner`), + people they add, + a project's team if they shared that project's repo with it before that was retired (`ProjectSessionShare`, per person × project, `/api/me/session-sharing/` — they may stop it, nobody may start one: the team is the project's participants, which canopy adds by itself); the box's runner admins read only (to move it off the box) | the box owner, + people they add as editor, + that project's team |
+| **Laptop** (a runner-discovered session) | the box's owner (`Runner.owner`), + people they add; the box's runner admins read only (to move it off the box) | the box owner, + people they add as editor |
 | **Web chat** | its creator + people they add | the same |
 | **Email** | everyone on the thread who is a verified member (§ Who is in a session) | the agent's admins, + the thread's people |
 | **Slack** | everyone in the Slack channel (a DM: its people), read + write, as in Slack | the agent's admins, + the channel's people |

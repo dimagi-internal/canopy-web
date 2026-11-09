@@ -264,7 +264,6 @@ def test_refused_on_a_personal_project(w):
                   content_type=J).status_code == 422
     assert c.post("/api/dynamic-views/", {"workspace": "acme", "project": "secret-plan", "slug": "v", "title": "V",
                                           "code": "function View(){}"}, content_type=J).status_code == 422
-    assert c.put(f"/api/session-sharing/{w['project'].pk}", {"shared": True}, content_type=J).status_code == 404
     with pytest.raises(ZkError):
         workspace_vaults.attach(Vault.objects.create(workspace=w["ws"], name="v", kind=Vault.WORKSPACE),
                                 project=w["project"], by=w["me"])
