@@ -13,6 +13,9 @@ dependencies = [
 # still imports and its logic is testable anywhere (CI is Linux).
 mac = [
     "parakeet-mlx>=0.7,<0.8",
+    "mlx-audio>=0.6.4,<0.7",  # Qwen3-ASR, Granite, Cohere; Sortformer
+    "mlx-whisper>=0.4.3,<0.5",
+    "pyarrow>=15",  # bench-data reads LibriSpeech's parquet
     "sherpa-onnx>=1.12",
     "sounddevice>=0.5",
     "soundfile>=0.12",

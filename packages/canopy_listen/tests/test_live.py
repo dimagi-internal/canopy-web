@@ -103,3 +103,63 @@ def test_segments_carry_meeting_time_and_speaker():
     second = t.step()
     assert [(s.text, s.speaker) for s in first + second] == [("from alice", 0), ("from bob", 1)]
     assert second[0].start == 2.2
+
+
+# --- by pause: for models that return text with no timings ---------------------------
+
+from canopy_listen.live import TimelineLabeller  # noqa: E402
+
+
+class TextOnly:
+    """Returns what was handed to it as one untimed utterance, and counts the calls."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, chunk):
+        self.calls.append(len(chunk) / SAMPLE_RATE)
+        return [Sentence(f"utterance {len(self.calls)}", 0.0, len(chunk) / SAMPLE_RATE)]
+
+
+def silence(seconds):
+    return audio(seconds, level=0.0)
+
+
+def test_text_only_models_are_read_once_per_utterance_at_each_pause():
+    rec = TextOnly()
+    t = LiveTranscriber(rec, timed=False)
+    t.feed(np.concatenate([audio(2.0), silence(0.3), audio(1.0)]))  # a 0.3 s gap is not a pause
+    assert t.step() == []
+    t.feed(silence(0.8))
+    first = t.step()
+    assert [s.text for s in first] == ["utterance 1"] and len(rec.calls) == 1
+    assert 3.3 <= rec.calls[0] <= 3.6  # both bursts, cut inside the pause
+    t.feed(np.concatenate([audio(1.5), silence(0.6)]))
+    second = t.step()
+    assert [s.text for s in second] == ["utterance 2"] and second[0].start >= first[0].end
+
+
+def test_talking_without_a_pause_is_cut_at_the_quietest_moment():
+    rec = TextOnly()
+    t = LiveTranscriber(rec, timed=False, max_window=10.0)
+    speech = np.concatenate([audio(6.0), audio(0.3, level=0.01), audio(6.0)])  # a dip, not a pause
+    t.feed(speech)
+    out = t.step()
+    assert len(out) == 1 and 5.9 <= rec.calls[0] <= 6.5
+
+
+def test_a_noisy_room_still_has_pauses():
+    rec = TextOnly()
+    t = LiveTranscriber(rec, timed=False)
+    t.feed(np.concatenate([audio(2.0, 0.2), audio(1.0, 0.02), audio(2.0, 0.2), audio(1.0, 0.02)]))
+    assert [s.text for s in t.step()] == ["utterance 1"]
+
+
+def test_a_diarization_timeline_names_each_segment_by_who_spoke_most_of_it():
+    timeline = [[(0.0, 2.0, 1), (2.0, 5.0, 0)]]
+    labeller = TimelineLabeller(lambda samples: timeline.pop() if timeline else [])
+    t = LiveTranscriber(TextOnly(), timed=False, labeller=labeller)
+    t.feed(np.concatenate([audio(1.8), silence(0.7)]))
+    assert t.step()[0].speaker == 1
+    t.feed(np.concatenate([audio(2.0), silence(0.7)]))
+    assert t.step()[0].speaker == 0

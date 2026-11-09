@@ -98,7 +98,8 @@ def _transcript(meeting: dict) -> str:
     return "\n".join(f"{names.get(s['speaker'], 'Speaker')}: {s['text']}" for s in meeting["segments"])
 
 
-def record(meeting_id: str, source, *, recognise=None, embed=None, keep_audio: bool = True) -> int:
+def record(meeting_id: str, source, *, recognise=None, embed=None, keep_audio: bool = True,
+           settings: dict | None = None) -> int:
     meeting = store.load(meeting_id)
     if meeting is None:
         return 1
@@ -111,11 +112,16 @@ def record(meeting_id: str, source, *, recognise=None, embed=None, keep_audio: b
     try:
         meeting["state"] = "loading"
         store.save(meeting)
+        chosen = settings or {}
+        labeller = None
         if recognise is None:
-            from .models import Recogniser, VoiceEmbedder
+            from . import config, engines
 
-            recognise, embed = Recogniser(), VoiceEmbedder()
-        live = LiveTranscriber(recognise, embed)
+            chosen = settings or config.load()
+            recognise = engines.Recogniser(chosen["asr"], chosen.get("language", "en"))
+            labeller = engines.make_labeller(chosen["speakers"], chosen.get("same_voice", 0.66))
+        meeting["engine"] = {k: chosen[k] for k in ("asr", "speakers", "final") if k in chosen}
+        live = LiveTranscriber(recognise, embed, labeller=labeller, timed=getattr(recognise, "timed", True))
         if keep_audio:
             import soundfile as sf
 
@@ -147,6 +153,10 @@ def record(meeting_id: str, source, *, recognise=None, embed=None, keep_audio: b
             live.feed(source.chunks.get_nowait())
         _add(meeting, live.step(final=True))
         meeting["heard_seconds"] = round(live.heard, 1)
+        if writer is not None:
+            writer.close()
+            writer = None
+            _final_pass(meeting, chosen.get("final", "none"))
         meeting["state"] = "ended"
         meeting["transcript"] = _transcript(meeting)
         meeting["summary"] = meeting["summary"] or "Recording ended."
@@ -167,6 +177,24 @@ def record(meeting_id: str, source, *, recognise=None, embed=None, keep_audio: b
         if store.active() == meeting_id:
             store.set_active(None)
         (store.meeting_dir(meeting_id) / "pid").unlink(missing_ok=True)
+
+
+def _final_pass(meeting: dict, name: str) -> None:
+    """Who spoke, decided again over the whole recording. A failure keeps the live labels."""
+    if name == "none" or not meeting["segments"]:
+        return
+    meeting["state"] = "finishing"
+    store.save(meeting)
+    try:
+        from . import engines
+
+        audio = read_audio(str(store.meeting_dir(meeting["id"]) / "audio.wav"))
+        meeting["segments"] = engines.relabel(meeting["segments"], engines.final_turns(name, audio))
+        meeting["speakers"] = _speakers(meeting["segments"])
+        meeting["relabelled_by"] = name
+    except Exception as exc:  # noqa: BLE001 — the live labels stand
+        meeting["final_error"] = type(exc).__name__
+        log.exception("final pass %s failed for %s", name, meeting["id"])
 
 
 def _add(meeting: dict, segments: list) -> None:
