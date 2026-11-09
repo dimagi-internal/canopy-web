@@ -486,6 +486,21 @@ def _cmd_stop(args) -> int:
     return 0
 
 
+def _cmd_end(args) -> int:
+    """End the meeting a run is recording, and keep it: unlike stop, the run finishes the way a
+    meeting that ends by itself does. Never uses the network."""
+    if not state.host_alive(args.key):
+        print(f"{args.key}: not running")
+        return 1
+    try:
+        os.kill(int(state.read_json(state.run_file(args.key)).get("pid")), signal.SIGUSR1)
+    except (OSError, ValueError, TypeError):
+        print(f"{args.key}: could not reach it")
+        return 1
+    print(f"{args.key}: ending")
+    return 0
+
+
 # --- building ----------------------------------------------------------------------
 
 
@@ -559,7 +574,7 @@ def _cmd_remove(args) -> int:
 
 COMMANDS = {
     "list": _cmd_list, "check": _cmd_check, "start": _cmd_start, "status": _cmd_status,
-    "stop": _cmd_stop, "pack": _cmd_pack, "submit": _cmd_submit,
+    "stop": _cmd_stop, "end": _cmd_end, "pack": _cmd_pack, "submit": _cmd_submit,
     "dev-install": _cmd_dev_install, "remove": _cmd_remove,
 }
 

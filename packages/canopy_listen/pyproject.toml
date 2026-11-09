@@ -1,0 +1,33 @@
+[project]
+name = "canopy-listen"
+version = "0.1.0"
+description = "Record a meeting on this Mac and transcribe it here, live, with open models (Parakeet v3 for words, TitaNet for voices)."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+# The models and the microphone: macOS on Apple Silicon only. Without them the package
+# still imports and its logic is testable anywhere (CI is Linux).
+mac = [
+    "parakeet-mlx>=0.7,<0.8",
+    "sherpa-onnx>=1.12",
+    "sounddevice>=0.5",
+    "soundfile>=0.12",
+]
+
+[project.scripts]
+canopy-listen = "canopy_listen.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["canopy_listen"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

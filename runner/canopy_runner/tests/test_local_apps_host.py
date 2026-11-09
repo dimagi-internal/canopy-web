@@ -570,7 +570,7 @@ def test_the_real_apps_run_end_to_end_with_nothing_leaving_and_nothing_logged(tm
                                cwd=str(app_dir), settings={"brief": "be brief"}),
         source=host_mod.ChildSpec(key="meeting-assistant", version="0.1.0",
                                   entry=["{python}", "source.py"], cwd=str(app_dir),
-                                  settings={"from_start": True}))
+                                  settings={"from_start": True, "recorder": "superwhisper"}))
     host = host_mod.Host(spec, server_mod.StubLink("meeting-assistant"), host_mod.Limits(tick=0.02))
     reason = host.run()
     assert reason == "meeting_ended"

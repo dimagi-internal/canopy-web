@@ -22,7 +22,7 @@ def _load():
 
 
 m = _load()
-NOW = dt.datetime(2026, 11, 3, 21, 40, tzinfo=dt.timezone.utc)
+NOW = dt.datetime(2026, 11, 3, 21, 40, tzinfo=dt.UTC)
 
 
 def seg(text, start, speaker=0):
@@ -158,7 +158,7 @@ def _run_source(tmp_path, bin_dir, lines):
 
 def test_as_a_program_it_refuses_with_a_code_and_prints_only_protocol(tmp_path):
     bin_dir = _fake_cli(tmp_path, [], {})
-    done = _run_source(tmp_path, bin_dir, [{"type": "start", "settings": {}, "run_id": "r"}])
+    done = _run_source(tmp_path, bin_dir, [{"type": "start", "settings": {"recorder": "superwhisper"}, "run_id": "r"}])
     assert done.returncode == 0
     # Stdin closing (the host gone) ends the wait at once, with a code and no words.
     assert [json.loads(x) for x in done.stdout.splitlines()] == [
@@ -221,3 +221,89 @@ def test_it_never_tells_superwhisper_to_do_anything():
 def test_without_a_wait_it_still_refuses_a_missing_meeting():
     with pytest.raises(m.Refused, match="no_meeting"):
         m.attach({}, list_meetings=lambda: [], read_meeting=lambda _id: None, now=NOW)
+
+
+# --- canopy-listen: records on this Mac, so Start starts it and leaving always stops it ---
+
+FAKE_LISTEN = """#!{python}
+import json, os, sys
+home = os.environ["HOME"]
+log = open(os.path.join(home, "calls"), "a")
+log.write(" ".join(sys.argv[1:]) + "\\n")
+args = sys.argv[1:]
+if args[0] == "start":
+    print(json.dumps({{"id": "m1", "state": {state!r}}}))
+elif args[0] == "stop":
+    open(os.path.join(home, "stopped"), "w").write("yes")
+    print(json.dumps({{"stopped": True}}))
+elif args[:2] == ["meetings", "read"]:
+    ended = os.path.exists(os.path.join(home, "stopped")) or os.path.exists(os.path.join(home, "end-now"))
+    print(json.dumps({{"segments": [{{"text": "hello", "start": 0.0, "end": 1.0, "speaker": 0, "words": []}}],
+                      "speakers": [{{"name": "Speaker 1", "number": 0}}],
+                      "summary": "Recording ended." if ended else "", "transcript": ""}}))
+"""
+
+
+def _listen_cli(tmp_path, state="recording"):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    path = bin_dir / "canopy-listen"
+    path.write_text(FAKE_LISTEN.format(python=sys.executable, state=state))
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+    return bin_dir
+
+
+def _calls(tmp_path):
+    return (tmp_path / "calls").read_text().splitlines()
+
+
+def test_canopy_listen_is_the_default_and_start_starts_it_from_the_first_word():
+    steps = []
+    (read, cursor), meeting_id = m.start_listening(step=steps.append, start=lambda: {"id": "m1", "state": "recording"})
+    assert steps == ["starting_recording", "recording"] and cursor == 0.0 and meeting_id == "m1"
+    assert m.recorder_of({}) == "canopy-listen" and m.recorder_of({"recorder": " Superwhisper "}) == "superwhisper"
+    with pytest.raises(m.Refused, match="recording_did_not_start"):
+        m.start_listening(start=lambda: {"id": "m1", "state": "failed"})
+    with pytest.raises(m.Refused, match="recording_did_not_start"):
+        m.start_listening(start=lambda: None)
+
+
+def test_a_meeting_it_recorded_is_followed_to_its_end_and_the_microphone_is_released(tmp_path):
+    bin_dir = _listen_cli(tmp_path)
+    (tmp_path / "end-now").write_text("yes")  # the person pressed End meeting
+    # The host keeps stdin open while a run is live; closing it means "stop".
+    proc = subprocess.Popen([sys.executable, str(SOURCE)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+                            env={"PATH": str(bin_dir), "HOME": str(tmp_path)})
+    proc.stdin.write(json.dumps({"type": "start", "settings": {}, "run_id": "r"}) + "\n")
+    proc.stdin.flush()
+    out = []
+    for line in proc.stdout:
+        out.append(json.loads(line))
+        if out[-1]["type"] == "stopped":
+            break
+    proc.stdin.close()
+    proc.wait(timeout=10)
+    assert [o.get("name") or o["type"] for o in out] == [
+        "starting_recording", "recording", "segment", "ended", "stopped"]
+    assert out[-1]["reason"] == "finished"
+    assert _calls(tmp_path)[0].startswith("start")
+    assert "stop --json" not in _calls(tmp_path)  # it ended by itself: nothing left to stop
+
+
+def test_leaving_early_always_stops_the_recording(tmp_path):
+    bin_dir = _listen_cli(tmp_path)
+    # Stdin closes at once (the host is gone), before the meeting ends.
+    done = _run_source(tmp_path, bin_dir, [{"type": "start", "settings": {}, "run_id": "r"}])
+    assert json.loads(done.stdout.splitlines()[-1]) == {"type": "stopped", "reason": "stopped"}
+    assert "stop --json" in _calls(tmp_path)
+
+
+def test_a_recording_that_did_not_start_says_so(tmp_path):
+    bin_dir = _listen_cli(tmp_path, state="failed")
+    done = _run_source(tmp_path, bin_dir, [{"type": "start", "settings": {}, "run_id": "r"}])
+    assert json.loads(done.stdout.splitlines()[-1]) == {"type": "stopped", "reason": "recording_did_not_start"}
+
+
+def test_an_unknown_recorder_is_refused_by_name(tmp_path):
+    done = _run_source(tmp_path, tmp_path, [{"type": "start", "settings": {"recorder": "otter"}, "run_id": "r"}])
+    assert json.loads(done.stdout.splitlines()[-1]) == {"type": "stopped", "reason": "unknown_recorder"}

@@ -280,6 +280,13 @@ jobs:
         working-directory: packages/canopy_transcript
         run: uv run --with pytest pytest -q
 
+      # canopy_listen records and transcribes meetings on a Mac. Its models only run on
+      # Apple Silicon, so CI runs the logic that decides when words are final, whose they
+      # are, and what lands on disk, with a fake recogniser (numpy only).
+      - name: Run canopy_listen tests
+        working-directory: packages/canopy_listen
+        run: uv run --with pytest pytest -q
+
       # canopy_acp is the ACP client the CLOUD runner executes turns through.
       # Its reducer is the piece that cannot be eyeballed: ACP's tool_call_update
       # is a sparse PATCH, so a merge bug renders half-empty tool calls rather

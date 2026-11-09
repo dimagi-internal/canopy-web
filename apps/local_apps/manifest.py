@@ -115,11 +115,12 @@ def _checks(raw) -> list[dict]:
 
 def _presentation(raw) -> dict:
     """How the menu bar and the app page show the app: copy only, so not part of the trust
-    surface. `steps` may say {agent}, filled with the agent the person chose."""
+    surface. `steps` may say {agent}, filled with the agent the person chose. `end` labels a
+    button that ends the meeting and keeps it, for an app whose source records it."""
     if raw in (None, ""):
-        return {"uses": "", "steps": [], "states": {}}
-    if not isinstance(raw, dict) or set(raw) - {"uses", "steps", "states"}:
-        _fail("presentation", "must be {uses, steps, states}")
+        return {"uses": "", "steps": [], "states": {}, "end": ""}
+    if not isinstance(raw, dict) or set(raw) - {"uses", "steps", "states", "end"}:
+        _fail("presentation", "must be {uses, steps, states, end}")
     states = raw.get("states") or {}
     if not isinstance(states, dict) or len(states) > 40:
         _fail("presentation.states", "must be an object of at most 40 states")
@@ -128,11 +129,14 @@ def _presentation(raw) -> dict:
             _fail(f"presentation.states.{name}", "must be a state name")
         if not isinstance(text, str) or not text.strip() or len(text) > 200:
             _fail(f"presentation.states.{name}", "must be non-empty text of at most 200 characters")
-    uses = raw.get("uses", "")
+    uses, end = raw.get("uses", ""), raw.get("end", "")
     if not isinstance(uses, str) or len(uses) > 40:
         _fail("presentation.uses", "must be text of at most 40 characters")
+    if not isinstance(end, str) or len(end) > 24:
+        _fail("presentation.end", "must be text of at most 24 characters")
     return {
         "uses": uses.strip(),
+        "end": end.strip(),
         "steps": _strings("presentation.steps", raw.get("steps"), limit=140, max_items=4),
         "states": {str(k): v.strip() for k, v in states.items()},
     }

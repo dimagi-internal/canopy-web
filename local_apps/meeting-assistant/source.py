@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
-"""A transcript source: follow one live Superwhisper meeting and emit its segments.
+"""A transcript source: follow one live meeting and emit its segments.
 
-Everything specific to Superwhisper lives here, so a meeting app doesn't know or care
-where its words come from.
+Two recorders, chosen by the `recorder` setting, and everything specific to them lives
+here, so the meeting app doesn't know or care where its words come from:
+
+  * canopy-listen (the default) records and transcribes on this Mac with open models.
+    Start starts it, and this always stops it on the way out, so the microphone is never
+    left on. `--end` ends its meeting, which the run then saves.
+  * superwhisper, the rules below.
 
   * ONE MEETING, AND A LIVE ONE. A Superwhisper meeting runs until someone ends it, so an
     old one may still be open, and attaching to it would pass off a past conversation as
@@ -40,6 +45,9 @@ CLI_TIMEOUT_SECONDS = 20
 #: How long Start waits for the person to start a meeting in Superwhisper.
 WAIT_FOR_MEETING_SECONDS = 540.0  # under the app's 10-minute silence stop, so the reason shown is this one
 CONTROL_TIMEOUT_SECONDS = 5
+#: The other recorder: canopy-listen, which records and transcribes on this Mac.
+LISTEN = "canopy-listen"
+LISTEN_START_SECONDS = 240  # its first start downloads the models
 
 class Refused(Exception):
     """Why this source can't attach. Its argument is a short reason code, never content."""
@@ -68,6 +76,43 @@ def tool_is_set_up() -> bool:
                               timeout=CLI_TIMEOUT_SECONDS).returncode == 0
     except (OSError, subprocess.SubprocessError):
         return False
+
+
+def listen_path() -> str:
+    return shutil.which(LISTEN) or str(Path.home() / ".local/bin" / LISTEN)
+
+
+def run_listen(*args: str, timeout: float = CLI_TIMEOUT_SECONDS):
+    """Parsed JSON from canopy-listen, or None. Its output holds words too, so it is never shown."""
+    try:
+        res = subprocess.run([listen_path(), *args, "--json"], capture_output=True, text=True, timeout=timeout,
+                             stdin=subprocess.DEVNULL)
+        return json.loads(res.stdout) if res.returncode == 0 else None
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def listen_is_set_up() -> bool:
+    try:
+        return subprocess.run([listen_path(), "status", "--json"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL, timeout=CLI_TIMEOUT_SECONDS).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def start_listening(*, step=lambda name: None, start=None) -> tuple:
+    """canopy-listen records on this Mac, so Start starts it: ((read, cursor), meeting id), or Refused."""
+    step("starting_recording")
+    got = (start or (lambda: run_listen("start", "--title", "Meeting", timeout=LISTEN_START_SECONDS)))()
+    if not isinstance(got, dict) or got.get("state") != "recording" or not got.get("id"):
+        raise Refused("recording_did_not_start")
+    meeting_id = str(got["id"])
+    step("recording")
+    return (lambda: run_listen("meetings", "read", meeting_id, "--transcript"), 0.0), meeting_id
+
+
+def recorder_of(settings: dict) -> str:
+    return str(settings.get("recorder") or LISTEN).strip().lower()
 
 
 def app_is_open() -> bool:
@@ -207,12 +252,14 @@ def wait_for_start() -> dict:
     raise SystemExit(0)
 
 
-def watch_for_stop(stop: threading.Event) -> None:
+def watch_for_stop(stop: threading.Event, end: threading.Event | None = None) -> None:
     for line in sys.stdin:
         try:
             message = json.loads(line)
         except ValueError:
             continue
+        if isinstance(message, dict) and message.get("type") == "end" and end is not None:
+            end.set()  # the person ended the meeting: finish it, and keep what was said
         if isinstance(message, dict) and message.get("type") == "stop":
             break
     # Stdin closing means the host is gone, and nobody is left to tell us to stop.
@@ -221,32 +268,50 @@ def watch_for_stop(stop: threading.Event) -> None:
 
 def main(argv=None) -> int:
     argv = sys.argv[1:] if argv is None else argv
+    # Checks get no settings, so each passes if either recorder is ready.
     if argv == ["--check"]:
-        return 0 if tool_is_set_up() else 1
+        return 0 if listen_is_set_up() or tool_is_set_up() else 1
     if argv == ["--check-open"]:
-        return 0 if app_is_open() else 1
+        return 0 if listen_is_set_up() or app_is_open() else 1
+    if argv == ["--end"]:  # end the meeting canopy-listen is recording; the run then saves it
+        return 0 if run_listen("stop", timeout=90) is not None else 1
     settings = wait_for_start()
-    stop = threading.Event()
-    threading.Thread(target=watch_for_stop, args=(stop,), daemon=True).start()
-    follower = None
+    stop, end = threading.Event(), threading.Event()
+    threading.Thread(target=watch_for_stop, args=(stop, end), daemon=True).start()
+    step = lambda name: emit_line({"type": "event", "name": name, "fields": {}})  # noqa: E731
+    recorder = recorder_of(settings)
+    follower, recording = None, None
     try:
-        read, start_after = attach(
-            settings,
-            list_meetings=lambda: run_cli("meetings", "--limit", "1"),
-            read_meeting=lambda meeting_id: run_cli("meetings", "read", meeting_id, "--transcript"),
-            now=dt.datetime.now(dt.timezone.utc), wait=WAIT_FOR_MEETING_SECONDS,
-            sleep=lambda seconds: stop.wait(seconds),
-            step=lambda name: emit_line({"type": "event", "name": name, "fields": {}}))
+        if recorder == LISTEN:
+            (read, start_after), recording = start_listening(step=step)
+        elif recorder == "superwhisper":
+            read, start_after = attach(
+                settings,
+                list_meetings=lambda: run_cli("meetings", "--limit", "1"),
+                read_meeting=lambda meeting_id: run_cli("meetings", "read", meeting_id, "--transcript"),
+                now=dt.datetime.now(dt.timezone.utc), wait=WAIT_FOR_MEETING_SECONDS,
+                sleep=lambda seconds: stop.wait(seconds), step=step)
+        else:
+            raise Refused("unknown_recorder")
         follower = Follower(read, emit_line, start_after)
+        ending = False
         while not follower.finished and not stop.is_set():
+            if end.is_set() and recording and not ending:
+                ending = True
+                step("ending")
+                run_listen("stop", timeout=90)  # its last words and its end arrive on the next read
             follower.tick()
             if not follower.finished:
-                stop.wait(POLL_SECONDS)
+                (end if recording and not ending else stop).wait(POLL_SECONDS)
     except Refused as refusal:
         emit_line({"type": "stopped", "reason": str(refusal)})
         return 0
     except BrokenPipeError:
         return 0
+    finally:
+        # Never leave the microphone on: a recording this started ends when this does.
+        if recording and not (follower and follower.ended):
+            run_listen("stop", timeout=90)
     emit_line({"type": "stopped", "reason": "finished" if follower.finished else "stopped"})
     return 0
 
