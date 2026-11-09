@@ -93,7 +93,7 @@ dependencies = [
     # sides cannot disagree about what a manifest is. Editable path dep below.
     "canopy-runtime",
     "pywebpush>=2.3.0",
-    "canopy-agent-factory>=1.2,<2",  # 1.2: google_account, marketplace.json
+    "canopy-agent-factory>=1.3,<2",  # 1.3: scaffolds carry the current-state guard test, a test workflow and its CLAUDE.md line
     "pyyaml>=6.0.3",
     # apps/mail/sns.py verifies SNS message signatures (RSA over the cert SNS publishes).
     "cryptography>=42",
