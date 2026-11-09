@@ -2,8 +2,9 @@
 
 Every browser-facing address canopy-web serves. The SPA route table is
 `frontend/src/router.tsx` (`routeTable`); server-side pages are in
-`config/urls.py`. What each page is for is its descriptor in
-`frontend/src/guide/surfaces.ts`; what it shows is its component. API routes are
+`config/urls.py`. When to open each page is its one-line `use` in
+`frontend/src/guide/surfaces.ts`; what it shows and who may change it is its
+component and the server, never restated in a descriptor. API routes are
 in [`api-surface.md`](api-surface.md). This doc holds only the rules every page
 shares.
 
@@ -48,9 +49,11 @@ shares.
   `flat` if it is not under `/w/:workspace`, and `home` or `group` if no menu
   links it). Every route gets an error boundary
   automatically (`guarded()` in `router.tsx`); a route needing a different one
-  sets its own `errorElement`. A label or control you name in a descriptor
-  goes in double quotes (“Keep a copy in canopy”), and `guide/labels.test.tsx`
-  fails unless the page's source contains it, so new descriptors are covered.
+  sets its own `errorElement`. A descriptor holds `title` and a one-sentence
+  `use` (the situation, no contents, counts, routes or role gates:
+  `guide/surfaces.test.ts` fails on those); a label or control it quotes in
+  double quotes (“Keep a copy in canopy”) must be in the page's source
+  (`guide/labels.test.tsx`).
 - **One editor per object.** A core object people configure — an agent, a
   workspace's settings, a runner, a vault — has ONE page at ONE address, built
   from the shared kit in `frontend/src/components/objectPage/`: `ObjectPage`

@@ -24,7 +24,7 @@ import { normalise, pageFile, pageText, type Sources } from './pageSource'
  * THE CONVENTION (surfaces.ts): a literal on-screen label or control name is
  * written in double quotes — “Keep a copy in canopy” in curly quotes, or
  * \"update missing\" in straight ones — inside `title`, `audience`, `what`,
- * `needsFirst` or an `actions` entry. Unquoted words are description, not a
+ * `use`. Unquoted words are description, not a
  * promise about the page's text, and are not checked. So when you name a button
  * or a heading in a descriptor, quote it, and this test makes the page prove it.
  *
@@ -37,19 +37,7 @@ import { normalise, pageFile, pageText, type Sources } from './pageSource'
  * on a different page the descriptor points to: it is then checked there. An
  * entry that no descriptor quotes any more fails, so the list cannot rot.
  */
-const ALLOWED: Array<{ path: string; quote: string; reason: string; on?: string }> = [
-  {
-    path: '/w/:workspace/settings/roles',
-    quote: 'read + use the Connect site',
-    reason: 'an example of a role name an admin might define; it is data a workspace types in, not a label',
-  },
-  {
-    path: '/w/:workspace/mail',
-    quote: 'Keep a copy in canopy',
-    on: '/w/:workspace/settings/email',
-    reason: 'the checkbox that turns this inbox on is on the Email settings page, which the descriptor names',
-  },
-]
+const ALLOWED: Array<{ path: string; quote: string; reason: string; on?: string }> = []
 
 const raw = import.meta.glob('/src/**/*.{ts,tsx}', { query: '?raw', import: 'default', eager: true }) as Sources
 const sources: Sources = Object.fromEntries(
@@ -64,7 +52,7 @@ export function quotedLabels(text: string): string[] {
 }
 
 function stringsOf(s: SurfaceDescriptor): string[] {
-  return [s.title, s.audience, s.what, s.needsFirst ?? '', ...(s.actions ?? [])]
+  return [s.use]
 }
 
 function routesByPath(routes: RouteObject[], parent = '', out = new Map<string, RouteObject>()) {
@@ -92,9 +80,8 @@ describe('quotedLabels', () => {
 describe('guide descriptors quote only labels their page contains', () => {
   const quoted = SURFACES.flatMap((s) => stringsOf(s).flatMap((t) => quotedLabels(t).map((q) => ({ s, q }))))
 
-  it('finds the quotes and the pages (a floor, so the check cannot pass by finding nothing)', () => {
+  it('finds the pages (a floor, so the check cannot pass by finding nothing)', () => {
     expect(Object.keys(sources).length).toBeGreaterThan(300)
-    expect(quoted.length).toBeGreaterThanOrEqual(5)
     const placed = SURFACES.filter((s) => routes.has(s.path) && pageFile(routes.get(s.path)!, sources))
     expect(placed.length).toBeGreaterThan(SURFACES.length * 0.8)
   })

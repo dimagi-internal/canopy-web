@@ -34,8 +34,8 @@ export function GuidePage() {
     <div className="mx-auto max-w-4xl px-6 py-8">
       <h1 className="text-lg font-semibold text-foreground">Guide</h1>
       <p className="mt-2 text-[13px] leading-relaxed text-foreground-secondary">
-        What each part of Canopy is for. Generated from the app&apos;s own route table, so
-        it cannot quietly miss a page.
+        When to open each part of Canopy. Generated from the app&apos;s own route table, so
+        it cannot quietly miss a page; each page says for itself what it shows and does.
       </p>
 
       <Link
@@ -92,18 +92,7 @@ export function GuidePage() {
                   <h3 className="text-sm font-semibold text-foreground">{s.title}</h3>
                   <code className="shrink-0 text-[11px] text-foreground-subtle">{s.path}</code>
                 </div>
-                <p className="mt-1 text-[12px] text-muted-foreground">{s.audience}</p>
-                <p className="mt-2 text-[13px] leading-relaxed text-foreground-secondary">{s.what}</p>
-                {s.needsFirst ? (
-                  <p className="mt-2 text-[12px] text-warning">Needs first: {s.needsFirst}</p>
-                ) : null}
-                {s.actions?.length ? (
-                  <ul className="mt-2 list-disc space-y-0.5 pl-5 text-[12px] text-foreground-secondary">
-                    {s.actions.map((a) => (
-                      <li key={a}>{a}</li>
-                    ))}
-                  </ul>
-                ) : null}
+                <p className="mt-2 text-[13px] leading-relaxed text-foreground-secondary">{s.use}</p>
               </article>
             ))}
           </div>

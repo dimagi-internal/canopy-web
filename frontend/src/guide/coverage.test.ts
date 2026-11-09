@@ -43,8 +43,7 @@ describe('guide coverage', () => {
   it('gives every descriptor the fields the guide renders', () => {
     for (const s of SURFACES) {
       expect(s.title, `${s.path} has no title`).toBeTruthy()
-      expect(s.what, `${s.path} has no 'what'`).toBeTruthy()
-      expect(s.audience, `${s.path} has no audience`).toBeTruthy()
+      expect(s.use, `${s.path} has no use`).toBeTruthy()
     }
   })
 })
