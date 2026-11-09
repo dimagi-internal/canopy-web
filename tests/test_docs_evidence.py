@@ -26,7 +26,6 @@ token needs any more fails (stale): remove it.
 
 from __future__ import annotations
 
-import fnmatch
 import pathlib
 import re
 import subprocess
@@ -381,10 +380,15 @@ def _doc_tokens() -> list[tuple[str, int, str]]:
     return out
 
 
+def _matches(pattern: str, tok: str) -> bool:
+    """Only `*` is a wildcard (brackets and braces in a token are literal)."""
+    return re.fullmatch(".*".join(re.escape(part) for part in pattern.split("*")), tok) is not None
+
+
 def _ignored(tok: str, entries: list[tuple[str, str]]) -> str | None:
     t = tok.strip().rstrip(".,;:")
     for pat, _ in entries:
-        if fnmatch.fnmatchcase(t, pat) or fnmatch.fnmatchcase(tok, pat):
+        if _matches(pat, t) or _matches(pat, tok):
             return pat
     return None
 
@@ -410,7 +414,7 @@ def test_ignore_file_has_no_stale_entries(corpus):
     stale = []
     for pat, _ in entries:
         needed = any(
-            fnmatch.fnmatchcase(tok.strip().rstrip(".,;:"), pat) or fnmatch.fnmatchcase(tok, pat)
+            _matches(pat, tok.strip().rstrip(".,;:")) or _matches(pat, tok)
             for _, _, tok in tokens
             if check(tok, corpus)
         )
