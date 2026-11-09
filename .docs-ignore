@@ -6,10 +6,7 @@
 capability.yaml  # a file in each capability's own repository (the manifest canopy-web validates), not here
 infra/capabilities/android-emulator/capability.yaml  # a capability repository's manifest
 .canopy/jobs.yaml  # a file in an agent's own repository
-SKILL.md  # the skill file inside each agent repository
-skills/*/SKILL.md  # skill files live in each agent repository
 connect_labs/*  # the connect-labs repository
-kb_*  # tools of the canopy plugin's `projects` MCP server (canopy repository)
 HttpAgent  # the AG-UI client library
 strict_required_status_checks_policy  # GitHub's ruleset API field
 merge_queue  # GitHub's ruleset rule type
@@ -18,10 +15,7 @@ canopy-ui/chat/turnStatus.ts  # package-relative shorthand for frontend/packages
 _role_changed  # shorthand for the suffix of the participant_role_changed event name
 # --- Stale citations: the code no longer has these. Fix the doc (point at what exists, or drop the
 # --- claim), then delete the line. Added when this test was introduced; the doc triage removes them.
-_zk_admin  # no such helper
 api_credentials._zk_admin  # no such helper
-came_from  # no such field
-POST /api/me/connections/{provider}/token  # no such route
 scripts/test-worker-set.ts  # no such file
 tier2_securing  # no such identifier
 templates/contacts/hcp_consent.html  # no such template

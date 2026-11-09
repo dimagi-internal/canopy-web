@@ -13,7 +13,7 @@ Router `apps/walkthroughs/api.py`; byte streaming `streaming.py`.
 - **Upload refusals** (`upload_walkthrough`): over `WALKTHROUGH_MAX_UPLOAD_BYTES` is 413; `cut_id` needs `kind=video` and a `narrative_review_id`, and `cut_scene_ids` needs `cut_id` (422); no Drive service account is 503 `drive-not-configured`. `WALKTHROUGHS_ENABLED` off makes the API and stream 404. A `style: recorded` narrative holds one video per cut, latest upload per cut wins; hero selection is `walkthroughs/pinned.py`.
 
 ## Reviews (`apps/reviews`) — the DDD gate
-Router `apps/reviews/api.py`. `scripts/ddd/review.py` polls a `ReviewRequest` until it resolves and reads `response_json`; do not change that contract.
+Router `apps/reviews/api.py`. A client polls a `ReviewRequest` until it resolves and reads `response_json`; do not change that contract.
 - **Read** (`get_review`, `auth=None`): a member of the review's workspace, or anyone for a `link` review (tokenless); otherwise 404. A review in another workspace than the page's `ws` is 404. A null-workspace review is reachable by no member.
 - **Decide** (`submit_review`): editor (`content.write`) in the review's workspace plus CSRF (re-run by hand because `auth=None`); an anonymous reader of a public review gets 403; an already-resolved review is 403. It mirrors into the storyboard's gate rows.
 - **Suggest** (`suggest_review`, `auth=None`): never resolves the gate. Callers: an external reviewer with the review's `?t=` (no CSRF, the token is never ambient), or a member saving edits without deciding (CSRF-checked). Neither is 403; a resolved review closes suggestions. A malformed suggester email is dropped, never refused.
