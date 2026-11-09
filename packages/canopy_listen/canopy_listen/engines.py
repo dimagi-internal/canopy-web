@@ -11,6 +11,7 @@ All run on this Mac, through MLX (GPU) or ONNX (CPU); none sends audio anywhere.
 """
 from __future__ import annotations
 
+import time
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -74,7 +75,14 @@ def _fetch(url: str, name: str) -> Path:
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(path.suffix + ".part")
-        urllib.request.urlretrieve(url, tmp)  # noqa: S310 — fixed https URLs
+        for attempt in range(3):  # GitHub's release downloads time out now and then (seen: 504)
+            try:
+                urllib.request.urlretrieve(url, tmp)  # noqa: S310 — fixed https URLs
+                break
+            except OSError:
+                if attempt == 2:
+                    raise
+                time.sleep(3 * (attempt + 1))
         tmp.rename(path)
     return path
 
