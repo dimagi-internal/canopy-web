@@ -279,6 +279,18 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
             "project": message.get("project"),
         })
 
+    async def runner_listen_start(self, message):
+        # runner.{id} group_send type="runner.listen_start" — the owner's phone opened
+        # a listen session to this box. The runner starts its pipe to /ws/listen/<id>/;
+        # `hello` is public keys only. A doorbell: a box that misses it finds the
+        # session on GET /api/runner/listen-sessions/pending.
+        await self.send_json({
+            "type": "listen_start",
+            "session_id": message.get("session_id"),
+            "kind": message.get("kind"),
+            "hello": message.get("hello"),
+        })
+
     async def receive_json(self, content, **kwargs):
         # Every frame, not just the handshake: a revoked token must stop claiming
         # and must stop reading as a live box (channels_auth.still_signed_in).

@@ -34,12 +34,13 @@ from starlette.routing import Mount  # noqa: E402
 
 from apps.canopy_sessions.routing import websocket_urlpatterns as chat_ws_urlpatterns  # noqa: E402
 from apps.common.thread_context import PerConnectionThread  # noqa: E402
+from apps.listen.routing import websocket_urlpatterns as listen_ws_urlpatterns  # noqa: E402
 from apps.mcp.server import build_http_app  # noqa: E402
 from apps.realtime.channels_auth import RealtimeAuthMiddleware  # noqa: E402
 from apps.realtime.origin import OriginValidator  # noqa: E402
 from apps.realtime.routing import websocket_urlpatterns as realtime_ws_urlpatterns  # noqa: E402
 
-_websocket_urlpatterns = realtime_ws_urlpatterns + chat_ws_urlpatterns
+_websocket_urlpatterns = realtime_ws_urlpatterns + chat_ws_urlpatterns + listen_ws_urlpatterns
 
 _MCP_PREFIX = "/api/mcp"
 

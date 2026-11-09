@@ -56,6 +56,8 @@ _RULES: tuple[tuple[frozenset[str], str], ...] = (
     (frozenset({"GET"}), r"/api/harness/runner-releases/current"),
     # Telemetry it reports (inbox and drill events).
     (frozenset({"POST"}), r"/api/events"),
+    # Listen sessions waiting for it, when its control socket is down (`apps/listen`).
+    (frozenset({"GET"}), r"/api/runner/listen-sessions/pending"),
 )
 
 
@@ -104,9 +106,12 @@ def reaches(method: str, path: str, runner_id, *, private: bool = False,
 
 
 def reaches_ws(path: str, runner_id, *, computer: bool = False) -> bool:
-    """A runner token opens its own runner's control channel and nothing else — and
-    a computer's (no runner app, no channel) opens none."""
+    """A runner token opens its own runner's control channel and the laptop side of a
+    listen relay (whose consumer holds it to sessions on this runner, by the scope's
+    `runner_id`) and nothing else — and a computer's (no runner app) opens none."""
     if computer:
         return False
-    return bool(re.fullmatch(rf"/?ws/runner/{re.escape(str(runner_id))}/?", path or ""))
+    path = path or ""
+    return bool(re.fullmatch(rf"/?ws/runner/{re.escape(str(runner_id))}/?", path)
+                or re.fullmatch(r"/?ws/listen/[0-9a-fA-F-]+/?", path))
 
