@@ -1,4 +1,4 @@
-"""Canopy Vault Phase 2 (canopy-web#1550), server half: the zero-knowledge vault.
+"""Canopy Vault Phase 2, server half: the zero-knowledge vault.
 
 canopy-web never encrypts or decrypts a ZK value; these tests build every wrap,
 seal and value with the NORMATIVE reference (docs/vault/zk-v1/zk_v1_reference.py)
@@ -654,8 +654,8 @@ def test_enrollment_records_the_ecdh_key_and_its_thumbprint(fleet):
 
 
 def test_a_new_ecdh_key_waits_for_approval_but_the_key_stays_active(fleet):
-    """A new ECDH key must not cut the box's sign-in (cloud-ec2-2 went offline
-    for every agent on 2026-10-18 when it did): only the ECDH key waits."""
+    """A new ECDH key must not cut the box's sign-in (the box would go offline
+    for every agent): only the ECDH key waits."""
     assert _enable(fleet).status_code == 200
     same = _register(fleet, fleet.sign, fleet.ecdh)
     assert same.status == RunnerDeviceKey.ACTIVE and same.ecdh_ready  # re-posting changes nothing
@@ -1121,7 +1121,7 @@ def test_migration_restores_a_key_sent_back_to_pending_by_its_ecdh_key(fleet):
     assert fleet.device.ecdh_ready
 
 
-# ==== an agent in ANOTHER workspace the box is enrolled in (marshellis, 2026-10-18) ====
+# ==== an agent in ANOTHER workspace the box is enrolled in ====
 
 def test_a_new_agent_in_another_enrolled_workspace_seals_to_the_box(fleet):
     """Jonathan's runners serve his family's workspace too. A new agent there has no
@@ -1679,11 +1679,11 @@ def test_a_browser_rotates_a_workspace_vault_only_after_a_passkey_step_up(fleet)
     assert res.status_code == 403 and res.json()["error"] == "step_up_required"
 
 
-# ---- a member's own machine: they sign for it, a keeper grants it (DIM-W154, 2026-10-29) ----
+# ---- a member's own machine: they sign for it, a keeper grants it ----
 
 def _members_own_laptop(fleet, name):
     """A vault member who does NOT manage it registers and approves their own computer,
-    which reads the agent through their license (as egeoffroy's DIM-W154 reads ACE)."""
+    which reads the agent through their license (as a licensed member's machine reads an agent)."""
     ed, priv = _editor_with_a_key(fleet, name=name)
     AgentLicense.objects.create(agent=fleet.agent, user=ed, status=AgentLicense.ACTIVE, basis="test")
     laptop = Runner.objects.create(name=f"{name}-laptop", kind=Runner.COMPUTER, owner=ed, private=True,
@@ -1876,8 +1876,8 @@ def _second_box(fleet):
     return box
 # ---- what one read of a workspace vault costs as the fleet grows --------------------------
 # Shared (dimagi) is attached to a whole workspace and held by dozens of machines; its page
-# took 19-45 s on labs (2026-11-06) with no new code on the path. Each machine holding a copy
-# re-read the vault's members, its runners and every agent it serves, and asked "does this box
+# is slow if each machine holding a copy
+# re-reads the vault's members, its runners and every agent it serves, and asks "does this box
 # serve this agent" with a fresh read of the fleet each time. These pin each read's query count
 # to the vault, not to machines x agents.
 

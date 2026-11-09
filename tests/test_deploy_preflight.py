@@ -1,8 +1,8 @@
 """The deploy preflight: can the CI role write what this change set touches?
 
-Written after a deploy failed on 2026-09-09 with a 403 on ModifyTargetGroup,
-five minutes into a rollout. The role could write 2 of the 13 resources in the
-stack it deploys; the other eleven had simply never changed.
+A CI role that can write only some of the resources in the stack it deploys fails
+late (for example a 403 on ModifyTargetGroup, minutes into a rollout) when a
+resource that rarely changes finally does.
 """
 import pytest
 
@@ -38,7 +38,7 @@ class TestActionsFor:
         assert "ecs:DeleteService" not in actions
 
     def test_a_delete_never_blocks_because_cfn_tolerates_a_failed_cleanup(self):
-        # Measured on this stack 2026-09-09: TaskDefinition reported
+        # Measured on this stack: TaskDefinition reported
         # DELETE_FAILED on ecs:DeregisterTaskDefinition while the stack still
         # reported UPDATE_COMPLETE, reason "Update successful. One or more
         # resources could not be deleted." A delete permission is therefore
@@ -52,7 +52,7 @@ class TestActionsFor:
         assert "elasticloadbalancing:ModifyTargetGroup" in actions
         assert "elasticloadbalancing:ModifyTargetGroupAttributes" in actions
         # Not resource-scopable in ELB, so it must be granted on "*" — the
-        # second grant the 2026-09-09 incident needed.
+        # second grant a target-group change needs.
         assert "elasticloadbalancing:DescribeTargetGroups" in actions
 
     def test_an_unmapped_type_fails_closed_and_says_what_to_add(self):
@@ -289,7 +289,7 @@ class TestCheck:
     def test_an_action_that_takes_no_resource_is_simulated_against_star(self):
         # DescribeTargetGroups can only be granted on "*"; simulated against the
         # target group's ARN it reads implicitDeny although "*" is granted. That
-        # false refusal blocked the health-check move on 2026-10-06.
+        # false refusal would block a health-check move.
         described = {"Changes": [{"Type": "Resource", "ResourceChange": {
             "Action": "Modify", "LogicalResourceId": "TargetGroup",
             "PhysicalResourceId": "arn:aws:elasticloadbalancing:us-east-1:1:targetgroup/tg/x",
@@ -383,8 +383,8 @@ class TestMain:
         assert "AWS::Kinesis::Stream" in capsys.readouterr().out
 
     def test_a_client_error_exits_two_not_zero_or_one(self, monkeypatch, capsys):
-        # CRITICAL: the preflight's OWN permissions are missing (measured
-        # 2026-09-09 — iam:SimulatePrincipalPolicy is implicitDeny for the CI
+        # CRITICAL: the preflight's OWN permissions are missing (for example
+        # iam:SimulatePrincipalPolicy is implicitDeny for the CI
         # role). This must be a THIRD outcome: reading it as "clean" (0) hides
         # that no gate ran at all; reading it as "blocked" (1) wedges every
         # deploy on a grant this file cannot give itself.

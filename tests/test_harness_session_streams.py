@@ -172,9 +172,9 @@ def test_plain_text_rows_store_no_redundant_content():
 
 
 def test_user_events_are_fanned_out_live(monkeypatch):
-    """They used to be withheld because "the sender's client already echoed
-    them" — true for the web, false for emdash, where nothing echoed. The result
-    was that typing in emdash and watching on the phone dropped your own words
+    """They are not withheld on the grounds that "the sender's client already echoed
+    them" — true for the web, false for emdash, where nothing echoes. Otherwise
+    typing in emdash and watching on the phone would drop your own words
     until a reload."""
     user, ws, runner, c = _ctx()
     s = Session.objects.create(workspace=ws, origin=Session.ORIGIN_RUNNER, title="a")
@@ -191,7 +191,7 @@ def test_user_events_are_fanned_out_live(monkeypatch):
 def test_a_web_sends_live_echo_carries_its_client_id(monkeypatch):
     """The row persist matched to the send stores the send's nonce; the live
     frame carries it too, so the sender's browser confirms its own line by id
-    instead of by guessing from recent words (2026-10-30: a send left
+    instead of by guessing from recent words (else a send is left
     "Sending…" under its own reply)."""
     from django.utils import timezone
 
@@ -274,11 +274,10 @@ def test_streams_excludes_archived_sessions():
 
 
 def test_streams_bounds_are_index_probes_not_a_grouped_join():
-    """The bounds used to be Min/Max over a JOIN to every message, which forced a
-    GROUP BY over every column of the binding and the session (JSON included) and
-    spilled to disk on each call: canopy-web's costliest statement on the shared
-    RDS. They are per-binding LIMIT 1 subqueries now; the values are unchanged,
-    including the epoch filter for a transferred session."""
+    """The bounds are per-binding LIMIT 1 subqueries, not Min/Max over a JOIN to every
+    message (which forces a GROUP BY over every column of the binding and the
+    session, JSON included, and spills to disk on each call). They include the epoch filter
+    for a transferred session."""
     from django.db import connection
     from django.test.utils import CaptureQueriesContext
 

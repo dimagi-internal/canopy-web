@@ -1,4 +1,4 @@
-"""Passkey step-up on agent credentials (canopy-web#1538).
+"""Passkey step-up on agent credentials.
 
 - SETTING a value from a browser session needs a fresh step-up; a token (PAT /
   MCP) write does not — `canopy vault import` has no browser to ask.

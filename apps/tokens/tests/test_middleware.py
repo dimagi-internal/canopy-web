@@ -106,8 +106,8 @@ def test_updates_last_used_at_on_success():
 
 @pytest.mark.django_db
 def test_records_what_used_the_token():
-    """Last used alone read as "nothing uses this" for a cloud runner's token,
-    which was then revoked (2026-10-17). The client is shown beside it."""
+    """Last used alone reads as "nothing uses this" for a cloud runner's token,
+    which could then be revoked. The client is shown beside it."""
     user = User.objects.create_user(username="alice", email="alice@dimagi.com")
     raw, token = PersonalToken.create_for_user(user=user, label="box")
 

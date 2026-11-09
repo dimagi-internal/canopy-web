@@ -1,4 +1,4 @@
-"""Canopy Vault Phase 1b (canopy-web#1549), server half: the EC2 AWS IAM
+"""Canopy Vault Phase 1b, server half: the EC2 AWS IAM
 identity proof (enrollment + resolve), read-anomaly alerts, and automatic
 canopy-pat rotation.
 
@@ -180,7 +180,7 @@ def test_a_valid_aws_proof_resolves_and_names_the_runner(fleet, sts):
 
 
 def test_the_runner_halfs_exact_shape_is_accepted(fleet, sts):
-    """canopy-web#1551's runner (runner/ec2/cloud_runner.py::aws_proof): an explicit
+    """The runner half (runner/ec2/cloud_runner.py::aws_proof) sends an explicit
     `Host` header, single-string values, compact JSON, standard base64."""
     _active_role(fleet, sts)
     headers = {"Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
@@ -296,8 +296,7 @@ def test_a_refused_device_proof_alerts_the_owner_once_an_hour(fleet, sts):
 def test_one_runner_fault_emails_each_owner_once_not_once_per_agent(fleet):
     """The same box fault reaches every agent the box runs. An owner already emailed
     this hour about it (for one agent) is not emailed again for the next; the second
-    agent's alert is still recorded, and says whose alert told them (Jonathan,
-    2026-10-30: one cloud-ec2-live fault mailed him for Trellis, then for Ada)."""
+    agent's alert is still recorded, and says whose alert told them."""
     from apps.agents.credentials import vault_alerts
 
     eva = fleet["agent"]
@@ -378,8 +377,7 @@ def test_a_refused_device_proof_says_who_asked_and_what_the_turn_is(fleet, sts):
 
 def test_a_refusal_on_a_runners_own_token_says_the_runner_asked_not_its_owner(fleet, sts):
     """A runner token signs in as the runner's owner. The alert must not read as
-    something the owner did ("resolve by jj@…" read as "resolved by"; Jonathan,
-    2026-10-30), and must link the conversation and the full alert log."""
+    something the owner did ("resolve by jj@…" reads as "resolved by"), and must link the conversation and the full alert log."""
     from apps.canopy_sessions.models import Session
     from apps.harness.models import RunnerAccessToken, RunnerDeviceKey, Turn
 
@@ -408,7 +406,7 @@ def test_a_refusal_on_a_runners_own_token_says_the_runner_asked_not_its_owner(fl
 
 def test_an_alert_names_the_boxs_software_and_says_when_it_is_stale(fleet, settings):
     """A box on old code is the likeliest cause of a refusal, so the alert carries what
-    the box runs and what Canopy expects (Jonathan, 2026-10-30, cloud-ec2-live)."""
+    the box runs and what Canopy expects."""
     from apps.agents.credentials import vault_alerts
 
     box = fleet["runner"]
@@ -483,7 +481,7 @@ def test_a_proven_box_read_without_a_turn_id_alerts(fleet, sts):
 
 
 def test_a_boxs_own_credential_refresh_is_expected(proven_box, fleet):
-    """canopy-web#1563: cloud-ec2-2's runner-update timer refreshes every agent's
+    """A cloud box's runner-update timer refreshes every agent's
     credentials every 30 min, outside any turn, and says so."""
     res = Client().get(RESOLVE, HTTP_AUTHORIZATION=f"Bearer {fleet['pat']}",
                        HTTP_X_CANOPY_RUNNER=str(fleet["runner"].pk),
@@ -526,7 +524,7 @@ def test_a_refresh_purpose_without_a_named_box_is_not_an_exemption(proven_box, f
 
 
 def test_an_owner_who_pairs_a_box_resolving_by_hand_is_expected(proven_box, fleet):
-    """canopy-web#1563: the owner pairs a runner the agent routes to, but this
+    """The owner pairs a runner the agent routes to, but this
     request names no box (no device proof, no X-Canopy-Runner) — it is their
     own session, so it is an admin read and raises no no-turn alert."""
     assert _resolve(fleet, turn="").status_code == 200
@@ -664,7 +662,7 @@ def test_a_due_rotation_mints_writes_overlaps_then_revokes(fleet, agent_login):
     first = PersonalToken.lookup(first_raw)
     assert first is not None and first.user_id == agent_login["login"].pk and first.expires_at is not None
     # The first token, which the job did not mint, still ends with the overlap: it is
-    # the one most likely to have been copied about (canopy-web#2265).
+    # the one most likely to have been copied about.
     stray = PersonalToken.objects.get(pk=agent_login["token"].pk)
     assert dt.timedelta(hours=23) < stray.expires_at - timezone.now() <= dt.timedelta(hours=24)
     assert AgentPatRotation.objects.get().old_token_id is None and agent.pat_rotated_at is not None
@@ -812,9 +810,8 @@ def test_the_own_rotation_needs_a_reason(fleet, agent_login):
 
 
 def test_self_rotation_retires_the_token_it_was_called_with_when_none_is_known(fleet, agent_login):
-    """Production, 2026-10-24: Hal's vault is zero-knowledge and had never rotated, so
-    nothing named its current token — the self-rotation minted a new one and left the
-    LEAKED one live. The token the agent called with is the leaked one: retire it."""
+    """A zero-knowledge vault that never rotated has nothing naming its current token;
+    a self-rotation must not mint a new one and leave the LEAKED one live. The token the agent called with is the leaked one: retire it."""
     fleet["client"].put("/api/agents/eva/credentials", data={"values": {"CANOPY_WEB_PAT": "unreadable-sealed-value"}},
                         content_type="application/json")
     res = _rotate_own(agent_login["raw"])

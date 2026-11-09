@@ -55,12 +55,8 @@ def test_another_tenants_agent_is_invisible(client):
     public transcript link). Non-membership must be indistinguishable from
     non-existence on every one of them.
 
-    This used to build an UNHOMED agent, because `_visible_agent_workspace_ids`
-    returned the caller's workspace ids **plus {None}** and a workspace-less
-    agent was therefore visible to every authenticated user (security review
-    2026-07-26, hole A). The `{None}` leg is gone and so is the row it admitted
-    — an unhomed agent cannot be created at all (agents/0013; see
-    tests/test_agent_workspace_not_null.py). Cross-tenant is what is left to
+    An unhomed agent cannot be created at all (agents/0013; see
+    tests/test_agent_workspace_not_null.py), so cross-tenant is what is left to
     prove."""
     stranger_owner = User.objects.create_user("stranger", "stranger@dimagi.com", "pw")
     # access_request_domains=[] keeps this workspace unreachable by anything but an

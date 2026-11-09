@@ -5,9 +5,8 @@ CustomAccountAdapter.is_open_for_signup returning False. allauth's social adapte
 delegates ITS OWN signup gate to that same account adapter, so closing the form
 also closed first-time Google sign-in: pre_social_login admitted the allowlisted
 email, then process_signup asked is_open_for_signup, got False, and rendered
-"Sign Up Closed" to every user who did not already have a row — observed
-2026-09-10 when a Dimagi associate was locked out of every /canopy/ review link
-(canopy-web#740). Social sign-in is the ONLY legitimate account-creation path and
+"Sign Up Closed" to every user who did not already have a row, locking
+associates out of every review link. Social sign-in is the ONLY legitimate account-creation path and
 pre_social_login already gates it (domain allowlist or live invite, on a
 provider-verified email), so it must stay open while the local form stays closed.
 

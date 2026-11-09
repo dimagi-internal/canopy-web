@@ -115,12 +115,12 @@ def test_session_state_dto_keys():
     state = serializers.session_state_dto(
         session=s, current_user_id=u.pk, participants=[sp],
         present_ids=[u.pk], draft=None, messages=[])
-    # `menu` joined the snapshot deliberately (2026-07-31): the dialog an agent
-    # is blocked on used to exist only as a view-only live frame, so it reached
+    # `menu` is in the snapshot deliberately: the dialog an agent
+    # is blocked on as a view-only live frame would reach
     # a client only if it was already connected when the agent asked — and you
     # go and look precisely BECAUSE the session stopped. Always present, null
     # when nothing is pending, so a client needs no second code path.
-    # `turn_status` joined it for the same reason (2026-09-20): where the ask
+    # `turn_status` is in it for the same reason: where the ask
     # stands is a fact only the server holds — its runner is offline, nothing is
     # routed to run it, the box it was on died — and a live-only frame reaches
     # nobody who opened the page after it went quiet. Null when the session has

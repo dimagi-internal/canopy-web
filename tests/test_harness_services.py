@@ -29,7 +29,7 @@ def _agent(slug="echo"):
 
 def _runner(agent=None, **kw):
     """agent: when given, this runner is assigned rank 0 for that agent —
-    agent turns route by RunnerAssignment now (spec 2026-07-24), not
+    agent turns route by RunnerAssignment, not
     capabilities, so tests that need a claim to succeed must assign."""
     # owner is REQUIRED for a claim: a runner's tenant is the workspaces of
     # the human who paired it, and NULL fails closed (services.runner_tenant_slugs).
@@ -100,7 +100,7 @@ def test_claim_next_turn_happy_path():
 
 
 def test_claim_requires_assignment():
-    """Agent turns route by RunnerAssignment (spec 2026-07-24), not capabilities.
+    """Agent turns route by RunnerAssignment, not capabilities.
     A runner may declare the agent in capabilities but will claim nothing without
     an explicit RunnerAssignment row."""
     a = _agent("eva")

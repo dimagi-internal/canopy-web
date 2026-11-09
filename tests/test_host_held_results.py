@@ -1,4 +1,4 @@
-"""Host-held results (spec 2026-10-23-host-held-results-design): a host's tool returns
+"""Host-held results: a host's tool returns
 facts plus a `resource_link` to an artifact the HOST keeps; canopy carries the link,
 never the data; the person's View and the agent read it back from the host, as
 themselves.
@@ -896,9 +896,9 @@ def test_nothing_canopy_stores_for_a_sensitive_conversation_holds_a_row(w, host,
 # --- Canopy-View: the person's own View, stated and never inferred -----------------------
 #
 # A host may give a person's View what it gives no agent (Connect Labs: the rows of a
-# sensitive result their cleared agent already received). It used to infer "the person is
-# looking" from a MISSING `Canopy-Execution`, so anything that could make canopy issue a
-# delegated read without a statement read as the person. canopy now states it — only when
+# sensitive result their cleared agent already received). Canopy does not infer "the person is
+# looking" from a MISSING `Canopy-Execution` (anything that could make canopy issue a
+# delegated read without a statement would read as the person). It states it — only when
 # the principal behind the View request is a person acting as themselves
 # (`harness.acting_person`, by credential, never by route), only in a conversation they are
 # in — bound to the person, the resource, the conversation, the DPoP key and the token.

@@ -1,9 +1,9 @@
 """PUT|DELETE /api/agents/{slug}/runner-rules/{source}[?actor=] — one rule at a time,
-and every routing write gated on the runners it ADDS (#1143).
+and every routing write gated on the runners it ADDS.
 
 The case: ACE's rules route Matt's and Ada's work to the fleet's cloud boxes
 (jjackson's, in `dimagi`) and Sarvesh's work to his own laptop (his, in
-`connect`). Saving ALL the rules re-checked every runner, so on 2026-10-05 no one
+`connect`). If saving ALL the rules re-checked every runner, no one
 could save ACE's rules at all, not even unchanged: jjackson can't vouch for
 Sarvesh's laptop, and Sarvesh can't vouch for the cloud boxes.
 """
@@ -119,7 +119,7 @@ def test_the_wholesale_save_still_refuses_an_added_box(fleet):
                               content_type="application/json")
     # Sarvesh is not in `dimagi`, but the box SERVES connect (its owner works
     # there, its dimagi enrollment covers the division), so he can already see
-    # it in connect's fleet (#1447): forbidden by name, not "unknown".
+    # it in connect's fleet: forbidden by name, not "unknown".
     assert res.status_code == 403
     assert "cloud-ec2-2" in res.json()["detail"]
     assert _rules(fleet["ace"])[("ace_web", "stewari@dimagi.com")] == ["st-mbp"]

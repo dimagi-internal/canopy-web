@@ -133,8 +133,8 @@ def test_a_marker_naming_another_sessions_turn_is_not_believed():
 
 
 # -- server-side attribution: an UNMARKED row is matched to its turn ------
-# canopy no longer marks a chat send's prompt at claim (authorship.py,
-# 2026-09-27). The transcript comes back with the person's exact words and
+# canopy does not mark a chat send's prompt at claim (authorship.py).
+# The transcript comes back with the person's exact words and
 # nothing else, so persist has to find the turn itself: the earliest of this
 # session's claimed, unlinked chat-send turns whose prompt is byte-for-byte
 # the row's text.
@@ -237,8 +237,7 @@ def test_a_multiline_prompt_matches_a_row_with_the_newline_dropped():
 
 def test_a_prompt_sent_with_an_attachment_matches_its_row():
     """The runner appends "The user attached the following file…" to the prompt
-    it types, so the row is the prompt plus that note (2026-10-05: the message
-    with a screenshot was the only one in its session with no author)."""
+    it types, so the row is the prompt plus that note."""
     session = _session()
     alice, turn = _sent(session, username="alice_att", text="is the screenshot getting to you?")
     _claim(turn)
@@ -293,13 +292,13 @@ def test_whitespace_blind_ambiguity_resolves_to_the_earliest_unlinked_turn():
 
 
 # -- a re-shipped row must never spend a match candidate ---------------------
-# `held` (which rows are already persisted) used to be computed AFTER every
-# row had already called `pool.claim` — including a row whose index already
+# `held` (which rows are already persisted) must be computed BEFORE any row
+# calls `pool.claim`; computed after, it would include a row whose index already
 # exists, which is a routine RE-SHIP (reconnect, catch-up, backfill overlap),
-# not an error. That row was always going to be dropped at bulk_create, but
-# by the time that happened it had already stolen the candidate a genuinely
-# NEW row in the same batch, with the same (squashed) text, actually needed.
-# `held` is now computed BEFORE any matching, so a re-shipped row's index is
+# not an error. That row is dropped at bulk_create, but
+# it would already have stolen the candidate a genuinely
+# NEW row in the same batch, with the same (squashed) text, actually needs.
+# Computing `held` before any matching means a re-shipped row's index is
 # known to be a no-write in advance and never touches the pool.
 
 def test_a_reshipped_row_does_not_steal_the_candidate_from_a_new_row():

@@ -1,6 +1,5 @@
 """An agent's GitHub identity is a token a PERSON delegated to it — its owner or an admin —
-held in the agent's vault as a delegated credential (spec 2026-10-26-delegated-credentials-
-in-the-vault-design.md).
+held in the agent's vault as a delegated credential.
 
 What these pin, in the order a turn meets them:
 
@@ -241,7 +240,7 @@ def test_a_copy_sealed_to_another_admins_laptop_earlier_is_not_handed_out_and_is
 
 
 @pytest.mark.parametrize("code,says", [
-    (403, "Pull requests"),       # reaches the repo, cannot open a PR (the #747 PAT)
+    (403, "Pull requests"),       # reaches the repo, cannot open a PR (a PAT without pull-request scope)
     (404, "Resource owner"),      # the form's resource owner fell back to a person
 ])
 def test_a_token_that_cannot_open_a_pull_request_is_refused_not_stored(agent, owner, github, machine,
@@ -682,9 +681,9 @@ def test_readiness_reports_each_agent_this_runner_serves(agent, owner, github, r
 def test_the_fleet_view_answers_github_from_the_rows_not_the_boot_report(agent, owner, github, runner,
                                                                         machine):
     """The box asks about GitHub once, at boot, then repeats that answer on every
-    heartbeat. A token lent after the boot must show as lent — eva, 2026-10-03:
-    `github.eva: fail` sat beside a fresh `health_received_at` while canopy was
-    issuing eva's token to that very box."""
+    heartbeat. A token lent after the boot must show as lent — not `github.eva: fail`
+    beside a fresh `health_received_at` while canopy is issuing eva's token to that
+    very box."""
     boot = _as_runner(runner).get(f"/api/harness/runners/{runner.pk}/github-readiness").json()
     services.heartbeat(runner, active_turn_ids=[], health={
         "checks": [{"name": "claude.version", "status": "ok", "detail": "2.1"},
@@ -715,7 +714,7 @@ def test_the_drill_probes_pull_request_permission_on_the_agents_repo(agent, runn
 
 
 def test_bootstrap_resolve_carries_this_instances_mailbox(agent, runner, monkeypatch):
-    """canopy-web#984: the box sets Gmail up for the INSTANCE's mailbox, never an
+    """The box sets Gmail up for the INSTANCE's mailbox, never an
     address derived from the slug or read from the shared repo."""
     from apps.tokens.models import PersonalToken
 

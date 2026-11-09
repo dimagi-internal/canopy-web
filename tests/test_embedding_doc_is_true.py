@@ -178,12 +178,12 @@ def test_the_step_numbering_matches_the_checklist():
 
 
 def test_no_reserved_name_or_setting_survives_in_the_doc(doc):
-    """§11 used to tell you to name the app after `EMBED_SELF_APP`.
+    """The doc must not tell you to name the app after `EMBED_SELF_APP`.
 
-    The setting is gone — canopy's own panel is a column an owner ticks, not a
+    The setting does not exist — canopy's own panel is a column an owner ticks, not a
     name that has to match a deployment value. A doc still naming the setting
-    would send someone looking for something that no longer exists, and the
-    failure it used to cause was silent on both sides.
+    would send someone looking for something that does not exist, and the
+    failure it caused would be silent on both sides.
     """
     from django.conf import settings
 
@@ -210,11 +210,11 @@ def test_the_self_embed_section_asks_for_nothing(doc):
     assert "| **Name** |" not in section
 
 
-# --- the 2026-09-16 page contract -------------------------------------------
+# --- the page contract -------------------------------------------
 #
 # The doc's value is that it is PINNED: a host team reads it once and builds
 # against it, so a claim that quietly stops being true is worse than no claim.
-# These cover what §5, §5a and §7 now promise.
+# These cover what §5, §5a and §7 promise.
 
 
 def test_the_documented_page_state_api_exists(doc):
@@ -252,10 +252,10 @@ def test_the_documented_size_cap_is_the_real_one(doc):
 def test_the_documented_invalidation_hook_exists(doc):
     """§5a tells a host to pass `onInvalidate` to `canopy.init`.
 
-    This used to assert the doc named `useResource` — a React hook that lives
-    inside canopy-web's OWN frontend and is exported by no package. A host
-    following the doc could not have called it, and this test pinned that. So
-    it now checks the option against the widget a host actually loads: it is a
+    The doc must not name `useResource` — a React hook that lives
+    inside canopy-web's OWN frontend and is exported by no package, so a host
+    could not call it. So
+    this checks the option against the widget a host actually loads: it is a
     declared option, and the widget really calls it when canopy says a
     resource moved.
     """
@@ -365,7 +365,7 @@ def test_the_documented_history_filters_are_real_parameters(doc):
 
 
 def test_the_doc_states_the_host_boundary_on_history(doc):
-    """The leak #823 closed — a delegated token listing another host's
+    """The host boundary — a delegated token listing another host's
     conversations — is a property a host team should be able to rely on, so
     the doc has to say it, and say the supplied value is ignored."""
     assert "on your host, and only yours" in doc
@@ -411,7 +411,7 @@ def test_every_documented_theme_variable_and_part_is_real(doc):
     )
 
 
-# --- host grant contract v1 (2026-09-26) ------------------------------------
+# --- host grant contract v1 ------------------------------------
 #
 # §8a hands a host team a wire contract they build against in another repo, so
 # every name in it is pinned to the code that reads it.

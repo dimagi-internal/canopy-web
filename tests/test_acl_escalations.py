@@ -1,4 +1,4 @@
-"""The privilege escalations found by the 2026-10-02 ACL audit, one test each.
+"""Privilege escalations an ACL audit found, one test each.
 
 Every one of these was a route whose gate was weaker than the tier it reached:
 
@@ -155,7 +155,7 @@ def test_a_viewer_cannot_create_a_task_that_dispatches_a_prompt(esc):
 
 
 def test_creating_tasks_is_the_editor_tier_even_without_on_approve(esc):
-    """A plain ask used to be open to any member; a task is written by an editor
+    """A plain ask is not open to any member; a task is written by an editor
     or by the agent itself, whatever it carries."""
     plain = [{"ask_kind": "question", "title": "what's the status?", "idempotency_key": "i2"}]
     res = _client(esc["viewer"]).post("/api/agents/escbot/tasks/", data=plain,
@@ -242,7 +242,7 @@ def test_a_co_tenant_cannot_read_a_private_chats_turns(esc):
 
 
 def _private_chat_turn_claimed_by(esc, box_owner):
-    """canopy-web#1210's shape: a private chat ONE member created, claimed by a box
+    """A private chat ONE member created, claimed by a box
     ANOTHER member paired. The claim is legitimate (tenant + routing); the claiming
     box's owner simply cannot read the chat."""
     from apps.canopy_sessions.models import Session
@@ -263,9 +263,9 @@ def _private_chat_turn_claimed_by(esc, box_owner):
     ("finish", {"status": "done", "result_note": "ok"}),
 ])
 def test_the_claiming_box_reports_on_a_turn_its_owner_cannot_read(esc, path, body):
-    """#1210: the editor's box claimed the owner's private chat turn. Reporting used to
-    404 (the readability check ran first), stranding the turn CLAIMED until its lease
-    expired, its work never recorded. The box that holds the claim reports on it."""
+    """The editor's box claimed the owner's private chat turn. Reporting must not
+    404 (the readability check running first), stranding the turn CLAIMED until its
+    lease expires, its work never recorded. The box that holds the claim reports on it."""
     turn = _private_chat_turn_claimed_by(esc, esc["editor"])
     box = Client(HTTP_AUTHORIZATION=f"Bearer {pat_token(esc['editor'])}")
     res = box.post(f"/api/harness/turns/{turn.id}/{path}", data=body, content_type="application/json")

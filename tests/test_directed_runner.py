@@ -1,5 +1,5 @@
 """A directed-only box takes only what is put on it, and choosing a box for a
-project chat needs you to administer it (spec 2026-10-19 #6).
+project chat needs you to administer it.
 
 `Runner.directed` is a person's setting (the runner page, or a test box's
 invitation), and it can only make a box take less: it claims turns pinned to it and turns of sessions bound to it —

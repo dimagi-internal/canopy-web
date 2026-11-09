@@ -1,4 +1,4 @@
-"""Canopy Vault Phase 0 (canopy-web#1538): harden what exists.
+"""Canopy Vault Phase 0: harden what exists.
 
 - FIELD_ENCRYPTION_KEY is its own secret, wired into the task definition.
 - `manage.py reencrypt_secrets` moves every *_enc column onto the write key.

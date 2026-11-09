@@ -157,10 +157,10 @@ def test_latest_turn_at_ignores_queued_turns_that_never_started():
 
 
 def test_card_counts_the_same_turns_the_harness_lists():
-    """#359: the agent card and `GET /api/harness/turns/?agent=` must count one
+    """The agent card and `GET /api/harness/turns/?agent=` must count one
     set. An email/Slack turn targets the agent's SESSION (agent is NULL on the
-    row), so counting `agent.turns` left every one of them out — ace, which works
-    mostly by email, read weeks stale against its own turn list."""
+    row), so counting `agent.turns` would leave every one of them out and an
+    email-driven agent would read stale against its own turn list."""
     from django.contrib.auth.models import User
     from django.test import Client
 
@@ -226,9 +226,9 @@ def test_close_out_does_not_reclaim_an_already_reported_turn():
 
 
 def test_close_out_names_its_turn_when_one_session_serves_two():
-    """The runner reused one live Claude session for a second turn on the same
+    """A runner may reuse one live Claude session for a second turn on the same
     thread: both closes carry the same cli_session_id. The turn id the agent names
-    is what puts the second close on the second turn (ada, 2026-10-27)."""
+    is what puts the second close on the second turn."""
     agent = _agent()
     first = _dispatch(agent, key="k1")
     agent_report.upsert_turn(agent, _turn(cli_session_id="s1", title="First", turn_id=first.pk))

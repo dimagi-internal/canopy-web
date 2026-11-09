@@ -1,5 +1,4 @@
-"""Agent memory is the PERSON's own, as two independent features (Jonathan,
-2026-10-09), each with a canopy-level `available` + `default` and a per-session
+"""Agent memory is the PERSON's own, as two independent features, each with a canopy-level `available` + `default` and a per-session
 override:
 
 * record — "Agents may learn about me": agents may WRITE;

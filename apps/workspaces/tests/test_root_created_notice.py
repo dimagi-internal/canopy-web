@@ -1,6 +1,6 @@
 """A new top-level workspace created by someone an org counts as its own emails that org's
-root owners (Jonathan, 2026-10-16: two divisions' agents lived in root workspaces nobody meant
-to create, outside the dimagi tree and invisible to the fleet)."""
+root owners (agents in a root workspace nobody meant to create sit outside the dimagi tree
+and are invisible to the fleet)."""
 from __future__ import annotations
 
 import json

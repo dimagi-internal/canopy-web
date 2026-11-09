@@ -130,8 +130,8 @@ def test_write_paths_are_their_own_list_and_reach_the_profile():
 # --- no interface: default deny, except the people the workspace let in ------------
 
 def test_without_an_interface_a_contact_is_refused(w):
-    # Until 2026-09-26 an agent with no interface ran every turn FULL, so a
-    # stranger on Slack or email drove the whole agent (Hal, via Slack, that day).
+    # An agent with no interface must not run every turn FULL, or a
+    # stranger on Slack or email would drive the whole agent.
     t = _email(w["agent"], "e1")
     assert t.status == Turn.CANCELLED
     assert "access list" in t.result_note
@@ -139,8 +139,8 @@ def test_without_an_interface_a_contact_is_refused(w):
 
 
 def test_without_a_line_a_workspace_editor_is_refused_too(w):
-    # 2026-10-30: an agent nothing was said about is usable by its owner and admins only; a
-    # workspace editor no longer gets in implicitly.
+    # An agent nothing was said about is usable by its owner and admins only; a
+    # workspace editor does not get in implicitly.
     from apps.workspaces import services as wsvc
 
     member = User.objects.create_user(username="m", email="m@dimagi.com")
@@ -166,7 +166,7 @@ def test_with_the_editors_line_an_editor_gets_the_whole_agent_manual(w):
 
 
 def test_without_an_interface_a_viewer_is_refused(w):
-    # 2026-10-04: no published interface = admins and editors only.
+    # No published interface = admins and editors only.
     t = _as_user(w["agent"], w["ed"], "v1")
     assert t.status == Turn.CANCELLED
     assert "access list" in t.result_note
@@ -529,8 +529,8 @@ def _in_session(session, user, key):
 
 
 def test_an_editor_of_the_owners_session_answers_by_their_own_line(w):
-    """Until 2026-11-06 an editor row in the owner's session ran the whole agent (`session_writer`). That rule
-    is gone: their own read line gives read mode, here as anywhere."""
+    """An editor row in the owner's session does not run the whole agent (no `session_writer` rule):
+    their own read line gives read mode, here as anywhere."""
     from apps.canopy_sessions.models import SessionParticipant
 
     _publish(w["agent"])

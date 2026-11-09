@@ -74,8 +74,8 @@ def test_two_project_turns_for_the_same_repo_both_execute():
 
 
 def test_agent_turns_run_side_by_side_like_project_turns():
-    """An agent is no more a lane than a repo is: both parallelize (the agent lane was
-    removed 2026-10-30, after one long ACE turn held every other request for hours)."""
+    """An agent is no more a lane than a repo is: both parallelize (a long agent turn
+    must not hold every other request)."""
     a = _agent()
     Turn.objects.create(
         agent=a, origin=Turn.ORIGIN_API, idempotency_key="a1", status=Turn.RUNNING
@@ -130,10 +130,10 @@ def test_turn_out_still_serializes_an_agent_turn():
 
 # ---- RunnerBinding-backed reuse: the same agent-XOR-project treatment ----
 #
-# The direct SessionLink model-constraint tests that used to live here
+# There are no direct SessionLink model-constraint tests
 # (two-link-for-the-same-thread rejected, thread-key-collision-across-projects
-# is fine, workspace-scoped tenant isolation, the CheckConstraint pairs) tested
-# a DB shape that no longer exists: RunnerBinding has no unique-per-thread_key
+# is fine, workspace-scoped tenant isolation, the CheckConstraint pairs):
+# RunnerBinding has no unique-per-thread_key
 # constraint at all — thread identity is enforced at the SERVICE layer
 # (`_binding_for_thread` finds-before-creates), not by a DB constraint, because
 # a binding's real identity is its OneToOne `session`, not `thread_key`. Those

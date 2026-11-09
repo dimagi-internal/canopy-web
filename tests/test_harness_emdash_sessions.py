@@ -84,7 +84,7 @@ def test_report_dedupes_duplicate_task_names_keeping_newest():
     """emdash task names are NOT unique — a report can carry two open sessions that
     share a name. The report must dedupe, keeping the newest (the runner sends
     newest-first, so the first occurrence wins) — regression: two "mobile" tasks
-    stranded the whole list, 2026-07-20."""
+    stranded the whole list."""
     from django.test import Client
 
     jj = _user("jj")
@@ -164,7 +164,7 @@ def test_list_is_tenant_scoped_and_hides_offline_runners():
 
 
 def test_list_no_longer_auto_joins_a_domain_matching_user_with_no_membership_row():
-    """Auto-join is gone (2026-09-12: self-join replaces it).
+    """There is no auto-join (self-join replaces it).
     A @dimagi.com user who has never explicitly joined `dimagi` (via
     `POST /api/workspaces/dimagi/join`) has NO WorkspaceMembership row, and
     must see an EMPTY list — not the workspace's sessions — even though the
@@ -215,11 +215,9 @@ def test_list_is_newest_first_by_last_interacted_at():
 
 def test_the_report_corrects_an_autotitled_session():
     """A session created on the phone is autotitled (first message, truncated)
-    before any emdash task exists, so it kept a sentence for a name while the
-    sidebar showed the task. The first fix went into `record_session`, which only
-    runs when a TURN is routed — this is the path that runs every ~10s, and
-    missing it is why the repair never happened (observed 2026-07-27, after
-    shipping it)."""
+    before any emdash task exists, so it would keep a sentence for a name while the
+    sidebar showed the task. `record_session` only runs when a TURN is routed;
+    the report path runs every ~10s, so the repair has to happen here too."""
     from django.test import Client
 
     from apps.canopy_sessions.models import Message, RunnerBinding, Session
@@ -299,7 +297,7 @@ def test_a_failing_retitle_never_breaks_the_session_report(monkeypatch):
 #   TransactionManagementError: select_for_update cannot be used outside of a
 #   transaction
 # raised by POST /runners/{id}/sessions on labs, every ~10s, taking the liveness
-# signal for a whole machine down with it (2026-07-27).
+# signal for a whole machine down with it.
 #
 # I wrote a test for it, then removed the fix to check the test actually caught
 # the bug. It did not — it passed either way. pytest-django wraps each test in a
@@ -318,7 +316,7 @@ def test_a_menu_is_cleared_when_its_session_stops_being_reported():
     """A dialog is a claim about a screen. When emdash no longer has the task,
     that screen is gone and the claim has to go with it.
 
-    Observed 2026-08-01: `pending_question` is written only inside the loop over
+    `pending_question` is written only inside the loop over
     the sessions IN a report, so a session whose task had been deleted kept its
     last dialog forever — the API served a phone six buttons, every one of which
     could only fail, and the failure came back as "could not reach emdash on this
@@ -379,7 +377,7 @@ def test_an_agent_session_tells_the_runner_which_emdash_project_it_lives_under()
     returned None. Both consumers then `continue`d, silently and forever: agent
     chats were never streamed and never backfilled.
 
-    Measured on labs 2026-08-01 — a fresh hal session sat at zero durable rows
+    A fresh hal session sat at zero durable rows
     through a 7-minute backfill wait, so "load full session" could not work for
     any agent chat on the fleet.
     """
@@ -434,9 +432,9 @@ def test_an_answer_survives_the_control_channel_being_down():
     A frame published while the runner's control channel is down lands in a
     Channels group with no consumer and is discarded — and because the runner
     keeps heartbeating over REST it reads ONLINE the whole time, so the API
-    answers `ok:true` and NOTHING records the loss. Measured on labs 2026-08-01:
-    an answer sent at 10:50 never reached the runner at all (no keystroke, no
-    refusal, no log line), between control-channel reconnects at 10:16 and 10:58.
+    answers `ok:true` and NOTHING records the loss: an answer sent between
+    control-channel reconnects never reaches the runner at all (no keystroke, no
+    refusal, no log line).
     That is the purest form of "clicking does nothing".
     """
     from django.test import Client as DjangoClient
@@ -459,8 +457,8 @@ def test_an_answer_survives_the_control_channel_being_down():
     assert [(a["session_key"], a["option"]) for a in answers] == [("chat-1", 2)], (
         "an answer that only ever existed as a WS frame is one the runner can "
         "never recover")
-    # Task names are unique per emdash PROJECT only (ada's and eva's "editing",
-    # 2026-10-04): the runner aims the keystroke by (project, task).
+    # Task names are unique per emdash PROJECT only (ada's and eva's "editing"):
+    # the runner aims the keystroke by (project, task).
     assert answers[0]["project"] == binding.session.emdash_project != ""
     answer_id = answers[0]["answer_id"]
 
@@ -509,7 +507,7 @@ def test_a_close_survives_the_control_channel_being_down():
     """The twin of the menu-answer case, for the other verb that only ever
     existed as a WS frame.
 
-    Verified live 2026-08-01: a real close returned `{"ok":true,"closing":true}`
+    A real close returned `{"ok":true,"closing":true}`
     and the runner logged nothing at all — no attempt, no error — so the emdash
     task stayed open and the session stayed active. `/close`'s own fallback ("the
     task's plain absence from the following report retires it anyway") assumes
@@ -551,13 +549,13 @@ def test_a_reported_session_belongs_to_the_agent_its_project_names():
     """A runner is a MACHINE serving several agents across tenants, so its own
     workspace cannot answer "whose work is this".
 
-    The wholesale sweep carries no agent, so canopy filed every reported session
-    under the runner's workspace with `agent = NULL`. Measured on labs
-    2026-09-08: all three runners are registered in `dimagi` while ace, ada,
-    echo and hal live in `connect` — so each of those agents' sessions sat in a
+    The wholesale sweep carries no agent, so canopy would file every reported session
+    under the runner's workspace with `agent = NULL`. When all three runners are
+    registered in `dimagi` while ace, ada, echo and hal live in `connect`, each of
+    those agents' sessions would sit in a
     tenant that does not contain the agent it is about, readable by that
     tenant's members and invisible to any lister scoped to the agent's own. The
-    feed's `agent: null` was the same defect seen from the other side.
+    feed's `agent: null` is the same defect seen from the other side.
     """
     from django.test import Client
 
@@ -635,12 +633,11 @@ def test_the_feed_names_the_agent_and_keeps_project_meaningful():
     """The feed is what a consumer builds "find the active ACE runs" on, so it
     has to say WHOSE run each one is.
 
-    It carried no `agent` field at all, which every consumer reads as
+    Without an `agent` field every consumer reads the row as
     `agent: null` — indistinguishable from "known to belong to nobody". The only
-    signal was `project`, and once #694 attributed these rows to their agent the
-    XOR constraint necessarily cleared that column, so a field reading it
-    directly began answering "" for every agent-owned run. Strictly less than
-    before. `emdash_project` is the value that never moved.
+    signal is `project`, and once these rows are attributed to their agent the
+    XOR constraint necessarily clears that column, so a field reading it
+    directly would answer "" for every agent-owned run. `emdash_project` is the value that never moved.
     """
     from django.test import Client
 

@@ -1,10 +1,9 @@
 """The claim never hands a box a turn of an agent the box REPORTS it cannot run.
 
-fizzy, 2026-10-15: an email turn was claimed by cloud-ec2-2, which had no clone of
-fizzy (so neither its plugin nor its credentials), ran in a bare scratch dir and
-ended having done nothing; another fizzy turn the same day was claimed by
-shayoni-win-cdp, whose emdash had no `fizzy` project, and failed at once. Both
-boxes passed every gate the claim asked (tenant, hold, routing). Now a box's own
+A box with no clone of an agent (so neither its plugin nor its credentials) would
+run the agent's turn in a bare scratch dir and do nothing; a box whose emdash has
+no project for the agent would fail at once. Both pass every other gate the claim
+asks (tenant, hold, routing). So a box's own
 report is a FLOOR on the routed list (`routing.cannot_serve`): it neither claims
 nor blocks a lower rank, and a turn only such boxes would take is reported as
 stuck, with what each box said.

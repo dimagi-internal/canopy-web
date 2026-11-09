@@ -365,7 +365,7 @@ def test_export_carries_soft_deleted_entries_unless_excluded(w):
 
 def test_discovery_document_is_public_and_declares_the_profile(w, settings):
     # Production's login gate ON: the test settings turn it off, which is how
-    # #1343 shipped a "public" document that answered 401 live.
+    # Otherwise a "public" document can answer 401 live.
     settings.REQUIRE_AUTH = True
     r = Client().get(f"{BASE}/.well-known/hcp-configuration")
     assert r.status_code == 200
@@ -415,7 +415,7 @@ def test_the_four_operations_are_mcp_tools_with_the_spec_names(db):
 
 # --- nothing from a sensitive conversation is ever written ----------------------------------
 #
-# Owner rule (2026-10-08). A turn is sensitive-data when its conversation requires it, when a
+# A turn is sensitive-data when its conversation requires it, when a
 # runner flagged `sensitive_data` claimed it, or when it descends from such a turn.
 
 

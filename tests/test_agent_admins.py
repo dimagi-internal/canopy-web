@@ -1,9 +1,8 @@
 """Agent admins — an explicit, per-agent grant of the whole agent (phase 3 of who-is-asking).
 
-"May hold this agent's keys" used to be a WORKSPACE role. The role that mattered,
+"May hold this agent's keys" is not a WORKSPACE role. The role that matters,
 `editor`, is handed to anyone from an allowed domain who clicks "join", so the
-credentials gate fell back to workspace owners only. An admin is the deliberate
-grant that was missing: the agent's owner, the workspace's owners, and whoever
+credentials gate cannot rest on it. An admin is the deliberate grant: the agent's owner, the workspace's owners, and whoever
 they name — never an editor by default.
 """
 from __future__ import annotations
@@ -126,7 +125,7 @@ def test_the_owner_cannot_be_revoked(world):
 
 
 def test_a_token_can_change_admins_for_someone_allowed_to(world):
-    """Anything the web app can do, MCP and a PAT can (2026-10-02): a token acts
+    """Anything the web app can do, MCP and a PAT can: a token acts
     as its user, under the same rule — the owner or a workspace owner."""
     raw, _ = PersonalToken.create_for_user(user=world["op"], label="t")
     c = Client(HTTP_AUTHORIZATION=f"Bearer {raw}")

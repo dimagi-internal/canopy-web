@@ -1,11 +1,10 @@
-"""Moving an agent between workspaces carries its history (#1532).
+"""Moving an agent between workspaces carries its history.
 
-Before this, the upsert's `workspace` field set `Agent.workspace` and nothing
-else: the agent's sessions, mail, machine capability grants and agent-scoped rules all
-carry their own `workspace` FK, so they stayed in the old tenant — invisible
-from the new one, or 404 through the by-slug gates. Jonathan, 2026-10-16: "we
-want to move the agent and its history which should all be possible and first
-class. This would happen if someone transferred divisions."
+The upsert's `workspace` field sets `Agent.workspace`, but the agent's sessions,
+mail, machine capability grants and agent-scoped rules all carry their own
+`workspace` FK; left behind they would stay in the old tenant, invisible
+from the new one, or 404 through the by-slug gates. Moving the agent (for example
+when someone transfers divisions) moves its history too.
 """
 from __future__ import annotations
 
@@ -301,7 +300,7 @@ def test_a_draft_written_as_the_agent_moves_with_it_and_can_still_be_sent(m):
 def test_every_agent_scoped_table_with_its_own_workspace_is_in_the_move(m):
     """A new table with an agent and its own workspace FK must join the move
     (`apps/agents/move.py::register`) or say here why not — else every moved
-    agent silently leaves those rows behind, the bug #1532 fixed."""
+    agent silently leaves those rows behind."""
     from django.apps import apps
 
     from apps.agents import move

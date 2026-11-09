@@ -1,7 +1,7 @@
 """Query budgets for the endpoints every box and every page hit constantly.
 
-Labs serves everything from one process. On 2026-10-03 the SLOW_REQUEST log named
-the requests stalling it: a runner's session report (~160 queries, ~1.1s, sent by
+Labs serves everything from one process. The requests that stall it
+(SLOW_REQUEST log): a runner's session report (~160 queries, ~1.1s, sent by
 every box every ~10s), the turn list (2,468 queries, 3s) and a chat send (~300).
 Each was a per-row loop of lookups. These tests pin the counts so a new per-row
 query in the loop fails here instead of in production.

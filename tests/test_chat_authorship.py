@@ -1,11 +1,11 @@
 """The author marker: the ONE syntax that carries who-said-it through Claude's transcript.
 
-Production no longer WRITES this marker (canopy no longer prepends it to a
-delivered prompt — see authorship.py's module docstring, updated 2026-09-27).
-`parse` still reads it, forever, because rows already recorded — and any
-transcript backfilled around the change — still carry it. `legacy_marker`
-(apps/canopy_sessions/testing.py) builds a realistic marked string the way the
-old `authorship.mark` used to, so these tests keep exercising the real format.
+Production does not WRITE this marker (canopy does not prepend it to a
+delivered prompt — see authorship.py's module docstring).
+`parse` still reads it, because rows already recorded — and any
+transcript backfilled — still carry it. `legacy_marker`
+(apps/canopy_sessions/testing.py) builds a realistic marked string, so these tests
+exercise the real format.
 """
 from __future__ import annotations
 
@@ -73,7 +73,7 @@ def test_marker_only_no_body():
     assert authorship.parse(marked) == ({"name": "A", "user_id": 1}, "", TID.hex)
 
 
-# -- the live bug this file's rewrite fixes (2026-09-27) --------------------
+# -- a marker with no trailing newline --------------------
 # The laptop runner types a prompt into emdash as ONE line, so a marker's
 # trailing "\n" is lost in transit and the row arrives as
 # `[canopy from="…" user=N turn=…]Are you working?` — marker and body glued

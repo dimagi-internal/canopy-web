@@ -106,8 +106,8 @@ def test_duplicate_slug_conflicts():
     assert dup.status_code == 409
 
 
-# Self-join (`/joinable`, `POST /{slug}/join`) was replaced by access requests
-# (owner decision, 2026-10-04) — see test_access_requests.py.
+# There is no self-join (`/joinable`, `POST /{slug}/join`); access requests
+# replace it — see test_access_requests.py.
 
 
 def test_the_old_join_routes_are_gone():

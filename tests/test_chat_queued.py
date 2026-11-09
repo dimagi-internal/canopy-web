@@ -153,7 +153,7 @@ def test_a_teammates_queued_send_is_theirs_to_withdraw():
 
 
 def test_a_withdrawn_send_is_listed_as_cancelled_in_send_order():
-    """canopy-web#2092: A is withdrawn, B is sent and answered. A must stay a
+    """A is withdrawn, B is sent and answered. A must stay a
     first-class entry — ordered by when it was sent, saying who cancelled it —
     not vanish from the server's view (and linger in a client as a live row)."""
     owner, session = _runner_session()

@@ -105,8 +105,8 @@ def test_post_rollup_has_null_project():
 
 @pytest.mark.django_db
 def test_post_any_well_formed_slug_is_stored():
-    """There is no project registry to check a slug against any more: any
-    well-formed slug is stored as given (it used to be skipped as unknown)."""
+    """There is no project registry to check a slug against: any
+    well-formed slug is stored as given."""
     c = _auth_client()
     resp = _post(c, {"shareouts": [_item(project_slug="never-registered.repo")]})
     assert resp.status_code == 201

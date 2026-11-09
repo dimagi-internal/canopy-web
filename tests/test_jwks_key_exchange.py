@@ -201,8 +201,7 @@ def test_with_no_copy_at_all_it_refuses_rather_than_verifying_against_nothing():
 # --- canopy's own keys ----------------------------------------------------------
 #
 # canopy's OAuth CLIENT key (host grant contract v1) is the only key canopy
-# publishes now. The canopy-minted on-behalf-of key these tests once covered
-# was deleted on 2026-09-26; the rotation properties carried over.
+# publishes. The rotation properties below are tested on it.
 
 
 def _key_settings(active: str, retired: list[str] | None = None):

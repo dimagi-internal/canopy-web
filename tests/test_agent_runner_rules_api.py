@@ -173,7 +173,7 @@ def test_a_non_member_cannot_read_or_write_the_rules(client):
     ).status_code == 404
 
 
-# --- actors (spec 2026-09-05) -------------------------------------------------
+# --- actors -------------------------------------------------
 
 def test_a_rule_round_trips_its_actor(setup):
     res = _put_rules(setup["client"], [

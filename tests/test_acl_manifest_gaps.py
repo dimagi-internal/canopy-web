@@ -1,4 +1,4 @@
-"""Gaps the route-gate manifest surfaced the day it was written (2026-10-02).
+"""Gaps the route-gate manifest surfaced.
 
 Classifying every route by the gate it actually enforces
 (`@gate`, `apps/api/route_gates.py`) is what found these; each was a write a viewer

@@ -142,7 +142,7 @@ def _pin_ace(c, box, key):
 
 
 def test_a_runner_homed_in_the_parent_that_serves_the_division_can_be_pinned_there():
-    # #1447: claim hands this box connect's turns (owner may work there, its
+    # Claim hands this box connect's turns (owner may work there, its
     # dimagi enrollment covers the division), so the pin and the list must too.
     owner, parent, _child = _division_world()
     box = enrolled(_runner(owner, parent, name="cloud-ec2-2"), parent)

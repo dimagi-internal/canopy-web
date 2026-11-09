@@ -262,7 +262,7 @@ def test_an_app_with_no_registered_key_cannot_assert_anything():
 
 
 def test_an_unknown_or_revoked_issuer_is_refused_identically():
-    """Distinguishing them tells a prober which of their guesses used to be
+    """Distinguishing them tells a prober which of their guesses is
     real."""
     app, priv, _ws = _setup()
     unknown = _exchange(_assert(priv, iss="no-such-site"))

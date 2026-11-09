@@ -103,10 +103,10 @@ def test_a_host_supplied_email_does_not_merge_with_an_email_contact():
 @pytest.mark.parametrize("other_channel", ["embed", "slack"])
 def test_the_next_email_still_finds_its_own_contact(other_channel):
     """The two rows above must not collide on the NEXT email either. The email
-    lookup matched on (workspace, email) alone, so a Slack or widget contact
-    carrying the same address made it raise MultipleObjectsReturned — the turn
-    lost its sender, ran as `unknown`, and an agent with a declared interface
-    refused its own owner's mail (ace, 2026-09-24)."""
+    lookup matching on (workspace, email) alone would let a Slack or widget contact
+    carrying the same address raise MultipleObjectsReturned — the turn
+    would lose its sender, run as `unknown`, and an agent with a declared interface
+    would refuse its own owner's mail."""
     ws = _ws()
     first = services.record_inbound_sender(workspace=ws, address="p@llo.org")
     if other_channel == "embed":

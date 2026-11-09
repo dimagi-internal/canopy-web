@@ -149,7 +149,7 @@ def test_push_with_keys_serves_the_public_key(client):
     assert r.status_code == 200 and r.json()["public_key"] == "pub"
 
 
-# --- round 4 (#2598): schema-valid requests the server failed --------------------
+# --- round 4: schema-valid requests the server failed --------------------
 
 
 def _member_of_fuzz():
@@ -198,7 +198,7 @@ def test_a_host_idna_cannot_encode_is_refused_not_a_500():
 
 
 
-# --- round 4 (#2598): what the schema now says, and refusals it declares -----------
+# --- round 4: what the schema says, and refusals it declares -----------
 
 
 def test_an_upload_record_of_the_wrong_shape_is_a_422_not_a_500(client):
@@ -237,7 +237,7 @@ def test_request_text_is_documented_nul_free_and_refusals_as_problem_json():
     assert "400" in schema["paths"]["/api/embed/ws-ticket"]["post"]["responses"]
 
 
-# --- round 5 (#2598): routes the fuzz reached once it could create an agent --------
+# --- round 5: routes the fuzz reached once it could create an agent --------
 
 
 def test_a_run_state_iteration_past_the_ceiling_is_a_422_not_an_endless_loop():
@@ -263,7 +263,7 @@ def test_the_device_proof_401_is_documented_as_problem_json():
     assert list(resolve["401"]["content"]) == ["application/problem+json"]
 
 
-# --- round 6 (#2598) -----------------------------------------------------------------
+# --- round 6 -----------------------------------------------------------------
 
 
 def test_a_feedback_version_past_its_integer_column_is_a_422_not_a_400(client):

@@ -415,7 +415,7 @@ def test_runner_online_reflects_binding_liveness(client, ctx):
     assert client.get(f"/api/canopy-sessions/{session.id}").json()["runner_online"] is False
 
 
-# ---- origin at the request boundary (spec 2026-07-27) ----
+# ---- origin at the request boundary ----
 
 
 def test_send_accepts_ace_web_origin(client):
@@ -478,15 +478,15 @@ def test_send_client_id_over_100_chars_is_truncated(client):
     assert not turn.idempotency_key.endswith(f":{long_id}")
 
 
-# ---- ledger-path peer visibility (spec 2026-09-26 Deviations) ----
+# ---- ledger-path peer visibility ----
 #
 # A transcript-sourced session gets peer visibility of a user's own send for
 # free: `apps.harness.api_session_sync.post_session_stream` fans out every "user" ledger row
 # live, sender included. A ledger-sourced session (the dev stub used by every
 # test in this file, and any pre-unification session not yet reset) writes its
-# Message directly and used to publish nothing beyond `draft.committed` to the
-# sender's own tabs — a peer never saw the line without a reload. Fixed by
-# `services._publish_user_message`, called once from the ledger branch of
+# Message directly, which alone publishes nothing beyond `draft.committed` to the
+# sender's own tabs — a peer would not see the line without a reload. So
+# `services._publish_user_message` is, called once from the ledger branch of
 # `send_message` only: the transcript-sourced branch (`_send_transcript_sourced_
 # message`) must NOT also publish it, or the row doubles with the runner's own
 # `post_session_stream` fan-out.

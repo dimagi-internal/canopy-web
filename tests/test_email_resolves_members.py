@@ -114,7 +114,7 @@ def test_with_an_interface_the_owner_by_email_stays_full_and_a_stranger_is_confi
 
 def _agent_login(w, *, member=True):
     """An agent's own login as `create_token --create-user` makes it: no
-    allauth EmailAddress row, bound through `Agent.user` (#983)."""
+    allauth EmailAddress row, bound through `Agent.user`."""
     bot = User.objects.create_user("ace@dimagi-ai.com", "ace@dimagi-ai.com")
     if member:
         M.objects.create(user=bot, workspace=w["ws"], role=M.EDITOR)

@@ -306,11 +306,10 @@ def test_place_queued_turn_foreign_tenant_runner_raises_value_error():
     assert turn.pinned_runner_id != foreign_runner.id
 
 
-# ---- origin: the ace_web producer (spec 2026-07-27 source-aware runner routing) ----
-# ace-web delegates run execution to canopy (spec 2026-07-26). Until it could say
-# so, its turns arrived as `canopy_web_chat` — indistinguishable from a human
-# typing in the web UI — so a routing rule on `ace_web` had nothing to match and
-# the source-aware routing spec shipped with its ace_web PRODUCER missing.
+# ---- origin: the ace_web producer (source-aware runner routing) ----
+# ace-web delegates run execution to canopy. A turn it sends must say so, else it
+# arrives as `canopy_web_chat` — indistinguishable from a human typing in the web
+# UI — and a routing rule on `ace_web` has nothing to match.
 
 
 def test_send_defaults_to_canopy_web_chat_origin():
@@ -339,10 +338,9 @@ def test_transcript_sourced_send_carries_the_origin_too():
 
 
 # ---- origin derived from the session's owning product ----
-# #496 threaded origin only through ace-web's SERVER-side run dispatcher, so a
-# human typing into ace-web's OWN chat produced canopy_web_chat and routed like
-# canopy chat. Observed live: "testing" typed into an ace-web session went to a
-# laptop runner instead of the box that runs ace-web's work. The distinction
+# Origin threaded only through ace-web's SERVER-side run dispatcher would let a
+# human typing into ace-web's OWN chat produce canopy_web_chat and route like
+# canopy chat, to a laptop runner instead of the box that runs ace-web's work. The distinction
 # that matters is which PRODUCT the session belongs to, not who typed.
 
 

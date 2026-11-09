@@ -1,12 +1,11 @@
 """The dialog a blocked agent is waiting on, from report to phone.
 
-The bug this closes: on 2026-07-31 `ace`'s `spark` session blocked on an
-`AskUserQuestion` for 52 minutes. The menu reached nothing — it was produced
-only as a view-only live frame (never persisted, never in the connect
-snapshot), and only ever by a chat send failing against it, so opening the
-session showed a chat that had simply stopped. See
+The menu of a session blocked on an `AskUserQuestion` must reach a person: a
+view-only live frame (never persisted, never in the connect snapshot), produced
+only by a chat send failing against it, would leave the opened session showing a
+chat that had simply stopped. See
 `canopy_transcript.questions` for why the transcript rather than the screen is
-now the source.
+the source.
 """
 from __future__ import annotations
 
@@ -241,8 +240,8 @@ def test_a_re_stamped_question_does_not_push_again(
         monkeypatch, django_capture_on_commit_callbacks):
     """What the runner actually sends. Every producer stamps `observed_at` on
     each read, so the same dialog arrives as a DIFFERENT dict every ~10s — and
-    a raw comparison buzzed a phone every ten seconds for one waiting agent
-    (2026-09-22). The cursor moving (`selected`) is not a new question either."""
+    a raw comparison would buzz a phone every ten seconds for one waiting agent.
+    The cursor moving (`selected`) is not a new question either."""
     sent = _sent(monkeypatch)
     _jj, _ws, runner, client = _setup()
     for i in range(3):
@@ -343,9 +342,9 @@ def test_an_answer_reaches_a_paused_runner(monkeypatch):
     heartbeat is fresh (a parked box that dies reads STALE), so a paused runner
     is by construction still reporting — it is the runner that delivered this
     very menu, since session reports run before the pause gate — and its control
-    channel is up. Refusing it turned every tap into a dead button the moment a
-    box was parked: found live 2026-07-31, first real use (jj-mbp-cdp parked for
-    a rate limit, ada blocked on AskUserQuestion, every answer 'unavailable')."""
+    channel is up. Refusing it would turn every tap into a dead button the moment a
+    box was parked (parked for a rate limit, agent blocked on AskUserQuestion,
+    every answer 'unavailable')."""
     published = []
     monkeypatch.setattr("apps.realtime.groups.publish",
                         lambda g, m: published.append((g, m)))
@@ -393,9 +392,9 @@ def test_an_answer_to_a_dead_runner_is_still_refused(monkeypatch):
 
 
 def test_a_push_only_goes_to_someone_who_can_open_the_chat(monkeypatch):
-    """The push is a LINK. An agent owner who could not read the session was
-    told it needed them and then shown "No Session matches the given query"
-    (2026-09-23). Whoever is picked must pass the chat's own read gate."""
+    """The push is a LINK. An agent owner who could not read the session would be
+    told it needed them and then shown "No Session matches the given query".
+    Whoever is picked must pass the chat's own read gate."""
     from apps.agents.models import Agent
     from apps.push import services as push_services
 

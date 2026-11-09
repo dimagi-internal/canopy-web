@@ -1,14 +1,11 @@
 """A missing hashed bundle must 404, not be answered with the SPA shell.
 
-Reported and reproduced 2026-09-08. Asset filenames are content-hashed and every
-deploy rehashes them, so a browser holding a cached index.html — the service
-worker precaches it — asks for a bundle the server no longer has. WhiteNoise
-passes the miss through, and the SPA catch-all used to answer that `.js` request
-with index.html at `200 text/html`.
-
-The browser cannot parse HTML as a module, so the app rendered a WHITE PAGE until
-a force-refresh, with no error anyone could act on. Six deploys in a day is what
-made it routine.
+Asset filenames are content-hashed and every deploy rehashes them, so a browser
+holding a cached index.html — the service worker precaches it — asks for a
+bundle the server no longer has. WhiteNoise passes the miss through, and if the
+SPA catch-all answered that `.js` request with index.html at `200 text/html`,
+the browser could not parse HTML as a module and the app would render a WHITE
+PAGE until a force-refresh, with no error anyone could act on.
 """
 from __future__ import annotations
 

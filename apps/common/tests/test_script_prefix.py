@@ -64,8 +64,8 @@ def test_self_full_path_preserves_the_query_string():
 
 
 def test_authorize_page_is_not_in_the_public_allowlist():
-    # It used to be, so that the view's own @login_required would bounce and
-    # keep ?cb/?state/?label. That decorator builds ?next= from
+    # The view's own @login_required would bounce and lose ?cb/?state/?label:
+    # that decorator builds ?next= from
     # get_full_path(), which drops the prefix — so the bounce must come from
     # LoginRequiredMiddleware, which preserves the query AND the prefix.
     assert _is_public("/auth/cli/authorize/") is False

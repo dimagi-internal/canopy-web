@@ -63,14 +63,13 @@ def test_post_then_list_turn(authed_client, workspace):
 
 
 def test_turns_are_invisible_for_another_tenants_agent(authed_client):
-    """Security review 2026-07-26, hole A: this endpoint's AgentTurnOut
+    """This endpoint's AgentTurnOut
     serializes `share_token`, a public `/share/<token>` transcript link, so
     `_get_agent_or_404` must fail CLOSED for an agent the caller cannot see.
 
-    This used to construct an UNHOMED agent, because that was the strongest
-    version of "cannot see" the model allowed. It no longer is — an unhomed
-    agent cannot exist (agents/0013; see tests/test_agent_workspace_not_null.py)
-    — so the case with something left to prove is the cross-tenant one."""
+    An unhomed agent cannot exist (agents/0013; see
+    tests/test_agent_workspace_not_null.py), so the case with something left to
+    prove is the cross-tenant one."""
     from types import SimpleNamespace
 
     from apps.workspaces.testing import a_workspace
@@ -219,8 +218,8 @@ def test_a_cloud_agent_turn_links_to_the_session_the_runner_recorded(
 
 def test_a_cloud_close_out_attaches_to_its_turn_instead_of_adding_a_row(
         authed_client, workspace):
-    """The duplicate seen on labs: echo's 17:00 scheduled turn and, beside it, a
-    'Scheduled turn 2026-10-01 — nothing in queue' report-only row."""
+    """No duplicate: echo's 17:00 scheduled turn must not get, beside it, a
+    'Scheduled turn — nothing in queue' report-only row."""
     agent = _echo(workspace)
     turn = _turn(agent, "sched-1", status="done", session_key="772b76a6-cli")
     resp = authed_client.post(
@@ -272,9 +271,9 @@ def test_a_laptop_session_is_still_named_after_its_emdash_task(authed_user, work
 
 
 # ---- the close-out lands BEFORE finish ---------------------------------------
-# Seen on labs 2026-10-02 17:00: echo posted its close-out at 17:01:56, the turn
-# finished (and was keyed) at 17:02:21, so the report found no turn and became a
-# second row. record-session now keys the turn the moment its session exists.
+# A close-out can arrive before the turn finishes (and is keyed), so the report
+# would find no turn and become a second row. record-session keys the turn the
+# moment its session exists.
 
 def test_record_session_keys_the_running_turn_so_an_early_close_out_joins(
         authed_client, authed_user, workspace):

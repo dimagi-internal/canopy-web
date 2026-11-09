@@ -284,7 +284,7 @@ def test_default_workspace_is_a_direct_membership_not_a_newer_inherited_one(labs
 
 
 def test_each_tenant_url_lists_its_agents_and_those_below_it(labs_shape):
-    """A pinned list covers the caller's workspaces below the pin (2026-10-12)."""
+    """A pinned list covers the caller's workspaces below the pin."""
     c = _client(labs_shape["owner"])
     assert _agent_slugs(c, "/api/w/connect/agents/") == ["ace", "hal"]
     assert _agent_slugs(c, "/api/w/dimagi/agents/") == ["ace", "eva", "fizzy", "hal"]

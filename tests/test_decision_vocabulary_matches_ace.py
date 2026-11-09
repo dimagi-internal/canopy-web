@@ -7,7 +7,7 @@ from the other repo, which CI cannot see. If ACE changes a value, change it
 here AND in apps/storyboards/decisions.py in the same PR — that is the point.
 
 `needed_by` is deliberately NOT ACE's (`award`/`go-live`/…): a set of demos has
-its own two moments (owner decision 2026-10-15).
+its own two moments.
 """
 import pytest
 

@@ -1,8 +1,7 @@
 """A new agent is born private, and gets its canopy login in one click.
 
 Its `canopy-pat` login is stored in the Canopy vault from the browser, with no terminal
-command (marshellis audit, 2026-10-18: a family workspace had no other way to give an
-agent a login at all).
+command (a family workspace has no other way to give an agent a login at all).
 
 Pinned here: the create default, `POST /canopy-login` storing the token SEALED and never
 returning it, its refusals, and the setup checklist step that points at it.
