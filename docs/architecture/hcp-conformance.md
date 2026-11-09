@@ -90,7 +90,7 @@ or `test_hcp_relevance.py`.
 | REST: `GET /v1/grants` scoped to the client's own | pass | as above |
 | Temporary vs persistent; temporary the default | pass | OAuth: `issue_grant`. canopy's agents: "allow for this session" is the only authorizing act, and it is temporary (`test_one_act_never_both_allows_and_keeps_it`) |
 | Temporary grants carry `expiresAt`, shown at authorization time | pass | DB check constraint; consent shows the duration and act 2 the time |
-| Persistence needs a distinct affirmative act | pass | OAuth: act 2; `test_the_keep_question_preselects_nothing`, `test_keeping_access_is_its_own_act…`. canopy's agents: the "Keep allowing" question after allowing; the server refuses `always` without the session's grant |
+| Persistence needs a distinct affirmative act | pass | OAuth: act 2, which validates the client and scopes again before writing (`hcp_oauth.recheck_pending`, `test_a_client_disabled_between_the_acts_gets_no_grant_and_no_code`); `test_the_keep_question_preselects_nothing`, `test_keeping_access_is_its_own_act…`. canopy's agents: the "Keep allowing" question after allowing; the server refuses `always` without the session's grant |
 | Revocation available and propagates per 4.2 | pass | `hcp_oauth.revoke`: every token at once; audited in the same transaction |
 | Revocation notifications signed and retried; revocation independent of delivery | pass | `HcpRevocationDelivery`, `hcp_webhooks.attempt`, off-request clock; `test_revoking_kills_every_token…`, `test_a_failing_webhook…` |
 | Token lifetimes per 4.1.3 | pass | access 1 h; refresh 30 d persistent, grant expiry temporary; codes 10 min |

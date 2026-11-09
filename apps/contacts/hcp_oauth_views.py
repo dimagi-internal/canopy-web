@@ -87,6 +87,10 @@ def authorize(request: HttpRequest) -> HttpResponse:
         pending = hcp_oauth.take_pending(request.POST.get("nonce") or "", request.user)
         if pending is None:
             return _error(request, "That request has expired. Go back to the app and start again.")
+        try:
+            hcp_oauth.recheck_pending(pending)
+        except hcp_oauth.BadClientOrRedirect as e:
+            return _error(request, str(e))
         persistent = request.POST.get("keep") == "yes"
         grant = hcp_oauth.issue_grant(pending, person=person, user=request.user, persistent=persistent)
         code = hcp_oauth.issue_code(pending, grant)

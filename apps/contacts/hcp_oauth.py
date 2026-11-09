@@ -249,6 +249,29 @@ def take_pending(nonce: str, user) -> dict | None:
     return data
 
 
+def recheck_pending(pending: dict) -> HcpClient:
+    """Act 2 is about to write: the client may have been disabled, deleted, re-addressed
+    or narrowed since act 1, so the request is validated again against the registry as
+    it is now. Raises `BadClientOrRedirect` (shown, never redirected to) on any failure."""
+    client = HcpClient.objects.filter(pk=pending["client"]).first()
+    if client is None:
+        raise BadClientOrRedirect("This app is not registered with canopy's HCP service.")
+    if not client.is_active:
+        raise BadClientOrRedirect(f"{client.name} has been disabled by canopy's administrators.")
+    if pending["redirect_uri"] not in (client.redirect_uris or []):
+        raise BadClientOrRedirect("That return address is not one this app registered, "
+                                  "so canopy will not send you there.")
+    try:
+        parse_scope(" ".join(pending["scopes"]))
+    except OAuthError as e:
+        raise BadClientOrRedirect(e.description) from None
+    beyond = [s for s in pending["scopes"] if s not in (client.allowed_scopes or [])]
+    if beyond:
+        raise BadClientOrRedirect(f"{client.name} is no longer registered to ask for {' '.join(beyond)}. "
+                                  "Nothing was shared; go back to the app and start again.")
+    return client
+
+
 def _restrictions(scopes: list[str], sources: list[str]) -> list[dict]:
     """4.1.5.1: every scope narrowed to the sources the person chose — their
     personal entries, plus any workspaces they ticked."""
