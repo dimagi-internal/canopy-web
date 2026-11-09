@@ -52,3 +52,4 @@ api._page_in_it_or_403  # no such helper
 test_key_passphrase_only  # no such test
 test_key_exists  # no such test
 test_key  # no such test
+sharing.set_shared  # no such function (the project-sharing writer was removed)
