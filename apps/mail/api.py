@@ -75,6 +75,10 @@ logger = logging.getLogger(__name__)
 
 router = Router(auth=session_auth, tags=["mail"])
 
+# MAIL_ENABLED off refuses only what needs SES: adding a domain (503, `domains.add_domain`),
+# sending or replying (503, `agent_mail.send`), and inbound mail (acknowledged and logged
+# `dropped:mail-off`, `inbound.handle`). Reads, routes, removals and the ledger keep working.
+
 
 def _domain(ws, domain_id: int) -> MailDomain:
     d = MailDomain.objects.filter(pk=domain_id, workspace=ws).first()

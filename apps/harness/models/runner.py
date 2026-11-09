@@ -339,6 +339,9 @@ class Runner(models.Model):
         "safety; the API assigns one at pairing (the owner's default workspace "
         "when unspecified). Mirrors Agent.workspace.",
     )
+    # SET_NULL, and a NULL owner has no tenant (`runner_tenant_slugs` fails closed): deleting
+    # the user strands the box (claims and schedule syncs return nothing; retire and re-pair).
+    # Deactivate a departing user instead.
     owner = models.ForeignKey(
         "auth.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
     )

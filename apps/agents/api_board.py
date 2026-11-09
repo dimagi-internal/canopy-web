@@ -366,8 +366,9 @@ def apply_task_patch(request: HttpRequest, task, data: dict, *, route_agent=None
 
 #: Actions that RESHAPE work rather than answer it: `nudge` starts an agent turn
 #: on work already under way (the QuickTurn tier) and `done` declares it
-#: finished. approve / decline / reply answer what is already on the board — the
-#: viewer tier ("decide, read the board").
+#: finished. Every other action (approve, decline, reply, and the triage ones:
+#: accept, backlog, snooze, duplicate) answers or sorts what is already on the
+#: board — the viewer tier ("decide, read the board").
 _EDITOR_ACTIONS = frozenset({"nudge", "done"})
 
 #: Task actions on a project's task that count as a person engaging with the project.
