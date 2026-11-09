@@ -27,7 +27,11 @@ At each Start, the runner runs the newest good version if its **trust surface** 
 
 ## How a person sees it
 
-The menu bar app (`runner/menubar/Sources/main.swift`) shows a start screen on Start and a status window while a run goes; it reads `~/.canopy/apps/<key>/run.json` every second, with no process or network. Every word on both comes from the manifest's optional `presentation` (`apps/local_apps/manifest.py::_presentation`: `uses`, `steps`, `states`). It's copy, so it isn't part of the trust surface: rewording it asks nobody to accept again. `CanopyRunner --render-app-previews <dir>` draws every screen, in light and dark, to PNG for review.
+The menu bar app (`runner/menubar/Sources/main.swift`) shows a start screen on Start and a status window while a run goes; it reads `~/.canopy/apps/<key>/run.json` every second, with no process or network. Every word on both comes from the manifest's optional `presentation` (`apps/local_apps/manifest.py::_presentation`: `uses`, `steps`, `states`, `end`). It's copy, so it isn't part of the trust surface: rewording it asks nobody to accept again. `CanopyRunner --render-app-previews <dir>` draws every screen, in light and dark, to PNG for review.
+
+Stop ends a run and keeps nothing. An app whose source records the meeting itself sets `presentation.end` (e.g. "End meeting"); the status window then shows that button beside Discard. It runs `canopy-runner app end <key>`, which signals the host (SIGUSR1), and the host sends the source `{"type": "end"}`. The source ends its recording and reports `ended`, so the run finishes the way a meeting that ends by itself does, and keeps what was said.
+
+Meeting assistant's recorder is a setting: `canopy-listen` (`packages/canopy_listen`, the default), which records and transcribes on the Mac with open models, or `superwhisper`, which it can only follow.
 
 A runner only runs a manifest whose keys it knows (`runner/canopy_runner/canopy_runner/local_apps/manifest.py::KNOWN`), so a version that adds a new key is published only once runners that know the key have shipped.
 

@@ -13,6 +13,9 @@ import time
 from pathlib import Path
 
 import pytest
+from canopy_runner.local_apps import commands, package, state
+from canopy_runner.local_apps import manifest as runner_manifest
+from canopy_runner.local_apps import server as runner_server
 from django.contrib.auth.models import User
 from django.test import Client
 
@@ -25,9 +28,6 @@ from apps.local_apps import services, trust
 from apps.local_apps.models import LocalAppRun, LocalAppSubmission
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from canopy_runner.local_apps import commands, package, state
-from canopy_runner.local_apps import manifest as runner_manifest
-from canopy_runner.local_apps import server as runner_server
 
 ROOT = Path(__file__).resolve().parent.parent
 APPS = ROOT / "local_apps"
@@ -115,7 +115,7 @@ def install(world) -> LocalAppSubmission:
     web = Client()
     web.force_login(world["person"])
     r = web.post("/api/local-apps/store/apps/meeting-assistant/install",
-                 {"runner_id": str(world["laptop"].pk), "settings": {"agent": "helper", "brief": "Be blunt"},
+                 {"runner_id": str(world["laptop"].pk), "settings": {"agent": "helper", "brief": "Be blunt", "recorder": "superwhisper"},
                   "accept_digest": trust.digest(sub.manifest)}, content_type=J)
     assert r.status_code == 201, r.content
     return sub
@@ -180,6 +180,71 @@ def test_what_the_server_accepts_every_runner_accepts():
     assert runner_manifest.validate(clean)["version"] == clean["version"]
     for change in ({"version": "999999.999999.999999.999999"}, {"max_minutes": 480}, {"max_minutes": 1},
                    {"source": []}, {"changelog": ""},
-                   {"presentation": {"uses": "x" * 40, "steps": ["a"] * 4, "states": {"s" * 40: "t" * 200}}}):
+                   {"presentation": {"uses": "x" * 40, "steps": ["a"] * 4, "states": {"s" * 40: "t" * 200}, "end": "e" * 24}}):
         server_ok = server_manifest.validate({**raw, **change})
         assert runner_manifest.validate(server_ok)
+
+
+# --- recorded on this Mac: Start starts canopy-listen, End meeting ends it and keeps it ---
+
+FAKE_LISTEN = """#!{python}
+import json, os, sys
+home = os.environ["HOME"]
+args = sys.argv[1:]
+ended = os.path.exists(os.path.join(home, "listen-stopped"))
+if args[0] == "status":
+    print(json.dumps({{"state": "idle"}}))
+elif args[0] == "start":
+    print(json.dumps({{"id": "local-1", "state": "recording"}}))
+elif args[0] == "stop":
+    open(os.path.join(home, "listen-stopped"), "w").write("yes")
+    print(json.dumps({{"stopped": True}}))
+elif args[:2] == ["meetings", "read"]:
+    segs = [{{"text": w, "start": float(i), "end": i + 0.5, "speaker": 0, "words": []}}
+            for i, w in enumerate({spoken!r}.split())]
+    print(json.dumps({{"segments": segs, "speakers": [{{"name": "Speaker 1", "number": 0}}],
+                      "summary": "Recording ended." if ended else "", "transcript": ""}}))
+"""
+
+
+@pytest.mark.django_db(transaction=True)
+def test_end_meeting_ends_a_recording_made_on_this_mac_and_keeps_it(world):
+    """Set CANOPY_LISTEN_REAL_BIN (a real canopy-listen) and CANOPY_LISTEN_AUDIO to run the
+    real recorder and models over an audio file; otherwise a stand-in plays SPOKEN."""
+    import os
+
+    from apps.meetings.models import Meeting
+
+    bin_dir = world["home"] / ".local" / "bin"
+    real, audio = os.environ.get("CANOPY_LISTEN_REAL_BIN"), os.environ.get("CANOPY_LISTEN_AUDIO")
+    listen = bin_dir / "canopy-listen"
+    if real and audio:
+        listen.symlink_to(real)
+        # Apps get a scrubbed environment, so the models are found under HOME, as on a real Mac.
+        (world["home"] / ".cache").mkdir(exist_ok=True)
+        # HOME is the test's by now, so the real one comes from the account.
+        real_home = Path(__import__("pwd").getpwuid(os.getuid()).pw_dir)
+        (world["home"] / ".cache" / "huggingface").symlink_to(real_home / ".cache" / "huggingface")
+        assert __import__("subprocess").run([str(listen), "queue-file", audio, "--speed", "4"],
+                                            env={**os.environ, "HOME": str(world["home"])}).returncode == 0
+    else:
+        listen.write_text(FAKE_LISTEN.format(python=sys.executable, spoken=SPOKEN))
+        listen.chmod(listen.stat().st_mode | stat.S_IEXEC)
+    sub = publish(world, "meeting-assistant")
+    web = Client()
+    web.force_login(world["person"])
+    r = web.post("/api/local-apps/store/apps/meeting-assistant/install",
+                 {"runner_id": str(world["laptop"].pk), "settings": {"agent": "helper", "open_chat": False},
+                  "accept_digest": trust.digest(sub.manifest)}, content_type=J)
+    assert r.status_code == 201, r.content
+    assert app(world, "start", key="meeting-assistant", accept_notice=True) == 0
+    wait_for(lambda: Message.objects.filter(session__agent=world["agent"]).exists(), seconds=240,
+             what="the first words to reach the chat")
+    assert app(world, "end", key="meeting-assistant") == 0
+    run = wait_for(lambda: LocalAppRun.objects.filter(finished_at__isnull=False).first(), seconds=180,
+                   what="the run to finish")
+    assert run.stop_reason == "meeting_ended", run.stop_reason
+    meeting = wait_for(lambda: Meeting.objects.filter(owner=world["person"]).first(), seconds=10,
+                       what="the meeting to be saved")
+    assert meeting is not None
+    assert not state.host_alive("meeting-assistant")

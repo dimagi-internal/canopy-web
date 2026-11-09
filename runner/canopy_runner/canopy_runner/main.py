@@ -1039,6 +1039,9 @@ def _build_parser() -> argparse.ArgumentParser:
     app_stop = app_commands.add_parser("stop", help="stop an app (never uses the network)")
     app_stop.add_argument("key", nargs="?")
     app_stop.add_argument("--all", action="store_true", help="stop every running app")
+    app_end = app_commands.add_parser(
+        "end", help="end the meeting an app is recording and keep it (never uses the network)")
+    app_end.add_argument("key")
     app_pack = app_commands.add_parser("pack", help="write a folder's deterministic package")
     app_pack.add_argument("folder")
     app_pack.add_argument("--out", default="")

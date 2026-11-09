@@ -96,11 +96,11 @@ def _presentation(raw: dict) -> dict:
     """Copy for the menu bar. Looser than the server's: a bad one shows plain text, never fails a run."""
     value = raw.get("presentation") or {}
     if not isinstance(value, dict):
-        return {"uses": "", "steps": [], "states": {}}
+        return {"uses": "", "steps": [], "states": {}, "end": ""}
     states = value.get("states") if isinstance(value.get("states"), dict) else {}
     steps = value.get("steps") if isinstance(value.get("steps"), list) else []
-    uses = value.get("uses")
-    return {"uses": uses if isinstance(uses, str) else "",
+    uses, end = value.get("uses"), value.get("end")
+    return {"uses": uses if isinstance(uses, str) else "", "end": end if isinstance(end, str) else "",
             "steps": [s for s in steps if isinstance(s, str)][:4],
             "states": {str(k): v for k, v in states.items() if isinstance(v, str)}}
 

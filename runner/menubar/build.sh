@@ -40,6 +40,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleExecutable</key><string>CanopyRunner</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>LSUIElement</key><false/>
+  <key>NSMicrophoneUsageDescription</key><string>A local app you start, such as Meeting assistant, records the meeting on this Mac. Nothing is recorded until you press Start.</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
 </dict>

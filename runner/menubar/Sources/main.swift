@@ -1210,6 +1210,10 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindo
         runWindow?.close()
         let model = AppRunModel(app: app, run: AppRun.read(key: app.key) ?? AppRun(running: true, state: "starting"))
         model.onStop = { [weak self] in self?.runStop([app.key]) }
+        model.onEnd = { [weak self, weak model] in
+            model?.ending = true
+            self?.runEnd(app.key)
+        }
         model.onClose = { [weak self] in
             self?.runWindow?.close()
             self?.runWindow = nil
@@ -1248,6 +1252,22 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindo
     }
 
     @objc func stopAllApps() { runStop(["--all"]) }
+
+    // End the meeting and keep it: the app finishes the way a meeting that ends by itself does.
+    func runEnd(_ key: String) {
+        guard let cli = RunnerCLI.load() else { return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let (code, out) = cli.run("app", ["end", key])
+            DispatchQueue.main.async {
+                if code != 0 {
+                    self.runModel?.ending = false
+                    self.showAppAlert("Couldn't end the meeting",
+                                      out.isEmpty ? "The runner reported nothing (exit \(code))."
+                                          : out.trimmingCharacters(in: .whitespacesAndNewlines))
+                }
+            }
+        }
+    }
 
     func runStop(_ scope: [String]) {
         guard let cli = RunnerCLI.load() else { return }
@@ -1444,15 +1464,19 @@ struct AppPresentation {
     let uses: String
     let steps: [String]
     let states: [String: String]
+    // The label of a button that ends the meeting and keeps it ("End meeting"), for an app
+    // whose source records the meeting itself. Empty: the app has only Stop.
+    let end: String
 
     init(_ raw: [String: Any]) {
         uses = raw["uses"] as? String ?? ""
         steps = (raw["steps"] as? [String] ?? []).filter { !$0.isEmpty }
         states = raw["states"] as? [String: String] ?? [:]
+        end = raw["end"] as? String ?? ""
     }
 
-    init(uses: String, steps: [String], states: [String: String]) {
-        self.uses = uses; self.steps = steps; self.states = states
+    init(uses: String, steps: [String], states: [String: String], end: String = "") {
+        self.uses = uses; self.steps = steps; self.states = states; self.end = end
     }
 
     func fill(_ text: String, agent: String?) -> String {
@@ -1544,6 +1568,8 @@ final class AppRunModel: ObservableObject {
     @Published var app: LocalApp
     @Published var run: AppRun
     var onStop: () -> Void = {}
+    var onEnd: () -> Void = {}
+    @Published var ending = false
     var onClose: () -> Void = {}
 
     init(app: LocalApp, run: AppRun) { self.app = app; self.run = run }
@@ -1750,8 +1776,19 @@ struct RunStatusView: View {
                 }
                 Spacer()
                 if model.run.running {
-                    Button(role: .destructive, action: model.onStop) { Text("Stop") }
-                        .help("Stops listening and saves nothing")
+                    if !model.app.presentation.end.isEmpty {
+                        Button(role: .destructive, action: model.onStop) { Text("Discard") }
+                            .help("Stops listening and saves nothing")
+                        Button(action: model.onEnd) {
+                            Text(model.ending ? "Ending…" : model.app.presentation.end)
+                        }
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(model.ending)
+                        .help("Ends the meeting and saves the transcript to your Meetings page")
+                    } else {
+                        Button(role: .destructive, action: model.onStop) { Text("Stop") }
+                            .help("Stops listening and saves nothing")
+                    }
                 } else {
                     Button("Close", action: model.onClose).keyboardShortcut(.defaultAction)
                 }
@@ -1811,39 +1848,39 @@ func hostWindow<V: View>(_ view: V, title: String, floating: Bool, closable: Boo
 // `CanopyRunner --render-app-previews <dir>`.
 @MainActor
 func renderAppPreviews(to dir: String) {
-    let presentation = AppPresentation(uses: "Superwhisper", steps: [
-        "Start your meeting in Superwhisper.",
+    let presentation = AppPresentation(uses: "Canopy Listen", steps: [
+        "Press Start: your Mac records and transcribes the meeting itself.",
         "{agent} listens and comments in a chat while you talk.",
-        "End the meeting in Superwhisper and the transcript is saved to your Meetings page.",
+        "Press End meeting and the transcript is saved to your Meetings page.",
     ], states: [
-        "waiting_for_your_meeting": "Start your meeting in Superwhisper\nIt's picked up as soon as it's recording.",
+        "recording": "Recording on this Mac\nWaiting for the first words.",
         "waiting_for_words": "Recording\nWaiting for the first words.",
         "listening": "Listening\n{agent} comments in the chat when something's worth saying.",
-        "meeting_ended": "Meeting ended\nSaving the transcript to your Meetings page.",
+        "meeting_ended": "Meeting ended\nThe transcript is saved to your Meetings page.",
         "saved": "Saved to your Meetings page\nOpen it from Meetings to ask {agent} for follow-up.",
-        "no_meeting_started": "No meeting was started\nStart one in Superwhisper, then press Start again.",
-    ])
-    let app = LocalApp(key: "meeting-assistant", name: "Meeting assistant", version: "0.4.2",
+        "recording_did_not_start": "The recording didn't start\nCheck that canopy-listen is installed and the microphone is allowed for Canopy Runner.",
+    ], end: "End meeting")
+    let app = LocalApp(key: "meeting-assistant", name: "Meeting assistant", version: "0.5.0",
                        notice: "What's said in this meeting leaves your Mac. Tell the people in it.",
-                       reads: ["the transcript and speaker names of the Superwhisper meeting you're recording"],
+                       reads: ["your microphone, while a meeting runs, through canopy-listen on this Mac"],
                        sends: ["transcript text to the chat it opens, and so to the agent's model provider",
                                "the whole transcript to your private Meetings page, when the meeting ends"],
                        agent: "Hal", presentation: presentation)
     var waiting = AppRun(); waiting.running = true; waiting.state = "waiting_for_words"
-    waiting.lastEvent = "waiting_for_your_meeting"; waiting.startedAt = Date(timeIntervalSinceNow: -12)
+    waiting.lastEvent = "recording"; waiting.startedAt = Date(timeIntervalSinceNow: -12)
     var live = waiting; live.state = "listening"; live.batches = 3; live.words = 412
     live.sessionURL = "https://canopy.dimagi.com/s/1"; live.startedAt = Date(timeIntervalSinceNow: -251)
     var saved = live; saved.running = false; saved.stopReason = "meeting_ended"; saved.lastEvent = "saved"
-    var none = AppRun(); none.stopReason = "no_meeting_started"
+    var none = AppRun(); none.stopReason = "recording_did_not_start"
     let noop = {}
     let screens: [(String, AnyView)] = [
         ("start", AnyView(StartAppView(app: app, failure: nil, onStart: noop, onRetry: noop, onCancel: noop))),
-        ("start-not-ready", AnyView(StartAppView(app: app, failure: "Superwhisper is open\nTo fix: Open Superwhisper, then press Start again.",
+        ("start-not-ready", AnyView(StartAppView(app: app, failure: "The recorder can record\nTo fix: Install canopy-listen, or open Superwhisper, then press Start again.",
                                                  onStart: noop, onRetry: noop, onCancel: noop))),
         ("run-waiting", AnyView(RunStatusView(model: AppRunModel(app: app, run: waiting)))),
         ("run-listening", AnyView(RunStatusView(model: AppRunModel(app: app, run: live)))),
         ("run-saved", AnyView(RunStatusView(model: AppRunModel(app: app, run: saved)))),
-        ("run-no-meeting", AnyView(RunStatusView(model: AppRunModel(app: app, run: none)))),
+        ("run-did-not-start", AnyView(RunStatusView(model: AppRunModel(app: app, run: none)))),
     ]
     for scheme in [ColorScheme.light, .dark] {
         for (name, view) in screens {

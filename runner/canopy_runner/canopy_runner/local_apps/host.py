@@ -248,6 +248,8 @@ class Host:
         self.stop_reason: Optional[str] = None
         self.stopping_at: Optional[float] = None
         self.external_stop: Optional[str] = None
+        self.end_requested = False  # `app end`: the person ended the meeting, so keep what was said
+        self.end_relayed = False
         self.source_closed = False  # no stream item goes to the app after this
         self.source_ended_at: Optional[float] = None
         self.app_said: Optional[str] = None
@@ -282,6 +284,19 @@ class Host:
     def request_stop(self, reason: str = STOPPED_BY_YOU) -> None:
         """Safe from a signal handler or another thread: the main loop acts on it."""
         self.external_stop = reason
+
+    def request_end(self) -> None:
+        """Safe from a signal handler: the main loop tells the source to end its meeting. The
+        run then finishes the way a meeting that ends by itself does, and keeps what was said."""
+        self.end_requested = True
+
+    def _relay_end(self) -> None:
+        if not self.end_requested or self.end_relayed or self.stop_reason is not None:
+            return
+        self.end_relayed = True
+        self._log("end_requested")
+        if self.source and self.source.alive():
+            self.source.send({"type": "end"})
 
     def begin_stop(self, reason: str) -> None:
         if self.stop_reason is not None:
@@ -503,6 +518,7 @@ class Host:
             self._relay_gone_then_stop(self.source_said or SOURCE_EXITED)
 
     def _check_clocks(self, now: float) -> None:
+        self._relay_end()
         if self.external_stop:
             self.begin_stop(self.external_stop)
         if self.stop_reason is not None:
@@ -653,6 +669,7 @@ def main(argv=None) -> int:
     host = Host(spec, _link_for(spec))
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(sig, lambda *_: host.request_stop(STOPPED_BY_YOU))
+    signal.signal(signal.SIGUSR1, lambda *_: host.request_end())
     try:
         host.run()
     finally:
