@@ -159,6 +159,108 @@ def test_no_pair_session_is_taken_before_any_code_was_made():
     asyncio.run(go())
 
 
+# --- pairing by code (from canopy-web, no QR) -------------------------------------------
+
+
+class Asked:
+    """The dialog, faked: remembers what it showed and answers `allow`."""
+
+    def __init__(self, allow=True):
+        self.allow, self.shown = allow, []
+
+    async def __call__(self, label, code, name):
+        self.shown.append((label, code, name))
+        return self.allow
+
+
+async def code_pairing(s, phone, sid="c-1", *, reveal_key=None, label="Chrome on Mac"):
+    """The phone's half of pairing by code. Returns (the code the phone shows, what the
+    laptop answered after the reveal, and the session's frames)."""
+    eph, nonce = rc.new_private(), os.urandom(32)
+    hello = {"phone_eph": rc.public_b64(eph), "phone_key": None, "label": label,
+             "commit": rc.pair_commit(phone.key, nonce)}
+    sent = []
+
+    async def send(frame):
+        sent.append(frame)
+
+    session = serve.RelaySession(s, sid, "pair", hello, send)
+    if not await session.open():
+        return None, [rc.read_handshake(f) for f in sent], session
+    laptop = rc.read_handshake(sent.pop(0))
+    assert laptop["type"] == "hello" and laptop["name"] == "Test Mac" and laptop["laptop_key"] == s.key.public()
+    code = rc.pair_code(sid, phone.key, laptop["laptop_key"], nonce, rc.unb64u(laptop["nonce"]))
+    reveal = {"type": "reveal", "phone_key": reveal_key or phone.key, "nonce": rc.b64u(nonce), "label": label}
+    assert await session.receive(rc.handshake_frame(reveal)) is False  # one exchange, then it closes
+    answers = []
+    for frame in sent:
+        if frame[0] == rc.HANDSHAKE:
+            answers.append(rc.read_handshake(frame))
+        else:
+            _, down = rc.session_keys_phone(eph, phone.static, laptop["laptop_key"], sid)
+            answers.append(opened(rc.Opener(down, sid), [frame])[0])
+    return code, answers, session
+
+
+def test_pairing_by_code_asks_this_mac_with_the_code_the_page_shows_then_the_phone_can_record():
+    async def go():
+        asked = Asked(allow=True)
+        s = serve.Serve(run=Runner(), name="Test Mac", confirm=asked)
+        phone = Phone()
+        code, answers, _ = await code_pairing(s, phone)
+        assert asked.shown == [("Chrome on Mac", code, "Test Mac")] and len(code) == 6 and code.isdigit()
+        assert answers == [{"type": "paired", "name": "Test Mac"}]  # sealed: only the real laptop can say it
+        assert s.phones.known(phone.key)["label"] == "Chrome on Mac"
+        session, _, down, sent = await meeting_session(s, phone)
+        assert await session.open() and opened(down, sent)[0]["type"] == "ready"
+    asyncio.run(go())
+
+
+def test_a_declined_code_pairs_nothing():
+    async def go():
+        s = serve.Serve(run=Runner(), name="Test Mac", confirm=Asked(allow=False))
+        phone = Phone()
+        _, answers, _ = await code_pairing(s, phone)
+        assert answers == [{"type": "refused", "reason": "declined"}] and s.phones.all() == []
+    asyncio.run(go())
+
+
+def test_a_key_swapped_after_the_commitment_is_dropped_before_anyone_is_asked():
+    async def go():
+        asked = Asked()
+        s = serve.Serve(run=Runner(), name="Test Mac", confirm=asked)
+        _, answers, _ = await code_pairing(s, Phone(), reveal_key=Phone().key)  # a relay substituting its own key
+        assert answers == [] and asked.shown == [] and s.phones.all() == []
+    asyncio.run(go())
+
+
+def test_one_code_on_screen_at_a_time():
+    async def go():
+        s = serve.Serve(run=Runner(), name="Test Mac", confirm=Asked())
+        s.confirming = True
+        code, answers, _ = await code_pairing(s, Phone())
+        assert code is None and answers == [{"type": "refused", "reason": "busy"}]
+    asyncio.run(go())
+
+
+def test_the_dialog_gets_the_label_as_an_argument_never_as_script(monkeypatch):
+    seen = {}
+
+    async def fake_exec(*argv, **_):
+        seen["argv"] = argv
+
+        class Proc:
+            async def communicate(self):
+                return b"yes\n", b""
+        return Proc()
+
+    monkeypatch.setattr(serve.shutil, "which", lambda _: "/usr/bin/osascript")
+    monkeypatch.setattr(serve.asyncio, "create_subprocess_exec", fake_exec)
+    label = 'Evil" & do shell script "rm -rf ~'
+    assert asyncio.run(serve.ask_on_screen(label, "123456", "Test Mac")) is True
+    assert label not in seen["argv"][2] and label in seen["argv"][3] and "123 456" in seen["argv"][3]
+
+
 def test_the_laptop_key_is_made_once_and_kept_private():
     s = make()
     first = s.key.public()

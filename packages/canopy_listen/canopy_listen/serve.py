@@ -24,6 +24,7 @@ import asyncio
 import contextlib
 import datetime as dt
 import fcntl
+import hmac
 import json
 import logging
 import os
@@ -570,6 +571,7 @@ class RelaySession:
                 hello = {}
         self.hello = hello if isinstance(hello, dict) else {}
         self.opener = self.sealer = None
+        self.laptop_nonce: bytes | None = None  # set when pairing by code
         self.input: Input | None = None
         self.current: dict | None = None
         self.follow: asyncio.Task | None = None
@@ -577,6 +579,8 @@ class RelaySession:
     async def open(self) -> bool:
         if not isinstance(self.sid, str) or not self.sid:
             return False
+        if self.kind == "pair" and self.hello.get("commit"):
+            return await self._code_hello()
         if self.kind == "pair":
             return self.serve.pairings.known()
         if self.kind != "meeting":
@@ -601,7 +605,7 @@ class RelaySession:
 
     async def receive(self, frame: bytes) -> bool:
         if self.kind == "pair":
-            return await self._pair(frame)
+            return await (self._code_reveal(frame) if self.laptop_nonce is not None else self._pair(frame))
         try:
             kind, body = self.opener.open(frame)
         except rc.BadFrame as bad:
@@ -717,6 +721,60 @@ class RelaySession:
         log.info("paired a phone")
         return False
 
+    async def _refuse_in_clear(self, reason: str) -> bool:
+        await self.send_raw(rc.handshake_frame({"type": "refused", "reason": reason}))
+        log.info("refused a code pairing: %s", reason)
+        return False
+
+    async def _code_hello(self) -> bool:
+        """Pairing by code, step 1: the phone has committed to its key; show ours."""
+        if self.serve.confirming:
+            return await self._refuse_in_clear("busy")
+        self.laptop_nonce = os.urandom(rc.NONCE_BYTES)
+        await self.send_raw(rc.handshake_frame({
+            "type": "hello", "laptop_key": self.serve.key.public(), "nonce": rc.b64u(self.laptop_nonce),
+            "name": self.serve.name}))
+        log.info("code pairing: hello sent")
+        return True
+
+    async def _code_reveal(self, frame: bytes) -> bool:
+        """Step 2: the phone reveals its key. If it matches its commitment, the person here
+        compares the code; yes keeps the key. The session closes either way."""
+        try:
+            message = rc.read_handshake(frame)
+            key, label = message.get("phone_key"), message.get("label")
+            nonce = rc.unb64u(message.get("nonce"))
+            if message.get("type") != "reveal" or not isinstance(label, str) or len(nonce) != rc.NONCE_BYTES:
+                raise ValueError
+            rc.load_public(key)
+        except (rc.BadFrame, ValueError, TypeError, AttributeError):
+            log.info("dropped a code pairing: malformed")
+            return False
+        if not hmac.compare_digest(rc.pair_commit(key, nonce), str(self.hello.get("commit") or "")):
+            log.info("dropped a code pairing: the key doesn't match its commitment")
+            return False
+        if self.serve.confirming:
+            return await self._refuse_in_clear("busy")
+        code = rc.pair_code(self.sid, key, self.serve.key.public(), nonce, self.laptop_nonce)
+        label = " ".join(label.split())[:NAME_LIMIT] or "A browser"
+        self.serve.confirming = True
+        try:
+            allowed = await self.serve.confirm(label, code, self.serve.name)
+        finally:
+            self.serve.confirming = False
+        if not allowed:
+            return await self._refuse_in_clear("declined")
+        try:
+            _, down = rc.session_keys_laptop(self.serve.key.private(), str(self.hello.get("phone_eph") or ""),
+                                             key, self.sid)
+        except (ValueError, TypeError):
+            log.info("dropped a code pairing: bad keys")
+            return False
+        self.serve.phones.add(key, label)
+        await self.send_raw(rc.Sealer(down, self.sid).control({"type": "paired", "name": self.serve.name}))
+        log.info("paired a phone by code")
+        return False
+
     async def close(self) -> None:
         if self.follow is not None:
             self.follow.cancel()
@@ -741,12 +799,44 @@ def allowed(host: str | None, origin: str | None, port: int, *, needs_origin: bo
     return origin in {f"http://{h}" for h in hosts}
 
 
+CONFIRM_SECONDS = 120
+DIALOG = """on run argv
+  activate
+  set answer to display dialog (item 1 of argv) with title "Canopy Listen" buttons {"Don't Allow", "Allow"} ¬
+    default button "Don't Allow" cancel button "Don't Allow" giving up after ((item 2 of argv) as integer) with icon caution
+  if gave up of answer then return "no"
+  if button returned of answer is "Allow" then return "yes"
+  return "no"
+end run"""
+
+
+async def ask_on_screen(label: str, code: str, name: str, seconds: int = CONFIRM_SECONDS) -> bool:
+    """Ask the person at this Mac whether the page that wants to pair shows `code`. The
+    label comes from the browser, so it goes in as an argument, never into the script."""
+    if not shutil.which("osascript"):
+        log.info("code pairing: no osascript, so no one can be asked")
+        return False
+    text = (f"“{label}” wants to pair with {name} to record meetings through Canopy.\n\n"
+            f"Allow only if the Canopy page shows this code:\n\n{code[:3]} {code[3:]}")
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "osascript", "-e", DIALOG, text, str(seconds),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+        out, _ = await asyncio.wait_for(proc.communicate(), seconds + 15)
+    except (OSError, asyncio.TimeoutError):
+        log.info("code pairing: the dialog didn't answer")
+        return False
+    return out.decode().strip() == "yes"
+
+
 class Serve:
-    def __init__(self, *, run=None, clock=time.time, name: str | None = None):
+    def __init__(self, *, run=None, clock=time.time, name: str | None = None, confirm=None):
         self.name = name or laptop_name()
         self.key = LaptopKey()
         self.phones = Phones()
         self.pairings = Pairings(clock)
+        self.confirm = confirm or ask_on_screen
+        self.confirming = False
         self.hub = Hub()
         self.controller = Controller(self.hub, run=run, clock=clock)
         self.app_info: dict = {}

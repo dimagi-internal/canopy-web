@@ -55,5 +55,12 @@
       },
       "frame_b64u": "AQAAAAAAAAAAAp4_VBfGbd3c8r07J_ijVYarRhDME_q1k86zyOlE01-Rnmf4z07pGLNJCa6_e54YGIBUpCMnSTpH8I81hA15taI263G7GpKPjjmKzEUuFyx54AqpAENqMQDoCHHuUhXP-84Yot2Rs6rpeVIg_TJreNXcLkELWVU20FIb5ARyGcN--RXLS0YRufGRg78libyAjhXccGAzNQ"
     }
-  ]
+  ],
+  "code_pairing": {
+    "phone_nonce": "ZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp7fH1-f4CBgoM",
+    "laptop_nonce": "yMnKy8zNzs_Q0dLT1NXW19jZ2tvc3d7f4OHi4-Tl5uc",
+    "commit": "OF5HJxDXXpm6YFw7dSNAUf6AyVvFGvMtMw-rImZg-Y8",
+    "code": "332074",
+    "hello_frame_b64u": "AnsidHlwZSI6ImhlbGxvIiwibGFwdG9wX2tleSI6IkJBM01ka2pIaWpFWThtRW9adjZEN3huMEF3VDJJem1lRWhHaER5czlIQVhQTU9nQ2RuZTh1UktVUHBuX2NSUU9xYndrY1R2aHQxd3hfMEJVY2t4UG5RQSIsIm5vbmNlIjoieU1uS3k4ek56c19RMGRMVDFOWFcxOWpaMnR2YzNkN2Y0T0hpNC1UbDV1YyIsIm5hbWUiOiJNYWMifQ"
+  }
 }

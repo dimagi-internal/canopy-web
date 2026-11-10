@@ -24,8 +24,15 @@ phone side is `frontend/src/listen/relayCrypto.ts`. Both are tested against
 `packages/canopy_listen/tests/relay_vectors.json`, which holds fixed keys, derived keys and
 exact frames. Summary:
 - ECDH P-256 (WebCrypto everywhere); HKDF-SHA256; AES-256-GCM.
-- Pairing happens once, at the laptop. The QR code's URL fragment carries the laptop's
-  public key and a one-time secret, and the fragment never reaches the server.
+- Pairing happens once per browser, two ways:
+  - **By code, from /listen itself** (the usual way, and the only one a laptop's own
+    browser needs): pick the computer; it shows a dialog with six digits, and the person
+    clicks Allow if /listen shows the same. The phone commits to its key (`hello.commit`)
+    before it sees the laptop's, so a server that swaps keys has a one-in-a-million chance
+    of matching codes. Handshake frames are `0x02 | JSON`, in the clear; the laptop's
+    `paired` is sealed under the session keys.
+  - **By QR**, from the laptop's local page: the URL fragment carries the laptop's public
+    key and a one-time secret, and the fragment never reaches the server.
 - Each session's key needs the phone's static key and the laptop's, so only the paired
   phone and that laptop can make it.
 - Frames are `0x01 | counter(8, BE) | GCM(…)`, with AAD = session id; counters strictly

@@ -9,7 +9,26 @@ import type { MicCapture } from './audio'
 import type { PairInvite } from './pairLink'
 import { isExpired } from './pairLink'
 import { PhoneRelay, type Control, type LostReason, type SocketFactory } from './relay'
-import { newKeyPair, Opener, pairKeys, publicB64, Sealer, sessionKeysPhone } from './relayCrypto'
+import {
+  b64u,
+  BadFrame,
+  controlMessage,
+  HANDSHAKE,
+  handshakeFrame,
+  importPublic,
+  newKeyPair,
+  newNonce,
+  NONCE_BYTES,
+  Opener,
+  pairCode,
+  pairCommit,
+  pairKeys,
+  publicB64,
+  readHandshake,
+  Sealer,
+  sessionKeysPhone,
+  unb64u,
+} from './relayCrypto'
 import type { ListenStore, Pairing } from './store'
 
 export interface ListenDeps {
@@ -21,6 +40,8 @@ export interface ListenDeps {
   wsUrl(path: string): string
   label: string
   startMic(onChunk: (pcm: Uint8Array) => void, onLevel: (level: number) => void): Promise<MicCapture>
+  /** A call in another tab plus the microphone; absent where the browser can't share a tab. */
+  startTab?: (onChunk: (pcm: Uint8Array) => void, onLevel: (level: number) => void) => Promise<MicCapture>
   /** Timers, injectable for tests. */
   setTimeout(fn: () => void, ms: number): unknown
   clearTimeout(handle: unknown): void
@@ -73,7 +94,7 @@ function safeUrl(value: unknown): string | undefined {
 
 // -- pairing -------------------------------------------------------------------------
 
-export type PairStep = 'connecting' | 'waiting' | 'done'
+export type PairStep = 'connecting' | 'waiting' | 'confirm' | 'done'
 
 /** Pair this phone with the laptop that showed `invite`. Resolves with what was stored. */
 export async function pairPhone(invite: PairInvite, deps: ListenDeps, onStep: (step: PairStep) => void): Promise<Pairing> {
@@ -135,6 +156,127 @@ export async function pairPhone(invite: PairInvite, deps: ListenDeps, onStep: (s
   }
 }
 
+/** The laptop's dialog waits two minutes; give it a little longer than that. */
+export const PAIR_CODE_TIMEOUT_MS = 150_000
+
+const CODE_REFUSALS: Record<string, (name: string) => string> = {
+  busy: (name) => `${name} is already showing a pairing code. Answer that one first, then try again.`,
+  declined: (name) => `Pairing was declined on ${name}, or nobody answered there in time.`,
+}
+
+/**
+ * Pair from canopy-web itself, no QR: the laptop shows a dialog with six digits, and the
+ * person allows it if this page shows the same ones. `onStep('confirm', code)` is when to
+ * show them. The relay sees the handshake but can't get in the middle without the codes
+ * differing (relaycrypto.py, "PAIRING BY CODE").
+ */
+export async function pairByCode(
+  runner: { id: string; name: string },
+  deps: ListenDeps,
+  onStep: (step: PairStep, code?: string) => void,
+): Promise<Pairing> {
+  onStep('connecting')
+  const phone = await deps.store.phoneKey()
+  const eph = await newKeyPair()
+  const nonce = newNonce()
+  const phoneKey = await publicB64(phone.publicKey)
+  const hello: ListenHello = {
+    phone_eph: await publicB64(eph.publicKey), phone_key: null, label: deps.label,
+    commit: await pairCommit(phoneKey, nonce),
+  }
+  let sid: string
+  try {
+    sid = await deps.openSession(runner.id, 'pair', hello)
+  } catch (e) {
+    throw new Error(openRefusal(e, runner.name))
+  }
+  try {
+    const { laptopKey, name } = await new Promise<{ laptopKey: string; name: string }>((resolve, reject) => {
+      let finished = false
+      let laptopKey = ''
+      let opener: Opener | null = null
+      let queue = Promise.resolve()
+      const ws = deps.socket(deps.wsUrl(`ws/listen/${sid}/?role=phone`))
+      const finish = (fn: () => void) => {
+        if (finished) return
+        finished = true
+        deps.clearTimeout(timer)
+        ws.onclose = null
+        ws.close(1000)
+        fn()
+      }
+      const fail = (message: string) => finish(() => reject(new Error(message)))
+      const timer = deps.setTimeout(() => fail(`${runner.name} didn't answer in time. Try again.`), PAIR_CODE_TIMEOUT_MS)
+
+      const onFrame = async (bytes: Uint8Array) => {
+        if (bytes[0] === HANDSHAKE) {
+          const m = readHandshake(bytes)
+          if (m?.type === 'refused') {
+            const why = typeof m.reason === 'string' ? m.reason : ''
+            fail((CODE_REFUSALS[why] ?? ((n: string) => `${n} refused this pairing.`))(runner.name))
+            return
+          }
+          if (m?.type !== 'hello' || laptopKey) return
+          const laptopNonce = typeof m.nonce === 'string' ? unb64u(m.nonce) : new Uint8Array()
+          if (typeof m.laptop_key !== 'string' || laptopNonce.length !== NONCE_BYTES) {
+            fail(`${runner.name} answered with something this page doesn't understand. Update Canopy Listen there.`)
+            return
+          }
+          await importPublic(m.laptop_key) // throws on anything that isn't a P-256 point
+          laptopKey = m.laptop_key
+          const keys = await sessionKeysPhone(eph.privateKey, phone.privateKey, laptopKey, sid)
+          opener = new Opener(keys.down, sid)
+          ws.send(handshakeFrame({ type: 'reveal', phone_key: phoneKey, nonce: b64u(nonce), label: deps.label }))
+          onStep('confirm', await pairCode(sid, phoneKey, laptopKey, nonce, laptopNonce))
+          return
+        }
+        if (!opener) return
+        let message: Control | null = null
+        try {
+          message = controlMessage(await opener.open(bytes))
+        } catch (e) {
+          if (e instanceof BadFrame) return // forged: ignored, the codes will say so
+          throw e
+        }
+        if (message?.type === 'paired') {
+          const said = typeof message.name === 'string' && message.name ? message.name : runner.name
+          finish(() => resolve({ laptopKey, name: said }))
+        }
+      }
+
+      ws.binaryType = 'arraybuffer'
+      ws.onopen = () => onStep('waiting')
+      ws.onerror = () => undefined
+      ws.onmessage = (ev) => {
+        const data = ev.data
+        if (typeof data === 'string') {
+          try {
+            const note = JSON.parse(data) as Control
+            if (note?.type === 'ended') fail('The pairing session ended before it finished.')
+          } catch {
+            // not a notice
+          }
+          return
+        }
+        const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : data instanceof Uint8Array ? data : null
+        if (bytes?.length) {
+          queue = queue.then(() => onFrame(bytes)).catch(() => fail(`${runner.name} sent a key this page can't use.`))
+        }
+      }
+      ws.onclose = (ev) => {
+        const fatal: Record<number, LostReason> = { 4001: 'signed_out', 4003: 'refused', 4009: 'taken' }
+        fail(fatal[ev.code] ? lostInWords(fatal[ev.code]) : 'The connection closed before pairing finished. Try again.')
+      }
+    })
+    const pairing: Pairing = { runner_id: runner.id, laptop_pub: laptopKey, laptop_name: name }
+    await deps.store.setPairing(pairing)
+    onStep('done')
+    return pairing
+  } finally {
+    void deps.endSession(sid).catch(() => undefined)
+  }
+}
+
 // -- a meeting -----------------------------------------------------------------------
 
 export interface Segment {
@@ -143,6 +285,9 @@ export interface Segment {
   speaker: number
   text: string
 }
+
+/** Where a meeting's sound comes from: this device's microphone, or a call in another tab. */
+export type AudioSource = 'mic' | 'tab'
 
 export type MeetingStatus = 'connecting' | 'waiting' | 'recording' | 'ending' | 'saved' | 'discarded' | 'failed'
 
@@ -200,8 +345,9 @@ export class Meeting {
    * because phones only start audio inside a gesture. Audio recorded before the laptop
    * says `ready` waits (up to 10 s) in the relay.
    */
-  begin(): Promise<void> {
-    const micStarting = this.deps.startMic(
+  begin(source: AudioSource = 'mic'): Promise<void> {
+    const start = source === 'tab' && this.deps.startTab ? this.deps.startTab : this.deps.startMic
+    const micStarting = start(
       (pcm) => this.relay?.sendAudio(pcm),
       (level) => this.set({ level }),
     )

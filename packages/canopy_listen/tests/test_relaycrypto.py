@@ -63,3 +63,25 @@ def test_a_relay_that_swaps_in_its_own_phone_key_gets_different_keys():
     real = rc.session_keys_laptop(laptop, V["phone_eph"]["pub"], V["phone_static"]["pub"], sid)
     fake = rc.session_keys_laptop(laptop, V["phone_eph"]["pub"], rc.public_b64(impostor), sid)
     assert real != fake
+
+
+def test_pairing_by_code_matches_the_pinned_commitment_code_and_handshake():
+    c, sid = V["code_pairing"], V["session_id"]
+    np_, nl = rc.unb64u(c["phone_nonce"]), rc.unb64u(c["laptop_nonce"])
+    S, L = V["phone_static"]["pub"], V["laptop"]["pub"]
+    assert rc.pair_commit(S, np_) == c["commit"]
+    assert rc.pair_code(sid, S, L, np_, nl) == c["code"]
+    hello = rc.read_handshake(rc.unb64u(c["hello_frame_b64u"]))
+    assert hello == {"type": "hello", "laptop_key": L, "nonce": c["laptop_nonce"], "name": "Mac"}
+
+
+def test_a_different_key_session_or_nonce_changes_the_code():
+    sid, np_, nl = V["session_id"], rc.unb64u(V["code_pairing"]["phone_nonce"]), rc.unb64u(V["code_pairing"]["laptop_nonce"])
+    S, L, other = V["phone_static"]["pub"], V["laptop"]["pub"], V["phone_eph"]["pub"]
+    code = rc.pair_code(sid, S, L, np_, nl)
+    assert code != rc.pair_code(sid, S, other, np_, nl)
+    assert code != rc.pair_code(sid + "x", S, L, np_, nl)
+    assert code != rc.pair_code(sid, S, L, np_, bytes(32))
+    for bad in (b"", b"\x01{}", b"\x02[1]", b"\x02not json"):
+        with pytest.raises(rc.BadFrame):
+            rc.read_handshake(bad)

@@ -16,6 +16,10 @@ import {
   publicB64,
   sessionKeysLaptop,
   sessionKeysPhone,
+  handshakeFrame,
+  pairCode,
+  pairCommit,
+  readHandshake,
   unb64u,
 } from './relayCrypto'
 
@@ -159,5 +163,26 @@ describe('keys made on the phone', () => {
     for (const [i, f] of frames.entries()) {
       expect(controlMessage(await opener.open(f))).toEqual({ type: 'rename', speaker: i + 1, name: `S${i + 1}` })
     }
+  })
+})
+
+describe('pairing by code', () => {
+  const C = (JSON.parse(raw) as { code_pairing: { phone_nonce: string; laptop_nonce: string; commit: string; code: string; hello_frame_b64u: string } }).code_pairing
+
+  it('matches the laptop: commitment, code and handshake frame', async () => {
+    const np = unb64u(C.phone_nonce)
+    const nl = unb64u(C.laptop_nonce)
+    expect(await pairCommit(V.phone_static.pub, np)).toBe(C.commit)
+    expect(await pairCode(V.session_id, V.phone_static.pub, V.laptop.pub, np, nl)).toBe(C.code)
+    expect(readHandshake(unb64u(C.hello_frame_b64u))).toEqual({ type: 'hello', laptop_key: V.laptop.pub, nonce: C.laptop_nonce, name: 'Mac' })
+    expect(b64u(handshakeFrame({ type: 'hello', laptop_key: V.laptop.pub, nonce: C.laptop_nonce, name: 'Mac' }))).toBe(C.hello_frame_b64u)
+  })
+
+  it('a swapped key changes the code; sealed or broken frames are not handshakes', async () => {
+    const np = unb64u(C.phone_nonce)
+    const nl = unb64u(C.laptop_nonce)
+    expect(await pairCode(V.session_id, V.phone_static.pub, V.phone_eph.pub, np, nl)).not.toBe(C.code)
+    expect(readHandshake(unb64u(V.down_frames[0].frame_b64u))).toBeNull()
+    expect(readHandshake(new Uint8Array([2, 91, 49, 93]))).toBeNull()
   })
 })

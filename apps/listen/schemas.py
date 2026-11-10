@@ -25,6 +25,9 @@ class ListenHello(Schema):
     phone_key: str | None = None
     #: What the laptop shows for this phone.
     label: str = ""
+    #: Pairing by code: the phone's commitment to its key (base64url SHA-256), sent before
+    #: it sees the laptop's. Null for a QR pairing and for a meeting.
+    commit: str | None = None
 
 
 class ListenSessionIn(Schema):
