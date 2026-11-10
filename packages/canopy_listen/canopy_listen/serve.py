@@ -57,7 +57,7 @@ SAMPLE_RATE = 16000
 MAX_BUFFER_BYTES = SAMPLE_RATE * 2 * 300  # five minutes waiting for the recorder to load its models
 MAX_AUDIO_MESSAGE = 64 * 1024
 SOURCES = ("microphone", "browser-tab", "browser-mic", "phone")
-FOLLOW_SECONDS = 0.5
+FOLLOW_SECONDS = 0.25
 NAME_LIMIT = 60
 DEFAULT_NOTICE = "What's said in this meeting leaves your Mac. Tell the people in it."
 
@@ -662,7 +662,7 @@ class RelaySession:
         return self.current is not None and self.serve.controller.current is self.current
 
     async def _follow(self) -> None:
-        sent_state, sent_segments, sent_speakers, sent_chat = None, 0, None, False
+        sent_state, sent_segments, sent_speakers, sent_chat, sent_partial = None, 0, None, False, ""
         while True:
             if not self._owns():
                 if sent_state not in ("ended", "failed"):
@@ -675,6 +675,12 @@ class RelaySession:
                 await self.control({"type": "segment", "start": seg.get("start", 0), "end": seg.get("end", 0),
                                     "speaker": seg.get("speaker", 0), "text": seg.get("text", "")})
             sent_segments = max(sent_segments, len(meeting.get("segments") or []))
+            partial = meeting.get("partial") or ""
+            if not isinstance(partial, str) or phase in TERMINAL:
+                partial = ""
+            if partial != sent_partial:
+                await self.control({"type": "partial", "text": partial[:2000]})
+                sent_partial = partial
             speakers = meeting.get("speakers") or []
             if speakers and speakers != sent_speakers:
                 await self.control({"type": "speakers", "speakers": speakers})

@@ -49,7 +49,10 @@ Plaintext messages (after decryption):
 - 0x02 + JSON, laptop → phone:
   - `{"type":"ready","name":laptop_name}`: sent first; the phone sends no audio before it.
   - `{"type":"state","state":"starting|recording|ending|ended|failed","detail":…}`
-  - `{"type":"segment","start":…,"end":…,"speaker":N,"text":…}`
+  - `{"type":"segment","start":…,"end":…,"speaker":N,"text":…}`: final words.
+  - `{"type":"partial","text":…}`: words heard but not final yet, shown greyed after the
+    transcript; each replaces the last, and `""` clears it. The recorder steps every second
+    and starts listening before its models load, so nothing said while they load is lost.
   - `{"type":"speakers","speakers":[{"number":N,"name":…}]}`
   - `{"type":"chat","url":…}`
   - `{"type":"saved","url":…}`

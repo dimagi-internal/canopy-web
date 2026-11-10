@@ -297,6 +297,8 @@ export interface MeetingView {
   /** The laptop's own word for where it is (starting, recording, ending…). */
   laptopState: string
   segments: Segment[]
+  /** Words heard but not final yet: shown as they are said, and may still change. */
+  partial: string
   speakers: Record<number, string>
   chatUrl?: string
   savedUrl?: string
@@ -326,7 +328,7 @@ export class Meeting {
     this.pairing = pairing
     this.deps = deps
     this.view = {
-      status: 'connecting', laptopName: pairing.laptop_name, laptopState: '', segments: [], speakers: {},
+      status: 'connecting', laptopName: pairing.laptop_name, laptopState: '', segments: [], partial: '', speakers: {},
       reconnecting: false, laptopConnected: false, level: 0,
     }
   }
@@ -470,6 +472,9 @@ export class Meeting {
         this.set({ segments: [...this.view.segments, seg].slice(-MAX_SEGMENTS) })
         return
       }
+      case 'partial':
+        this.set({ partial: typeof m.text === 'string' ? m.text.slice(0, 2000) : '' })
+        return
       case 'speakers': {
         if (!Array.isArray(m.speakers)) return
         const speakers: Record<number, string> = { ...this.view.speakers }

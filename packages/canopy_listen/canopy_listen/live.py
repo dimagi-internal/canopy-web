@@ -147,6 +147,9 @@ class LiveTranscriber:
         self.base = 0.0  # meeting time, in seconds, of buffer[0]
         self.received = 0  # samples seen in all
         self.last_speaker = 0
+        #: What the newest step heard but has not committed: shown as it is said, and
+        #: may still change. Empty when that step committed everything or heard nothing.
+        self.pending = ""
 
     # Kept for callers and tests that set them directly.
     @property
@@ -176,6 +179,7 @@ class LiveTranscriber:
         window = len(self.buffer) / SAMPLE_RATE
         if window < 0.5 and not final:
             return []
+        self.pending = ""
         if not final and self._quiet(self.buffer):
             if window > 3.0:  # nothing said: let go of all but the newest moment
                 self._drop(window - 0.5)
@@ -193,6 +197,8 @@ class LiveTranscriber:
             if not ready and sentences and window >= self.max_window:
                 ready = sentences[:-1] or sentences
         out = [self._segment(s) for s in ready]
+        if not final:
+            self.pending = " ".join(s.text.strip() for s in sentences[len(ready):])
         if ready:
             self._drop(window if final else ready[-1].end)
         elif final:

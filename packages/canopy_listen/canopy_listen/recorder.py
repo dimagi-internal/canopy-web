@@ -17,7 +17,7 @@ import numpy as np
 from . import store
 from .live import SAMPLE_RATE, LiveTranscriber
 
-STEP_SECONDS = 2.0
+STEP_SECONDS = 1.0  # one pass over a full 24 s window takes ~0.2 s on an M-series Mac
 log = logging.getLogger("canopy_listen")
 
 
@@ -194,9 +194,17 @@ def record(meeting_id: str, source, *, recognise=None, embed=None, keep_audio: b
     (store.meeting_dir(meeting_id) / "pid").write_text(str(os.getpid()))
     store.set_active(meeting_id)
     writer = None
+    started = False
     try:
         meeting["state"] = "loading"
         store.save(meeting)
+        # Listen first, load the models second: what is said while they load waits in the
+        # source's queue, so recording starts the moment audio can arrive.
+        source.start()
+        started = True
+        meeting["state"] = "recording"
+        store.save(meeting)
+        log.info("recording %s from %s", meeting_id, source.name)
         chosen = settings or {}
         labeller = None
         if recognise is None:
@@ -211,10 +219,7 @@ def record(meeting_id: str, source, *, recognise=None, embed=None, keep_audio: b
             import soundfile as sf
 
             writer = sf.SoundFile(str(store.meeting_dir(meeting_id) / "audio.wav"), "w", SAMPLE_RATE, 1, "PCM_16")
-        source.start()
-        meeting["state"] = "recording"
-        store.save(meeting)
-        log.info("recording %s from %s", meeting_id, source.name)
+        log.info("models ready for %s", meeting_id)
         next_step = time.monotonic() + STEP_SECONDS
         while not stop.is_set():
             try:
@@ -226,18 +231,24 @@ def record(meeting_id: str, source, *, recognise=None, embed=None, keep_audio: b
                 if writer is not None:
                     writer.write(chunk)
             ended = source.done.is_set() and source.chunks.empty()
-            if time.monotonic() >= next_step or ended:
+            if (time.monotonic() >= next_step and source.chunks.empty()) or ended:
                 _add(meeting, live.step())
                 _name_speakers(meeting)  # a rename reaches meeting.json within a step
+                meeting["partial"] = live.pending
                 meeting["heard_seconds"] = round(live.heard, 1)
                 store.save(meeting)
                 next_step = time.monotonic() + STEP_SECONDS
             if ended:
                 break
         source.stop()
+        started = False
         while not source.chunks.empty():
-            live.feed(source.chunks.get_nowait())
+            chunk = source.chunks.get_nowait()
+            live.feed(chunk)
+            if writer is not None:
+                writer.write(chunk)
         _add(meeting, live.step(final=True))
+        meeting["partial"] = ""
         meeting["heard_seconds"] = round(live.heard, 1)
         if writer is not None:
             writer.close()
@@ -253,12 +264,18 @@ def record(meeting_id: str, source, *, recognise=None, embed=None, keep_audio: b
         return 0
     except Exception as exc:  # the reason, never the audio or words
         meeting["state"] = "failed"
+        meeting["partial"] = ""
         meeting["error"] = type(exc).__name__
         meeting["summary"] = meeting["summary"] or "Recording failed."
         store.save(meeting)
         log.exception("recorder failed for %s", meeting_id)
         return 1
     finally:
+        if started:  # the models failed to load, or something else broke mid-recording
+            try:
+                source.stop()
+            except Exception:  # noqa: BLE001 — already failing; keep the first reason
+                log.exception("stopping the source failed for %s", meeting_id)
         if writer is not None:
             writer.close()
         if store.active() == meeting_id:
