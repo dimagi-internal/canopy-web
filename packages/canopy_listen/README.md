@@ -28,6 +28,32 @@ Meetings live in `~/.canopy-listen/meetings/<id>/` (`meeting.json`, `audio.wav`)
 records which models made it. The log there has states and counts only, never a word. The
 first `start` from the menu bar asks macOS for the microphone on behalf of Canopy Runner.
 
+## The local page, a browser tab, and a phone
+
+```bash
+canopy-listen serve --detach          # http://127.0.0.1:7351; does nothing if it's already running
+```
+
+One daemon serves a page on this Mac only (127.0.0.1) to start a meeting, follow it live
+(timer, level, transcript by speaker, click a speaker to name them), end or discard it,
+change models, pair phones and see past meetings. It records from:
+
+- **this Mac's microphone**: Start runs Meeting assistant, which records as before;
+- **a browser tab**: a Meet or Zoom call in Chrome, through `getDisplayMedia`, mixed with
+  the browser's microphone if you like, so the people on the call are heard;
+- **the browser's microphone**;
+- **a paired phone**, through Canopy and the runner, end-to-end encrypted
+  (`docs/architecture/listen-relay.md`).
+
+Every start queues its input in `next-input.json` and runs
+`canopy-runner app start meeting-assistant --accept-notice` once you've ticked that you told
+the people in the meeting. Audio from a tab or phone reaches the recorder over
+`~/.canopy-listen/serve.sock`, and never leaves the Mac. Paired phones are in
+`phones.json` and this Mac's relay key in `relay-key.json` (both 0600). The page only
+answers requests addressed to it from its own origin, so another website can't drive it.
+Speaker names are kept per meeting in `names.json` and reach meeting.json, and so Meeting
+assistant, within a couple of seconds.
+
 ## Choosing models
 
 ```bash
@@ -87,6 +113,6 @@ runs the real recorder through the whole app path when `CANOPY_LISTEN_REAL_BIN` 
 
 ## Not yet
 
-- **Other people on a call with headphones.** Only the microphone is recorded. System
-  audio (a Core Audio tap) is next.
-- Naming speakers, and knowing the person who owns the Mac across meetings.
+- **A call in a desktop app** (Zoom's or Teams' own app) with headphones: a browser tab can
+  be recorded, but not another app's audio. System audio (a Core Audio tap) is next.
+- Knowing the person who owns the Mac across meetings.

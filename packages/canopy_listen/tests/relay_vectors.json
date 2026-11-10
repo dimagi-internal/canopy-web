@@ -1,0 +1,59 @@
+{
+  "session_id": "6f1c2a8e-0000-4000-8000-000000000001",
+  "laptop": {
+    "d": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAERE",
+    "pub": "BA3MdkjHijEY8mEoZv6D7xn0AwT2IzmeEhGhDys9HAXPMOgCdne8uRKUPpn_cRQOqbwkcTvht1wx_0BUckxPnQA"
+  },
+  "phone_static": {
+    "d": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIiI",
+    "x": "pi8EjzZzWYCcLUbCBJ19e_Jow8BzxHJ1PLGKJKitILE",
+    "y": "ysz4EEtmZ5XH812sncREs8LGGXgZjEmFmVW5mVbaXts",
+    "pub": "BKYvBI82c1mAnC1GwgSdfXvyaMPAc8RydTyxiiSorSCxysz4EEtmZ5XH812sncREs8LGGXgZjEmFmVW5mVbaXts"
+  },
+  "phone_eph": {
+    "d": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMzM",
+    "x": "hXDpXYWCUobbkseDF2eb3Y_-PJDQr4QpG_ZBMrZvzJk",
+    "y": "ySbwhyEtdbH028XUmZtMVgWt9m24AaTeNxza0568VeU",
+    "pub": "BIVw6V2FglKG25LHgxdnm92P_jyQ0K-EKRv2QTK2b8yZySbwhyEtdbH028XUmZtMVgWt9m24AaTeNxza0568VeU"
+  },
+  "up": "AP2vRkDcehyi-TsvNQyP0Yo7hov5vOqkQO4fgOUdTIQ",
+  "down": "1mWnprEtAiO7KzdqyfoJT4UDwFLqPBRe8jemwq6rHR8",
+  "up_frames": [
+    {
+      "kind": 1,
+      "body_b64u": "AAECAwQFBgcICQoLDA0ODwABAgMEBQYHCAkKCwwNDg8",
+      "frame_b64u": "AQAAAAAAAAAAV3MFd4J-5SMPSyWPBIsFMgVGbxNGe4p_uBY3CleN59ZGxV-XSLAn4S3oQOOCOwl40Q"
+    },
+    {
+      "kind": 2,
+      "json": {
+        "type": "end"
+      },
+      "frame_b64u": "AQAAAAAAAAAB6utZXWR5kqM3wd0kKe-Dbs7-zZ8FQlDn7hrGhMZxBg"
+    }
+  ],
+  "down_frames": [
+    {
+      "kind": 2,
+      "json": {
+        "type": "ready",
+        "name": "Jonathan's MacBook"
+      },
+      "frame_b64u": "AQAAAAAAAAAAaDUUQXH0hR_xiuR2vkOE5lj_UIQtQHqyH5gRvLTg0zx0IMori5B1b2JIC-NQ1So64QjnzIuXILZgHRBzQQ"
+    }
+  ],
+  "pairing_secret": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "pair_up": "aHNeX80dWTO7xdeKJcNQ6f9qt1WW7BOIWKWH4GefACs",
+  "pair_down": "BeyjY5c86hiStastLz0OKSQUoG3ZQcoUZ8o7vydJN_g",
+  "pair_frames": [
+    {
+      "kind": 2,
+      "json": {
+        "type": "pair",
+        "phone_key": "BKYvBI82c1mAnC1GwgSdfXvyaMPAc8RydTyxiiSorSCxysz4EEtmZ5XH812sncREs8LGGXgZjEmFmVW5mVbaXts",
+        "label": "iPhone"
+      },
+      "frame_b64u": "AQAAAAAAAAAAAp4_VBfGbd3c8r07J_ijVYarRhDME_q1k86zyOlE01-Rnmf4z07pGLNJCa6_e54YGIBUpCMnSTpH8I81hA15taI263G7GpKPjjmKzEUuFyx54AqpAENqMQDoCHHuUhXP-84Yot2Rs6rpeVIg_TJreNXcLkELWVU20FIb5ARyGcN--RXLS0YRufGRg78libyAjhXccGAzNQ"
+    }
+  ]
+}

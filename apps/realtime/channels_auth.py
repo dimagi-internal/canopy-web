@@ -327,6 +327,13 @@ class RealtimeAuthMiddleware:
         scope["user"] = user or AnonymousUser()
         scope["auth_method"] = method
         scope["delegated_app"] = delegated_app
+        # The runner whose own key signed this socket in, or None: a consumer a
+        # runner key reaches beyond its control channel (a listen relay's laptop
+        # side) holds it to that runner's own rows.
+        scope["runner_id"] = (
+            found.token.runner_id if user is not None and found is not None and found.kind == "runner-key"
+            else None
+        )
         # Only ever from a DelegatedToken on this socket (never the client's
         # frames), and read even when a session cookie signed the socket in —
         # the same rule the REST middleware applies to `delegated_app`.

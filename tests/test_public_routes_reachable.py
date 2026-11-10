@@ -81,6 +81,7 @@ PUBLIC_PATHS = [
     "/api/storyboards/ecf-supply/feedback",
     "/about",
     "/get-started",
+    "/listen",
     "/api/system/public-stats",
 ]
 
@@ -116,6 +117,8 @@ GATED_PATHS = [
     "/aboutus",
     "/get-started-now",
     "/get-started/x",
+    "/listen/x",
+    "/api/listen/runners",
 ]
 
 

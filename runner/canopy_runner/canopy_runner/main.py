@@ -1380,6 +1380,16 @@ def make_control_handler(cfg: Config, waker, client=None):
             except Exception:  # noqa: BLE001
                 logger.warning("close failed for %s", msg.get("session_key"),
                                exc_info=True)
+        elif msg.get("type") == "listen_start" and client is not None:
+            # A phone wants to record through this laptop: a pipe of opaque frames to
+            # canopy-listen, on its own thread (listen_pipe.py). Never raises.
+            try:
+                from . import listen_pipe
+
+                listen_pipe.start(msg, base_url=cfg.base_url, bearer=lambda: client.token)
+            except Exception:  # noqa: BLE001
+                logger.warning("listen pipe did not start for %s", msg.get("session_id"),
+                               exc_info=True)
 
     return _on_control
 
@@ -1640,6 +1650,7 @@ def main() -> None:
     from .reconnect import AuthWatch
 
     auth_watch = AuthWatch(Path(args.config), cfg.base_url, cfg.runner_id)
+    listen_poll_at = 0.0
     while True:
         _beat()
         # The pause is NOT short-circuited here any more, and that is deliberate.
@@ -1648,6 +1659,13 @@ def main() -> None:
         # two states with no path between them. run_once heartbeats, pumps
         # in-flight replies, reconciles the two, and returns "paused" without
         # starting anything. One place owns the rule.
+        if not getattr(waker, "connected", False) and time.monotonic() >= listen_poll_at:
+            # A phone's meeting reaches us on the control socket; when that is down,
+            # ask for waiting ones instead (listen_pipe.py).
+            listen_poll_at = time.monotonic() + 10
+            from . import listen_pipe
+
+            listen_pipe.poll_pending(client, base_url=cfg.base_url, bearer=lambda: client.token)
         try:
             result = run_once(cfg, client)
             auth_watch.ok()

@@ -20,6 +20,7 @@ import { WalkthroughViewerPage } from './pages/WalkthroughViewerPage'
 import { ReviewPage } from './pages/ReviewPage'
 import { InviteAcceptPage } from './pages/InviteAcceptPage'
 import { PairRunnerPage } from './pages/PairRunnerPage'
+import { ListenPage } from './pages/ListenPage'
 import { HostSitesPage } from './pages/HostSitesPage'
 import { WorkspaceSecretsPage } from './pages/WorkspaceSecretsPage'
 import { WorkspaceRetentionPage } from './pages/WorkspaceRetentionPage'
@@ -592,6 +593,11 @@ export const routeTable: RouteObject[] = [
       { path: '*', element: <NotFound /> },
     ],
   },
+  // /listen — record a meeting on this phone for your laptop to transcribe. A phone
+  // screen, so OUTSIDE AppLayout (no app chrome), but signed-in: AuthProvider sends a
+  // signed-out phone to sign in. The server serves its shell to anyone so the page can
+  // lift the pairing secret out of `#pair=` before that bounce (pairLink.ts).
+  { path: '/listen', element: <ListenPage /> },
   // Public, chrome-less route — mounted OUTSIDE AppLayout so anonymous
   // visitors aren't bounced to login by the app shell's authed calls. Carries
   // its own light-themed `errorElement` (see `ShareRouteErrorBoundary`) so

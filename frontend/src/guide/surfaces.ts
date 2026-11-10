@@ -203,6 +203,13 @@ export const SURFACES: SurfaceDescriptor[] = [
     use: 'Right after installing Canopy Runner, which opens this page.',
   },
   {
+    path: '/listen',
+    group: 'Recording a meeting from your phone',
+    flat: 'personal/global: your phone and your own laptop, in no workspace',
+    title: 'Canopy Listen on your phone',
+    use: 'When you want to record a meeting on your phone and have your own laptop transcribe it, end-to-end encrypted.',
+  },
+  {
     path: '/act-as/:requestId',
     group: 'Letting an agent act as you',
     flat: 'personal/global: a request to act as YOU, from an agent in any of your workspaces',
