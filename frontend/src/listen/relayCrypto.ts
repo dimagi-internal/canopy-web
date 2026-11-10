@@ -235,3 +235,50 @@ export function controlMessage(opened: Opened): Record<string, unknown> | null {
     return null
   }
 }
+
+// -- pairing by code ------------------------------------------------------------------
+// From canopy-web's /listen on any device, no QR: the phone commits to its key, the laptop
+// shows its own, and the person compares six digits (the spec's "PAIRING BY CODE").
+
+export const HANDSHAKE = 0x02
+export const NONCE_BYTES = 32
+const COMMIT_INFO = 'canopy-listen commit v1'
+const CODE_INFO = 'canopy-listen code v1'
+
+async function sha256(...parts: Uint8Array[]): Promise<Bytes> {
+  return new Uint8Array(await subtle().digest('SHA-256', concat(...parts))) as Bytes
+}
+
+export function newNonce(): Bytes {
+  return globalThis.crypto.getRandomValues(new Uint8Array(NONCE_BYTES)) as Bytes
+}
+
+/** A handshake message, in the clear: 0x02 | UTF-8 JSON. */
+export function handshakeFrame(message: Record<string, unknown>): Bytes {
+  return concat(new Uint8Array([HANDSHAKE]), utf8(JSON.stringify(message)))
+}
+
+/** A handshake frame's JSON object, or null when the frame is anything else. */
+export function readHandshake(frame: Uint8Array): Record<string, unknown> | null {
+  if (frame.length < 3 || frame.length > 4096 || frame[0] !== HANDSHAKE) return null
+  try {
+    const value: unknown = JSON.parse(new TextDecoder().decode(frame.subarray(1)))
+    return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null
+  } catch {
+    return null
+  }
+}
+
+/** What the phone commits to before it has seen the laptop's key. */
+export async function pairCommit(phonePub: string, phoneNonce: Uint8Array): Promise<string> {
+  return b64u(await sha256(utf8(COMMIT_INFO), unb64u(phonePub), phoneNonce))
+}
+
+/** The six digits both screens show. */
+export async function pairCode(
+  sessionId: string, phonePub: string, laptopPub: string, phoneNonce: Uint8Array, laptopNonce: Uint8Array,
+): Promise<string> {
+  const d = await sha256(utf8(CODE_INFO), utf8(sessionId), unb64u(phonePub), unb64u(laptopPub), phoneNonce, laptopNonce)
+  const n = ((d[0] << 24) >>> 0) + (d[1] << 16) + (d[2] << 8) + d[3]
+  return String(n % 1_000_000).padStart(6, '0')
+}

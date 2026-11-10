@@ -129,6 +129,20 @@ def test_a_pairing_has_no_phone_key(jj, laptop):
     assert bad.status_code == 422
 
 
+def test_a_pairing_by_code_carries_its_commitment_and_nothing_else_does(jj, laptop):
+    c = _client(jj)
+    commit = "A" * 43
+    ok = _post(c, {"runner_id": str(laptop.pk), "kind": "pair",
+                   "hello": {"phone_eph": EPH, "phone_key": None, "label": "Chrome on Mac", "commit": commit}})
+    assert ok.status_code == 201
+    assert ListenSession.objects.get(pk=ok.json()["id"]).hello["commit"] == commit
+    for bad in ("short", "A" * 42 + "=", "A" * 42 + "/"):
+        res = _post(c, {"runner_id": str(laptop.pk), "kind": "pair",
+                        "hello": {"phone_eph": EPH, "phone_key": None, "commit": bad}})
+        assert res.status_code == 422, bad
+    assert _post(c, _meeting(laptop, commit=commit)).status_code == 422
+
+
 def test_someone_elses_runner_is_404(jj):
     theirs = _runner(_user("x"), "theirs")
     assert _post(_client(jj), _meeting(theirs)).status_code == 404

@@ -19,6 +19,21 @@ pairing secret, and says {"type": "pair", "phone_key": phone_static_pub, "label"
 The laptop, holding the same secret, adds that key to ~/.canopy-listen/phones.json and
 answers {"type": "paired"}. A secret works once and for 10 minutes.
 
+PAIRING BY CODE (from canopy-web's /listen, on any device; no QR, no local page). Canopy
+carries the handshake but can't get in the middle: the person compares a six-digit code,
+and the phone commits to its key before it sees the laptop's, so a relay that swaps keys
+has one chance in a million of matching codes. A session of kind "pair" whose hello has
+`commit` = base64url(SHA-256(b"canopy-listen commit v1" | phone_static_pub_raw | Np)),
+Np 32 random bytes. Handshake frames are in the clear: 0x02 | UTF-8 JSON.
+  laptop -> phone  {"type": "hello", "laptop_key": L, "nonce": b64u(Nl), "name": laptop_name}
+  phone -> laptop  {"type": "reveal", "phone_key": S, "nonce": b64u(Np), "label": ...}
+The laptop checks the commitment; both compute
+  code = SHA-256(b"canopy-listen code v1" | session_id | S_raw | L_raw | Np | Nl)[:4]
+         as a big-endian integer mod 1_000_000, six digits.
+The laptop asks its person (a dialog) whether the page shows that code. Yes: it keeps S and
+answers {"type": "paired", "name"} SEALED under the session keys (below, with the hello's
+phone_eph), which proves it holds L. No: {"type": "refused", "reason"} in the clear.
+
 SESSION KEYS. ikm = ECDH(phone_eph, laptop_static) || ECDH(phone_static, laptop_static)
 (64 bytes); okm = HKDF-SHA256(ikm, salt=utf8(session_id), info=b"canopy-listen relay v1",
 length=64); up = okm[:32] (phone -> laptop), down = okm[32:] (laptop -> phone). The first
@@ -35,6 +50,7 @@ Plaintext: 0x01 | int16 little-endian mono 16 kHz PCM (audio, phone -> laptop), 
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import struct
@@ -49,6 +65,10 @@ AUDIO, CONTROL = 0x01, 0x02
 SESSION_INFO = b"canopy-listen relay v1"
 PAIR_INFO = b"canopy-listen pair v1"
 MAX_FRAME = 64 * 1024
+HANDSHAKE = 0x02
+NONCE_BYTES = 32
+COMMIT_INFO = b"canopy-listen commit v1"
+CODE_INFO = b"canopy-listen code v1"
 
 
 class BadFrame(Exception):
@@ -153,3 +173,35 @@ class Opener:
 
 def new_pairing_secret() -> bytes:
     return os.urandom(32)
+
+
+# --- pairing by code (no QR, nothing local) -----------------------------------------
+
+
+def handshake_frame(message: dict) -> bytes:
+    """A pairing-by-code message, in the clear: HANDSHAKE | UTF-8 JSON."""
+    return bytes([HANDSHAKE]) + json.dumps(message, separators=(",", ":")).encode()
+
+
+def read_handshake(frame: bytes) -> dict:
+    if len(frame) < 3 or len(frame) > 4096 or frame[0] != HANDSHAKE:
+        raise BadFrame("shape")
+    try:
+        message = json.loads(frame[1:])
+    except ValueError:
+        raise BadFrame("shape") from None
+    if not isinstance(message, dict):
+        raise BadFrame("shape")
+    return message
+
+
+def pair_commit(phone_pub: str, phone_nonce: bytes) -> str:
+    """What the phone commits to before it has seen the laptop's key."""
+    return b64u(hashlib.sha256(COMMIT_INFO + unb64u(phone_pub) + phone_nonce).digest())
+
+
+def pair_code(session_id: str, phone_pub: str, laptop_pub: str, phone_nonce: bytes, laptop_nonce: bytes) -> str:
+    """The six digits both screens show. Equal codes mean both ends hold the same two keys."""
+    digest = hashlib.sha256(CODE_INFO + session_id.encode() + unb64u(phone_pub) + unb64u(laptop_pub)
+                            + phone_nonce + laptop_nonce).digest()
+    return f"{int.from_bytes(digest[:4], 'big') % 1_000_000:06d}"

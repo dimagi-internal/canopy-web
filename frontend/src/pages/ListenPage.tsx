@@ -8,6 +8,7 @@ import {
   Lock,
   MessageSquare,
   Mic,
+  MonitorSpeaker,
   QrCode,
   Smartphone,
   Square,
@@ -17,23 +18,29 @@ import {
 } from 'lucide-react'
 import { personColor } from 'canopy-ui/chat'
 import { Button, Dialog, DialogContent, DialogHeader, DialogTitle } from 'canopy-ui/ui'
-import { endListenSession, listListenRunners, openListenSession } from '@/api/listen'
+import { endListenSession, listListenRunners, openListenSession, type ListenRunner } from '@/api/listen'
 import { CanopyWordmark } from '@/brand/CanopyWordmark'
 import { wsUrl } from '@/lib/wsUrl'
-import { MicDenied, startMic } from '@/listen/audio'
-import { Meeting, pairPhone, type ListenDeps, type MeetingView, type PairStep } from '@/listen/controller'
+import { canCaptureTab, MicDenied, startMic, startTab } from '@/listen/audio'
+import {
+  Meeting,
+  pairByCode,
+  pairPhone,
+  type AudioSource,
+  type ListenDeps,
+  type MeetingView,
+  type PairStep,
+} from '@/listen/controller'
 import { captureListenPairing, isExpired, parsePairFragment, takeStashedPairing, type PairInvite } from '@/listen/pairLink'
 import { browserSocket } from '@/listen/relay'
 import { browserStore, deviceLabel, type ListenStore, type Pairing } from '@/listen/store'
 
-/** The laptop's own page, where a phone is paired. */
-export const LAPTOP_PAGE = 'http://127.0.0.1:7351'
-export const NOTICE = "What's said here leaves this phone for your laptop and your agent. Tell the people here."
+export const NOTICE = "What's said here leaves this device for your laptop and your agent. Tell the people here."
 
 type Screen =
   | { kind: 'loading' }
   | { kind: 'unpaired'; problem?: string }
-  | { kind: 'pairing'; invite: PairInvite; step: PairStep; error?: string }
+  | { kind: 'pairing'; name: string; step: PairStep; byCode?: boolean; code?: string; error?: string }
   | { kind: 'home'; pairing: Pairing; noticeAccepted: boolean }
   | { kind: 'meeting'; pairing: Pairing; meeting: Meeting }
 
@@ -58,19 +65,22 @@ export function defaultDeps(store: ListenStore = browserStore): ListenDeps {
         throw e
       }
     },
+    startTab: canCaptureTab() ? startTab : undefined,
     setTimeout: (fn, ms) => window.setTimeout(fn, ms),
     clearTimeout: (h) => window.clearTimeout(h as number),
   }
 }
 
 /**
- * /listen — record a meeting on this phone; the owner's laptop transcribes it.
+ * /listen — record a meeting on this device (a phone, or the laptop's own browser); the
+ * owner's laptop transcribes it.
  *
- * Audio goes phone → canopy-web → the laptop's runner → canopy-listen, end-to-end
- * encrypted (relayCrypto.ts): Canopy carries ciphertext only. Pairing happens once, from
- * the QR code on the laptop's own page; the link's `#pair=` fragment is taken out of the
- * address before anything else runs (pairLink.ts). Mounted outside the app shell: it is
- * a phone screen, not a page of the app. Design: docs/architecture/listen-relay.md.
+ * Audio goes browser → canopy-web → the laptop's runner → canopy-listen, end-to-end
+ * encrypted (relayCrypto.ts): Canopy carries ciphertext only. Pairing happens once: pick
+ * the computer here and allow it there, comparing six digits (pairByCode), or scan the QR
+ * code on the laptop's own page, whose `#pair=` fragment is taken out of the address before
+ * anything else runs (pairLink.ts). On a computer, a call in another tab can be recorded
+ * with the microphone. Mounted outside the app shell. Design: docs/architecture/listen-relay.md.
  */
 export function ListenPage({ deps: given }: { deps?: ListenDeps } = {}): JSX.Element {
   const deps = useMemo(() => given ?? defaultDeps(), [given])
@@ -95,8 +105,22 @@ export function ListenPage({ deps: given }: { deps?: ListenDeps } = {}): JSX.Ele
         setScreen({ kind: 'unpaired', problem: 'That pairing code has expired. Make a new one on your laptop and scan it again.' })
         return
       }
-      setScreen({ kind: 'pairing', invite, step: 'connecting' })
+      setScreen({ kind: 'pairing', name: invite.laptopName, step: 'connecting' })
       pairPhone(invite, deps, (step) => setScreen((s) => (s.kind === 'pairing' ? { ...s, step } : s)))
+        .then(() => window.setTimeout(() => void goHome(), 900))
+        .catch((e: unknown) =>
+          setScreen((s) => (s.kind === 'pairing' ? { ...s, error: e instanceof Error ? e.message : 'Pairing failed.' } : s)),
+        )
+    },
+    [deps, goHome],
+  )
+
+  const startCodePairing = useCallback(
+    (runner: ListenRunner) => {
+      setScreen({ kind: 'pairing', name: runner.name, step: 'connecting', byCode: true })
+      pairByCode(runner, deps, (step, code) =>
+        setScreen((s) => (s.kind === 'pairing' ? { ...s, step, code: code ?? s.code } : s)),
+      )
         .then(() => window.setTimeout(() => void goHome(), 900))
         .catch((e: unknown) =>
           setScreen((s) => (s.kind === 'pairing' ? { ...s, error: e instanceof Error ? e.message : 'Pairing failed.' } : s)),
@@ -131,14 +155,14 @@ export function ListenPage({ deps: given }: { deps?: ListenDeps } = {}): JSX.Ele
           <CanopyWordmark />
           <span className="ml-1.5 font-normal text-muted-foreground">Listen</span>
         </span>
-        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground" title="Encrypted on this phone; only your laptop can open it">
+        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground" title="Encrypted on this device; only your laptop can open it">
           <Lock className="size-3.5" aria-hidden />
           End-to-end encrypted
         </span>
       </header>
       <main className="flex-1 flex flex-col w-full max-w-md mx-auto px-5 pb-[max(env(safe-area-inset-bottom),1.25rem)]">
         {screen.kind === 'loading' && <Centered><Loader2 className="size-6 animate-spin text-muted-foreground" aria-label="Loading" /></Centered>}
-        {screen.kind === 'unpaired' && <Unpaired problem={screen.problem} />}
+        {screen.kind === 'unpaired' && <Unpaired deps={deps} problem={screen.problem} onPair={startCodePairing} />}
         {screen.kind === 'pairing' && <PairingScreen screen={screen} onDone={() => void goHome()} />}
         {screen.kind === 'home' && (
           <Home
@@ -153,9 +177,9 @@ export function ListenPage({ deps: given }: { deps?: ListenDeps } = {}): JSX.Ele
               await deps.store.setPairing(null).catch(() => undefined)
               setScreen({ kind: 'unpaired' })
             }}
-            onRecord={() => {
+            onRecord={(source: AudioSource) => {
               const meeting = new Meeting(screen.pairing, deps)
-              void meeting.begin()
+              void meeting.begin(source)
               setScreen({ kind: 'meeting', pairing: screen.pairing, meeting })
             }}
           />
@@ -181,7 +205,24 @@ function Problem({ children }: { children: ReactNode }) {
 
 // -- (a) not paired -------------------------------------------------------------------
 
-function Unpaired({ problem }: { problem?: string }) {
+function useRunners(deps: ListenDeps): ListenRunner[] | null {
+  const [runners, setRunners] = useState<ListenRunner[] | null>(null)
+  useEffect(() => {
+    let alive = true
+    const poll = () =>
+      deps.listRunners().then((r) => alive && setRunners(r)).catch(() => alive && setRunners((s) => s ?? []))
+    void poll()
+    const timer = window.setInterval(() => void poll(), 15_000)
+    return () => {
+      alive = false
+      window.clearInterval(timer)
+    }
+  }, [deps])
+  return runners
+}
+
+function Unpaired({ deps, problem, onPair }: { deps: ListenDeps; problem?: string; onPair: (runner: ListenRunner) => void }) {
+  const runners = useRunners(deps)
   return (
     <div className="flex-1 flex flex-col justify-center gap-7 py-6">
       <div className="flex items-center justify-center gap-3 text-primary" aria-hidden>
@@ -190,28 +231,51 @@ function Unpaired({ problem }: { problem?: string }) {
         <span className="grid place-items-center size-14 rounded-2xl bg-primary/10"><Laptop className="size-7" /></span>
       </div>
       <div className="text-center space-y-2">
-        <h1 className="text-2xl font-semibold tracking-tight">Record meetings from your phone</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Record meetings with Canopy</h1>
         <p className="text-sm text-muted-foreground leading-relaxed">
-          This phone records; your laptop transcribes and your agent takes notes. The audio is encrypted here and only
-          your laptop can open it — Canopy just carries it.
+          This device records; your laptop transcribes with its own models and your agent takes notes. The audio is
+          encrypted here and only your laptop can open it — Canopy just carries it.
         </p>
       </div>
       {problem && <Problem>{problem}</Problem>}
-      <ol className="rounded-2xl border border-border bg-card divide-y divide-border">
-        {[
-          <>On your laptop, open <span className="font-medium text-foreground">Canopy Listen</span> at{' '}
-            <span className="font-mono text-xs text-foreground break-all">{LAPTOP_PAGE}</span></>,
-          <>Choose <span className="font-medium text-foreground">“Pair a phone”</span></>,
-          <>Scan the QR code with this phone’s camera</>,
-        ].map((step, i) => (
-          <li key={i} className="flex items-start gap-3 px-4 py-3.5 text-sm text-muted-foreground">
-            <span className="grid place-items-center size-6 shrink-0 rounded-full bg-primary text-primary-foreground text-xs font-semibold">{i + 1}</span>
-            <span className="pt-0.5">{step}</span>
-          </li>
-        ))}
-      </ol>
+      <section className="space-y-2">
+        <h2 className="text-sm font-medium">Which computer transcribes?</h2>
+        {runners === null ? (
+          <div className="grid place-items-center py-4"><Loader2 className="size-5 animate-spin text-muted-foreground" aria-label="Loading your computers" /></div>
+        ) : runners.length === 0 ? (
+          <p className="rounded-xl bg-muted px-4 py-3 text-sm text-muted-foreground">
+            None of your computers run Canopy Runner yet. Install it on your laptop, then come back.
+          </p>
+        ) : (
+          <ul className="space-y-2">
+            {runners.map((r) => (
+              <li key={r.id}>
+                <button
+                  type="button"
+                  disabled={!r.online}
+                  onClick={() => onPair(r)}
+                  className="w-full flex items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3.5 text-left transition hover:border-primary/50 active:scale-[0.99] disabled:opacity-50 disabled:hover:border-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <span className="grid place-items-center size-10 rounded-xl bg-primary/10 text-primary"><Laptop className="size-5" aria-hidden /></span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium">{r.name}</span>
+                    <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <span className={`size-2 rounded-full ${r.online ? 'bg-success' : 'bg-muted-foreground/50'}`} aria-hidden />
+                      {r.online ? 'Online' : 'Offline'}
+                    </span>
+                  </span>
+                  <span className="text-sm font-medium text-primary">{r.online ? 'Pair' : ''}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          Your computer shows a six-digit code; allow it there if it matches the one here. Once per browser.
+        </p>
+      </section>
       <p className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
-        <QrCode className="size-3.5" aria-hidden /> Pairing happens once per phone.
+        <QrCode className="size-3.5" aria-hidden /> Or scan the QR code from “Pair a phone” in Canopy Listen on the laptop.
       </p>
     </div>
   )
@@ -220,12 +284,10 @@ function Unpaired({ problem }: { problem?: string }) {
 // -- (b) pairing ----------------------------------------------------------------------
 
 function PairingScreen({ screen, onDone }: { screen: Extract<Screen, { kind: 'pairing' }>; onDone: () => void }) {
-  const name = screen.invite.laptopName
-  const steps: Array<[PairStep, string]> = [
-    ['connecting', `Reaching ${name}`],
-    ['waiting', `Waiting for ${name} to confirm`],
-    ['done', 'Paired'],
-  ]
+  const name = screen.name
+  const steps: Array<[PairStep, string]> = screen.byCode
+    ? [['connecting', `Reaching ${name}`], ['waiting', `Waiting for ${name}`], ['confirm', `Allow it on ${name}`], ['done', 'Paired']]
+    : [['connecting', `Reaching ${name}`], ['waiting', `Waiting for ${name} to confirm`], ['done', 'Paired']]
   const at = steps.findIndex(([s]) => s === screen.step)
   return (
     <Centered>
@@ -233,6 +295,16 @@ function PairingScreen({ screen, onDone }: { screen: Extract<Screen, { kind: 'pa
         {screen.step === 'done' ? <Check className="size-8" aria-hidden /> : <Laptop className="size-8" aria-hidden />}
       </span>
       <h1 className="text-xl font-semibold">Pairing with {name}</h1>
+      {screen.code && screen.step === 'confirm' && !screen.error && (
+        <section className="w-full rounded-2xl border border-primary/30 bg-primary/5 px-4 py-5 space-y-2" aria-live="polite">
+          <p className="font-mono text-4xl font-semibold tracking-[0.2em] tabular-nums" aria-label={`Code ${screen.code.split('').join(' ')}`}>
+            {screen.code.slice(0, 3)} {screen.code.slice(3)}
+          </p>
+          <p className="text-sm text-muted-foreground">
+            {name} is showing a dialog. Click <span className="font-medium text-foreground">Allow</span> only if it shows this code.
+          </p>
+        </section>
+      )}
       <ul className="w-full space-y-2 text-left">
         {steps.map(([step, label], i) => (
           <li key={step} className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 text-sm">
@@ -293,7 +365,7 @@ function Home({
   noticeAccepted: boolean
   onAccept: () => void
   onUnpair: () => void
-  onRecord: () => void
+  onRecord: (source: AudioSource) => void
 }) {
   const { online, gone } = useRunnerOnline(deps, pairing.runner_id)
   const [confirmUnpair, setConfirmUnpair] = useState(false)
@@ -333,7 +405,7 @@ function Home({
       <div className="flex-1 flex flex-col items-center justify-center gap-4 py-6">
         <button
           type="button"
-          onClick={onRecord}
+          onClick={() => onRecord('mic')}
           disabled={!canRecord}
           aria-label="Start recording"
           className="group relative grid place-items-center size-40 rounded-full bg-destructive text-destructive-foreground shadow-lg transition active:scale-95 disabled:opacity-35 disabled:shadow-none focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-destructive/40"
@@ -344,6 +416,22 @@ function Home({
         <p className="text-sm text-muted-foreground text-center min-h-5">
           {!noticeAccepted ? 'Acknowledge the notice to start' : online ? 'Tap to start recording' : online === false ? 'Waiting for your laptop' : ''}
         </p>
+        {deps.startTab && (
+          <Button
+            variant="outline"
+            className="h-11 rounded-xl gap-2"
+            disabled={!canRecord}
+            onClick={() => onRecord('tab')}
+          >
+            <MonitorSpeaker className="size-4" aria-hidden />
+            Record a call in another tab
+          </Button>
+        )}
+        {deps.startTab && (
+          <p className="text-xs text-muted-foreground text-center max-w-xs">
+            For Meet or Zoom in the browser: pick the call’s tab and tick “Also share tab audio”. Your microphone is mixed in.
+          </p>
+        )}
         {noticeAccepted && <p className="text-xs text-muted-foreground text-center max-w-xs">{NOTICE}</p>}
       </div>
 

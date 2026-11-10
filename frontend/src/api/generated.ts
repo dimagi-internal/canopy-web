@@ -27100,6 +27100,8 @@ export interface components {
              * @default
              */
             readonly label: string;
+            /** Commit */
+            readonly commit?: string | null;
         };
         /** ListenSessionIn */
         readonly ListenSessionIn: {

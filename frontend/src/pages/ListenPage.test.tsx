@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ListenDeps } from '@/listen/controller'
 import { memoryStore, socketFactory } from '@/listen/testing'
-import { LAPTOP_PAGE, ListenPage, NOTICE } from './ListenPage'
+import { ListenPage, NOTICE } from './ListenPage'
 
 afterEach(() => {
   cleanup()
@@ -28,11 +28,32 @@ function deps(store = memoryStore(), online = true): ListenDeps {
 const PAIRING = { runner_id: 'runner-1', laptop_pub: 'BA3MdkjHijEY8mEoZv6D7xn0AwT2IzmeEhGhDys9HAXPMOgCdne8uRKUPpn_cRQOqbwkcTvht1wx_0BUckxPnQA', laptop_name: "Jonathan's MacBook" }
 
 describe('ListenPage', () => {
-  it('explains how to pair when this phone is not paired', async () => {
-    render(<ListenPage deps={deps()} />)
-    expect(await screen.findByText('Record meetings from your phone')).toBeTruthy()
-    expect(screen.getByText(LAPTOP_PAGE)).toBeTruthy()
-    expect(screen.getByText('“Pair a phone”')).toBeTruthy()
+  it('lists my computers to pair with when this browser is not paired, and pairs by code', async () => {
+    const d = deps()
+    render(<ListenPage deps={d} />)
+    expect(await screen.findByText('Record meetings with Canopy')).toBeTruthy()
+    fireEvent.click(await screen.findByRole('button', { name: /jj-mbp/ }))
+    await vi.waitFor(() => expect(d.openSession).toHaveBeenCalledTimes(1))
+    const [runner, kind, hello] = (d.openSession as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect([runner, kind, hello.phone_key]).toEqual(['runner-1', 'pair', null])
+    expect(hello.commit).toMatch(/^[A-Za-z0-9_-]{43}$/)
+    expect(await screen.findByText('Pairing with jj-mbp')).toBeTruthy()
+  })
+
+  it('offers a call in another tab only where the browser can share one', async () => {
+    const store = memoryStore(PAIRING)
+    await store.acceptNotice()
+    const withTab = { ...deps(store), startTab: vi.fn(async () => ({ stop: () => undefined })) }
+    render(<ListenPage deps={withTab} />)
+    const tab = await screen.findByRole('button', { name: /Record a call in another tab/ })
+    await vi.waitFor(() => expect((tab as HTMLButtonElement).disabled).toBe(false))
+    fireEvent.click(tab)
+    expect(withTab.startTab).toHaveBeenCalledTimes(1)
+    expect(withTab.startMic).not.toHaveBeenCalled()
+    cleanup()
+    render(<ListenPage deps={deps(store)} />)
+    expect(await screen.findByText('Online')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /another tab/ })).toBeNull()
   })
 
   it('asks for the notice before the first recording, then lets it start', async () => {

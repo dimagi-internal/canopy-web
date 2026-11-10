@@ -3,11 +3,17 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/api/problem'
 import type { ListenHello } from '@/api/listen'
-import { Meeting, pairPhone, type ListenDeps } from './controller'
+import { Meeting, pairByCode, pairPhone, type ListenDeps } from './controller'
 import type { PairInvite } from './pairLink'
 import {
   AUDIO,
+  b64u,
   controlMessage,
+  handshakeFrame,
+  newNonce,
+  pairCode,
+  pairCommit,
+  readHandshake,
   newKeyPair,
   Opener,
   pairKeys,
@@ -102,6 +108,75 @@ describe('pairPhone', () => {
 
     const offline = deps({ openSession: async () => Promise.reject(new ApiError(409, 'That computer is offline')) })
     await expect(pairPhone(base, offline.d, () => undefined)).rejects.toThrow('MBP is offline. Open it and make sure Canopy Runner is running.')
+  })
+})
+
+describe('pairByCode', () => {
+  /** A laptop holding a real key: answers the commitment, checks it, and seals 'paired'. */
+  async function laptopAnswers(allow: boolean | 'busy') {
+    const { d, sockets, hellos, ended } = deps()
+    const laptop = await newKeyPair()
+    const laptopPub = await publicB64(laptop.publicKey)
+    const steps: Array<[string, string | undefined]> = []
+    const done = pairByCode({ id: 'runner-1', name: 'MBP' }, d, (s, code) => steps.push([s, code]))
+    await vi.waitFor(() => expect(sockets.sockets).toHaveLength(1))
+    const ws = sockets.sockets[0]
+    ws.open()
+    const hello = hellos[0]
+    expect(hello.phone_key).toBeNull()
+    if (allow === 'busy') {
+      ws.binary(handshakeFrame({ type: 'refused', reason: 'busy' }))
+      return { done, steps, ended, d }
+    }
+    const laptopNonce = newNonce()
+    ws.binary(handshakeFrame({ type: 'hello', laptop_key: laptopPub, nonce: b64u(laptopNonce), name: 'MBP' }))
+    await vi.waitFor(() => expect(ws.sent).toHaveLength(1))
+    const reveal = readHandshake(ws.sent[0])!
+    expect(reveal.type).toBe('reveal')
+    // What the laptop checks: the key revealed is the one committed to before it saw ours.
+    expect(await pairCommit(reveal.phone_key as string, unb64u(reveal.nonce as string))).toBe(hello.commit)
+    const code = await pairCode(SID, reveal.phone_key as string, laptopPub, unb64u(reveal.nonce as string), laptopNonce)
+    await vi.waitFor(() => expect(steps.at(-1)).toEqual(['confirm', code]))
+    if (allow) {
+      const keys = await sessionKeysLaptop(laptop.privateKey, hello.phone_eph, reveal.phone_key as string, SID)
+      ws.binary(await new Sealer(keys.down, SID).control({ type: 'paired', name: "Jonathan's MacBook" }))
+    } else {
+      ws.binary(handshakeFrame({ type: 'refused', reason: 'declined' }))
+    }
+    return { done, steps, ended, d, laptopPub }
+  }
+
+  it('commits, reveals, shows the code the laptop shows, and keeps the laptop once it seals "paired"', async () => {
+    const { done, steps, ended, d, laptopPub } = await laptopAnswers(true)
+    const pairing = await done
+    expect(pairing).toEqual({ runner_id: 'runner-1', laptop_pub: laptopPub, laptop_name: "Jonathan's MacBook" })
+    expect(await d.store.pairing()).toEqual(pairing)
+    expect(steps.map(([s]) => s)).toEqual(['connecting', 'waiting', 'confirm', 'done'])
+    expect(ended).toEqual([SID])
+  })
+
+  it('says so when it is declined or another code is already showing, and keeps nothing', async () => {
+    const declined = await laptopAnswers(false)
+    await expect(declined.done).rejects.toThrow(/declined on MBP/)
+    expect(await declined.d.store.pairing()).toBeNull()
+    const busy = await laptopAnswers('busy')
+    await expect(busy.done).rejects.toThrow(/already showing a pairing code/)
+  })
+
+  it('ignores a "paired" it cannot open: only the laptop it saw can say it', async () => {
+    const { d, sockets } = deps()
+    const done = pairByCode({ id: 'runner-1', name: 'MBP' }, d, () => undefined)
+    await vi.waitFor(() => expect(sockets.sockets).toHaveLength(1))
+    const ws = sockets.sockets[0]
+    ws.open()
+    const real = await newKeyPair()
+    ws.binary(handshakeFrame({ type: 'hello', laptop_key: await publicB64(real.publicKey), nonce: b64u(newNonce()), name: 'MBP' }))
+    await vi.waitFor(() => expect(ws.sent).toHaveLength(1))
+    ws.binary(await new Sealer(new Uint8Array(32).fill(9) as never, SID).control({ type: 'paired', name: 'Impostor' }))
+    await settle()
+    expect(await d.store.pairing()).toBeNull()
+    ws.drop()
+    await expect(done).rejects.toThrow()
   })
 })
 

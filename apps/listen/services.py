@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import datetime as dt
+import re
 import uuid
 
 from django.db import transaction
@@ -71,6 +72,8 @@ def is_online(runner: Runner) -> bool:
 
 
 # -- hello --------------------------------------------------------------------
+_B64U = re.compile(r"[A-Za-z0-9_-]+")
+
 def _public_key(value, *, field: str) -> str:
     """A base64url (no padding) uncompressed P-256 point, as the phone sends it."""
     if not isinstance(value, str) or not value or len(value) > 200:
@@ -96,8 +99,17 @@ def clean_hello(kind: str, hello: dict) -> dict:
     label = hello.get("label") or ""
     if not isinstance(label, str):
         raise Refused(422, "hello.label must be text")
-    return {"phone_eph": _public_key(hello.get("phone_eph"), field="phone_eph"),
-            "phone_key": phone_key, "label": label.strip()[:80]}
+    commit = hello.get("commit")
+    if commit is not None:
+        if kind != ListenSession.PAIR:
+            raise Refused(422, "only a pairing carries a commitment")
+        if not isinstance(commit, str) or len(commit) != 43 or not _B64U.fullmatch(commit):
+            raise Refused(422, "hello.commit must be a base64url SHA-256")
+    cleaned = {"phone_eph": _public_key(hello.get("phone_eph"), field="phone_eph"),
+               "phone_key": phone_key, "label": label.strip()[:80]}
+    if commit is not None:
+        cleaned["commit"] = commit
+    return cleaned
 
 
 # -- create / end -------------------------------------------------------------

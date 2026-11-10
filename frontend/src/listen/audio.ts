@@ -140,6 +140,17 @@ export async function startMic(onChunk: (pcm: Uint8Array) => void, onLevel: (lev
     }
     throw new MicDenied('other', 'The microphone could not start.')
   }
+  return tapStream(ctx, resumed, [stream], onChunk, onLevel)
+}
+
+/** Run `streams`, mixed, through the tap: 16 kHz int16 chunks to `onChunk`, a level to `onLevel`. */
+async function tapStream(
+  ctx: AudioContext,
+  resumed: Promise<void>,
+  streams: MediaStream[],
+  onChunk: (pcm: Uint8Array) => void,
+  onLevel: (level: number) => void,
+): Promise<MicCapture> {
   const url = URL.createObjectURL(new Blob([WORKLET], { type: 'text/javascript' }))
   try {
     await ctx.audioWorklet.addModule(url)
@@ -147,11 +158,11 @@ export async function startMic(onChunk: (pcm: Uint8Array) => void, onLevel: (lev
     URL.revokeObjectURL(url)
   }
   await resumed
-  const source = ctx.createMediaStreamSource(stream)
+  const sources = streams.map((stream) => ctx.createMediaStreamSource(stream))
   const tap = new AudioWorkletNode(ctx, 'canopy-listen-tap', { numberOfInputs: 1, numberOfOutputs: 1, channelCount: 1 })
   const silent = ctx.createGain()
   silent.gain.value = 0
-  source.connect(tap)
+  for (const source of sources) source.connect(tap) // a node's inputs sum: the streams mix
   tap.connect(silent)
   silent.connect(ctx.destination) // keeps the graph pulling on every browser
   const down = new Downsampler(ctx.sampleRate)
@@ -170,10 +181,59 @@ export async function startMic(onChunk: (pcm: Uint8Array) => void, onLevel: (lev
       tap.port.onmessage = null
       const rest = chunker.flush()
       if (rest) onChunk(rest)
-      for (const track of stream.getTracks()) track.stop()
-      source.disconnect()
+      for (const stream of streams) for (const track of stream.getTracks()) track.stop()
+      for (const source of sources) source.disconnect()
       tap.disconnect()
       void ctx.close()
     },
   }
+}
+
+/** Whether this browser can share a tab's audio (desktop Chrome and Edge can; phones can't). */
+export function canCaptureTab(): boolean {
+  return typeof navigator !== 'undefined' && typeof navigator.mediaDevices?.getDisplayMedia === 'function'
+    && !/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+}
+
+/**
+ * Record a call in another browser tab (Meet, Zoom on the web): the tab's sound plus this
+ * computer's microphone, mixed. Call from a click. The browser asks which tab; the person
+ * must tick "Also share tab audio". The picture is stopped at once: only sound is used.
+ */
+export async function startTab(onChunk: (pcm: Uint8Array) => void, onLevel: (level: number) => void): Promise<MicCapture> {
+  if (!canCaptureTab() || typeof AudioWorkletNode === 'undefined') {
+    throw new MicDenied('unsupported', 'This browser cannot share a tab’s audio. Use Chrome or Edge on a computer.')
+  }
+  const ctx = new AudioContext()
+  const resumed = ctx.resume()
+  let stream: MediaStream
+  try {
+    stream = await navigator.mediaDevices.getDisplayMedia({
+      video: true,
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+      preferCurrentTab: false,
+      selfBrowserSurface: 'exclude',
+      systemAudio: 'include',
+    } as DisplayMediaStreamOptions)
+  } catch (e) {
+    void ctx.close()
+    const name = (e as { name?: string })?.name
+    if (name === 'NotAllowedError') throw new MicDenied('denied', 'Sharing was cancelled.')
+    throw new MicDenied('other', 'The tab could not be shared.')
+  }
+  for (const track of stream.getVideoTracks()) track.stop()
+  if (stream.getAudioTracks().length === 0) {
+    void ctx.close()
+    throw new MicDenied('missing', 'That share had no sound. Share again and tick “Also share tab audio”.')
+  }
+  // The tab carries everyone else on the call; this computer's microphone carries you.
+  const streams = [stream]
+  try {
+    streams.push(await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    }))
+  } catch {
+    // No microphone, or refused: the tab alone still records the others.
+  }
+  return tapStream(ctx, resumed, streams, onChunk, onLevel)
 }
