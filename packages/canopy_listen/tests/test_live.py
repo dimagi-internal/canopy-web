@@ -46,6 +46,21 @@ def test_a_sentence_is_final_only_once_newer_audio_follows_it():
     assert [s.text for s in t.step()] == ["second"]
 
 
+def test_words_not_final_yet_are_pending_until_they_commit():
+    t = make([(0.0, 2.0, "hello there"), (2.5, 4.0, "second")])
+    t.feed(audio(2.6))
+    assert t.step() == [] and t.pending == "hello there second"  # both heard, neither final
+    t.feed(audio(1.0))
+    assert [s.text for s in t.step()] == ["hello there"]
+    assert t.pending == "second"  # heard, not final
+    t.feed(audio(2.0))
+    t.step()
+    assert t.pending == ""
+    t.feed(audio(1.0))
+    t.step(final=True)
+    assert t.pending == ""
+
+
 def test_each_sentence_is_emitted_once_and_final_flushes_the_rest():
     t = make([(0.0, 1.0, "one"), (1.5, 3.0, "two"), (3.2, 3.9, "three")])
     seen = []

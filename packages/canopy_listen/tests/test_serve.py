@@ -374,7 +374,8 @@ def test_the_phone_hears_its_meeting_live_and_its_end():
         await settle(s)
         meeting = store.new_meeting("", "phone")
         meeting.update(input=session.input.id, state="recording", speakers=[{"name": "Speaker 1", "number": 0}],
-                       segments=[{"text": "hello there", "start": 0.0, "end": 1.2, "speaker": 0, "words": []}])
+                       segments=[{"text": "hello there", "start": 0.0, "end": 1.2, "speaker": 0, "words": []}],
+                       partial="and the budget")
         store.save(meeting)
         proc = fake_recorder(meeting)
         await asyncio.sleep(serve.FOLLOW_SECONDS * 2.5)
@@ -382,6 +383,7 @@ def test_the_phone_hears_its_meeting_live_and_its_end():
         assert {"type": "segment", "start": 0.0, "end": 1.2, "speaker": 0, "text": "hello there"} in got
         assert {"type": "speakers", "speakers": [{"name": "Speaker 1", "number": 0}]} in got
         assert {"type": "state", "state": "recording", "detail": ""} in got
+        assert [m for m in got if m["type"] == "partial"] == [{"type": "partial", "text": "and the budget"}]
 
         app = store.home().parent / "canopy" / "apps" / "meeting-assistant"
         app.mkdir(parents=True)

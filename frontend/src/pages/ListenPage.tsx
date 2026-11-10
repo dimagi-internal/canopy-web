@@ -534,7 +534,7 @@ function MeetingScreen({ meeting, onBack }: { meeting: Meeting; onBack: () => vo
   useEffect(() => {
     const el = listRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [view.segments.length])
+  }, [view.segments.length, view.partial])
 
   if (view.status === 'saved' || view.status === 'discarded' || view.status === 'failed') {
     return <Ended view={view} onBack={onBack} />
@@ -578,7 +578,7 @@ function MeetingScreen({ meeting, onBack }: { meeting: Meeting; onBack: () => vo
       )}
 
       <div ref={listRef} className="flex-1 min-h-40 overflow-y-auto overscroll-contain rounded-2xl bg-muted/40 px-4 py-3 space-y-3" aria-live="polite">
-        {view.segments.length === 0 ? (
+        {view.segments.length === 0 && !view.partial ? (
           <p className="h-full grid place-items-center text-sm text-muted-foreground text-center py-10">
             {view.status === 'recording' ? 'Listening… the transcript appears here.' : 'The transcript appears here once your laptop is listening.'}
           </p>
@@ -602,6 +602,9 @@ function MeetingScreen({ meeting, onBack }: { meeting: Meeting; onBack: () => vo
               </div>
             )
           })
+        )}
+        {view.partial && view.status === 'recording' && (
+          <p className="text-[15px] leading-relaxed text-muted-foreground" aria-live="off" data-testid="listen-partial">{view.partial}</p>
         )}
       </div>
 

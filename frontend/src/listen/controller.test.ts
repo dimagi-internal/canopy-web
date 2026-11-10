@@ -219,6 +219,13 @@ describe('Meeting', () => {
     expect(meeting.view.speakers).toEqual({ 1: 'Ana' })
     expect(meeting.view.chatUrl).toBeUndefined() // the unsafe link replaced the good one: never shown
 
+    ws.binary(await toPhone.control({ type: 'partial', text: 'and the budget' }))
+    await settle()
+    expect(meeting.view.partial).toBe('and the budget')
+    ws.binary(await toPhone.control({ type: 'partial', text: 42 }))
+    await settle()
+    expect(meeting.view.partial).toBe('')
+
     meeting.rename(1, '  Ana Silva ')
     await vi.waitFor(() => expect(ws.sent).toHaveLength(3))
     expect(controlMessage(await fromPhone.open(ws.sent[2]))).toEqual({ type: 'rename', speaker: 1, name: 'Ana Silva' })

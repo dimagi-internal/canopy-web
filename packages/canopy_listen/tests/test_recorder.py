@@ -55,6 +55,35 @@ def test_a_recording_reads_like_a_superwhisper_meeting(capsys):
     assert store.active() is None
 
 
+def test_it_listens_before_the_models_load_and_loses_nothing(monkeypatch):
+    """Loading the models can take seconds on a cold disk: audio that arrives meanwhile
+    waits in the source's queue, and the meeting already says it is recording."""
+    from canopy_listen import config, engines
+
+    meeting = store.new_meeting()
+    seen = {}
+
+    class SlowRecogniser:
+        timed = True
+
+        def __init__(self, *a):
+            seen["state"] = store.load(meeting["id"])["state"]
+            seen["queued"] = source.chunks.qsize()
+
+        def __call__(self, buffer):
+            return recognise(buffer)
+
+    source = FakeSource(3.0)
+    monkeypatch.setattr(config, "load", lambda: {"asr": "x", "speakers": "none", "final": "none"})
+    monkeypatch.setattr(engines, "Recogniser", SlowRecogniser)
+    monkeypatch.setattr(engines, "make_labeller", lambda *a: None)
+    assert record(meeting["id"], source, keep_audio=False) == 0
+    assert seen == {"state": "recording", "queued": 30}
+    saved = store.load(meeting["id"])
+    assert [s["text"] for s in saved["segments"]] == ["the budget is due friday"]
+    assert saved["partial"] == ""
+
+
 def test_a_live_meeting_has_no_transcript_yet(capsys):
     meeting = store.new_meeting()
     meeting["state"] = "recording"
