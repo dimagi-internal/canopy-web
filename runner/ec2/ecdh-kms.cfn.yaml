@@ -43,7 +43,7 @@ Conditions:
   HasRunner4: !Not [!Equals [!Ref Runner4, '']]
 
 Resources:
-  # The box's zero-knowledge ECDH key (canopy-web#1550): the key a ZK agent's
+  # The box's zero-knowledge ECDH key: the key a ZK agent's
   # vault key is wrapped to. A Mac keeps it in its Secure Enclave; an EC2 box
   # has none, so it lives here — P-256 KEY_AGREEMENT, and ONLY this runner's
   # instance role may derive with it (canopy src/orchestrator/device_key_kms.py

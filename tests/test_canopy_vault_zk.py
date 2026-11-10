@@ -1876,9 +1876,9 @@ def _second_box(fleet):
     return box
 # ---- what one read of a workspace vault costs as the fleet grows --------------------------
 # Shared (dimagi) is attached to a whole workspace and held by dozens of machines; its page
-# is slow if each machine holding a copy
-# re-reads the vault's members, its runners and every agent it serves, and asks "does this box
-# serve this agent" with a fresh read of the fleet each time. These pin each read's query count
+# is slow if each machine holding a copy re-reads the vault's members, its runners and
+# every agent it serves, and asks "does this box serve this agent" with a fresh read of
+# the fleet each time. These pin each read's query count
 # to the vault, not to machines x agents.
 
 def _grow_vault(fleet, vault: Vault, *, machines: int, agents: int, tag: str, wrapped: bool = True) -> None:

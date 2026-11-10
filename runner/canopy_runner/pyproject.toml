@@ -16,8 +16,7 @@ dependencies = [
     # The Claude Code transcript core — path resolution, tailing, block->row
     # extraction, ordinals, batching. Shared VERBATIM with the cloud runner and
     # with the server (which imports BLOCK_STRIDE rather than documenting it).
-    # Both runners had independently written the same functions before this
-    # package existed; see the 2026-07-27 convergence spec.
+    # One copy, so the two runners cannot drift apart.
     "canopy-transcript",
     # The ACP client the cloud runner drives Claude headless with — the `claude-cli`
     # session runtime (desktop.py) runs the same executor on a laptop.
@@ -64,8 +63,8 @@ build-backend = "hatchling.build"
 path = "canopy_runner/__init__.py"
 
 [tool.hatch.build.targets.wheel]
-# Explicit, like every sibling package. The runner is INSTALLED (see the
-# 2026-07-28 runner-as-installed-package spec), so what lands in the wheel is
+# Explicit, like every sibling package. The runner is INSTALLED (not run from a
+# checkout), so what lands in the wheel is
 # what the daemon executes — auto-detection is not a thing to leave to luck.
 packages = ["canopy_runner"]
 # The CDP sidecar is code and ships WITH the Python that shells out to it, so a

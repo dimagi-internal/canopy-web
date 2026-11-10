@@ -7,13 +7,10 @@ something a person typed. Ship those verbatim and the machine's own event stream
 renders on the HUMAN's side of the chat.
 
 This lives in `canopy_transcript` — the transcript core both the server and the
-runners already depend on — because it was previously duplicated: the server's
-copy in `apps.canopy_sessions.transcript_noise` and the runner's private
-`_SYSTEM_NOISE_PREFIXES`. The two drifted (2026-07-26 -> 2026-07-30): two
-prefixes were added server-side and the runner's copy never grew them, so a
-skill body still rendered as the user's own message on the one path that trusts
-the runner's filtering (the binding tail). A rule enforced in two places is a
-rule that holds in one of them.
+runners already depend on — because two copies drift: a prefix added to one
+copy and missing from the other lets a skill body render as the user's own
+message on the one path that trusts the runner's filtering (the binding tail).
+A rule enforced in two places is a rule that holds in one of them.
 """
 from __future__ import annotations
 
@@ -29,8 +26,8 @@ SYSTEM_NOISE_PREFIXES = (
     "<local-command-stdout>",
     # Invoking a Skill injects its whole body as a `type: "user"` record opening
     # with this line — so the skill's instructions rendered as if the human had
-    # pasted them. Found 2026-07-26 in a rebuilt session: 1 noise row in 110,
-    # the only prefix the original list missed.
+    # pasted them. In a rebuilt session this was 1 noise row in 110,
+    # the only prefix the other entries did not catch.
     "base directory for this skill:",
     # Hitting escape in emdash writes this as a `type: "user"` record, so it
     # rendered as a message YOU sent — in your own bubble, on your own side of
@@ -42,10 +39,10 @@ SYSTEM_NOISE_PREFIXES = (
     # Reading an image makes Claude Code add a `type: "user"` record giving its
     # dimensions ("[Image: original 1440x3214, displayed at 896x2000. Multiply
     # coordinates by …]"), and a Stop hook that blocks writes its feedback the
-    # same way. Neither is a person. Labs 2026-09-26: Hal read its own
-    # screenshot after a Slack turn ended, the thread was told the conversation
-    # had moved into emdash, and — the dimensions now being the "latest human
-    # message" — the answer that followed was never relayed to it.
+    # same way. Neither is a person. Counted as a person, they break
+    # relaying: when an agent reads its own screenshot after a Slack turn ends, the
+    # thread is told the conversation moved into emdash, and — the dimensions being
+    # the "latest human message" — the answer that follows is never relayed.
     #
     # Deliberately NOT a blanket skip of `isMeta` records: that flag also marks
     # slash-command expansions ("Do a turn of work as Hal…"), which ARE the ask.

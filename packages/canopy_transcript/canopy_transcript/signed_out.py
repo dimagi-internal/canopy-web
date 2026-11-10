@@ -3,10 +3,9 @@
 When Claude Code has no usable sign-in it does not fail the way a runner can see.
 The prompt lands, and the "reply" is a synthetic assistant record flagged
 `isApiErrorMessage` whose text is `Not logged in · Please run /login`. A laptop
-turn finishes as soon as the prompt is delivered, so the turn read DONE, the
-error rendered as the agent's answer, and the box kept reporting ready and kept
-claiming — each new message got the same one-line "reply" (acedimagi-mbp-cdp,
-2026-10-22).
+turn finishes as soon as the prompt is delivered, so without this the turn reads DONE, the
+error renders as the agent's answer, and the box keeps reporting ready and keeps
+claiming — each new message gets the same one-line "reply".
 
 Recognised here, once, for both the runner (which marks itself not ready) and
 the transcript rows (which say the record is an error, not a reply). Requires

@@ -720,8 +720,7 @@ Resources:
                 "aws:RequestTag/canopy:owner": !Ref Owner
           # The launch template's ImageId is `resolve:ssm:` — EC2 resolves it AS
           # THE CALLER of RunInstances, so the broker needs read on that one
-          # parameter or every launch fails with SsmAccessDenied (first live
-          # lease, 2026-10-14).
+          # parameter or every launch fails with SsmAccessDenied.
           - Sid: ResolveTheAmiParameter
             Effect: Allow
             Action: [ssm:GetParameters, ssm:GetParameter]

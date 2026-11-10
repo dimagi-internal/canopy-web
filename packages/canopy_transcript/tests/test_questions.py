@@ -1,7 +1,7 @@
 """The dialog a blocked agent is waiting on, read from its transcript.
 
 The payloads here are the REAL ones. `SPARK_ASK` is copied verbatim from
-`ace`'s `spark` session on 2026-07-31, the run that motivated this: an
+`ace`'s `spark` session, the run that motivated this: an
 `AskUserQuestion` at 03:53:46Z that nobody could answer from a phone, and a
 session that consequently sat dead for 52 minutes.
 """
@@ -201,7 +201,7 @@ def test_the_shape_matches_the_screen_reader_s():
 #
 # `pending_question` above can only ever report a dialog that is OVER. Claude
 # Code writes the AskUserQuestion tool_use record when the ask is answered, not
-# when it is made: measured 2026-08-01 across 60 transcripts on a live box, 39
+# when it is made: across 60 transcripts on a live box, 39
 # such records, all already answered, zero pending — while two sessions sat
 # blocked on visible dialogs with nothing in their files at all. `PreToolUse`
 # fires at the other end, when the ask starts, carrying the same tool_input.
@@ -315,7 +315,7 @@ def test_stamping_is_injectable_so_ages_are_testable():
 # until each has an answer. Carrying only questions[0] therefore did not merely
 # under-report the ask — it made it UNANSWERABLE from any surface but the
 # keyboard, because no button on question 1 can reach the Submit behind tab 3.
-# eva, 2026-08-12: a two-question July closeout took a tap, toggled a checkbox,
+# eva: a two-question closeout took a tap, toggled a checkbox,
 # and sat there.
 
 def _multi_ask():
@@ -382,7 +382,7 @@ def test_a_single_question_ask_still_reports_one_question():
 
 # --- an API error ends the turn, and fires no `Stop` -------------------------
 #
-# Verbatim shape from `ace`'s `spark` on 2026-08-17: a 500 at 23:08:15Z, its
+# Verbatim shape from `ace`'s `spark`: a 500 at 23:08:15Z, its
 # `turn_duration` row 4ms later, and no `Stop` hook at all. Sixty seconds after
 # that the ordinary idle `Notification` arrived and was read as an agent asking
 # a question, which locked the chat behind a dialog that did not exist.
@@ -427,7 +427,7 @@ def test_a_subagent_error_is_not_this_turn(tmp_path):
         {"hook_event_name": "Notification", "transcript_path": path}) is False
 
 
-# `continue: false` from a PostToolUse hook, as Ada's debug turn 05590519 wrote it on 2026-11-03:
+# `continue: false` from a PostToolUse hook, as a debug turn wrote it:
 # the call the model had already started is refused, then `turn_duration`, and no `Stop` hook.
 # Sixty seconds later the idle `Notification` raised a "Waiting on you" over nothing.
 STOPPED_BY_HOOK = [

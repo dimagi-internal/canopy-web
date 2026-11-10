@@ -331,7 +331,6 @@ from apps.canopy_sessions.api import router as canopy_sessions_router  # noqa: E
 from apps.canopy_sessions.app_views_api import router as app_views_router  # noqa: E402
 from apps.canopy_sessions.lineage_api import router as session_lineage_router  # noqa: E402
 from apps.canopy_sessions.secrets_api import router as session_secrets_router  # noqa: E402
-from apps.canopy_sessions.sharing_api import router as session_sharing_router  # noqa: E402
 from apps.agent_tasks.api import router as agent_tasks_router  # noqa: E402
 from apps.capabilities.api import agents_router as agent_capabilities_router  # noqa: E402
 from apps.capabilities.api import router as capabilities_router  # noqa: E402
@@ -589,7 +588,6 @@ api.add_router("/approvals", approvals_router)
 api.add_router("/canopy-sessions", slack_session_router)
 api.add_router("/canopy-sessions", session_lineage_router)
 api.add_router("/canopy-sessions", canopy_sessions_router)
-api.add_router("/me/session-sharing", session_sharing_router)
 api.add_router("/me", my_sessions_router)
 # MCP Apps: a rendered View's browser plumbing (apps/mcp_apps_host/mcp_apps_views.py).
 api.add_router("/canopy-sessions", app_views_router)

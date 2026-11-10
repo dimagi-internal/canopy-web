@@ -11,7 +11,7 @@ store and its sources.
     GET/POST …/kb/sources               where its documents come from (a curator's crawler)
 
 The whole-file publish (`…/kb/upload`, `…/kb/publish`) stays in `api_fleet.py`.
-Services: `kb_versions`, `kb_store`. canopy-web never builds an index (#1971).
+Services: `kb_versions`, `kb_store`. canopy-web never builds an index.
 """
 from __future__ import annotations
 

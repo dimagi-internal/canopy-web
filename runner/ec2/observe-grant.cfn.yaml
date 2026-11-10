@@ -7,7 +7,7 @@ AWSTemplateFormatVersion: '2010-09-09'
 # every box made or updated from now on. A live runner stack cannot just be updated
 # to get it: its `Ami` parameter is an SSM-resolved `.../ubuntu/.../current` AMI, so
 # ANY stack update re-resolves it to the newest image and REPLACES the instance
-# (measured on canopy-cloud-runner-2, 2026-10-29: the change set showed
+# (the change set shows
 # `Modify Instance Replacement=True` for a policy-only edit). This stack adds the
 # grant as its own inline policy (a different name, so it never fights the
 # template's) and touches nothing else. Delete it once the box is recycled

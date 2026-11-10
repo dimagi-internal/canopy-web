@@ -416,8 +416,8 @@ def test_the_reader_gets_current_and_previous_narration(board, ws):
 
 def test_the_share_url_is_on_the_public_base_url(member, board, settings):
     """The link is built on CANOPY_PUBLIC_BASE_URL, prefix and all — never the
-    request's host, which an in-process MCP call reports as localhost
-    . Under a path prefix the
+    request's host, which an in-process MCP call reports as localhost.
+    Under a path prefix the
     link must keep the prefix, or it 404s; the base URL carries it."""
     settings.CANOPY_PUBLIC_BASE_URL = "https://labs.example.org/canopy"
     url = member.post(f"/api/storyboards/{board.slug}/share").json()["share_url"]

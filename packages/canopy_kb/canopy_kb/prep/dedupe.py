@@ -3,7 +3,7 @@
 `collapse_duplicates`: identical texts at different URLs (a PDF linked from three pages
 under three paths) become one item that lists its other URLs and every referrer.
 `collapse_shared_tabs`: a spreadsheet tab copied verbatim into many workbooks keeps its
-rows in one; every other copy becomes a one-line pointer. On GiveWell (2026-10-20) the
+rows in one; every other copy becomes a one-line pointer. On GiveWell the
 "Moral weights and discount rate" tab sat in 89 cost-effectiveness models: 171M of 1.1G
 spreadsheet characters, which otherwise answer every search about that tab 89 times.
 """

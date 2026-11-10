@@ -309,7 +309,7 @@ def is_tool_route(method: str, path: str) -> bool:
     """Whether `method path` is a REST operation this server serves as a tool.
 
     A conversation's caller token reaches REST through exactly these
-    (`BearerTokenAuthMiddleware`, canopy-web#1782), so the two routes cannot
+    (`BearerTokenAuthMiddleware`), so the two routes cannot
     drift: what is left out above — minting a PAT, the person's own memory
     switches and grants, the runner protocol — is as unreachable for that
     session over REST as it is over MCP. A path that is not an API operation at
@@ -609,7 +609,7 @@ class NullKeepingDirector(RequestDirector):
     `patch_task(waiting_on_email=null)` reached the route with no
     `waiting_on_email` key at all, the route left the field alone, and the call
     answered 200 with the old value still set — while the same body sent to
-    REST cleared it (ace T24, 2026-10-14). A body field the caller passed as
+    REST cleared it. A body field the caller passed as
     `null` is put back, so the route sees exactly what REST would."""
 
     def _unflatten_arguments(self, route, flat_args):
@@ -674,8 +674,8 @@ def api_schema() -> dict:
     under `FORCE_SCRIPT_NAME=/canopy` (labs) Ninja writes every path as
     `/canopy/api/…`, and everything here — the exclusions, the `workspace`
     rewrite, the in-process request — speaks the unprefixed path Django's
-    handler resolves. Left prefixed, on labs the `workspace` argument was
-    silently ignored and the excluded surfaces became tools (2026-09-30)."""
+    handler resolves. Left prefixed, on labs the `workspace` argument would be
+    silently ignored and the excluded surfaces would become tools."""
     from django.urls import get_script_prefix
 
     from apps.api.api import api

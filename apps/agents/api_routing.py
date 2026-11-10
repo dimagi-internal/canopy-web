@@ -82,8 +82,8 @@ def _runners_for_routing(request: HttpRequest, agent, ids, already) -> dict:
 
     Why keeping is free: routing is a shared object. ACE's rules name the fleet's
     cloud boxes (jjackson's) and Sarvesh's laptop (his), and when every runner was
-    re-checked against the caller, NO one could save ACE's rules at all — not even
-    unchanged (2026-10-05, #1143). The gate exists so a box can't be attached by
+    re-checked against the caller, no one could save ACE's rules at all, not even
+    unchanged. The gate exists so a box can't be attached by
     someone without rights over it; re-sending a row someone with those rights
     already wrote attaches nothing.
 

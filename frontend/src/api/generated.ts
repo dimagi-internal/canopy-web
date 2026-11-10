@@ -5536,7 +5536,7 @@ export interface paths {
         readonly put?: never;
         /**
          * Give the agent its canopy login, stored in its Canopy vault
-         * @description Mint the agent's own canopy token, store it as its `canopy-pat` sealed to the
+         * @description Mint the agent's own canopy token, store it as its canopy login, sealed to the
          *     people and machines that may read the agent, and turn on automatic rotation. Only
          *     for an agent on the Canopy vault (409 otherwise, or when nobody could open the
          *     stored token yet). Changes a secret, so a browser needs a fresh passkey step-up.
@@ -7378,7 +7378,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /**
-         * This agent's canopy-pat rotation: setting, next due, history
+         * This agent's canopy login rotation: setting, next due, history
          * @description Never a token. The agent's owner or an admin.
          */
         readonly get: operations["get_pat_rotation"];
@@ -7388,7 +7388,7 @@ export interface paths {
         readonly options?: never;
         readonly head?: never;
         /**
-         * Turn automatic canopy-pat rotation on or off
+         * Turn automatic canopy login rotation on or off
          * @description `{enabled, period_days}` (default 30, 1-365). This route only records the
          *     setting: while it is on, canopy-web mints a new token for the agent's own
          *     canopy login every `period_days` (counted from the last rotation, else from
@@ -7417,9 +7417,9 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /**
-         * Rotate this agent's canopy-pat now
+         * Rotate this agent's canopy login now
          * @description The same rotation the schedule does, now, whether or not rotation is on:
-         *     a new token in `canopy-pat`, the old one valid for 24 h then revoked. It
+         *     a new token as the canopy login, the old one valid for 24 h then revoked. It
          *     changes a secret, so from a browser it needs a fresh passkey step-up (403
          *     `step_up_required`); a token may call it. The owner or an admin.
          */
@@ -13034,12 +13034,11 @@ export interface paths {
         /**
          * Which credential slots are set (masked — booleans, never values)
          * @description The operator's read: which slots are filled, without putting a secret on a
-         *     screen. Separate from the GET below, which returns REAL VALUES for the runner
-         *     to consume.
+         *     screen. Separate from the GET below, which returns the credential list (no
+         *     values) for the runner to stage its credentials from.
          *
-         *     Exists because the only way to read this used to be a no-op POST — and that
-         *     WROTE, bumping `updated_at`/`updated_by` and destroying the one signal that
-         *     says when a credential was last actually rotated.
+         *     A read must not write: a no-op POST would bump `updated_at`/`updated_by` and
+         *     destroy the one signal that says when a credential was last actually rotated.
          */
         readonly get: operations["get_runner_credential_status"];
         readonly put?: never;
@@ -18050,51 +18049,6 @@ export interface paths {
         readonly post?: never;
         /** Forget a shared secret */
         readonly delete: operations["delete_secret"];
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/me/session-sharing/": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * The projects you still share your laptop sessions with
-         * @description Every project whose team can still read, write and pull your laptop
-         *     sessions in its repo, because you shared them before this was retired.
-         *     Empty for almost everyone: a laptop session is yours alone.
-         */
-        readonly get: operations["list_session_sharing"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/me/session-sharing/{project_id}": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        /**
-         * Stop sharing your laptop sessions with a project's team
-         * @description `shared: false` turns off a share you have: the project's team stops
-         *     seeing your laptop sessions in its repo on the next read. `shared: true` is
-         *     refused (409): sharing all your sessions in a repo with a project's team is
-         *     retired. To share one session with named people, add them on its page.
-         */
-        readonly put: operations["set_session_sharing"];
-        readonly post?: never;
-        readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -29213,7 +29167,7 @@ export interface components {
         /**
          * AgentCanopyLoginOut
          * @description `POST /canopy-login`: the agent's canopy login was made (or reused), its token
-         *     stored sealed as `canopy-pat`, rotation turned on when it could be. Never the token.
+         *     stored sealed in its vault, rotation turned on when it could be. Never the token.
          */
         readonly AgentCanopyLoginOut: {
             /** User Email */
@@ -32247,14 +32201,14 @@ export interface components {
          * AgentCredentialAccessOut
          * @description Whether the CALLER may resolve this agent's secrets — never the values.
          *
-         *         The cheap check `canopy cred` makes before deciding how to resolve
-         *     . `may_resolve` mirrors GET /credentials/resolve exactly, minus
-         *         its bearer requirement (that is a property of the request, not of the
-         *         caller): `via` is `runner` when the caller pairs a live runner this agent
-         *         routes to, `admin` when they are the agent's owner or an admin, `license`
-         *         when they hold an active license to use it directly and name their own open
-         *         direct turn in `X-Canopy-Turn-Id`, and null when none holds — then `reason`
-         *         names the access to ask for.
+         *     The cheap check `canopy cred` makes before deciding how to resolve.
+         *     `may_resolve` mirrors GET /credentials/resolve exactly, minus
+         *     its bearer requirement (that is a property of the request, not of the
+         *     caller): `via` is `runner` when the caller pairs a live runner this agent
+         *     routes to, `admin` when they are the agent's owner or an admin, `license`
+         *     when they hold an active license to use it directly and name their own open
+         *     direct turn in `X-Canopy-Turn-Id`, and null when none holds — then `reason`
+         *     names the access to ask for.
          */
         readonly AgentCredentialAccessOut: {
             /** Agent */
@@ -33391,7 +33345,7 @@ export interface components {
         };
         /**
          * PatRotationOut
-         * @description The agent's canopy-pat rotation: the setting, when it is next due, and
+         * @description The agent's canopy login rotation: the setting, when it is next due, and
          *     its recent rotations. Never a token.
          */
         readonly PatRotationOut: {
@@ -33416,7 +33370,7 @@ export interface components {
         };
         /**
          * PatRotationIn
-         * @description Opt the agent's own `canopy-pat` in to (or out of) automatic rotation.
+         * @description Opt the agent's own canopy login in to (or out of) automatic rotation.
          */
         readonly PatRotationIn: {
             /** Enabled */
@@ -48316,52 +48270,6 @@ export interface components {
             readonly value_zk: string;
             /** Value */
             readonly value?: string | null;
-        };
-        /**
-         * ProjectSessionShareOut
-         * @description A project you still share your laptop sessions with (`/api/me/session-sharing/`).
-         */
-        readonly ProjectSessionShareOut: {
-            /**
-             * Project Id
-             * @description The project's id.
-             */
-            readonly project_id: number;
-            /**
-             * Handle
-             * @description The project's handle in its workspace.
-             */
-            readonly handle: string;
-            /** Name */
-            readonly name: string;
-            /**
-             * Workspace
-             * @description The workspace the project belongs to.
-             */
-            readonly workspace: string;
-            /**
-             * Repo
-             * @description The repo the project works in; your laptop sessions in it are what is shared.
-             */
-            readonly repo: string;
-            /**
-             * Shared
-             * @description Your sessions in this repo are visible to the project's team.
-             */
-            readonly shared: boolean;
-            /**
-             * Team Size
-             * @description How many people are on the project's team: its owner and its participants.
-             */
-            readonly team_size: number;
-        };
-        /**
-         * ProjectSessionShareIn
-         * @description `false` stops sharing your laptop sessions with one project's team; `true` is refused (retired).
-         */
-        readonly ProjectSessionShareIn: {
-            /** Shared */
-            readonly shared: boolean;
         };
         /**
          * SessionSecretValueOut
@@ -73451,52 +73359,6 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
-            };
-        };
-    };
-    readonly list_session_sharing: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": readonly components["schemas"]["ProjectSessionShareOut"][];
-                };
-            };
-        };
-    };
-    readonly set_session_sharing: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly project_id: number;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["ProjectSessionShareIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ProjectSessionShareOut"];
-                };
             };
         };
     };

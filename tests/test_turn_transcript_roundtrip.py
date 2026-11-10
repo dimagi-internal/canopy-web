@@ -1,7 +1,7 @@
 """The laptop runner's transcript writer, end to end against the real server code.
 
-The retained raw transcript is what cost and structure are re-derived from
-, so the only property that matters is
+The retained raw transcript is what cost and structure are re-derived from,
+so the only property that matters is
 that what the runner ships comes back byte-identical. That spans two packages —
 the runner's byte-chunker and the server's gzip-member append — and neither side's
 unit tests can see the seam, which is why this test imports both.

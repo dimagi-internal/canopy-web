@@ -1,18 +1,16 @@
 # Base images come from ECR Public's mirror of the Docker Official Images, not
-# Docker Hub: the deploy runner pulls anonymously, and on 2026-10-09 Docker Hub
-# failed three deploys in a row (429 rate limit, then 504 on auth.docker.io).
-# Same images, same tags.
+# Docker Hub: the deploy runner pulls anonymously, and Docker Hub answers that with
+# 429 rate limits and 504s on auth.docker.io. Same images, same tags.
 # ─── Stage 1: build the React SPA ────────────────────────────────────
 FROM public.ecr.aws/docker/library/node:22-slim AS frontend-build
 WORKDIR /app/frontend
 COPY frontend/package*.json ./
 # The npm WORKSPACES must exist before `npm ci`, or it cannot link them and any
-# import of a local package fails the build. `canopy-ui` hid this for a while
-# because it is also published to the registry and resolved from there;
-# `canopy-client` is local-only, so the first import of it broke every deploy
-# (2026-09-13) with "Cannot find module 'canopy-client'". Copied separately
-# from the rest of frontend/ so the dependency layer still caches on
-# package.json alone in the common case.
+# import of a local package fails the build. `canopy-ui` is also published to the
+# registry and would resolve from there; `canopy-client` is local-only, so
+# without its workspace the build fails with "Cannot find module 'canopy-client'".
+# Copied separately from the rest of frontend/ so the dependency layer still
+# caches on package.json alone in the common case.
 COPY frontend/packages ./packages
 RUN npm ci
 COPY frontend/ ./
@@ -61,8 +59,7 @@ RUN npm run build
 FROM public.ecr.aws/docker/library/python:3.12-slim
 
 # No Node or Claude Code CLI here: canopy-web makes no model calls of its own
-# (agents run on runners), and the in-process `claude -p` backend they served
-# was removed 2026-09-25.
+# (agents run on runners), so there is no in-process `claude -p` backend.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates git \
     && apt-get clean && rm -rf /var/lib/apt/lists/*

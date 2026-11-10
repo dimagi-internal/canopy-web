@@ -4,13 +4,12 @@ A transcript-sourced session has two things tailing the same .jsonl: the
 per-turn `chat_bridge`, which posts each assistant text as an `assistant`
 TurnEvent, and the per-session transcript tailer, which posts every
 conversational record to `/session-stream` with its durable composite ordinal.
-Both fan out to the same session group, so every assistant reply arrived twice
-— once as `seq:<ordinal>`, once as `<turn8>:<ledger seq>` — and the client has
-no way to reconcile those (tool rows dedupe on `tool_use_id`, user rows on
-their text, an assistant row on nothing). Observed live 2026-08-27 on the
-`targeting` session: every reply on screen twice, and once on reload.
+Both fan out to the same session group. The ledger's copy has no id the client
+can reconcile with the tailer's (tool rows dedupe on `tool_use_id`, user rows on
+their text, an assistant row on nothing), so a reply that arrived over both
+would show twice.
 
-So the ledger stops fanning chat rows for a session whose transcript is the
+So the ledger does not fan chat rows for a session whose transcript is the
 durable source, and keeps fanning turn-lifecycle events, which no transcript
 contains. A ledger-sourced session has no transcript to tail and is untouched.
 """
@@ -43,8 +42,13 @@ def _turn(session):
 
 
 def _session_frames(published, session):
-    """Just the frames aimed at the per-session group."""
-    return [m for g, m in published if g.endswith(session.id.hex)]
+    """The ledger's event frames on the per-session group.
+
+    The group also carries other frame types (a status event makes the queue
+    publish `session.queued`); only `chat.turn_event` is the ledger's fan-out.
+    """
+    return [m for g, m in published
+            if g.endswith(session.id.hex) and m.get("type") == "chat.turn_event"]
 
 
 def _capture(monkeypatch):

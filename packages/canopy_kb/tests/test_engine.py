@@ -19,7 +19,7 @@ def _item(i="amf", text="Nets work."):
 
 
 def test_the_model_is_metadata_and_what_it_made_before_is_still_found():
-    """Jonathan, 2026-10-24: the model is just metadata. A card made when the model was in
+    """The model is just metadata. A card made when the model was in
     the key keeps its address among `keys`, so moving model (or engine) re-makes nothing."""
     step, it = steps.card_step("GiveWell"), _item()
     old = Step("card", "1", {**step.settings, "model": "gemini-2.5-flash"})  # the step as it was

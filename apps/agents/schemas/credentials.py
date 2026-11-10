@@ -172,7 +172,7 @@ class AgentCredentialAlertOut(StrictModel):
 
 
 class PatRotationIn(StrictModel):
-    """Opt the agent's own `canopy-pat` in to (or out of) automatic rotation."""
+    """Opt the agent's own canopy login in to (or out of) automatic rotation."""
 
     enabled: bool
     period_days: int = Field(default=30, ge=1, le=365)
@@ -189,7 +189,7 @@ class PatRotationEventOut(StrictModel):
 
 
 class PatRotationOut(StrictModel):
-    """The agent's canopy-pat rotation: the setting, when it is next due, and
+    """The agent's canopy login rotation: the setting, when it is next due, and
     its recent rotations. Never a token."""
 
     enabled: bool
@@ -216,8 +216,8 @@ class OwnPatRotateOut(StrictModel):
 class AgentCredentialAccessOut(StrictModel):
     """Whether the CALLER may resolve this agent's secrets — never the values.
 
-    The cheap check `canopy cred` makes before deciding how to resolve
-. `may_resolve` mirrors GET /credentials/resolve exactly, minus
+    The cheap check `canopy cred` makes before deciding how to resolve.
+    `may_resolve` mirrors GET /credentials/resolve exactly, minus
     its bearer requirement (that is a property of the request, not of the
     caller): `via` is `runner` when the caller pairs a live runner this agent
     routes to, `admin` when they are the agent's owner or an admin, `license`

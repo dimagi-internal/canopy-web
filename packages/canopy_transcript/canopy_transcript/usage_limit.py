@@ -127,8 +127,8 @@ def limit_in_record(record) -> str | None:
     """The cap message, if this transcript record IS Claude Code's cap notice.
 
     Claude Code writes a cap as a synthetic assistant message flagged
-    `isApiErrorMessage` (and, since late 2026, `error: "rate_limit"`) — observed
-    2026-10-08 on this fleet: `{"type": "assistant", "isApiErrorMessage": true,
+    `isApiErrorMessage` (and, since late 2026, `error: "rate_limit"`) — as
+    seen on this fleet: `{"type": "assistant", "isApiErrorMessage": true,
     "error": "rate_limit", "message": {"model": "<synthetic>", "content":
     [{"type": "text", "text": "You've hit your session limit · resets 2:30am
     (America/Denver)"}]}}`.

@@ -38,9 +38,9 @@ def test_validate_timezone_accepts_and_rejects():
 def test_due_slot_none_before_first_fire():
     """A schedule anchored at creation owes nothing until its first real slot.
 
-    2026-07-15 is a Wednesday and the next Friday 9am ET has not happened. Note the
-    anchor is what makes this None: `due_slot` looks BACKWARD, and 2026-07-10 is
-    itself a Friday, so an unanchored call would legitimately return it (see
+    The creation time is a Wednesday and the next Friday 9am ET has not happened. Note the
+    anchor is what makes this None: `due_slot` looks BACKWARD, and the Friday before
+    the creation time is a slot itself, so an unanchored call would legitimately return it (see
     test_due_slot_unanchored_returns_the_previous_slot). Anchoring on the creation
     time is what stops a slot from before the schedule existed from firing.
     """
@@ -61,7 +61,7 @@ def test_due_slot_unanchored_returns_the_previous_slot():
 
 
 def test_due_slot_returns_the_slot_once_passed():
-    # Friday 2026-07-17 09:00 ET == 13:00 UTC (EDT, UTC-4).
+    # The Friday 09:00 ET slot == 13:00 UTC (EDT, UTC-4).
     slot = due_slot(FRIDAYS_9AM, NY, after=None, now=_utc(2026, 7, 17, 14))
     assert slot == _utc(2026, 7, 17, 13)
 
@@ -74,14 +74,14 @@ def test_due_slot_respects_after_no_refire():
 def test_due_slot_never_backfills():
     """Three weeks offline yields ONE slot — the newest — not three."""
     slot = due_slot(FRIDAYS_9AM, NY, after=_utc(2026, 6, 26, 13), now=_utc(2026, 7, 17, 14))
-    assert slot == _utc(2026, 7, 17, 13)  # newest, not 2026-07-03 or 2026-07-10
+    assert slot == _utc(2026, 7, 17, 13)  # newest, not the two Fridays before it
 
 
 def test_due_slot_dst_holds_local_9am():
     """9am ET stays 9am across the DST shift: EDT=13:00Z, EST=14:00Z."""
     edt = due_slot(FRIDAYS_9AM, NY, after=None, now=_utc(2026, 10, 30, 20))
     assert edt == _utc(2026, 10, 30, 13)
-    # 2026-11-06 is after the US shift back to EST (UTC-5).
+    # This Friday is after the US shift back to EST (UTC-5).
     est = due_slot(FRIDAYS_9AM, NY, after=_utc(2026, 10, 30, 13), now=_utc(2026, 11, 6, 20))
     assert est == _utc(2026, 11, 6, 14)
 
@@ -98,7 +98,7 @@ def test_next_slots_dst_holds_local_9am_across_the_shift():
     `due_slot` — so `test_due_slot_dst_holds_local_9am` above pins nothing here, and
     every other `next_slots` case sits entirely inside EDT.
 
-    The US shifts back to EST on Sunday 2026-11-01, so a window opened the Monday
+    The US shifts back to EST on a Sunday in early November, so a window opened the Monday
     before spans it: 9am ET is 13:00Z under EDT (UTC-4) and 14:00Z under EST
     (UTC-5). The same cron expression must therefore yield two *different* UTC
     instants either side of the shift. Evaluating in UTC would emit a constant
@@ -108,7 +108,7 @@ def test_next_slots_dst_holds_local_9am_across_the_shift():
     A bug here mislabels rather than misfires — but the preview is the only thing
     that makes a hand-typed cron trustworthy, so a wrong "Next" is a wrong schedule.
     """
-    # 2026-10-26 is the Monday before the shift; the window covers Fridays either side.
+    # `now` is the Monday before the shift; the window covers Fridays either side.
     out = next_slots(FRIDAYS_9AM, NY, now=_utc(2026, 10, 26, 12), count=3)
 
     assert out == [
@@ -165,7 +165,7 @@ def test_slots_between_is_half_open_inclusive_start_exclusive_end():
 
 
 def test_slots_between_dst_holds_local_9am_across_the_shift():
-    # US Eastern falls back 2026-11-01. A daily 9am-ET cron stays 9am LOCAL:
+    # US Eastern falls back on the first Sunday of the window's November. A daily 9am-ET cron stays 9am LOCAL:
     # 13:00Z before the shift (EDT, UTC-4), 14:00Z after (EST, UTC-5).
     start = dt.datetime(2026, 10, 30, 0, 0, tzinfo=dt.UTC)
     end = start + dt.timedelta(days=7)
@@ -175,8 +175,8 @@ def test_slots_between_dst_holds_local_9am_across_the_shift():
     et = ZoneInfo("America/New_York")
     assert all(f.astimezone(et).hour == 9 and f.astimezone(et).minute == 0 for f in fires)
     # And the offset genuinely changed mid-window (proves it isn't fixed-offset).
-    # NOTE: the brief's original assertion used 2026-11-06 14:00Z, but that instant
-    # is >= end (Nov 6 00:00Z) so it is (correctly) excluded by the half-open window.
+    # The first Friday after the shift (14:00Z) is >= end (Nov 6 00:00Z), so the
+    # half-open window correctly excludes it.
     # Nov 2 is an in-window post-shift EST fire, which is what proves the offset moved.
     assert dt.datetime(2026, 10, 30, 13, 0, tzinfo=dt.UTC) in fires   # EDT (UTC-4)
     assert dt.datetime(2026, 11, 2, 14, 0, tzinfo=dt.UTC) in fires    # EST (UTC-5)

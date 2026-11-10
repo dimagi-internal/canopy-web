@@ -57,9 +57,9 @@ codesign --force --sign - "$APP" 2>/dev/null || echo "  (codesign skipped)"
 
 # Quit the copy that is already running, so the launch below starts THIS build.
 # `open` on a running app only brings that instance forward, so without this a
-# rebuild replaced the bundle on disk while the menu bar kept the old binary and
-# its old icons in memory — until the next login. Seen 2026-10-06: every account
-# had the new mark installed and none showed it. Matched by this bundle's own
+# rebuild replaces the bundle on disk while the menu bar keeps the old binary and
+# its old icons in memory — until the next login: every account
+# has the new mark installed and none shows it. Matched by this bundle's own
 # executable path, so another account's menu-bar app is never touched.
 pkill -f "$APP/Contents/MacOS/CanopyRunner" 2>/dev/null && sleep 1 || true
 

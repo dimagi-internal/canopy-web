@@ -91,8 +91,8 @@ def after_read(agent, request, *, via: str, turn_id: str,
         # A box's own credential refresh (the runner-update timer, bootstrap) runs
         # outside any turn by design and says so. It cannot hide a misuse the turn
         # id would have caught: a turn id is not checked against a live turn either,
-        # so this alert only ever catches an honest caller nobody expected
-        #. The read is still logged; the other checks still run.
+        # so this alert only ever catches an honest caller nobody expected.
+        # The read is still logged; the other checks still run.
         purpose = request.META.get("HTTP_X_CANOPY_READ_PURPOSE", "")
         refresh = runner is not None and purpose == REFRESH_PURPOSE
         if not turn_id and via == "runner" and not refresh:

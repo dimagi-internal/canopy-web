@@ -6,7 +6,7 @@ import live from './__fixtures__/work-fleet-20261006.json'
 
 // The page as Jonathan lands on it from the huddle email: the real, finished
 // work-fleet-20261006 huddle (3 ideas → 5 board tasks, 2 parked), with the
-// tasks as they stood that day — two he declined, three "in progress"
+// tasks as the fixture captured them — two he declined, three "in progress"
 // of which all three are actually stuck (one on him).
 vi.mock('@/api/huddles', () => ({ getHuddle: vi.fn(async () => live), listHuddles: vi.fn(async () => []) }))
 vi.mock('@/components/activity/TurnTranscript', () => ({ TurnTranscript: () => <div>transcript</div> }))

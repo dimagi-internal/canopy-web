@@ -80,7 +80,7 @@ git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1 \
 # The daemon and the menu-bar app are separate PROCESSES by design (the daemon must
 # run headless), but nothing required installing them separately — and nothing did:
 # a fresh account got a running runner and no status icon, and had to find
-# runner/menubar/build.sh by hand (2026-09-28). Install it alongside the daemon.
+# runner/menubar/build.sh by hand. Install it alongside the daemon.
 #
 # Rebuilt only when its source changes: build.sh replaces the bundle and relaunches
 # the app, and --if-stale runs this every 30 minutes — an unconditional rebuild would
@@ -271,7 +271,7 @@ echo "==> installing $(basename "$WHEEL")"
 # letting uv take the first python3 on PATH. On a fresh macOS account with no
 # ~/.zprofile, Homebrew sits behind /usr/bin, so that is Apple's 3.9 and the resolve
 # fails outright ("the current Python version (3.9.6) does not satisfy >=3.11") —
-# hit provisioning a third account on 2026-09-28. uv downloads a match if none exists.
+# seen when provisioning a further account. uv downloads a match if none exists.
 PY_REQ="$(sed -n 's/^requires-python *= *"\(.*\)"/\1/p' "$TMP/runner/canopy_runner/pyproject.toml" | head -1)"
 # --reinstall-package: the in-repo packages never change version (0.1.0), so
 # without it uv keeps the copy it already has and a change to the shared
@@ -316,15 +316,15 @@ fi
 # `bootout` returns BEFORE launchd has finished tearing the job down, and a
 # bootstrap issued into a domain still holding the old job fails with
 # `Bootstrap failed: 5: Input/output error`, leaving it STOPPED. Hit on the very
-# first real install (2026-07-29); a hand-run retry seconds later succeeded with
+# a real install; a hand-run retry seconds later succeeds with
 # no other change — the signature of a race, not a bad plist. So wait for the
 # domain to clear, then retry anyway, because the print check races too.
 #
 # One job must never be bounced this way: the one we are RUNNING UNDER.
 # `launchctl bootout` tears down the job's whole process tree, and in --if-stale
 # mode that tree contains this script — so bootout kills us, `bootstrap` never
-# runs, and the timer is left UNLOADED. Observed on a real box 2026-07-29: the
-# updater fired, installed a new runner, and its log stops mid-sentence at
+# runs, and the timer is left UNLOADED. Seen on a real box: the
+# updater fires, installs a new runner, and its log stops mid-sentence at
 # "rendering …com.canopy.runner.updater.plist" — "(re)started" never printed and
 # the job was gone from `launchctl list`. It comes back at the next login (or
 # whenever something else runs an install), so this is not permanent; it just
@@ -382,15 +382,15 @@ install_job() {
 }
 
 # --- device key helper (macOS) -----------------------------------------------
-# canopy-device-key holds this Mac's Secure Enclave key for Canopy Vault's device proof
-# (canopy#946). canopy's `vault device` / resolve client look for it at
+# canopy-device-key holds this Mac's Secure Enclave key for Canopy Vault's device proof.
+# canopy's `vault device` / resolve client look for it at
 # ~/.canopy/bin/canopy-device-key; the runner enrolls the key at startup. Same shape as
 # the menu-bar app: rebuilt only when its source changes, best-effort (no swiftc is a
 # warning — canopy then refuses to make a key on this Mac rather than silently using a
 # software one). Not gated on launchd: a hand install wants it too. Opt out with
 # CANOPY_DEVICE_KEY=0. Built BEFORE the runner is (re)started below: the runner enrolls
-# the moment it starts, and a helper rebuilt seconds after that left a box logging "no
-# ECDH key" until its next restart (haldimagi, 2026-10-19).
+# the moment it starts, and a helper rebuilt seconds after that leaves a box logging "no
+# ECDH key" until its next restart.
 DEVKEY="$TMP/runner/device-key"
 DEVKEY_STAMP="$HOME/.canopy/device-key-bin.sha"
 DEVKEY_BIN="$HOME/.canopy/bin/canopy-device-key"

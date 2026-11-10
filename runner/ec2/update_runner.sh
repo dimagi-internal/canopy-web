@@ -58,8 +58,7 @@ ENV_FILE="${ENV_FILE:-$RUNNER_HOME/runner.env}"
 # A box's manually set address (cloud_runner.py BASE_URL_OVERRIDE_FILE).
 # runner.env still names the stack parameter's address, which canopy-fetch-env
 # re-renders on every start, so this timer must prefer the override exactly as
-# the runner does — or it keeps calling the address canopy has left (it did,
-# every 30 minutes, after the 2026-10-06 move).
+# the runner does — or it keeps calling an address canopy has left (every 30 minutes).
 OVERRIDE_FILE="${CANOPY_BASE_URL_OVERRIDE_FILE:-$RUNNER_HOME/base_url.override}"
 TARGET="$RUNNER_HOME/cloud_runner.py"
 STAMP="$RUNNER_HOME/build-info.json"
@@ -72,8 +71,8 @@ RESTART_GIVEN="${RESTART_CMD:-}"
 RESTART_CMD="${RESTART_CMD:-sudo -n systemctl restart}"
 # The first-boot seed (runner/ec2/seed.py): a manifest + "<id>-part-<i>" parts.
 SEED_SECRET="${SEED_SECRET:-canopy/cloud-runner/runner-seed}"
-# The single-value seed stacks created before 2026-10-04 were built from. up.sh no
-# longer writes it; read only when there is no manifest seed to read.
+# The single-value seed that older stacks were built from. up.sh does not
+# write it; read only when there is no manifest seed to read.
 CODE_SECRET="${CODE_SECRET:-canopy/cloud-runner/runner-code}"
 RUNNER_SRC="runner/ec2/cloud_runner.py"
 # The paths the DEPLOYED sha is computed over (deploy-labs.yml's cloud_sha step).
@@ -82,8 +81,8 @@ RUNNER_SRC="runner/ec2/cloud_runner.py"
 # update_runner.sh is in this list ON PURPOSE. The shim at
 # /usr/local/bin/canopy-runner-update reads THIS script from the clone's origin/main
 # without fetching, and origin/main only moves when the install path runs — which
-# only happens when one of these files changes. So an updater-only change never
-# reached a box: #742 merged 13:3xZ on 2026-09-10 and the 13:40Z tick still ran the
+# only happens when one of these files changes. Without it, an updater-only change never
+# reaches a box: the next tick still runs the
 # old script. Listing it here makes an updater change a deploy, as the shim's own
 # comment already claims. Keep in step with deploy-labs.yml's cloud_sha step —
 # runner/ec2/tests/test_update_runner_sh.py pins the two lists equal.
@@ -289,18 +288,17 @@ moved_base() {
 
 # --- this box's credential ---------------------------------------------------
 # The bearer for the one read below — the SAME credential the daemon signs in with.
-# Since keyless runners (#1594) that is a runner token bought with this box's device
+# For a keyless runner that is a runner token bought with this box's device
 # key (its EC2 instance role), and runner.env's CANOPY_TOKEN — a person's PAT — is
-# only the fallback for a box whose key is not approved yet. This script used to
-# read the PAT and nothing else: when it was revoked in the 2026-10-17 token
-# cleanup the daemon carried on keyless, but every tick here got a 401, read
-# `unknown`, and installed nothing — for hours, on a box the runner itself was
-# nudging every ten minutes (cloud-ec2-2, 2026-10-17 23:30Z onward).
+# only the fallback for a box whose key is not approved yet. Reading the PAT alone fails
+# once it is revoked: the daemon carries on keyless, but every tick here would get
+# a 401, read `unknown`, and install nothing — for hours, on a box the runner itself
+# nudges every ten minutes.
 #
 # Two sources, in order:
-#   1. the token the running daemon SHARES (RUNNER_TOKEN_FILE, 0600, #1630) — free;
+#   1. the token the running daemon SHARES (RUNNER_TOKEN_FILE, 0600) — free;
 #   2. one this script BUYS with the INSTALLED runner's own exchange code. Not
-#      optional: (1) is written only by runner bytes newer than #1630, and a box
+#      optional: (1) is written only by runner bytes that share the token, and a box
 #      whose PAT is dead cannot reach those bytes without this — the updater that
 #      would install the token-sharing daemon needs a token to decide to. It also
 #      covers the crash-looping daemon that shares nothing. Imported, never run
@@ -720,8 +718,8 @@ PY
 # deliberate restart (an install above, or a reboot).
 #
 # The template bakes this file into new boxes; cloud-init never re-runs on boxes
-# already up, so every tick lays it down too, replacing a rule that differs (the
-# narrower `^canopy-runner` one written by hand on 2026-10-16). As the service
+# already up, so every tick lays it down too, replacing a rule that differs (such as a
+# narrower `^canopy-runner` one written by hand). As the service
 # user it goes through `sudo -n`; on a box of several runners this already runs as root. It
 # is skipped when the box has no needrestart and never fails the tick.
 NEEDRESTART_CONF="${NEEDRESTART_CONF:-/etc/needrestart/conf.d/50-canopy-runner.conf}"
@@ -745,10 +743,10 @@ ensure_needrestart_exclusion() {
 # --- what no runner cleans --------------------------------------------------
 #
 # Each runner sweeps only its own files (cloud_runner.py maybe_sweep_disk),
-# while its `disk` check measures the whole volume. On cloud-ec2-2 (2026-10-26)
-# that check warned at 89% while every sweep freed 0 MB: 35 GB sat in the home of
-# the user the box ran as before it had several runners, and 12 GB of /tmp belonged
-# to users no runner may delete. Root's tick is the one place that can see all of it.
+# while its `disk` check measures the whole volume. On a box with several runners
+# that check can warn at 89% while every sweep frees 0 MB: GBs can sit in the home of
+# the user the box ran as before it had several runners, and /tmp can hold files owned
+# by users no runner may delete. Root's tick is the one place that can see all of it.
 
 # /tmp: Ubuntu's own rule (/usr/lib/tmpfiles.d/tmp.conf, `D /tmp ... -`) empties
 # /tmp only at boot, and a runner box is not rebooted. A file of the same name in
@@ -844,8 +842,8 @@ case "$MODE" in
 esac
 
 # Move origin/main: the shim runs THIS script from it, and fetch_commit fetches the
-# deployed commit by sha, which never moves it. Without this a box ran a day-old
-# updater (cloud-ec2-2, 2026-10-06). Takes effect from the next tick.
+# deployed commit by sha, which never moves it. Without this a box runs a day-old
+# updater. Takes effect from the next tick.
 [ -d "$REPO_DIR/.git" ] && git -C "$REPO_DIR" fetch --quiet origin main 2>/dev/null || true
 
 EXPECTED="$(expected_sha)"
@@ -898,8 +896,8 @@ esac
 # vault grant that was missing) had no path to the box at all. It would sit
 # unread until someone happened to ship unrelated code, which is not a mechanism.
 #
-# That is the second half of the 2026-09-07 outage: the fix landed, the operator
-# set the credential, and nothing would have picked it up.
+# Without this pass, a fix could land and the operator set the credential, and
+# nothing would pick it up.
 #
 # `--credentials-only` skips the expensive, disruptive half of a bootstrap (clone,
 # env fill, plugin installs) and re-runs the cheap idempotent half — client creds
@@ -912,7 +910,7 @@ esac
 #
 # Run from the RUNNER'S own clone (cloud_runner.py's RUNNER_SRC_DIR, reset to
 # origin/main on every start), not the working tree of $REPO_DIR: agent turns
-# can reach that one, and on 2026-09-22 one had left it on a local branch. The
+# can reach that one, and one can leave it on a local branch. The
 # shared clone is only the fallback for a box that predates the runner's own.
 BOOT_DIR="${RUNNER_SRC_DIR:-$RUNNER_HOME/src}"
 [ -x "$BOOT_DIR/runner/ec2/bootstrap_agents.sh" ] || BOOT_DIR="$REPO_DIR"
@@ -965,12 +963,12 @@ if [ "$V" = "busy" ]; then
 elif [ -x "$BOOT_DIR/runner/ec2/bootstrap_agents.sh" ]; then
   log "refreshing credentials (config changes reach the box here, not via a deploy)"
   # Under the RUNNER'S environment, not this timer's. canopy-runner.service loads
-  # runner.env; canopy-runner-update.service does not, so this pass used to run
-  # with no GOG_KEYRING_PASSWORD (every keyring read fails: "mailbox NOT live" for
+  # runner.env; canopy-runner-update.service does not, so this pass loads it itself:
+  # without it there is no GOG_KEYRING_PASSWORD (every keyring read fails: "mailbox NOT live" for
   # all five agents) and no CANOPY_TOKEN (no per-agent vault, no canopy-web token:
-  # "no gog token anywhere" for ace while the very next service start read both).
-  # Measured 2026-09-10 11:59Z on cloud-ec2-1 — and this pass re-reports readiness,
-  # so the control plane was told the fleet's mailboxes were dead every 30 minutes.
+  # "no gog token anywhere" for ace while the very next service start reads both).
+  # This pass re-reports readiness, so otherwise the control plane is told the
+  # fleet's mailboxes are dead every 30 minutes.
   ( set +e
     if [ -r "$ENV_FILE" ]; then set -a; . "$ENV_FILE"; set +a; fi
     moved="$(moved_base)"
@@ -981,9 +979,9 @@ elif [ -x "$BOOT_DIR/runner/ec2/bootstrap_agents.sh" ]; then
       export CANOPY_BASE_URL="$moved"
     fi
     # The roster read, each prepare and its readiness report act AS THE BOX, as on
-    # service start — not with runner.env's PAT (revoked 2026-10-17: the roster
-    # came back empty, only the AGENT_SLUGS fallback was refreshed, and every
-    # readiness report was a 401).
+    # service start — not with runner.env's PAT (once it is revoked the roster
+    # comes back empty, only the AGENT_SLUGS fallback is refreshed, and every
+    # readiness report is a 401).
     rt="$(runner_token "${CANOPY_BASE_URL:-}" "$(json_field "$STATE_FILE" runner_id "")")"
     if [ -n "$rt" ]; then export CANOPY_TOKEN="$rt"; fi
     root="$(tr -d '[:space:]' < "$TURN_ENV_ROOT_MARKER" 2>/dev/null)"

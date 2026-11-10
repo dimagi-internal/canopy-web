@@ -20,10 +20,9 @@ AWSTemplateFormatVersion: '2010-09-09'
 #
 # DNS is the step this stack cannot do: dimagi.com is a Cloudflare zone, in no
 # AWS account. The identity stays unverified, and SES refuses every send from
-# it, until the three DKIM CNAMEs in the Outputs are published there. They were
-# published and verified on 2026-10-07, when DEFAULT_FROM_EMAIL
-# (config/settings/connectlabs.py — the one place the sender is named) moved
-# onto this domain.
+# it, until the three DKIM CNAMEs in the Outputs are published there. They are
+# published and verified for the domain DEFAULT_FROM_EMAIL names
+# (config/settings/connectlabs.py — the one place the sender is named).
 #
 # dimagi.com publishes DMARC p=quarantine, and a subdomain inherits it. DKIM
 # alignment is what passes it: the default MAIL FROM is amazonses.com, which

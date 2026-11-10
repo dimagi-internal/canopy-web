@@ -1,7 +1,7 @@
 """Curation with no local state: a refresh that runs from an empty disk on any machine.
 
 A knowledge base's host (canopy-web) keeps everything a refresh needs from the last
-one, so a runner's disk is scratch (canopy-web#1925):
+one, so a runner's disk is scratch:
 
 * **Step results.** Every derived thing (an extracted text, an OCR transcription, a
   catalog card, the alias groups) is stored under `Step.key(inputs)`: the sha256 of the
@@ -86,7 +86,7 @@ class Step:
     `revision` changes when the step's output would; `settings` holds everything else
     that defines it (a prompt template, a reader's page selector) and changes the key by
     itself. `meta` describes how it is made without defining it, and is not in the key:
-    which model reads a prompt is metadata (Jonathan, 2026-10-24), so a card is the
+    which model reads a prompt is metadata, so a card is the
     reading of its prompt whoever read it, and moving to another model re-makes nothing.
     `formerly` lists earlier `settings` whose results are this step's own (a setting that
     became metadata): `keys` names them too, so what they made is still found. `sources`

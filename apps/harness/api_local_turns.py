@@ -7,7 +7,7 @@ a session there starts using an agent: it opens (or re-opens) that session's tur
 and hands back the caller envelope a runner would have received at claim.
 Finishing it and uploading its transcript use the ordinary turn routes
 (`/api/harness/turns/{id}/finish`, `/transcript`), which accept a direct turn's own
-initiator. Rules: `apps/harness/local_turns.py`; canopy-web#1704.
+initiator. Rules: `apps/harness/local_turns.py`.
 """
 from __future__ import annotations
 

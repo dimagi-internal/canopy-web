@@ -35,10 +35,10 @@ _SUFFIX_RE = re.compile(r"-[0-9a-z]+$")
 def encode_project_dir(worktree: Path | str) -> str:
     """Claude Code's ``~/.claude/projects/<name>`` encoding: '/', '.' and '_' -> '-'.
 
-    The underscore was missing until 2026-07-27 and is not cosmetic: a cwd
-    containing one resolved to a directory that does not exist, so the session
-    silently had no transcript — no durable rows, no backfill, no reset. It bit
-    a session run under ``packages/canopy_runtime``.
+    The underscore is not cosmetic: without it, a cwd containing one resolves to a
+    directory that does not exist, so the session silently has no transcript — no
+    durable rows, no backfill, no reset. A session run under
+    ``packages/canopy_runtime`` is the example.
 
     Verified against the live fleet rather than guessed: of 286 directories in
     ``~/.claude/projects`` **none** contains an underscore, and the session run
@@ -48,11 +48,10 @@ def encode_project_dir(worktree: Path | str) -> str:
     which is the same function on the box that ships as a single file.
 
     Windows: Claude Code stores ``C:\\Users\\x\\repo`` as ``C--Users-x-repo``, so
-    ``\\`` and ``:`` encode to '-' too. Without them the encoded name kept its
-    ``C:\\`` anchor, and globbing it under ``~/.claude/projects`` raised pathlib's
-    "Non-relative patterns are unsupported" — which crashed fizzy's Slack turn
-    2f115d03 on shayoni-win-cdp before it reached an agent (2026-10-16, failure
-    investigation 6).
+    ``\\`` and ``:`` encode to '-' too. Without them the encoded name keeps its
+    ``C:\\`` anchor, and globbing it under ``~/.claude/projects`` raises pathlib's
+    "Non-relative patterns are unsupported", which crashes a Slack turn on a
+    Windows runner before it reaches an agent.
     """
     return (str(worktree).replace("\\", "-").replace(":", "-")
             .replace("/", "-").replace(".", "-").replace("_", "-"))
@@ -71,12 +70,11 @@ def _worktree_bases(repo: str, task: str, home: Path) -> list[Path]:
 
     Three layouts are live on the fleet, all of them observed rather than guessed:
 
-    * `<repo>/emdash/<task>` — the common pre-1.2 nesting (verified 2026-07-20).
+    * `<repo>/emdash/<task>` — the common pre-1.2 nesting.
     * `<repo>/<task>` — some worktrees (e.g. echo's) skip the `emdash` segment.
     * `<repo>-<8 hex>/emdash-<task>` — **emdash 1.2**. Every worktree created after
-      the 1.2 upgrade uses it (verified 2026-08-28: all four such dirs on the fleet
-      laptop were created minutes after 1.2 first ran, and every older one is the
-      pre-1.2 shape).
+      the 1.2 upgrade uses it (on the fleet laptop every such dir was created after 1.2
+      first ran, and every older one is the pre-1.2 shape).
 
     The 1.2 root carries a random per-repo hash, so unlike the other two this
     candidate cannot be constructed — the worktree root is globbed off disk. That
@@ -117,8 +115,8 @@ def resolve_emdash_transcript(
     parent segment, so `mobile` can't match `alt-mobile`.
 
     Project dirs OUTLIVE their worktrees, and a task name gets reused, so the
-    de-dupe suffix means one name can accumulate several — four `bednet*` dirs
-    existed locally on 2026-08-14, three of them orphans of deleted worktrees.
+    de-dupe suffix means one name can accumulate several — a laptop can hold four `bednet*` dirs,
+    three of them orphans of deleted worktrees.
     Newest-mtime alone would happily return one of those (touch an old session and
     it wins), so a dir whose worktree still exists is preferred; mtime only breaks
     ties among the live ones. Orphans remain the fallback rather than an error —

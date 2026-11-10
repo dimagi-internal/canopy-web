@@ -19,7 +19,6 @@ import { SessionWorkspacePanel } from '@/components/settings/SessionWorkspacePan
 import { CanopyProjectsPanel } from '@/components/settings/CanopyProjectsPanel'
 import { RunnerAppPanel } from '@/components/settings/RunnerAppPanel'
 import { SessionReviewersPanel } from '@/components/settings/SessionReviewersPanel'
-import { SessionSharingPanel } from '@/components/settings/SessionSharingPanel'
 import { AgentLoginRequestsPanel } from '@/components/settings/AgentLoginRequestsPanel'
 import { runnerHref } from '@/lib/scopedLinks'
 import { ProfileSection } from '@/pages/SettingsLayout'
@@ -100,7 +99,6 @@ export function SettingsPage() {
             <PresencePanel />
             <ApprovalCardsPanel />
             <SessionWorkspacePanel />
-            <SessionSharingPanel />
             <SessionReviewersPanel />
           </>
         )}

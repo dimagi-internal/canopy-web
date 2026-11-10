@@ -1,4 +1,4 @@
-"""Each cloud AGENT turn runs in its own worktree of the agent's clone .
+"""Each cloud AGENT turn runs in its own worktree of the agent's clone.
 
 A turn running IN AGENT_ROOT/<slug> would share a working tree with a concurrent
 turn for the same agent — stranded commits and moving branches. These pin the

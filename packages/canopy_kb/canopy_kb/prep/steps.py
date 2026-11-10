@@ -57,8 +57,8 @@ def reader(kind: str, page_selector: str | None = None, title_suffix: str = "") 
     return Step(f"extract:{kind}", rev, settings, _src(*mods), libs)
 
 
-#: The model each step names was in its key until 2026-10-24; it is metadata now (`meta`),
-#: and `formerly` keeps what was made under it found.
+#: The model each step names is metadata (`meta`), not part of its key; `formerly` keeps
+#: what an earlier model made under the old key found.
 _FORMER_MODEL = {"card": "gemini-2.5-flash", "aliases": "gemini-2.5-pro"}
 
 

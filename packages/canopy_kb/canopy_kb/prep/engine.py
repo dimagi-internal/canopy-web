@@ -3,15 +3,14 @@
 A curator's refresh decides WHAT needs a model (each new card, the alias groups when the
 names moved); the session that started it does the work. The prompt is the step's own and
 the result is checked to the step's shape before it is stored, so a result does not
-depend on who made it, and its key does not name them (`Step.meta`; Jonathan,
-2026-10-24: "the model is just metadata").
+depend on who made it, and its key does not name them: the model is just metadata (`Step.meta`).
 
 The refresh writes the tasks to a directory and waits; the session writes the results
 beside them and the refresh carries on, so one crawl serves every step. Judgment (the
 alias groups) stays with the session; a batch of cards fans out to fast subagents
 (`split`, then `merge`). A refresh is started by an AI session, never by a scheduler:
 nobody would answer it. There is no other engine and nothing is priced: the work is the
-session's own (Jonathan, 2026-10-24: "this should all be built inside our session").
+session's own: the whole refresh is built inside the session.
 
 The protocol, in the session's directory, one step at a time (`<step>` is the step's name):
 

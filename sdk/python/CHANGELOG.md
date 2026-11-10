@@ -2,6 +2,10 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.29.2 — 2026-11-09
+
+Comment wording only in a bundled CloudFormation template; no behaviour change.
+
 ## 0.29.1 — 2026-11-09
 
 Comment and docstring wording only; no behaviour change.

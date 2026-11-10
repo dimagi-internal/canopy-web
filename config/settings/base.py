@@ -759,7 +759,7 @@ CANOPY_VAULT_READ_BURST_LIMIT = env.int("CANOPY_VAULT_READ_BURST_LIMIT", default
 CANOPY_RETENTION_ENFORCE = env.bool("CANOPY_RETENTION_ENFORCE", default=False)
 # A SENSITIVE conversation (one that requires sensitive-data runners, apps/harness/sensitivity.py)
 # is purged after this many days WHATEVER CANOPY_RETENTION_ENFORCE says, by the same
-# heartbeat sweep . A shorter rule wins.
+# heartbeat sweep. A shorter rule wins.
 CANOPY_SENSITIVE_KEEP_DAYS = env.int("CANOPY_SENSITIVE_KEEP_DAYS", default=30)
 # A sensitive turn's prompt is the person's words in clear, held only so a runner can
 # run it. One still queued or claimed this long after it was asked is closed (MISSED)

@@ -12,9 +12,9 @@ chat, a project turn) has no GitHub credential at all — unless its repo has a
 `RepoIdentity` row, in which case it runs as that agent, under the same rule.
 
 The caller of a turn (the person who emailed the agent, say) is deliberately NOT
-the principal: an agent's GitHub writes use the identity of whoever lent it
-(its owner, or an admin when the owner has not), whoever
-caused them. Stopping an agent from doing something bad is the
+the principal: an agent's GitHub writes always use the identity of whoever lent
+the delegation (its owner, or an admin when the owner has not), regardless of who
+caused them, never the caller's. Stopping an agent from doing something bad is the
 agent's own design responsibility — its gating hooks and sender triage — not the
 token layer's. Who asked is RECORDED instead (`requested_by`), so attribution
 shows both the credential and the person who caused the change.

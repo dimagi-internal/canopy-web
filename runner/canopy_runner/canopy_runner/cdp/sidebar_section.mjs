@@ -2,12 +2,11 @@
 //
 // emdash task names are unique per PROJECT, not per emdash. Two agents can each
 // have a task called "editing", and the sidebar then holds two buttons with the
-// identical aria-label "Open task editing". The old lookup clicked the FIRST one in
-// DOM order, so a message meant for eva's "editing" was typed into ada's — four
-// times, because the runner then watched eva's transcript, saw nothing, and the
-// turn was retried (turn 22662f53, 2026-10-04).
+// identical aria-label "Open task editing". Clicking the FIRST one in
+// DOM order would type a message meant for eva's "editing" into ada's, and the
+// runner would then watch eva's transcript, see nothing, and retry the turn.
 //
-// The sidebar is a FLAT list (measured on emdash, 2026-10-04): each project's
+// The sidebar is a FLAT list (measured on emdash): each project's
 // header row carries a "New task for <project>" button, and that project's task
 // rows follow it until the next header. So a task row belongs to the nearest
 // header ABOVE it. This module is that rule, over the ordered list of sidebar

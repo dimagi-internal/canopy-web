@@ -1,4 +1,4 @@
-"""Projects are the workspace's : addressed `<workspace>/<handle>`,
+"""Projects are the workspace's: addressed `<workspace>/<handle>`,
 led by a person and/or a lead agent (which holds the Drive folder), worked on by
 member agents, and any agent of the workspace files tasks into one. An agent's
 route still names a project by the `P<n>` alias it was made with.

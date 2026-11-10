@@ -712,7 +712,7 @@ def claim_admission_notices(request: HttpRequest, runner_id: uuid.UUID,
                             payload: AdmissionNoticeClaimIn):
     """Automatic replies to rejected senders that canopy-web could not send,
     leased to this runner to send from the mailboxes it reads."""
-    # The other half of an admission rule's sender notice :
+    # The other half of an admission rule's sender notice:
     # canopy-web cannot refresh a desktop-client token, the runner's gog can.
     # Polled from the runner's mailbox tick; `apps/admission/runner_notices.py`.
     from apps.admission import runner_notices

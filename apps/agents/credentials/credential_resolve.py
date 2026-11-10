@@ -328,8 +328,8 @@ def _classify_read(request: HttpRequest, via: str, *, runner, device_key, rtok) 
     # A read is a BOX's only when this request names one: a device proof, or an
     # `X-Canopy-Runner` the caller owns. Pairing a runner is a fact about the
     # caller, not the request, so an owner who also pairs a box and resolves by
-    # hand from their own session is an admin read, not a box outside a turn
-    #. Every `runner` caller is an admin already.
+    # hand from their own session is an admin read, not a box outside a turn.
+    # Every `runner` caller is an admin already.
     if via == "runner" and runner is None:
         return "admin"
     # The owner at their OWN laptop: their own token (not the box's runner token),

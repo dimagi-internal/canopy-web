@@ -133,8 +133,8 @@ _OWNER_ASSURANCES = ("session", "pat", "private-runner-key")
 def _creating_owner(request: HttpRequest, home):
     """Who owns an agent this request creates: the caller — unless the caller is an
     AGENT's own login registering it from inside one of its live turns, when it is the
-    person who asked for that turn. Ada creating an agent for Jonathan made Ada the
-    owner (2026-10-25), and he had to transfer it by hand.
+    person who asked for that turn. Otherwise an agent creating an agent for a person
+    would own it, and the person would have to transfer it by hand.
 
     The parent turn (`X-Canopy-Parent-Turn`, which the canopy CLI sends) is checked, not
     taken on trust: it must be live, belong to the caller's own agent, and have been
@@ -591,7 +591,7 @@ def mint_agent_canopy_token(request: HttpRequest, slug: str, payload: AgentCanop
 # The same mint, stored sealed and never returned. Browser: + passkey step-up.
 @gate("agent-admin", setting=True, step_up=True)
 def give_agent_canopy_login(request: HttpRequest, slug: str, payload: AgentCanopyTokenIn) -> Status:
-    """Mint the agent's own canopy token, store it as its `canopy-pat` sealed to the
+    """Mint the agent's own canopy token, store it as its canopy login, sealed to the
     people and machines that may read the agent, and turn on automatic rotation. Only
     for an agent on the Canopy vault (409 otherwise, or when nobody could open the
     stored token yet). Changes a secret, so a browser needs a fresh passkey step-up.

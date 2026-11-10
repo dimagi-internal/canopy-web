@@ -1,8 +1,8 @@
 // The sidecar's arguments: one JSON object, read from STDIN.
 //
-// They used to be argv[3]. On Windows a command line is capped at 32,767
-// characters, so a long prompt failed to even start node (WinError 206) and the
-// turn died on an uncaught OSError. stdin has no such cap. argv[3] is still read
+// They are not passed as argv[3]. On Windows a command line is capped at 32,767
+// characters, so a long prompt would fail to even start node (WinError 206) and the
+// turn would die on an uncaught OSError. stdin has no such cap. argv[3] is still read
 // when present, so the sidecar can be driven by hand: `node emdash_control.mjs
 // list '{"port":9222}'` (or pipe the JSON in).
 //

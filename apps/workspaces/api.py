@@ -619,10 +619,11 @@ def list_invites(request: HttpRequest, slug: str) -> list[InviteOut]:
     everyone else."""
     m = _membership_or_404(request.user, slug)
     # A pending invite's token IS the invite — the link that admits someone at
-    # its role, owner included — and handing it out is an owner's act, like
-    # creating it. Not every member may receive every token: a viewer could
-    # forward an owner-level link the owners never meant to send. A viewer
-    # still sees the list (the page shows it to everyone), just not the links.
+    # its role, owner included — so it goes only to a member who may manage members
+    # AND may grant that invite's role, the same test creating it applies. Not
+    # every member may receive every token: a viewer could forward an owner-level
+    # link the owners never meant to send. A viewer still sees the list (the page
+    # shows it to everyone), just not the links.
     return [
         _invite_out(i, with_token=perms.role_allows(m.role, perms.MEMBERS_MANAGE)
                     and perms.may_manage_member(m.role, None, i.role))

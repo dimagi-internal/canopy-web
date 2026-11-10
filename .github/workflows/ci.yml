@@ -4,7 +4,7 @@ name: CI
 # on push to main). Deploys are a separate, manual workflow:
 # .github/workflows/deploy-labs.yml (GitHub → AWS labs / ECS Fargate).
 #
-# Why not on the PR too (Jonathan, 2026-10-19). The ruleset requires
+# Why not on the PR too. The ruleset requires
 # `Backend tests` and `Frontend build` green on the PR before it may ENTER the
 # queue, and the queue then runs them again on the PR merged onto the queue
 # head. That second run is the one that matters — it tests what will actually
@@ -123,9 +123,8 @@ jobs:
       # self-consistent TypeScript, so `Frontend build` passes and the next
       # person to regenerate finds an unrelated diff in their PR.
       #
-      # This lived in its own workflow (regen-openapi.yml) that could not be
-      # made a required check, for two independent reasons — so it failed and
-      # PRs merged anyway, twice (#575, then #756 → #757):
+      # A separate workflow cannot be made a required check, for two independent
+      # reasons — it would fail and PRs would merge anyway:
       #   1. No `merge_group` trigger, so it never reports against the queued
       #      merge result. Requiring it would have hung the queue forever — see
       #      the `on:` block at the top of this file.
@@ -229,12 +228,10 @@ jobs:
         working-directory: packages/canopy_cron
         run: uv run --with pytest pytest -q
 
-      # The KB engine's own suite. It was taken out of CI once for a flake: the refused-
-      # card test wrote card.results.json in place, the engine's 10 ms poll read it
-      # half-written, moved it to .bad and waited out its 10 s timeout. The test now
-      # writes temp-then-rename as the session protocol requires (#2134); with the old
-      # write it failed ~1 in 120 runs under load, with the fix 0 in 120 and 0 in 18
-      # full-suite runs. [prep] brings the curator toolkit's format readers, so their
+      # The KB engine's own suite. The refused-card test writes card.results.json
+      # temp-then-rename, as the session protocol requires: an in-place write could be
+      # read half-written by the engine's 10 ms poll, which moved it to .bad and waited
+      # out its 10 s timeout. [prep] brings the curator toolkit's format readers, so their
       # tests run too.
       - name: Run canopy_kb tests
         working-directory: packages/canopy_kb
@@ -258,7 +255,7 @@ jobs:
       # NOTE: this does NOT run in a bare env. runner/ec2 has no
       # pyproject.toml, so uv discovers the ROOT project and Django et al. are
       # importable here. That is fine: the stdlib-only invariant is checked
-      # against the module itself by tests/test_stdlib_only.py (#1351), not
+      # against the module itself by tests/test_stdlib_only.py, not
       # inferred from the env — a `--no-project` run would still have to carry
       # canopy_transcript and yaml for the tests, which proves nothing.
       #
@@ -380,9 +377,9 @@ jobs:
       # inputs restores it in seconds (a merge_group ref reads main's caches). A
       # PR that adds a migration misses the key and replays for real.
       # The dump is written and read by pg_dump/pg_restore run from the SAME image as
-      # the service (see `pgc` below), not the runner's: `ubuntu-latest` moved to 26.04
-      # on 2026-11-05, whose client is PG18, and a PG18 archive carries
-      # `SET transaction_timeout`, which a PG16 server rejects (production is RDS 18 now).
+      # the service (see `pgc` below), not the runner's: `ubuntu-latest` ships a PG18
+      # client, and a PG18 archive carries `SET transaction_timeout`, which a PG16
+      # server rejects (production is RDS 18).
       # So the client version follows the server, whatever the runner ships.
       - name: Restore the migrated test DB
         id: testdb
@@ -448,15 +445,12 @@ jobs:
   # identically on the PR and in the queue, so moving them earlier costs ~1
   # min of PR time and saves a queue ejection.
   #
-  # Why (measured 2026-10-27): after the suites left the PR (2026-10-19), the
-  # merge-queue failure rate went from ~3% to 25-50% a day, re-queued PRs from
-  # 3% to 25%, and p90 queue->merge from 8 to 75 min. An ejection is not one
-  # PR's ~5 min: with ALLGREEN and max_entries_to_build=5, every entry built
-  # on top of the failed one is thrown away and rebuilt. Of a sample of the
-  # failed queue runs, ~40% failed only these static gates (lazy-import and
-  # layered-import ratchets, generated.ts out of date, test-module imports);
-  # most of the rest failed a test in a file the PR itself changed, which is
-  # why those test files run here too.
+  # Why: with the suites only in the queue, a failure there is costly. An ejection
+  # is not one PR's ~5 min: with ALLGREEN and max_entries_to_build=5, every entry
+  # built on top of the failed one is thrown away and rebuilt. Many failed queue
+  # runs fail only these static gates (lazy-import and layered-import ratchets,
+  # generated.ts out of date, test-module imports); most of the rest fail a test in
+  # a file the PR itself changed, which is why those test files run here too.
   #
   # What this cannot catch: two PRs that each pass alone and conflict once
   # combined (two edits to a ratchet baseline). Only the queue sees that.
@@ -583,11 +577,10 @@ jobs:
       # the registry keeps serving old code under a version number that no
       # longer describes it.
       #
-      # Not hypothetical. On 2026-09-16 the registry's canopy-ui@0.7.0 was
-      # missing `agui.ts` and `useSessionSocket`'s `onUnknownEvent` seam, both
-      # in-repo at 0.7.0 for weeks. ace-web pinned "0.7.0", believed itself
-      # current, and could not receive a `page.invalidate` frame — with nothing
-      # anywhere to say why.
+      # Not hypothetical: a registry copy of canopy-ui can lack files that are in the
+      # repo at the same version (`agui.ts`, `useSessionSocket`'s `onUnknownEvent`
+      # seam). A consumer pinned to that version believes itself current and cannot
+      # receive a `page.invalidate` frame — with nothing anywhere to say why.
       #
       # Covers every publishable workspace rather than canopy-ui alone: the
       # trap is a property of "published to npm", not of that one package, and

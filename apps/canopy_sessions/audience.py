@@ -8,7 +8,7 @@ in `readers(session)` is exactly `access.can_read`. If a leg changes in
 `access.py`, that test fails until the piece here changes with it.
 
 The line is for people, so it names what they would recognise — the email
-thread, the Slack channel, the machine, the project team, the agent — and says
+thread, the Slack channel, the machine, the agent — and says
 "you" when the viewer is the one it is about. docs/architecture/access-sessions-and-people.md
 § Who can see a session.
 """
@@ -16,12 +16,12 @@ from __future__ import annotations
 
 from django.utils import timezone
 
-from apps.agents.models import Agent, AgentAdmin, AgentProject, ProjectParticipant
+from apps.agents.models import AgentAdmin
 from apps.harness import sensitivity
 from apps.harness.models import Runner, RunnerAdmin
 from apps.workspaces import services as wsvc
 
-from .models import ProjectSessionShare, RunnerBinding, Session, SessionReviewAsk, SessionReviewGrant
+from .models import RunnerBinding, Session, SessionReviewAsk, SessionReviewGrant
 
 #: Where an email-born session keeps its thread (`harness.session_sync.EMAIL_THREAD_KEY`).
 EMAIL_THREAD_KEY = "email_thread_key"
@@ -118,30 +118,6 @@ def _runner_admins(session) -> set[int]:
     return set(RunnerAdmin.objects.filter(runner_id=b.runner_id).values_list("user_id", flat=True))
 
 
-def _project_teams(session) -> dict[str, set[int]]:
-    """Leg 7: the teams of the projects the box owner shared this session's repo
-    with. {project name: team user ids}, never an agent's own login."""
-    if not _discovered(session) or session.agent_id or sensitivity.is_sensitive(session):
-        return {}
-    b = _binding(session)
-    if b is None or b.runner_id is None or not b.runner.owner_id or not b.emdash_project:
-        return {}
-    projects = AgentProject.objects.filter(
-        pk__in=ProjectSessionShare.objects.filter(user_id=b.runner.owner_id, revoked_at__isnull=True)
-        .values("project_id"),
-        workspace_id=session.workspace_id, repo_slug__iexact=b.emdash_project,
-        visibility=AgentProject.WORKSPACE)
-    logins = set(Agent.objects.filter(user__isnull=False).values_list("user_id", flat=True))
-    out = {}
-    for p in projects:
-        team = set(ProjectParticipant.objects.filter(project=p, person__user__isnull=False)
-                   .values_list("person__user_id", flat=True))
-        if p.owner_user_id:
-            team.add(p.owner_user_id)
-        out[p.name] = team - logins
-    return out
-
-
 def pieces(session) -> dict:
     """Every leg's people for this session, each already inside the tenant."""
     members = wsvc.member_user_ids(session.workspace_id)
@@ -157,7 +133,6 @@ def pieces(session) -> dict:
         "coaches": {uid: name for uid, name in coaches.items() if uid in members},
         "asked_reviewers": asked,
         "runner_admins": within(_runner_admins(session)),
-        "project_teams": {name: within(team) for name, team in _project_teams(session).items()},
     }
 
 
@@ -167,8 +142,6 @@ def readers(session) -> set[int]:
     p = pieces(session)
     out = p["creator"] | p["participants"] | p["box_owner"] | p["agent_admins"] | p["own_login"]
     out |= set(p["coaches"]) | p["runner_admins"]
-    for team in p["project_teams"].values():
-        out |= team
     return out
 
 
@@ -222,8 +195,6 @@ def summary(session, viewer) -> dict:
         label = ("Only you" + _added(added, True)) if vid == session.created_by_id \
             else (_name(creator) + _added(added, False))
 
-    for name in p["project_teams"]:
-        extras.append(f"The {name} project team")
     for name in sorted(set(p["coaches"].values())):
         extras.append(f"{name} may review (coaching)")
     for name in sorted(set(p["asked_reviewers"].values())):

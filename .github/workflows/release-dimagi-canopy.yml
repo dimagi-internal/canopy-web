@@ -8,7 +8,7 @@ name: Release dimagi-canopy
 #
 # or the Release's wheel URL. See sdk/python/README.md.
 #
-# NOT published to PyPI, deliberately (decided 2026-09-27): the distribution
+# NOT published to PyPI, deliberately: the distribution
 # name may still change, and a published name cannot be taken back. A PyPI job
 # (trusted publishing via OIDC, like publish-canopy-{ui,client}.yml does for
 # npm) can be added here once the name is settled. The import name `canopy_sdk`

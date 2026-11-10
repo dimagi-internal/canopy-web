@@ -178,8 +178,7 @@ echo ">> account"
 # No Secrets Manager secret to stage: a new box pairs by invitation (no canopy PAT),
 # derives each agent's gog keyring password from its runner's own secret (spec
 # docs/architecture/runners.md), and keeps its Claude credentials in a vault
-# its owner signs in on the runner's page (spec 2026-10-23-runner-claude-credentials-
-# in-the-vault-design.md) — there is no bootstrap Claude token any more.
+# its owner signs in on the runner's page — there is no bootstrap Claude token.
 
 STACK_STATUS=$("${AWS[@]}" cloudformation describe-stacks --stack-name "$STACK" \
   --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "NONE")
@@ -243,9 +242,8 @@ echo ">> workspace: ${WORKSPACE:-<the stack default>}"
 # A NEW box always runs its runners the --install-runners way (cloud_runner.py): with
 # Runners empty it is ONE runner, tree:<RunnerWorkspace>, named the box, and it pairs
 # with `pair-by-role` listing that runner. The invitation must list it too, or canopy
-# refuses every pairing call (401) however the invitation is approved -- found standing
-# up the first sensitive-data box, 2026-10-22. So a new stack names its one runner explicitly. An existing
-# stack keeps what it has (above).
+# refuses every pairing call (401) however the invitation is approved. So a new stack names its one runner
+# explicitly. An existing stack keeps what it has (above).
 if [[ -z "$RUNNERS" && "$STACK_STATUS" == "NONE" && -n "$WORKSPACE" ]]; then
   RUNNERS="tree:${WORKSPACE}"
   echo ">> runners: ${RUNNERS} (a new box's one runner)"
@@ -331,9 +329,9 @@ echo ">> runner key slots: ${RUNNER_SLOTS}"
 
 # Provenance of the bytes about to be published: the SAME quantity
 # deploy-labs.yml computes for the server's `expected_code_sha`, over the same
-# paths (tests/test_seed_roundtrip.py pins the lists equal). update_runner.sh was
-# missing here until 2026-10-04, so a seed published after an updater-only change
-# was stamped with an older sha than the deploy expected.
+# paths (tests/test_seed_roundtrip.py pins the lists equal). update_runner.sh is
+# listed so a seed published after an updater-only change
+# is not stamped with an older sha than the deploy expects.
 SHA_PATHS=(cloud_runner.py bootstrap_agents.sh update_runner.sh kms_broker.py aws_broker.py job_broker.py job_self_check.sh ../../packages/canopy_transcript ../canopy_acp ../canopy_runner/canopy_runner)
 CODE_SHA="$(git log -1 --format=%H -- "${SHA_PATHS[@]}" 2>/dev/null || true)"
 CODE_AT="$(git log -1 --format=%ct -- "${SHA_PATHS[@]}" 2>/dev/null || true)"
@@ -347,8 +345,8 @@ MYIP=$(curl -fsS https://checkip.amazonaws.com | tr -d '[:space:]')
 echo ">> SSH allowed from ${MYIP}/32"
 
 # ── publish the first-boot seed (manifest + parts) ──────────────────────────────
-# Secrets Manager caps a value at 65536 bytes and cloud_runner.py outgrew one
-# gzip+base64 secret on 2026-10-04 (91 KB) — every up.sh died on PutSecretValue.
+# Secrets Manager caps a value at 65536 bytes and cloud_runner.py outgrows one
+# gzip+base64 secret (91 KB), so a single value would make up.sh die on PutSecretValue.
 # See seed.py. Parts first, manifest last; the box verifies the sha256 either way.
 # The legacy single-value canopy/cloud-runner/runner-code is deliberately NOT
 # touched: stacks created before this format still read it.

@@ -14,13 +14,12 @@
 # agent's vault) needs that credential bundle — see the ordering note in
 # cloud_runner.py where this is invoked.
 #
-# WHAT THIS SCRIPT IS NOW (2026-10-15, canopy docs/architecture/agent-setup-lifecycle.md):
+# WHAT THIS SCRIPT IS (see canopy docs/architecture/agent-setup-lifecycle.md):
 # the BOX's half only — tooling, gog's file keyring, the canopy plugin + CLI, caches. Each
 # AGENT is prepared by canopy's `canopy agent prepare --runner` (clone, env, plugins,
 # provisioner, Gmail, readiness report): ONE implementation, shared with laptops and with
-# cloud_runner's lazy path. The 1,000 lines of per-agent bash that used to live here — and
-# every lesson they recorded — moved into canopy's agent_prepare.py and its tests, after a
-# standby drill (cloud-ec2-prep) matched this box's readiness agent for agent.
+# cloud_runner's lazy path. Per-agent setup, and every lesson it records, lives in
+# canopy's agent_prepare.py and its tests, not here.
 #
 # Steps below each OK-skip when already satisfied. Each step is OK-skipped when already satisfied. Deliberately NOT `set -e`:
 # one agent's failure must not take down the other four (step 5) — the runner still
@@ -59,11 +58,11 @@ gog_config_dir() {
 }
 
 # ── The fleet roster comes from canopy-web (Agent Runtime Registry) ────────────
-# It used to be pinned in THREE places — the AgentSlugs CFN parameter, AGENT_SLUGS
-# in runner.env, and this script's default — so adding an agent meant editing the
-# CloudFormation stack. canopy-web already serves the answer
+# The roster is not pinned in the AgentSlugs CFN parameter, in runner.env or in this
+# script's default, so adding an agent needs no CloudFormation stack edit.
+# canopy-web serves the answer
 # (`GET /api/agents/{slug}/runtime`: "what a runner needs from canopy-web to run
-# this agent"); nothing consumed it. Now it does, and AGENT_SLUGS is the OFFLINE
+# this agent"), and AGENT_SLUGS is the OFFLINE
 # fallback rather than the source. Register an agent in canopy-web and the next
 # bootstrap picks it up — no stack change, no SSH.
 #
@@ -88,7 +87,7 @@ agent_registry() {  # -> one slug per line, or nothing
           "${base%/}/api/agents/?limit=200" 2>/dev/null)" || list=""
   if [[ -z "$list" ]]; then
     # A token whose workspaces span more than one tenant tree gets a 422 on the
-    # flat list (canopy-web's read rule, 2026-10-11): name each workspace instead.
+    # flat list (canopy-web's read rule): name each workspace instead.
     local _wss _ws
     _wss="$(curl -fsSL --max-time 20 -H "Authorization: Bearer $tok" \
             "${base%/}/api/workspaces/" 2>/dev/null | python3 -c '
@@ -144,13 +143,13 @@ for a in (items or []):
 # The registry is every agent the box's TOKEN can list, which for an owner's token
 # is the whole fleet, other people's agents included. A box asked canopy-web for
 # each one's vault every 30 minutes; a zero-knowledge agent refuses a box it does
-# not route to, and each refusal emailed that agent's owner a device-proof alert
-# (fizzy, 2026-10-17, canopy-web#1563). canopy-web answers which agents this box
+# not route to, and each refusal emailed that agent's owner a device-proof alert.
+# canopy-web answers which agents this box
 # serves by the same rule it checks the proof against.
 #
 # ANSWERED (HTTP 200 with a JSON list) is final, an empty list included: a new box
-# serves nothing, and reading [] as "unknown" sent cloud-ec2-fork down the whole
-# registry, each resolve refused "does not run echo" (2026-10-18). Only UNKNOWN (no
+# serves nothing, and reading [] as "unknown" would send the box down the whole
+# registry, each resolve refused "does not run echo". Only UNKNOWN (no
 # runner id yet, an older canopy-web, an error, a body that is not a list) falls
 # back to the registry. A box that later gains an agent prepares it then
 # (request_setup, or the runner's lazy clone on its first turn).
@@ -181,8 +180,8 @@ resolve_roster() {  # -> comma-joined slugs; served first, registry, AGENT_SLUGS
   # What canopy-web says this box RUNS is the answer whenever it gives one: it
   # spans every workspace the box is enrolled in (marshellis as well as dimagi),
   # and it does not depend on the token being able to list the whole fleet. It
-  # used to be only a filter over the registry, so an empty registry (a revoked
-  # PAT, 2026-10-17) threw it away and fell back to AGENT_SLUGS.
+  # is not only a filter over the registry: an empty registry (a revoked
+  # PAT) does not discard it or force the fall back to AGENT_SLUGS.
   local reg served slugs
   if served="$(served_agents)"; then
     slugs="$(printf '%s' "$served" | grep -v '^$' | paste -sd, - 2>/dev/null || true)"
@@ -299,8 +298,8 @@ for a in d.get("assets", []):
     if a["name"].endswith("_linux_amd64.tar.gz"):
         print(a["browser_download_url"]); break' 2>/dev/null)
     [[ -n "$url" ]] || { fail "could not resolve the latest gogcli linux_amd64 asset"; return 1; }
-    # --retry: this download is flaky in practice. Standing up a box on 2026-08-12
-    # took three attempts (a 503, then a dropped connection, then success), and a
+    # --retry: this download is flaky in practice. Standing up a box can
+    # take several attempts (a 503, then a dropped connection, then success), and a
     # bare curl turns each blip into the same silent outcome as the layout bug —
     # no gog, so no keyring, no client map, and no gmail token for any agent.
     curl -fsSL --retry 5 --retry-delay 3 --retry-connrefused "$url" -o "$tmp/gog.tar.gz" \
@@ -310,7 +309,7 @@ for a in d.get("assets", []):
 
   # Extract EVERYTHING, then locate the binary — never name the member. gogcli
   # 0.35.0 stores it as `./gog`, and `tar -xzf … gog` does not match that: a
-  # from-scratch rebuild on 2026-08-12 died here with "tar: gog: Not found in
+  # from-scratch rebuild dies here with "tar: gog: Not found in
   # archive", taking gog with it and so silently skipping the keyring, the
   # account->client map, and the gmail-token import for ALL FIVE agents. The box
   # came up healthy in every other respect and could not send a single email.
@@ -455,11 +454,11 @@ step4_claude_plugins() {
       && ok "added canopy marketplace" \
       || warn "claude plugin marketplace add failed"
   fi
-  # Adding the marketplace once is not keeping it current. Nothing here used to
-  # pull it: the clone advanced only when some session's async SessionStart hook
-  # happened to update it, so a refresh re-ran bootstrap against whatever canopy
-  # the box last saw, and the CLI sync below faithfully matched that stale clone
-  # (hal's drill, 2026-09-22: plugin 0.2.509, origin 0.2.511). Every agent
+  # Adding the marketplace once is not keeping it current. Without a pull here,
+  # the clone advances only when some session's async SessionStart hook
+  # happens to update it, so a refresh re-runs bootstrap against whatever canopy
+  # the box last saw, and the CLI sync below faithfully matches that stale clone.
+  # Every agent
   # plugin already updates by `git pull` in its own clone; this is canopy's.
   claude plugin marketplace update canopy >/dev/null 2>&1 \
     && ok "canopy marketplace updated" \
@@ -491,17 +490,16 @@ reinstall_cli_from_marketplace_clone() {
     warn "marketplace clone not at $clone — leaving the CLI on its VCS install"
     return
   fi
-  # The guard is BOTH provenance AND version. It used to be provenance alone,
-  # which made this a one-shot repair that could never update: once the receipt
-  # recorded a directory it returned early forever, so the CLI froze at whatever
-  # the clone happened to be on the day it was first re-pointed while the clone
+  # The guard is BOTH provenance AND version. Provenance alone would make this a
+  # one-shot repair that could never update: once the receipt
+  # recorded a directory it would return early forever, so the CLI would freeze at
+  # whatever the clone was on when it was first re-pointed while the clone
   # itself kept advancing underneath it. A laptop hides this because a human runs
   # /canopy:update; nobody types that on a cloud box.
   #
-  # Measured 2026-09-09: CLI 0.2.471 against a 0.2.479 clone, eight releases
-  # behind, and `bin/hal-email`'s engine-staleness guard refused every send —
-  # so the box could think but could not answer anyone. Found by a readiness
-  # drill, not by the box reporting it.
+  # A CLI eight releases behind its clone trips `bin/hal-email`'s engine-staleness
+  # guard, which refuses every send — so the box could think but could not answer
+  # anyone. A readiness drill finds this; the box does not report it.
   local clone_version installed_version
   clone_version="$(sed -nE 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' \
                    "$clone/pyproject.toml" 2>/dev/null | head -1)"
@@ -516,8 +514,8 @@ reinstall_cli_from_marketplace_clone() {
     log "canopy CLI $installed_version lags the clone's $clone_version — reinstalling"
   fi
   # Keep what was installed beside canopy (the KB engine canopy-kb, readers): a bare
-  # reinstall drops every `--with`, and `canopy kb build` then fails on this box
-  # (2026-10-23, the GiveWell republish). uv's receipt lists them; cli_extras.py spells them.
+  # reinstall drops every `--with`, and `canopy kb build` then fails on this box.
+  # uv's receipt lists them; cli_extras.py spells them.
   local extras_py with=() value
   # `:-$0` and `${with[@]+…}` keep this working under `set -u` on bash 3.2 (macOS),
   # where BASH_SOURCE is empty under `bash -c` and an empty array counts as unset.
@@ -538,8 +536,8 @@ reinstall_cli_from_marketplace_clone() {
 
 # ── Step 4b: prune caches ────────────────────────────────────────────────────────
 # AFTER step 4, so the plugin versions just installed are already recorded and
-# kept. cloud-ec2-1's 20 GB root reached 100% on 2026-10-04 because nothing ever
-# removed a plugin version (33 canopy, 24 ace, ~9 GB) or an npm/uv download.
+# kept. Without pruning, a 20 GB root fills to 100%: nothing else ever
+# removes a plugin version (each ~100s of MB) or an npm/uv download.
 # Full bootstrap only — never the --credentials-only timer pass — so it runs at a
 # service start or a self-refresh. Turns may be running: each keeps the version it
 # started on while that is the installed one or the newest spare.

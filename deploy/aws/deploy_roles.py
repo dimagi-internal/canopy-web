@@ -11,8 +11,8 @@ human runs those commands. This
 file exists because the alternative is what was here before: the deploy role's
 grants were hand-made on a shared role and tracked nowhere, so nobody could
 review them and adding a resource type meant a failed deploy for whoever
-deployed next (see the 2026-09-13 incident — a new `AWS::SecretsManager::Secret`
-in canopy-web's template blocked ALL three deployments).
+deployed next (a new `AWS::SecretsManager::Secret` in canopy-web's template
+blocked ALL three deployments).
 
 Before this, ONE role (`github-actions-labs-deploy`) was assumable by six OIDC
 subjects — including two personal-account repos — and held the union of every
@@ -32,7 +32,7 @@ secret in the account — plus `lambda:CreateFunction`, `s3:GetObject` and
 for. Someone had carefully scoped the inline policy to `labs-jj-*`; the managed
 policy made that scoping decorative.
 
-Detached 2026-09-13. Reads are now granted only by scoped inline policies:
+The managed policy is detached. Reads are granted only by scoped inline policies:
 `labs-jj-*` (SecretsManagerAccess, pre-existing), the three umami ARNs, and
 `canopy-web/*` + `ace-web/*` + `labs/*` (AppPrefixedSecretsRead, added first so
 there was never a window where a container could not read). Those four prefixes
@@ -98,8 +98,7 @@ APPS = {
         # deploy-labs.yml logs in to PUBLIC ECR before buildx so the Dockerfile's
         # `FROM public.ecr.aws/...` base images pull authenticated. Anonymous
         # pulls share a per-IP data quota with every other GitHub runner and
-        # failed the build with `429 toomanyrequests: Data limit exceeded`
-        # (runs 38857394563, 38857717539, 2026-10-15).
+        # failed the build with `429 toomanyrequests: Data limit exceeded`.
         "public_ecr_login": True,
         # Runner installers (.github/workflows build the macOS/Windows bundles on
         # main and upload them, manifest.json last). The bucket is the
@@ -153,7 +152,7 @@ def policy_for(app: str, cfg: dict) -> dict:
                 "cloudformation:DescribeStackResources", "cloudformation:GetTemplate",
                 "cloudformation:UpdateStack", "cloudformation:CreateStack",
                 # Detecting a stack's drift detects each resource's, which is its own action:
-                # without it DetectStackDrift is AccessDenied (the daily drift check, 2026-10).
+                # without it DetectStackDrift is AccessDenied (the daily drift check).
                 "cloudformation:DetectStackDrift", "cloudformation:DetectStackResourceDrift",
                 "cloudformation:DescribeStackResourceDrifts",
                 "cloudformation:CreateUploadBucket",
@@ -229,7 +228,7 @@ def policy_for(app: str, cfg: dict) -> dict:
             "Effect": "Allow",
             "Action": ["ecs:UpdateService", "ecs:DescribeServices"],
             # The long, cluster-qualified ARN — what `describe-services`
-            # returns for this service (checked 2026-10-06).
+            # returns for this service.
             "Resource": [f"arn:aws:ecs:{REGION}:{ACCT}:service/{ECS_CLUSTER}/{s}"
                          for s in cfg["ecs_services"]],
         })
@@ -269,7 +268,7 @@ def policy_for(app: str, cfg: dict) -> dict:
             "Resource": "*",
         })
     # An app with its own task role(s) passes those instead of the shared task
-    # role: canopy-web moved to canopy-web-task-role on 2026-10-15, so its
+    # role: canopy-web runs on canopy-web-task-role, so its
     # pipeline must not be able to put it back on the role every labs app shares.
     shared = [f"arn:aws:iam::{ACCT}:role/labs-jj-ecs-task-execution-role"]
     if not cfg.get("task_roles"):
@@ -358,7 +357,7 @@ def policy_for(app: str, cfg: dict) -> dict:
             "Resource": [f"arn:aws:logs:{REGION}:{ACCT}:log-group:{g}:*" for g in cfg["log_groups"]],
         })
         # Hand-added to all three live roles before this file recorded it
-        # (found 2026-10-06 diffing live against generated); without it here,
+        # (found by diffing live against generated); without it here,
         # re-applying the generated policy would silently drop it.
         st.append({
             "Sid": "DescribeLogGroupsTakesNoResource",
@@ -371,8 +370,8 @@ def policy_for(app: str, cfg: dict) -> dict:
         # Drift detection (the daily Infra drift check) reads every property of every
         # resource in the stack AS THIS ROLE. A property the role cannot read comes
         # back null: the resource reads UNKNOWN, or as if its settings had been
-        # removed (the attachments bucket's encryption and public-access block,
-        # 2026-10). Read-only, on the stack's own resources.
+        # removed (the attachments bucket's encryption and public-access block).
+        # Read-only, on the stack's own resources.
         st.append({
             "Sid": "DriftReadsOwnResources",
             "Effect": "Allow",
