@@ -74,9 +74,9 @@ class WakeListener:
 
         Silent is the case that matters. After the Mac sleeps or changes network, the
         socket can stay open on this side while the server has long forgotten it: no
-        error, no close, just nothing, ever. Waiting on recv() alone, the listener
-        believed it was connected for hours, so the loop never fell back to polling and
-        every frame sent meanwhile (a phone's `listen_start`) was lost. So when idle it
+        error, no close, just nothing, ever. Waiting on recv() alone, the listener would
+        believe it was connected, the loop would never fall back to polling, and every
+        frame sent meanwhile (a phone's `listen_start`) would be lost. So when idle it
         pings, and a socket that answers nothing, not even a pong, for `dead_after`
         seconds is given up and reopened."""
         last_heard = clock()

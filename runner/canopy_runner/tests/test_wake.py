@@ -211,10 +211,9 @@ def test_session_interrupt_frame_without_a_key_is_ignored():
 
 # --- a socket that went silent ----------------------------------------------------------
 #
-# REGRESSION (2026-11-11): after the Mac slept, the control socket stayed open on the
-# laptop's side and delivered nothing, for hours. recv() just timed out over and over,
-# `connected` stayed True, so the loop never polled for phone sessions either, and a
-# phone pairing sat on "Waiting for <laptop>" forever.
+# After a Mac sleeps, its control socket can stay open on the laptop's side and deliver
+# nothing. If the listener only waited on recv(), `connected` would stay True, the loop
+# would never poll for phone sessions, and a phone pairing would wait forever.
 
 class _TimeoutError(Exception):
     pass
