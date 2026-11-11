@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time
 
 from .runner_token import bearer_of
 
@@ -33,6 +34,8 @@ class WakeListener:
         self._url = ws_url(base_url, runner_id)
         self._token = token
         self._recv_timeout = recv_timeout
+        # Silence longer than this, pings unanswered included, means the socket is dead.
+        self._dead_after = 2 * recv_timeout + 15
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self.on_control = on_control
@@ -66,6 +69,33 @@ class WakeListener:
     def stop(self) -> None:
         self._stop.set()
 
+    def _serve(self, ws, websocket, clock=time.monotonic) -> None:
+        """Read frames until the socket closes or goes silent.
+
+        Silent is the case that matters. After the Mac sleeps or changes network, the
+        socket can stay open on this side while the server has long forgotten it: no
+        error, no close, just nothing, ever. Waiting on recv() alone, the listener
+        believed it was connected for hours, so the loop never fell back to polling and
+        every frame sent meanwhile (a phone's `listen_start`) was lost. So when idle it
+        pings, and a socket that answers nothing, not even a pong, for `dead_after`
+        seconds is given up and reopened."""
+        last_heard = clock()
+        while not self._stop.is_set():
+            try:
+                opcode, data = ws.recv_data(control_frame=True)
+            except websocket.WebSocketTimeoutException:
+                if clock() - last_heard > self._dead_after:
+                    logger.info("wake listener: nothing heard for %ds; reconnecting",
+                                int(clock() - last_heard))
+                    return
+                ws.ping()
+                continue
+            last_heard = clock()
+            if opcode == websocket.ABNF.OPCODE_CLOSE:
+                return
+            if opcode == websocket.ABNF.OPCODE_TEXT:
+                self._handle(data.decode("utf-8", "replace") if isinstance(data, bytes) else data)
+
     def _run(self) -> None:
         import websocket
 
@@ -82,14 +112,7 @@ class WakeListener:
             logger.info("wake listener connected: %s", self._url)
             self.connected = True
             try:
-                while not self._stop.is_set():
-                    try:
-                        raw = ws.recv()
-                    except websocket.WebSocketTimeoutException:
-                        continue  # idle; keep the socket open
-                    if not raw:
-                        break
-                    self._handle(raw)
+                self._serve(ws, websocket)
             except Exception as exc:  # noqa: BLE001 — a socket error is recoverable
                 logger.debug("wake ws loop error (%s); reconnecting", exc)
             finally:
