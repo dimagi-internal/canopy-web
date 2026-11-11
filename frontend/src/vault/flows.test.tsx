@@ -390,11 +390,20 @@ describe('Any unlock tells this browser which key is yours', () => {
 })
 
 describe('An agent page: nothing to set up by hand', () => {
-  it('shows a born agent (no key of its own yet) as private, with no setup button', async () => {
+  it('a born agent with readers waiting offers Give access, which makes the key and lets them in', async () => {
     api.getKeyset.mockResolvedValue(keysetOut())
     api.getZkState.mockResolvedValue({ agent: 'eva', agent_id: AGENT_ID, enabled: true, kv: 0, wraps: [],
-      pending: [{ kind: 'device', target: 'dk1', runner_name: 'box' }], rotation_recommended: false, values: null,
-      sealed: ['kindora'] })
+      pending: [{ kind: 'device', target: 'dk1', runner_name: 'box' }, { kind: 'member', target: '7', email: 'a@b.c' }],
+      rotation_recommended: false, values: null, sealed: ['kindora'] })
+    render(<AgentZkSection slug="eva" canEdit />)
+    expect((await screen.findByTestId('zk-pending-names')).textContent).toBe('Waiting for access: box, a@b.c')
+    expect((await screen.findByTestId('zk-grant')).textContent).toBe('Give all 2 access')
+  })
+
+  it('shows a born agent (no key of its own yet) as private, with no setup button when nobody waits', async () => {
+    api.getKeyset.mockResolvedValue(keysetOut())
+    api.getZkState.mockResolvedValue({ agent: 'eva', agent_id: AGENT_ID, enabled: true, kv: 0, wraps: [],
+      pending: [], rotation_recommended: false, values: null, sealed: ['kindora'] })
     render(<AgentZkSection slug="eva" canEdit />)
     expect((await screen.findByTestId('zk-private')).textContent).toMatch(/Only you \(your passkey\) and the machines you approve can open these/)
     expect((await screen.findByTestId('zk-trust-caveat')).textContent).toBe(ZK_TRUST_CAVEAT)

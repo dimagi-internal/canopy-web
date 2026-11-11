@@ -115,12 +115,28 @@ export function AgentZkSection({
       </h4>
 
       {state.kv === 0 ? (
-        // Nothing to do here by hand: an agent with no key of its own yet (kv 0)
-        // has each secret sealed to you and its approved machines as it arrives,
-        // and approving a new machine gives it access.
-        <p className="text-[12px] text-foreground" data-testid="zk-private">
-          Only you (your passkey) and the machines you approve can open these — canopy-web can&rsquo;t.
-        </p>
+        // An agent with no key of its own yet (kv 0) has each secret sealed to you and
+        // its approved machines as it arrives, and approving a new machine gives it
+        // access. A machine or person already waiting (approved earlier, or added since)
+        // is let in by the same Give access: it makes the key first, then wraps it.
+        <div className="space-y-2 text-[12px]">
+          <p className="text-foreground" data-testid="zk-private">
+            Only you (your passkey) and the machines you approve can open these — canopy-web can&rsquo;t.
+          </p>
+          {state.pending.length > 0 && (
+            <>
+              <p className="text-warning" data-testid="zk-pending-names">
+                Waiting for access: {state.pending.map((p) =>
+                  p.kind === 'device' ? p.runner_name || p.label || 'a machine' : p.email).join(', ')}
+              </p>
+              <button type="button" disabled={busy !== null} data-testid="zk-grant"
+                      onClick={() => void run('give access', () => giveAccess(slug, unlock))}
+                      className="min-h-11 rounded-md bg-primary px-3 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40 sm:min-h-0">
+                {`Give ${state.pending.length === 1 ? 'them' : `all ${state.pending.length}`} access`}
+              </button>
+            </>
+          )}
+        </div>
       ) : (
         <div className="space-y-2 text-[12px]">
           <p className="text-foreground" data-testid="zk-on">
