@@ -207,3 +207,69 @@ def test_session_interrupt_frame_without_a_key_is_ignored():
     on_control, _w = _handler()
     on_control({"type": "session_interrupt", "session_id": "s1"})
     assert session_interrupt._pending == {}
+
+
+# --- a socket that went silent ----------------------------------------------------------
+#
+# After a Mac sleeps, its control socket can stay open on the laptop's side and deliver
+# nothing. If the listener only waited on recv(), `connected` would stay True, the loop
+# would never poll for phone sessions, and a phone pairing would wait forever.
+
+class _TimeoutError(Exception):
+    pass
+
+
+# websocket-client is optional for the runner (and absent in CI), so a stand-in with the
+# names _serve uses. The opcodes are RFC 6455's.
+websocket = types.SimpleNamespace(
+    WebSocketTimeoutException=_TimeoutError,
+    ABNF=types.SimpleNamespace(OPCODE_TEXT=0x1, OPCODE_CLOSE=0x8, OPCODE_PONG=0xA),
+)
+
+
+class _Socket:
+    """Replays a script of frames; None is a recv timeout. Counts pings."""
+
+    def __init__(self, script):
+        self.script, self.pings = list(script), 0
+
+    def recv_data(self, control_frame=False):
+        assert control_frame  # pongs must reach the reader, or silence can't be told apart
+        if not self.script:
+            raise AssertionError("read past the end of the script")
+        item = self.script.pop(0)
+        if item is None:
+            raise websocket.WebSocketTimeoutException("timed out")
+        return item
+
+    def ping(self):
+        self.pings += 1
+
+
+class _Clock:
+    def __init__(self, step):
+        self.now, self.step = 0.0, step
+
+    def __call__(self):
+        self.now += self.step
+        return self.now
+
+
+def test_a_silent_socket_is_pinged_then_given_up():
+    w = WakeListener("https://x", "t", "r", recv_timeout=30)
+    ws = _Socket([None] * 10)
+    w._serve(ws, websocket, clock=_Clock(step=30))
+    assert 1 <= ws.pings <= 3  # it asked, a few times, and then let the socket go
+    assert ws.script  # and stopped reading well before the script ran out
+
+
+def test_pongs_keep_an_idle_socket_open_and_frames_still_arrive():
+    got = []
+    w = WakeListener("https://x", "t", "r", recv_timeout=30, on_control=got.append)
+    pong = (websocket.ABNF.OPCODE_PONG, b"")
+    text = (websocket.ABNF.OPCODE_TEXT, b'{"type": "listen_start", "session_id": "s"}')
+    close = (websocket.ABNF.OPCODE_CLOSE, b"")
+    ws = _Socket([None, pong, None, pong, None, pong, None, pong, text, close])
+    w._serve(ws, websocket, clock=_Clock(step=30))
+    assert got == [{"type": "listen_start", "session_id": "s"}]
+    assert ws.pings == 4 and not ws.script  # read to the close; never gave up
