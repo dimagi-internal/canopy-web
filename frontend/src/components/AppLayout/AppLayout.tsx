@@ -62,12 +62,12 @@ function UserMenu() {
         type="button"
         onClick={() => setOpen(!open)}
         aria-label="Account menu"
-        className="flex min-h-11 items-center gap-2 rounded-full border border-border bg-card py-1 pl-1 pr-3 hover:bg-muted sm:min-h-0"
+        className="flex min-h-11 min-w-11 shrink-0 items-center justify-center gap-2 rounded-full border border-border bg-card p-1 hover:bg-muted sm:min-h-0 sm:min-w-0 sm:justify-start sm:pr-3"
       >
         {auth.user.avatar_url ? (
-          <img src={auth.user.avatar_url} alt="" className="h-6 w-6 rounded-full" />
+          <img src={auth.user.avatar_url} alt="" className="h-6 w-6 shrink-0 rounded-full object-cover" />
         ) : (
-          <span className="h-6 w-6 rounded-full bg-primary text-primary-foreground text-xs font-semibold flex items-center justify-center">
+          <span className="h-6 w-6 shrink-0 rounded-full bg-primary text-primary-foreground text-xs font-semibold flex items-center justify-center">
             {initials}
           </span>
         )}
