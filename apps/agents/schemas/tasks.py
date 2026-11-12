@@ -439,6 +439,26 @@ class AgentProjectOut(StrictModel):
     updated_at: dt.datetime
 
 
+class Recurrence(StrictModel):
+    """A recurring task's rhythm. The task is then a TEMPLATE: it stays in backlog, and each
+    period's work is an instance of it (`POST /api/tasks/{key}/spawn`, or the tick when `auto`)."""
+
+    #: `day`, `week` (from Monday), `2weeks` (alternate Mondays), `month` (from the 1st), or
+    #: `as_needed` (spawned by hand only, one instance per date).
+    every: Literal["day", "week", "2weeks", "month", "as_needed"]
+    #: The day an instance is due in its week (week and 2weeks only; Monday when omitted).
+    weekday: Literal["mon", "tue", "wed", "thu", "fri", "sat", "sun"] | None = None
+    #: Spawn each period's instance automatically when the period begins, in the workspace's
+    #: timezone. Never for `as_needed`.
+    auto: bool = False
+
+
+class SpawnIn(StrictModel):
+    #: The instance's due date; it decides the period (a second spawn in that period returns
+    #: the instance already made).
+    due: dt.date
+
+
 class AgentTaskIn(StrictModel):
     """One task to create. `POST /tasks/` takes a LIST of these.
 
@@ -511,6 +531,8 @@ class AgentTaskIn(StrictModel):
     raised_by: uuid.UUID | None = None
     #: Free-text producer tag (the sheet / tool the task was mirrored from).
     source: str = Field(default="", max_length=100)
+    #: Makes it a recurring TEMPLATE (filed in backlog, whatever `status` says). Null: an ordinary task.
+    recurrence: Recurrence | None = None
 
     @field_validator("origin")
     @classmethod
@@ -596,6 +618,12 @@ class AgentTaskOut(StrictModel):
     notes: str
     position: int
     rank: float = 0
+    #: Set on a recurring TEMPLATE (which stays in backlog); null on any other task.
+    recurrence: Recurrence | None = None
+    #: The template this task is one period's instance of.
+    template_key: str | None = None
+    #: A template's newest done instance's completion time; null when none is done, or not a template.
+    last_done: dt.datetime | None = None
     created_at: dt.datetime
     updated_at: dt.datetime
 
@@ -660,16 +688,19 @@ class AgentTaskPatch(StrictModel):
     #: omitted at the top or bottom of the list).
     before: str | None = Field(default=None, max_length=24)
     after: str | None = Field(default=None, max_length=24)
+    #: Makes it a recurring template (moved to backlog) or, null, an ordinary task again. While
+    #: it recurs its status stays backlog. An instance of a template cannot recur.
+    recurrence: Recurrence | None = None
 
 
 # ---- actions: everything a person does TO a task ----
 class AgentTaskActionIn(StrictModel):
     #: approve (start now) · decline · reply (a reply needs a comment) · nudge ·
     #: done · accept (→ todo) · backlog · snooze (comment: a date, default a
-    #: week) · duplicate (comment: the key it duplicates). Field changes are a
-    #: PATCH, not an action.
+    #: week) · duplicate (comment: the key it duplicates) · comment (words only:
+    #: answers no ask, starts nothing). Field changes are a PATCH, not an action.
     action: Literal["approve", "decline", "reply", "nudge", "done", "accept", "backlog", "snooze",
-                    "duplicate"]
+                    "duplicate", "comment"]
     comment: str = ""
 
 
@@ -989,13 +1020,13 @@ class TaskEventOut(StrictModel):
     """One entry in the task's history."""
 
     id: int
-    #: created · field · action · relation.
+    #: created · field · action · relation · comment.
     kind: str
     #: For `field`: which field. For `action`: the action. For `relation`: its kind.
     field: str = ""
     old: str = ""
     new: str = ""
-    #: An action's comment — a reply is the comment thread.
+    #: An action's comment, and a `comment` event's words.
     comment: str = ""
     by_email: str | None = None
     by_name: str = ""
@@ -1155,6 +1186,8 @@ class TaskSettingsOut(StrictModel):
     #: category -> name, every category (defaults filled in).
     status_names: dict[str, str] = Field(default_factory=dict)
     update_cadence_days: int = 7
+    #: IANA name: where a recurring task's day, week and month begin.
+    timezone: str = "UTC"
 
 
 class TaskSettingsPatch(StrictModel):
@@ -1165,6 +1198,8 @@ class TaskSettingsPatch(StrictModel):
     status_names: dict[str, Annotated[str, Field(max_length=30)]] | None = Field(
         default=None, json_schema_extra={"propertyNames": {"enum": list(DEFAULT_STATUS_NAMES)}})
     update_cadence_days: int | None = Field(default=None, ge=1, le=90)
+    #: An IANA timezone name (`Europe/London`).
+    timezone: str | None = Field(default=None, min_length=1, max_length=64)
 
 
 class MilestoneOut(StrictModel):

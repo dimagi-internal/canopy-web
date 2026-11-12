@@ -252,11 +252,13 @@ from .tasks import (
     ProposalCommentOut,
     ProposalPartnerOut,
     ProposedProjectOut,
+    Recurrence,
     ProposedTaskOut,
     SavedViewIn,
     SavedViewOut,
     SavedViewPatch,
     SpawnedFromOut,
+    SpawnIn,
     SpawnedProjectOut,
     TaskBriefOut,
     TaskCountOut,
@@ -323,6 +325,8 @@ from .vault import (
 )
 
 __all__ = [
+    "Recurrence",
+    "SpawnIn",
     "AgentRoleIn",
     "AgentRoleOut",
     "AgentRolePatch",

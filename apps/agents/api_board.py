@@ -372,7 +372,8 @@ def apply_task_patch(request: HttpRequest, task, data: dict, *, route_agent=None
 _EDITOR_ACTIONS = frozenset({"nudge", "done"})
 
 #: Task actions on a project's task that count as a person engaging with the project.
-_ENGAGEMENT_OF_ACTION = {"approve": "approved", "decline": "declined", "reply": "commented"}
+_ENGAGEMENT_OF_ACTION = {"approve": "approved", "decline": "declined", "reply": "commented",
+                         "comment": "commented"}
 
 
 def _engaged_with_project_task(request: HttpRequest, task, action: str) -> None:
@@ -451,7 +452,9 @@ def act_and_record(request: HttpRequest, task, payload: AgentTaskActionIn) -> Ac
                              and not own),
             # An ANSWER to an open question wakes the agent whoever writes it (it
             # is the response the agent asked for) — but never the agent itself.
-            by_agent_itself=own)
+            by_agent_itself=own,
+            # A comment from any agent's login is that agent's, in the history.
+            by_agent=getattr(request.user, "agent_identity", None))
     except services.ClosedAskError as exc:
         raise HttpError(409, str(exc)) from exc
     except PermissionError as exc:

@@ -32,6 +32,7 @@ from apps.workspaces.links import scoped_path
 from apps.workspaces.models import Workspace
 
 from . import kb_store, kb_vectors, kb_versions, project_members, services, work
+from .services import recurrence
 from .api import list_agents
 from .api_board import apply_project_patch, project_detail, require_workspace_editor
 from .credentials import workspace_vaults
@@ -100,7 +101,7 @@ def task_query(request: HttpRequest, *, agent: str = "", project: str = "", stat
                waiting: str = "", ask: str = "", batch: str = "", parent: str = "", assignee: str = "",
                created_by: str = "", label: str = "", priority: str = "", milestone: str = "",
                category: str = "", kind: str = "", due_before=None, due_after=None, q: str = "",
-               snoozed: str = ""):
+               snoozed: str = "", recurring: str = "", template: str = ""):
     """The workspace task list's rows, scoped to what the caller may list."""
     # Scope FIRST: `filter_tasks(waiting="me")` adds unrouted open asks from
     # whatever queryset it is handed, so an unscoped one would leak other
@@ -113,7 +114,8 @@ def task_query(request: HttpRequest, *, agent: str = "", project: str = "", stat
                                  waiting=waiting, ask=ask, batch=batch, parent=parent, assignee=assignee,
                                  created_by=created_by, label=label, priority=priority,
                                  milestone=milestone, category=category, kind=kind,
-                                 due_before=due_before, due_after=due_after, q=q, snoozed=snoozed)
+                                 due_before=due_before, due_after=due_after, q=q, snoozed=snoozed,
+                                 recurring=recurring, template=template)
 
 
 @router.get("/tasks/", response=list[AgentTaskOut],
@@ -125,6 +127,7 @@ def list_fleet_tasks(request: HttpRequest, agent: str = "", project: str = "", s
                      milestone: str = "", category: str = "", kind: str = "",
                      due_before: dt.date | None = None, due_after: dt.date | None = None,
                      q: str = "", snoozed: str = "", sort: TaskSort = "",
+                     recurring: Literal["", "true", "false"] = "", template: str = "",
                      limit: int = DEFAULT_LIMIT_CAP) -> list[AgentTaskOut]:
     """`waiting=me` is the caller's inbox: open asks nobody owns plus tasks
     parked on the caller. `assignee` / `created_by`: `me`, an email,
@@ -134,14 +137,18 @@ def list_fleet_tasks(request: HttpRequest, agent: str = "", project: str = "", s
     matches a title, key or next action. `snoozed=hide` leaves out tasks
     snoozed into the future. `sort`: rank, created, updated, priority, due,
     status, title — default reviews first, then questions, then the rest,
-    oldest first in each. `limit` caps the rows (at most 500)."""
+    oldest first in each. `recurring=true` keeps the recurring templates,
+    `false` everything else; `template` (a key) keeps that template's
+    instances. `limit` caps the rows (at most 500)."""
     qs = task_query(request, agent=agent, project=project, status=status, waiting=waiting, ask=ask,
                     batch=batch, parent=parent, assignee=assignee, created_by=created_by, label=label,
                     priority=priority, milestone=milestone, category=category, kind=kind,
-                    due_before=due_before, due_after=due_after, q=q, snoozed=snoozed)
+                    due_before=due_before, due_after=due_after, q=q, snoozed=snoozed,
+                    recurring=recurring, template=template)
     order = _SORTS[sort]
     qs = qs.order_by(*order) if order else qs.order_by(_ASK_RANK, "created_at", "id")
-    return [AgentTaskOut.model_validate(t) for t in qs[:clamp_limit(limit)]]
+    rows = recurrence.annotate_last_done(qs[:clamp_limit(limit)])
+    return [AgentTaskOut.model_validate(t) for t in rows]
 
 
 @router.post("/tasks/", response={201: AgentTaskOut, **refusals(422)}, summary="Create a task in a workspace")
@@ -187,12 +194,14 @@ def create_task(request: HttpRequest, payload: TaskCreateIn) -> Status:
 def count_tasks(request: HttpRequest, agent: str = "", project: str = "", status: str = "",
                 waiting: str = "", ask: str = "", assignee: str = "", created_by: str = "",
                 label: str = "", priority: str = "", category: str = "", kind: str = "",
-                snoozed: str = "", parent: str = "") -> TaskCountOut:
+                snoozed: str = "", parent: str = "", recurring: Literal["", "true", "false"] = "",
+                template: str = "") -> TaskCountOut:
     """The same filters as `GET /api/tasks/`, answered as one number, so a badge
     never downloads the list it counts."""
     qs = task_query(request, agent=agent, project=project, status=status, waiting=waiting, ask=ask,
                     assignee=assignee, created_by=created_by, label=label, priority=priority,
-                    category=category, kind=kind, snoozed=snoozed, parent=parent)
+                    category=category, kind=kind, snoozed=snoozed, parent=parent, recurring=recurring,
+                    template=template)
     return TaskCountOut(count=qs.order_by().values("pk").distinct().count())
 
 

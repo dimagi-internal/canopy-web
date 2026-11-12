@@ -211,7 +211,9 @@ def test_every_action_is_deliberately_tiered():
     interaction = {AgentTaskAction.APPROVE, AgentTaskAction.DECLINE, AgentTaskAction.REPLY,
                    # Triage's verbs decide what is on the board, as approve and decline do.
                    AgentTaskAction.ACCEPT, AgentTaskAction.BACKLOG, AgentTaskAction.SNOOZE,
-                   AgentTaskAction.DUPLICATE}
+                   AgentTaskAction.DUPLICATE,
+                   # A comment is words only: any reader of the task, and it starts nothing.
+                   AgentTaskAction.COMMENT}
     assert _EDITOR_ACTIONS | interaction == all_actions, (
         f"unclassified actions: {all_actions - (_EDITOR_ACTIONS | interaction)}"
     )

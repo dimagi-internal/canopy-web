@@ -297,6 +297,9 @@ def create_tasks(agent: Agent | None, payloads: list[dict], *, workspace: str = 
         fields = {f: _norm_field(f, p[f]) for f in _TASK_FIELDS if p.get(f) is not None}
         fields.update({f: p[f] for f in _TASK_CREATE_EXTRAS if p.get(f) is not None})
         fields["status"] = _norm_status(fields.get("status", AgentTask.SUGGESTED))
+        rec = _clean_recurrence(p.get("recurrence"))
+        if rec is not None:
+            fields["status"] = AgentTask.BACKLOG  # a template waits in backlog; its instances are the work
         ask_kind = p.get("ask_kind") or AgentTask.ASK_NONE
         if ask_kind not in _ASK_KINDS:
             raise ValueError(f"ask_kind must be review|question, got {ask_kind!r}")
@@ -364,6 +367,7 @@ def create_tasks(agent: Agent | None, payloads: list[dict], *, workspace: str = 
                     waiting_on_user=waiting_on,
                     milestone=milestone,
                     rank=rank,
+                    recurrence=rec,
                     **fields,
                 )
                 if p.get("human_why"):
@@ -383,6 +387,12 @@ def create_tasks(agent: Agent | None, payloads: list[dict], *, workspace: str = 
                 raise DuplicateTaskError(f"{agent.slug} already has a task {ext_id}") from None
             raise
     return out
+
+
+def _clean_recurrence(value):
+    from .recurrence import clean  # noqa: PLC0415 — recurrence imports this module's writers
+
+    return clean(value)
 
 
 def _project_ref(agent: Agent | None, ref: str, workspace: str, *, user=None):
@@ -506,6 +516,16 @@ def patch_task(task: AgentTask, data, *, by_user=None, by_agent=None) -> AgentTa
         task.milestone = work.resolve_milestone(task.project, data["milestone"])
     if data.get("kind") is not None:
         task.kind = _kind(data["kind"])
+    if "recurrence" in data:
+        rec = _clean_recurrence(data["recurrence"])
+        if rec is not None and task.template_id is not None:
+            raise ValueError(f"{task.ref} is an instance of {task.template.key}; an instance does not recur")
+        task.recurrence = rec
+        if rec is not None and "status" not in data:
+            task.status = AgentTask.BACKLOG
+    if task.recurrence is not None and task.status != AgentTask.BACKLOG:
+        raise ValueError(f"{task.ref} recurs: a recurring task stays in backlog and its instances are the work "
+                         f"(send \"recurrence\": null first to finish it)")
     if moved or "assignee" in data or "waiting_on_email" in data:
         _refuse_outsiders(task.project, agent=task.agent, people=(task.assignee_user, task.waiting_on_user))
     if moved:

@@ -9021,7 +9021,9 @@ export interface paths {
          *     matches a title, key or next action. `snoozed=hide` leaves out tasks
          *     snoozed into the future. `sort`: rank, created, updated, priority, due,
          *     status, title — default reviews first, then questions, then the rest,
-         *     oldest first in each. `limit` caps the rows (at most 500).
+         *     oldest first in each. `recurring=true` keeps the recurring templates,
+         *     `false` everything else; `template` (a key) keeps that template's
+         *     instances. `limit` caps the rows (at most 500).
          */
         readonly get: operations["list_fleet_tasks"];
         readonly put?: never;
@@ -9447,14 +9449,40 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /**
-         * Act on a task by key: approve, decline, reply, accept, backlog, snooze, duplicate, nudge, done
+         * Act on a task by key: approve, decline, reply, accept, backlog, snooze, duplicate, nudge, done, comment
          * @description approve → in progress and, on an agent's task, its agent starts now.
          *     accept → todo; backlog → backlog (both close a review ask, start nothing).
          *     snooze (comment: a date, default a week) → out of Triage until then.
-         *     duplicate (comment: the key it duplicates) → canceled, related. decline,
-         *     reply, nudge and done as on an agent's route.
+         *     duplicate (comment: the key it duplicates) → canceled, related. comment →
+         *     words in its history, nothing else: it answers no ask and never starts or
+         *     wakes a turn (a reply does). decline, reply, nudge and done as on an agent's
+         *     route. A recurring template takes only comment, backlog and snooze (409).
          */
         readonly post: operations["act_on_task_by_key"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/tasks/{key}/spawn": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Make a recurring task's instance for the period a date falls in
+         * @description The instance of the recurring task `key` for the period `due` falls in (its day,
+         *     week, two weeks or month; one per date for `as_needed`), due `due`, with the
+         *     template's title, notes, assignee, project and labels. 201 when made; 200 with the
+         *     instance already made for that period. 422 when `key` does not recur, or its
+         *     assignee may no longer have work in its project.
+         */
+        readonly post: operations["spawn_task_instance"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -31293,6 +31321,11 @@ export interface components {
              * @default 0
              */
             readonly rank: number;
+            readonly recurrence?: components["schemas"]["Recurrence"] | null;
+            /** Template Key */
+            readonly template_key?: string | null;
+            /** Last Done */
+            readonly last_done?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -31531,6 +31564,25 @@ export interface components {
              */
             readonly project_outside_tree: boolean;
         };
+        /**
+         * Recurrence
+         * @description A recurring task's rhythm. The task is then a TEMPLATE: it stays in backlog, and each
+         *     period's work is an instance of it (`POST /api/tasks/{key}/spawn`, or the tick when `auto`).
+         */
+        readonly Recurrence: {
+            /**
+             * Every
+             * @enum {string}
+             */
+            readonly every: "day" | "week" | "2weeks" | "month" | "as_needed";
+            /** Weekday */
+            readonly weekday?: ("mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun") | null;
+            /**
+             * Auto
+             * @default false
+             */
+            readonly auto: boolean;
+        };
         /** TurnBriefOut */
         readonly TurnBriefOut: {
             /**
@@ -31760,6 +31812,7 @@ export interface components {
              * @default
              */
             readonly source: string;
+            readonly recurrence?: components["schemas"]["Recurrence"] | null;
         };
         /**
          * HumanWho
@@ -32019,6 +32072,11 @@ export interface components {
              * @default 0
              */
             readonly rank: number;
+            readonly recurrence?: components["schemas"]["Recurrence"] | null;
+            /** Template Key */
+            readonly template_key?: string | null;
+            /** Last Done */
+            readonly last_done?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -32097,6 +32155,7 @@ export interface components {
             readonly before?: string | null;
             /** After */
             readonly after?: string | null;
+            readonly recurrence?: components["schemas"]["Recurrence"] | null;
         };
         /** ActOut */
         readonly ActOut: {
@@ -32111,7 +32170,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            readonly action: "approve" | "decline" | "reply" | "nudge" | "done" | "accept" | "backlog" | "snooze" | "duplicate";
+            readonly action: "approve" | "decline" | "reply" | "nudge" | "done" | "accept" | "backlog" | "snooze" | "duplicate" | "comment";
             /**
              * Comment
              * @default
@@ -36270,6 +36329,7 @@ export interface components {
              * @default
              */
             readonly source: string;
+            readonly recurrence?: components["schemas"]["Recurrence"] | null;
             /**
              * Workspace
              * @default
@@ -36815,6 +36875,11 @@ export interface components {
              * @default 0
              */
             readonly rank: number;
+            readonly recurrence?: components["schemas"]["Recurrence"] | null;
+            /** Template Key */
+            readonly template_key?: string | null;
+            /** Last Done */
+            readonly last_done?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -36925,6 +36990,14 @@ export interface components {
              * @default
              */
             readonly url: string;
+        };
+        /** SpawnIn */
+        readonly SpawnIn: {
+            /**
+             * Due
+             * Format: date
+             */
+            readonly due: string;
         };
         /** BulkTaskResultOut */
         readonly BulkTaskResultOut: {
@@ -37184,6 +37257,11 @@ export interface components {
              * @default 7
              */
             readonly update_cadence_days: number;
+            /**
+             * Timezone
+             * @default UTC
+             */
+            readonly timezone: string;
         };
         /** TaskSettingsPatch */
         readonly TaskSettingsPatch: {
@@ -37195,6 +37273,8 @@ export interface components {
             } | null;
             /** Update Cadence Days */
             readonly update_cadence_days?: number | null;
+            /** Timezone */
+            readonly timezone?: string | null;
         };
         /** MilestoneIn */
         readonly MilestoneIn: {
@@ -62676,6 +62756,8 @@ export interface operations {
                 readonly q?: string;
                 readonly snoozed?: string;
                 readonly sort?: "" | "rank" | "created" | "updated" | "priority" | "due" | "status" | "title";
+                readonly recurring?: "" | "true" | "false";
+                readonly template?: string;
                 readonly limit?: number;
             };
             readonly header?: never;
@@ -62744,6 +62826,8 @@ export interface operations {
                 readonly kind?: string;
                 readonly snoozed?: string;
                 readonly parent?: string;
+                readonly recurring?: "" | "true" | "false";
+                readonly template?: string;
             };
             readonly header?: never;
             readonly path?: never;
@@ -63297,6 +63381,50 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ActOut"];
+                };
+            };
+        };
+    };
+    readonly spawn_task_instance: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SpawnIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentTaskOut"];
+                };
+            };
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentTaskOut"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };

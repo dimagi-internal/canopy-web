@@ -2,6 +2,7 @@
 
 from django.conf import settings
 from django.db import models
+from django.db.models import Max
 from django.db.models.functions import Lower
 
 from .agent import Agent
@@ -677,6 +678,21 @@ class AgentTask(models.Model):
         "self", null=True, blank=True, on_delete=models.SET_NULL,
         related_name="subtasks",
     )
+    #: Set, this task is a recurring TEMPLATE: `{"every": "day"|"week"|"2weeks"|"month"|"as_needed",
+    #: "weekday": "mon".."sun" (week and 2weeks only), "auto": bool}` (`services.recurrence.clean`).
+    #: A template stays in backlog and never completes; its periods' work is its instances.
+    #: Null: an ordinary task.
+    recurrence = models.JSONField(null=True, blank=True, default=None)
+    #: The template this task is one period's INSTANCE of — not `parent`: a subtask rolls its
+    #: progress up and nests at most `MAX_TASK_DEPTH`, and a weekly chore would collect hundreds.
+    #: Made only by `services.recurrence.spawn`. SET_NULL: deleting a template keeps the work done.
+    template = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="instances",
+    )
+    #: The first day of the period this instance is for, stamped when it is made, so moving its
+    #: `due` neither frees its period nor fills another (unique per template, below).
+    template_period = models.DateField(null=True, blank=True)
     #: WHAT this task is. `work` — the agent's
     #: own work, and every task that says nothing. `idea` — a PERSON's want
     #: about the product, carrying their own words (at least one human-why
@@ -799,6 +815,8 @@ class AgentTask(models.Model):
             models.CheckConstraint(condition=models.Q(confidence__in=["", "high", "medium", "low"]),
                                    name="task_confidence_known"),
             models.CheckConstraint(condition=models.Q(priority__lte=4), name="task_priority_known"),
+            models.UniqueConstraint(fields=["template", "template_period"], condition=models.Q(template__isnull=False),
+                                    name="uniq_task_instance_period"),
         ]
         indexes = [models.Index(fields=["agent", "status"]), models.Index(fields=["workspace", "status"]),
                    models.Index(fields=["assignee_user", "status"])]
@@ -912,6 +930,29 @@ class AgentTask(models.Model):
         return self.parent.key if self._parent_shown else None
 
     @property
+    def template_key(self) -> str | None:
+        """The template this is an instance of, unless that template sits in a personal
+        project this one is not in (the `_parent_shown` rule)."""
+        if not self.template_id:
+            return None
+        tpl = self.template
+        if tpl.project_id != self.project_id and tpl.project_id and tpl.project.is_personal:
+            return None
+        return tpl.key
+
+    @property
+    def last_done(self):
+        """A template's newest DONE instance's completion: when its status last became done.
+        Derived, never stored; a list caches it on `_last_done` (`services.recurrence.annotate_last_done`)."""
+        if self.recurrence is None or self.pk is None:
+            return None
+        if hasattr(self, "_last_done"):
+            return self._last_done
+        return (TaskEvent.objects.filter(task__template_id=self.pk, task__status=self.DONE, kind=TaskEvent.FIELD,
+                                         field="status", new=self.DONE)
+                .aggregate(at=Max("created_at"))["at"])
+
+    @property
     def _parent_shown(self) -> bool:
         """A subtask lives in its parent's project; if one ever does not, a task never
         names a parent in a personal project it is not in itself."""
@@ -1003,7 +1044,9 @@ class AgentTaskAction(models.Model):
 
     APPROVE, DECLINE, REPLY, NUDGE, DONE = "approve", "decline", "reply", "nudge", "done"
     ACCEPT, BACKLOG, SNOOZE, DUPLICATE = "accept", "backlog", "snooze", "duplicate"
-    ACTIONS = (APPROVE, DECLINE, REPLY, NUDGE, DONE, ACCEPT, BACKLOG, SNOOZE, DUPLICATE)
+    #: Words on a task and nothing else: no status, no ask, never pending, never a turn.
+    COMMENT = "comment"
+    ACTIONS = (APPROVE, DECLINE, REPLY, NUDGE, DONE, ACCEPT, BACKLOG, SNOOZE, DUPLICATE, COMMENT)
     ACTION_CHOICES = [(a, a) for a in ACTIONS]
     PENDING, APPLIED = "pending", "applied"
     STATUS_CHOICES = [(PENDING, "Pending"), (APPLIED, "Applied")]
@@ -1061,6 +1104,8 @@ class TaskSettings(models.Model):
     status_names = models.JSONField(default=dict, blank=True)
     #: An active project with no update in this many days shows "update missing".
     update_cadence_days = models.PositiveSmallIntegerField(default=7)
+    #: IANA name; where a recurring template's day, week and month begin (`services.recurrence`).
+    timezone = models.CharField(max_length=64, default="UTC")
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self) -> str:  # pragma: no cover
@@ -1116,12 +1161,13 @@ class TaskRelation(models.Model):
 class TaskEvent(models.Model):
     """One entry in a task's history, append-only: it was created, a field
     changed, someone acted on it (the `AgentTaskAction` row, whose comment is
-    the comment), or a relation was added or removed. Written by `work.record`
+    the comment), someone commented (`comment`, its words the action row's
+    comment), or a relation was added or removed. Written by `work.record*`
     from every writer, so the stream is the same whichever path the change came
     through."""
 
-    CREATED, FIELD, ACTION, RELATION = "created", "field", "action", "relation"
-    KINDS = (CREATED, FIELD, ACTION, RELATION)
+    CREATED, FIELD, ACTION, RELATION, COMMENT = "created", "field", "action", "relation", "comment"
+    KINDS = (CREATED, FIELD, ACTION, RELATION, COMMENT)
     task = models.ForeignKey(AgentTask, on_delete=models.CASCADE, related_name="events")
     kind = models.CharField(max_length=10, choices=[(k, k) for k in KINDS])
     #: For `field`: which one, and its value before and after, as shown (a key,
@@ -1141,7 +1187,7 @@ class TaskEvent(models.Model):
     class Meta:
         ordering = ["created_at", "id"]
         indexes = [models.Index(fields=["task", "created_at"])]
-        constraints = [models.CheckConstraint(condition=models.Q(kind__in=["created", "field", "action", "relation"]),
+        constraints = [models.CheckConstraint(condition=models.Q(kind__in=["created", "field", "action", "relation", "comment"]),
                                               name="task_event_kind_known")]
 
     def __str__(self) -> str:  # pragma: no cover

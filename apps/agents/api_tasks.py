@@ -26,6 +26,7 @@ from apps.workspaces.links import base_url
 from apps.workspaces.models import Workspace
 
 from . import proposals, services, work
+from .services import recurrence
 from .api_board import act_and_record, apply_task_patch
 from .gates import (
     listed_agent_workspaces,
@@ -65,6 +66,7 @@ from .schemas import (
     SavedViewIn,
     SavedViewOut,
     SavedViewPatch,
+    SpawnIn,
     TaskBriefOut,
     TaskDetailOut,
     TaskEventOut,
@@ -151,14 +153,15 @@ def patch_task_by_key(request: HttpRequest, key: str, payload: AgentTaskPatch) -
 
 
 @router.post("/tasks/{key}/actions", response=ActOut,
-             summary="Act on a task by key: approve, decline, reply, accept, backlog, snooze, duplicate, nudge, done")
+             summary="Act on a task by key: approve, decline, reply, accept, backlog, snooze, duplicate, nudge, done, "
+                     "comment")
 @gate(
     "member",
     "agent.work",
     kind="content",
     viewer_write=(
-        "approve/decline/reply/accept/backlog/snooze/duplicate decide what is already on the board (the "
-        "interaction tier); nudge/done require agent.work — except that a task's own assignee, or the person "
+        "approve/decline/reply/accept/backlog/snooze/duplicate decide what is already on the board, and comment "
+        "only adds words (the interaction tier); nudge/done require agent.work — except that a task's own assignee, or the person "
         "whose idea it is, may mark it done"
     ),
 )
@@ -166,9 +169,32 @@ def act_on_task_by_key(request: HttpRequest, key: str, payload: AgentTaskActionI
     """approve → in progress and, on an agent's task, its agent starts now.
     accept → todo; backlog → backlog (both close a review ask, start nothing).
     snooze (comment: a date, default a week) → out of Triage until then.
-    duplicate (comment: the key it duplicates) → canceled, related. decline,
-    reply, nudge and done as on an agent's route."""
+    duplicate (comment: the key it duplicates) → canceled, related. comment →
+    words in its history, nothing else: it answers no ask and never starts or
+    wakes a turn (a reply does). decline, reply, nudge and done as on an agent's
+    route. A recurring template takes only comment, backlog and snooze (409)."""
     return act_and_record(request, task_or_404(request, key), payload)
+
+
+@router.post("/tasks/{key}/spawn", response={200: AgentTaskOut, 201: AgentTaskOut, **refusals(422)},
+             summary="Make a recurring task's instance for the period a date falls in")
+# an editor of its workspace, its assignee person, or its agent's own login (as changing it)
+@gate("agent.work", "agent-login", "self", kind="content")
+def spawn_task_instance(request: HttpRequest, key: str, payload: SpawnIn) -> Status:
+    """The instance of the recurring task `key` for the period `due` falls in (its day,
+    week, two weeks or month; one per date for `as_needed`), due `due`, with the
+    template's title, notes, assignee, project and labels. 201 when made; 200 with the
+    instance already made for that period. 422 when `key` does not recur, or its
+    assignee may no longer have work in its project."""
+    task = task_or_404(request, key)
+    if not may_edit_task(request, task):
+        raise HttpError(403, "making a task's instance requires being able to change it")
+    by = getattr(request.user, "agent_identity", None) or request.user
+    try:
+        instance, made = recurrence.spawn(task, payload.due, by=by)
+    except ValueError as exc:
+        raise HttpError(422, str(exc)) from exc
+    return Status(201 if made else 200, AgentTaskOut.model_validate(instance))
 
 
 @router.post("/tasks/bulk", response=list[BulkTaskResultOut], summary="Change many tasks at once")
@@ -407,7 +433,7 @@ def delete_view(request: HttpRequest, view_id: int):
 def _settings_out(ts) -> TaskSettingsOut:
     return TaskSettingsOut(workspace=ts.workspace_id, prefix=ts.prefix,
                            status_names=work.status_names(ts.workspace_id),
-                           update_cadence_days=ts.update_cadence_days)
+                           update_cadence_days=ts.update_cadence_days, timezone=ts.timezone)
 
 
 @router.get("/task-settings/", response=TaskSettingsOut,
