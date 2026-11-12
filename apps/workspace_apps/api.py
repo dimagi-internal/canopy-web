@@ -7,6 +7,9 @@ publish life cycle, using an app, and the public pages.
 * Using it is by the app's own roles (`access.roles_for`). `?draft=<id>` points a
   read or action at that draft's TEST COPY — sample records, nothing sent — and
   needs maintainer rights.
+* An app that declares `tasks` reads and acts on canopy tasks of ONE project an
+  admin bound (`…/tasks`, `…/tasks/actions/{name}`; rules in `tasks.py`). Live
+  work only: a draft's test copy has none.
 * The public pages (`/api/public-apps/`) serves only an app that is enabled AND
   public: its public pages, public projections and create-only, rate-limited
   public actions. Anything else is the same 404, so it reveals nothing.
@@ -16,8 +19,9 @@ Every route is also an MCP tool: an agent changes an app for a person by reading
 """
 from __future__ import annotations
 
+import datetime as dt
 import json
-from typing import Any
+from typing import Any, Literal
 
 from django.contrib.auth.models import User
 from django.http import HttpRequest, HttpResponse
@@ -35,6 +39,7 @@ from apps.workspaces import permissions as perms
 from apps.workspaces.models import Workspace
 
 from . import access, guide, services
+from . import tasks as app_tasks
 from .models import LIVE, AppInstallation, AppRoleGrant, AppVersion
 from .schemas import (
     ActionIn,
@@ -60,6 +65,7 @@ from .schemas import (
     SetupIn,
     SetupOut,
     StoreAppDetailOut,
+    TaskActionIn,
     StoreAppOut,
     VersionOut,
 )
@@ -159,6 +165,7 @@ def _schema(m: dict) -> dict:
                          "bulk": a.get("bulk", False), "when": a.get("when")} for k, a in m["actions"].items()},
         "_links": {k: {"collection": v["collection"], "label": v["label"], "days": v["days"]}
                    for k, v in (m.get("links") or {}).items()},
+        "_tasks": app_tasks.declared(m),
     }
 
 
@@ -577,6 +584,53 @@ def act_workspace_app(request: HttpRequest, workspace: str, key: str, action: st
         raise _refusal(exc) from exc
     except ValueError as exc:
         raise HttpError(422, str(exc)) from exc
+
+
+def _live_only(draft: int | None) -> None:
+    if draft:
+        raise HttpError(409, "a draft's test copy has no tasks: the app's tasks are live work, never sample records")
+
+
+@router.get("/workspace-apps/{workspace}/{key}/tasks", response=list[dict],
+            summary="Read the tasks of the one project an app declares")
+@gate("member")
+def query_workspace_app_tasks(request: HttpRequest, workspace: str, key: str, status: str = "",
+                              category: str = "", due_after: dt.date | None = None,
+                              due_before: dt.date | None = None, template: str = "",
+                              recurring: Literal["", "true", "false"] = "", q: str = "", limit: int = 100,
+                              draft: int | None = None) -> list[dict]:
+    """The tasks of the project the app is bound to, that you may read, for a holder of the
+    app's task `read` role. `status`, `category`: comma lists. `recurring=true` keeps the
+    recurring templates; `template` (a key) keeps one template's instances. 404 when the app
+    declares no tasks or its project is not there; 409 in a draft."""
+    inst = _installation(request, workspace, key)
+    _live_only(draft)
+    try:
+        return app_tasks.query(inst, request.user, status=status, category=category, due_after=due_after,
+                               due_before=due_before, template=template, recurring=recurring, q=q, limit=limit)
+    except services.Refused as exc:
+        raise _refusal(exc) from exc
+
+
+@router.post("/workspace-apps/{workspace}/{key}/tasks/actions/{name}", response={200: dict, 201: dict},
+             summary="Run one of an app's declared task actions, as yourself")
+@gate("member", kind="content",
+      viewer_write="the app's task declaration names the role; holding it is the admin's consent for that project")
+def act_workspace_app_task(request: HttpRequest, workspace: str, key: str, name: str, payload: TaskActionIn,
+                           draft: int | None = None) -> Status:
+    """Create, finish, reopen, comment on, make this period's instance of, or change the
+    declared fields of a task in the app's project, as the declaration allows. Never starts an
+    agent's turn. 201 when a task was made. 404 for a task outside the project or an action
+    not declared; 403 without the action's role; 409 in a draft or on a task in the wrong state."""
+    inst = _installation(request, workspace, key)
+    _live_only(draft)
+    try:
+        out, made = app_tasks.act_task(inst, request.user, name, payload.key, payload.input)
+    except services.Refused as exc:
+        raise _refusal(exc) from exc
+    except ValueError as exc:
+        raise HttpError(422, str(exc)) from exc
+    return Status(201 if made else 200, out)
 
 
 @router.get("/workspace-apps/{workspace}/{key}/records/{record_id}/history", response=list[dict],

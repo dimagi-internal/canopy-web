@@ -244,6 +244,28 @@ async function callLink(workspace: string, key: string, token: string, op: AppOp
 }
 
 /**
+ * Answer a page's task call: the ONE project the app declares, as the viewer. Live work only —
+ * never on a public or link page, and never in a draft's test copy (its records are samples; the
+ * project's tasks are real).
+ */
+async function callTasks(workspace: string, key: string, op: Extract<AppOp, { op: "tasks_query" | "tasks_act" }>,
+                         surface: "member" | "preview" | "public", draft?: number | null): Promise<unknown> {
+  if (surface !== "member") throw new Error("not available on a public page");
+  if (draft) throw new Error("a draft's test copy has no tasks: the app's tasks are live work");
+  const path = P(workspace, key);
+  if (op.op === "tasks_query") {
+    const res = await apiV2.GET("/api/workspace-apps/{workspace}/{key}/tasks", {
+      params: { path, query: { ...(op.filters ?? {}) } },
+    });
+    return unwrap(res, "Could not read the tasks");
+  }
+  const res = await apiV2.POST("/api/workspace-apps/{workspace}/{key}/tasks/actions/{name}", {
+    params: { path: { ...path, name: op.name } }, body: { key: op.key ?? null, input: op.input ?? {} },
+  });
+  return unwrap(res, "That did not work");
+}
+
+/**
  * Answer an app page's call. `surface`:
  * - `member`: as the viewer, on the live app or (with `draft`) a draft's test copy;
  * - `preview`: a public page previewed by a maintainer on a draft's test copy,
@@ -255,6 +277,7 @@ export async function callApp(workspace: string, key: string, op: AppOp,
                               surface: "member" | "preview" | "public" | "link", draft?: number | null,
                               token?: string): Promise<unknown> {
   if (surface === "link") return callLink(workspace, key, token ?? "", op);
+  if (op.op === "tasks_query" || op.op === "tasks_act") return callTasks(workspace, key, op, surface, draft);
   const path = P(workspace, key);
   const isPublic = surface === "public";
   const asPublic = surface === "preview" ? true : undefined;

@@ -41,6 +41,33 @@ is approved per app on the agent's Accounts tab ([`vault-connections.md`](vault-
 Do not let a workspace declare what acts beyond the caller: overlay `add_action` refuses
 `then` and link actions (`overlay.py`, `add_action` branch); only a template declares them.
 
+## Acting on one project's tasks (`apps/workspace_apps/tasks.py`)
+
+An app may declare `tasks` (`manifest.py::_validate_tasks`): the app role that reads, and named
+actions, each one `do` (create, done, reopen, comment, spawn, patch) by one role over a fixed field
+allowlist (`TASK_FIELDS`: title, notes, due, priority, labels; a create also recurrence and
+`assignee_email`). Never agent, assignee, status, project, parent, template or `on_approve`.
+
+- **The project is bound, not named.** The template names a text setting (`project_setting`);
+  its value is a project handle in the app's workspace. `tasks` is template-only (an overlay op
+  carrying it is refused, one that changes it is quarantined), and rebinding the setting is risky
+  (`overlay.is_risky`), as is any template update to either (`template_diff.changes`): an admin's.
+- **The app role replaces the workspace task gates, for exactly that.** The admin's install is the
+  consent: a holder of the action's role runs it AS THEMSELVES through the task writers, recorded
+  under their name. Everything outside the bound project or the declared actions is a 404; reads are
+  `task_read_q` AND the project, so a personal project stays its lead's.
+- **Never a turn.** Done and comment go through `task_actions.act`; reopen and patch are field
+  writes; create files with no agent assignee (a person assignee must hold the `read` role); spawn
+  copies a template. Status moves only through done and reopen.
+- **Live work only.** A draft's test copy has no tasks: the routes refuse `?draft` (409), the page
+  host refuses there too, and a scenario names only the app's own actions.
+- **An agent for a person.** `tasks.act_task(..., on_behalf_by_agent=)` runs as the asker's own app
+  role and records "<agent> for <person>" (`TaskEvent.by_user` and `by_agent`). Its caller verifies
+  the asker.
+
+Pages call `app.tasks.query(filters)` and `app.tasks.act(name, {key, input})`; `app.tasks.declared`
+says what exists (the data model's `_tasks`).
+
 ## The overlay (`overlay.py`)
 
 The module docstring holds the rules. The ones to keep: the workspace **adds** only in

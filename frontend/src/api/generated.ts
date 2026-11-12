@@ -4095,6 +4095,52 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/workspace-apps/{workspace}/{key}/tasks": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Read the tasks of the one project an app declares
+         * @description The tasks of the project the app is bound to, that you may read, for a holder of the
+         *     app's task `read` role. `status`, `category`: comma lists. `recurring=true` keeps the
+         *     recurring templates; `template` (a key) keeps one template's instances. 404 when the app
+         *     declares no tasks or its project is not there; 409 in a draft.
+         */
+        readonly get: operations["query_workspace_app_tasks"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-apps/{workspace}/{key}/tasks/actions/{name}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Run one of an app's declared task actions, as yourself
+         * @description Create, finish, reopen, comment on, make this period's instance of, or change the
+         *     declared fields of a task in the app's project, as the declaration allows. Never starts an
+         *     agent's turn. 201 when a task was made. 404 for a task outside the project or an action
+         *     not declared; 403 without the action's role; 409 in a draft or on a task in the wrong state.
+         */
+        readonly post: operations["act_workspace_app_task"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/workspace-apps/{workspace}/{key}/records/{record_id}/history": {
         readonly parameters: {
             readonly query?: never;
@@ -26420,6 +26466,18 @@ export interface components {
              * @default {}
              */
             readonly params: {
+                readonly [key: string]: unknown;
+            };
+        };
+        /** TaskActionIn */
+        readonly TaskActionIn: {
+            /** Key */
+            readonly key?: string | null;
+            /**
+             * Input
+             * @default {}
+             */
+            readonly input: {
                 readonly [key: string]: unknown;
             };
         };
@@ -55633,6 +55691,84 @@ export interface operations {
         readonly responses: {
             /** @description OK */
             readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    readonly query_workspace_app_tasks: {
+        readonly parameters: {
+            readonly query?: {
+                readonly status?: string;
+                readonly category?: string;
+                readonly due_after?: string | null;
+                readonly due_before?: string | null;
+                readonly template?: string;
+                readonly recurring?: "" | "true" | "false";
+                readonly q?: string;
+                readonly limit?: number;
+                readonly draft?: number | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly {
+                        readonly [key: string]: unknown;
+                    }[];
+                };
+            };
+        };
+    };
+    readonly act_workspace_app_task: {
+        readonly parameters: {
+            readonly query?: {
+                readonly draft?: number | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+                readonly name: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["TaskActionIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Created */
+            readonly 201: {
                 headers: {
                     readonly [name: string]: unknown;
                 };

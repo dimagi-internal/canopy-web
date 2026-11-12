@@ -6,6 +6,7 @@
  */
 import { Component, createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Td, Th, Tr } from '@/components/DataTable'
+import type { AppTaskFilters } from '../protocol'
 
 type Tone = 'default' | 'success' | 'warning' | 'destructive'
 
@@ -382,6 +383,15 @@ export interface AppApi {
   fieldLabel: (collection: string, name: string) => string
   options: (collection: string, name: string) => { value: string; label: string }[]
   optionLabel: (collection: string, name: string, value: unknown) => string
+  /** The tasks of the ONE project the app declares (`tasks` in its manifest), as the viewer.
+   * `declared` is null when the app declares none; `act` runs a declared action by name. */
+  tasks: AppTasksApi
+}
+
+export interface AppTasksApi {
+  declared: { read: string; actions: Record<string, { role: string; do: string; fields: string[]; label: string }> } | null
+  query: (filters?: AppTaskFilters) => Promise<Record<string, unknown>[]>
+  act: (name: string, opts?: { key?: string | null; input?: Record<string, unknown> }) => Promise<Record<string, unknown>>
 }
 
 export const AppKitContext = createContext<AppApi | null>(null)

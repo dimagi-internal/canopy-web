@@ -9,6 +9,7 @@ import {
   type AgentTaskStatus,
   type AppContext,
   type AppOp,
+  type AppTaskFilters,
   type FrameMessage,
   type HostMessage,
   type ReadRequest,
@@ -192,6 +193,11 @@ function appApi(ctx: AppContext): AppApi {
       return (f?.options ?? []).filter((o) => !hidden.has(o)).map((o) => ({ value: o, label: f?.option_labels?.[o] ?? o }))
     },
     optionLabel: (collection, name, value) => field(collection, name)?.option_labels?.[String(value)] ?? String(value ?? ''),
+    tasks: {
+      declared: (ctx.dataModel as { _tasks?: AppApi['tasks']['declared'] })._tasks ?? null,
+      query: (filters: AppTaskFilters = {}) => call({ op: 'tasks_query', filters }) as Promise<Record<string, unknown>[]>,
+      act: (name, opts = {}) => call({ op: 'tasks_act', name, ...opts }) as Promise<Record<string, unknown>>,
+    },
   }
 }
 
