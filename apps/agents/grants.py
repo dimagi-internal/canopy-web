@@ -190,15 +190,22 @@ def grants_write(role) -> bool:
     return role is not None and roles.drives(roles.ROLES.close(role.permissions))
 
 
-def _person(actor, user_id, email):
+def _person(actor, user_id, email, *, guest_home: str = ""):
+    """The person a line names: someone in a workspace the actor can see. `guest_home`, for a line that opens
+    one entry (never a role) on an agent of that workspace, also accepts a GUEST of it (docs/architecture/access.md
+    § Guests): a guest is outside every workspace line, so a line naming them is the only way they reach an agent,
+    and it can open no more than that one entry."""
     User = get_user_model()
     user = (User.objects.filter(pk=user_id).first() if user_id
             else User.objects.filter(email__iexact=(email or "").strip(), is_active=True).first())
     reach = wsvc.member_scope(actor)
-    if user is None or not (wsvc.user_workspace_slugs(user) & reach):
-        raise LineError("no such person among the workspaces you can see — they need a canopy account "
-                        "in one of them (or use an 'anyone at a domain' line)")
-    return user
+    if user is not None and (wsvc.user_workspace_slugs(user) & reach):
+        return user
+    if (user is not None and guest_home and guest_home in reach
+            and wsvc.is_member(user, guest_home, include_guests=True)):
+        return user
+    raise LineError("no such person among the workspaces you can see — they need a canopy account "
+                    "in one of them (or use an 'anyone at a domain' line)")
 
 
 def check_role(kind, role: str | None, home: str):
@@ -248,7 +255,8 @@ def check_line(actor, *, home, kind, role=None, capability=None, user_id=None, e
                     "capability": capability, "domain": "", "at_least": "", "verified": True,
                     "include_below": False}
     if kind == AgentGrant.PERSON:
-        fields["user"] = _person(actor, user_id, email)
+        fields["user"] = _person(actor, user_id, email,
+                                 guest_home=home if capability and not scope_is_workspace else "")
     elif kind == AgentGrant.WORKSPACE:
         if workspace not in wsvc.member_scope(actor):
             raise LineError(f"you are not in a workspace called {workspace!r}")

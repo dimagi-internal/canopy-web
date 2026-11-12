@@ -38,6 +38,8 @@ export function shortLabel(ctx: Pick<TurnContextView, "access" | "profile">): st
       return "read mode";
     case "host_site":
       return p.site ? `${entryName(p.name)} on ${p.site}` : entryName(p.name);
+    case "app_entry":
+      return p.app ? `${entryName(p.name)} in the app ${p.app}` : entryName(p.name);
     case "session_review":
       return "review only";
     case "deny_all":
@@ -60,6 +62,8 @@ export function headline(ctx: Pick<TurnContextView, "access" | "profile">, who: 
       return "Read mode only: it can look things up and answer, within read mode's limits.";
     case "host_site":
       return `Only what ${entryName(p.name)} allows${p.site ? `, for ${p.site}` : ""}.`;
+    case "app_entry":
+      return `Only the app ${p.app ?? entryName(p.name)}: its records and tasks, as ${who === "you" ? "you" : "the person asking"}.`;
     case "session_review":
       return "Review only: it reads the one session it was asked to review, and nothing else.";
     case "deny_all":
@@ -265,6 +269,7 @@ export function outcomeText(e: Trace): string {
     if (o === "whole_agent") return "the whole agent";
     if (o === "read_mode") return "read mode";
     if (o === "host_site") return "a host site";
+    if (o === "app_entry") return "one app";
     if (o === "session_review") return "review only";
     if (o === "deny_all") return "nothing (it no longer exists)";
   }

@@ -2251,6 +2251,11 @@ export interface paths {
          *     that workspace's agents — the site's own list where the page is in the site's own
          *     workspace — and, wherever it is, may open a conversation with an agent of any
          *     workspace you are in, as you can on canopy itself.
+         *
+         *     `app` names the workspace app whose page the panel is on (`/w/<workspace>/apps/<app>/…`). When you may
+         *     open that app (as a member, or as a guest it names), the panel offers the agents with an entry for it, and
+         *     a conversation you start there is held in that app: the agent answers you there with only that app's
+         *     tools. Naming one you may not open is simply no app.
          */
         readonly post: operations["embed_self_token"];
         readonly delete?: never;
@@ -6283,6 +6288,47 @@ export interface paths {
         readonly post?: never;
         /** Remove one host site from this agent */
         readonly delete: operations["delete_agent_host_site"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/app-entries": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** The workspace apps this agent is bound to, and the apps it could be bound to */
+        readonly get: operations["list_agent_app_entries"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/app-entries/{app}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Bind this agent to one workspace app, or change that entry. dry_run checks without saving
+         * @description An app entry's tools are canopy's own (the app's query, actions and tasks, as the person asking); only
+         *     its description, its entry command and a `ceiling` that narrows those tools can be set. An app not
+         *     installed in the agent's workspace, or a ceiling naming anything else, is a 422. Who may use it is the
+         *     access list (`use:<key>`).
+         */
+        readonly put: operations["put_agent_app_entry"];
+        readonly post?: never;
+        /** Unbind this agent from one workspace app */
+        readonly delete: operations["delete_agent_app_entry"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -30323,6 +30369,53 @@ export interface components {
             /** Sensitive */
             readonly sensitive?: boolean | null;
         };
+        /** AgentAppEntriesOut */
+        readonly AgentAppEntriesOut: {
+            /** Entries */
+            readonly entries: readonly components["schemas"]["AgentAppEntryOut"][];
+            /** Available */
+            readonly available: readonly string[];
+            /** Narrowable */
+            readonly narrowable: readonly string[];
+        };
+        /** AgentAppEntryOut */
+        readonly AgentAppEntryOut: {
+            /** App */
+            readonly app: string;
+            /** Key */
+            readonly key: string;
+            /**
+             * Description
+             * @default
+             */
+            readonly description: string;
+            /** Entry */
+            readonly entry?: string | null;
+            /**
+             * Ceiling
+             * @default []
+             */
+            readonly ceiling: readonly string[];
+            /**
+             * Tools
+             * @default []
+             */
+            readonly tools: readonly string[];
+        };
+        /** AgentAppEntryIn */
+        readonly AgentAppEntryIn: {
+            /** Description */
+            readonly description?: string | null;
+            /** Entry */
+            readonly entry?: string | null;
+            /** Ceiling */
+            readonly ceiling?: readonly string[] | null;
+            /**
+             * Dry Run
+             * @default false
+             */
+            readonly dry_run: boolean;
+        };
         /**
          * AgentDefaultsOut
          * @description A workspace's default lines, the roles they can give, and what the caller may do.
@@ -47931,6 +48024,8 @@ export interface components {
             readonly name: string;
             /** Site */
             readonly site?: string | null;
+            /** App */
+            readonly app?: string | null;
             /** Description */
             readonly description?: string | null;
             /** Entry */
@@ -47998,6 +48093,11 @@ export interface components {
              * @default
              */
             readonly site: string;
+            /**
+             * App
+             * @default
+             */
+            readonly app: string;
             /**
              * Page
              * @default
@@ -53273,6 +53373,7 @@ export interface operations {
             readonly query?: {
                 readonly page?: string;
                 readonly workspace?: string;
+                readonly app?: string;
             };
             readonly header?: never;
             readonly path?: never;
@@ -59218,6 +59319,87 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentHostSitesOut"];
+                };
+            };
+        };
+    };
+    readonly list_agent_app_entries: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentAppEntriesOut"];
+                };
+            };
+        };
+    };
+    readonly put_agent_app_entry: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly app: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentAppEntryIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentAppEntriesOut"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly delete_agent_app_entry: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly app: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentAppEntriesOut"];
                 };
             };
         };

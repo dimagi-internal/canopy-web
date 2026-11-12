@@ -33,16 +33,25 @@ export function pageWorkspaceFor(pathname: string): string {
   return /^\/w\/([^/]+)/.exec(pathname)?.[1] ?? ''
 }
 
+/** The workspace app a canopy page belongs to (`/w/<slug>/apps/<key>/…`), or ''. */
+export function pageAppFor(pathname: string): string {
+  return /^\/w\/[^/]+\/apps\/([^/?#]+)/.exec(pathname)?.[1] ?? ''
+}
+
 /** The widget's token URL for the page on screen now: `page=` when the page has a
  *  grant, and `workspace=` when it is in one — the panel then offers that
- *  workspace's agents (the site's own list in the site's own workspace). The server
- *  checks you are in it; naming one cannot widen anything. */
+ *  workspace's agents (the site's own list in the site's own workspace). On a
+ *  workspace app's page, `app=` too: the panel offers the agents bound to that app,
+ *  and a conversation started there is held in it. The server checks you may open
+ *  it; naming one cannot widen anything. */
 export function tokenUrlFor(base: string, pathname: string): string {
   const page = grantPageFor(pathname)
   const workspace = pageWorkspaceFor(pathname)
+  const app = workspace ? pageAppFor(pathname) : ''
   const query = [
     page ? `page=${encodeURIComponent(page)}` : '',
     workspace ? `workspace=${encodeURIComponent(workspace)}` : '',
+    app ? `app=${encodeURIComponent(app)}` : '',
   ].filter(Boolean).join('&')
   return query ? `${base}?${query}` : base
 }

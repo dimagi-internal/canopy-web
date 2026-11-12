@@ -6,6 +6,7 @@ import uuid
 from django.http import HttpRequest
 from ninja.errors import HttpError
 
+from apps.agents import app_entries
 from apps.agents import services as agent_services
 from apps.api.errors import refusals
 from apps.api.route_gates import gate
@@ -16,6 +17,7 @@ from apps.harness import sensitivity
 from apps.harness.models import Runner
 from apps.realtime import groups
 from apps.workspaces import services as wsvc
+from apps.workspaces.models import Workspace
 
 from . import (
     access,
@@ -93,8 +95,10 @@ def create_session(request: HttpRequest, payload: SessionCreateIn):
     agent runs on Claude Code only), or no workspace to start it in, is a 422."""
     if payload.agent_slug and payload.project:
         raise HttpError(422, "a session targets an agent or a project, not both")
+    guest_app = _guest_app(request)
     try:
-        workspace = wsvc.current_workspace(request.user, getattr(request, "workspace_slug", None))
+        workspace = (guest_app[0] if guest_app else
+                     wsvc.current_workspace(request.user, getattr(request, "workspace_slug", None)))
     except ValueError as exc:
         raise HttpError(422, str(exc))
     agent = None
@@ -102,6 +106,9 @@ def create_session(request: HttpRequest, payload: SessionCreateIn):
         agent = agent_services.get_agent(payload.agent_slug)
         if agent is None or agent.workspace_id != workspace.slug:
             raise HttpError(404, f"agent '{payload.agent_slug}' not found in this workspace")
+    if guest_app and (agent is None or not app_entries.entry_for_app(agent.interface, guest_app[1])):
+        # A guest starts a chat only with an agent bound to the app they are in, never anything else here.
+        raise HttpError(404, f"agent '{payload.agent_slug}' not found in this workspace")
     # A site acting for its visitor may open a chat only with an agent it
     # offers — and never an agent-less (project) session, which no site offers.
     offered = delegation.offered_for(request)
@@ -165,6 +172,20 @@ def create_session(request: HttpRequest, payload: SessionCreateIn):
         parent=payload.parent, conversation_key=offered, cli=payload.cli or "",
     )
     return session_out(session)
+
+
+def _guest_app(request: HttpRequest):
+    """`(workspace, app key)` when a GUEST starts a chat from canopy's own panel on a page of an app their scope
+    names (the token's `page_app`, checked when it was minted and again here), else None. The one way a guest
+    starts a conversation: in that app's workspace, held in that app (`stamp_host_metadata`)."""
+    page_app = getattr(request, "page_app", "") if getattr(request, "own_panel", False) else ""
+    if not page_app:
+        return None
+    slug, key = app_entries.split(page_app)
+    if wsvc.is_member(request.user, slug) or not app_entries.may_open(request.user, slug, key):
+        return None
+    ws = Workspace.objects.filter(slug=slug).first()
+    return (ws, key) if ws is not None else None
 
 
 def _holder_or_422(*, user=None, contact=None) -> None:

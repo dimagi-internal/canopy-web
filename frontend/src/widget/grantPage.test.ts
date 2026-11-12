@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { grantPageFor, tokenUrlFor } from './grantPage'
+import { grantPageFor, pageAppFor, tokenUrlFor } from './grantPage'
 
 /**
  * The keys must match `apps/host_grants/self_host.py::PAGE_SCOPES` exactly — a key
@@ -31,5 +31,14 @@ describe('which page the widget names when it mints', () => {
       .toBe('/canopy/api/embed/token?workspace=marshellis')
     expect(tokenUrlFor('/canopy/api/embed/token', '/ide')).toBe('/canopy/api/embed/token?page=ide')
     expect(tokenUrlFor('/canopy/api/embed/token', '/')).toBe('/canopy/api/embed/token')
+  })
+
+  it('adds ?app= on a workspace app\'s page, so a conversation started there is held in that app', () => {
+    expect(pageAppFor('/w/marshellis/apps/household/week')).toBe('household')
+    expect(pageAppFor('/w/marshellis/apps/household')).toBe('household')
+    expect(pageAppFor('/w/marshellis/apps')).toBe('')
+    expect(pageAppFor('/w/marshellis/views/household')).toBe('')
+    expect(tokenUrlFor('/canopy/api/embed/token', '/w/marshellis/apps/household/week'))
+      .toBe('/canopy/api/embed/token?workspace=marshellis&app=household')
   })
 })

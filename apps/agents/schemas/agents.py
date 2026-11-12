@@ -777,6 +777,35 @@ class AgentHostSiteIn(ReadModeIn):
     sensitive: bool | None = None
 
 
+class AgentAppEntryOut(StrictModel):
+    # The workspace app this entry is bound to (an app key in the agent's own workspace).
+    app: str
+    # The internal name a turn is stamped with and an access line names (`use:<key>`). Never renamed.
+    key: str
+    description: str = ""
+    entry: str | None = None
+    # Which of canopy's app tools stay; empty: all of them.
+    ceiling: list[str] = []
+    # The tools a turn in it holds: canopy's own, after `ceiling`. Not settable.
+    tools: list[str] = []
+
+
+class AgentAppEntriesOut(StrictModel):
+    entries: list[AgentAppEntryOut]
+    # Every app installed in the agent's workspace, bound to it or not.
+    available: list[str]
+    # What `ceiling` may name.
+    narrowable: list[str]
+
+
+class AgentAppEntryIn(StrictModel):
+    # Only the fields sent change. An app entry's tools are canopy's own: there is no `tools` to send.
+    description: str | None = None
+    entry: str | None = None
+    ceiling: list[str] | None = None
+    dry_run: bool = False
+
+
 class AgentCanopyUserIn(StrictModel):
     #: True links the agent to the canopy account at its own email (the only account
     #: that can be its login); false unlinks it.

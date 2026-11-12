@@ -10,7 +10,7 @@ from __future__ import annotations
 #: Bump when a stored field's MEANING changes; adding a field does not need it.
 SNAPSHOT_VERSION = 1
 
-_PROFILE_FIELDS = ("kind", "name", "site", "description", "entry", "tools", "bash", "read_paths", "write_paths",
+_PROFILE_FIELDS = ("kind", "name", "site", "app", "description", "entry", "tools", "bash", "read_paths", "write_paths",
                    "data", "default_profile_version")
 
 
@@ -73,6 +73,7 @@ def session_context(ctx, *, sees_page: bool = True) -> dict:
         "runner_requested": None if ctx.runner_requested is None else str(ctx.runner_requested),
         "runner_bound": None if ctx.runner_bound is None else str(ctx.runner_bound),
         "site": ctx.site,
+        "app": ctx.app,
         "page": ctx.page if sees_page else "",
         "sensitive": ctx.sensitive,
         "sensitive_requirement": ctx.sensitive_requirement,

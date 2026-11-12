@@ -21,6 +21,7 @@ from functools import cached_property
 
 from apps.harness import clis, sensitivity
 
+from . import app_entries
 from . import published_profiles as profiles_mod
 from .refusals import Code, Refusal
 from .refusals import make as refusal_of
@@ -77,6 +78,9 @@ class SessionContext:
     #: The host site this conversation is held on and the resource its page declared, if any.
     site: str = ""
     page: str = ""
+    #: `"<workspace>/<app key>"` when the conversation was created from a workspace app's chat panel (its
+    #: server-owned stamp, `app_entries.session_app`); it SELECTS that app's entry, and grants nothing.
+    app: str = ""
     #: Once true it does not revert: requirements only grow.
     sensitive: bool = False
     #: The session a review chat is about, when this is one. `is_review` is the rule's question.
@@ -155,6 +159,7 @@ def build(session, turn=None, *, agent=None) -> SessionContext:
         channel=_where_it_lives(session),
         runner_requested=(session.metadata or {}).get("requested_runner_id"),
         site=profiles_mod.session_site(session), page=profiles_mod.session_resource(session),
+        app=app_entries.session_app(session),
         sensitive=sensitivity.any_sensitive(session),
         is_review=session_access.is_review_conversation(session),
         review_of=_reviewed_session(session),
@@ -170,6 +175,7 @@ def _of_turn(session, turn, agent) -> SessionContext:
         workspace=agent.workspace_id if agent is not None else getattr(session, "workspace_id", None),
         channel=turn.origin, runner_requested=turn.pinned_runner_id,
         site=profiles_mod._conversation_site(turn), page=profiles_mod._declared_resource(turn),
+        app=app_entries.session_app(getattr(turn, "chat_session", None)),
         sensitive=sensitivity.is_sensitive(turn), is_review=is_review,
         review_of=_reviewed_session(session) if is_review else None,
         _session=session, _turn=turn, _agent=agent)

@@ -300,8 +300,9 @@ def member_behind_email(agent, contact):
       * exactly one canopy user provably holds that address
         (`contacts.services.user_for_verified_email`: a VERIFIED allauth email,
         or — with none — an agent's own login, `Agent.user`).
-      * that user is a member of the agent's workspace. A canopy account with
-        no business in this tenant stays a contact.
+      * that user is a member of the agent's workspace, or a guest of it whom the
+        agent's access list names (`named_guest`). A canopy account with no business
+        in this tenant stays a contact.
       * the contact is not already linked to someone else.
 
     On success the contact is linked (`promote_to_user`), which grants nothing.
@@ -327,13 +328,25 @@ def member_behind_email(agent, contact):
         return None
     # A question about the SENDER's membership, asked through the one authorizer
     # (`address_holder` reads the role with `wsvc.member_role`).
-    if role is None:
+    if role is None and not named_guest(agent, user):
         return None
     # Linking is for proven mail only: a temporary exception must not leave a
     # permanent link behind when it expires.
     if contact.user_id is None and trust is None:
         contacts.promote_to_user(contact, user)
     return user
+
+
+def named_guest(agent, user) -> bool:
+    """Is `user` a GUEST of the agent's workspace (docs/architecture/access.md § Guests) whom the agent's own
+    access list names by a person line? Then THEIR proven mail is theirs, as a member's is, so the line can match
+    them: a guest is outside every workspace line, and a person line (which opens at most one entry for a guest,
+    `grants._person`) is the only way they reach an agent. Every other check of `member_behind_email` still
+    applies. A guest the list does not name stays a contact, as before."""
+    from apps.agents.models import AgentGrant  # noqa: PLC0415 — models load with a call
+
+    return (wsvc.is_member(user, agent.workspace_id, include_guests=True)
+            and AgentGrant.objects.filter(agent=agent, kind=AgentGrant.PERSON, user=user).exists())
 
 
 def trigger_behind_email(agent, contact, subject: str = ""):

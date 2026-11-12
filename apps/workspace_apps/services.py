@@ -1000,11 +1000,13 @@ def _then(inst: AppInstallation, m: dict, action: str, spec: dict, rec: AppRecor
 def act(inst: AppInstallation, *, roles: set[str], action: str, record_id: int | None, input: dict,
         user, client_ip: str | None = None, public: bool = False, space: str = LIVE,
         manifest: dict | None = None, label: str = "", params: dict | None = None,
-        link: dict | None = None) -> dict:
+        link: dict | None = None, acting_agent=None) -> dict:
     """Run one declared action. Returns the written record (as its writer may
     see it: whole for a member, `{id}` alone for an anonymous visitor or a link
     holder). `link` is a verified link (`verify_link`): its holder runs only
-    that link's actions, on that link's record alone."""
+    that link's actions, on that link's record alone. `acting_agent`: an agent
+    running it FOR `user` (an app entry, `agent_host`): `user`'s roles decide,
+    and the record's history says "<agent> for <user>"."""
     m = manifest or manifest_for(inst, space)
     spec = m["actions"].get(action)
     if spec is None or not spec.get("enabled", True):
@@ -1040,6 +1042,8 @@ def act(inst: AppInstallation, *, roles: set[str], action: str, record_id: int |
     # A visitor with no account is labelled by the first address they gave (normalised).
     given = next((v for k, v in values.items() if fields[k]["type"] == "email" and v), "")
     label = (user.email if authed else "") or given or label or (f"link:{link['name']}" if link else "") or "anonymous"
+    if acting_agent is not None and authed:
+        label = f"{acting_agent.slug} for {user.email}"[:254]
     sc = scope_for(inst, m, space, user, roles) if not public and link is None else None
     for k, target in spec["refs"].items():
         if values.get(k) is not None:

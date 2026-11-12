@@ -65,8 +65,8 @@ interface Props {
   scope: ViewScope
   /** Called with the frame's compile or runtime error, or null once it draws again. */
   onError?: (message: string | null) => void
-  /** The view is the page (its own `/views/<slug>`): it may describe itself to canopy's
-   *  panel and offer the agent actions (`pagePanel.ts`). Not on a page drawing several. */
+  /** The view is the page (its own `/views/<slug>`, or a workspace app's page): it may describe
+   *  itself to canopy's panel and offer the agent actions (`pagePanel.ts`). Not on a page drawing several. */
   pagePanel?: boolean
   /**
    * A workspace app's page (apps/workspace_apps). `load` replaces the catalog
@@ -174,7 +174,7 @@ export function DynamicViewFrame({ view, scope, onError, app, pagePanel = false 
   }
   // canopy's panel, on a view's own page: what it shows and what it offers the agent.
   const panel = useRef<ViewPagePanel | null>(null)
-  if (panel.current === null && pagePanel && !app) {
+  if (panel.current === null && pagePanel) {
     panel.current = new ViewPagePanel(
       (id, name, args) => frame.current?.contentWindow?.postMessage({ channel: CHANNEL, type: 'page-action', id, name, args } satisfies HostMessage, '*'),
       () => ({ slug: screen.current.scope.view.slug, title: screen.current.scope.view.title, workspace: screen.current.scope.workspace.slug }),
