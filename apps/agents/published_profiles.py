@@ -41,6 +41,9 @@ under `READ_MODE_STAMP`):
         # ceiling: ["mcp__*connect_labs__marketplace_*"]   # OPTIONAL site tool limit ("Site tools it may use")
 
 One entry per site, and one site per entry (`answering`, the one writer, enforces both).
+
+**An app entry** names ONE workspace app instead of a site (`apps: [<key>]`); its tools are canopy's
+own and fixed (`apps/agents/app_entries.py`), and `ceiling` there can only narrow them.
 A conversation held on that site (its server-owned `embed_app`) selects the
 profile, and its confined profile gains canopy's gateway tools (`site_tools`,
 `site_call`, `site_read`) and the page's own actions (`page_*`) automatically.
@@ -228,6 +231,9 @@ def parse(doc) -> dict:
                                  "conversation is held on (`sites:`), never by a page's resource", f"{name}.pages")
         if "input" in cap:
             ignored.append(f"{name}.input")
+        if "apps" in cap:
+            out[name] = _app_entry(cap, name)
+            continue
         bad = set(cap) - {"description", "entry", "tools", "bash", "read_paths",
                           "write_paths", "input", "sites", "ceiling", "own_login", "data"}
         if bad:
@@ -259,6 +265,41 @@ def parse(doc) -> dict:
 
 
 _SITE = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
+#: An app key (`apps/workspace_apps/models.py::AppInstallation.key`).
+_APP_KEY = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+
+
+def _entry_command(entry, name: str):
+    if entry is not None and (not isinstance(entry, str) or "\n" in entry or len(entry) > _MAX_PATTERN
+                              or invocations.parse(entry) is None):
+        raise InterfaceError(f"{name}.entry must be one plugin command: /<plugin>:<skill> [args]")
+    return entry
+
+
+def _app_entry(cap: dict, name: str) -> dict:
+    """An entry bound to ONE workspace app (`apps/agents/app_entries.py`): `apps: [<key>]`, an optional
+    `ceiling` that only narrows canopy's fixed tools, and its words. Anything a profile would list for itself
+    is refused: canopy fixes an app entry's tools, so the owner cannot widen it. Whether the app is installed
+    is the writer's question (`profile_settings.set_app_entry`): a document stays valid when an app goes."""
+    from . import app_entries  # noqa: PLC0415 — app_entries reads no models; kept beside its one caller
+
+    bad = set(cap) - app_entries.KEYS - {"input"}
+    if bad:
+        raise InterfaceError(f"{name}: an app entry's tools are canopy's own and cannot be listed "
+                             f"({sorted(bad)}); `ceiling` can only narrow them", f"{name}.{sorted(bad)[0]}")
+    apps = _strings(cap.get("apps"), "apps", name)
+    if len(apps) != 1:
+        raise InterfaceError(f"{name}.apps names exactly one app", f"{name}.apps")
+    if not _APP_KEY.match(apps[0]):
+        raise InterfaceError(f"{name}.apps: {apps[0]!r} is not an app key", f"{name}.apps")
+    ceiling = _strings(cap.get("ceiling"), "ceiling", name)
+    unknown = sorted(set(ceiling) - set(app_entries.NARROWABLE))
+    if unknown:
+        raise InterfaceError(f"{name}.ceiling: {unknown} — an app entry's ceiling names only "
+                             f"{', '.join(app_entries.NARROWABLE)}", f"{name}.ceiling")
+    return {"description": str(cap.get("description") or "")[:500],
+            "entry": _entry_command(cap.get("entry"), name),
+            "apps": apps, "ceiling": sorted(set(ceiling))}
 
 
 def _data(value, name: str, cap: dict) -> str:
@@ -512,6 +553,11 @@ def profile(agent, name: str) -> dict | None:
                 "description": f"{agent.slug} reviews one session someone asked it to, and replies to them.",
                 "read_paths": ["{cwd}/**"], "write_paths": []}
     _published, cap = published_profile(getattr(agent, "interface", None), name)
+    from . import app_entries  # noqa: PLC0415 — app_entries reads no models; kept beside its callers
+
+    if app_entries.is_app_entry(cap):
+        # Canopy's fixed tools for one app, never a list the owner wrote (`app_entries.profile`).
+        return app_entries.profile(agent, name, cap)
     default_version = None
     if cap is None and is_read_mode(name):
         # Read mode on an agent that published no read mode of its own: canopy's own default, built from the agent

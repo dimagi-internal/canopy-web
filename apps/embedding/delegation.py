@@ -106,7 +106,27 @@ def offered_agent_ids(app, *, user=None, own_panel: bool = False) -> set | None:
 
         listed |= set(Agent.objects.filter(workspace_id__in=wsvc.user_workspace_slugs(user))
                       .exclude(workspace_id=app.workspace_id).values_list("pk", flat=True))
+        listed |= _guest_app_agent_ids(user)
     return listed
+
+
+def _guest_app_agent_ids(user) -> set:
+    """For a GUEST (docs/architecture/access.md § Guests): the agents of a workspace they are only a guest of
+    that have an entry for an app their scope names — what that app's chat panel offers them. The access list
+    still decides whether any of them answers (`turn_context`)."""
+    from apps.agents import app_entries  # noqa: PLC0415 — as above: this module imports no models at load
+    from apps.agents.models import Agent  # noqa: PLC0415 — as above
+    from apps.workspaces import services as wsvc  # noqa: PLC0415 — as above
+
+    out: set = set()
+    for workspace, scope in wsvc.guest_scopes(user).items():
+        keys = set((scope or {}).get("apps") or {})
+        if not keys:
+            continue
+        for agent in Agent.objects.filter(workspace_id=workspace).only("pk", "interface"):
+            if keys & set(app_entries.entries(agent.interface).values()):
+                out.add(agent.pk)
+    return out
 
 
 def acting_app(request):

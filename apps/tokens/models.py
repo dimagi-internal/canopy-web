@@ -518,6 +518,11 @@ class DelegatedToken(models.Model):
     #: The workspace of the canopy page that minted it (`/w/<slug>/…`), when the person is
     #: in it: which agents the panel LISTS there. Display only; `own_panel` is the rule.
     page_workspace = models.CharField(max_length=100, blank=True, default="")
+    #: `"<workspace>/<app key>"` when it was minted on a workspace app's page that the person may open
+    #: (a member, or a guest whose scope names it): a conversation created with it is stamped with that app
+    #: (`canopy_sessions.services.stamp_host_metadata` → `metadata.workspace_app`), which selects the
+    #: agent's entry for that app and grants nothing (`apps/agents/app_entries.py`).
+    page_app = models.CharField(max_length=150, blank=True, default="")
 
     class Meta:
         db_table = "delegated_tokens"
@@ -526,13 +531,13 @@ class DelegatedToken(models.Model):
     @classmethod
     def issue(cls, *, app, user, ttl_seconds, assurance: str = "delegated",
               runner_requirements=(), bound_agent=None, host_grant=None,
-              own_panel=False, page_workspace=""):
+              own_panel=False, page_workspace="", page_app=""):
         from django.utils import timezone
         raw = cls.PREFIX + secrets.token_urlsafe(32)
         token = cls.objects.create(
             app=app, user=user, assurance=assurance,
             runner_requirements=list(runner_requirements), bound_agent=bound_agent,
-            host_grant=host_grant, own_panel=own_panel, page_workspace=page_workspace,
+            host_grant=host_grant, own_panel=own_panel, page_workspace=page_workspace, page_app=page_app,
             token_hash=hash_token(raw),
             expires_at=timezone.now() + timezone.timedelta(seconds=ttl_seconds),
         )

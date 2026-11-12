@@ -250,6 +250,12 @@ HAND_TOOL_GATES: dict[str, tuple[tuple[str, ...], str]] = {
     "site_call": (("caller-token",), "action"),
     # `resources/read` at the visitor's site, same resolution as site_call.
     "site_read": (("caller-token",), "read"),
+    # One workspace app, as a confined turn's verified asker (`apps/mcp/tools/app.py`): caller tokens of
+    # a turn in an app entry only; the app comes from the turn's entry, the asker's own app role decides.
+    "app_query": (("caller-token",), "read"),
+    "app_act": (("caller-token",), "content"),
+    "app_tasks_query": (("caller-token",), "read"),
+    "app_tasks_act": (("caller-token",), "content"),
     # The caller's own open pages (or, for a caller token, its own conversation's).
     "current_page": (("self", "caller-token"), "read"),
     # /ide close review: carries an MCP Apps View, which has no REST shape.

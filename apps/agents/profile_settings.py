@@ -1,4 +1,4 @@
-"""An agent's two plain settings, read mode and host sites, as views of `Agent.interface`.
+"""An agent's plain settings, read mode, host sites and app entries, as views of `Agent.interface`.
 
 Nothing about
 storage moves and no reader changes: this reads the same document everything else reads and edits it
@@ -13,6 +13,7 @@ import re
 from django.db import transaction
 from django.utils import timezone
 
+from . import app_entries
 from . import published_profiles as profiles_mod
 from . import sensitive_data
 from .models import Agent
@@ -78,14 +79,39 @@ def host_sites_of(agent) -> list[dict]:
     return sorted(rows, key=lambda r: (r["site"], r["key"]))
 
 
+def app_entries_of(agent) -> list[dict]:
+    """One row per app entry, by app: what it is bound to, its words, its `ceiling` and the tools that
+    leaves it (`app_entries.tools_for`, canopy's own)."""
+    rows = []
+    for name, entry in _entries(agent).items():
+        app = app_entries.app_of(entry)
+        if app is None:
+            continue
+        entry = entry or {}
+        rows.append({"app": app, "key": name, "description": entry.get("description") or "",
+                     "entry": entry.get("entry"), "ceiling": entry.get("ceiling") or [],
+                     "tools": app_entries.tools_for(entry)})
+    return sorted(rows, key=lambda r: (r["app"], r["key"]))
+
+
 def document_problems(caps: dict) -> list[str]:
     """Why a document does not fit the plain settings, each named. Empty: it fits. It keeps working
     either way; this refuses only a save through the new routes, and the snapshot's `shape` reports it."""
     out = []
     by_site: dict[str, list[str]] = {}
+    by_app: dict[str, list[str]] = {}
     for name, cap in caps.items():
         cap = cap or {}
         sites = cap.get("sites") or []
+        if cap.get("apps"):
+            # An app entry: one app, no site, never read mode (`app_entries`).
+            for app in cap["apps"]:
+                by_app.setdefault(app, []).append(name)
+            if profiles_mod.is_read_mode(name) or sites:
+                out.append(f"{name}: an app entry names sites or is read mode")
+            elif len(cap["apps"]) > 1:
+                out.append(f"{name}: names {len(cap['apps'])} apps")
+            continue
         for site in sites:
             by_site.setdefault(site, []).append(name)
         if profiles_mod.is_read_mode(name):
@@ -96,6 +122,7 @@ def document_problems(caps: dict) -> list[str]:
         elif len(sites) > 1:
             out.append(f"{name}: names {len(sites)} sites")
     out += [f"{site}: named by {', '.join(sorted(names))}" for site, names in by_site.items() if len(names) > 1]
+    out += [f"app {app}: named by {', '.join(sorted(names))}" for app, names in by_app.items() if len(names) > 1]
     return sorted(out)
 
 
@@ -208,6 +235,40 @@ def set_site(agent, site: str, fields: dict, *, by, dry_run: bool = False):
         if merged["sensitive"]:
             entry["data"] = sensitive_data.SENSITIVE
         caps[name] = _validated(name, entry)
+    return _edit(agent, change, by=by, dry_run=dry_run)
+
+
+def set_app_entry(agent, app: str, fields: dict, *, by, dry_run: bool = False):
+    """Add or change the entry bound to `app`, an app installed in the agent's own workspace: `fields`
+    (`description`, `entry`, `ceiling`) over what it holds now. Its tools are canopy's
+    (`app_entries.profile`); nothing here can list one."""
+    unknown = sorted(set(fields) - {"description", "entry", "ceiling"})
+    if unknown:
+        raise SettingsError(f"an app entry's tools are canopy's own: {', '.join(unknown)} cannot be set; "
+                            "`ceiling` can only narrow them")
+    if not app_entries.installed(agent.workspace_id, app):
+        raise SettingsError(f"there is no app '{app}' in {agent.workspace_id}: an agent can be bound only to "
+                            "an app installed in its own workspace")
+
+    def change(doc):
+        caps = doc["capabilities"]
+        name = app_entries.entry_for_app({"capabilities": caps}, app)
+        start = caps[name] if name else {"description": "", "entry": None, "ceiling": []}
+        merged = {"description": start.get("description") or "", "entry": start.get("entry"),
+                  "ceiling": start.get("ceiling") or [], **fields}
+        name = name or key_for(app, caps)
+        caps[name] = _validated(name, {**merged, "apps": [app]})
+    return _edit(agent, change, by=by, dry_run=dry_run)
+
+
+def remove_app_entry(agent, app: str, *, by, dry_run: bool = False):
+    """Take the entry bound to `app` away: a turn stamped with it gets the deny-all profile, and a
+    `use:<key>` line opens nothing."""
+    def change(doc):
+        name = app_entries.entry_for_app(doc, app)
+        if name is None:
+            raise LookupError(app)
+        doc["capabilities"].pop(name)
     return _edit(agent, change, by=by, dry_run=dry_run)
 
 

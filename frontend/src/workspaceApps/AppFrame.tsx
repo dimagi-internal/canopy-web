@@ -97,7 +97,9 @@ export function AppFrame({ workspace, app, page, roles, params, surface, draft, 
   return (
     <>
       {error && <div className="mb-3 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
-      <DynamicViewFrame view={view} scope={scope} onError={setError} app={hosted} />
+      {/* A live member page is the page canopy's panel is on: it may describe itself to the agent bound
+          to this app and offer it actions (its `page_*` tools), as a view does on its own page. */}
+      <DynamicViewFrame view={view} scope={scope} onError={setError} app={hosted} pagePanel={surface === 'member' && !draft} />
     </>
   )
 }

@@ -61,6 +61,17 @@ The Turn Context resolver (`turn_context.resolve_turn_context`; order in [access
 
 `GET /api/sites/agents` (signed request, signed answer; [api-workspaces.md](api-workspaces.md); content in `apps/host_grants/site_agents.py`) lists the agents the site may offer with their entries for the site, runners, `ready` and `problems`. `sensitive_set_by` / `_at` are the last save of **any** of the agent's read mode or host sites, not of that flag. Sign-offs (`apps/host_grants/sign_offs.py`) are a separate site-to-person approval flow and touch neither record.
 
+## App entries: an agent bound to one workspace app
+
+An **app entry** is the same kind of entry as a host site, bound to ONE workspace app of the agent's own workspace instead of a site (`apps: [<key>]`, `apps/agents/app_entries.py`, whose module docstring is the rule). It is how a person let into one app (a guest, [access.md](access.md) § Guests) reaches an agent there and nowhere else.
+
+- **Set by an agent admin**, like a host site: `profile_settings.set_app_entry` / `remove_app_entry` (routes `…/app-entries/{app}` in `api_answering.py`). The app must be installed in the agent's workspace; one entry per app. **The owner lists no tools**: canopy fixes them (`app_entries.profile`): `who_is_asking`, `current_page`, `page_*`, `app_query`, `app_act`, `app_tasks_query`, `app_tasks_act`, `Read`/`Write` in a scratch folder, and on an agent with a mailbox read mode's `{thread_id}`-pinned email read and reply. `ceiling` names which of `app_entries.NARROWABLE` stay; it only narrows.
+- **Who reaches it is the access list** (`use:<key>`); a line may name a guest by email for an entry, never for a role (`grants._person`).
+- **Every channel, same entry.** Someone whose lines open no read mode gets the app entry their `use:` line opens wherever they write: the app's chat panel, email to the agent, any chat (`turn_context._app_by_line`). Their proven mail is theirs when the list names them (`apps/harness/channels/email.py::named_guest`).
+- **The app's chat panel** (canopy's own panel on `/w/<ws>/apps/<key>/…`) names the app when it mints its token; `embed_api.embed_self_token` keeps it only if the person may open that app (`app_entries.may_open`, a guest included) and the token stamps `metadata.workspace_app = "<ws>/<key>"` on the conversations it creates (`canopy_sessions.services.stamp_host_metadata`; never from a body). That stamp SELECTS the entry for anyone without `write` whose lines open it, and a `read` line opens it there, so a `read` holder gets the app entry inside the app and read mode elsewhere (`turn_context._entry_for`). It opens nothing for anyone with no line. A guest starts a chat only there, only with an agent bound to that app (`api_lifecycle._guest_app`), and reads only those conversations of hers (`canopy_sessions.access._guest_app_q`).
+- **The tools** (`apps/mcp/tools/app.py`) read the app from the turn's entry (`Turn.capability`), never an argument, and act as the turn's verified, active human asker with their own app role (`apps/workspace_apps/agent_host.py`). The writes are the one exception to "a caller token never writes" → [access-confinement-and-act-as.md](access-confinement-and-act-as.md) § App entries.
+- The envelope's `app` block (`caller_context._app`) tells the agent where it is; the Turn Context's profile kind is `app_entry`.
+
 ## Code map
 
 | Question | Where |
@@ -73,4 +84,6 @@ The Turn Context resolver (`turn_context.resolve_turn_context`; order in [access
 | Does this turn run on a site's page; what is withheld | `published_profiles.page_site_of`, `page_turn`, `own_login_of` |
 | Sensitive | `apps/agents/sensitive_data.py`, `turn_context._sensitive_rule` |
 | The gateway | `apps/host_grants/host_gateway.py`, `apps/mcp/tools/site.py` |
+| An app entry: parse, its fixed tools, which app a conversation is held in | `published_profiles.parse`, `apps/agents/app_entries.py` |
+| The app tools, and what they reach | `apps/mcp/tools/app.py`, `apps/workspace_apps/agent_host.py` |
 | What the host is told | `apps/host_grants/site_agents.py` |

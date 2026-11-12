@@ -50,6 +50,11 @@ code does not make obvious:
 * **A named profile they cannot open, or one that is gone, is `refused`: no fall-through to read mode**
   (`_entry_for`). Naming none, a site's profile they cannot open is skipped, not fatal: someone with `read` on a host
   site gets read mode there.
+* **Naming none, the order is: the app entry the conversation is stamped with** (`metadata.workspace_app`, server-set
+  from an app's chat panel; `_app_selected`), **the site's entry, read mode, then the app entry a `use:` line opens**
+  (`_app_by_line`). So a person whose only line is `use:<key>` for an app entry gets it on every channel and never
+  read mode; a `read` holder gets the app entry inside that app's own conversations and read mode elsewhere. A stamp
+  selects, never grants ([host-sites.md](host-sites.md) § App entries).
 * **The two narrowing rules only narrow.** A review chat gets `session_review`, `confined`, loses `auto` and pinning,
   owner included. Sensitive data confines a `full` base to the sensitive profile (`basis: sensitive:<name>`), keeping
   role, mode and pin rights; a turn in a sensitive conversation that ends anywhere but its sensitive profile is
@@ -135,7 +140,7 @@ narrowing. Neither ever holds the prompt, a transcript, the envelope's `person` 
 |---|---|---|---|---|---|
 | 1 | **owner / agent admin / system** (no line needed) | `full` | the routing ladder | owner / agent admin, on a verified credential | owner / agent admin: any runner that may hold the agent |
 | 2 | their lines give them **`write`** (read_write, editor) | `full` | the routing ladder, but **every turn `manual`** when every line that gives `write` is `manual_only` | no | only a runner they administer (`access.may_pin_runner`; the Turn Context's own flag is for row 1) |
-| 3 | their lines give them **`read`** or a **host site**, and a profile they open exists | `confined` to it | the routing ladder | no | — |
+| 3 | their lines give them **`read`** or a **host site** / **app entry** (`use:<key>`), and a profile they open exists | `confined` to it | the routing ladder | no | — |
 | 4 | anyone else (no line, or lines that open nothing the agent has) | `refused` | — | — | — |
 
 `basis` is `owner`, `admin`, `system`, `session:<role>`, `grant:<line>` (row 2), `capability:<name>` (row 3) or

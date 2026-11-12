@@ -9,6 +9,7 @@ Importing this package registers every tool against the `mcp` instance
 exactly once, after the FastMCP instance is constructed.
 """
 from . import (
+    app,  # noqa: F401
     caller,  # noqa: F401
     close_review,  # noqa: F401
     page,  # noqa: F401

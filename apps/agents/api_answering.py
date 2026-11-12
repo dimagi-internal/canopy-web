@@ -1,4 +1,4 @@
-"""An agent's read mode and host sites over HTTP (`apps/agents/profile_settings.py`).
+"""An agent's read mode, host sites and app entries over HTTP (`apps/agents/profile_settings.py`).
 
 Any member may read them, as they may read the interface; only the agent's owner or an admin changes
 them. MCP is the REST API, so each route here is a tool.
@@ -14,9 +14,16 @@ from apps.api.route_gates import gate
 from apps.events import audit
 from apps.tokens.models import AppCredential
 
-from . import profile_settings
+from . import app_entries, profile_settings
 from .gates import agent_for_admin, agent_for_read
-from .schemas import AgentHostSiteIn, AgentHostSitesOut, ReadModeIn, ReadModeSettingOut
+from .schemas import (
+    AgentAppEntriesOut,
+    AgentAppEntryIn,
+    AgentHostSiteIn,
+    AgentHostSitesOut,
+    ReadModeIn,
+    ReadModeSettingOut,
+)
 
 router = Router(tags=["agents"])
 
@@ -110,3 +117,50 @@ def delete_agent_host_site(request: HttpRequest, slug: str, site: str):
     audit.note_change(scope=f"agent:{agent.slug}/site/{site}", before=before, after=after,
                       summary=f"host site {site} removed from {agent.slug}")
     return _sites_out(locked)
+
+
+def _apps_out(agent) -> dict:
+    host = app_entries.host()
+    available = host.available(agent.workspace_id) if host is not None else []
+    return {"entries": profile_settings.app_entries_of(agent), "available": available,
+            "narrowable": list(app_entries.NARROWABLE)}
+
+
+@router.get("/{slug}/app-entries", response=AgentAppEntriesOut,
+            summary="The workspace apps this agent is bound to, and the apps it could be bound to")
+@gate("member")
+def list_agent_app_entries(request: HttpRequest, slug: str):
+    return _apps_out(agent_for_read(request, slug))
+
+
+@router.put("/{slug}/app-entries/{app}", response={200: AgentAppEntriesOut, **refusals(422)},
+            summary="Bind this agent to one workspace app, or change that entry. dry_run checks without saving")
+@gate("agent-admin", setting=True)
+def put_agent_app_entry(request: HttpRequest, slug: str, app: str, payload: AgentAppEntryIn):
+    """An app entry's tools are canopy's own (the app's query, actions and tasks, as the person asking); only
+    its description, its entry command and a `ceiling` that narrows those tools can be set. An app not
+    installed in the agent's workspace, or a ceiling naming anything else, is a 422. Who may use it is the
+    access list (`use:<key>`)."""
+    agent = agent_for_admin(request, slug)
+    locked, before, after = _run(profile_settings.set_app_entry, agent, app, _changed(payload), by=request.user,
+                                 dry_run=payload.dry_run)
+    audit.note_change(scope=f"agent:{agent.slug}/app/{app}", before=before,
+                      after=before if payload.dry_run else after,
+                      summary=f"app entry {app} changed on {agent.slug}")
+    if payload.dry_run:
+        locked.interface = {"capabilities": after}
+    return _apps_out(locked)
+
+
+@router.delete("/{slug}/app-entries/{app}", response=AgentAppEntriesOut,
+               summary="Unbind this agent from one workspace app")
+@gate("agent-admin", setting=True)
+def delete_agent_app_entry(request: HttpRequest, slug: str, app: str):
+    agent = agent_for_admin(request, slug)
+    try:
+        locked, before, after = _run(profile_settings.remove_app_entry, agent, app, by=request.user)
+    except LookupError as exc:
+        raise HttpError(404, f"{agent.slug} is not bound to the app {app}") from exc
+    audit.note_change(scope=f"agent:{agent.slug}/app/{app}", before=before, after=after,
+                      summary=f"app entry {app} removed from {agent.slug}")
+    return _apps_out(locked)

@@ -452,6 +452,11 @@ def build(turn, *, reader_user=None) -> dict:
         # are, the agent's owner included. Its own login there (`withheld`) is not in
         # this turn. null for any other turn.
         "site": _site(turn, agent),
+        # THE ONE WORKSPACE APP THIS TURN IS CONFINED TO, when it runs in an app entry
+        # (`apps/agents/app_entries.py`): {workspace, key, name, tools, note}. The agent reaches the app
+        # only through canopy's app_query / app_act / app_tasks_query / app_tasks_act, which act as the
+        # person asking, by their own role in the app. null for any other turn. Additive.
+        "app": _app(context, agent),
         # MCP APPS: what a site's View in this conversation
         # last said about its state (`ui/update-model-context`, latest wins) and
         # canopy's OWN receipts of the calls a person made by clicking in one —
@@ -545,6 +550,27 @@ def _site(turn, agent) -> dict | None:
                  "not available in this conversation (owners and admins included); never use "
                  f"another way into {site}. If site_call is refused, say why and ask them to "
                  "send again from the page."),
+    }
+
+
+def _app(context, agent) -> dict | None:
+    from apps.agents import app_entries  # noqa: PLC0415 — as _site: the interface reads models, loaded with a call
+
+    profile = getattr(context, "profile", None)
+    if agent is None or profile is None or not getattr(profile, "app", None):
+        return None
+    workspace, key = app_entries.split(profile.app)
+    host = app_entries.host()
+    name = host.name(workspace, key) if host is not None and app_entries.installed(workspace, key) else key
+    return {
+        "workspace": workspace, "key": key, "name": name,
+        "reach_with": [t for t in app_entries.APP_TOOLS if any(t in g for g in (profile.tools or []))],
+        "as": "the person who asked",
+        "note": (f"This conversation is confined to the {name} app. Read and change it only through canopy's "
+                 "app_query / app_act / app_tasks_query / app_tasks_act: each acts as the person who asked, "
+                 "with exactly their role in the app, and is recorded as you acting for them. You have no other "
+                 "canopy tool, no shell beyond reading and replying to this email thread, and nothing else of "
+                 "the agent's here. If a tool refuses, tell them why."),
     }
 
 

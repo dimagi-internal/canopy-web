@@ -726,10 +726,12 @@ class StandingOut(Schema):
 
 
 class ProfileOut(Schema):
-    #: whole_agent | read_mode | host_site | session_review | deny_all | no_agent.
+    #: whole_agent | read_mode | host_site | app_entry | session_review | deny_all | no_agent.
     kind: str
     name: str = ""
     site: str | None = None
+    #: `<workspace>/<app key>` an app entry is bound to.
+    app: str | None = None
     description: str | None = None
     entry: str | None = None
     #: Null when nothing is enumerated: `kind` alone says what it is. Empty denies.
@@ -818,6 +820,8 @@ class SessionContextOut(Schema):
     runner_requested: str | None = None
     runner_bound: str | None = None
     site: str = ""
+    #: `<workspace>/<app key>` when the conversation was started from a workspace app's chat panel.
+    app: str = ""
     #: Blank for a reader outside a sensitive conversation.
     page: str = ""
     sensitive: bool = False

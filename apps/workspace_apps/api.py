@@ -601,7 +601,7 @@ def _live_only(draft: int | None) -> None:
 
 @router.get("/workspace-apps/{workspace}/{key}/tasks", response=list[dict],
             summary="Read the tasks of the one project an app declares")
-@gate("member")
+@gate("member", "app-guest")
 def query_workspace_app_tasks(request: HttpRequest, workspace: str, key: str, status: str = "",
                               category: str = "", due_after: dt.date | None = None,
                               due_before: dt.date | None = None, template: str = "",
@@ -611,7 +611,7 @@ def query_workspace_app_tasks(request: HttpRequest, workspace: str, key: str, st
     app's task `read` role. `status`, `category`: comma lists. `recurring=true` keeps the
     recurring templates; `template` (a key) keeps one template's instances. 404 when the app
     declares no tasks or its project is not there; 409 in a draft."""
-    inst = _installation(request, workspace, key)
+    inst = _installation(request, workspace, key, guest_ok=True)
     _live_only(draft)
     try:
         return app_tasks.query(inst, request.user, status=status, category=category, due_after=due_after,
@@ -622,7 +622,7 @@ def query_workspace_app_tasks(request: HttpRequest, workspace: str, key: str, st
 
 @router.post("/workspace-apps/{workspace}/{key}/tasks/actions/{name}", response={200: dict, 201: dict},
              summary="Run one of an app's declared task actions, as yourself")
-@gate("member", kind="content",
+@gate("member", "app-guest", kind="content",
       viewer_write="the app's task declaration names the role; holding it is the admin's consent for that project")
 def act_workspace_app_task(request: HttpRequest, workspace: str, key: str, name: str, payload: TaskActionIn,
                            draft: int | None = None) -> Status:
@@ -630,7 +630,7 @@ def act_workspace_app_task(request: HttpRequest, workspace: str, key: str, name:
     declared fields of a task in the app's project, as the declaration allows. Never starts an
     agent's turn. 201 when a task was made. 404 for a task outside the project or an action
     not declared; 403 without the action's role; 409 in a draft or on a task in the wrong state."""
-    inst = _installation(request, workspace, key)
+    inst = _installation(request, workspace, key, guest_ok=True)
     _live_only(draft)
     try:
         out, made = app_tasks.act_task(inst, request.user, name, payload.key, payload.input)

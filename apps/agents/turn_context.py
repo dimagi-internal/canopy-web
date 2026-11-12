@@ -19,8 +19,9 @@ admins and canopy itself) and its **access list**
   (`system`); its owner and admins; a session grant (no kind exists now); the access list; otherwise nothing.
 * **Stage 2, profile.** A base, then two rules that only narrow. Owner, admin, system, a session grant
   or `write` get `whole_agent`. Someone holding only `read` or named lines gets what they named if it
-  opens for them, else (naming nothing) the site entry that opens for them, else read
-  mode. Anyone else is refused. Then a review chat is `session_review` for anyone not refused, and
+  opens for them, else (naming nothing) the app entry their conversation is stamped with, else the site
+  entry that opens for them, else read mode, else the app entry a line of theirs opens. Anyone else is
+  refused. Then a review chat is `session_review` for anyone not refused, and
   sensitive data confines the whole agent to its entry and refuses anything else in a sensitive
   conversation.
 * **Stage 3, fan-out**: turn mode, the runner session's suffix, and a true account of credentials.
@@ -44,7 +45,7 @@ from apps.harness import caller_context as cc
 from apps.harness import initiator as initiator_mod
 from apps.harness.caller_context import is_verified
 
-from . import grants, refusals, roles, sensitive_data
+from . import app_entries, grants, refusals, roles, sensitive_data
 from . import published_profiles as profiles_mod
 from . import session_context as sc
 from .standings import standing_of
@@ -59,10 +60,12 @@ FULL, CONFINED, REFUSED = "full", "confined", "refused"
 WHOLE_AGENT = "whole_agent"
 READ_MODE = "read_mode"
 HOST_SITE = "host_site"
+#: An entry bound to one workspace app (`app_entries`): canopy's fixed tools for that app.
+APP_ENTRY = "app_entry"
 SESSION_REVIEW = "session_review"
 DENY_ALL = "deny_all"
 NO_AGENT = "no_agent"
-PROFILE_KINDS = frozenset({WHOLE_AGENT, READ_MODE, HOST_SITE, SESSION_REVIEW, DENY_ALL, NO_AGENT})
+PROFILE_KINDS = frozenset({WHOLE_AGENT, READ_MODE, HOST_SITE, APP_ENTRY, SESSION_REVIEW, DENY_ALL, NO_AGENT})
 
 #: What a stage reports when the answer needs something only the claim knows.
 PENDING = "pending"
@@ -161,6 +164,8 @@ class Profile:
     name: str = ""
     #: The site a `host_site` serves, None for one with no site.
     site: str | None = None
+    #: `"<workspace>/<app key>"` an `app_entry` is bound to, None for any other kind.
+    app: str | None = None
     _agent: object = field(default=None, compare=False, repr=False)
 
     @cached_property
@@ -339,12 +344,31 @@ def _selected_entry(iface: dict, opens, session_ctx) -> str | None:
     return profiles_mod.site_entry(session_ctx.site, iface, opens)
 
 
-def _entry_for(iface: dict, permissions, requested, session_ctx, trace: list) -> str | None:
-    """The entry someone without `write` is held to: the one named, else the site's,
-    else read mode, among those their permissions open. Read mode exists on every agent; any other
-    name must be published, and an unknown or retired one is refused, never widened."""
-    def opens(name, _cap):
-        return profiles_mod.opens(permissions, name)
+def _app_selected(agent, opens, session_ctx) -> str | None:
+    """The app entry this conversation's app stamp selects, if this asker can open it. Skipped, not fatal."""
+    name = app_entries.selected_entry(agent, session_ctx.app)
+    caps = (getattr(agent, "interface", None) or {}).get("capabilities") or {}
+    return name if name is not None and opens(name, caps.get(name)) else None
+
+
+def _app_by_line(iface: dict, permissions) -> str | None:
+    """For someone whose lines open no read mode: the app entry a `use:<key>` line of theirs opens, so a person
+    let into one app reaches the agent there on every channel (email, chat), and in nothing else. The first by
+    name when several do."""
+    return next((n for n in sorted(app_entries.entries(iface)) if profiles_mod.opens(permissions, n)), None)
+
+
+def _entry_for(agent, iface: dict, permissions, requested, session_ctx, trace: list) -> str | None:
+    """The entry someone without `write` is held to: the one named, else the app entry its conversation is
+    stamped with, else the site's, else read mode, else the app entry a line of theirs names, among those
+    their permissions open. Read mode exists on every agent; any other name must be published, and an unknown
+    or retired one is refused, never widened. A `read` line also opens the app entry of the conversation it
+    is stamped with: inside an app's own chat, the app entry is preferred to read mode."""
+    def opens(name, cap):
+        if profiles_mod.opens(permissions, name):
+            return True
+        return (app_entries.is_app_entry(cap) and roles.holds(permissions, roles.READ)
+                and app_entries.selected_entry(agent, session_ctx.app) == name)
 
     if requested == profiles_mod.SESSION_REVIEW:
         # Canopy's own, for a turn in a review chat only: `read` opens it.
@@ -353,7 +377,11 @@ def _entry_for(iface: dict, permissions, requested, session_ctx, trace: list) ->
         return requested if allowed else None
     name, how = requested, "named"
     if name is None:
+        name, how = _app_selected(agent, opens, session_ctx), "app"
+    if name is None:
         name, how = _selected_entry(iface, opens, session_ctx), "site"
+    if name is None and not profiles_mod.opens(permissions, profiles_mod.READ_MODE_STAMP):
+        name, how = _app_by_line(iface, permissions), "app line"
     if name is None:
         name, how = profiles_mod.READ_MODE_STAMP, "read mode"
     published, cap = profiles_mod.published_profile(iface, name)
@@ -387,14 +415,16 @@ def _base_stage(agent, reach: _Reach, asker: Asker, requested, session_ctx, turn
                        source=f"list:{line.subject_key}", via=grants.describe(line), permissions=got.permissions,
                        code="", facts=())
     trace.append(TraceEntry("access_list", ",".join(sorted(got.permissions)), got.basis))
-    name = _entry_for(iface, got.permissions, requested, session_ctx, trace)
+    name = _entry_for(agent, iface, got.permissions, requested, session_ctx, trace)
     if name is None:
         published = bool(requested) and (profiles_mod.published_profile(iface, requested)[0] is not None
                                          or profiles_mod.is_read_mode(requested)
                                          or requested == profiles_mod.SESSION_REVIEW)
         return replace(reach, code=PROFILE_NOT_OPEN, facts=(("name", requested), ("published", published)))
     # The review entry is opened by `read`; `line_opening` knows only named entries and read mode.
-    line = got.line_for(roles.READ) if name == profiles_mod.SESSION_REVIEW else got.line_opening(name)
+    # A `read` line opens the app entry of its own conversation without naming it (`_entry_for`).
+    line = (got.line_for(roles.READ) if name == profiles_mod.SESSION_REVIEW
+            else got.line_opening(name) or got.line_for(roles.READ))
     return replace(reach, access=CONFINED, name=name, basis=f"capability:{name}", agent_role=got.role,
                    source=f"list:{line.subject_key}", via=grants.describe(line), permissions=got.permissions,
                    code="", facts=())
@@ -467,9 +497,11 @@ def _rules(agent, asker: Asker, session_ctx, requested, turn, trace: list) -> _R
 
 # --- the result ------------------------------------------------------------------------------------
 
-def _kind_of(name: str) -> str:
+def _kind_of(name: str, agent=None) -> str:
     if name == profiles_mod.SESSION_REVIEW:
         return SESSION_REVIEW
+    if app_entries.app_of_entry(getattr(agent, "interface", None), name):
+        return APP_ENTRY
     return READ_MODE if profiles_mod.is_read_mode(name) else HOST_SITE
 
 
@@ -482,9 +514,11 @@ def _site_of(agent, name: str, session_ctx) -> str | None:
 
 
 def _profile_of(agent, name: str, session_ctx) -> Profile:
-    kind = _kind_of(name)
+    kind = _kind_of(name, agent)
+    app = app_entries.app_of_entry(getattr(agent, "interface", None), name) if kind == APP_ENTRY else None
     return Profile(kind=kind, name=name, _agent=agent,
-                   site=_site_of(agent, name, session_ctx) if kind == HOST_SITE else None)
+                   site=_site_of(agent, name, session_ctx) if kind == HOST_SITE else None,
+                   app=app_entries.stamp_of(agent.workspace_id, app) if app else None)
 
 
 def stamped_profile(agent, stamp: str, session_ctx) -> Profile:

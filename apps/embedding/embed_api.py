@@ -19,6 +19,7 @@ from django.http import HttpRequest
 from ninja import Router
 from ninja.errors import HttpError
 
+from apps.agents import app_entries
 from apps.agents.models import Agent
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_FORBIDDEN, ProblemError, refusals
@@ -120,7 +121,15 @@ def _offered_rows(request: HttpRequest, app):
     workspaces, narrowed to the one agent a bound token names."""
     reachable = wsvc.user_workspace_slugs(request.user)
     page_ws = getattr(request, "page_workspace", "") if getattr(request, "own_panel", False) else ""
-    if page_ws and page_ws in reachable and page_ws != app.workspace_id:
+    page_app = getattr(request, "page_app", "") if getattr(request, "own_panel", False) else ""
+    if page_app:
+        # canopy's own panel on a workspace app's page (checked when the token was minted): the agents with an
+        # entry for that app. Offering is not access: the access list still decides each conversation.
+        ws, key = app_entries.split(page_app)
+        ids = [a.pk for a in Agent.objects.filter(workspace_id=ws).only("pk", "interface")
+               if app_entries.entry_for_app(a.interface, key)]
+        rows = Agent.objects.filter(pk__in=ids).order_by("slug")
+    elif page_ws and page_ws in reachable and page_ws != app.workspace_id:
         # canopy's own panel on a page of another workspace than the site's: that
         # workspace's agents. The site's list is what it set for its OWN workspace;
         # nothing narrower is set here, so the workspace's agents are on offer.
@@ -227,7 +236,7 @@ def _asks_for_grant(request: HttpRequest) -> bool:
 @embed_router.post("/token", response=EmbedSelfTokenOut,
                    summary="Mint a delegated token for the caller, for canopy's own widget")
 @gate("self", kind="ephemeral-credential", step_up="the caller's own embed token")
-def embed_self_token(request: HttpRequest, page: str = "", workspace: str = "") -> EmbedSelfTokenOut:
+def embed_self_token(request: HttpRequest, page: str = "", workspace: str = "", app: str = "") -> EmbedSelfTokenOut:
     """The host-side token endpoint every embedder needs — for the host that is
     canopy itself.
 
@@ -251,6 +260,11 @@ def embed_self_token(request: HttpRequest, page: str = "", workspace: str = "") 
     that workspace's agents — the site's own list where the page is in the site's own
     workspace — and, wherever it is, may open a conversation with an agent of any
     workspace you are in, as you can on canopy itself.
+
+    `app` names the workspace app whose page the panel is on (`/w/<workspace>/apps/<app>/…`). When you may
+    open that app (as a member, or as a guest it names), the panel offers the agents with an entry for it, and
+    a conversation you start there is held in that app: the agent answers you there with only that app's
+    tools. Naming one you may not open is simply no app.
     """
     # Session-authenticated means ONLY a session. This route sits inside the
     # delegated-token surface (`^/api/embed/`), so without this a host
@@ -269,8 +283,8 @@ def embed_self_token(request: HttpRequest, page: str = "", workspace: str = "") 
                            type_=TYPE_FORBIDDEN,
                            detail="This token is minted for a browser session only, "
                                   "never from another token.")
-    app = _self_app()
-    if app is None:
+    self_app = _self_app()
+    if self_app is None:
         raise HttpError(404, "no host site shows its panel on canopy's own pages")
 
     # Cheaper to abuse than exchange in one specific way: it needs only a
@@ -279,7 +293,7 @@ def embed_self_token(request: HttpRequest, page: str = "", workspace: str = "") 
     try:
         check_mint_limit(request.user.pk)
     except MintRateLimitError as exc:
-        audit(event=EmbedAuditLog.MINT, request=request, app=app, subject=request.user,
+        audit(event=EmbedAuditLog.MINT, request=request, app=self_app, subject=request.user,
               ok=False, reason="rate_limited")
         raise HttpError(429, str(exc))
 
@@ -291,13 +305,19 @@ def embed_self_token(request: HttpRequest, page: str = "", workspace: str = "") 
     # (`host_grants.lookup`), as for any other host.
     from apps.host_grants import self_host
 
-    grant = self_host.grant_for_visitor(app, request.user, page) if _asks_for_grant(request) else None
+    grant = self_host.grant_for_visitor(self_app, request.user, page) if _asks_for_grant(request) else None
     granted = grant is not None
     page_ws = workspace if workspace and workspace in wsvc.user_workspace_slugs(request.user) else ""
-    raw, token = DelegatedToken.issue(app=app, user=request.user, ttl_seconds=TOKEN_TTL_SECONDS,
-                                      host_grant=grant, own_panel=True, page_workspace=page_ws)
-    audit(event=EmbedAuditLog.MINT, request=request, app=app, subject=request.user,
-          detail=f"ttl={TOKEN_TTL_SECONDS}s host_grant={granted} page={page[:40]!r}")
+    # The app is checked HERE, against who is asking, and only then stamped on the token: what the panel names
+    # is a claim, and a conversation's app is server-owned (`stamp_host_metadata`).
+    page_app = (app_entries.stamp_of(workspace, page_app_key)
+                if (page_app_key := app.strip()) and workspace
+                and app_entries.may_open(request.user, workspace, page_app_key) else "")
+    raw, token = DelegatedToken.issue(app=self_app, user=request.user, ttl_seconds=TOKEN_TTL_SECONDS,
+                                      host_grant=grant, own_panel=True, page_workspace=page_ws,
+                                      page_app=page_app)
+    audit(event=EmbedAuditLog.MINT, request=request, app=self_app, subject=request.user,
+          detail=f"ttl={TOKEN_TTL_SECONDS}s host_grant={granted} page={page[:40]!r} app={page_app[:60]!r}")
     return EmbedSelfTokenOut(token=raw, expires_at=token.expires_at.isoformat(), host_grant=granted)
 
 

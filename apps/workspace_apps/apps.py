@@ -28,6 +28,11 @@ class WorkspaceAppsConfig(AppConfig):
         from .access import describe_guest_apps, validate_guest_apps  # noqa: PLC0415 — models: registry not ready at load
 
         guests.register("apps", validate_guest_apps, describe_guest_apps)
+        from apps.agents import app_entries  # noqa: PLC0415 — the registry of what an agent's app entry reaches
+
+        from .agent_host import Host  # noqa: PLC0415 — models: registry not ready at load
+
+        app_entries.register(Host())
 
 
 def _connection_surface(request, ref):

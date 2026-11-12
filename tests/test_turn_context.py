@@ -224,7 +224,8 @@ def test_each_profile_kind(w):
     AgentGrant.objects.create(agent=w.agent, kind=AgentGrant.PERSON, user=w.member, capability="bare")
     bare = turn_context.for_asker(w.agent, w.member, verified=True, requested="bare").profile
     assert bare.kind == turn_context.HOST_SITE and bare.site is None        # a row with no site keeps the kind
-    assert turn_context.PROFILE_KINDS == {"whole_agent", "read_mode", "host_site", "session_review", "deny_all", "no_agent"}
+    assert turn_context.PROFILE_KINDS == {"whole_agent", "read_mode", "host_site", "app_entry", "session_review", "deny_all",
+                                            "no_agent"}
 
 
 def test_an_entry_on_two_sites_names_the_one_this_conversation_is_on(w):

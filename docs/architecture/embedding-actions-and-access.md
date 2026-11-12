@@ -109,6 +109,13 @@ opaque random strings stored as hashes, and memberships are re-read from the
 database on every request — revoke a membership and the next call reflects it.
 A JWT would have frozen the ACL at mint time, which is weaker.
 
+**canopy's own panel on a workspace app's page** (`/w/<ws>/apps/<key>/…`) is the same chain with canopy as
+the host: the panel names the app when it mints (`?app=`, `frontend/src/widget/grantPage.ts::tokenUrlFor`),
+canopy keeps it on the token only if the person may open that app (a guest included,
+`embed_api.embed_self_token`), offers the agents with an entry for it, and stamps the conversations it creates
+`metadata.workspace_app`, which selects that entry and grants nothing ([host-sites.md](host-sites.md) § App
+entries). The app's page offers the agent its own actions as a view does on its page (`AppFrame` → `pagePanel`).
+
 **What the agent never gets:** any credential for your product from this
 chain. It reaches your page only through the bridge, only while the page is
 open.

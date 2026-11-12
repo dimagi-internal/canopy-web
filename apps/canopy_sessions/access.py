@@ -505,8 +505,24 @@ def readable_sessions(user, *, workspace_slugs=None):
     slugs = _tenant_slugs(user)
     if workspace_slugs is not None:
         slugs &= set(workspace_slugs)
-    return (Session.objects.filter(workspace_id__in=slugs)
+    return (Session.objects.filter(Q(workspace_id__in=slugs) | _guest_app_q(user))
             .filter(visible_session_q(user)).distinct())
+
+
+def _guest_app_q(user) -> Q:
+    """The one tenant leg a GUEST has (docs/architecture/access.md § Guests): conversations held in an app their
+    scope names (`metadata.workspace_app`, server-stamped from that app's chat panel), in the workspace they are
+    a guest of. Still narrowed by the legs (`visible_session_q`): their own, or one they were added to. Nothing
+    for anyone who is not a guest anywhere."""
+    from apps.agents import app_entries  # noqa: PLC0415 — access imports nothing of agents at load
+    from apps.workspaces import services as wsvc  # noqa: PLC0415 — as `_tenant_slugs`
+
+    q = Q(pk__in=[])
+    for workspace, scope in wsvc.guest_scopes(user).items():
+        for key in (scope or {}).get("apps") or {}:
+            q |= Q(workspace_id=workspace,
+                   **{f"metadata__{app_entries.WORKSPACE_APP_KEY}": app_entries.stamp_of(workspace, key)})
+    return q
 
 
 def readable_ids(user, session_ids) -> set:

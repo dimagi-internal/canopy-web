@@ -120,8 +120,12 @@ A template update is taken as a draft (`upgrade=true`), then the same steps.
   records; files only for a public form's file field; rate-limited) and gets back `{id}`.
 - A **guest** of the workspace (`access.md` § Guests) holds, in the app their scope names, exactly that app
   role plus `public` (`access.roles_for`), and reaches only the routes that use an app (`_installation(guest_ok=True)`:
-  read it, query, act, history, files), never its drafts, setup, grants or any other app; everything else is the
-  stranger's 404. A guest scope may name only a role the app declares (never `maintainer`, `member`, `public`),
+  read it, query, act, history, files, the declared project's tasks), never its drafts, setup, grants or any other
+  app; everything else is the stranger's 404.
+- **An agent in the app.** A live member page is the page canopy's panel is on (`AppFrame` → `pagePanel`): the panel
+  offers the agents with an entry for the app and holds the conversations it starts in it; such an agent reaches the
+  app only through `app_query` / `app_act` / `app_tasks_query` / `app_tasks_act`, as the person asking
+  (`agent_host.py`, [host-sites.md](host-sites.md) § App entries). A guest scope may name only a role the app declares (never `maintainer`, `member`, `public`),
   given by someone who may maintain the app (`access.validate_guest_apps`).
 - **Test copies** are separate spaces of records; nothing in one reaches live or sends email.
 - An **app author or agent** cannot run server code, write access rules, or read what its

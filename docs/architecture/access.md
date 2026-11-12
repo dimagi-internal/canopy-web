@@ -46,7 +46,7 @@ runner roles and turn mode. The rest is split by subject:
 | **site tool limit** | Optional, per host site: tool-name globs that narrow which of the host's tools an agent may call there. It never widens: the host's grant decides what exists, and an empty limit adds nothing. Stored and sent as `ceiling` (the name stays). A save that sets a limit matching every tool is refused, since it limits nothing. | `profile_settings.set_site` (`_limits_nothing`), `apps/host_grants/host_gateway.py::tool_allowed` |
 | **entry point** | A way work reaches an agent: the harness API, a canopy-web chat, Slack, email, a site's panel. Every one asks the rule. | `access-turn-context.md` § The rule (the decision table) |
 | **role** vs **source** | A role is what someone can do; a source is why they have it (`owner`, `admin`, `system`, `session`, `list:<line>`). Never the same word. | `Standing.agent_role`, `Standing.source` |
-| **guest** | A workspace membership for ONE thing the workspace runs, and outside it for everything else: role `guest` plus a `scope` (`{"apps": {key: app role}}`). Not a workspace role: it holds no permission and no line can name it. | `WorkspaceMembership.GUEST`, `apps/workspaces/guests.py`, § Guests |
+| **guest** | A workspace membership for ONE thing the workspace runs, and outside it for everything else: role `guest` plus a `scope` (`{"apps": {key: app role}}`). Not a workspace role: it holds no permission and no workspace line matches it; only a person line opening one entry names it. | `WorkspaceMembership.GUEST`, `apps/workspaces/guests.py`, § Guests |
 | **contact** | Not a role. How canopy knows someone who is not a workspace member: an emailer, a Slack person outside the workspace, a widget visitor (who may have no address at all). A contact has an agent role only if a line names them; with no line they are refused. | `apps/contacts` |
 | **verified** | THIS message proves the sender's address: a signed-in request, mail that is DMARC-aligned or DKIM-signed by its own From: domain, a full member of our own Slack. An embedded site's visitor is never verified (the host vouches for them, not the human). | `caller_context.is_verified` |
 | **refusal** | Why a turn is not run, how to fix it and who can: one code from a closed set. | `apps/agents/refusals.py::Code` |
@@ -129,7 +129,11 @@ removed like any member. Invariants:
 * **Only code written for guests opts in:** `services.guest_scope` / `guest_app_role` / `guest_scopes`,
   `workspace_apps.access.roles_for` (their scoped app role and `public`, never `member`, a capability role or a grant),
   the app routes that use an app (`workspace_apps/api.py::_installation`, `guest_ok`, gate label `app-guest`), the
-  members list and `GET /api/workspaces/guest-of` (the shell shows a guest only their apps).
+  members list and `GET /api/workspaces/guest-of` (the shell shows a guest only their apps). For an agent bound to
+  their app ([host-sites.md](host-sites.md) § App entries): a person line opening that one entry
+  (`agents.grants._person`), their proven mail when such a line names them (`harness/channels/email.py::named_guest`),
+  the app's chat panel (`embedding/delegation.py::_guest_app_agent_ids`, `api_lifecycle._guest_app`) and their own
+  conversations held in their app (`canopy_sessions.access._guest_app_q`).
 * **Making one.** Only a guest invite does: `create_invite(role="guest", scope=…)` by someone who may manage members
   AND maintain each named app; the scope is vouched for by the app that owns it (`guests.register`, from
   `workspace_apps`' `AppConfig.ready()`; no validator, no guest). Accepting grants exactly it (`services._grant`

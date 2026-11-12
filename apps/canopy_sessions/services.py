@@ -40,6 +40,8 @@ SERVER_OWNED_METADATA = frozenset({
     # History of detached threads (apps/slack/share.py); retention classes on it.
     "slack_detached",
     "email_thread_key", "via", "capability",
+    # The workspace app canopy's own panel was opened on (`apps/agents/app_entries.py`), from its token.
+    "workspace_app",
     # A host's runner requirements (`sensitive_data`, apps/harness/runner_requirements.py),
     # copied from the token that started or sent into the session.
     "runner_requirements",
@@ -105,8 +107,9 @@ EMBED_APP_KEY = "embed_app"
 def stamp_host_metadata(metadata: dict, request) -> dict:
     """Stamp the SERVER-OWNED host keys onto a new session's `metadata`, from the
     request's delegated token — never from the body: `embed_app` (which site
-    created it, so one host's widget cannot create or list under another's name)
-    and the site's runner requirements (`sensitive_data`). A request with no acting site (a
+    created it, so one host's widget cannot create or list under another's name),
+    the workspace app canopy's own panel was opened on (`workspace_app`) and the
+    site's runner requirements (`sensitive_data`). A request with no acting site (a
     browser, a PAT) stamps nothing. One rule for a user's and a contact's
     session."""
     from apps.harness import runner_requirements as rr
@@ -115,6 +118,13 @@ def stamp_host_metadata(metadata: dict, request) -> dict:
     if app is None:
         return metadata
     metadata[EMBED_APP_KEY] = app.name
+    page_app = getattr(request, "page_app", "") if getattr(request, "own_panel", False) else ""
+    if page_app:
+        # The workspace app whose page the panel is on, checked against the person when the token was minted
+        # (`embed_api.embed_self_token`): it selects the agent's entry for that app, and grants nothing.
+        from apps.agents import app_entries  # noqa: PLC0415 — app_entries reads no models; one caller here
+
+        metadata[app_entries.WORKSPACE_APP_KEY] = page_app
     reqs = getattr(request, "runner_requirements", ())
     if reqs:
         metadata[rr.METADATA_KEY] = list(reqs)
