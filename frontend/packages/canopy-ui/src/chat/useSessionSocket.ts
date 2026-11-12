@@ -15,7 +15,13 @@ const HEARTBEAT_INTERVAL_MS = 20_000;
  *  or the browser froze a hidden tab), may hold a socket that is open in name
  *  only: nothing more arrives on it and no close ever fires. It is replaced. */
 export const STALE_SOCKET_MS = 30_000;
-const RECONNECT_DELAYS_MS = [1_000, 2_000, 5_000, 10_000];
+/** Backoff between attempts. It resets when a socket OPENS, so a healthy line that
+ *  drops is back in a second; only a socket that keeps failing before it opens
+ *  (a handshake the server answers with a 500, which arrives here as 1006) climbs
+ *  the tail. Keep the tail long: capped at 10 s, one broken conversation in one
+ *  open tab is a failed handshake every few seconds for as long as the tab stays
+ *  open, ~40 per five minutes, enough on its own to page canopy-web's 5xx alarm. */
+export const RECONNECT_DELAYS_MS: readonly number[] = [1_000, 2_000, 5_000, 10_000, 30_000, 60_000];
 /** Close codes that are canopy's ANSWER, not a dropped line: 4003 (you may not
  *  open this conversation — its ACL, the site's agents, or a private one you are
  *  not in or hold no key for) and 4004 (there is no such conversation). Asking
