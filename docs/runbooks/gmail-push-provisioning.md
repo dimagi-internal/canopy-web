@@ -125,11 +125,12 @@ quickest confirmation that an agent is actually on push.
 
 `users.watch` must be called AS the mailbox. A service account can only do that
 with **domain-wide delegation**, and `dimagi-ai.com` is a *secondary domain
-inside the dimagi.com Workspace org* (`C018tavmm`) rather than its own tenant —
-as the login consent screen shows: an Internal
-consent screen lets `dimagi.com` and `dimagi-ai.com` both sign in, while
-`dimagi-associate.com`, a genuinely separate org, is blocked before the callback
-returns. DWD is granted per Workspace account and cannot be scoped to a domain,
+inside the dimagi.com Workspace org* (`C018tavmm`) rather than its own tenant.
+(Don't infer org membership from the login consent screen: canopy-web's Google
+client is **External**, in production, so it admits any Google account, and
+canopy's own `AUTH_ALLOWED_EMAIL_DOMAIN` decides who gets in. An earlier
+version of this page said the screen was Internal and blocked
+`dimagi-associate.com`; that was wrong, corrected 2026-11-12.) DWD is granted per Workspace account and cannot be scoped to a domain,
 an OU, or a user list, so granting it would cover every `dimagi.com` mailbox.
 
 The runner already holds a per-mailbox OAuth grant for exactly the agent
