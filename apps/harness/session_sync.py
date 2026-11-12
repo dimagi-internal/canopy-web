@@ -438,6 +438,21 @@ def record_session(
             binding.agent_task_ext_id = agent_task_ext_id
         if summary is not None:
             binding.summary = summary
+        # This call is the runner saying "this emdash task serves this thread", and a
+        # task (runner, project, name) has one binding. The report loop can see the
+        # task first and file it as a new session holding the key; that row lets go
+        # of it here, or the save below violates one_binding_per_runner_project_session_key
+        # on every retry. The stray row stops being reported and retires on staleness.
+        if binding.session_key:
+            stray = (RunnerBinding.objects.select_for_update()
+                     .filter(runner=runner, emdash_project=binding.emdash_project,
+                             session_key=binding.session_key)
+                     .exclude(pk=binding.pk))
+            for other in stray:
+                logger.info("record_session: task %s/%s moves from session %s to thread %r",
+                            other.emdash_project, other.session_key, other.session_id, thread_key)
+                other.session_key = ""
+                other.save(update_fields=["session_key"])
         binding.save()
         # A widget can attach before this binding exists — see seed_stream_desired.
         from apps.canopy_sessions.transcript_ingest import seed_stream_desired
