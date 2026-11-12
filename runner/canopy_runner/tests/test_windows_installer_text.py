@@ -59,6 +59,33 @@ def test_developer_install_waits_for_end_before_run():
     assert end < query < run
 
 
+def _dev_ps1() -> str:
+    return (RUNNER / "canopy_runner" / "scripts" / "install-runner.ps1").read_text(
+        encoding="utf-8")
+
+
+def test_developer_install_stops_the_runner_before_replacing_its_files():
+    """#2675: `uv tool install --force` over a live runner is os error 32 on Windows, and
+    the old daemon then kept heartbeating the old sha while -IfStale reported current."""
+    ps1 = _dev_ps1()
+    install = ps1.index("& uv tool install --force")
+    stop = ps1.rindex("Stop-RunnerTask", 0, install)
+    assert ps1.index("function Stop-RunnerTask") < stop < install
+    # Stop waits for the runner's PROCESSES, not just the task state.
+    body = ps1[ps1.index("function Stop-RunnerTask"):ps1.index("function Start-RunnerTask")]
+    assert "Get-RunnerProcesses" in body and "Stop-Process" in body
+
+
+def test_developer_install_restarts_the_runner_on_every_failure_path():
+    ps1 = _dev_ps1()
+    fail = ps1[ps1.index("function Fail"):ps1.index("function Info")]
+    assert fail.index("Start-RunnerTask") < fail.index("Write-Error")
+    trap = ps1[ps1.index("trap {"):]
+    assert trap.index("Start-RunnerTask") < trap.index("break")
+    no_tasks = ps1[ps1.index("if ($NoTasks) {"):]
+    assert no_tasks.index("Start-RunnerTask") < no_tasks.index("exit 0")
+
+
 def test_update_check_reads_stdout_only():
     """2>&1 under ErrorActionPreference Stop: one stderr line ends the updater on PS 5.1."""
     ps1 = (RUNNER / "canopy_runner" / "scripts" / "install-runner.ps1").read_text(
