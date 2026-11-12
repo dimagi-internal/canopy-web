@@ -64,6 +64,7 @@ def _snooze_until(comment: str):
 def act(task: AgentTask, *, action: str, comment: str = "", by: str, by_user=None,
         actor_workspace_ids: set, may_start_turns: bool = False,
         by_agent_itself: bool = False, by_agent: Agent | None = None,
+        acting_agent: Agent | None = None,
         ) -> tuple[AgentTask, AgentTaskAction, list[Turn]]:
     """Do one of the actions to `task`; returns (task, action row, turns).
 
@@ -85,7 +86,8 @@ def act(task: AgentTask, *, action: str, comment: str = "", by: str, by_user=Non
     whether ANSWERING a question wakes the agent: an answer is the response the
     agent explicitly asked for, so anyone allowed to answer (the viewer tier)
     starts the turn that carries it — except the agent answering itself, whose
-    turn would only wake itself.
+    turn would only wake itself. `acting_agent` is an agent acting FOR `by_user` (an app-confined
+    turn, `workspace_apps.tasks.act_task`): history names both, "<agent> for <person>".
 
     Atomic, and that is the whole ballgame: `dispatch()` raises on a bad
     `on_approve` spec, and committing the action first would leave the ask
@@ -108,7 +110,7 @@ def act(task: AgentTask, *, action: str, comment: str = "", by: str, by_user=Non
 
     if action == AgentTaskAction.COMMENT:
         return _comment(task, comment, by=by, by_user=by_user,
-                        by_agent=task.agent if by_agent_itself else by_agent)
+                        by_agent=task.agent if by_agent_itself else (acting_agent or by_agent))
 
     task = (AgentTask.objects.select_for_update(of=("self",))
             .select_related("agent", "project").get(pk=task.pk))
@@ -218,7 +220,7 @@ def act(task: AgentTask, *, action: str, comment: str = "", by: str, by_user=Non
     row.applied_at = None if follow_up else (row.applied_at or timezone.now())
     row.save()
     actor = by_user if getattr(by_user, "is_authenticated", False) else None
-    by_agent = task.agent if by_agent_itself else None
+    by_agent = task.agent if by_agent_itself else acting_agent
     work.record_action(task, row, by_user=actor, by_agent=by_agent)
     work.record_changes(task, before, by_user=actor, by_agent=by_agent)
     if duplicate_of is not None:

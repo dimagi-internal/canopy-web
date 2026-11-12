@@ -12,7 +12,9 @@ the surfaces where a mistake exposes data or hands out power:
 * acting — an action's role;
 * email — who an email goes to;
 * Salesforce — the calls an app's pages may make, and as whom (`connections`);
-* retention — what is anonymized or deleted, and when.
+* retention — what is anonymized or deleted, and when;
+* tasks — which project's tasks the app's pages act on, who may, and how (`tasks`,
+  and the default of the setting that names the project).
 
 Each finding is a sentence a non-developer can act on. Any finding means a
 workspace admin publishes the update (`services.publish`), exactly as for a
@@ -113,7 +115,18 @@ def changes(old: dict, new: dict) -> list[str]:
     # Retention.
     if (old.get("retention") or []) != (new.get("retention") or []):
         out.append("changes what candidate data is anonymized or deleted, and when")
+    # Tasks: any change to what the pages may do to canopy tasks, or to which project, is an admin's.
+    to, tn = old.get("tasks"), new.get("tasks")
+    if to != tn:
+        out.append("changes what the app's pages may do to the project's tasks, or who may")
+    if _bound_default(old) != _bound_default(new) and tn:
+        out.append("changes which project's tasks the app's pages act on")
     return out
+
+
+def _bound_default(m: dict):
+    key = (m.get("tasks") or {}).get("project_setting")
+    return ((m.get("settings") or {}).get(key) or {}).get("value") if key else None
 
 
 def _calls(connections: list) -> set[tuple]:

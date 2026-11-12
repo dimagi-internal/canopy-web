@@ -53,7 +53,10 @@ Stat, Badge, Form, Input, TextArea, Select, Button, FieldInputs, FieldValues, Sl
 {data, app, scope}; app.query(collection, {where, order, limit}) (a where value may be a list: any
 of), app.act(action, {record, input, params}), app.bulk(action, {records, input, params}) for an
 action the template marks bulk, app.link(link, record) → {url} for a record's private link,
-app.go(page, params). A slot fill is `function Fill({ record, app, ...slotProps })`. Never <form>.
+app.go(page, params). When the manifest declares `tasks`: app.tasks.query({status, category,
+due_after, due_before, template, recurring, q, limit}) reads the ONE bound project's tasks, and
+app.tasks.act(name, {key, input}) runs a declared task action as the viewer (app.tasks.declared lists
+them); never in a draft's test copy (tasks are live work). A slot fill is `function Fill({ record, app, ...slotProps })`. Never <form>.
 
 SALESFORCE: when the manifest declares `connections`, a page calls
 canopy.connection.request({provider: "salesforce", method, path, query?, body?}) ->
@@ -72,7 +75,8 @@ WHAT THE TEMPLATE DECLARES (read it in the manifest; a workspace change cannot a
   an action's `when` (it applies only to a record in that state — offer the button only then),
   `actor_field` (only the person the record names may run it: an approver approves), `params` (values
   it uses but never stores, e.g. an email's wording), `then` (records the app writes after it), and
-  `links` (a private page for one record — a candidate picking a time). A field with `read` is
+  `links` (a private page for one record — a candidate picking a time), and `tasks` (which canopy
+  tasks the pages act on; its project is a setting, and changing that setting needs an admin). A field with `read` is
   readable by that role only (self-ID answers: compliance) and is absent for everyone else: never
   show it, mail it or copy it into another field. `retention` rules anonymize records on a clock.
   A collection's `scope` narrows it to records: a member sees only the jobs (and their candidates)

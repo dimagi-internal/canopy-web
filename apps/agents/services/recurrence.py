@@ -120,11 +120,12 @@ def due_in(template: AgentTask, period: dt.date) -> dt.date:
 
 
 @transaction.atomic
-def spawn(template: AgentTask, due: dt.date, by=None) -> tuple[AgentTask, bool]:
+def spawn(template: AgentTask, due: dt.date, by=None, *,
+          for_agent: Agent | None = None) -> tuple[AgentTask, bool]:
     """The instance of `template` for the period `due` falls in: made (due `due`, title,
     notes, assignee, project and labels copied, status todo, relations not), or the one
     already there. Returns (instance, made). `by` is the person or agent who asked, or
-    None for the tick. Raises ValueError on a task that is not a template, and
+    None for the tick; `for_agent` an agent asking for that person (history names both). Raises ValueError on a task that is not a template, and
     `AssigneeError` when the copied assignee may no longer have work in its project."""
     template = AgentTask.objects.select_for_update(of=("self",)).select_related("project").get(pk=template.pk)
     if template.recurrence is None:
@@ -135,7 +136,7 @@ def spawn(template: AgentTask, due: dt.date, by=None) -> tuple[AgentTask, bool]:
         return existing, False
     _refuse_outsiders(template.project, agent=template.agent, people=(template.assignee_user,))
     by_user = by if getattr(by, "is_authenticated", False) else None
-    by_agent = by if isinstance(by, Agent) else None
+    by_agent = by if isinstance(by, Agent) else for_agent
     try:
         with transaction.atomic():  # savepoint: a racing spawn for the same period wins
             instance = AgentTask.objects.create(

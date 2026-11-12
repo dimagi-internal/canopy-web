@@ -21,6 +21,9 @@ The rules that keep composition safe:
   anchor no longer exists, or that the template has since made invalid, is
   QUARANTINED with its reason — never silently dropped, never allowed to break
   the app (Power Platform's "Conflicts" tab, not Odoo's failed view).
+* `tasks` (the one project's tasks the app's pages act on) is the TEMPLATE's alone:
+  no op may carry it, and one that changed it anyway is quarantined. Rebinding its
+  project setting is a risky change (`is_risky`).
 """
 from __future__ import annotations
 
@@ -50,10 +53,16 @@ class OpError(ValueError):
     pass
 
 
+_TASKS_ARE_THE_TEMPLATES = ("only the template declares which tasks the app's pages may act on ('tasks'); "
+                            "a workspace cannot add or widen it")
+
+
 def new_op(raw: dict, *, by: str = "", intent: str = "") -> dict:
     """Normalise one incoming op: stamp an id, who, when and why."""
     if not isinstance(raw, dict) or raw.get("op") not in OP_TYPES:
         raise OpError(f"op must be one of: {', '.join(OP_TYPES)}")
+    if "tasks" in raw:
+        raise OpError(_TASKS_ARE_THE_TEMPLATES)
     op = {k: v for k, v in raw.items() if k not in ("id", "by", "at")}
     op["id"] = uuid.uuid4().hex[:12]
     op["intent"] = str(raw.get("intent") or intent or "")[:1000]
@@ -250,8 +259,12 @@ def compose(template_manifest: dict, overlay: list) -> tuple[dict, list]:
     for op in overlay or []:
         candidate = copy.deepcopy(m)
         try:
+            if "tasks" in op:
+                raise OpError(_TASKS_ARE_THE_TEMPLATES)
             _apply(candidate, op)
             candidate = mf.validate(candidate)
+            if candidate.get("tasks") != m.get("tasks"):
+                raise OpError(_TASKS_ARE_THE_TEMPLATES)
         except (OpError, ValueError, KeyError, TypeError) as exc:
             quarantine.append({"op": op, "reason": str(exc)})
             continue
@@ -273,6 +286,8 @@ def is_risky(op: dict, effective: dict) -> str | None:
     kind = op["op"]
     if kind in RISK_REASONS:
         return RISK_REASONS[kind]
+    if kind == "set_setting" and op.get("key") == (effective.get("tasks") or {}).get("project_setting"):
+        return "changes which project's tasks the app's pages may change"
     action = effective.get("actions", {}).get(op.get("action") or op.get("key") or "")
     if kind == "set_action" and action and action["role"] == "public" and op.get("add_input"):
         return "changes what the public form accepts"

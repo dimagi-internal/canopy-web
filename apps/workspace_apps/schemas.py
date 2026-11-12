@@ -171,6 +171,13 @@ class ActionIn(Schema):
     params: dict[str, Any] = {}
 
 
+class TaskActionIn(Schema):
+    #: The task it acts on (its key); omitted for a `create`.
+    key: str | None = None
+    #: The declared fields (`create`, `patch`), `body` (`comment`) or `due` (`spawn`).
+    input: dict[str, Any] = {}
+
+
 class BulkActionIn(Schema):
     records: list[int]
     input: dict[str, Any] = {}

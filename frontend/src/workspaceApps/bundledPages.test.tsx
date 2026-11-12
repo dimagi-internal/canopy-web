@@ -36,7 +36,7 @@ function stubApi(app: string, page: string): AppApi {
   const nothing = async () => [] as never
   return {
     key: app, name: app, page, params: {}, roles: ['member', 'recruiter', 'interviewer', 'compliance'], public: false,
-    draft: false, dataModel: m.collections, fills: {},
+    draft: false, dataModel: m.collections, fills: {}, tasks: { declared: null, query: nothing, act: nothing },
     settings: Object.fromEntries(Object.entries(m.settings).map(([k, s]) => [k, s.default])),
     query: nothing, act: async () => ({}), bulk: async () => ({ done: [], failed: [] }),
     link: async () => ({ url: 'https://example.org/l/x', days: 30 }), history: nothing,

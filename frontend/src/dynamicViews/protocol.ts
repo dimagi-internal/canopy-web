@@ -72,6 +72,22 @@ export type AppOp =
   | { op: 'history'; record: number }
   | { op: 'upload'; collection: string; field: string; name: string; type: string; bytes: ArrayBuffer }
   | { op: 'open_file'; id: number }
+  /** The tasks of the one project the app declares (`app.tasks.query`). Live work: refused in a draft. */
+  | { op: 'tasks_query'; filters?: AppTaskFilters }
+  /** One of the app's declared task actions, as the viewer (`app.tasks.act`). Never starts a turn. */
+  | { op: 'tasks_act'; name: string; key?: string | null; input?: Record<string, unknown> }
+
+/** `app.tasks.query`'s filters (`GET /api/workspace-apps/{ws}/{key}/tasks`). */
+export interface AppTaskFilters {
+  status?: string
+  category?: string
+  due_after?: string
+  due_before?: string
+  template?: string
+  recurring?: '' | 'true' | 'false'
+  q?: string
+  limit?: number
+}
 
 /** Page → frame. */
 export type HostMessage =

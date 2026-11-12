@@ -42,6 +42,13 @@ public fields only) and ``setup`` (a maintainer's first-run checklist, at most 1
 steps). A workspace's own actions (overlay ``add_action``) may not declare ``then``
 or be link actions: both act beyond the caller, so only a template declares them.
 
+``tasks`` lets the app's pages act on canopy tasks of ONE project, as the viewer
+(`tasks.py`): the role that ``read``s them and named ``actions``, each one ``do``
+(`TASK_DO`) by one role over a fixed field allowlist (`TASK_FIELDS`). The project
+is never named here: it is the value of a text setting (``project_setting``) a
+workspace admin binds. TEMPLATE-ONLY, like ``then``: no overlay op may carry it
+(`overlay.compose`), and rebinding its setting is a risky change (`overlay.is_risky`).
+
 A template's manifest is the base; a workspace's changes are an overlay on it
 (`overlay.py`), and what runs is the two composed — validated here again, so a
 composition that breaks a rule is refused like a hand-written one.
@@ -939,6 +946,63 @@ def _validate_setup(raw, settings: dict, roles: set[str], collections: dict, pag
     return out
 
 
+#: What an app task action does (`tasks.py`): file a task, finish or reopen one, comment, make a
+#: recurring task's instance, or change its fields. Never approve, reply or nudge: those start turns.
+TASK_DO = ("create", "done", "reopen", "comment", "spawn", "patch")
+#: The fields a `patch` may declare. Never the agent, the assignee, the status, the project, the
+#: parent, the template or `on_approve`: status moves only through done/reopen, and the rest move work.
+TASK_PATCH_FIELDS = ("title", "notes", "due", "priority", "labels")
+#: A `create` may also make a recurring template, and give the task to a person who reads the app's tasks.
+TASK_CREATE_FIELDS = (*TASK_PATCH_FIELDS, "recurrence", "assignee_email")
+TASK_FIELDS = {"patch": TASK_PATCH_FIELDS, "create": TASK_CREATE_FIELDS}
+MAX_TASK_ACTIONS = 20
+
+
+def _validate_tasks(raw, roles: set[str], settings: dict) -> dict | None:
+    """The one project's tasks the app's pages may act on (module docstring)."""
+    if raw in (None, ""):
+        return None
+    if not isinstance(raw, dict):
+        _fail("tasks", "must be an object of {project_setting, read, actions}")
+    extra = sorted(set(raw) - {"project_setting", "read", "actions"})
+    if extra:
+        _fail("tasks", f"takes project_setting, read and actions, not {', '.join(extra)} — the project is "
+                       "bound by an admin through the setting, never named in the template")
+    own = roles - {"public", "link"}
+    key = raw.get("project_setting")
+    if key not in settings or settings[key]["type"] != "text":
+        _fail("tasks.project_setting", "must name a text setting of this app (the project's handle)")
+    if raw.get("read") not in own:
+        _fail("tasks.read", "must name a role of this app (not public or link)")
+    actions = raw.get("actions")
+    if not isinstance(actions, dict) or not actions or len(actions) > MAX_TASK_ACTIONS:
+        _fail("tasks.actions", f"must be an object of 1 to {MAX_TASK_ACTIONS} {{name: {{role, do, fields?}}}}")
+    out = {}
+    for name, spec in actions.items():
+        where = f"tasks.actions.{name}"
+        if not IDENT.match(str(name)) or not isinstance(spec, dict):
+            _fail(where, "must be an identifier naming an object")
+        extra = sorted(set(spec) - {"role", "do", "fields", "label"})
+        if extra:
+            _fail(where, f"takes role, do, fields and label, not {', '.join(extra)}")
+        if spec.get("role") not in own:
+            _fail(f"{where}.role", "must name a role of this app (not public or link)")
+        do = spec.get("do")
+        if do not in TASK_DO:
+            _fail(f"{where}.do", f"must be one of: {', '.join(TASK_DO)}")
+        fields = spec.get("fields") or []
+        allowed = TASK_FIELDS.get(do, ())
+        if not isinstance(fields, list) or len(set(fields)) != len(fields) or any(f not in allowed for f in fields):
+            _fail(f"{where}.fields", f"'{do}' may declare only: {', '.join(allowed) or 'none'}")
+        if do == "patch" and not fields:
+            _fail(f"{where}.fields", "a patch declares the fields it changes")
+        if do == "create" and "title" not in fields:
+            _fail(f"{where}.fields", "a create takes the task's title")
+        out[name] = {"role": spec["role"], "do": do, "fields": list(fields),
+                     "label": str(spec.get("label") or name)[:120]}
+    return {"project_setting": key, "read": raw["read"], "actions": out}
+
+
 def _validate_connections(raw) -> list:
     """The Salesforce calls the app's pages may make (`apps.connections.declarations`).
     An agent named for a shared connection is checked for shape only: the app has
@@ -976,11 +1040,12 @@ def validate(raw) -> dict:
     for lname, link in links.items():
         if not any(p["slug"] == link["page"] and p["audience"] == "link" for p in pages):
             _fail(f"links.{lname}.page", f"'{link['page']}' must be a page with audience 'link'")
+    tasks = _validate_tasks(raw.get("tasks"), names, settings)
     for cname, c in collections.items():
         feed = (c.get("public") or {}).get("feed")
         if feed and not any(p["slug"] == feed["page"] and p["audience"] == "public" for p in pages):
             _fail(f"collections.{cname}.public.feed.page", f"'{feed['page']}' must be a public page")
-    return {
+    out = {
         "key": key, "name": name[:120], "description": str(raw.get("description") or "")[:2000],
         "version": str(raw.get("version") or "")[:40], "changelog": str(raw.get("changelog") or "")[:5000],
         "roles": roles, "settings": settings, "collections": collections, "actions": actions, "pages": pages,
@@ -991,3 +1056,6 @@ def validate(raw) -> dict:
         "fixtures": _validate_fixtures(raw.get("fixtures"), collections),
         "scenarios": _validate_scenarios(raw.get("scenarios"), names, actions, collections),
     }
+    if tasks is not None:  # only when declared, so an app without it keeps its exact shape
+        out["tasks"] = tasks
+    return out
