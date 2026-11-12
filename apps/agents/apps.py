@@ -42,6 +42,9 @@ class AgentsConfig(AppConfig):
         ticks.register("agents.zk_notify", _zk_notify, 60)
         ticks.register("agents.pat_rotation", _pat_rotation, pat_rotation.interval_s, dedupe=False)
         ticks.register("agents.skill_catalog", _skill_catalog, 5 * 60)
+        # Each auto recurring task's instance for the period that has begun (idempotent per period,
+        # so a tick that runs twice, or late, makes each one once).
+        ticks.register("agents.recurrence", _recurrence, 10 * 60)
 
 
 def _make_vault(sender, instance, created, raw=False, **kwargs) -> None:
@@ -113,3 +116,9 @@ def _skill_catalog() -> None:
     from . import skill_catalog  # noqa: PLC0415 — a tick job: imported when it runs, once the app registry is ready
 
     skill_catalog.refresh_all()
+
+
+def _recurrence() -> None:
+    from .services import recurrence  # noqa: PLC0415 — a tick job: imported when it runs, once the app registry is ready
+
+    recurrence.spawn_due()

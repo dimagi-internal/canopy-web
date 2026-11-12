@@ -7,7 +7,9 @@ share and the planning objects around them.
 from __future__ import annotations
 
 import datetime as dt
+import json
 import re
+import zoneinfo
 
 from django.db import IntegrityError, transaction
 from django.db.models import Count, F, Q, prefetch_related_objects
@@ -118,8 +120,8 @@ def status_names(workspace_slug: str) -> dict[str, str]:
 
 
 def set_settings(workspace_slug: str, data: dict) -> TaskSettings:
-    """Change a workspace's prefix (only while no task carries it), status names
-    or update cadence. Raises ValueError on a bad value."""
+    """Change a workspace's prefix (only while no task carries it), status names,
+    timezone or update cadence. Raises ValueError on a bad value."""
     ts = settings_for(workspace_slug)
     if "prefix" in data and data["prefix"] is not None:
         prefix = data["prefix"].strip().upper()
@@ -142,6 +144,13 @@ def set_settings(workspace_slug: str, data: dict) -> TaskSettings:
             if name and name != DEFAULT_STATUS_NAMES[cat]:
                 names[cat] = name
         ts.status_names = names
+    if data.get("timezone") is not None:
+        name = data["timezone"].strip()
+        try:
+            zoneinfo.ZoneInfo(name)
+        except (zoneinfo.ZoneInfoNotFoundError, ValueError):
+            raise ValueError(f"timezone must be an IANA name (Europe/London), got {name!r}") from None
+        ts.timezone = name
     if data.get("update_cadence_days") is not None:
         days = int(data["update_cadence_days"])
         if not 1 <= days <= 90:
@@ -158,7 +167,7 @@ def task_rows(qs):
     """A task queryset joined up for the list shape (`AgentTaskOut`): one query
     for the rows and one per prefetched relation, never one per task."""
     return (qs.select_related("agent", "project", "waiting_on_user", "parent__project", "assignee_user",
-                              "created_by_agent", "milestone")
+                              "created_by_agent", "milestone", "template__project")
             .prefetch_related("human_whys", "labels"))
 
 
@@ -201,7 +210,7 @@ def annotate_projects(projects: list[AgentProject]) -> list[AgentProject]:
 
 #: The fields a PATCH records, as shown.
 TRACKED_FIELDS = ("title", "status", "assignee", "project", "parent", "priority", "due", "milestone",
-                  "labels", "next_action", "kind", "waiting_on")
+                  "labels", "next_action", "kind", "waiting_on", "recurrence")
 
 
 def snapshot(task: AgentTask) -> dict[str, str]:
@@ -220,6 +229,7 @@ def snapshot(task: AgentTask) -> dict[str, str]:
         "next_action": task.next_action,
         "kind": task.kind,
         "waiting_on": task.waiting_on_user.email if task.waiting_on_user_id else "",
+        "recurrence": json.dumps(task.recurrence, sort_keys=True) if task.recurrence is not None else "",
     }
 
 
@@ -245,6 +255,12 @@ def record_changes(task: AgentTask, before: dict[str, str], *, by_user=None, by_
 def record_action(task: AgentTask, action_row, *, by_user=None, by_agent=None) -> None:
     TaskEvent.objects.create(task=task, kind=TaskEvent.ACTION, action=action_row,
                              field=action_row.action, **_by(by_user, by_agent))
+
+
+def record_comment(task: AgentTask, action_row, *, by_user=None, by_agent=None) -> TaskEvent:
+    """A comment on the task: its words are `action_row.comment` (a `comment` action,
+    never pending). Only history: it answers no ask and starts nothing."""
+    return TaskEvent.objects.create(task=task, kind=TaskEvent.COMMENT, action=action_row, **_by(by_user, by_agent))
 
 
 def events_of(task: AgentTask) -> list[TaskEvent]:

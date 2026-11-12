@@ -123,6 +123,15 @@ def _make_world() -> dict:
                        waiting_on_user=wsadmin, ask_kind=AgentTask.ASK_QUESTION)
     on_lead = task("task.lead", status=AgentTask.IN_PROGRESS, agent=lead_agent, ext_id=f"{MARK}-T3")
     subtask = task("task.sub", status=AgentTask.TODO, agent=lead_agent, parent=on_lead, ext_id=f"{MARK}-T4")
+    # A recurring template and its instance: the recurring/template filters and spawn must keep them in.
+    template = task("task.template", status=AgentTask.BACKLOG, agent=lead_agent, ext_id=f"{MARK}-T5",
+                    recurrence={"every": "week", "auto": True})
+    instance = task("task.instance", status=AgentTask.DONE, agent=lead_agent, ext_id=f"{MARK}-T6", template=template,
+                    template_period=timezone.localdate())
+    TaskEvent.objects.create(task=instance, kind=TaskEvent.FIELD, field="status", old="todo", new="done")
+    comment = AgentTaskAction.objects.create(task=on_lead, action="comment", comment=S("comment.body"), by="lead@dimagi.com",
+                                             agent=lead_agent, status="applied")
+    TaskEvent.objects.create(task=on_lead, kind=TaskEvent.COMMENT, action=comment)
     # A task of a project anyone reads pointing into the personal one, and a subtask of it.
     outside_sub = AgentTask.objects.create(workspace=ws, title=f"{PUBLIC_MARK}-sub", parent=on_lead, ext_id="T901",
                                            created_by_agent=lead_agent, agent=lead_agent)
@@ -205,7 +214,7 @@ def _make_world() -> dict:
 
     return dict(meeting=meeting, ws=ws, lead=lead, editor=editor, wsadmin=wsadmin, lead_login=lead_login, lead_agent=lead_agent,
                 outsider_agent=outsider_agent, project=project, twin=twin, public_task=public_task,
-                tasks=[held_by_editor, on_outsider, on_lead, subtask], checkin=checkin, run=run, view=view, saved=saved,
+                tasks=[held_by_editor, on_outsider, on_lead, subtask, template, instance], checkin=checkin, run=run, view=view, saved=saved,
                 turn=turn, doc=doc, vault=vault, storyboard=storyboard, walkthrough=walkthrough, review=review,
                 editor_person=editor_person, admin_person=admin_person, version=version, action=action)
 
@@ -277,7 +286,8 @@ def _query_variants(w: dict) -> dict[str, list[str]]:
             "parent": [w["tasks"][2].key], "ask": ["open"], "kind": ["idea"], "category": ["triage"], "q": [MARK],
             "agent_project": [str(project.pk), project.ext_id], "scope": ["all"], "days": ["30"], "repo_slug": [project.repo_slug],
             "workspace": [w["ws"].slug], "ws": [w["ws"].slug], "huddle": [f"{MARK}-huddle"], "checkin": [w["checkin"].name],
-            "mine": ["false"], "subsystem": ["agents"]}
+            "mine": ["false"], "subsystem": ["agents"], "recurring": ["true", "false"],
+            "template": [w["tasks"][4].key, w["tasks"][4].key.lower()]}
 
 
 _REQUIRED_QUERY = {"email": "editor@dimagi.com", "agent": "guard-lead", "workspace": "guardws", "start": "2026-01-05",
@@ -474,6 +484,9 @@ QUERY_ALLOWLIST = {
     ("apps/agents/services/tasks.py", "get_task"): "resolves a name; check_task_visible and resolve_parent gate the result",
     ("apps/agents/services/tasks.py", "list_tasks"): "machinery: an agent's own rows for its status report, no HTTP reader",
     ("apps/agents/services/task_actions.py", "act"): "re-reads the task the route already gated, for update",
+    ("apps/agents/services/recurrence.py", "spawn"): "the writer: locks a template the route gated (or the tick holds); "
+                                                     "its instance stays in the template's project",
+    ("apps/agents/services/recurrence.py", "spawn_due"): "off-request: the recurrence tick, writes instances and returns a count",
     ("apps/agents/work.py", "task_by_key"): "resolves a key; task_or_404 gates the result",
     ("apps/agents/work.py", "set_settings"): "exists(): whether a prefix is frozen",
     ("apps/agents/work.py", "annotate_projects"): "figures for projects the caller's list already filtered",

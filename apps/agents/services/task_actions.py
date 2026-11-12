@@ -33,7 +33,11 @@ _EFFECT = {
     AgentTaskAction.BACKLOG: (None, AgentTask.BACKLOG, False),
     AgentTaskAction.SNOOZE: (False, None, False),
     AgentTaskAction.DUPLICATE: (True, AgentTask.DECLINED, False),
+    AgentTaskAction.COMMENT: (False, None, False),  # words only: `_comment`
 }
+
+#: What may be done to a recurring template, which stays in backlog and never completes.
+_ON_A_TEMPLATE = frozenset({AgentTaskAction.COMMENT, AgentTaskAction.BACKLOG, AgentTaskAction.SNOOZE})
 
 
 #: How long a snooze lasts when the comment names no date.
@@ -59,7 +63,7 @@ def _snooze_until(comment: str):
 @transaction.atomic
 def act(task: AgentTask, *, action: str, comment: str = "", by: str, by_user=None,
         actor_workspace_ids: set, may_start_turns: bool = False,
-        by_agent_itself: bool = False,
+        by_agent_itself: bool = False, by_agent: Agent | None = None,
         ) -> tuple[AgentTask, AgentTaskAction, list[Turn]]:
     """Do one of the actions to `task`; returns (task, action row, turns).
 
@@ -67,7 +71,8 @@ def act(task: AgentTask, *, action: str, comment: str = "", by: str, by_user=Non
     `snooze` takes it out of Triage until the date in `comment` (default a
     week); `duplicate` cancels it as a duplicate of the task `comment` names.
     Only approve, nudge and an answer start an agent's turn, and only on a
-    task an agent is assigned.
+    task an agent is assigned. `comment` is words and nothing else (`_comment`).
+    A recurring template takes only comment, backlog and snooze.
 
     `may_start_turns` is whether the actor holds the tier that may start an
     agent turn (editor — the QuickTurn gate). It decides only whether a REPLY
@@ -75,7 +80,8 @@ def act(task: AgentTask, *, action: str, comment: str = "", by: str, by_user=Non
     starts the work whoever makes it (as `on_approve` always has); a nudge is
     editor-gated at the route.
 
-    `by_agent_itself` is the task's own agent acting on its own card. It decides
+    `by_agent` is the agent whose login acts, recorded on a comment's history
+    event. `by_agent_itself` is the task's own agent acting on its own card. It decides
     whether ANSWERING a question wakes the agent: an answer is the response the
     agent explicitly asked for, so anyone allowed to answer (the viewer tier)
     starts the turn that carries it — except the agent answering itself, whose
@@ -100,10 +106,17 @@ def act(task: AgentTask, *, action: str, comment: str = "", by: str, by_user=Non
     if action == AgentTaskAction.REPLY and not comment:
         raise ValueError("a reply needs words — comment must not be empty")
 
+    if action == AgentTaskAction.COMMENT:
+        return _comment(task, comment, by=by, by_user=by_user,
+                        by_agent=task.agent if by_agent_itself else by_agent)
+
     task = (AgentTask.objects.select_for_update(of=("self",))
             .select_related("agent", "project").get(pk=task.pk))
     before = work.snapshot(task)
     name = task.key
+    if task.recurrence is not None and action not in _ON_A_TEMPLATE:
+        raise ClosedAskError(f"{name} recurs: its instances are the work, and it stays in backlog "
+                             f"(clear its recurrence first)")
     deciding = (AgentTaskAction.APPROVE, AgentTaskAction.DECLINE, AgentTaskAction.ACCEPT,
                 AgentTaskAction.BACKLOG, AgentTaskAction.DUPLICATE)
     if action in deciding:
@@ -213,6 +226,21 @@ def act(task: AgentTask, *, action: str, comment: str = "", by: str, by_user=Non
     return task, row, turns
 
 
+def _comment(task: AgentTask, body: str, *, by: str, by_user=None, by_agent: Agent | None = None,
+             ) -> tuple[AgentTask, AgentTaskAction, list[Turn]]:
+    """A comment: one applied action row holding the words, and its `comment` history
+    event (`work.record_comment`). Not a `reply`: it answers no ask, changes no field,
+    is never on the agent's queue (`pending`), and starts no turn, whoever writes it."""
+    if not body:
+        raise ValueError("a comment needs words — comment must not be empty")
+    actor = by_user if getattr(by_user, "is_authenticated", False) else None
+    row = AgentTaskAction.objects.create(
+        agent=task.agent, task=task, action=AgentTaskAction.COMMENT, comment=body, by=by, by_user=actor,
+        status=AgentTaskAction.APPLIED, applied_at=timezone.now())
+    work.record_comment(task, row, by_user=actor, by_agent=by_agent)
+    return task, row, []
+
+
 def pending_actions(agent: Agent):
     """The agent's queue: actions it still has to carry out, oldest first —
     on the tasks it was assigned when each was done."""
@@ -259,7 +287,7 @@ def filter_tasks(qs, *, user=None, project: str = "", status: str = "", waiting:
                  ask: str = "", batch: str = "", parent: str = "", assignee: str = "",
                  created_by: str = "", label: str = "", priority: str = "", milestone: str = "",
                  category: str = "", kind: str = "", due_before=None, due_after=None, q: str = "",
-                 snoozed: str = ""):
+                 snoozed: str = "", recurring: str = "", template: str = ""):
     """The task list's filters, shared by the per-agent and workspace routes.
 
     `waiting=me` is what lands in a person's inbox: tasks parked on them, plus
@@ -268,6 +296,8 @@ def filter_tasks(qs, *, user=None, project: str = "", status: str = "", waiting:
     or `none`. `label`, `priority`, `category`, `status` take comma lists.
     `project`: an alias ("P3"), a handle, an address, or `none`. `snoozed=hide`
     leaves out tasks snoozed into the future; `only` keeps just those.
+    `recurring=true|false` keeps the recurring templates, or everything else;
+    `template` (a key) keeps that template's instances.
     """
     def _split(value: str) -> list[str]:
         return [v.strip() for v in (value or "").split(",") if v.strip()]
@@ -336,6 +366,12 @@ def filter_tasks(qs, *, user=None, project: str = "", status: str = "", waiting:
         text = q.strip()
         qs = qs.filter(Q(title__icontains=text) | Q(key__iexact=text) | Q(next_action__icontains=text)
                        | Q(ext_id__iexact=text))
+    if recurring == "true":
+        qs = qs.filter(recurrence__isnull=False)
+    elif recurring == "false":
+        qs = qs.filter(recurrence__isnull=True)
+    if template:
+        qs = qs.filter(template__key__iexact=template.strip())
     if snoozed == "hide":
         qs = qs.filter(Q(snoozed_until__isnull=True) | Q(snoozed_until__lte=timezone.now()))
     elif snoozed == "only":
