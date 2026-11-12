@@ -39,8 +39,16 @@ from apps.mcp.server import build_http_app  # noqa: E402
 from apps.realtime.channels_auth import RealtimeAuthMiddleware  # noqa: E402
 from apps.realtime.origin import OriginValidator  # noqa: E402
 from apps.realtime.routing import websocket_urlpatterns as realtime_ws_urlpatterns  # noqa: E402
+from apps.realtime.unknown_path import UnknownPathConsumer  # noqa: E402
+from django.urls import re_path  # noqa: E402
 
-_websocket_urlpatterns = realtime_ws_urlpatterns + chat_ws_urlpatterns + listen_ws_urlpatterns
+# Last: a path no route above matches is a 4004 close, not URLRouter's
+# "No route found" exception, which the ASGI server answers with a 500 that the
+# client retries forever (apps/realtime/unknown_path.py).
+_websocket_urlpatterns = (
+    realtime_ws_urlpatterns + chat_ws_urlpatterns + listen_ws_urlpatterns
+    + [re_path(r"", UnknownPathConsumer.as_asgi())]
+)
 
 _MCP_PREFIX = "/api/mcp"
 
