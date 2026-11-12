@@ -141,6 +141,25 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         return offered is None or session.agent_id in offered
 
     async def connect(self):
+        try:
+            await self._connect()
+        except Exception:
+            # Raised before accept(), this is a handshake 500, and the ASGI server's
+            # own traceback names neither the conversation nor who opened it. Every
+            # other socket of the same route succeeds meanwhile, so the fault is one
+            # session's state, and without its id nobody can go and look at it.
+            # Name the inputs, then re-raise unchanged.
+            user = self.scope.get("user")
+            contact = self.scope.get("contact")
+            log.exception(
+                "session socket connect failed: session=%s user=%s contact=%s via_widget=%s",
+                (self.scope.get("url_route") or {}).get("kwargs", {}).get("session_id"),
+                getattr(user, "pk", None), getattr(contact, "pk", None),
+                bool(self.scope.get("via_widget")),
+            )
+            raise
+
+    async def _connect(self):
         self._negotiate_protocol()
         self.hide_tools = bool(self.scope.get("via_widget"))
         user = self.scope.get("user")
