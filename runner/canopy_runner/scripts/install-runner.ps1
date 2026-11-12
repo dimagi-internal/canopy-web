@@ -103,9 +103,89 @@ $UPDATER_TASK = "canopy-runner-updater"
 $TASK_USER    = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 $CanopyDir    = Join-Path $HOME ".canopy"
 
-function Fail($msg) { Write-Error $msg; exit 1 }
+function Fail($msg) {
+    # Never exit with the runner stopped: bring it back, old code and all.
+    if ($script:RunnerStopped) { Start-RunnerTask }
+    Write-Error $msg; exit 1
+}
 function Info($msg) { Write-Host "==> $msg" }
 function Stamp { (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ") }
+
+# --- stopping and starting the runner ----------------------------------------
+# Windows will not replace a file a running process has open, so `uv tool install
+# --force` over a LIVE runner fails with os error 32 (sharing violation). The
+# runner is therefore stopped BEFORE the install, not only restarted after it.
+# A failed install that leaves the old daemon up is silent: it heartbeats the
+# old sha while the next -IfStale check finds the new version on disk and
+# reports "current", so the box stays on old code until restarted by hand.
+$script:RunnerStopped = $false
+
+function Get-RunnerProcesses {
+    # /End ends the task's cmd.exe wrapper, but the runner itself is a process
+    # TREE under it: uv's canopy-runner.exe trampoline, the tool venv's
+    # python.exe, and the base interpreter that one launches. The base
+    # interpreter does NOT live under the venv, so match on what all three
+    # share: the trampoline's path in their command line. That path is the bin
+    # exe, not the script name, so this installer (canopy-runner-update.ps1)
+    # never matches itself.
+    $binDir = (& uv tool dir --bin 2>$null)
+    $toolDir = (& uv tool dir 2>$null)
+    if (-not $binDir) { return @() }
+    $exe  = Join-Path $binDir "canopy-runner.exe"
+    $venv = if ($toolDir) { (Join-Path $toolDir "canopy-runner") + "\" } else { $null }
+    @(Get-CimInstance Win32_Process | Where-Object {
+        $_.ProcessId -ne $PID -and (
+            ($_.CommandLine -and $_.CommandLine.IndexOf($exe, [StringComparison]::OrdinalIgnoreCase) -ge 0) -or
+            ($venv -and $_.ExecutablePath -and
+             $_.ExecutablePath.StartsWith($venv, [StringComparison]::OrdinalIgnoreCase)))
+    })
+}
+
+function Stop-RunnerTask {
+    # First install: no task, nothing to stop.
+    if (-not (Get-ScheduledTask -TaskPath "$TASK_FOLDER\" -TaskName $RUNNER_TASK -ErrorAction SilentlyContinue)) { return }
+    Info "stopping the runner so its files can be replaced"
+    & schtasks /End /TN "$TASK_FOLDER\$RUNNER_TASK" *> $null
+    $script:RunnerStopped = $true
+    for ($i = 0; $i -lt 30; $i++) {
+        # The State enum, not schtasks' status column: that one is translated.
+        $state = (Get-ScheduledTask -TaskPath "$TASK_FOLDER\" -TaskName $RUNNER_TASK -ErrorAction SilentlyContinue).State
+        if ("$state" -ne 'Running') { break }
+        Start-Sleep -Milliseconds 500
+    }
+    # The task reading "Ready" is not the files being free: wait for the
+    # processes that hold them, and only force what outlives the wait.
+    for ($i = 0; $i -lt 30; $i++) {
+        if (-not (Get-RunnerProcesses)) { return }
+        Start-Sleep -Milliseconds 500
+    }
+    $left = Get-RunnerProcesses
+    Write-Warning "runner processes still alive 15s after /End; stopping them: $(($left | ForEach-Object { $_.ProcessId }) -join ', ')"
+    $left | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Start-Sleep -Seconds 1
+}
+
+function Start-RunnerTask {
+    # Clear the flag FIRST so a failure in here cannot recurse through Fail/trap.
+    $script:RunnerStopped = $false
+    # /End first even when we stopped it ourselves: the task is IgnoreNew, so a
+    # /Run that lands while an old daemon is still Running is dropped. Same /End,
+    # wait, /Run as platform_jobs.restart_windows_task.
+    & schtasks /End /TN "$TASK_FOLDER\$RUNNER_TASK" *> $null
+    for ($i = 0; $i -lt 30; $i++) {
+        $state = (Get-ScheduledTask -TaskPath "$TASK_FOLDER\" -TaskName $RUNNER_TASK -ErrorAction SilentlyContinue).State
+        if ("$state" -ne 'Running') { break }
+        Start-Sleep -Milliseconds 500
+    }
+    & schtasks /Run /TN "$TASK_FOLDER\$RUNNER_TASK" *> $null
+}
+
+# Any terminating error that does not go through Fail (a throw from a cmdlet)
+# must not leave the runner stopped either.
+trap {
+    if ($script:RunnerStopped) { Start-RunnerTask }
+    break
+}
 
 # --- preflight ---------------------------------------------------------------
 foreach ($tool in @("git", "uv")) {
@@ -238,6 +318,9 @@ COMMITTED_AT = $(if ($CommittedAt) { $CommittedAt } else { 0 })
     # itself is named by direct file:// URL so no index can shadow it.
     $uri = "file:///" + ($wheel.FullName -replace '\\','/')
     # --reinstall-package: the in-repo packages never change version (see install-runner.sh).
+    # Stop the runner first, as late as possible so it is down only for the install
+    # itself: a live runner holds these files open and the install fails.
+    Stop-RunnerTask
     & uv tool install --force --reinstall-package canopy-cron --reinstall-package canopy-transcript --reinstall-package canopy-acp --find-links $dist "canopy-runner[realtime] @ $uri"
     if ($LASTEXITCODE -ne 0) { Fail "uv tool install failed" }
 } finally {
@@ -259,7 +342,12 @@ Info "provisioning the CDP sidecar's node deps"
 & $Bin install-sidecar
 if ($LASTEXITCODE -ne 0) { Write-Warning "install-sidecar failed -- emdash control will not work until node/npm are available" }
 
-if ($NoTasks) { Info "done (Scheduled Tasks untouched)"; exit 0 }
+if ($NoTasks) {
+    # Definitions untouched, but if the install had to stop the runner, start it
+    # again (now on the new code) rather than leave the box with no runner.
+    if ($script:RunnerStopped) { Start-RunnerTask }
+    Info "done (Scheduled Tasks untouched)"; exit 0
+}
 
 # --- Scheduled Tasks ---------------------------------------------------------
 # Register-ScheduledTask is idempotent via -Force, which replaces an existing
@@ -328,17 +416,8 @@ if (-not $NoAutoUpdate) {
         -CommandLine "`"$ps`" -NoProfile -ExecutionPolicy Bypass -File `"$stage2`" -IfStale -Repo `"$Repo`" >> `"$updaterLog`" 2>&1"
 }
 
-# Start the runner now so a first install does not wait for the next logon. /End
-# first: the task is IgnoreNew, so on an UPDATE a bare /Run is a no-op and the old
-# daemon keeps running the old code. And WAIT for /End to settle: a /Run that lands
-# while the old daemon is still Running is dropped too -- the same /End, wait, /Run
-# as platform_jobs.restart_windows_task.
-& schtasks /End /TN "$TASK_FOLDER\$RUNNER_TASK" *> $null
-for ($i = 0; $i -lt 30; $i++) {
-    # The State enum, not schtasks' status column: that one is translated.
-    $state = (Get-ScheduledTask -TaskPath "$TASK_FOLDER\" -TaskName $RUNNER_TASK -ErrorAction SilentlyContinue).State
-    if ("$state" -ne 'Running') { break }
-    Start-Sleep -Milliseconds 500
-}
-& schtasks /Run /TN "$TASK_FOLDER\$RUNNER_TASK" *> $null
+# Start the runner now so a first install does not wait for the next logon, and
+# on an update so it runs the code just installed. Start-RunnerTask does /End,
+# wait, /Run: the task is IgnoreNew, so a bare /Run over a live daemon is a no-op.
+Start-RunnerTask
 Info "done -- logs at $runnerLog"
