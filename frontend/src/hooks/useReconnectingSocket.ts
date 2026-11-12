@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 
-/** The reconnect ladder every live socket in the app walks: 1s, 2s, 5s, then 10s
- *  for as long as it stays down. A successful open resets it. */
-export const RECONNECT_BACKOFFS_MS = [1000, 2000, 5000, 10000] as const
+/** The reconnect ladder every live socket in the app walks: 1s, 2s, 5s, 10s, 30s,
+ *  then once a minute for as long as it stays down. A successful open resets it.
+ *  A server that refuses the handshake looks the same to the browser as one that
+ *  is briefly gone, so the tail stays slow: a tab left open on a socket the
+ *  server keeps refusing costs one request a minute, not six. */
+export const RECONNECT_BACKOFFS_MS = [1_000, 2_000, 5_000, 10_000, 30_000, 60_000] as const
 
 export interface ReconnectingSocketOptions {
   /** Called on every (re)connect to build the URL actually dialled — for a

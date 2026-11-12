@@ -62,9 +62,9 @@ describe('useReconnectingSocket', () => {
     expect(onBadFrame).toHaveBeenCalledWith('nope')
   })
 
-  it('reconnects on the 1/2/5/10s ladder and resets it after an open', () => {
+  it('reconnects on the 1/2/5/10/30/60s ladder, holds at 60s, and resets after an open', () => {
     const { result } = renderHook(() => useReconnectingSocket('ws://x/a', () => {}))
-    const waits = [1000, 2000, 5000, 10000, 10000]
+    const waits = [1000, 2000, 5000, 10000, 30000, 60000, 60000]
     for (const w of waits) {
       const before = FakeSocket.all.length
       act(() => last().drop())
