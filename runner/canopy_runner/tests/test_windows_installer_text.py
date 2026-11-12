@@ -65,8 +65,8 @@ def _dev_ps1() -> str:
 
 
 def test_developer_install_stops_the_runner_before_replacing_its_files():
-    """#2675: `uv tool install --force` over a live runner is os error 32 on Windows, and
-    the old daemon then kept heartbeating the old sha while -IfStale reported current."""
+    """`uv tool install --force` over a live runner is os error 32 on Windows: the install
+    fails, the old daemon heartbeats the old sha, and -IfStale reports current."""
     ps1 = _dev_ps1()
     install = ps1.index("& uv tool install --force")
     stop = ps1.rindex("Stop-RunnerTask", 0, install)

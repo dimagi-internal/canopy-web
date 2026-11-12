@@ -104,21 +104,20 @@ $TASK_USER    = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 $CanopyDir    = Join-Path $HOME ".canopy"
 
 function Fail($msg) {
-    # Never exit with the runner stopped (#2675): bring it back, old code and all.
+    # Never exit with the runner stopped: bring it back, old code and all.
     if ($script:RunnerStopped) { Start-RunnerTask }
     Write-Error $msg; exit 1
 }
 function Info($msg) { Write-Host "==> $msg" }
 function Stamp { (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ") }
 
-# --- stopping and starting the runner (#2675) --------------------------------
+# --- stopping and starting the runner ----------------------------------------
 # Windows will not replace a file a running process has open, so `uv tool install
 # --force` over a LIVE runner fails with os error 32 (sharing violation). The
-# runner must therefore be stopped BEFORE the install, not only restarted after
-# it. When this ran the other way round, the install failed, the script exited
-# before the restart, the old daemon kept heartbeating the old sha, and the next
-# -IfStale check found the new version on disk and reported "current": a box
-# silently stuck on old code until someone restarted it by hand.
+# runner is therefore stopped BEFORE the install, not only restarted after it.
+# A failed install that leaves the old daemon up is silent: it heartbeats the
+# old sha while the next -IfStale check finds the new version on disk and
+# reports "current", so the box stays on old code until restarted by hand.
 $script:RunnerStopped = $false
 
 function Get-RunnerProcesses {
@@ -320,7 +319,7 @@ COMMITTED_AT = $(if ($CommittedAt) { $CommittedAt } else { 0 })
     $uri = "file:///" + ($wheel.FullName -replace '\\','/')
     # --reinstall-package: the in-repo packages never change version (see install-runner.sh).
     # Stop the runner first, as late as possible so it is down only for the install
-    # itself: a live runner holds these files open and the install fails (#2675).
+    # itself: a live runner holds these files open and the install fails.
     Stop-RunnerTask
     & uv tool install --force --reinstall-package canopy-cron --reinstall-package canopy-transcript --reinstall-package canopy-acp --find-links $dist "canopy-runner[realtime] @ $uri"
     if ($LASTEXITCODE -ne 0) { Fail "uv tool install failed" }
