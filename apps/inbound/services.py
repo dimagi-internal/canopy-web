@@ -143,7 +143,7 @@ def readers_for(mailbox: InboundMailbox) -> list[dict]:
             runners.setdefault(r.pk, r)
     members = WorkspaceMembership.objects.filter(
         workspace_id=mailbox.agent.workspace_id
-    ).values("user_id")
+    ).exclude(role=WorkspaceMembership.GUEST).values("user_id")
     address = mailbox.address.lower()
     for r in (Runner.objects.filter(mailboxes_readable__isnull=False, owner_id__in=members)
               .exclude(status=Runner.RETIRED)):

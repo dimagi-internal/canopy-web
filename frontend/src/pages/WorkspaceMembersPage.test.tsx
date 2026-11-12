@@ -66,6 +66,8 @@ function member(overrides: Partial<MemberOut> = {}): MemberOut {
     role: 'owner',
     joined_at: '2026-01-01T00:00:00Z',
     inherited: false,
+    scope: {},
+    label: '',
     ...overrides,
   }
 }
@@ -75,6 +77,7 @@ function invite(overrides: Partial<InviteOut> = {}): InviteOut {
     id: 1,
     email: 'bob@example.com',
     role: 'editor',
+    scope: {},
     token: 'tok-123',
     expires_at: new Date(Date.now() + 86_400_000).toISOString(),
     accepted_at: null,

@@ -8,7 +8,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from .models import Workspace, WorkspaceInvite, generate_invite_token
+from .models import Workspace, WorkspaceInvite, WorkspaceMembership, generate_invite_token
 from .services import _grant
 
 INVITE_TTL_DAYS = 14
@@ -53,7 +53,7 @@ class InviteError(Exception):
 
 
 def create_invite(
-    *, workspace: Workspace, email: str, role: str, invited_by
+    *, workspace: Workspace, email: str, role: str, invited_by, scope: dict | None = None,
 ) -> WorkspaceInvite:
     """Create (or reuse) an invite for `email` to join `workspace` at `role`.
 
@@ -79,8 +79,15 @@ def create_invite(
     genuinely concurrent call still races past the `existing` check, the
     `.create()` IntegrityError is caught and the winning row is re-fetched
     and returned instead of raising.
+
+    A GUEST invite carries its `scope`, already validated by the caller
+    (`guests.validate_scope`, which checks the inviter may give it); any other role has none.
+    A changed scope re-arms the live row like a changed role does.
     """
     email = (email or "").strip().lower()
+    scope = (scope or {}) if role == WorkspaceMembership.GUEST else {}
+    if role == WorkspaceMembership.GUEST and not scope:
+        raise InviteError("invalid_scope")
     existing = (
         WorkspaceInvite.objects.filter(
             workspace=workspace, email=email, accepted_at__isnull=True, revoked_at__isnull=True
@@ -90,18 +97,20 @@ def create_invite(
     )
     if existing is not None:
         stale = not existing.is_pending()  # never actioned, but its TTL lapsed
-        role_changed = existing.role != role
+        role_changed = existing.role != role or (existing.scope or {}) != scope
         if stale or role_changed:
             existing.token = generate_invite_token()
             existing.expires_at = timezone.now() + dt.timedelta(days=INVITE_TTL_DAYS)
             existing.role = role
-            existing.save(update_fields=["token", "expires_at", "role"])
+            existing.scope = scope
+            existing.save(update_fields=["token", "expires_at", "role", "scope"])
         return existing
     try:
         return WorkspaceInvite.objects.create(
             workspace=workspace,
             email=email,
             role=role,
+            scope=scope,
             invited_by=invited_by,
             expires_at=timezone.now() + dt.timedelta(days=INVITE_TTL_DAYS),
         )
@@ -139,7 +148,8 @@ def accept_invite(*, token: str, user) -> tuple[Workspace, str]:
         raise InviteError("expired")
     if inv.email and mailbox_key(getattr(user, "email", "")) != mailbox_key(inv.email):
         raise InviteError("email_mismatch")
-    m = _grant(inv.workspace, user, inv.role, invited_by=inv.invited_by)
+    m = _grant(inv.workspace, user, inv.role, invited_by=inv.invited_by,
+               scope=inv.scope if inv.role == WorkspaceMembership.GUEST else None)
     inv.accepted_at = timezone.now()
     inv.save(update_fields=["accepted_at"])
     return inv.workspace, m.role

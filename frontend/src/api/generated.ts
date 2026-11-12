@@ -10061,6 +10061,28 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/workspaces/guest-of": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Workspaces I am only a guest of
+         * @description Each workspace you are in ONLY as a guest, with what you are in it for
+         *     (`{"apps": {key: role}}`). Open those apps at `/w/<slug>/apps/<key>`; nothing else of the
+         *     workspace is yours to see. A workspace you are a full member of is not listed here.
+         */
+        readonly get: operations["list_guest_workspaces"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/workspaces/{slug}/": {
         readonly parameters: {
             readonly query?: never;
@@ -10272,6 +10294,8 @@ export interface paths {
          * List members (member-only)
          * @description Everyone in the workspace. Owners of a parent workspace own this one
          *     too, and are listed with `inherited: true`; they are changed on the parent.
+         *     Guests are listed too (`role: "guest"`, `label` "Guest: Household (assistant)") — the
+         *     relationship is explicit — though a guest cannot read this list.
          */
         readonly get: operations["list_members"];
         readonly put?: never;
@@ -10355,6 +10379,10 @@ export interface paths {
          *     says whether the email went out; the link in `token` works either way.
          *     Inviting an address that already has an outstanding invite returns that
          *     invite and emails its link again (at most once a minute).
+         *
+         *     `role: "guest"` needs a `scope` (`{"apps": {"<app key>": "<app role>"}}`): accepting
+         *     makes them a guest who can open exactly those apps at those roles and nothing else of the
+         *     workspace. Inviting one needs, beside managing members, the right to maintain each app.
          */
         readonly post: operations["create_invite"];
         readonly delete?: never;
@@ -37650,6 +37678,13 @@ export interface components {
             readonly workspace_display_name: string;
             /** Role */
             readonly role: string;
+            /**
+             * Scope
+             * @default {}
+             */
+            readonly scope: {
+                readonly [key: string]: unknown;
+            };
             /** Invited By Email */
             readonly invited_by_email?: string | null;
             /**
@@ -37657,6 +37692,21 @@ export interface components {
              * Format: date-time
              */
             readonly expires_at: string;
+        };
+        /**
+         * GuestWorkspaceOut
+         * @description A workspace the caller is ONLY a guest of, and what for: the shell shows them these
+         *     apps and nothing else of it.
+         */
+        readonly GuestWorkspaceOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Display Name */
+            readonly display_name: string;
+            /** Scope */
+            readonly scope: {
+                readonly [key: string]: unknown;
+            };
         };
         /**
          * WorkspaceParentIn
@@ -37788,6 +37838,18 @@ export interface components {
              * @default false
              */
             readonly inherited: boolean;
+            /**
+             * Scope
+             * @default {}
+             */
+            readonly scope: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Label
+             * @default
+             */
+            readonly label: string;
         };
         /** MemberAddIn */
         readonly MemberAddIn: {
@@ -37862,6 +37924,13 @@ export interface components {
             readonly email: string;
             /** Role */
             readonly role: string;
+            /**
+             * Scope
+             * @default {}
+             */
+            readonly scope: {
+                readonly [key: string]: unknown;
+            };
             /** Token */
             readonly token: string;
             /**
@@ -37894,7 +37963,11 @@ export interface components {
              * @default viewer
              * @enum {string}
              */
-            readonly role: "superuser" | "owner" | "admin" | "editor" | "viewer";
+            readonly role: "superuser" | "owner" | "admin" | "editor" | "viewer" | "guest";
+            /** Scope */
+            readonly scope?: {
+                readonly [key: string]: unknown;
+            } | null;
         };
         /**
          * InvitePreviewOut
@@ -64497,6 +64570,26 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["MyInviteOut"][];
+                };
+            };
+        };
+    };
+    readonly list_guest_workspaces: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["GuestWorkspaceOut"][];
                 };
             };
         };

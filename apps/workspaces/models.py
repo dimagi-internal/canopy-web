@@ -181,8 +181,14 @@ MAX_DEPTH = 8
 
 class WorkspaceMembership(models.Model):
     SUPERUSER, OWNER, ADMIN, EDITOR, VIEWER = "superuser", "owner", "admin", "editor", "viewer"
+    #: A scoped member: in the workspace ONLY for what `scope` names (`{"apps": {key: app role}}`),
+    #: and outside it for everything else. `services.membership` and every reader built on it
+    #: answer None for a guest unless the caller opts in (`include_guests=True`), so the
+    #: permission table never sees one (`permissions.ROLES` leaves it out) — see
+    #: docs/architecture/access.md § Guests.
+    GUEST = "guest"
     ROLE_CHOICES = [(SUPERUSER, "Superuser"), (OWNER, "Owner"), (ADMIN, "Admin"), (EDITOR, "Editor"),
-                    (VIEWER, "Viewer")]
+                    (VIEWER, "Viewer"), (GUEST, "Guest")]
     # Total order — the single place role ORDERING lives. What each role may
     # DO is not here: that is `apps/workspaces/permissions.py`, which maps
     # every permission to the lowest role that holds it, and is the only thing
@@ -202,7 +208,10 @@ class WorkspaceMembership(models.Model):
     # superuser gets none of it, and can still hold or stop the workspace's work.
     # The workspace-level sibling of the system superuser (`User.is_superuser`),
     # which holds the same switches for the whole fleet.
-    ROLE_RANK = {VIEWER: 0, EDITOR: 1, ADMIN: 2, OWNER: 3, SUPERUSER: 4}
+    #
+    # GUEST sits below viewer and holds no workspace permission at all: what it opens is its
+    # `scope`, asked for by name by the few readers written for guests.
+    ROLE_RANK = {GUEST: -1, VIEWER: 0, EDITOR: 1, ADMIN: 2, OWNER: 3, SUPERUSER: 4}
     #: The roles the workspace tree carries down to every descendant (see
     #: `Workspace.parent`). Never editor or viewer: those are what the org's
     #: domain-wide access requests grant.
@@ -217,6 +226,9 @@ class WorkspaceMembership(models.Model):
         related_name="workspace_memberships",
     )
     role = models.CharField(max_length=16, choices=ROLE_CHOICES)
+    # What a GUEST is in for: `{"apps": {"<app key>": "<app role>"}}`. Empty for every other
+    # role (`guests.validate_scope`, `services._grant`).
+    scope = models.JSONField(default=dict, blank=True)
     invited_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -271,6 +283,8 @@ class WorkspaceInvite(models.Model):
         # lower than a role already held). Viewer unless they chose otherwise.
         default=WorkspaceMembership.VIEWER,
     )
+    # A guest invite's scope, validated when the invite is made; accepting grants exactly it.
+    scope = models.JSONField(default=dict, blank=True)
     token = models.CharField(max_length=64, unique=True, default=generate_invite_token)
     invited_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

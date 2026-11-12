@@ -5,6 +5,7 @@ import {
   NAV,
   activeHref,
   entryItems,
+  guestNav,
   isNavEntryActive,
   isNavItemActive,
   menuSections,
@@ -179,5 +180,14 @@ describe('switchWorkspacePath', () => {
       const target = switchWorkspacePath(p.replace(/:workspace/, 'x').replace(/:[a-zA-Z]+/g, 'v'), 'y')
       expect(routed.has(target.replace('/w/y/', '')), `${p} -> ${target}`).toBe(true)
     }
+  })
+})
+
+describe('guestNav', () => {
+  it('is one link per app the guest scope opens, and nothing else of the workspace', () => {
+    expect(guestNav('marshellis', ['household'])).toEqual([
+      { kind: 'link', item: { href: '/w/marshellis/apps/household', label: 'Household' } },
+    ])
+    expect(guestNav('marshellis', [])).toEqual([])
   })
 })

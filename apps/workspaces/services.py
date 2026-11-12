@@ -94,8 +94,20 @@ def ensure_member(
     return m, created
 
 
+#: A guest's row (`WorkspaceMembership.GUEST`) is not a membership to any reader here unless
+#: the caller opts in with `include_guests=True`: every gate, listing and fan-out built on
+#: these readers treats a guest as outside the workspace by default. Only code written for
+#: guests opts in (`guest_scope`, the app routes, the members list).
+_GUEST = WorkspaceMembership.GUEST
+
+
+def _rows(**filters):
+    """`WorkspaceMembership` rows, never a guest's — the fail-safe default every reader uses."""
+    return WorkspaceMembership.objects.filter(**filters).exclude(role=_GUEST)
+
+
 def _direct_slugs(user, role: str | None = None) -> set[str]:
-    qs = WorkspaceMembership.objects.filter(user=user)
+    qs = _rows(user=user)
     if role is not None:
         qs = qs.filter(role=role)
     return set(qs.values_list("workspace_id", flat=True))
@@ -198,8 +210,7 @@ def inherited_roles(user, direct: dict[str, str] | None = None) -> dict[str, str
     `direct` is the caller's {slug: role} rows when already in hand (saves the
     query)."""
     if direct is None:
-        direct = dict(WorkspaceMembership.objects.filter(user=user)
-                      .values_list("workspace_id", "role"))
+        direct = dict(_rows(user=user).values_list("workspace_id", "role"))
     return _inherited_roles_of({user.pk: direct})[user.pk]
 
 
@@ -246,14 +257,15 @@ def inherited_owner_slugs(user) -> set[str]:
 
 def user_workspace_slugs(user) -> set[str]:
     """Every workspace `user` may act within: direct memberships plus the
-    descendants of workspaces they own or administer."""
-    direct = dict(WorkspaceMembership.objects.filter(user=user)
-                  .values_list("workspace_id", "role"))
+    descendants of workspaces they own or administer. Never a workspace they are only a
+    guest of."""
+    direct = dict(_rows(user=user).values_list("workspace_id", "role"))
     return set(direct) | set(inherited_roles(user, direct))
 
 
-def is_member(user, slug: str) -> bool:
-    return membership(user, slug) is not None
+def is_member(user, slug: str, *, include_guests: bool = False) -> bool:
+    """Is `user` in `slug`? A guest is not, unless the caller opts in (`include_guests`)."""
+    return membership(user, slug, include_guests=include_guests) is not None
 
 
 def _inherited_role(user, workspace_id: str) -> str | None:
@@ -272,12 +284,13 @@ def _inherited_role(user, workspace_id: str) -> str | None:
     return best
 
 
-def membership(user, workspace):
+def membership(user, workspace, *, include_guests: bool = False):
     """The caller's membership row, lowered to their acting cap (`role_cap`) when one is
-    set — see `_uncapped_membership` for the row itself."""
+    set — see `_uncapped_membership` for the row itself. None for a guest unless
+    `include_guests`: only code written for guests reads their row (and then their scope)."""
     from . import role_cap
 
-    row = _uncapped_membership(user, workspace)
+    row = _uncapped_membership(user, workspace, include_guests=include_guests)
     cap = role_cap.cap_of(user)
     lowered = role_cap.capped_role(row.role if row is not None else None, cap)
     if row is None or lowered == row.role:
@@ -288,7 +301,7 @@ def membership(user, workspace):
     return synthetic
 
 
-def _uncapped_membership(user, workspace):
+def _uncapped_membership(user, workspace, *, include_guests: bool = False):
     """The caller's `WorkspaceMembership` ROW in `workspace`, or `None`.
 
     `member_role` answers the question; this returns the row, for the workspace
@@ -307,6 +320,8 @@ def _uncapped_membership(user, workspace):
         .filter(user=user, workspace_id=workspace_id)
         .first()
     )
+    if row is not None and row.role == _GUEST and not include_guests:
+        row = None  # fail-safe: a guest is outside the workspace to every gate that did not opt in
     if row is not None and row.role == WorkspaceMembership.SUPERUSER:
         return row  # the top role: nothing inherited can outrank it
     # An owner or admin of any ancestor is an owner or admin here (see
@@ -353,7 +368,7 @@ def member_roles_of(users) -> dict[int, dict[str, str]]:
 
     users = {u.pk: u for u in users if getattr(u, "pk", None)}
     direct: dict[int, dict[str, str]] = {uid: {} for uid in users}
-    for uid, slug, role in (WorkspaceMembership.objects.filter(user_id__in=users)
+    for uid, slug, role in (_rows(user_id__in=users)
                             .values_list("user_id", "workspace_id", "role")):
         direct[uid][slug] = role
     out: dict[int, dict[str, str]] = {}
@@ -366,7 +381,7 @@ def member_roles_of(users) -> dict[int, dict[str, str]]:
     return out
 
 
-def member_role(user, workspace) -> str | None:
+def member_role(user, workspace, *, include_guests: bool = False) -> str | None:
     """The caller's role in `workspace` (a `Workspace` or a bare slug), or
     `None` if they are not a member at all.
 
@@ -380,9 +395,40 @@ def member_role(user, workspace) -> str | None:
     layers (notably `apps/harness/schedule_services.py`, which the MCP tools
     call directly) can use the same reader the Ninja handlers do — the MCP
     invariant is that both surfaces run through one implementation, and an
-    authorization check is the last thing that should have two."""
-    m = membership(user, workspace)
+    authorization check is the last thing that should have two.
+
+    None for a guest unless `include_guests` — see `guest_scope` for what a guest holds."""
+    m = membership(user, workspace, include_guests=include_guests)
     return m.role if m else None
+
+
+def guest_scope(user, workspace) -> dict:
+    """What `user` is a GUEST of `workspace` for (`{"apps": {key: app role}}`), or `{}` when
+    they are not a guest there — a full member (direct or inherited) is never read as a guest,
+    so this cannot narrow anyone. The one reader of a guest's scope."""
+    m = membership(user, workspace, include_guests=True)
+    if m is None or m.role != _GUEST:
+        return {}
+    return m.scope or {}
+
+
+def guest_app_role(user, workspace, app_key: str) -> str | None:
+    """The app role a guest of `workspace` holds in its app `app_key`, or None."""
+    role = (guest_scope(user, workspace).get("apps") or {}).get(app_key)
+    return role if isinstance(role, str) and role else None
+
+
+def guest_scopes(user) -> dict[str, dict]:
+    """{workspace slug: scope} for every workspace `user` is ONLY a guest of — what the
+    shell shows them. A workspace they are a full member of (directly or by inheritance)
+    is left out."""
+    if not getattr(user, "pk", None):
+        return {}
+    rows = dict(WorkspaceMembership.objects.filter(user=user, role=_GUEST).values_list("workspace_id", "scope"))
+    if not rows:
+        return {}
+    full = member_roles(user)
+    return {slug: scope or {} for slug, scope in rows.items() if slug not in full}
 
 
 def has_role_at_least(user, workspace, minimum: str) -> bool:
@@ -692,7 +738,7 @@ def workspace_slugs_for_user_id(user_id, workspace: str | None = None, *,
     return write_scope(user, workspace) if write else read_scope(user, workspace)
 
 
-def effective_memberships(ws) -> list[WorkspaceMembership]:
+def effective_memberships(ws, *, include_guests: bool = False) -> list[WorkspaceMembership]:
     """Everyone who is IN `ws`, as `membership()` would answer for each of them.
 
     The listing counterpart of `membership`: a workspace's own rows are only half
@@ -710,7 +756,10 @@ def effective_memberships(ws) -> list[WorkspaceMembership]:
     rows carry `inherited = False`.
     """
     ws = ws if hasattr(ws, "pk") else Workspace.objects.get(slug=ws)
-    rows = {m.user_id: m for m in ws.memberships.select_related("user").order_by("joined_at")}
+    direct = ws.memberships.select_related("user").order_by("joined_at")
+    if not include_guests:
+        direct = direct.exclude(role=_GUEST)  # fail-safe: who is IN a workspace never counts a guest
+    rows = {m.user_id: m for m in direct}
     for m in rows.values():
         m.inherited = False
     ancestors = ws.ancestor_slugs()
@@ -762,9 +811,7 @@ def workspace_member_ids(ws) -> list[int]:
 def user_default_workspace(user) -> Workspace | None:
     """The user's workspace when unambiguous — their sole membership, else None
     (0 or 2+ memberships). Used to resolve a default for headless PAT callers."""
-    rows = list(
-        WorkspaceMembership.objects.filter(user=user).select_related("workspace")[:2]
-    )
+    rows = list(_rows(user=user).select_related("workspace")[:2])
     return rows[0].workspace if len(rows) == 1 else None
 
 
@@ -969,7 +1016,8 @@ def set_member_role(*, workspace: Workspace, user_id, role: str, by=None) -> Wor
     inheritance — so those are swept exactly as a removal would sweep them
     (`departure.sweep`, which touches only workspaces they are no longer in).
     """
-    if role not in WorkspaceMembership.ROLE_RANK:
+    # A guest is made by a guest invite, which carries the scope; a role change never makes one.
+    if role not in WorkspaceMembership.ROLE_RANK or role == _GUEST:
         raise MemberError("invalid_role")
 
     def _mutate(m: WorkspaceMembership) -> WorkspaceMembership:
@@ -978,7 +1026,8 @@ def set_member_role(*, workspace: Workspace, user_id, role: str, by=None) -> Wor
                 raise MemberError("last_owner")
             carried_down = m.role in WorkspaceMembership.INHERITS_DOWN
             m.role = role
-            m.save(update_fields=["role"])
+            m.scope = {}  # a full member has no scope; promoting a guest drops theirs
+            m.save(update_fields=["role", "scope"])
             if carried_down:
                 from . import departure
 
@@ -1028,7 +1077,7 @@ def add_tree_member(*, workspace: Workspace, user_id, role: str, visible: set[st
 
     The authority check (who may grant `role`) is the caller's, made before
     this is called; the row itself is created by `_grant`, the shared path."""
-    if role not in WorkspaceMembership.ROLE_RANK:
+    if role not in WorkspaceMembership.ROLE_RANK or role == _GUEST:
         raise MemberError("invalid_role")
     user = get_user_model().objects.filter(pk=user_id).first()
     if user is None:
@@ -1046,15 +1095,30 @@ def add_tree_member(*, workspace: Workspace, user_id, role: str, visible: set[st
 # ---- the membership-creating path shared by invites and access requests ----
 
 
-def _grant(ws: Workspace, user, role: str, invited_by=None) -> WorkspaceMembership:
+def _grant(ws: Workspace, user, role: str, invited_by=None, *, scope: dict | None = None) -> WorkspaceMembership:
     """Create the membership, or raise an existing one to `role`. Upgrade-only,
-    exactly like `accept_invite`: a grant never demotes anyone."""
+    exactly like `accept_invite`: a grant never demotes anyone.
+
+    A GUEST grant needs its `scope` (validated by the caller, `guests.validate_scope`): a new
+    guest gets exactly it; an existing guest's app roles are merged with it (each app at the
+    new grant's role); a full member is left as they are — they already reach more."""
+    if role == _GUEST and not (scope or {}).get("apps"):
+        raise MemberError("invalid_role")
     m, created = WorkspaceMembership.objects.get_or_create(
-        workspace=ws, user=user, defaults={"role": role, "invited_by": invited_by},
+        workspace=ws, user=user,
+        defaults={"role": role, "invited_by": invited_by, "scope": scope if role == _GUEST else {}},
     )
-    if not created and WorkspaceMembership.ROLE_RANK[role] > WorkspaceMembership.ROLE_RANK[m.role]:
+    if created:
+        return m
+    if role == _GUEST:
+        if m.role == _GUEST:
+            m.scope = {"apps": {**((m.scope or {}).get("apps") or {}), **scope["apps"]}}
+            m.save(update_fields=["scope"])
+        return m
+    if WorkspaceMembership.ROLE_RANK[role] > WorkspaceMembership.ROLE_RANK[m.role]:
         m.role = role
-        m.save(update_fields=["role"])
+        m.scope = {}
+        m.save(update_fields=["role", "scope"])
     return m
 
 

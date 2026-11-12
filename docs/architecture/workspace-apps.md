@@ -118,6 +118,11 @@ A template update is taken as a draft (`upgrade=true`), then the same steps.
 - A **visitor** reads only public projections of enabled, public apps, creates only
   through public actions (declared, typed, size-limited inputs; refs only to allowed
   records; files only for a public form's file field; rate-limited) and gets back `{id}`.
+- A **guest** of the workspace (`access.md` § Guests) holds, in the app their scope names, exactly that app
+  role plus `public` (`access.roles_for`), and reaches only the routes that use an app (`_installation(guest_ok=True)`:
+  read it, query, act, history, files), never its drafts, setup, grants or any other app; everything else is the
+  stranger's 404. A guest scope may name only a role the app declares (never `maintainer`, `member`, `public`),
+  given by someone who may maintain the app (`access.validate_guest_apps`).
 - **Test copies** are separate spaces of records; nothing in one reaches live or sends email.
 - An **app author or agent** cannot run server code, write access rules, or read what its
   viewers could not; page code can see what its page shows.

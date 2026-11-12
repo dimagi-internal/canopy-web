@@ -21,7 +21,7 @@ from apps.api.auth import session_auth
 from apps.api.route_gates import gate
 from apps.workspaces import permissions as perms
 
-from . import access_requests, invites, login_gate, notifications, services
+from . import access_requests, guests, invites, login_gate, notifications, services
 from .gates import membership_or_404 as _membership_or_404
 from .gates import require as _require
 from .gates import tree_reader as _tree_reader
@@ -37,6 +37,7 @@ from .schemas import (
     AccessRequestIn,
     AccessRequestOut,
     AccessSettingsIn,
+    GuestWorkspaceOut,
     InviteCreateIn,
     InviteOut,
     InvitePreviewOut,
@@ -130,19 +131,23 @@ def _target_role(slug: str, user_id: int) -> str | None:
     from django.contrib.auth import get_user_model
 
     target = get_user_model().objects.filter(pk=user_id).first()
-    return services.member_role(target, slug) if target is not None else None
+    # A guest is managed like any member (removed, or promoted to a full role), so ask with them in.
+    return services.member_role(target, slug, include_guests=True) if target is not None else None
 
 
 def _member_out(m: WorkspaceMembership) -> MemberOut:
+    guest = m.role == WorkspaceMembership.GUEST
     return MemberOut(user_id=m.user_id, email=m.user.email, display_name=m.user.get_full_name().strip(),
                      role=m.role, joined_at=m.joined_at,
-                     inherited=getattr(m, "inherited", False))
+                     inherited=getattr(m, "inherited", False),
+                     scope=(m.scope or {}) if guest else {},
+                     label=guests.describe(m.workspace_id, m.scope) if guest else "")
 
 
 def _invite_out(inv: WorkspaceInvite, email_status: str | None = None, *,
                 with_token: bool = True) -> InviteOut:
     return InviteOut(
-        id=inv.id, email=inv.email, role=inv.role, token=inv.token if with_token else "",
+        id=inv.id, email=inv.email, role=inv.role, scope=inv.scope or {}, token=inv.token if with_token else "",
         expires_at=inv.expires_at, accepted_at=inv.accepted_at, revoked_at=inv.revoked_at,
         created_at=inv.created_at, invited_by_email=inv.invited_by.email or None,
         last_emailed_at=inv.last_emailed_at, email_status=email_status,
@@ -217,11 +222,23 @@ def my_invites(request: HttpRequest) -> list[MyInviteOut]:
     return [
         MyInviteOut(
             token=inv.token, workspace_slug=inv.workspace.slug,
-            workspace_display_name=inv.workspace.display_name, role=inv.role,
+            workspace_display_name=inv.workspace.display_name, role=inv.role, scope=inv.scope or {},
             invited_by_email=inv.invited_by.email or None, expires_at=inv.expires_at,
         )
         for inv in invites.pending_invites_for(request.user.email)
     ]
+
+
+@router.get("/guest-of", response=list[GuestWorkspaceOut], summary="Workspaces I am only a guest of")
+@gate("self")  # the caller's own guest rows, and nothing of the workspace beyond its name
+def list_guest_workspaces(request: HttpRequest) -> list[GuestWorkspaceOut]:
+    """Each workspace you are in ONLY as a guest, with what you are in it for
+    (`{"apps": {key: role}}`). Open those apps at `/w/<slug>/apps/<key>`; nothing else of the
+    workspace is yours to see. A workspace you are a full member of is not listed here."""
+    scopes = services.guest_scopes(request.user)
+    names = dict(Workspace.objects.filter(slug__in=scopes).values_list("slug", "display_name"))
+    return [GuestWorkspaceOut(slug=slug, display_name=names.get(slug) or slug, scope=scope)
+            for slug, scope in sorted(scopes.items())]
 
 
 @router.get("/{slug}/", response=WorkspaceOut, summary="Get a workspace (member-only)",)
@@ -502,9 +519,11 @@ def delete_workspace(request: HttpRequest, slug: str):
 @gate("member")
 def list_members(request: HttpRequest, slug: str) -> list[MemberOut]:
     """Everyone in the workspace. Owners of a parent workspace own this one
-    too, and are listed with `inherited: true`; they are changed on the parent."""
+    too, and are listed with `inherited: true`; they are changed on the parent.
+    Guests are listed too (`role: "guest"`, `label` "Guest: Household (assistant)") — the
+    relationship is explicit — though a guest cannot read this list."""
     m = _membership_or_404(request.user, slug)
-    return [_member_out(row) for row in services.effective_memberships(m.workspace)]
+    return [_member_out(row) for row in services.effective_memberships(m.workspace, include_guests=True)]
 
 
 @router.post("/{slug}/members/", response={201: MemberOut},
@@ -601,11 +620,24 @@ def create_invite(request: HttpRequest, slug: str, payload: InviteCreateIn) -> S
     """Creates the invite and emails its link to the address. `email_status`
     says whether the email went out; the link in `token` works either way.
     Inviting an address that already has an outstanding invite returns that
-    invite and emails its link again (at most once a minute)."""
+    invite and emails its link again (at most once a minute).
+
+    `role: "guest"` needs a `scope` (`{"apps": {"<app key>": "<app role>"}}`): accepting
+    makes them a guest who can open exactly those apps at those roles and nothing else of the
+    workspace. Inviting one needs, beside managing members, the right to maintain each app."""
     m = _require(request.user, slug, perms.MEMBERS_MANAGE)
     _require_may_manage(m, None, payload.role)
+    scope = None
+    if payload.role == WorkspaceMembership.GUEST:
+        try:
+            scope = guests.validate_scope(slug, payload.scope, by=request.user)
+        except guests.ScopeError as exc:
+            raise HttpError(exc.status, str(exc)) from exc
+    elif payload.scope:
+        raise HttpError(422, "only a guest invite carries a scope")
     inv = invites.create_invite(
         workspace=m.workspace, email=payload.email, role=payload.role, invited_by=request.user,
+        scope=scope,
     )
     return Status(201, _invite_out(inv, notifications.email_invite(invite=inv)))
 

@@ -6,10 +6,14 @@
 // tenant page for /supervisor or /sessions keeps the workspace they picked.
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
 import { listWorkspaces, type WorkspaceOut } from '../api/workspaces'
+import { listGuestWorkspaces, type GuestWorkspaceOut } from '../api/guests'
 import { resolveActiveWorkspace } from './resolveActiveWorkspace'
 
 interface WorkspaceCtx {
   workspaces: WorkspaceOut[]
+  /** Workspaces the caller is only a GUEST of: never in `workspaces`, never `active`.
+   *  The shell shows a guest only the apps each one opens to them. */
+  guestOf: GuestWorkspaceOut[]
   active: string | null
   loading: boolean
   // Re-fetch `workspaces` on demand. The list (incl. each membership's
@@ -53,6 +57,7 @@ export function WorkspaceProvider({
   children: ReactNode
 }) {
   const [workspaces, setWorkspaces] = useState<WorkspaceOut[]>([])
+  const [guestOf, setGuestOf] = useState<GuestWorkspaceOut[]>([])
   const [loading, setLoading] = useState(true)
 
   const refresh = useCallback(async () => {
@@ -69,6 +74,12 @@ export function WorkspaceProvider({
       .finally(() => {
         if (live) setLoading(false)
       })
+    // Best-effort: a failure only means no guest apps in the header.
+    listGuestWorkspaces()
+      .then((g) => {
+        if (live) setGuestOf(g)
+      })
+      .catch(() => {})
     return () => {
       live = false
     }
@@ -80,7 +91,7 @@ export function WorkspaceProvider({
   useEffect(() => {
     if (urlSlug && workspaces.some((w) => w.slug === urlSlug)) writeRemembered(urlSlug)
   }, [urlSlug, workspaces])
-  return <Ctx.Provider value={{ workspaces, active, loading, refresh }}>{children}</Ctx.Provider>
+  return <Ctx.Provider value={{ workspaces, guestOf, active, loading, refresh }}>{children}</Ctx.Provider>
 }
 
 /** The caller's role in `slug`, or null when it is unknown — outside a
@@ -95,6 +106,13 @@ export function useWorkspaceRole(slug: string | null | undefined): string | null
  *  provider. Display hints only — never a gate. */
 export function useActiveWorkspace(): string | null {
   return useContext(Ctx)?.active ?? null
+}
+
+/** The workspace `slug` when the caller is only a guest there, else undefined. */
+export function useGuestWorkspace(slug: string | null | undefined): GuestWorkspaceOut | undefined {
+  const ctx = useContext(Ctx)
+  if (!ctx || !slug) return undefined
+  return ctx.guestOf.find((g) => g.slug === slug)
 }
 
 /** The caller's workspaces, or [] outside a provider or while loading. */
