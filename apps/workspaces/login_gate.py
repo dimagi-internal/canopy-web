@@ -87,4 +87,6 @@ def can_create_workspace(user) -> bool:
     email = getattr(user, "email", "") or ""
     if email_in_allowlist(email):
         return True
-    return WorkspaceMembership.objects.filter(user=user).exists()
+    # A guest's row lets them sign in (`email_admitted_outside_domain` above) but is no standing:
+    # a guest who could create a workspace could mint invites of their own.
+    return WorkspaceMembership.objects.filter(user=user).exclude(role=WorkspaceMembership.GUEST).exists()

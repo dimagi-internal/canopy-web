@@ -127,10 +127,14 @@ MINIMUM_ROLE: dict[str, str] = {
 #: roles), built from `MINIMUM_ROLE` and the ladder `models.WorkspaceMembership.ROLE_RANK`:
 #: each role holds every permission whose minimum is at or below it. Nothing here is a second
 #: table; `MINIMUM_ROLE` stays the one place a permission's tier is set.
+#:
+#: A GUEST is not on the ladder: it holds no workspace permission, is no role an access-list
+#: line can name (`is_role`), and meets no floor, not even "any member" (`role_meets(_, "")`).
+#: `MINIMUM_ROLE` must never name it (`tests/test_guest_members_never_leak.py`).
 ROLES = RoleSet.ladder(
     "workspace", MINIMUM_ROLE,
     [(role, [c for c, minimum in MINIMUM_ROLE.items() if minimum == role])
-     for role in sorted(_M.ROLE_RANK, key=_M.ROLE_RANK.__getitem__)])
+     for role in sorted(_M.ROLE_RANK, key=_M.ROLE_RANK.__getitem__) if role != _M.GUEST])
 
 
 def _rank(role: str | None) -> int:
@@ -146,10 +150,10 @@ def role_allows(role: str | None, permission: str) -> bool:
 def role_meets(role: str | None, floor: str) -> bool:
     """Is `role` the workspace role named `floor`, or stronger? For data that stores a
     workspace role by name (an access-list line "editors of connect"); `floor` must be
-    a workspace role, `""` meaning any member. A non-member (`role` None) meets nothing
-    but `""`."""
+    a workspace role, `""` meaning any member. A non-member (`role` None) meets nothing,
+    and neither does a guest: a guest is not "any member"."""
     if not floor:
-        return role is not None
+        return ROLES.is_role(role)
     return ROLES.at_least(role, floor)
 
 

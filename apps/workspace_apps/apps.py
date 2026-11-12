@@ -23,6 +23,11 @@ class WorkspaceAppsConfig(AppConfig):
         from .models import AppInstallation  # noqa: PLC0415 — models: the app registry is not ready at module load
 
         post_delete.connect(_app_removed, sender=AppInstallation, dispatch_uid="workspace_apps.connection_shares")
+        from apps.workspaces import guests  # noqa: PLC0415 — the registry of what a guest may be in for
+
+        from .access import describe_guest_apps, validate_guest_apps  # noqa: PLC0415 — models: registry not ready at load
+
+        guests.register("apps", validate_guest_apps, describe_guest_apps)
 
 
 def _connection_surface(request, ref):

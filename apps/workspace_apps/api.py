@@ -76,12 +76,20 @@ def _member_or_404(request: HttpRequest, workspace: str) -> None:
         raise HttpError(404, f"workspace '{workspace}' not found")
 
 
-def _installation(request: HttpRequest, workspace: str, key: str, *, enabled: bool = True) -> AppInstallation:
+def _installation(request: HttpRequest, workspace: str, key: str, *, enabled: bool = True,
+                  guest_ok: bool = False) -> AppInstallation:
     """The app, for a member of its workspace. A switched-off app is 404 to its
-    users; those who manage it still reach it (to switch it back on)."""
-    _member_or_404(request, workspace)
+    users; those who manage it still reach it (to switch it back on).
+
+    `guest_ok` (the routes that USE an app: read it, query, act, history, files) also lets in a
+    GUEST of the workspace whose scope names this enabled app; to a guest every other app, and
+    every other route, is the same 404 a stranger gets."""
     inst = (AppInstallation.objects.select_related("template", "live__template_version")
             .filter(workspace_id=workspace, key=key).first())
+    if not perms.can(request.user, workspace, perms.READ):
+        if guest_ok and inst is not None and inst.enabled and access.is_guest_of(request.user, inst):
+            return inst
+        raise HttpError(404, f"workspace '{workspace}' not found")
     if inst is None or (enabled and not inst.enabled and not access.may_manage(request.user, workspace)):
         raise HttpError(404, f"no app '{key}' in '{workspace}'")
     return inst
@@ -280,10 +288,10 @@ def install_workspace_app(request: HttpRequest, workspace: str, payload: Install
 
 @router.get("/workspace-apps/{workspace}/{key}", response=InstallationOut,
             summary="One installed app: its pages for you, your roles, its fields and settings")
-@gate("member")
+@gate("member", "app-guest")
 def get_workspace_app(request: HttpRequest, workspace: str, key: str, draft: int | None = None) -> InstallationOut:
     """`draft=<id>` describes that draft's test copy instead (maintainers)."""
-    inst = _installation(request, workspace, key)
+    inst = _installation(request, workspace, key, guest_ok=True)
     try:
         return _out(request, inst, _space(request, inst, draft))
     except services.Refused as exc:
@@ -537,14 +545,14 @@ def rollback_workspace_app(request: HttpRequest, workspace: str, key: str, paylo
 
 @router.get("/workspace-apps/{workspace}/{key}/query", response=list[dict],
             summary="Read records of one of an app's collections")
-@gate("member")
+@gate("member", "app-guest")
 def query_workspace_app(request: HttpRequest, workspace: str, key: str, collection: str, where: str = "",
                         order: str = "-created_at", limit: int = 100, draft: int | None = None,
                         as_public: bool = False) -> list[dict]:
     """`where` is a JSON object of field equalities (plus `id`). Needs the
     collection's `read` role. `as_public` reads as a visitor would (a maintainer
     previewing a public page in a draft)."""
-    inst = _installation(request, workspace, key)
+    inst = _installation(request, workspace, key, guest_ok=True)
     try:
         space = _space(request, inst, draft)
         m = services.manifest_for(inst, space)
@@ -559,11 +567,11 @@ def query_workspace_app(request: HttpRequest, workspace: str, key: str, collecti
 
 @router.post("/workspace-apps/{workspace}/{key}/actions/{action}", response=dict,
              summary="Run one of an app's actions (its only way to write)")
-@gate("member", kind="content",
+@gate("member", "app-guest", kind="content",
       viewer_write="an app action declares its own role; services.act refuses a caller without it")
 def act_workspace_app(request: HttpRequest, workspace: str, key: str, action: str, payload: ActionIn,
                       draft: int | None = None, as_public: bool = False) -> dict:
-    inst = _installation(request, workspace, key)
+    inst = _installation(request, workspace, key, guest_ok=True)
     try:
         space = _space(request, inst, draft)
         m = services.manifest_for(inst, space)
@@ -581,10 +589,10 @@ def act_workspace_app(request: HttpRequest, workspace: str, key: str, action: st
 
 @router.get("/workspace-apps/{workspace}/{key}/records/{record_id}/history", response=list[dict],
             summary="Every action that wrote one record, newest first")
-@gate("member")
+@gate("member", "app-guest")
 def workspace_app_record_history(request: HttpRequest, workspace: str, key: str, record_id: int,
                                  draft: int | None = None) -> list[dict]:
-    inst = _installation(request, workspace, key)
+    inst = _installation(request, workspace, key, guest_ok=True)
     try:
         space = _space(request, inst, draft)
         return services.history(inst, roles=_roles(request, inst, space, services.manifest_for(inst, space)),
@@ -605,10 +613,10 @@ def _file_field(m: dict, collection: str, field: str, *, public: bool) -> dict:
 
 @router.post("/workspace-apps/{workspace}/{key}/files", response={201: FileOut},
              summary="Upload a file for a file field (then pass its id to an action)")
-@gate("member", kind="content", viewer_write="the action that uses the file checks the role; an unused upload is swept")
+@gate("member", "app-guest", kind="content", viewer_write="the action that uses the file checks the role; an unused upload is swept")
 def upload_workspace_app_file(request: HttpRequest, workspace: str, key: str, collection: Form[str],
                               field: Form[str], file: File[UploadedFile], draft: int | None = None) -> Status:
-    inst = _installation(request, workspace, key)
+    inst = _installation(request, workspace, key, guest_ok=True)
     try:
         space = _space(request, inst, draft)
         spec = _file_field(services.manifest_for(inst, space), collection, field, public=False)
@@ -626,10 +634,10 @@ def upload_workspace_app_file(request: HttpRequest, workspace: str, key: str, co
 
 @router.get("/workspace-apps/{workspace}/{key}/files/{file_id}", response={200: None},
             summary="Download a file a record you can read points at")
-@gate("member")
+@gate("member", "app-guest")
 def download_workspace_app_file(request: HttpRequest, workspace: str, key: str, file_id: int,
                                 draft: int | None = None):
-    inst = _installation(request, workspace, key)
+    inst = _installation(request, workspace, key, guest_ok=True)
     try:
         space = _space(request, inst, draft)
         f = services.readable_file(inst, roles=_roles(request, inst, space, services.manifest_for(inst, space)),
@@ -691,11 +699,11 @@ def delete_workspace_app_grant(request: HttpRequest, workspace: str, key: str, g
 
 @router.post("/workspace-apps/{workspace}/{key}/actions/{action}/bulk", response=dict,
              summary="Run one of an app's bulk actions over many records (bulk reject)")
-@gate("member", kind="content",
+@gate("member", "app-guest", kind="content",
       viewer_write="an app action declares its own role; services.act refuses a caller without it")
 def bulk_act_workspace_app(request: HttpRequest, workspace: str, key: str, action: str, payload: BulkActionIn,
                            draft: int | None = None) -> dict:
-    inst = _installation(request, workspace, key)
+    inst = _installation(request, workspace, key, guest_ok=True)
     try:
         space = _space(request, inst, draft)
         m = services.manifest_for(inst, space)

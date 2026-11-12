@@ -230,21 +230,26 @@ export function WorkspaceMembersPage(): JSX.Element | null {
                 m.role === 'owner' && !m.inherited && directOwnerCount === 1 && !hasInheritedOwner
               // A row I may act on: below me (an owner may act on anyone).
               const manageable = !m.inherited && mayManageMember(myRole, m.role)
+              // A guest is in for one app (their `label` says which): removed like anyone, never
+              // re-roled from here — a guest is made only by a guest invite.
+              const guest = m.role === 'guest'
               return {
                 key: m.user_id,
                 name: m.email,
                 href: scopedPath(slug, `/members/${m.user_id}`),
                 role: m.role,
                 options: roleOptions(grantable),
-                editable: manageable,
+                editable: manageable && !guest,
                 roleDisabled: isSoleOwner,
-                why: m.inherited
+                why: guest
+                  ? m.label || 'Guest'
+                  : m.inherited
                   ? 'via parent workspace'
                   : manageable && isSoleOwner
                     ? 'Only owner — promote someone else first'
                     : null,
                 onRoleChange: (next) => handleRoleChange(m.user_id, next as MemberRole),
-                onRemove: manageable ? () => handleRemoveMember(m.user_id) : undefined,
+                onRemove: manageable || (guest && canManage) ? () => handleRemoveMember(m.user_id) : undefined,
               }
             })}
           />

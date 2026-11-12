@@ -189,6 +189,15 @@ export function resolveNav(opts: {
   })
 }
 
+/** The whole header for a GUEST of `workspace`: one link per app their scope opens, and
+ *  nothing else of the workspace (docs/architecture/access.md § Guests). */
+export function guestNav(workspace: string, appKeys: string[]): ResolvedNavEntry[] {
+  return appKeys.map((key) => ({
+    kind: 'link' as const,
+    item: { href: scopedPath(workspace, `/apps/${key}`), label: key.charAt(0).toUpperCase() + key.slice(1) },
+  }))
+}
+
 /** Every resolved destination an entry stands for. */
 export function entryItems(entry: ResolvedNavEntry): ResolvedNavItem[] {
   return entry.kind === 'link' ? [entry.item] : entry.items

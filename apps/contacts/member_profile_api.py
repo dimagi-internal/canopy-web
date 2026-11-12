@@ -35,7 +35,8 @@ def get_member(request: HttpRequest, slug: str, user_id: int) -> MemberProfileOu
     if m is None:
         raise HttpError(404, f"workspace '{slug}' not found")
     ws = m.workspace
-    row = next((r for r in services.effective_memberships(ws) if r.user_id == user_id), None)
+    # A guest is listed on the members page, so their own page opens too (as "guest").
+    row = next((r for r in services.effective_memberships(ws, include_guests=True) if r.user_id == user_id), None)
     if row is None:
         raise HttpError(404, f"no member {user_id} in workspace '{slug}'")
     user = row.user
@@ -46,12 +47,16 @@ def get_member(request: HttpRequest, slug: str, user_id: int) -> MemberProfileOu
     operates = [MemberAgentRef(slug=a.slug, name=a.name)
                 for a in Agent.objects.filter(owner_id=user_id, workspace=ws).order_by("name")]
 
-    mine = {r.workspace_id for r in WorkspaceMembership.objects.filter(user=request.user)}
+    # Never a guest row on either side: a workspace the caller is only a guest of is not theirs to
+    # list, and one the member is only a guest of is no shared membership.
+    mine = {r.workspace_id for r in WorkspaceMembership.objects.filter(user=request.user)
+            .exclude(role=WorkspaceMembership.GUEST)}
     shared = [
         MemberWorkspaceRef(slug=r.workspace.slug, display_name=r.workspace.display_name or r.workspace.slug,
                            role=r.role)
         for r in WorkspaceMembership.objects.filter(user_id=user_id, workspace_id__in=mine)
-        .exclude(workspace=ws).select_related("workspace").order_by("workspace__slug")
+        .exclude(workspace=ws).exclude(role=WorkspaceMembership.GUEST)
+        .select_related("workspace").order_by("workspace__slug")
     ]
 
     admin = None

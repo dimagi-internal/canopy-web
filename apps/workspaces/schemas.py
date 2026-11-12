@@ -12,6 +12,8 @@ from apps.common.schemas import StrictModel
 from .models import SLUG_PATTERN
 
 Role = Literal["superuser", "owner", "admin", "editor", "viewer"]
+#: What an invite may grant: a role, or `guest` with a scope (`InviteCreateIn.scope`).
+InviteRole = Literal["superuser", "owner", "admin", "editor", "viewer", "guest"]
 
 
 class WorkspaceCreateIn(StrictModel):
@@ -145,6 +147,10 @@ class MemberOut(StrictModel):
     # An owner of a PARENT workspace, listed because they own this one too.
     # There is no row here to change or remove — the grant lives on the parent.
     inherited: bool = False
+    # A guest's scope (`{"apps": {key: app role}}`) and how it reads: "Guest: Household
+    # (assistant)". Empty for everyone else.
+    scope: dict = {}
+    label: str = ""
 
 
 class MemberAgentRef(StrictModel):
@@ -241,7 +247,10 @@ class InviteCreateIn(StrictModel):
     # e.g. a garbage or wildcard-shaped value there.
     email: EmailStr = Field(max_length=200)
     # What accepting grants. Viewer unless the inviting admin picks otherwise.
-    role: Role = "viewer"
+    role: InviteRole = "viewer"
+    # Only with `role: "guest"`, and required then: what the guest is in for,
+    # `{"apps": {"<app key>": "<app role>"}}`. The inviter must also maintain each app.
+    scope: dict | None = None
 
 
 InviteEmailStatus = Literal["sent", "throttled", "not_configured", "failed"]
@@ -251,6 +260,8 @@ class InviteOut(StrictModel):
     id: int
     email: str
     role: str
+    # A guest invite's scope; empty for any other role.
+    scope: dict = {}
     token: str
     expires_at: dt.datetime
     accepted_at: dt.datetime | None = None
@@ -287,6 +298,7 @@ class MyInviteOut(StrictModel):
     workspace_slug: str
     workspace_display_name: str
     role: str
+    scope: dict = {}
     invited_by_email: str | None = None
     expires_at: dt.datetime
 
@@ -776,3 +788,13 @@ class WorkspaceAnalyticsOut(StrictModel):
     agents: list[AnalyticsAgentOut]
     repositories: list[AnalyticsRepositoryOut]
     users: list[AnalyticsUserOut]
+
+
+class GuestWorkspaceOut(StrictModel):
+    """A workspace the caller is ONLY a guest of, and what for: the shell shows them these
+    apps and nothing else of it."""
+
+    slug: str
+    display_name: str
+    # {"apps": {"<app key>": "<app role>"}}
+    scope: dict

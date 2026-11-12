@@ -8,7 +8,7 @@ const DAY = 86_400_000
 
 function inv(overrides: Partial<InviteOut> = {}): InviteOut {
   return {
-    id: 1, email: 'b@x.org', role: 'editor', token: 't',
+    id: 1, email: 'b@x.org', role: 'editor', scope: {}, token: 't',
     expires_at: new Date(NOW + 3 * DAY).toISOString(),
     accepted_at: null, revoked_at: null,
     ...overrides,

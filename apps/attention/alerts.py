@@ -542,6 +542,7 @@ def notify_new_blocking(now) -> None:
     members: dict[str, set[int]] = {root: set() for root in tree_slugs}
     owner_of = {slug: root for root, slugs in tree_slugs.items() for slug in slugs}
     for slug, uid in (WorkspaceMembership.objects.filter(workspace_id__in=list(owner_of))
+                      .exclude(role=WorkspaceMembership.GUEST)  # a guest closes nothing of the tree's
                       .values_list("workspace_id", "user_id")):
         members[owner_of[slug]].add(uid)
     users = {u.pk: u for u in get_user_model().objects.filter(pk__in=set().union(*members.values()), is_active=True)}

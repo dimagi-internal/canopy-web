@@ -16,10 +16,18 @@ Three tiers act on the app itself, beside its own roles:
   roll back. Not a workspace role: running the hiring app is not running the
   workspace.
 * GRANT (`members.manage`): give or take app roles by name.
+
+A GUEST of the workspace (`WorkspaceMembership.GUEST`, docs/architecture/access.md § Guests)
+is no member: `perms.can` answers no for them on every permission. `roles_for` opts in for them
+alone, and gives a guest exactly the app role their scope names for THIS app, beside `public`
+— never `member`, never a capability role, never a grant, and nothing in any other app.
+`validate_guest_apps` is what a guest scope may name, registered with `workspaces.guests`.
 """
 from __future__ import annotations
 
+from apps.workspaces import guests
 from apps.workspaces import permissions as perms
+from apps.workspaces import services as wsvc
 
 from .models import AppInstallation, AppRoleGrant
 
@@ -33,7 +41,8 @@ def roles_for(user, installation: AppInstallation, manifest: dict | None = None)
     held = {"public"}
     ws = installation.workspace_id
     if not perms.can(user, ws, perms.READ):
-        return held
+        guest_role = guest_role_for(user, installation, manifest)
+        return held | ({guest_role} if guest_role else set())
     held.add("member")
     for name, spec in ((manifest or installation.manifest).get("roles") or {}).items():
         cap = spec.get("capability")
@@ -74,3 +83,45 @@ def may_help(agent_user, workspace) -> bool:
 def may_grant(user, workspace) -> bool:
     """Give or take an app role by name: the tier that already manages members."""
     return perms.can(user, workspace, perms.MEMBERS_MANAGE)
+
+
+def guest_role_for(user, installation: AppInstallation, manifest: dict | None = None) -> str | None:
+    """The app role a GUEST of the app's workspace holds in this app — the one their scope
+    names, and only while the app still declares it — else None. A member is never a guest."""
+    if not getattr(user, "is_authenticated", False):
+        return None
+    role = wsvc.guest_app_role(user, installation.workspace_id, installation.key)
+    if role is None or role not in ((manifest or installation.manifest).get("roles") or {}):
+        return None
+    return role
+
+
+def is_guest_of(user, installation: AppInstallation) -> bool:
+    """Does `user` reach this app ONLY as a guest of its workspace, with a role in it?"""
+    return guest_role_for(user, installation) is not None
+
+
+def validate_guest_apps(workspace: str, entries: dict, by) -> dict:
+    """What a guest scope's `apps` may name (`workspaces.guests.validate_scope`): each an app
+    installed here, at a role its manifest declares (never `maintainer`, `member` or
+    `public`), and given by someone who may maintain that app."""
+    out: dict[str, str] = {}
+    for key, role in entries.items():
+        inst = AppInstallation.objects.filter(workspace_id=workspace, key=key).first()
+        if inst is None:
+            raise guests.ScopeError(f"no app {key!r} in {workspace!r}")
+        declared = inst.manifest.get("roles") or {}
+        if not isinstance(role, str) or role in (MAINTAINER, "member", "public") or role not in declared:
+            raise guests.ScopeError(f"app {key!r} has no role {role!r} a guest can hold "
+                                    f"(it declares: {', '.join(sorted(declared)) or 'none'})")
+        if by is None or not may_maintain(by, inst):
+            raise guests.ScopeError(f"giving a guest app {key!r} needs the right to maintain it", status=403)
+        out[key] = role
+    return out
+
+
+def describe_guest_apps(workspace: str, entries: dict) -> list[str]:
+    """"Household (assistant)" for each app a guest scope names."""
+    names = dict(AppInstallation.objects.filter(workspace_id=workspace, key__in=list(entries))
+                 .values_list("key", "name"))
+    return [f"{names.get(key, key)} ({role})" for key, role in entries.items()]

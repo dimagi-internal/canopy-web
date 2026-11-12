@@ -49,8 +49,10 @@ def _c(user) -> Client:
 # --- the table --------------------------------------------------------------------
 
 def test_the_ladder_is_viewer_editor_admin_owner_superuser():
+    # A guest sits below viewer and off the permission ladder (docs/architecture/access.md § Guests).
     assert [r for r, _ in sorted(M.ROLE_RANK.items(), key=lambda kv: kv[1])] == [
-        M.VIEWER, M.EDITOR, M.ADMIN, M.OWNER, M.SUPERUSER]
+        M.GUEST, M.VIEWER, M.EDITOR, M.ADMIN, M.OWNER, M.SUPERUSER]
+    assert perms.ROLES.roles == (M.VIEWER, M.EDITOR, M.ADMIN, M.OWNER, M.SUPERUSER)
 
 
 @pytest.mark.parametrize("capability,lowest", [

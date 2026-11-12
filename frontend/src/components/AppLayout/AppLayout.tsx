@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import { Outlet, Link, matchPath, useLocation, useParams, useNavigate } from 'react-router-dom'
+import { Outlet, Link, Navigate, matchPath, useLocation, useParams, useNavigate } from 'react-router-dom'
 import { clsx } from 'clsx'
 import { ChevronDown, CircleHelp } from 'lucide-react'
 import { PresenceBadge, pageKeyFor, usePresence } from 'canopy-ui/presence'
@@ -14,14 +14,16 @@ import {
 } from 'canopy-ui/ui'
 import { useAuth } from '@/auth/AuthProvider'
 import { useTheme } from '@/theme/ThemeProvider'
-import { WorkspaceProvider, useWorkspace, useWorkspaceRole } from '@/workspace/WorkspaceProvider'
+import { WorkspaceProvider, useGuestWorkspace, useWorkspace, useWorkspaceRole } from '@/workspace/WorkspaceProvider'
+import { guestAppKeys } from '@/api/guests'
+import { scopedPath } from '@/lib/scopedLinks'
 import { wsUrl } from '@/lib/wsUrl'
 import { usePresenceReconnectNonce } from '@/presence/usePresenceReconnectNonce'
 import { canopyPresenceRules } from '@/presence/routes'
 import { CanopyWidget } from '@/widget/CanopyWidget'
 import { CommandPalette } from '@/components/work/CommandPalette'
 import { KeyboardHelp } from '@/components/work/KeyboardHelp'
-import { ACCOUNT_ITEMS, HELP_ITEMS, activeHref, isNavEntryActive, menuSections, resolveNav, switchWorkspacePath, type ResolvedNavEntry, type ResolvedNavItem } from './nav'
+import { ACCOUNT_ITEMS, HELP_ITEMS, activeHref, guestNav, isNavEntryActive, menuSections, resolveNav, switchWorkspacePath, type ResolvedNavEntry, type ResolvedNavItem } from './nav'
 import { CanopyWordmark } from '@/brand/CanopyWordmark'
 import { useAppBarHidden } from './appBarStore'
 
@@ -348,8 +350,14 @@ function AppShell() {
   // See `nav.ts` for the grouping and why the header is menus rather than a
   // flat row of links.
   const role = useWorkspaceRole(active)
-  const nav = resolveNav({ isAuthed, active, role })
+  // A guest of the workspace in the address (never a member of it) sees only the apps their
+  // scope opens; anywhere else in that workspace sends them to the first of them.
+  const guest = useGuestWorkspace(tenantKey)
+  const guestApps = guestAppKeys(guest)
+  const nav = guest ? guestNav(guest.slug, guestApps) : resolveNav({ isAuthed, active, role })
   const currentHref = activeHref(nav, location.pathname)
+  const guestElsewhere = !!guest && guestApps.length > 0
+    && !guestApps.some((k) => matchPath({ path: scopedPath(guest.slug, `/apps/${k}`), end: false }, location.pathname))
 
   // Collapse the mobile menu whenever the route changes (e.g. tapping a link).
   useEffect(() => {
@@ -513,13 +521,13 @@ function AppShell() {
         // 69px, so every full-bleed page was 16px taller than the screen and
         // scrolled past its own bottom. `dvh` also follows the mobile URL bar,
         // which `vh` does not.
-        <main className="min-h-0 flex-1"><Outlet key={tenantKey ?? ''} /></main>
+        <main className="min-h-0 flex-1">{guestElsewhere ? <Navigate to={nav[0].kind === 'link' ? nav[0].item.href : '/home'} replace /> : <Outlet key={tenantKey ?? ''} />}</main>
       ) : (
         // `px-6` unconditionally, on top of the `p-6` several pages set for
         // themselves, spent 96px of a 375px screen on padding — a quarter of the
         // width, before any content. The gutter now scales with the viewport;
         // the header above already did this.
-        <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8"><Outlet key={tenantKey ?? ''} /></main>
+        <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">{guestElsewhere ? <Navigate to={nav[0].kind === 'link' ? nav[0].item.href : '/home'} replace /> : <Outlet key={tenantKey ?? ''} />}</main>
       )}
       {/* Inside the authenticated shell only: it mints a token for the signed-in
           user, and a launcher on a chrome-less public viewer (/share, /storyboard,
