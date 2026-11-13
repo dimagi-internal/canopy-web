@@ -100,7 +100,8 @@ def _after_create(pk: int) -> None:
     delivery.raise_alert_safely(pk)
 
 
-def decide(request_id: int, user, decision: str, *, comment: str = "", via: str = "web") -> ApprovalRequest:
+def decide(request_id: int, user, decision: str, *, comment: str = "", via: str = "web",
+           stepped_up: bool = False) -> ApprovalRequest:
     if decision not in ("approve", "decline"):
         raise ApprovalError("decision must be approve or decline", 422)
     if not getattr(user, "is_authenticated", False):
@@ -122,6 +123,8 @@ def decide(request_id: int, user, decision: str, *, comment: str = "", via: str 
             raise ApprovalError(f"This request is no longer valid: {exc}", 409) from exc
         if not k.may_approve(user, p, described):
             raise ApprovalError(f"You can't approve this: {k.label.lower()} needs {k.needs}.", 403)
+        if decision == "approve" and k.step_up and not stepped_up:
+            raise ApprovalError(f"{k.label} needs your passkey: open this request in canopy and approve it there.", 403)
         comment = (comment or "").strip()
         if decision == "decline":
             _close(req, ApprovalRequest.DECLINED, user, via=via, comment=comment, event=ApprovalEvent.DECLINED)

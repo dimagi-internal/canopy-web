@@ -90,7 +90,7 @@ def pushes():
 def test_the_kinds_are_a_closed_catalog_with_typed_params(world):
     cat = {k["key"]: k for k in _client(world["alice"]).get("/api/approvals/kinds").json()}
     assert set(cat) == {"workspace.member.add", "workspace.member.set_role", "agent.admin.add", "agent.run_turns",
-                        "local_app.release"}
+                        "local_app.release", "vault.attach_agent"}
     add = cat["workspace.member.add"]
     assert add["needs"] and add["does"]
     assert set(add["params_schema"]["properties"]) == {"workspace", "email", "role"}

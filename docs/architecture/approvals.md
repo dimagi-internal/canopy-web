@@ -27,7 +27,7 @@ its buttons). Page: `/w/:workspace/approvals/:id` (`frontend/src/pages/ApprovalP
 - **A link never decides by itself.** The email's buttons open the request with the choice made, to
   confirm (mail scanners open every link: `channel_email.py`). A Slack click decides, but only from
   the DM canopy sent THAT person for THAT request, matched on the message ts
-  (`slack/approvals.py::handle_click`). A decision carries no passkey step-up.
+  (`slack/approvals.py::handle_click`). A decision carries no passkey step-up, except for a kind with `Kind.step_up` (`vault.attach_agent`, which stands in for a route that needs one): the web decide route asks for it (`apps/approvals/api.py::decide_approval`), and `services.decide` refuses an approval from a Slack click or alert button for such a kind.
 
 ## Delivery (`delivery.deliver`)
 

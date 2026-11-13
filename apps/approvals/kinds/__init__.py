@@ -59,6 +59,9 @@ class Kind:
     needs: str = ""
     #: A line for the catalog: what the handler does.
     does: str = ""
+    #: Approving needs a fresh passkey step-up in a browser, as the route this kind stands in for
+    #: does. Only the web page can supply one: a Slack click or an alert button is refused.
+    step_up: bool = False
 
     def describe(self, p) -> Described:  # pragma: no cover — abstract
         raise NotImplementedError
@@ -145,6 +148,6 @@ def _load() -> None:
     global _loaded
     if _loaded:
         return
-    from . import agent_admin, agent_turns, workspace_members  # noqa: F401, PLC0415 — registers the kinds
+    from . import agent_admin, agent_turns, vault_attach, workspace_members  # noqa: F401, PLC0415 — registers the kinds
 
     _loaded = True
