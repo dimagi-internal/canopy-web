@@ -389,7 +389,8 @@ def test_a_forged_or_replayed_frame_is_dropped_and_does_nothing():
         session, up, _, _ = await meeting_session(s, phone, "sess-3")
         await session.open()
         other_session = rc.Sealer(rc.unb64u(rc.b64u(os.urandom(32))), "sess-3")
-        frames = [other_session.control({"type": "start", "notice_accepted": True, "nonce": session.start_nonce}) for _ in range(201)]
+        start = {"type": "start", "notice_accepted": True, "nonce": session.start_nonce}
+        frames = [other_session.control(start) for _ in range(201)]
         results = [await session.receive(f) for f in frames]
         assert session.input is None and results[0] is True and results[-1] is False
     asyncio.run(go())
@@ -402,7 +403,8 @@ def test_start_queues_the_relay_input_then_starts_meeting_assistant():
         s.phones.add(phone.key, "Pixel")
         session, up, down, sent = await meeting_session(s, phone)
         await session.open()
-        assert await session.receive(up.control({"type": "start", "notice_accepted": True, "nonce": session.start_nonce}))
+        assert await session.receive(up.control({"type": "start", "notice_accepted": True,
+                                                 "nonce": session.start_nonce}))
         await settle(s)
         argv, queued = runner.calls[0]
         assert argv == APP_START
@@ -428,7 +430,8 @@ def test_start_needs_the_notice_accepted_and_one_meeting_at_a_time():
         meeting = store.new_meeting("", "microphone")
         proc = fake_recorder(meeting)
         try:
-            await session.receive(up.control({"type": "start", "notice_accepted": True, "nonce": session.start_nonce}))
+            await session.receive(up.control({"type": "start", "notice_accepted": True,
+                                              "nonce": session.start_nonce}))
             assert opened(down, sent[2:])[-1] == {"type": "state", "state": "failed", "detail": "busy"}
             assert runner.calls == []
         finally:
