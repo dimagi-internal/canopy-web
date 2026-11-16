@@ -65,6 +65,8 @@ const LAPTOP_FAILURES: Record<string, (name: string) => string> = {
   busy: (n) => `${n} is already recording a meeting. End it there first.`,
   notice_not_accepted: () => 'The recording notice has to be acknowledged first.',
   app_did_not_start: (n) => `Meeting assistant didn't start on ${n}. Check it's installed there.`,
+  did_not_start: (n) => `${n} started Meeting assistant, but it never began recording. Try again.`,
+  update_page: (n) => `Reload this page: Canopy Listen on ${n} needs its newest version.`,
 }
 
 /** A laptop's `failed` detail in words: its codes, or its own sentence. */
@@ -189,6 +191,7 @@ export const PAIR_CODE_TIMEOUT_MS = 150_000
 const CODE_REFUSALS: Record<string, (name: string) => string> = {
   busy: (name) => `${name} is already showing a pairing code. Answer that one first, then try again.`,
   declined: (name) => `Pairing was declined on ${name}, or nobody answered there in time.`,
+  wait: (name) => `A pairing was just declined on ${name}. Wait half a minute, then try again.`,
 }
 
 /**
@@ -352,6 +355,8 @@ export interface MeetingView {
   backlog: number
   /** Why an `unsaved` end wasn't confirmed as saved. */
   note?: string
+  /** The laptop no longer knows this phone: the way on is to pair again. */
+  unpaired?: boolean
   /** ms epoch the recording started on this phone. */
   startedAt?: number
   level: number
@@ -485,6 +490,12 @@ export class Meeting {
         onBacklog: (seconds) => {
           if (seconds !== this.view.backlog) this.set({ backlog: seconds })
         },
+        onRefused: (reason) => {
+          if (reason === 'unpaired') {
+            this.set({ unpaired: true })
+            this.fail(`${this.pairing.laptop_name} doesn't know this phone any more: it was unpaired there, or its key changed. Pair again.`)
+          }
+        },
       },
       this.deps.socket,
     )
@@ -547,7 +558,10 @@ export class Meeting {
       case 'ready':
         this.disarm()
         if (typeof m.name === 'string' && m.name) this.set({ laptopName: m.name })
-        void this.relay?.sendControl({ type: 'start', notice_accepted: true })
+        // The laptop's fresh nonce goes back sealed, so an old session's frames can't start one.
+        void this.relay?.sendControl({
+          type: 'start', notice_accepted: true, ...(typeof m.nonce === 'string' ? { nonce: m.nonce } : {}),
+        })
         this.set({ status: 'recording', startedAt: Date.now(), laptopConnected: true, laptopSlow: false })
         return
       case 'state': {

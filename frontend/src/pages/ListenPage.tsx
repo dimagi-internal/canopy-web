@@ -187,7 +187,16 @@ export function ListenPage({ deps: given }: { deps?: ListenDeps } = {}): JSX.Ele
             }}
           />
         )}
-        {screen.kind === 'meeting' && <MeetingScreen meeting={screen.meeting} onBack={() => void goHome()} />}
+        {screen.kind === 'meeting' && (
+          <MeetingScreen
+            meeting={screen.meeting}
+            onBack={() => void goHome()}
+            onRepair={async () => {
+              await deps.store.setPairing(null).catch(() => undefined)
+              setScreen({ kind: 'unpaired' })
+            }}
+          />
+        )}
       </main>
     </div>
   )
@@ -584,7 +593,7 @@ function speakerName(view: MeetingView, n: number): string {
   return view.speakers[n] || `Speaker ${n + 1}`
 }
 
-function MeetingScreen({ meeting, onBack }: { meeting: Meeting; onBack: () => void }) {
+function MeetingScreen({ meeting, onBack, onRepair }: { meeting: Meeting; onBack: () => void; onRepair: () => void }) {
   const view = useMeetingView(meeting)
   const live = view.status === 'recording' || view.status === 'waiting' || view.status === 'connecting'
   useWakeLock(live || view.status === 'ending')
@@ -607,7 +616,7 @@ function MeetingScreen({ meeting, onBack }: { meeting: Meeting; onBack: () => vo
   }, [meeting])
 
   if (view.status === 'saved' || view.status === 'unsaved' || view.status === 'discarded' || view.status === 'failed') {
-    return <Ended view={view} onBack={onBack} />
+    return <Ended view={view} onBack={onBack} onRepair={onRepair} />
   }
 
   return (
@@ -779,7 +788,7 @@ function RenameSheet({ current, onCancel, onSave }: { current: string; onCancel:
   )
 }
 
-function Ended({ view, onBack }: { view: MeetingView; onBack: () => void }) {
+function Ended({ view, onBack, onRepair }: { view: MeetingView; onBack: () => void; onRepair: () => void }) {
   return (
     <Centered>
       {view.status === 'saved' && (
@@ -828,9 +837,13 @@ function Ended({ view, onBack }: { view: MeetingView; onBack: () => void }) {
           )}
         </>
       )}
-      <Button className="w-full h-12 rounded-xl text-base mt-4" onClick={onBack}>
-        {view.status === 'failed' ? 'Back' : 'Record another'}
-      </Button>
+      {view.unpaired ? (
+        <Button className="w-full h-12 rounded-xl text-base mt-4" onClick={onRepair}>Pair again</Button>
+      ) : (
+        <Button className="w-full h-12 rounded-xl text-base mt-4" onClick={onBack}>
+          {view.status === 'failed' ? 'Back' : 'Record another'}
+        </Button>
+      )}
     </Centered>
   )
 }

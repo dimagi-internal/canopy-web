@@ -277,3 +277,16 @@ def test_the_pending_poll_starts_each_waiting_session(monkeypatch):
 
     assert listen_pipe.poll_pending(Client(), base_url="x", bearer=lambda: "t") == 2
     assert seen == ["a", "b"]
+
+
+#: A home too deep for a socket path, and the stand-in canopy-listen's store.socket_path
+#: names for it (packages/canopy_listen/tests/test_serve.py pins the same pair).
+LONG_HOME = "/Users/someone/" + "deep/" * 20 + "listen"
+LONG_HOME_SOCKET = "canopy-listen-a69ff3d2bc9d.sock"
+
+
+def test_the_socket_path_is_canopy_listens_own(monkeypatch):
+    monkeypatch.setenv("CANOPY_LISTEN_HOME", "/Users/x/.canopy-listen")
+    assert str(listen_pipe.sock_path()) == "/Users/x/.canopy-listen/serve.sock"
+    monkeypatch.setenv("CANOPY_LISTEN_HOME", LONG_HOME)
+    assert listen_pipe.sock_path().name == LONG_HOME_SOCKET

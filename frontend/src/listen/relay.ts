@@ -14,7 +14,7 @@
  *   - After any gap, `onResync` tells the page to ask the laptop for what it missed.
  * Text frames are the server's own notices (`peer`, `ended`).
  */
-import { AUDIO, BadFrame, controlMessage, type Opener, type Sealer } from './relayCrypto'
+import { AUDIO, BadFrame, controlMessage, HANDSHAKE, readHandshake, type Opener, type Sealer } from './relayCrypto'
 
 export interface SocketLike {
   binaryType: string
@@ -48,6 +48,11 @@ export interface RelayEvents {
   onResync?(): void
   /** Seconds of audio waiting to go out (0 when caught up). */
   onBacklog?(seconds: number): void
+  /**
+   * The laptop refused this session in the clear (`unpaired`: it doesn't know this phone's
+   * key). Unauthenticated, like any server notice: it can only stop a session, never act.
+   */
+  onRefused?(reason: string): void
 }
 
 export type LostReason = 'dropped' | 'too_much' | 'taken' | 'refused' | 'signed_out'
@@ -247,6 +252,11 @@ export class PhoneRelay {
     }
     const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : data instanceof Uint8Array ? data : null
     if (!bytes) return
+    if (bytes[0] === HANDSHAKE && !this.ready) {
+      const note = readHandshake(bytes)
+      if (note?.type === 'refused') this.events.onRefused?.(typeof note.reason === 'string' ? note.reason : '')
+      return
+    }
     let message: Control | null
     try {
       message = controlMessage(await this.opener.open(bytes))

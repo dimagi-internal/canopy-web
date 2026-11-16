@@ -4,6 +4,8 @@ A person's phone records; their laptop, running canopy-listen, transcribes with 
 and runs Meeting assistant. Audio goes phone → canopy-web → the laptop's runner →
 canopy-listen, **end-to-end encrypted**: canopy-web and the runner carry ciphertext only.
 They can't read the audio or the transcript, pose as the phone, or pose as the laptop.
+That holds while the `/listen` page itself is trusted (see "What this protects against"
+under Crypto).
 
 ```
 phone (canopy-web /listen page)
@@ -37,11 +39,24 @@ exact frames. Summary:
   phone and that laptop can make it.
 - Frames are `0x01 | counter(8, BE) | GCM(…)`, with AAD = session id; counters strictly
   increase, so a replayed frame is refused.
+- **A replayed session can't start a meeting.** A session's keys come from the phone's
+  keys and the session id alone, so a server that kept an old session's frames could
+  replay all of them to the laptop.
+  - To stop that, the laptop's `ready` carries a fresh 16-byte `nonce`, and `start` must
+    carry the same nonce back, sealed.
+  - A `start` with no nonce is refused with `failed`/`update_page`: it comes from a page
+    older than the laptop, and reloading fixes it.
+  - A `start` with the wrong nonce is ignored.
+- **What this protects against, and what it doesn't.** It protects against a relay that
+  is compromised or curious: canopy-web and the runner see only ciphertext. It doesn't
+  protect against canopy-web serving a malicious `/listen` page, because that page holds
+  the phone's key in the browser and displays the pairing code. Trusting the page means
+  trusting canopy-web's code.
 
 Plaintext messages (after decryption):
 - 0x01 + int16 LE mono 16 kHz PCM: phone → laptop, about 0.5 s each.
 - 0x02 + JSON, phone → laptop:
-  - `{"type":"start","notice_accepted":true}`
+  - `{"type":"start","notice_accepted":true,"nonce":…}`: `nonce` is the one from `ready`.
   - `{"type":"end"}`: end and save.
   - `{"type":"discard"}`
   - `{"type":"rename","speaker":N,"name":"…"}`
@@ -50,7 +65,8 @@ Plaintext messages (after decryption):
     its current state, speakers, chat link and partial words.
   - pairing only: `{"type":"pair","phone_key":…,"label":…}`
 - 0x02 + JSON, laptop → phone:
-  - `{"type":"ready","name":laptop_name}`: sent first; the phone sends no audio before it.
+  - `{"type":"ready","name":laptop_name,"nonce":…}`: sent first; the phone sends no audio
+    before it.
   - `{"type":"state","state":"starting|recording|ending|ended|failed","detail":…}`
     - For `ended`, the detail says how it ended:
       - `saved`: a `saved` message follows.
@@ -72,13 +88,22 @@ Plaintext messages (after decryption):
   - `{"type":"speakers","speakers":[{"number":N,"name":…}]}`
   - `{"type":"chat","url":…}`
   - `{"type":"saved","url":…}`
-  - pairing only: `{"type":"paired","name":…}` / `{"type":"refused","reason":…}`
+  - pairing only: `{"type":"paired","name":…}` / `{"type":"refused","reason":…}`. When
+    pairing by code, the reasons are:
+    - `busy`: another dialog is open;
+    - `declined`;
+    - `wait`: a pairing was declined less than 30 s ago. Each attempt puts a dialog on the
+      Mac, so attempts can't be repeated back to back.
+- In the clear, `0x02 | {"type":"refused","reason":"unpaired"}`: the laptop doesn't know
+  this phone's key. It was unpaired there, or the laptop's key changed. The phone then
+  offers to pair again.
 
 ## canopy-web (`apps/listen`)
 
 `ListenSession` holds, per session:
 - `id` (UUID), `owner` → user, `runner` → `harness.Runner`, `kind` (`pair` | `meeting`);
-- `hello`: JSON of public keys only, `{"phone_eph": b64u, "phone_key": b64u | null, "label": str}`;
+- `hello`: JSON of public keys only, `{"phone_eph": b64u, "phone_key": b64u | null, "label": str}`,
+  plus `commit` (a base64url SHA-256) on a pairing by code;
 - `state` (`waiting` | `live` | `ended`), `end_reason`;
 - `created_at`, `connected_at`, `ended_at`, `bytes_up`, `bytes_down`.
 
@@ -86,7 +111,8 @@ Frames are never stored or logged, not even their sizes per frame (only totals).
 
 REST, for the signed-in person (session cookie or PAT):
 - `GET /api/listen/runners`: their runners, each `{id, name, online}`. Online is
-  "connected to /ws/runner in the last minute", by the existing runner presence.
+  `Runner.is_reachable`: the runner's daemon sent a heartbeat recently. It doesn't mean the
+  control socket is up; when that socket is down, the runner's pending poll covers it.
 - `POST /api/listen/sessions` `{runner_id, kind, hello}` → 201 `{id}`.
   - The runner must be theirs and live, or 404/409.
   - At most one non-ended `meeting` session per runner (409).
@@ -191,6 +217,14 @@ On `listen_start`, or a pending session from the REST fallback, the runner:
    - Close codes 4001, 4003 and 4009 are final.
 6. When the server ends the session, it writes an empty frame to serve (the explicit end)
    and closes both sides. When serve closes, it closes the socket to canopy-web.
+7. When it is the side that leaves, it first sends canopy-web the text
+   `{"type":"bye","reason":code}` (`listen_closed`, `server_lost`, `closed`). The server
+   logs the code, and only a code, so a failure on the laptop can be told apart from a
+   network drop.
+
+Serve's socket path follows `store.socket_path`'s rule: a home too deep for a unix socket
+gets a short stand-in under the temp folder. The runner repeats that rule because it can't
+import canopy-listen, and both test suites pin the same example.
 
 The runner never holds a key.
 
@@ -219,6 +253,14 @@ The runner never holds a key.
     `resume`.
   - A frame that doesn't open is dropped on its own, because a reconnecting pipe may resend
     one. 200 of them end the session.
+- **The laptop key** is `relay-key.json` (0600). If that file exists but can't be read, it
+  is kept as `relay-key.json.unreadable-<time>` and a warning is logged before a new key is
+  made, which means every phone must pair again.
+- **A start that never records:**
+  - After 240 s without becoming a recording, it reads as `failed`/`did_not_start`.
+  - Its input is ended, and its `next-input.json` is removed.
+  - A queued relay input carries `queued_at`. `canopy-listen start` ignores one older than
+    5 minutes, so a dead phone is never recorded in place of the microphone.
 - **A recorder that died** reads as `failed` / `recorder_stopped`: its pid is gone while
   `meeting.json` still says loading, recording or finishing.
 - **A meeting**, from the page, a tab or the phone:
