@@ -34,6 +34,8 @@ from . import store
 from .recorder import FileSource, MicSource, RelaySource, pid_of, record
 
 START_TIMEOUT_SECONDS = 180  # the first start downloads the models
+#: A queued relay input older than this belongs to a start that never happened: ignored.
+QUEUED_FOR_SECONDS = 300
 RELAY_SOURCES = ("phone", "browser-tab", "browser-mic")
 
 
@@ -55,7 +57,10 @@ def cmd_start(args) -> int:
         #   {"file": path, "speed": n}: a file played in, for testing (`canopy-listen queue-file`).
         try:
             spec = json.loads(queued.read_text())
-            if spec.get("relay"):
+            stale = time.time() - float(spec.get("queued_at") or time.time()) > QUEUED_FOR_SECONDS
+            if spec.get("relay") and stale:
+                pass  # a phone or tab that isn't streaming any more: the microphone, as usual
+            elif spec.get("relay"):
                 relay = str(spec["relay"])
                 source = spec.get("source") if spec.get("source") in RELAY_SOURCES else "relay"
             else:

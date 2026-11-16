@@ -35,8 +35,18 @@ _lock = threading.Lock()
 
 
 def sock_path() -> Path:
-    home = os.environ.get("CANOPY_LISTEN_HOME")
-    return Path(home) / "serve.sock" if home else Path.home() / ".canopy-listen" / "serve.sock"
+    """canopy-listen serve's socket: the same rule as its `store.socket_path`, which this
+    package can't import. A socket path must be under 104 bytes on macOS, so a home that
+    deep gets a short stand-in named after it. tests/test_listen_pipe.py pins the two."""
+    home = Path(os.environ.get("CANOPY_LISTEN_HOME") or Path.home() / ".canopy-listen")
+    path = home / "serve.sock"
+    if len(str(path).encode()) < 100:
+        return path
+    import hashlib
+    import tempfile
+
+    tag = hashlib.sha256(str(home).encode()).hexdigest()[:12]
+    return Path(tempfile.gettempdir()) / f"canopy-listen-{tag}.sock"
 
 
 def listen_cli() -> str | None:
@@ -274,6 +284,10 @@ def pipe(session_id: str, kind: str, hello: dict, *, base_url: str, bearer, conn
         link.replace(fresh)
     done.set()
     link.over.set()
+    if reason["why"] in ("listen_closed", "server_lost", "closed"):
+        # Why this side left, for the server's log: a code, never content.
+        with contextlib.suppress(Exception):
+            link.ws.send(json.dumps({"type": "bye", "reason": reason["why"]}))
     for closer in (link.ws.close, lambda: local.shutdown(socket.SHUT_RDWR), local.close):
         with contextlib.suppress(Exception):
             closer()

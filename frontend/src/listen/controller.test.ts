@@ -443,4 +443,20 @@ describe('Meeting', () => {
     await vi.waitFor(() => expect(died.meeting.view.status).toBe('failed'))
     expect(died.meeting.view.error).toBe('The recorder on MBP stopped unexpectedly. What it heard so far is saved there.')
   })
+
+  it("carries the laptop's nonce back in start", async () => {
+    const { meeting, ws, fromPhone, toPhone } = await started()
+    ws.binary(await toPhone.control({ type: 'ready', name: 'MBP', nonce: 'fresh-nonce' }))
+    await vi.waitFor(() => expect(meeting.view.status).toBe('recording'))
+    await vi.waitFor(() => expect(ws.sent).toHaveLength(1))
+    expect(controlMessage(await fromPhone.open(ws.sent[0]))).toEqual({ type: 'start', notice_accepted: true, nonce: 'fresh-nonce' })
+  })
+
+  it('a laptop that no longer knows this phone says so, and offers to pair again', async () => {
+    const { meeting, ws } = await started()
+    ws.binary(handshakeFrame({ type: 'refused', reason: 'unpaired' }))
+    await vi.waitFor(() => expect(meeting.view.status).toBe('failed'))
+    expect(meeting.view.unpaired).toBe(true)
+    expect(meeting.view.error).toMatch(/doesn't know this phone any more/)
+  })
 })

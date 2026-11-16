@@ -271,23 +271,95 @@ def test_the_laptop_key_is_made_once_and_kept_private():
 # --- the meeting session -----------------------------------------------------------
 
 
-def test_an_unpaired_phone_is_refused_and_told_nothing():
-    async def go():
-        s = make()
-        session, _, _, sent = await meeting_session(s, Phone())
-        assert await session.open() is False
-        assert sent == []
-    asyncio.run(go())
-
-
 def test_ready_comes_first_and_says_who_this_is():
     async def go():
         s, phone = make(), Phone()
         s.phones.add(phone.key, "Pixel")
         session, _, down, sent = await meeting_session(s, phone)
         assert await session.open()
-        assert opened(down, sent) == [{"type": "ready", "name": "Test Mac"}]
+        got = opened(down, sent)
+        assert got == [{"type": "ready", "name": "Test Mac", "nonce": session.start_nonce}]
     asyncio.run(go())
+
+
+def test_a_start_must_answer_this_sessions_ready():
+    """The laptop's `ready` carries a fresh nonce that `start` must carry back, so frames
+    kept from an older session with the same keys can't start a meeting here."""
+    async def go():
+        runner = Runner()
+        s, phone = make(runner), Phone()
+        s.phones.add(phone.key, "Pixel")
+        session, up, down, sent = await meeting_session(s, phone)
+        await session.open()
+        ready = opened(down, sent)[0]
+        assert ready["type"] == "ready" and len(rc.unb64u(ready["nonce"])) == 16
+        assert await session.receive(up.control({"type": "start", "notice_accepted": True, "nonce": "b2xk"}))
+        await settle(s)
+        assert session.input is None and runner.calls == []  # an old session's start: ignored
+        assert await session.receive(up.control({"type": "start", "notice_accepted": True}))
+        assert opened(down, sent[1:])[-1] == {"type": "state", "state": "failed", "detail": "update_page"}
+        assert await session.receive(up.control({"type": "start", "notice_accepted": True, "nonce": ready["nonce"]}))
+        await settle(s)
+        assert session.input is not None and len(runner.calls) == 1
+    asyncio.run(go())
+
+
+def test_an_unknown_phone_is_told_it_isnt_paired():
+    async def go():
+        s = make()
+        session, _, _, sent = await meeting_session(s, Phone())  # never paired
+        assert await session.open() is False
+        assert rc.read_handshake(sent[0]) == {"type": "refused", "reason": "unpaired"}
+    asyncio.run(go())
+
+
+def test_an_unreadable_key_is_kept_aside_not_silently_replaced(tmp_path):
+    path = tmp_path / "relay-key.json"
+    path.write_text("{not json")
+    key = serve.LaptopKey(path)
+    assert key.public()
+    assert json.loads(path.read_text())["public"] == key.public()
+    kept = list(tmp_path.glob("relay-key.json.unreadable-*"))
+    assert len(kept) == 1 and kept[0].read_text() == "{not json"
+
+
+def test_a_start_that_never_records_gives_up_and_unqueues_its_input():
+    async def go():
+        clock = [1000.0]
+        s = serve.Serve(run=Runner(), name="Test Mac", clock=lambda: clock[0])
+        inp = s.hub.create("phone")
+        assert s.controller.start("phone", inp.id)["ok"]
+        await settle(s)
+        assert s.controller.busy() and (store.home() / "next-input.json").exists()
+        clock[0] += serve.BIND_DEADLINE + 1
+        view = s.controller.view()
+        assert (view["phase"], view["detail"]) == ("failed", "did_not_start")
+        assert not s.controller.busy() and inp.ended and not (store.home() / "next-input.json").exists()
+    asyncio.run(go())
+
+
+def test_a_declined_pairing_makes_the_next_wait():
+    async def go():
+        clock = [1000.0]
+        s = serve.Serve(run=Runner(), name="Test Mac", clock=lambda: clock[0], confirm=lambda *a: _no())
+        s.declined_at = clock[0]
+        sent = []
+
+        async def send(frame):
+            sent.append(frame)
+
+        session = serve.RelaySession(s, "pair-1", "pair", {"phone_eph": "x", "commit": "c" * 43}, send)
+        assert await session.open() is False
+        assert rc.read_handshake(sent[0]) == {"type": "refused", "reason": "wait"}
+        clock[0] += serve.DECLINE_COOLDOWN + 1
+        session = serve.RelaySession(s, "pair-2", "pair", {"phone_eph": "x", "commit": "c" * 43}, send)
+        assert await session.open() is True
+        assert rc.read_handshake(sent[1])["type"] == "hello"
+    asyncio.run(go())
+
+
+async def _no():
+    return False
 
 
 def test_a_forged_or_replayed_frame_is_dropped_and_does_nothing():
@@ -299,7 +371,7 @@ def test_a_forged_or_replayed_frame_is_dropped_and_does_nothing():
         s.phones.add(phone.key, "Pixel")
         session, up, _, _ = await meeting_session(s, phone)
         await session.open()
-        start = up.control({"type": "start", "notice_accepted": True})
+        start = up.control({"type": "start", "notice_accepted": True, "nonce": session.start_nonce})
         assert await session.receive(start)
         await settle(s)
         started = len(runner.calls)
@@ -309,7 +381,7 @@ def test_a_forged_or_replayed_frame_is_dropped_and_does_nothing():
 
         session, up, _, _ = await meeting_session(s, phone, "sess-2")
         await session.open()
-        forged = bytearray(up.control({"type": "start", "notice_accepted": True}))
+        forged = bytearray(up.control({"type": "start", "notice_accepted": True, "nonce": session.start_nonce}))
         forged[-1] ^= 1
         assert await session.receive(bytes(forged))
         assert session.input is None  # it started nothing
@@ -317,7 +389,8 @@ def test_a_forged_or_replayed_frame_is_dropped_and_does_nothing():
         session, up, _, _ = await meeting_session(s, phone, "sess-3")
         await session.open()
         other_session = rc.Sealer(rc.unb64u(rc.b64u(os.urandom(32))), "sess-3")
-        frames = [other_session.control({"type": "start", "notice_accepted": True}) for _ in range(201)]
+        start = {"type": "start", "notice_accepted": True, "nonce": session.start_nonce}
+        frames = [other_session.control(start) for _ in range(201)]
         results = [await session.receive(f) for f in frames]
         assert session.input is None and results[0] is True and results[-1] is False
     asyncio.run(go())
@@ -330,11 +403,13 @@ def test_start_queues_the_relay_input_then_starts_meeting_assistant():
         s.phones.add(phone.key, "Pixel")
         session, up, down, sent = await meeting_session(s, phone)
         await session.open()
-        assert await session.receive(up.control({"type": "start", "notice_accepted": True}))
+        assert await session.receive(up.control({"type": "start", "notice_accepted": True,
+                                                 "nonce": session.start_nonce}))
         await settle(s)
         argv, queued = runner.calls[0]
         assert argv == APP_START
-        assert queued == {"relay": session.input.id, "source": "phone"}
+        assert {k: queued[k] for k in ("relay", "source")} == {"relay": session.input.id, "source": "phone"}
+        assert abs(queued["queued_at"] - time.time()) < 60
         assert opened(down, sent)[1] == {"type": "state", "state": "starting", "detail": ""}
         await session.close()
         assert session.input.ended
@@ -355,7 +430,8 @@ def test_start_needs_the_notice_accepted_and_one_meeting_at_a_time():
         meeting = store.new_meeting("", "microphone")
         proc = fake_recorder(meeting)
         try:
-            await session.receive(up.control({"type": "start", "notice_accepted": True}))
+            await session.receive(up.control({"type": "start", "notice_accepted": True,
+                                              "nonce": session.start_nonce}))
             assert opened(down, sent[2:])[-1] == {"type": "state", "state": "failed", "detail": "busy"}
             assert runner.calls == []
         finally:
@@ -380,7 +456,7 @@ def test_the_phone_hears_its_meeting_live_and_its_end():
         s.phones.add(phone.key, "Pixel")
         session, up, down, sent = await meeting_session(s, phone)
         await session.open()
-        await session.receive(up.control({"type": "start", "notice_accepted": True}))
+        await session.receive(up.control({"type": "start", "notice_accepted": True, "nonce": session.start_nonce}))
         await settle(s)
         meeting = store.new_meeting("", "phone")
         meeting.update(input=session.input.id, state="recording", speakers=[{"name": "Speaker 1", "number": 0}],
@@ -418,7 +494,7 @@ def test_end_discard_and_rename_reach_the_right_commands():
         s.phones.add(phone.key, "Pixel")
         session, up, _, _ = await meeting_session(s, phone)
         await session.open()
-        await session.receive(up.control({"type": "start", "notice_accepted": True}))
+        await session.receive(up.control({"type": "start", "notice_accepted": True, "nonce": session.start_nonce}))
         await settle(s)
         meeting = store.new_meeting("", "phone")
         meeting.update(input=session.input.id, state="ended", speakers=[{"name": "Speaker 1", "number": 0}],
@@ -490,7 +566,8 @@ def test_the_page_starts_a_browser_meeting_and_pairs_a_phone():
         code, body = s.api_start({"input": "browser-tab", "notice_accepted": True})
         assert code == 200 and s.hub.get(body["input"]).source == "browser-tab"
         await settle(s)
-        assert runner.calls[0] == (APP_START, {"relay": body["input"], "source": "browser-tab"})
+        argv, queued = runner.calls[0]
+        assert argv == APP_START and (queued["relay"], queued["source"]) == (body["input"], "browser-tab")
         assert s.api_live()["phase"] == "starting"
 
         code, pairing = s.api_pair()
@@ -697,7 +774,8 @@ def test_a_meeting_waits_for_its_runner_to_rejoin_and_carries_on():
         hello, up, down = phone.session(s.key.public(), "sess-r")
         first = Pipe()
         task = await run_pipe(s, "sess-r", hello, first)
-        first.frame(up.control({"type": "start", "notice_accepted": True}))
+        await asyncio.sleep(0.05)
+        first.frame(up.control({"type": "start", "notice_accepted": True, "nonce": s.relays["sess-r"].start_nonce}))
         await asyncio.sleep(0.05)
         await settle(s)
         session = s.relays["sess-r"]
@@ -714,7 +792,7 @@ def test_a_meeting_waits_for_its_runner_to_rejoin_and_carries_on():
         second.frame(up.control({"type": "resume", "have": 0}))
         await asyncio.sleep(0.05)
         assert inp.seconds > 0 and session.bad_frames == 0
-        assert opened(down, first.out)[0] == {"type": "ready", "name": "Test Mac"}
+        assert opened(down, first.out)[0] == {"type": "ready", "name": "Test Mac", "nonce": session.start_nonce}
         assert all(m["type"] != "ready" for m in opened(down, second.out))  # no second ready
 
         second.end()  # the server ended the session
@@ -732,7 +810,8 @@ def test_a_pipe_that_never_comes_back_ends_the_meeting(monkeypatch):
         hello, up, _ = phone.session(s.key.public(), "sess-g")
         pipe = Pipe()
         task = await run_pipe(s, "sess-g", hello, pipe)
-        pipe.frame(up.control({"type": "start", "notice_accepted": True}))
+        await asyncio.sleep(0.05)
+        pipe.frame(up.control({"type": "start", "notice_accepted": True, "nonce": s.relays["sess-g"].start_nonce}))
         await asyncio.sleep(0.05)
         await settle(s)
         inp = s.relays["sess-g"].input
@@ -766,7 +845,7 @@ def test_a_recorder_that_died_reads_as_failed_and_an_unsaved_end_is_not_saved():
         s.phones.add(phone.key, "Pixel")
         session, up, down, sent = await meeting_session(s, phone)
         await session.open()
-        await session.receive(up.control({"type": "start", "notice_accepted": True}))
+        await session.receive(up.control({"type": "start", "notice_accepted": True, "nonce": session.start_nonce}))
         await settle(s)
         meeting = store.new_meeting("", "phone")
         meeting.update(input=session.input.id, state="recording")
@@ -781,7 +860,7 @@ def test_a_recorder_that_died_reads_as_failed_and_an_unsaved_end_is_not_saved():
         s2.phones.add(phone2.key, "Pixel")
         session, up, down, sent = await meeting_session(s2, phone2, "sess-u")
         await session.open()
-        await session.receive(up.control({"type": "start", "notice_accepted": True}))
+        await session.receive(up.control({"type": "start", "notice_accepted": True, "nonce": session.start_nonce}))
         await settle(s2)
         meeting = store.new_meeting("", "phone")
         meeting.update(input=session.input.id, state="ended")  # recorded, but Meeting assistant never saved
@@ -791,3 +870,10 @@ def test_a_recorder_that_died_reads_as_failed_and_an_unsaved_end_is_not_saved():
         assert {"type": "state", "state": "ended", "detail": "not_saved"} in got
         assert all(m["type"] != "saved" for m in got)
     asyncio.run(go())
+
+
+def test_a_deep_home_gets_the_socket_the_runner_looks_for(monkeypatch):
+    """The runner can't import this package, so it repeats store.socket_path's rule;
+    runner/canopy_runner/tests/test_listen_pipe.py pins the same pair."""
+    monkeypatch.setenv("CANOPY_LISTEN_HOME", "/Users/someone/" + "deep/" * 20 + "listen")
+    assert store.socket_path().name == "canopy-listen-a69ff3d2bc9d.sock"

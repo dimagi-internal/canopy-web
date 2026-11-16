@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import re
 import time
 import uuid
 from collections import deque
@@ -30,6 +32,9 @@ from apps.realtime.channels_auth import still_signed_in
 
 from . import services
 from .models import ROLES, ListenSession
+
+logger = logging.getLogger(__name__)
+_REASON = re.compile(r"[a-z0-9_]{1,40}")
 
 MAX_FRAME = 64 * 1024
 MAX_PER_SECOND = 60
@@ -110,8 +115,11 @@ class ListenConsumer(AsyncWebsocketConsumer):
                 "type": "listen.peer", "role": self._role, "connected": False})
 
     async def receive(self, text_data=None, bytes_data=None):
-        if not self._holding or self._ended or bytes_data is None:
-            return  # a client's text is not part of the protocol; nothing reads it
+        if not self._holding or self._ended:
+            return
+        if bytes_data is None:
+            self._bye(text_data)
+            return
         if len(bytes_data) > MAX_FRAME or self._over_rate():
             await self.close(code=TOO_MUCH)
             return
@@ -144,6 +152,19 @@ class ListenConsumer(AsyncWebsocketConsumer):
         await self.close()
 
     # -- helpers -----------------------------------------------------------------
+    def _bye(self, text) -> None:
+        """The laptop's pipe says why it is leaving (`{"type":"bye","reason":code}`): logged,
+        a short code only, so a failure on someone's laptop can be told from a network drop.
+        Any other text from a client means nothing."""
+        if self._role != "laptop" or not isinstance(text, str) or len(text) > 200:
+            return
+        try:
+            note = json.loads(text)
+        except ValueError:
+            return
+        reason = note.get("reason") if isinstance(note, dict) and note.get("type") == "bye" else None
+        if isinstance(reason, str) and _REASON.fullmatch(reason):
+            logger.info("listen %s: laptop left (%s)", self._sid, reason)
     async def _relay(self, frame: bytes) -> None:
         self._sent += len(frame)
         await self.channel_layer.group_send(services.role_group(self._sid, self._peer),

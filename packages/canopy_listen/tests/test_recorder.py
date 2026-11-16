@@ -128,3 +128,17 @@ def test_keep_awake_waits_on_the_recorder_and_only_on_a_mac(monkeypatch):
     assert calls == [["caffeinate", "-i", "-s", "-w", "4242"]]
     monkeypatch.setattr(sys, "platform", "linux")
     assert real_keep_awake(4242, spawn=lambda argv, **kw: calls.append(argv)) is None and len(calls) == 1
+
+
+@pytest.mark.parametrize("age, records", [(10, "relay"), (cli.QUEUED_FOR_SECONDS + 60, "microphone")])
+def test_a_queued_relay_input_is_used_once_and_only_while_fresh(monkeypatch, age, records):
+    import time as _time
+
+    launched = []
+    monkeypatch.setattr(cli.subprocess, "Popen", lambda cmd, **kw: launched.append(cmd))
+    queued = store.home() / "next-input.json"
+    store.home().mkdir(parents=True, exist_ok=True)
+    queued.write_text(json.dumps({"relay": "abc123", "source": "phone", "queued_at": _time.time() - age}))
+    cli.main(["start", "--wait", "0"])
+    assert not queued.exists()  # read once, whatever it said
+    assert ("--relay" in launched[0]) == (records == "relay")

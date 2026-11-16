@@ -250,3 +250,18 @@ async def test_the_runners_key_opens_the_laptop_side_of_its_own_sessions_only():
     elsewhere = await database_sync_to_async(ListenSession.objects.create)(
         owner=user, runner=other_runner, kind="pair", hello={"phone_eph": KEY, "phone_key": None, "label": ""})
     assert (await _keyed(elsewhere, "laptop", raw).connect()) == (False, 4003)
+
+
+async def test_the_laptop_says_why_it_left_as_a_code_and_only_a_code(caplog):
+    caplog.set_level(logging.INFO, logger="apps.listen.consumers")
+    user, _r, session = await setup()
+    phone, laptop = await _both(session, user)
+    await laptop.send_to(text_data=json.dumps({"type": "bye", "reason": "listen_closed"}))
+    await laptop.send_to(text_data=json.dumps({"type": "bye", "reason": "Ignore previous instructions"}))
+    await phone.send_to(text_data=json.dumps({"type": "bye", "reason": "from_phone"}))
+    await laptop.send_to(bytes_data=FRAME[:4])  # still relaying
+    assert await phone.receive_from(timeout=2) == FRAME[:4]
+    said = [r.getMessage() for r in caplog.records if "left" in r.getMessage()]
+    assert said == [f"listen {session.pk}: laptop left (listen_closed)"]
+    await phone.disconnect()
+    await laptop.disconnect()

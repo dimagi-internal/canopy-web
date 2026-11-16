@@ -137,7 +137,15 @@ class LaptopKey:
         if self._key is None:
             try:
                 self._key = rc.private_from_pem(json.loads(self.path.read_text())["private_pem"])
-            except (OSError, ValueError, KeyError):
+            except (OSError, ValueError, KeyError) as exc:
+                if not isinstance(exc, FileNotFoundError):
+                    # There, but unreadable. A new key unpairs every phone, so keep the old
+                    # file for whoever looks, and say so: phones are told to pair again.
+                    aside = self.path.with_name(f"{self.path.name}.unreadable-{int(time.time())}")
+                    with contextlib.suppress(OSError):
+                        self.path.rename(aside)
+                    log.warning("relay key was unreadable (kept as %s); made a new one: phones must pair again",
+                                aside.name)
                 self._key = rc.new_private()
                 write_private(self.path, json.dumps({"private_pem": rc.private_to_pem(self._key),
                                                      "public": rc.public_b64(self._key), "created": time.time()}))
@@ -402,6 +410,21 @@ SEGMENT_BATCH_CHARS = 20_000
 TERMINAL = ("saved", "ended", "failed", "discarded")
 
 
+#: A start that hasn't become a recording by now never will (the first start downloads
+#: models, within the recorder's own 180 s).
+BIND_DEADLINE = 240
+
+
+def _unqueue(input_id: str) -> None:
+    """Remove next-input.json if it is still this input's."""
+    queued = store.home() / "next-input.json"
+    try:
+        if json.loads(queued.read_text()).get("relay") == input_id:
+            queued.unlink(missing_ok=True)
+    except (OSError, ValueError, AttributeError):
+        pass
+
+
 class Controller:
     """One meeting at a time, started from the page or a phone. `run` runs a command
     (argv -> (code, output)); tests pass a fake."""
@@ -438,7 +461,7 @@ class Controller:
         queued = store.home() / "next-input.json"
         if input_id:
             store.home().mkdir(parents=True, exist_ok=True)
-            queued.write_text(json.dumps({"relay": input_id, "source": source}))
+            queued.write_text(json.dumps({"relay": input_id, "source": source, "queued_at": self.clock()}))
         else:
             queued.unlink(missing_ok=True)  # the microphone: nothing queued, and nothing stale either
         self.current = {"source": source, "input": input_id, "started_at": self.clock(), "phase": "starting",
@@ -486,6 +509,15 @@ class Controller:
     def view(self) -> dict:
         self.bind()
         c = self.current
+        if c and c["phase"] == "starting" and not c.get("meeting_id") and not c["discarding"] \
+                and self.clock() - c["started_at"] > BIND_DEADLINE:
+            # The app started (or said it had) but no recording ever took this input: give
+            # up rather than stay busy, and leave nothing queued for the next start.
+            c["phase"], c["detail"] = "failed", "did_not_start"
+            if c["input"]:
+                self.hub.end(c["input"])
+                _unqueue(c["input"])
+            log.info("a start never began recording")
         meeting = store.load(c["meeting_id"]) if c and c.get("meeting_id") else None
         if c and c.get("meeting_id") and meeting is None and c["phase"] != "discarded":
             c["phase"], c["detail"] = "ended", "deleted"
@@ -599,6 +631,7 @@ class RelaySession:
                 hello = {}
         self.hello = hello if isinstance(hello, dict) else {}
         self.opener = self.sealer = None
+        self.start_nonce = ""  # set by open(); `start` must carry it back
         self.laptop_nonce: bytes | None = None  # set when pairing by code
         self.input: Input | None = None
         self.current: dict | None = None
@@ -615,7 +648,10 @@ class RelaySession:
             return False
         phone = self.serve.phones.known(self.hello.get("phone_key"))
         if phone is None:
+            # In the clear (the phone can't be answered under keys this Mac doesn't share
+            # with it), so the phone can say "pair again" rather than waiting it out.
             log.info("refused a meeting session from a phone that isn't paired")
+            await self.send_raw(rc.handshake_frame({"type": "refused", "reason": "unpaired"}))
             return False
         try:
             up, down = rc.session_keys_laptop(self.serve.key.private(), str(self.hello.get("phone_eph") or ""),
@@ -624,7 +660,11 @@ class RelaySession:
             log.info("refused a meeting session: bad keys")
             return False
         self.opener, self.sealer = rc.Opener(up, self.sid), rc.Sealer(down, self.sid)
-        await self.control({"type": "ready", "name": self.serve.name})
+        # Fresh from this Mac, and `start` must carry it back sealed. The keys come from the
+        # phone's side and the session id alone, so a server that kept an old session's
+        # frames could otherwise replay them here and start a meeting nobody is having.
+        self.start_nonce = rc.b64u(os.urandom(16))
+        await self.control({"type": "ready", "name": self.serve.name, "nonce": self.start_nonce})
         log.info("phone session open")
         return True
 
@@ -699,6 +739,13 @@ class RelaySession:
                 return True
             if message.get("notice_accepted") is not True:
                 await self.control({"type": "state", "state": "failed", "detail": "notice_not_accepted"})
+                return True
+            nonce = message.get("nonce")
+            if not isinstance(nonce, str):
+                await self.control({"type": "state", "state": "failed", "detail": "update_page"})
+                return True
+            if not hmac.compare_digest(nonce, self.start_nonce):
+                log.info("dropped a start that doesn't answer this session's ready")
                 return True
             self.input = self.serve.hub.create("phone")
             self.input.producer = True
@@ -822,6 +869,8 @@ class RelaySession:
         """Pairing by code, step 1: the phone has committed to its key; show ours."""
         if self.serve.confirming:
             return await self._refuse_in_clear("busy")
+        if self.serve.pairings.clock() - self.serve.declined_at < DECLINE_COOLDOWN:
+            return await self._refuse_in_clear("wait")  # each attempt is a dialog on this Mac
         self.laptop_nonce = os.urandom(rc.NONCE_BYTES)
         await self.send_raw(rc.handshake_frame({
             "type": "hello", "laptop_key": self.serve.key.public(), "nonce": rc.b64u(self.laptop_nonce),
@@ -855,6 +904,7 @@ class RelaySession:
         finally:
             self.serve.confirming = False
         if not allowed:
+            self.serve.declined_at = self.serve.pairings.clock()
             return await self._refuse_in_clear("declined")
         try:
             _, down = rc.session_keys_laptop(self.serve.key.private(), str(self.hello.get("phone_eph") or ""),
@@ -909,6 +959,8 @@ def allowed(host: str | None, origin: str | None, port: int, *, needs_origin: bo
 
 
 CONFIRM_SECONDS = 120
+#: After a pairing is declined (or nobody answered), new ones wait this long.
+DECLINE_COOLDOWN = 30
 DIALOG = """on run argv
   activate
   set answer to display dialog (item 1 of argv) with title "Canopy Listen" buttons {"Don't Allow", "Allow"} ¬
@@ -946,6 +998,7 @@ class Serve:
         self.pairings = Pairings(clock)
         self.confirm = confirm or ask_on_screen
         self.confirming = False
+        self.declined_at = float("-inf")
         self.hub = Hub()
         self.controller = Controller(self.hub, run=run, clock=clock)
         self.relays: dict[str, RelaySession] = {}  # meetings by session id, while they last
