@@ -244,8 +244,11 @@ read and never written, when no runner has reported it within `SESSION_LIVE_WIND
   this list are the same `active()` set.
 - On the cloud, `staleness.CLOUD_CHAT_IDLE` closes a person's auto-mode web chat (or a
   Slack-thread session, or the work session of mail a member sent,
-  `staleness.person_mail_q`); a session an agent started ran on its own and closes once
-  nothing is in flight, as does one from a mail trigger or an outside sender. Manual
+  `staleness.person_mail_q`, or a session an agent started for a person,
+  `staleness.for_a_person_q`: that person is waiting on its answer). Any other session an
+  agent started ran on its own and closes once nothing is in flight, as does one from a
+  mail trigger or an outside sender. The two person legs stay out of `ran_on_its_own`,
+  so the Feed and pushes still treat them as auto work. Manual
   sessions and a dialog up hold one open.
 - `GET /api/canopy-sessions/?reply=true` stamps every row with `feed_status`; the Feed
   only sorts and counts that verdict. The "is asking" / "is done" pushes go to the first
