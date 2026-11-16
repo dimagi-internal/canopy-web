@@ -367,7 +367,7 @@ export function ChatSessionsPanel({
           </div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
             <FilterToggle checked={mineOnly} onChange={toggleMineOnly} testId="toggle-mine-only"
-              title="Sessions you started, on your own machine, or that an agent you asked dispatched from one of your chats">
+              title="Sessions you started, ran on your own machine or on a schedule you set up, or that an agent dispatched from one of those">
               Started by me
             </FilterToggle>
             <FilterToggle checked={showArchived} onChange={() => setShowArchived((v) => !v)}>
