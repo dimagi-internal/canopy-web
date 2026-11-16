@@ -210,6 +210,13 @@ export const SURFACES: SurfaceDescriptor[] = [
     use: 'When you want to record a meeting on your phone and have your own laptop transcribe it, end-to-end encrypted.',
   },
   {
+    path: '/listen/voice',
+    group: 'Recording a meeting from your phone',
+    flat: 'personal/global: your phone and your own laptop; the agent named in the address says where the chat lands',
+    title: 'Voice session: a voice note to an agent',
+    use: 'When you want to start a chat with an agent by talking to your phone; your laptop reads it.',
+  },
+  {
     path: '/act-as/:requestId',
     group: 'Letting an agent act as you',
     flat: 'personal/global: a request to act as YOU, from an agent in any of your workspaces',

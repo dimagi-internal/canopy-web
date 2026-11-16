@@ -26906,8 +26906,8 @@ export interface components {
             /** Workspace */
             readonly workspace: string;
         };
-        /** LocalAppMenuItemOut */
-        readonly LocalAppMenuItemOut: {
+        /** LocalAppMenuEntryOut */
+        readonly LocalAppMenuEntryOut: {
             /** App */
             readonly app: string;
             /** App Name */
@@ -26927,7 +26927,7 @@ export interface components {
         /** LocalAppMenuOut */
         readonly LocalAppMenuOut: {
             /** Items */
-            readonly items: readonly components["schemas"]["LocalAppMenuItemOut"][];
+            readonly items: readonly components["schemas"]["LocalAppMenuEntryOut"][];
             /**
              * Agents
              * @default []

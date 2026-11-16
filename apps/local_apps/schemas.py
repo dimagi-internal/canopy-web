@@ -88,7 +88,7 @@ class LocalAppInstallationOut(Schema):
     last_run: LocalAppRunOut | None = None
 
 
-class LocalAppMenuItemOut(Schema):
+class LocalAppMenuEntryOut(Schema):
     #: The app that adds it, and the item's own key within that app.
     app: str
     app_name: str
@@ -107,7 +107,7 @@ class LocalAppMenuAgentOut(Schema):
 
 
 class LocalAppMenuOut(Schema):
-    items: list[LocalAppMenuItemOut]
+    items: list[LocalAppMenuEntryOut]
     #: Your agents, when an item asks for one; empty otherwise.
     agents: list[LocalAppMenuAgentOut] = []
 

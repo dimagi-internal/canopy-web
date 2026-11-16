@@ -77,7 +77,7 @@ export async function installLocalApp(
 }
 
 export type LocalAppMenu = components["schemas"]["LocalAppMenuOut"];
-export type LocalAppMenuItem = components["schemas"]["LocalAppMenuItemOut"];
+export type LocalAppMenuItem = components["schemas"]["LocalAppMenuEntryOut"];
 export type LocalAppMenuAgent = components["schemas"]["LocalAppMenuAgentOut"];
 
 /** What this person's apps add to their account menu (the items they turned on). */
