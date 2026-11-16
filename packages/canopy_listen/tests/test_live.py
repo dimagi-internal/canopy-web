@@ -178,3 +178,13 @@ def test_a_diarization_timeline_names_each_segment_by_who_spoke_most_of_it():
     assert t.step()[0].speaker == 1
     t.feed(np.concatenate([audio(2.0), silence(0.7)]))
     assert t.step()[0].speaker == 0
+
+
+def test_sound_with_no_words_is_let_go_rather_than_read_again_forever():
+    calls = []
+    t = LiveTranscriber(lambda b: calls.append(len(b) / SAMPLE_RATE) or [], max_window=24.0)
+    for _ in range(40):  # 40 s of loud noise the recogniser finds no words in
+        t.feed(audio(1.0))
+        t.step()
+    assert len(t.buffer) / SAMPLE_RATE <= 24.0
+    assert max(calls) <= 24.5  # never more than one window per read

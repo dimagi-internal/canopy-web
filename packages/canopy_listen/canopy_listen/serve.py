@@ -387,6 +387,18 @@ def phase_of(current: dict | None, meeting: dict | None, app: dict) -> tuple[str
 
 PHONE_STATE = {"idle": "starting", "starting": "starting", "recording": "recording", "listening": "recording",
                "ending": "ending", "saved": "ended", "ended": "ended", "failed": "failed", "discarded": "ended"}
+#: How each finished phase reads on the phone (the `detail` of its `ended` state): only
+#: `saved` may be shown as saved.
+PHONE_END = {"saved": "saved", "ended": "not_saved", "discarded": "discarded"}
+#: A meeting in one of these states has a recorder running (it writes its pid first).
+RECORDER_STATES = ("loading", "recording", "finishing")
+#: A phone meeting whose pipe went away (its runner restarted) is kept this long for the
+#: runner to rejoin; longer than the server's PEER_GONE, which ends it first.
+DETACHED_GRACE = 200.0
+#: Segments go to the phone in batches, so a step that commits many (the first after the
+#: models load) can't trip the relay's message rate.
+SEGMENT_BATCH = 20
+SEGMENT_BATCH_CHARS = 20_000
 TERMINAL = ("saved", "ended", "failed", "discarded")
 
 
@@ -481,6 +493,10 @@ class Controller:
             other = self.active_meeting()  # started elsewhere: the menu bar, or the command line
             if other is not None:
                 meeting, c = other, None
+        if meeting and meeting.get("state") in RECORDER_STATES and not pid_of(meeting["id"]):
+            # Its recorder died (killed, out of memory) without saying so: the file still
+            # says it's recording, and the audio still arriving would go nowhere.
+            meeting = {**meeting, "state": "failed", "error": meeting.get("error") or "recorder_stopped"}
         app = app_state(c["started_at"] if c else None)
         phase, detail = phase_of(c, meeting, app)
         return {"phase": phase, "detail": detail, "meeting": meeting, "app": app, "current": c}
@@ -559,11 +575,23 @@ def _first_line(text: str) -> str:
 
 class RelaySession:
     """One relay session from the runner's pipe. `send` writes a frame back (bytes ->
-    awaitable). Every inbound frame goes to `receive`; False means drop the session. A
-    frame that is forged, replayed or malformed drops it, and only a reason code is logged."""
+    awaitable). Every inbound frame goes to `receive`; False means end the session.
+
+    A meeting outlives the pipe that brought it: when the pipe closes without the server
+    ending the session (the runner restarted), the session waits DETACHED_GRACE for the
+    runner to bring a new pipe (`attach`), keeping its keys, counters, input and recorder.
+    What it would have sent meanwhile is dropped, and resent from where the phone says it
+    is (`resume`). A frame that doesn't open (forged, or replayed by a pipe that resent
+    it) is dropped on its own; only a reason code is logged."""
 
     def __init__(self, serve: Serve, session_id: str, kind: str, hello, send):
         self.serve, self.sid, self.kind, self.send_raw = serve, session_id, kind, send
+        self.conn = 1  # which pipe is attached: a newer one replaces an older
+        self.attached = True
+        self.finished = False
+        self.grace: asyncio.Task | None = None
+        self.bad_frames = 0
+        self.sent = {"segments": 0, "state": None, "speakers": None, "chat": False, "partial": ""}
         if isinstance(hello, str):
             try:
                 hello = json.loads(hello)
@@ -601,7 +629,44 @@ class RelaySession:
         return True
 
     async def control(self, message: dict) -> None:
-        await self.send_raw(self.sealer.control(message))  # sealed and written together: counters stay in order
+        frame = self.sealer.control(message)  # sealed and written together: counters stay in order
+        if not self.attached:
+            return  # no pipe: dropped, and resent from where the phone says it is
+        try:
+            await self.send_raw(frame)
+        except (ConnectionError, OSError):
+            self.attached = False
+
+    def attach(self, send) -> int:
+        """A new pipe for this meeting (the runner rejoined): carry on through it."""
+        self.send_raw, self.conn, self.attached = send, self.conn + 1, True
+        if self.grace is not None:
+            self.grace.cancel()
+            self.grace = None
+        self.resync(None)
+        log.info("phone session rejoined")
+        return self.conn
+
+    def detach(self, conn: int) -> None:
+        """Pipe `conn` closed without an end: wait for the runner to bring another."""
+        if conn != self.conn or self.finished:
+            return
+        self.attached = False
+        log.info("phone session waiting for its pipe")
+        self.grace = asyncio.get_running_loop().create_task(self._expire(conn))
+
+    async def _expire(self, conn: int) -> None:
+        await asyncio.sleep(DETACHED_GRACE)
+        if conn == self.conn and not self.attached:
+            log.info("phone session's pipe never came back")
+            await self.close()
+
+    def resync(self, have) -> None:
+        """Send again what the phone may have missed: the state, speakers, chat link and
+        partial words, and every segment after the first `have` (None: keep the count)."""
+        if isinstance(have, int) and not isinstance(have, bool) and have >= 0:
+            self.sent["segments"] = min(have, self.sent["segments"])
+        self.sent.update(state=None, speakers=None, chat=False, partial=None)
 
     async def receive(self, frame: bytes) -> bool:
         if self.kind == "pair":
@@ -609,8 +674,9 @@ class RelaySession:
         try:
             kind, body = self.opener.open(frame)
         except rc.BadFrame as bad:
-            log.info("dropped a phone session: %s frame", bad.args[0])
-            return False
+            self.bad_frames += 1
+            log.info("dropped a %s frame from the phone", bad.args[0])
+            return self.bad_frames <= 200  # a stream of them is something else: end it
         if kind == rc.AUDIO:
             if self.input is not None:
                 self.input.push(body)
@@ -649,6 +715,10 @@ class RelaySession:
             if self._owns():
                 await (self.serve.controller.end(self.current) if what == "end"
                        else self.serve.controller.discard(self.current))
+        elif what == "resume":
+            self.resync(message.get("have"))
+            if self.follow is not None and self.follow.done() and self._owns():
+                self.follow = asyncio.get_running_loop().create_task(self._follow())  # tell it the end again
         elif what == "rename":
             if self._owns():
                 self.serve.controller.bind()
@@ -662,43 +732,59 @@ class RelaySession:
         return self.current is not None and self.serve.controller.current is self.current
 
     async def _follow(self) -> None:
-        sent_state, sent_segments, sent_speakers, sent_chat, sent_partial = None, 0, None, False, ""
+        sent = self.sent
         while True:
             if not self._owns():
-                if sent_state not in ("ended", "failed"):
+                if sent["state"] not in ("ended", "failed"):
                     await self.control({"type": "state", "state": "ended", "detail": "replaced"})
                 return
             view = self.serve.controller.view()
             phase, detail = view["phase"], view["detail"]
             meeting = view["meeting"] or {}
-            for seg in (meeting.get("segments") or [])[sent_segments:]:
-                await self.control({"type": "segment", "start": seg.get("start", 0), "end": seg.get("end", 0),
-                                    "speaker": seg.get("speaker", 0), "text": seg.get("text", "")})
-            sent_segments = max(sent_segments, len(meeting.get("segments") or []))
+            segments = meeting.get("segments") or []
+            if self.attached:
+                await self._send_segments(segments)
             partial = meeting.get("partial") or ""
             if not isinstance(partial, str) or phase in TERMINAL:
                 partial = ""
-            if partial != sent_partial:
+            if self.attached and partial != sent["partial"]:
                 await self.control({"type": "partial", "text": partial[:2000]})
-                sent_partial = partial
+                sent["partial"] = partial
             speakers = meeting.get("speakers") or []
-            if speakers and speakers != sent_speakers:
+            if self.attached and speakers and speakers != sent["speakers"]:
                 await self.control({"type": "speakers", "speakers": speakers})
-                sent_speakers = speakers
+                sent["speakers"] = speakers
             url = view["app"].get("session_url")
-            if url and not sent_chat:
+            if self.attached and url and not sent["chat"]:
                 await self.control({"type": "chat", "url": url})
-                sent_chat = True
+                sent["chat"] = True
             state = PHONE_STATE.get(phase, "starting")
-            if state != sent_state:
+            if phase in PHONE_END:
+                detail = PHONE_END[phase]
+            if self.attached and state != sent["state"]:
                 await self.control({"type": "state", "state": state, "detail": detail})
-                sent_state = state
-            if phase == "saved":
-                await self.control({"type": "saved", "url": self.serve.meetings_url()})
-            if phase in TERMINAL:
-                log.info("phone meeting finished: %s, %d segments", phase, sent_segments)
+                sent["state"] = state
+            if phase in TERMINAL and self.attached:
+                if phase == "saved":
+                    await self.control({"type": "saved", "url": self.serve.meetings_url()})
+                log.info("phone meeting finished: %s, %d segments", phase, sent["segments"])
                 return
             await asyncio.sleep(FOLLOW_SECONDS)
+
+    async def _send_segments(self, segments: list) -> None:
+        """The segments the phone doesn't have yet, in batches."""
+        while self.attached and self.sent["segments"] < len(segments):
+            batch, chars = [], 0
+            for seg in segments[self.sent["segments"]:]:
+                text = str(seg.get("text", ""))[:4000]
+                if batch and (len(batch) >= SEGMENT_BATCH or chars + len(text) > SEGMENT_BATCH_CHARS):
+                    break
+                batch.append({"start": seg.get("start", 0), "end": seg.get("end", 0),
+                              "speaker": seg.get("speaker", 0), "text": text})
+                chars += len(text)
+            await self.control({"type": "segments", "from": self.sent["segments"], "items": batch})
+            if self.attached:
+                self.sent["segments"] += len(batch)
 
     async def _pair(self, frame: bytes) -> bool:
         """The first and only frame of a pair session. Answers, then the session closes."""
@@ -782,12 +868,29 @@ class RelaySession:
         return False
 
     async def close(self) -> None:
+        """The end of the session: the recorder hears its input end and finishes."""
+        if self.finished:
+            return
+        self.finished, self.attached = True, False
+        if self.grace is not None and self.grace is not asyncio.current_task():
+            self.grace.cancel()
+        if self.serve.relays.get(self.sid) is self:
+            del self.serve.relays[self.sid]
         if self.follow is not None:
             self.follow.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await self.follow
         if self.input is not None:
             self.input.end()  # the recorder hears the end of its input and finishes the meeting
+
+
+def _hello(hello) -> dict:
+    if isinstance(hello, str):
+        try:
+            hello = json.loads(hello)
+        except ValueError:
+            return {}
+    return hello if isinstance(hello, dict) else {}
 
 
 # --- the whole service --------------------------------------------------------------
@@ -845,6 +948,7 @@ class Serve:
         self.confirming = False
         self.hub = Hub()
         self.controller = Controller(self.hub, run=run, clock=clock)
+        self.relays: dict[str, RelaySession] = {}  # meetings by session id, while they last
         self.app_info: dict = {}
         self._app_info_at = 0.0
 
@@ -908,21 +1012,41 @@ class Serve:
             writer.write(struct.pack(">I", len(frame)) + frame)
             await writer.drain()
 
-        session = RelaySession(self, op.get("session_id"), op.get("kind"), op.get("hello"), send)
-        if not await session.open():
+        sid, kind = op.get("session_id"), op.get("kind")
+        session = self.relays.get(sid) if kind == "meeting" and isinstance(sid, str) else None
+        if session is not None and session.hello.get("phone_eph") != _hello(op.get("hello")).get("phone_eph"):
+            log.info("refused a rejoin: not the same phone session")
             return
+        if session is not None:
+            conn = session.attach(send)
+        else:
+            session = RelaySession(self, sid, kind, op.get("hello"), send)
+            if not await session.open():
+                return
+            if kind == "meeting":
+                self.relays[sid] = session
+            conn = session.conn
+        over = False  # the session is over, not just this pipe
         try:
-            while True:
+            while session.conn == conn:
                 (size,) = struct.unpack(">I", await reader.readexactly(4))
-                if size == 0 or size > rc.MAX_FRAME:
+                if size == 0:  # the runner's explicit end: the server ended the session
+                    over = True
+                    break
+                if size > rc.MAX_FRAME:
                     log.info("dropped a session: frame size")
+                    over = True
                     break
                 if not await session.receive(await reader.readexactly(size)):
+                    over = True
                     break
         except (asyncio.IncompleteReadError, ConnectionError):
             pass
         finally:
-            await session.close()
+            if over or kind != "meeting":
+                await session.close()
+            else:
+                session.detach(conn)
 
     # --- what the page asks (web.py turns these into routes) ---
 

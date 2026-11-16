@@ -133,6 +133,10 @@ class TimelineLabeller(Labeller):
         return max(overlap, key=overlap.get) if overlap else previous
 
 
+#: Seconds kept when a full window held sound but no words.
+KEEP_AFTER_NOISE = 2.0
+
+
 class LiveTranscriber:
     def __init__(self, recognise: Recognise, embed: Embed | None = None, *, labeller: Labeller | None = None,
                  timed: bool = True, stable_lag: float = 1.2, max_window: float | None = None,
@@ -203,6 +207,11 @@ class LiveTranscriber:
             self._drop(window if final else ready[-1].end)
         elif final:
             self._drop(window)
+        elif not sentences and window >= self.max_window:
+            # Sound with no words in it (music, a fan): without this the window only grows,
+            # and each step reads all of it again. Keep the newest moments: speech may be
+            # starting.
+            self._drop(window - KEEP_AFTER_NOISE)
         return out
 
     # --- by pause ----------------------------------------------------------------------
