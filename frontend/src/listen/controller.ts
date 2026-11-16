@@ -60,6 +60,20 @@ export const READY_TIMEOUT_MS = 45_000
 export const PAIR_TIMEOUT_MS = 60_000
 export const SAVE_TIMEOUT_MS = 90_000
 
+const LAPTOP_FAILURES: Record<string, (name: string) => string> = {
+  recorder_stopped: (n) => `The recorder on ${n} stopped unexpectedly. What it heard so far is saved there.`,
+  busy: (n) => `${n} is already recording a meeting. End it there first.`,
+  notice_not_accepted: () => 'The recording notice has to be acknowledged first.',
+  app_did_not_start: (n) => `Meeting assistant didn't start on ${n}. Check it's installed there.`,
+}
+
+/** A laptop's `failed` detail in words: its codes, or its own sentence. */
+export function laptopFailure(detail: string, name: string): string {
+  if (!detail) return `${name} stopped the recording.`
+  const known = LAPTOP_FAILURES[detail]
+  return known ? known(name) : detail
+}
+
 /** A REST refusal in words for this page. */
 export function openRefusal(e: unknown, laptopName: string): string {
   if (e instanceof ApiError) {
@@ -310,7 +324,11 @@ export interface Segment {
 /** Where a meeting's sound comes from: this device's microphone, or a call in another tab. */
 export type AudioSource = 'mic' | 'tab'
 
-export type MeetingStatus = 'connecting' | 'waiting' | 'recording' | 'ending' | 'saved' | 'discarded' | 'failed'
+/**
+ * `saved`: the laptop said Meeting assistant saved it. `unsaved`: it ended, but no save was
+ * confirmed (`note` says why); the recording is still on the laptop.
+ */
+export type MeetingStatus = 'connecting' | 'waiting' | 'recording' | 'ending' | 'saved' | 'unsaved' | 'discarded' | 'failed'
 
 export interface MeetingView {
   status: MeetingStatus
@@ -330,6 +348,10 @@ export interface MeetingView {
   laptopSlow: boolean
   /** The browser paused the microphone (screen locked, a call…): nothing is recorded until resumed. */
   micPaused: boolean
+  /** Seconds of audio held on this phone, waiting for the connection or the laptop. */
+  backlog: number
+  /** Why an `unsaved` end wasn't confirmed as saved. */
+  note?: string
   /** ms epoch the recording started on this phone. */
   startedAt?: number
   level: number
@@ -344,6 +366,8 @@ export class Meeting {
   private sid = ''
   private timer: unknown = null
   private slowTimer: unknown = null
+  /** Segments received in all: what to tell the laptop we have when asking it to resync. */
+  private segmentCount = 0
   private source: AudioSource = 'mic'
   private listeners = new Set<(view: MeetingView) => void>()
   private finished = false
@@ -356,7 +380,7 @@ export class Meeting {
     this.deps = deps
     this.view = {
       status: 'connecting', laptopName: pairing.laptop_name, laptopState: '', segments: [], partial: '', speakers: {},
-      reconnecting: false, laptopConnected: false, laptopSlow: false, micPaused: false, level: 0,
+      reconnecting: false, laptopConnected: false, laptopSlow: false, micPaused: false, backlog: 0, level: 0,
     }
   }
 
@@ -454,6 +478,13 @@ export class Meeting {
         onEnded: (reason) => this.serverEnded(reason),
         onLost: (why) => this.fail(lostInWords(why)),
         onReconnecting: () => this.set({ reconnecting: true }),
+        onResync: () => {
+          this.set({ reconnecting: false })
+          void this.relay?.sendControl({ type: 'resume', have: this.segmentCount })
+        },
+        onBacklog: (seconds) => {
+          if (seconds !== this.view.backlog) this.set({ backlog: seconds })
+        },
       },
       this.deps.socket,
     )
@@ -482,7 +513,8 @@ export class Meeting {
     }
     this.set({ status: 'ending' })
     void this.relay.sendControl({ type: 'end' })
-    this.arm(SAVE_TIMEOUT_MS, () => this.close({ status: 'saved' }))
+    this.arm(SAVE_TIMEOUT_MS + this.view.backlog * 1000, () =>
+      this.close({ status: 'unsaved', note: `${this.pairing.laptop_name} didn't say whether it saved the meeting. Check Meetings in Canopy, or Canopy Listen on the laptop.` }))
   }
 
   /** Throw it away: the laptop deletes what it has. */
@@ -521,24 +553,20 @@ export class Meeting {
       case 'state': {
         const state = typeof m.state === 'string' ? m.state : ''
         this.set({ laptopState: state })
+        const detail = typeof m.detail === 'string' ? m.detail : ''
         if (state === 'failed') {
-          const detail = typeof m.detail === 'string' && m.detail ? m.detail : 'The laptop stopped the recording.'
-          this.fail(detail)
-        } else if (state === 'ended' && this.view.status === 'ending') {
-          this.arm(5000, () => this.close({ status: 'saved' }))
+          this.fail(laptopFailure(detail, this.pairing.laptop_name))
+        } else if (state === 'ended') {
+          this.laptopEnded(detail)
         }
         return
       }
-      case 'segment': {
-        const seg: Segment = {
-          start: Number(m.start) || 0, end: Number(m.end) || 0,
-          speaker: Number.isInteger(m.speaker) ? (m.speaker as number) : 0,
-          text: typeof m.text === 'string' ? m.text : '',
-        }
-        if (!seg.text) return
-        this.set({ segments: [...this.view.segments, seg].slice(-MAX_SEGMENTS) })
+      case 'segment':
+        this.addSegments(this.segmentCount, [m])
         return
-      }
+      case 'segments':
+        if (Array.isArray(m.items)) this.addSegments(Number.isInteger(m.from) ? (m.from as number) : this.segmentCount, m.items)
+        return
       case 'partial':
         this.set({ partial: typeof m.text === 'string' ? m.text.slice(0, 2000) : '' })
         return
@@ -569,10 +597,44 @@ export class Meeting {
     }
   }
 
+  /** The laptop's recording is over: saved only if it says so. */
+  private laptopEnded(detail: string): void {
+    if (detail === 'not_saved') {
+      this.close({ status: 'unsaved', note: `The recording ended on ${this.pairing.laptop_name}, but Meeting assistant didn't save notes. The transcript is in Canopy Listen there.` })
+    } else if (detail === 'discarded') {
+      this.close({ status: 'discarded' })
+    } else if (detail === 'saved') {
+      this.arm(10_000, () => this.close({ status: 'saved' })) // the `saved` message, with its link, is on its way
+    } else if (this.view.status === 'ending') {
+      // A laptop that doesn't say how it ended: the old reading, saved once ended.
+      this.arm(5000, () => this.close({ status: 'saved' }))
+    } else {
+      this.close({ status: 'unsaved', note: `${this.pairing.laptop_name} ended the recording.` })
+    }
+  }
+
+  /** Segments `items`, the first being number `from` of the meeting; any already held are skipped. */
+  private addSegments(from: number, items: unknown[]): void {
+    const skip = Math.max(0, this.segmentCount - from)
+    const fresh: Segment[] = []
+    for (const raw of items.slice(skip)) {
+      const m = (raw ?? {}) as Record<string, unknown>
+      fresh.push({
+        start: Number(m.start) || 0, end: Number(m.end) || 0,
+        speaker: Number.isInteger(m.speaker) ? (m.speaker as number) : 0,
+        text: typeof m.text === 'string' ? m.text : '',
+      })
+    }
+    if (!fresh.length) return
+    this.segmentCount = Math.max(this.segmentCount, from) + fresh.length
+    const shown = fresh.filter((seg) => seg.text)
+    if (shown.length) this.set({ segments: [...this.view.segments, ...shown].slice(-MAX_SEGMENTS) })
+  }
+
   private serverEnded(reason: string): void {
     if (this.finished) return
     if (this.view.status === 'ending') {
-      this.close({ status: 'saved' }, false)
+      this.close({ status: 'unsaved', note: `The connection closed before ${this.pairing.laptop_name} said it saved the meeting. Check Meetings in Canopy.` }, false)
       return
     }
     const words: Record<string, string> = {
@@ -599,7 +661,7 @@ export class Meeting {
     this.stopMic()
     this.relay?.close()
     if (endOnServer && this.sid) void this.deps.endSession(this.sid).catch(() => undefined)
-    this.set({ ...patch, reconnecting: false, laptopSlow: false, micPaused: false, level: 0 })
+    this.set({ ...patch, reconnecting: false, laptopSlow: false, micPaused: false, backlog: 0, level: 0 })
   }
 
   private stopMic(): void {

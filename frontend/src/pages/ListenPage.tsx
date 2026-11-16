@@ -606,7 +606,7 @@ function MeetingScreen({ meeting, onBack }: { meeting: Meeting; onBack: () => vo
     return () => document.removeEventListener('visibilitychange', onVisible)
   }, [meeting])
 
-  if (view.status === 'saved' || view.status === 'discarded' || view.status === 'failed') {
+  if (view.status === 'saved' || view.status === 'unsaved' || view.status === 'discarded' || view.status === 'failed') {
     return <Ended view={view} onBack={onBack} />
   }
 
@@ -630,7 +630,20 @@ function MeetingScreen({ meeting, onBack }: { meeting: Meeting; onBack: () => vo
           <Laptop className="size-3.5" aria-hidden />
           <span className="truncate">{view.laptopName}</span>
           <span aria-hidden>·</span>
-          <span>{view.reconnecting ? 'Reconnecting…' : view.laptopConnected ? 'connected' : 'not connected yet'}</span>
+          <span>
+            {view.reconnecting
+              ? 'Reconnecting…'
+              : view.laptopConnected
+                ? 'connected'
+                : view.status === 'recording'
+                  ? 'away — still recording here'
+                  : 'not connected yet'}
+          </span>
+          {view.backlog >= 2 && (
+            <span className="ml-auto tabular-nums" title="Recorded on this phone; it goes to your laptop when the connection is back">
+              {Math.round(view.backlog)} s held here
+            </span>
+          )}
         </div>
         <div className={`text-xs text-muted-foreground ${ON_A_PHONE ? '' : 'hidden'}`}>
           Keep this page open: locking the phone or switching apps pauses the recording.
@@ -779,6 +792,18 @@ function Ended({ view, onBack }: { view: MeetingView; onBack: () => void }) {
               Open the meeting <ExternalLink className="size-4" aria-hidden />
             </a>
           )}
+          {view.chatUrl && (
+            <a href={view.chatUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 text-sm font-medium text-primary underline underline-offset-4">
+              Open the agent chat <ExternalLink className="size-4" aria-hidden />
+            </a>
+          )}
+        </>
+      )}
+      {view.status === 'unsaved' && (
+        <>
+          <span className="grid place-items-center size-16 rounded-full bg-warning/15 text-warning"><TriangleAlert className="size-7" aria-hidden /></span>
+          <h1 className="text-xl font-semibold">Recording ended</h1>
+          <p className="text-sm text-muted-foreground">{view.note ?? `${view.laptopName} didn’t confirm it saved the meeting.`}</p>
           {view.chatUrl && (
             <a href={view.chatUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 text-sm font-medium text-primary underline underline-offset-4">
               Open the agent chat <ExternalLink className="size-4" aria-hidden />

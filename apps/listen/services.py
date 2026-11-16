@@ -12,6 +12,7 @@ import re
 import uuid
 
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.harness import runner_protocol
@@ -22,8 +23,10 @@ from .models import ROLES, ListenSession
 
 #: Nothing connected (both roles) this long after creation: the session ends.
 CONNECT_WINDOW = dt.timedelta(minutes=2)
-#: A role gone this long from a live session: the session ends.
-PEER_GONE = dt.timedelta(seconds=60)
+#: A role gone this long from a live session: the session ends. Long enough for a phone
+#: to change networks or a laptop's runner to restart and come back: both ends keep the
+#: meeting (and the phone its audio) meanwhile.
+PEER_GONE = dt.timedelta(minutes=3)
 #: No session lasts longer.
 MAX_AGE = dt.timedelta(hours=4)
 #: A socket refreshes its role this often; one silent for STALE_S has gone.
@@ -148,10 +151,15 @@ def end(session_id, reason: str) -> bool:
 
 
 def pending_for(runners) -> list[ListenSession]:
-    """Waiting sessions on these runners made inside the connect window, oldest first."""
-    since = timezone.now() - CONNECT_WINDOW
-    return list(ListenSession.objects.filter(runner__in=runners, state=ListenSession.WAITING,
-                                             created_at__gte=since).order_by("created_at"))
+    """Sessions these runners should connect to, oldest first: waiting ones made inside
+    the connect window, and live meetings whose laptop side has gone (its runner restarted,
+    or its socket dropped), which it can rejoin until PEER_GONE ends them."""
+    now = timezone.now()
+    waiting = Q(state=ListenSession.WAITING, created_at__gte=now - CONNECT_WINDOW)
+    laptop_gone = (Q(laptop_channel="") | Q(laptop_seen_at__isnull=True)
+                   | Q(laptop_seen_at__lt=now - dt.timedelta(seconds=STALE_S)))
+    rejoin = Q(state=ListenSession.LIVE, kind=ListenSession.MEETING) & laptop_gone
+    return list(ListenSession.objects.filter(Q(runner__in=runners) & (waiting | rejoin)).order_by("created_at"))
 
 
 # -- roles (the consumer's bookkeeping) ----------------------------------------
@@ -164,9 +172,14 @@ def _present(session: ListenSession, role: str, now) -> bool:
 def claim_role(user, session_id, role: str, channel: str, *, runner_id=None):
     """Hold `role` on the session for this socket.
 
-    Returns ("ok", other_present), ("ended", reason), ("taken", None) or
-    ("missing", None) — missing also for a session that isn't the user's, or (for a
-    runner's own key) isn't on that runner, so a stranger learns nothing."""
+    Returns ("ok", (other_present, replaced_channel)), ("ended", reason) or ("missing",
+    None) — missing also for a session that isn't the user's, or (for a runner's own key)
+    isn't on that runner, so a stranger learns nothing.
+
+    A newer socket takes the role over from an older one (`replaced_channel`, which the
+    caller tells to close). The usual older socket is this same phone or laptop before it
+    changed networks: the server can't yet tell that it's dead, and refusing the new one
+    would end a meeting over a network change. Only the owner gets this far."""
     now = timezone.now()
     with transaction.atomic():
         s = ListenSession.objects.select_for_update().filter(pk=session_id).first()
@@ -174,8 +187,7 @@ def claim_role(user, session_id, role: str, channel: str, *, runner_id=None):
             return "missing", None
         if s.state == ListenSession.ENDED:
             return "ended", s.end_reason
-        if _present(s, role, now):
-            return "taken", None
+        replaced = getattr(s, f"{role}_channel") if _present(s, role, now) else ""
         setattr(s, f"{role}_channel", channel)
         setattr(s, f"{role}_seen_at", now)
         fields = [f"{role}_channel", f"{role}_seen_at"]
@@ -185,7 +197,7 @@ def claim_role(user, session_id, role: str, channel: str, *, runner_id=None):
             s.connected_at = s.connected_at or now
             fields += ["state", "absent_since", "connected_at"]
         s.save(update_fields=fields)
-        return "ok", peer
+        return "ok", (peer, replaced)
 
 
 def beat(session_id, role: str, channel: str, *, sent: int = 0) -> str:
@@ -211,15 +223,16 @@ def peer_present(session_id, role: str) -> bool:
     return bool(s and s.state != ListenSession.ENDED and _present(s, other(role), timezone.now()))
 
 
-def release_role(session_id, role: str, channel: str, *, sent: int = 0) -> None:
+def release_role(session_id, role: str, channel: str, *, sent: int = 0) -> bool:
     """This socket closed: give the role up (if it still held it) and start the
-    peer-gone clock on a live session."""
+    peer-gone clock on a live session. True if it held the role."""
     with transaction.atomic():
         s = ListenSession.objects.select_for_update().filter(pk=session_id).first()
         if s is None:
-            return
+            return False
         fields = _add_bytes(s, role, sent)
-        if getattr(s, f"{role}_channel") == channel:
+        held = getattr(s, f"{role}_channel") == channel
+        if held:
             setattr(s, f"{role}_channel", "")
             setattr(s, f"{role}_seen_at", None)
             fields += [f"{role}_channel", f"{role}_seen_at"]
@@ -228,6 +241,7 @@ def release_role(session_id, role: str, channel: str, *, sent: int = 0) -> None:
                 fields.append("absent_since")
         if fields:
             s.save(update_fields=fields)
+        return held
 
 
 def _add_bytes(s: ListenSession, role: str, sent: int) -> list[str]:

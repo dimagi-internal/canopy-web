@@ -290,26 +290,36 @@ def test_ready_comes_first_and_says_who_this_is():
     asyncio.run(go())
 
 
-def test_a_forged_or_replayed_frame_drops_the_session():
+def test_a_forged_or_replayed_frame_is_dropped_and_does_nothing():
+    """A pipe that reconnects may resend a frame, so one that doesn't open is dropped on its
+    own; it never acts. A stream of them ends the session."""
     async def go():
-        s, phone = make(), Phone()
+        runner = Runner()
+        s, phone = make(runner), Phone()
         s.phones.add(phone.key, "Pixel")
         session, up, _, _ = await meeting_session(s, phone)
         await session.open()
-        frame = up.control({"type": "rename", "speaker": 0, "name": "x"})
-        assert await session.receive(frame)
-        assert await session.receive(frame) is False  # replayed
+        start = up.control({"type": "start", "notice_accepted": True})
+        assert await session.receive(start)
+        await settle(s)
+        started = len(runner.calls)
+        assert await session.receive(start)  # replayed: dropped
+        await settle(s)
+        assert len(runner.calls) == started and session.bad_frames == 1
 
         session, up, _, _ = await meeting_session(s, phone, "sess-2")
         await session.open()
-        forged = bytearray(up.control({"type": "end"}))
+        forged = bytearray(up.control({"type": "start", "notice_accepted": True}))
         forged[-1] ^= 1
-        assert await session.receive(bytes(forged)) is False
+        assert await session.receive(bytes(forged))
+        assert session.input is None  # it started nothing
 
         session, up, _, _ = await meeting_session(s, phone, "sess-3")
         await session.open()
         other_session = rc.Sealer(rc.unb64u(rc.b64u(os.urandom(32))), "sess-3")
-        assert await session.receive(other_session.control({"type": "start", "notice_accepted": True})) is False
+        frames = [other_session.control({"type": "start", "notice_accepted": True}) for _ in range(201)]
+        results = [await session.receive(f) for f in frames]
+        assert session.input is None and results[0] is True and results[-1] is False
     asyncio.run(go())
 
 
@@ -380,7 +390,8 @@ def test_the_phone_hears_its_meeting_live_and_its_end():
         proc = fake_recorder(meeting)
         await asyncio.sleep(serve.FOLLOW_SECONDS * 2.5)
         got = opened(down, sent)
-        assert {"type": "segment", "start": 0.0, "end": 1.2, "speaker": 0, "text": "hello there"} in got
+        assert {"type": "segments", "from": 0,
+                "items": [{"start": 0.0, "end": 1.2, "speaker": 0, "text": "hello there"}]} in got
         assert {"type": "speakers", "speakers": [{"name": "Speaker 1", "number": 0}]} in got
         assert {"type": "state", "state": "recording", "detail": ""} in got
         assert [m for m in got if m["type"] == "partial"] == [{"type": "partial", "text": "and the budget"}]
@@ -395,7 +406,7 @@ def test_the_phone_hears_its_meeting_live_and_its_end():
         await asyncio.wait_for(session.follow, 5)
         got = opened(down, sent[len(got):])
         assert {"type": "chat", "url": "https://c.example/s/1"} in got
-        assert {"type": "state", "state": "ended", "detail": ""} in got
+        assert {"type": "state", "state": "ended", "detail": "saved"} in got
         assert {"type": "saved", "url": "https://canopy.example/meetings"} in got
     asyncio.run(go())
 
@@ -635,3 +646,148 @@ def test_the_qr_code_has_its_finder_patterns_and_fits_a_pairing_link():
         assert ring == [True] * 7
         assert code.modules[cy + 1][cx + 1] is False and code.modules[cy + 3][cx + 3] is True
     assert qr.svg("hi").count("<path") == 1
+
+
+# --- a meeting outlives its pipe ----------------------------------------------------
+
+
+class Pipe:
+    """The runner's pipe to serve, in memory: frames in through a StreamReader, frames out
+    collected; `hang_up` is the pipe dying, `end` the runner's explicit end (an empty frame)."""
+
+    def __init__(self):
+        self.reader = asyncio.StreamReader()
+        self.out: list[bytes] = []
+        self._buf = b""
+
+    def write(self, data):
+        self._buf += data
+        while len(self._buf) >= 4:
+            (n,) = struct.unpack(">I", self._buf[:4])
+            if len(self._buf) < 4 + n:
+                break
+            self.out.append(self._buf[4:4 + n])
+            self._buf = self._buf[4 + n:]
+
+    async def drain(self):
+        pass
+
+    def close(self):
+        pass
+
+    def frame(self, data: bytes):
+        self.reader.feed_data(struct.pack(">I", len(data)) + data)
+
+    def hang_up(self):
+        self.reader.feed_eof()
+
+    def end(self):
+        self.reader.feed_data(struct.pack(">I", 0))
+
+
+async def run_pipe(s, sid, hello, pipe):
+    op = {"op": "session", "session_id": sid, "kind": "meeting", "hello": hello}
+    return asyncio.get_running_loop().create_task(s._session(op, pipe.reader, pipe))
+
+
+def test_a_meeting_waits_for_its_runner_to_rejoin_and_carries_on():
+    async def go():
+        s, phone = make(), Phone()
+        s.phones.add(phone.key, "Pixel")
+        hello, up, down = phone.session(s.key.public(), "sess-r")
+        first = Pipe()
+        task = await run_pipe(s, "sess-r", hello, first)
+        first.frame(up.control({"type": "start", "notice_accepted": True}))
+        await asyncio.sleep(0.05)
+        await settle(s)
+        session = s.relays["sess-r"]
+        inp = session.input
+        first.hang_up()  # the runner restarted
+        await task
+        assert s.relays["sess-r"] is session and not inp.ended and not session.attached
+
+        second = Pipe()
+        task = await run_pipe(s, "sess-r", hello, second)
+        await asyncio.sleep(0.05)
+        assert session.attached and session.conn == 2
+        second.frame(up.seal(rc.AUDIO, b"\x01\x00" * 800))  # the counter carries on: same keys, same session
+        second.frame(up.control({"type": "resume", "have": 0}))
+        await asyncio.sleep(0.05)
+        assert inp.seconds > 0 and session.bad_frames == 0
+        assert opened(down, first.out)[0] == {"type": "ready", "name": "Test Mac"}
+        assert all(m["type"] != "ready" for m in opened(down, second.out))  # no second ready
+
+        second.end()  # the server ended the session
+        await task
+        assert inp.ended and "sess-r" not in s.relays
+    asyncio.run(go())
+
+
+def test_a_pipe_that_never_comes_back_ends_the_meeting(monkeypatch):
+    monkeypatch.setattr(serve, "DETACHED_GRACE", 0.05)
+
+    async def go():
+        s, phone = make(), Phone()
+        s.phones.add(phone.key, "Pixel")
+        hello, up, _ = phone.session(s.key.public(), "sess-g")
+        pipe = Pipe()
+        task = await run_pipe(s, "sess-g", hello, pipe)
+        pipe.frame(up.control({"type": "start", "notice_accepted": True}))
+        await asyncio.sleep(0.05)
+        await settle(s)
+        inp = s.relays["sess-g"].input
+        pipe.hang_up()
+        await task
+        await asyncio.sleep(0.15)
+        assert inp.ended and "sess-g" not in s.relays
+    asyncio.run(go())
+
+
+def test_a_rejoin_must_be_the_same_phone_session():
+    async def go():
+        s, phone = make(), Phone()
+        s.phones.add(phone.key, "Pixel")
+        hello, up, _ = phone.session(s.key.public(), "sess-x")
+        pipe = Pipe()
+        task = await run_pipe(s, "sess-x", hello, pipe)
+        await asyncio.sleep(0.05)
+        pipe.hang_up()
+        await task
+        other, _, _ = phone.session(s.key.public(), "sess-x")  # another ephemeral key
+        intruder = Pipe()
+        await (await run_pipe(s, "sess-x", other, intruder))
+        assert s.relays["sess-x"].conn == 1 and intruder.out == []
+    asyncio.run(go())
+
+
+def test_a_recorder_that_died_reads_as_failed_and_an_unsaved_end_is_not_saved():
+    async def go():
+        s, phone = make(), Phone()
+        s.phones.add(phone.key, "Pixel")
+        session, up, down, sent = await meeting_session(s, phone)
+        await session.open()
+        await session.receive(up.control({"type": "start", "notice_accepted": True}))
+        await settle(s)
+        meeting = store.new_meeting("", "phone")
+        meeting.update(input=session.input.id, state="recording")
+        store.save(meeting)
+        proc = fake_recorder(meeting)
+        await asyncio.sleep(serve.FOLLOW_SECONDS * 2)
+        proc.kill()  # killed, without writing its end
+        await asyncio.wait_for(session.follow, 5)
+        assert {"type": "state", "state": "failed", "detail": "recorder_stopped"} in opened(down, sent)
+
+        s2, phone2 = make(), Phone()
+        s2.phones.add(phone2.key, "Pixel")
+        session, up, down, sent = await meeting_session(s2, phone2, "sess-u")
+        await session.open()
+        await session.receive(up.control({"type": "start", "notice_accepted": True}))
+        await settle(s2)
+        meeting = store.new_meeting("", "phone")
+        meeting.update(input=session.input.id, state="ended")  # recorded, but Meeting assistant never saved
+        store.save(meeting)
+        await asyncio.wait_for(session.follow, 5)
+        got = opened(down, sent)
+        assert {"type": "state", "state": "ended", "detail": "not_saved"} in got
+        assert all(m["type"] != "saved" for m in got)
+    asyncio.run(go())

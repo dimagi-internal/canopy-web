@@ -403,4 +403,44 @@ describe('Meeting', () => {
     expect(meeting.view.micPaused).toBe(false)
     expect(mic.starts).toBe(1)
   })
+
+  it('takes segments in batches, skips any it already has, and asks to resync after a gap', async () => {
+    const { meeting, ws, fromPhone, toPhone } = await started()
+    ws.binary(await toPhone.control({ type: 'ready', name: 'MBP' }))
+    await vi.waitFor(() => expect(meeting.view.status).toBe('recording'))
+    const seg = (n: number) => ({ start: n, end: n + 1, speaker: 0, text: `line ${n}` })
+    ws.binary(await toPhone.control({ type: 'segments', from: 0, items: [seg(0), seg(1)] }))
+    ws.binary(await toPhone.control({ type: 'segments', from: 1, items: [seg(1), seg(2)] })) // a resend overlaps
+    await vi.waitFor(() => expect(meeting.view.segments.map((s) => s.text)).toEqual(['line 0', 'line 1', 'line 2']))
+
+    ws.text({ type: 'peer', role: 'laptop', connected: false })
+    await settle()
+    expect(meeting.view.laptopConnected).toBe(false)
+    ws.text({ type: 'peer', role: 'laptop', connected: true })
+    await vi.waitFor(() => expect(ws.sent).toHaveLength(2))
+    expect(controlMessage(await fromPhone.open(ws.sent[1]))).toEqual({ type: 'resume', have: 3 })
+  })
+
+  it('is saved only when the laptop says so', async () => {
+    const notSaved = await started()
+    notSaved.ws.binary(await notSaved.toPhone.control({ type: 'ready', name: 'MBP' }))
+    await vi.waitFor(() => expect(notSaved.meeting.view.status).toBe('recording'))
+    notSaved.meeting.end()
+    notSaved.ws.binary(await notSaved.toPhone.control({ type: 'state', state: 'ended', detail: 'not_saved' }))
+    await vi.waitFor(() => expect(notSaved.meeting.view.status).toBe('unsaved'))
+    expect(notSaved.meeting.view.note).toMatch(/didn't save notes/)
+
+    const cut = await started()
+    cut.ws.binary(await cut.toPhone.control({ type: 'ready', name: 'MBP' }))
+    await vi.waitFor(() => expect(cut.meeting.view.status).toBe('recording'))
+    cut.meeting.end()
+    cut.ws.text({ type: 'ended', reason: 'peer_gone' })
+    await vi.waitFor(() => expect(cut.meeting.view.status).toBe('unsaved'))
+
+    const died = await started()
+    died.ws.binary(await died.toPhone.control({ type: 'ready', name: 'MBP' }))
+    died.ws.binary(await died.toPhone.control({ type: 'state', state: 'failed', detail: 'recorder_stopped' }))
+    await vi.waitFor(() => expect(died.meeting.view.status).toBe('failed'))
+    expect(died.meeting.view.error).toBe('The recorder on MBP stopped unexpectedly. What it heard so far is saved there.')
+  })
 })

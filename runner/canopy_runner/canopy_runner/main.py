@@ -1659,13 +1659,17 @@ def main() -> None:
         # two states with no path between them. run_once heartbeats, pumps
         # in-flight replies, reconciles the two, and returns "paused" without
         # starting anything. One place owns the rule.
-        if not getattr(waker, "connected", False) and time.monotonic() >= listen_poll_at:
-            # A phone's meeting reaches us on the control socket; when that is down,
-            # ask for waiting ones instead (listen_pipe.py).
-            listen_poll_at = time.monotonic() + 10
+        if time.monotonic() >= listen_poll_at:
+            # A phone's meeting reaches us on the control socket, but that frame is sent once
+            # and pub/sub may drop it, and a meeting whose pipe died (this runner restarted)
+            # gets no new frame at all. So ask for sessions to join: every 10 s while the
+            # socket is down, every 15 s while it is up, and only on a Mac with Canopy Listen.
             from . import listen_pipe
 
-            listen_pipe.poll_pending(client, base_url=cfg.base_url, bearer=lambda: client.token)
+            connected = getattr(waker, "connected", False)
+            listen_poll_at = time.monotonic() + (15 if connected else 10)
+            if listen_pipe.listen_cli():
+                listen_pipe.poll_pending(client, base_url=cfg.base_url, bearer=lambda: client.token)
         try:
             result = run_once(cfg, client)
             auth_watch.ok()

@@ -45,11 +45,27 @@ Plaintext messages (after decryption):
   - `{"type":"end"}`: end and save.
   - `{"type":"discard"}`
   - `{"type":"rename","speaker":N,"name":"…"}`
+  - `{"type":"resume","have":N}`: sent after a gap (its socket reopened, or the laptop came
+    back), saying the phone has the first N segments. The laptop resends the rest, plus
+    its current state, speakers, chat link and partial words.
   - pairing only: `{"type":"pair","phone_key":…,"label":…}`
 - 0x02 + JSON, laptop → phone:
   - `{"type":"ready","name":laptop_name}`: sent first; the phone sends no audio before it.
   - `{"type":"state","state":"starting|recording|ending|ended|failed","detail":…}`
-  - `{"type":"segment","start":…,"end":…,"speaker":N,"text":…}`: final words.
+    - For `ended`, the detail says how it ended:
+      - `saved`: a `saved` message follows.
+      - `not_saved`: Meeting assistant didn't save the meeting.
+      - `discarded`
+    - The phone shows "saved" only for `saved`.
+    - For `failed`, the detail is a code or a sentence. `recorder_stopped` means the
+      recorder died.
+  - `{"type":"segments","from":N,"items":[{"start","end","speaker","text"}…]}`: final
+    words.
+    - Batches hold at most 20 segments or 20,000 characters, so the relay's message rate
+      can't be exceeded.
+    - The first item is segment N of the meeting; the phone skips any segments it already
+      has.
+    - The phone also reads `{"type":"segment",…}`, one segment at a time.
   - `{"type":"partial","text":…}`: words heard but not final yet, shown greyed after the
     transcript; each replaces the last, and `""` clears it. The recorder steps every second
     and starts listening before its models load, so nothing said while they load is lost.
@@ -80,9 +96,15 @@ REST, for the signed-in person (session cookie or PAT):
   sockets are closed.
 
 For the runner, authenticated as the existing runner routes are:
-- `GET /api/runner/listen-sessions/pending` → `waiting` sessions for this runner created in
-  the last 2 minutes, each `{session_id, runner_id, kind, hello}`. This is the fallback when
-  the control socket is down. A runner's own key reads its own runner's
+- `GET /api/runner/listen-sessions/pending` → the sessions this runner should be on, each
+  `{session_id, runner_id, kind, hello}`:
+  - `waiting` sessions created in the last 2 minutes;
+  - `live` meetings whose laptop side has gone, so the runner can rejoin them.
+
+  The runner polls this route every 15 s, or every 10 s while its control socket is down.
+  It polls only if Canopy Listen is installed. Polling is needed for two reasons: the
+  control frame is sent once and pub/sub may drop it, and a runner that restarts
+  mid-meeting gets no new frame. A runner's own key reads its own runner's
   (`apps/harness/runner_auth.py` lets it reach this route and nothing else under listen); a
   person's token reads the runner named by `?runner_id=`, or all of theirs.
 
@@ -94,8 +116,9 @@ WebSocket `/ws/listen/<sid>/?role=phone|laptop`:
   authenticates with the runner's bearer, which resolves to the owner, as `/ws/runner` does;
   a runner's own key opens only the laptop side of sessions on that runner (the handshake
   puts its runner on `scope["runner_id"]`, `apps/realtime/channels_auth.py`). Anyone else is
-  refused 4003 before the socket is accepted. One socket per role; a second is accepted and
-  then closed 4009, so the client can read why. Which socket holds a role is on the row
+  refused 4003 before the socket is accepted. One socket per role: a newer socket takes the
+  role over, and the older one is closed 4009. The older socket is usually the same phone
+  or laptop from before a network change, which still looks alive to the server. Which socket holds a role is on the row
   (`phone_channel`/`laptop_channel`), refreshed every 10 s; one silent for 30 s has gone
   (a web process that died never said so).
 - **What gets relayed:** binary messages go to the other role, as they are. A binary
@@ -114,7 +137,7 @@ WebSocket `/ws/listen/<sid>/?role=phone|laptop`:
   `{"type":"peer","role":…,"connected":bool}` whenever the other side connects or
   leaves, and `{"type":"ended","reason":…}`. The server never reads a binary message.
 - **Session states:** both roles connected → `live` (`connected_at`). The session ends
-  when a role has been gone for 60 s once live (`peer_gone`), when it is not live 2 minutes
+  when a role has been gone for 3 minutes once live (`peer_gone`), when it is not live 2 minutes
   after creation (`not_connected`), or at 4 h (`max_duration`): `apps/listen/services.py::sweep`,
   a job on the off-request clock every 10 s. Ended rows (state and byte totals) are deleted
   after 30 days. Connecting to an ended session gets its `ended` notice, then a close.
@@ -126,9 +149,16 @@ WebSocket `/ws/listen/<sid>/?role=phone|laptop`:
   pairing `{runner_id, laptop_pub, laptop_name}`, in IndexedDB.
 - `pairLink.ts`: the `#pair=` fragment is moved to this tab's sessionStorage and stripped
   from the address first thing at startup (`main.tsx`), and again on a same-tab hash change.
-- `relay.ts`: one session's socket. No audio before `ready`; until then up to 10 s waits,
-  oldest dropped first. Frames go out in counter order; a dropped socket is reopened once.
-  The pairing frame is sent when the server says the laptop is connected.
+- `relay.ts`: one session's socket.
+  - Everything goes out through one queue and is sealed as it leaves, so counters always
+    rise.
+  - Control messages go ahead of waiting audio, except `end`, which follows it.
+  - Audio waits before `ready`, while the socket is down, and while the laptop is away. Up
+    to 3 minutes is kept, oldest dropped first.
+  - When catching up, it sends at most 30 frames a second.
+  - A dropped socket is reopened with backoff for up to 170 s. After any gap, the page
+    sends `resume`.
+  - The pairing frame is sent when the server says the laptop is connected.
 - `audio.ts`: microphone (echo cancellation, noise suppression) → AudioWorklet → box-filter
   downsample to 16 kHz → int16 LE → 0.5 s chunks. Started inside the tap, as phones require.
 - `controller.ts`: pairing and a meeting as classes the page drives; REST, socket, storage
@@ -154,7 +184,13 @@ On `listen_start`, or a pending session from the REST fallback, the runner:
 3. Opens `/ws/listen/<sid>/?role=laptop`.
 4. Copies binary frames both ways. Over the socket each frame is length-prefixed
    (4 bytes, big-endian).
-5. Closes both sides when either closes.
+5. For a meeting, a dropped socket to canopy-web is reopened while the local socket stays
+   open.
+   - It retries with backoff for up to 170 s; frames from serve wait for the new socket.
+   - It pings when idle, and gives up on a socket that has been silent for 75 s.
+   - Close codes 4001, 4003 and 4009 are final.
+6. When the server ends the session, it writes an empty frame to serve (the explicit end)
+   and closes both sides. When serve closes, it closes the socket to canopy-web.
 
 The runner never holds a key.
 
@@ -175,6 +211,16 @@ The runner never holds a key.
   - pair a phone (with the QR code) and list or remove paired phones.
 - **Keeping the Mac awake**: while a recorder runs it holds `caffeinate -i -s -w <its pid>`,
   so the Mac doesn't idle to sleep mid-meeting (closing the lid on battery still sleeps it).
+- **A phone meeting outlives its pipe.** If the pipe closes without the empty frame (the
+  runner restarted), serve keeps the session for 200 s so the runner can rejoin. It keeps
+  the keys, counters, input and recorder.
+  - The runner rejoins with the same session id and `phone_eph`.
+  - Serve then carries on without sending a second `ready`, and resends from the phone's
+    `resume`.
+  - A frame that doesn't open is dropped on its own, because a reconnecting pipe may resend
+    one. 200 of them end the session.
+- **A recorder that died** reads as `failed` / `recorder_stopped`: its pid is gone while
+  `meeting.json` still says loading, recording or finishing.
 - **A meeting**, from the page, a tab or the phone:
   1. Serve queues the input (`next-input.json {"relay": id}`, or nothing for the native
      microphone).
