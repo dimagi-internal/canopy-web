@@ -4509,6 +4509,27 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/local-apps/menu/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What your apps add to your account menu
+         * @description Items your installed apps add to the account menu, the ones you turned on in each
+         *     app's settings. An item that asks for an agent comes with the agents you may use.
+         */
+        readonly get: operations["list_local_app_menu"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/local-apps/installations/{installation_id}": {
         readonly parameters: {
             readonly query?: never;
@@ -26875,6 +26896,43 @@ export interface components {
             };
             /** Accept Digest */
             readonly accept_digest: string;
+        };
+        /** LocalAppMenuAgentOut */
+        readonly LocalAppMenuAgentOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Name */
+            readonly name: string;
+            /** Workspace */
+            readonly workspace: string;
+        };
+        /** LocalAppMenuEntryOut */
+        readonly LocalAppMenuEntryOut: {
+            /** App */
+            readonly app: string;
+            /** App Name */
+            readonly app_name: string;
+            /** Key */
+            readonly key: string;
+            /** Label */
+            readonly label: string;
+            /** Path */
+            readonly path: string;
+            /**
+             * Pick
+             * @default
+             */
+            readonly pick: string;
+        };
+        /** LocalAppMenuOut */
+        readonly LocalAppMenuOut: {
+            /** Items */
+            readonly items: readonly components["schemas"]["LocalAppMenuEntryOut"][];
+            /**
+             * Agents
+             * @default []
+             */
+            readonly agents: readonly components["schemas"]["LocalAppMenuAgentOut"][];
         };
         /** LocalAppConfigureIn */
         readonly LocalAppConfigureIn: {
@@ -56560,6 +56618,26 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["LocalAppInstallationOut"][];
+                };
+            };
+        };
+    };
+    readonly list_local_app_menu: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LocalAppMenuOut"];
                 };
             };
         };

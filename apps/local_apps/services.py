@@ -365,6 +365,30 @@ def resolve(inst: LocalAppInstallation) -> dict:
     return {"version": version, "needs_acceptance": needs_acceptance, "changes": changes, "refusal": refusal}
 
 
+def menu_items(user) -> list[tuple[LocalAppInstallation, dict]]:
+    """The account-menu items this person's apps add, each once however many computers
+    have the app. An item shows while its `shown_when` setting is on; an app with no
+    released version left adds nothing. Read from the newest release, since an item is
+    not part of what they accepted."""
+    seen: set[tuple[str, str]] = set()
+    out: list[tuple[LocalAppInstallation, dict]] = []
+    rows = LocalAppInstallation.objects.filter(user=user).select_related("template").order_by("template__name", "id")
+    for inst in rows:
+        top = latest(inst.template.key)
+        if top is None:
+            continue
+        spec = top.manifest.get("settings") or {}
+        for item in top.manifest.get("menu") or []:
+            switch = item.get("shown_when") or ""
+            if switch and inst.settings.get(switch, (spec.get(switch) or {}).get("default")) is not True:
+                continue
+            if (inst.template.key, item["key"]) in seen:
+                continue
+            seen.add((inst.template.key, item["key"]))
+            out.append((inst, item))
+    return out
+
+
 def agent_slug(inst: LocalAppInstallation, version: LocalAppSubmission) -> str:
     for name, field in version.manifest["settings"].items():
         if field["type"] == "agent":

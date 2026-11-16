@@ -202,11 +202,11 @@ export function ListenPage({ deps: given }: { deps?: ListenDeps } = {}): JSX.Ele
   )
 }
 
-function Centered({ children }: { children: ReactNode }) {
+export function Centered({ children }: { children: ReactNode }) {
   return <div className="flex-1 flex flex-col items-center justify-center text-center gap-4">{children}</div>
 }
 
-function Problem({ children }: { children: ReactNode }) {
+export function Problem({ children }: { children: ReactNode }) {
   return (
     <div role="alert" className="flex gap-2.5 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive text-left">
       <TriangleAlert className="size-4 mt-0.5 shrink-0" aria-hidden />
@@ -216,7 +216,7 @@ function Problem({ children }: { children: ReactNode }) {
 }
 
 /** The laptop hasn't connected yet: most often asleep, or its connection to Canopy is down. */
-function SlowLaptop({ name }: { name: string }) {
+export function SlowLaptop({ name }: { name: string }) {
   return (
     <p role="status" className="flex gap-2 rounded-xl bg-muted px-4 py-3 text-sm text-muted-foreground text-left">
       <WifiOff className="size-4 mt-0.5 shrink-0" aria-hidden />
@@ -389,7 +389,7 @@ const ON_A_PHONE = typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod
  * fail, and the page can't ask again. Only the browser's settings can undo that, so say
  * how before the tap rather than after it. Browsers that can't tell answer 'unknown'.
  */
-function useMicPermission(): PermissionState | 'unknown' {
+export function useMicPermission(): PermissionState | 'unknown' {
   const [state, setState] = useState<PermissionState | 'unknown'>('unknown')
   useEffect(() => {
     let status: PermissionStatus | null = null
@@ -411,7 +411,7 @@ function useMicPermission(): PermissionState | 'unknown' {
   return state
 }
 
-function micSettingsHelp(): string {
+export function micSettingsHelp(): string {
   const ua = typeof navigator === 'undefined' ? '' : navigator.userAgent
   if (/iPhone|iPad|iPod/i.test(ua)) {
     return 'On iPhone: tap aA in the address bar → Website Settings → Microphone → Allow. If that doesn’t show it, check Settings → Apps → Safari → Microphone.'
@@ -536,7 +536,7 @@ function useMeetingView(meeting: Meeting): MeetingView {
 }
 
 /** Keeps the screen on while `active`; re-asked when the page is shown again. */
-function useWakeLock(active: boolean) {
+export function useWakeLock(active: boolean) {
   useEffect(() => {
     if (!active || !('wakeLock' in navigator)) return
     let lock: { release(): Promise<void> } | null = null
@@ -561,7 +561,7 @@ function useWakeLock(active: boolean) {
   }, [active])
 }
 
-function useClock(since: number | undefined, running: boolean): string {
+export function useClock(since: number | undefined, running: boolean): string {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     if (!running) return
@@ -576,7 +576,7 @@ function useClock(since: number | undefined, running: boolean): string {
   return h ? `${h}:${String(mm).padStart(2, '0')}:${ss}` : `${mm}:${ss}`
 }
 
-function Meter({ level }: { level: number }) {
+export function Meter({ level }: { level: number }) {
   const bars = 24
   return (
     <div className="flex items-end justify-center gap-[3px] h-8" aria-hidden>

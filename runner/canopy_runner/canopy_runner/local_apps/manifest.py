@@ -19,7 +19,9 @@ MAX_MINUTES = 480
 
 REQUIRED = ("key", "name", "version", "entry", "platforms", "max_minutes")
 KNOWN = {*REQUIRED, "description", "changelog", "source", "notice",
-         "disclosure", "settings", "checks", "canopy", "presentation"}
+         "disclosure", "settings", "checks", "canopy", "presentation",
+         # Account-menu items: canopy-web shows them; nothing here runs them.
+         "menu"}
 
 
 def _text(raw: dict, name: str) -> str:

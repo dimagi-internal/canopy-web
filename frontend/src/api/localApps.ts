@@ -76,6 +76,23 @@ export async function installLocalApp(
   return unwrap(res, "Failed to install the app") as unknown as LocalAppInstallation;
 }
 
+export type LocalAppMenu = components["schemas"]["LocalAppMenuOut"];
+export type LocalAppMenuItem = components["schemas"]["LocalAppMenuEntryOut"];
+export type LocalAppMenuAgent = components["schemas"]["LocalAppMenuAgentOut"];
+
+/** What this person's apps add to their account menu (the items they turned on). */
+export async function getLocalAppMenu(): Promise<LocalAppMenu> {
+  const res = await apiV2.GET("/api/local-apps/menu/");
+  return unwrap(res, "Failed to load your apps' menu") as LocalAppMenu;
+}
+
+/** Where a menu item goes: its page, with the agent it was opened for when it asks for one. */
+export function menuItemHref(item: LocalAppMenuItem, agent?: LocalAppMenuAgent): string {
+  if (!agent) return item.path;
+  const q = new URLSearchParams({ agent: agent.slug, workspace: agent.workspace });
+  return `${item.path}?${q.toString()}`;
+}
+
 /** This person's installations, on all their computers. */
 export async function listMyLocalApps(): Promise<LocalAppInstallation[]> {
   const res = await apiV2.GET("/api/local-apps/installations/");

@@ -8,6 +8,8 @@ A local app is a `manifest.json` plus a program, run as its own process on a per
 
 **Where its stream comes from.** A person installs one app. If it listens to something, the manifest's `source` names a second program in the same package, which the host starts and relays: it writes `segment`, then `ended` or `gone`, and owns its own cursor and quirks. The app must drop anything unsent on `gone`. Keeping the two programs separate is what lets a different source replace this one with no change to the app.
 
+**Add to the account menu.** `menu` lists up to five items, each `{key, label, path, pick, shown_when}`. `path` is one of canopy-web's own pages, never another site. With `pick: "agent"` the menu lists the person's agents under the item and opens `path?agent=<slug>&workspace=<slug>`. `shown_when` names one of the app's on/off settings: the item shows only while the person has it on, so they choose it in the app's settings. An item isn't part of what people accept, because the page it opens says what it does. Meeting assistant's Voice session is the example.
+
 **Try it.** `canopy-runner app dev-install <folder>`, then `canopy-runner app start <key>`. Nothing leaves the computer: Canopy calls go to a local stub and what would have been sent lands in `~/.canopy/apps/<key>/would-send.jsonl`.
 
 **Publish it.** `canopy-runner app pack <folder>` shows what would ship; `canopy-runner app submit <folder>` sends it for review, with `CANOPY_WEB_PAT` set. Bump `version` for every change.

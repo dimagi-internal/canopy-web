@@ -793,3 +793,72 @@ def test_a_run_saves_a_private_meeting_only_if_its_manifest_declares_it(world):
 def test_a_run_without_the_op_cannot_save_a_meeting(world):
     install(world, released(world))
     assert call(world, start(world), "meetings.save", {"text": "we ship"})["status"] == 403
+
+
+# --- account-menu items ------------------------------------------------------------------
+
+VOICE = {"key": "voice-session", "label": "Voice session", "path": "/listen/voice", "pick": "agent",
+         "shown_when": "voice_session"}
+
+
+def with_menu(**over) -> dict:
+    m = manifest(**over)
+    m["settings"] = {**m["settings"], "voice_session": {"type": "bool", "label": "Voice session in my menu"}}
+    return {**m, "menu": [VOICE]}
+
+
+def test_a_menu_item_is_checked_for_shape_and_left_out_of_what_people_accept():
+    m = pkg.read(package(with_menu())).manifest
+    assert m["menu"] == [VOICE]
+    assert pkg.read(package(manifest())).manifest["menu"] == []
+    # Adding or rewording an item mustn't make everyone accept again: it links to canopy-web's own page.
+    assert trust.digest(m) == trust.digest({**m, "menu": []})
+    for bad in ({"path": "https://evil.example/x"}, {"path": "//evil.example"}, {"path": "/listen/../admin"},
+                {"pick": "person"}, {"shown_when": "brief"}, {"shown_when": "nope"}, {"label": ""},
+                {"key": "Not A Key"}, {"colour": "red"}):
+        with pytest.raises(pkg.BadPackage, match="menu"):
+            pkg.read(package({**with_menu(), "menu": [{**VOICE, **bad}]}))
+    with pytest.raises(pkg.BadPackage, match="menu"):
+        pkg.read(package({**with_menu(), "menu": [VOICE, VOICE]}))
+
+
+def _menu(world, user=None) -> dict:
+    r = client(user or world["person"]).get("/api/local-apps/menu/")
+    assert r.status_code == 200, r.content
+    return r.json()
+
+
+def test_a_menu_item_shows_only_once_its_person_turns_it_on(world):
+    install(world, released(world, with_menu()))
+    assert _menu(world) == {"items": [], "agents": []}
+    inst = LocalAppInstallation.objects.get(user=world["person"])
+    r = client(world["person"]).patch(
+        f"/api/local-apps/installations/{inst.pk}", {"settings": {"voice_session": True}}, content_type=J
+    )
+    assert r.status_code == 200, r.content
+    menu = _menu(world)
+    assert menu["items"] == [{"app": "meeting-assistant", "app_name": "Meeting assistant", "key": "voice-session",
+                              "label": "Voice session", "path": "/listen/voice", "pick": "agent"}]
+    assert menu["agents"] == [{"slug": "helper", "name": "Helper", "workspace": "dimagi"}]
+    # Someone else's apps add nothing to your menu.
+    assert _menu(world, world["other"])["items"] == []
+
+
+def test_a_menu_item_shows_once_however_many_computers_have_the_app(world):
+    sub = released(world, with_menu())
+    install(world, sub, {"agent": "helper", "voice_session": True})
+    world["laptop"] = Runner.objects.create(name="desk", kind=Runner.EMDASH, owner=world["person"])
+    install(world, sub, {"agent": "helper", "voice_session": True})
+    assert LocalAppInstallation.objects.filter(user=world["person"]).count() == 2
+    assert [i["key"] for i in _menu(world)["items"]] == ["voice-session"]
+
+
+def test_a_withdrawn_app_adds_nothing_to_the_menu(world):
+    sub = released(world, with_menu())
+    install(world, sub, {"agent": "helper", "voice_session": True})
+    services.revoke(sub, reason="bad", user=world["root"])
+    assert _menu(world)["items"] == []
+
+
+def test_the_menu_is_only_for_the_person():
+    assert Client().get("/api/local-apps/menu/").status_code in (401, 403)

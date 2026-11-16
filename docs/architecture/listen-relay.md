@@ -201,6 +201,27 @@ WebSocket `/ws/listen/<sid>/?role=phone|laptop`:
   resumes it when the browser allows; otherwise a tap starts a new capture in the same
   session.
 
+### A voice note (`/listen/voice`)
+
+Meeting assistant adds Voice session to the account menu when its person turns it on in
+the app's settings (`local_apps/README.md`, "Add to the account menu"). They pick an agent
+there, and `VoiceNotePage.tsx` over `voiceNote.ts` does the rest:
+- It uses the same pairing, session kind and relay as a meeting, so canopy-web and the
+  runner can't tell a note from a meeting. Only the laptop and the phone know.
+- The laptop's `ready` lists `modes`. The phone asks for a note only from a laptop that
+  lists `note`, because an older one would take the start for a meeting's.
+- The phone sends `start {mode: "note", nonce}`. No notice is asked for, because nobody
+  else is recorded.
+- Done sends `end`. Done before the laptop answers keeps the audio on the phone, and the
+  end follows it once the laptop does.
+- The laptop answers `state ending/transcribing`, then `note {text}` and
+  `state ended/transcribed`. If it can't read it, it answers `state failed` with
+  `no_words`, `transcribe_failed` or `transcribe_timeout`.
+- The words come back into an editable box. Send opens a chat with the agent, as the
+  person (`createSession` then `sendMessage`), with the words as the first message.
+  Nothing reaches the agent before Send.
+- A note stops at 10 minutes on both sides.
+
 ## Runner (`listen_pipe.py`)
 
 On `listen_start`, or a pending session from the REST fallback, the runner:
@@ -272,3 +293,13 @@ The runner never holds a key.
      `canopy-runner app stop meeting-assistant`.
   4. It follows the active `meeting.json` and the app's `run.json`, and pushes
      segments, speakers, the chat link and state to the page and, encrypted, to the phone.
+- **A voice note** starts no app and no meeting, so it never makes this Mac busy:
+  - The audio is held in memory, at most 10 minutes.
+  - At `end`, it is written to `notes/<random>.pcm` (0600, in a 0700 folder), and
+    `canopy-listen _transcribe` reads it in its own process with the configured speech
+    model. Long notes are read in pieces of up to 60 s, each cut at the quietest moment
+    near its end (`note.py`).
+  - The file is deleted as soon as it has been read. Nothing of the note is kept.
+  - If the pipe drops while the note is being read, the words are kept, and sent again
+    when the phone asks with `resume`.
+  - The log records only the note's length and how many characters came back.
