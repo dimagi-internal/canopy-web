@@ -81,14 +81,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from django.db.models import Q
+from django.db.models import Exists, Q
 from django.utils import timezone
 
 from apps.harness import runner_requirements as rr
 from apps.harness import runners, sensitivity
 from apps.harness.models import Runner, Turn
 
-from . import channel_bindings
+from . import channel_bindings, staleness
 from .models import (
     REVIEW_METADATA_KEY,
     RunnerBinding,
@@ -97,7 +97,6 @@ from .models import (
     SessionReviewAsk,
     SessionReviewGrant,
 )
-
 
 #: On a request's user: the `Reach` an agent turn's caller token holds its reads to (`limit_reach`).
 REACH_ATTR = "_canopy_session_reach"
@@ -354,29 +353,42 @@ def is_own_session(user, session) -> bool:
 MAX_LINEAGE_DEPTH = 32
 
 
+def _scheduled_by(user, pks) -> set:
+    """The pks among `pks` driven by a schedule `user` set up: a turn canopy's
+    scheduler fired (`schedule_turns.schedule_initiator` records the schedule's
+    creator as the turn's `initiator_user`)."""
+    if not pks:
+        return set()
+    theirs = staleness.driving_turns().filter(
+        origin=Turn.ORIGIN_CANOPY_SCHEDULER, initiator_user=user)
+    return set(Session.objects.filter(pk__in=pks).filter(Exists(theirs))
+               .values_list("pk", flat=True))
+
+
 def started_by_you_among(user, sessions) -> set:
-    """The pks among `sessions` that `user` started: their own (`is_own_session`), or
-    one dispatched from a conversation of theirs — an agent they asked created it
-    under its own login, so `created_by` is the agent, but `parent_session` leads
-    back to the chat they typed in. Two queries per level of nesting for the whole page.
+    """The pks among `sessions` that `user` started: their own (`is_own_session`),
+    one a schedule of theirs fired (`_scheduled_by`), or one dispatched from either —
+    an agent created it under its own login, so `created_by` is the agent, but
+    `parent_session` leads back to the chat they typed in or the scheduled run they
+    set up. A few queries per level of nesting for the whole page.
 
     A DISPLAY rule for the "Started by me" filter, never an access one: it grants
     nothing, which is why it is not folded into `sessions_of_q` (review grants and
     coaching read that)."""
     if not getattr(user, "is_authenticated", False):
         return set()
-    mine, frontier = set(), {}  # frontier: row pk -> the ancestor we are asking about
-    for s in sessions:
-        if is_own_session(user, s):
-            mine.add(s.pk)
-        elif s.parent_session_id:
-            frontier[s.pk] = s.parent_session_id
+    mine = {s.pk for s in sessions if is_own_session(user, s)}
+    mine |= _scheduled_by(user, {s.pk for s in sessions} - mine)
+    # frontier: row pk -> the ancestor we are asking about
+    frontier = {s.pk: s.parent_session_id for s in sessions
+                if s.pk not in mine and s.parent_session_id}
     for _ in range(MAX_LINEAGE_DEPTH):
         if not frontier:
             break
         asked = set(frontier.values())
         own = set(Session.objects.filter(sessions_of_q([user.pk]), pk__in=asked)
                   .values_list("pk", flat=True))
+        own |= _scheduled_by(user, asked - own)
         parents = dict(Session.objects.filter(pk__in=asked - own, parent_session_id__isnull=False)
                        .values_list("pk", "parent_session_id"))
         nxt = {}
