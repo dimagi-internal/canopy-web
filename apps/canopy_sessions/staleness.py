@@ -50,8 +50,9 @@ SESSION_LIVE_WINDOW = dt.timedelta(minutes=3)
 # archived or its runner is retired, with three exceptions that retire it once
 # nothing on it is in flight and no dialog is up:
 #   * it ran on its own (`ran_on_its_own`): nobody is waiting on it;
-#   * it is a person's conversation (a web chat, a Slack thread, or mail a member
-#     sent: `person_mail_q`) started in auto mode, and no turn on it was created or
+#   * it is a person's conversation (a web chat, a Slack thread, mail a member
+#     sent: `person_mail_q`, or an agent's work for a person: `for_a_person_q`)
+#     started in auto mode, and no turn on it was created or
 #     finished within CLOUD_CHAT_IDLE.
 # A manual-mode session waits for a person and keeps the open-until-closed rule.
 CLOUD_CHAT_IDLE = dt.timedelta(hours=24)
@@ -220,6 +221,19 @@ class _Predicates:
     one holds a session open without restating any of them."""
 
 
+def for_a_person_q() -> Q:
+    """Under a Session queryset: its first claimed turn was started by an agent working
+    for a person (`origin_ref.on_behalf_of`, which only the server stamps: the turn
+    login's verified asker, `turn_asker`). That person asked for it and is waiting on
+    its answer, so it is listed like their conversation (`_predicates`). Like
+    `person_mail_q`, deliberately NOT part of `ran_on_its_own`: the feed and pushes
+    still treat an agent's dispatch as work that ran on its own."""
+    first = first_driving_turn().annotate(
+        _for_a_person=ExpressionWrapper(Q(origin_ref__on_behalf_of__user_id__isnull=False),
+                                        output_field=BooleanField()))
+    return Q(Exact(Coalesce(Subquery(first.values("_for_a_person")[:1]), Value(False)), True))
+
+
 def _predicates() -> _Predicates:
     p = _Predicates()
     # Its binding stopped being reported. `live_seen_at__isnull=True` also covers
@@ -259,8 +273,10 @@ def _predicates() -> _Predicates:
     # work session of mail a member sent.
     slack_thread = Q(metadata__has_key="slack_thread")
     person_mail = person_mail_q()
-    conversation = Q(Exact(first("origin"), Turn.ORIGIN_CANOPY_WEB_CHAT)) | slack_thread | person_mail
-    ran_on_its_own = ran_on_its_own_q() & ~person_mail
+    for_a_person = for_a_person_q()
+    conversation = (Q(Exact(first("origin"), Turn.ORIGIN_CANOPY_WEB_CHAT)) | slack_thread
+                    | person_mail | for_a_person)
+    ran_on_its_own = ran_on_its_own_q() & ~person_mail & ~for_a_person
     # Idle: no driving turn created or finished within CLOUD_CHAT_IDLE. Turn times,
     # not the binding's: a cloud binding's `live_seen_at` is stamped per turn and
     # its `last_interacted_at` is never reported.
@@ -292,7 +308,7 @@ def _predicates() -> _Predicates:
     # A session mid-transfer is unseen by design (see TRANSFER_WINDOW), not gone.
     p.quiet, p.unobserved, p.cloud_gone = quiet, unobserved, cloud_gone
     p.first_mode, p.first_origin = first("turn_mode"), first("origin")
-    p.slack_thread, p.person_mail = slack_thread, person_mail
+    p.slack_thread, p.person_mail, p.for_a_person = slack_thread, person_mail, for_a_person
     p.in_flight, p.no_dialog = in_flight, no_dialog
     p.runner_quiet, p.web_quiet, p.cloud_retired = runner_quiet, web_quiet, cloud_retired
     p.transferring = transferring_q()
@@ -308,7 +324,8 @@ OPEN_REASONS = (
     "turn_running",       # cloud: a turn that drives it is queued, claimed or running
     "dialog_up",          # cloud: a question is waiting for an answer
     "manual_turn",        # cloud: its first claimed turn ran in manual mode
-    "person_started",     # cloud: a person's web chat, Slack thread or member's mail with a turn within CLOUD_CHAT_IDLE
+    "person_started",     # cloud: a person's chat, Slack thread, member's mail or work for a person; a turn
+                          # within CLOUD_CHAT_IDLE
     "no_turn_found",      # cloud: no claimed turn drives it, so nothing can finish it
     "unbound",            # a web chat no runner has picked up yet
     "unobservable",       # held by a box that has never sent a session report
@@ -336,7 +353,8 @@ def open_reason():
         When(cloud & Q(p.in_flight), then=Value("turn_running")),
         When(cloud & ~p.no_dialog, then=Value("dialog_up")),
         When(cloud & Q(Exact(p.first_mode, "manual")), then=Value("manual_turn")),
-        When(cloud & (Q(Exact(p.first_origin, Turn.ORIGIN_CANOPY_WEB_CHAT)) | p.slack_thread | p.person_mail),
+        When(cloud & (Q(Exact(p.first_origin, Turn.ORIGIN_CANOPY_WEB_CHAT)) | p.slack_thread
+                      | p.person_mail | p.for_a_person),
              then=Value("person_started")),
         When(cloud & Q(Exact(p.first_mode, "")), then=Value("no_turn_found")),
         When(~runner & ~bound, then=Value("unbound")),
