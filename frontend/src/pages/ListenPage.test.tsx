@@ -19,7 +19,7 @@ function deps(store = memoryStore(), online = true): ListenDeps {
     socket: socketFactory().make,
     wsUrl: (p) => `wss://x/${p}`,
     label: 'iPhone',
-    startMic: vi.fn(async () => ({ stop: () => undefined })),
+    startMic: vi.fn(async () => ({ stop: () => undefined, resume: async () => true })),
     setTimeout: (fn, ms) => setTimeout(fn, ms),
     clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
   }
@@ -43,7 +43,7 @@ describe('ListenPage', () => {
   it('offers a call in another tab only where the browser can share one', async () => {
     const store = memoryStore(PAIRING)
     await store.acceptNotice()
-    const withTab = { ...deps(store), startTab: vi.fn(async () => ({ stop: () => undefined })) }
+    const withTab = { ...deps(store), startTab: vi.fn(async () => ({ stop: () => undefined, resume: async () => true })) }
     render(<ListenPage deps={withTab} />)
     const tab = await screen.findByRole('button', { name: /Record a call in another tab/ })
     await vi.waitFor(() => expect((tab as HTMLButtonElement).disabled).toBe(false))

@@ -5,7 +5,7 @@
  */
 import { ApiError } from '@/api/problem'
 import type { ListenHello, ListenKind, ListenRunner } from '@/api/listen'
-import type { MicCapture } from './audio'
+import type { MicCapture, OnPause } from './audio'
 import type { PairInvite } from './pairLink'
 import { isExpired } from './pairLink'
 import { PhoneRelay, type Control, type LostReason, type SocketFactory } from './relay'
@@ -39,15 +39,23 @@ export interface ListenDeps {
   socket: SocketFactory
   wsUrl(path: string): string
   label: string
-  startMic(onChunk: (pcm: Uint8Array) => void, onLevel: (level: number) => void): Promise<MicCapture>
+  startMic(onChunk: (pcm: Uint8Array) => void, onLevel: (level: number) => void, onPause?: OnPause): Promise<MicCapture>
   /** A call in another tab plus the microphone; absent where the browser can't share a tab. */
-  startTab?: (onChunk: (pcm: Uint8Array) => void, onLevel: (level: number) => void) => Promise<MicCapture>
+  startTab?: (onChunk: (pcm: Uint8Array) => void, onLevel: (level: number) => void, onPause?: OnPause) => Promise<MicCapture>
   /** Timers, injectable for tests. */
   setTimeout(fn: () => void, ms: number): unknown
   clearTimeout(handle: unknown): void
 }
 
-/** How long the laptop has to answer before the phone gives up. */
+/**
+ * How long the laptop has to answer. A laptop that is awake and online connects within a
+ * few seconds, so after SLOW_LAPTOP_MS the page says it hasn't yet, and keeps waiting.
+ * It gives up at LAPTOP_TIMEOUT_MS: the runner reopens a control socket that went quiet
+ * within about 75 s and then polls for waiting sessions, so a laptop that just woke up can
+ * still make it. Once connected, READY_TIMEOUT_MS covers Canopy Listen starting up.
+ */
+export const SLOW_LAPTOP_MS = 15_000
+export const LAPTOP_TIMEOUT_MS = 100_000
 export const READY_TIMEOUT_MS = 45_000
 export const PAIR_TIMEOUT_MS = 60_000
 export const SAVE_TIMEOUT_MS = 90_000
@@ -90,6 +98,11 @@ function safeUrl(value: unknown): string | undefined {
   } catch {
     return undefined
   }
+}
+
+/** What to say when a laptop never connected to a session at all. */
+export function notAnswering(name: string): string {
+  return `${name} isn't answering. Make sure it's awake, online and running Canopy, then try again.`
 }
 
 // -- pairing -------------------------------------------------------------------------
@@ -174,6 +187,7 @@ export async function pairByCode(
   runner: { id: string; name: string },
   deps: ListenDeps,
   onStep: (step: PairStep, code?: string) => void,
+  onSlow?: () => void,
 ): Promise<Pairing> {
   onStep('connecting')
   const phone = await deps.store.phoneKey()
@@ -197,16 +211,21 @@ export async function pairByCode(
       let opener: Opener | null = null
       let queue = Promise.resolve()
       const ws = deps.socket(deps.wsUrl(`ws/listen/${sid}/?role=phone`))
+      let laptopHere = false
       const finish = (fn: () => void) => {
         if (finished) return
         finished = true
         deps.clearTimeout(timer)
+        deps.clearTimeout(slow)
+        deps.clearTimeout(absent)
         ws.onclose = null
         ws.close(1000)
         fn()
       }
       const fail = (message: string) => finish(() => reject(new Error(message)))
       const timer = deps.setTimeout(() => fail(`${runner.name} didn't answer in time. Try again.`), PAIR_CODE_TIMEOUT_MS)
+      const slow = deps.setTimeout(() => !laptopHere && !laptopKey && onSlow?.(), SLOW_LAPTOP_MS)
+      const absent = deps.setTimeout(() => !laptopHere && !laptopKey && fail(notAnswering(runner.name)), LAPTOP_TIMEOUT_MS)
 
       const onFrame = async (bytes: Uint8Array) => {
         if (bytes[0] === HANDSHAKE) {
@@ -216,6 +235,7 @@ export async function pairByCode(
             fail((CODE_REFUSALS[why] ?? ((n: string) => `${n} refused this pairing.`))(runner.name))
             return
           }
+          laptopHere = true
           if (m?.type !== 'hello' || laptopKey) return
           const laptopNonce = typeof m.nonce === 'string' ? unb64u(m.nonce) : new Uint8Array()
           if (typeof m.laptop_key !== 'string' || laptopNonce.length !== NONCE_BYTES) {
@@ -252,6 +272,7 @@ export async function pairByCode(
         if (typeof data === 'string') {
           try {
             const note = JSON.parse(data) as Control
+            if (note?.type === 'peer' && note.role === 'laptop' && note.connected === true) laptopHere = true
             if (note?.type === 'ended') fail('The pairing session ended before it finished.')
           } catch {
             // not a notice
@@ -305,6 +326,10 @@ export interface MeetingView {
   error?: string
   reconnecting: boolean
   laptopConnected: boolean
+  /** The laptop hasn't connected after SLOW_LAPTOP_MS: still waiting, but say so. */
+  laptopSlow: boolean
+  /** The browser paused the microphone (screen locked, a call…): nothing is recorded until resumed. */
+  micPaused: boolean
   /** ms epoch the recording started on this phone. */
   startedAt?: number
   level: number
@@ -318,6 +343,8 @@ export class Meeting {
   private mic: MicCapture | null = null
   private sid = ''
   private timer: unknown = null
+  private slowTimer: unknown = null
+  private source: AudioSource = 'mic'
   private listeners = new Set<(view: MeetingView) => void>()
   private finished = false
 
@@ -329,7 +356,7 @@ export class Meeting {
     this.deps = deps
     this.view = {
       status: 'connecting', laptopName: pairing.laptop_name, laptopState: '', segments: [], partial: '', speakers: {},
-      reconnecting: false, laptopConnected: false, level: 0,
+      reconnecting: false, laptopConnected: false, laptopSlow: false, micPaused: false, level: 0,
     }
   }
 
@@ -348,12 +375,46 @@ export class Meeting {
    * says `ready` waits (up to 10 s) in the relay.
    */
   begin(source: AudioSource = 'mic'): Promise<void> {
-    const start = source === 'tab' && this.deps.startTab ? this.deps.startTab : this.deps.startMic
-    const micStarting = start(
+    this.source = source
+    return this.open(this.startCapture()).catch(() => this.fail('Something went wrong starting the recording. Try again.'))
+  }
+
+  private startCapture(): Promise<MicCapture> {
+    const start = this.source === 'tab' && this.deps.startTab ? this.deps.startTab : this.deps.startMic
+    return start(
       (pcm) => this.relay?.sendAudio(pcm),
       (level) => this.set({ level }),
+      () => {
+        if (!this.finished) this.set({ micPaused: true, level: 0 })
+      },
     )
-    return this.open(micStarting).catch(() => this.fail('Something went wrong starting the recording. Try again.'))
+  }
+
+  /**
+   * After the browser paused the microphone: carry on with the same capture if it can,
+   * or start a new one. Call from a tap (a new capture needs one on phones); it is also
+   * tried when the page is shown again, where it works if the old capture can go on.
+   * The session, its keys and the transcript so far are kept either way.
+   */
+  async resumeMic(fromTap = true): Promise<void> {
+    if (this.finished || !this.view.micPaused || !this.mic) return
+    if (await this.mic.resume()) {
+      this.set({ micPaused: false })
+      return
+    }
+    if (!fromTap) return
+    this.stopMic()
+    try {
+      const mic = await this.startCapture()
+      if (this.finished) {
+        mic.stop()
+        return
+      }
+      this.mic = mic
+      this.set({ micPaused: false, error: undefined })
+    } catch (e) {
+      this.set({ error: e instanceof Error ? e.message : 'The microphone could not start again.' })
+    }
   }
 
   private async open(micStarting: Promise<MicCapture>): Promise<void> {
@@ -389,7 +450,7 @@ export class Meeting {
       new Opener(keys.down, this.sid),
       {
         onControl: (m) => this.control(m),
-        onPeer: (connected) => this.set({ laptopConnected: connected, reconnecting: false }),
+        onPeer: (connected) => this.peer(connected),
         onEnded: (reason) => this.serverEnded(reason),
         onLost: (why) => this.fail(lostInWords(why)),
         onReconnecting: () => this.set({ reconnecting: true }),
@@ -397,7 +458,13 @@ export class Meeting {
       this.deps.socket,
     )
     this.set({ status: 'waiting' })
-    this.arm(READY_TIMEOUT_MS, () => this.fail(`${this.pairing.laptop_name} didn't start listening. Check Canopy Listen is installed there.`))
+    this.arm(LAPTOP_TIMEOUT_MS, () =>
+      this.fail(this.view.laptopConnected
+        ? `${this.pairing.laptop_name} didn't start listening. Check Canopy Listen is installed there.`
+        : notAnswering(this.pairing.laptop_name)))
+    this.slowTimer = this.deps.setTimeout(() => {
+      if (!this.view.laptopConnected && this.view.status === 'waiting') this.set({ laptopSlow: true })
+    }, SLOW_LAPTOP_MS)
     try {
       await this.relay.connect()
     } catch {
@@ -449,7 +516,7 @@ export class Meeting {
         this.disarm()
         if (typeof m.name === 'string' && m.name) this.set({ laptopName: m.name })
         void this.relay?.sendControl({ type: 'start', notice_accepted: true })
-        this.set({ status: 'recording', startedAt: Date.now() })
+        this.set({ status: 'recording', startedAt: Date.now(), laptopConnected: true, laptopSlow: false })
         return
       case 'state': {
         const state = typeof m.state === 'string' ? m.state : ''
@@ -493,6 +560,15 @@ export class Meeting {
     }
   }
 
+  private peer(connected: boolean): void {
+    this.set({ laptopConnected: connected, reconnecting: false, laptopSlow: connected ? false : this.view.laptopSlow })
+    // Connected but not yet ready: the laptop is starting Canopy Listen, which has its own limit.
+    if (connected && this.view.status === 'waiting') {
+      this.arm(READY_TIMEOUT_MS, () =>
+        this.fail(`${this.pairing.laptop_name} didn't start listening. Check Canopy Listen is installed there.`))
+    }
+  }
+
   private serverEnded(reason: string): void {
     if (this.finished) return
     if (this.view.status === 'ending') {
@@ -518,10 +594,12 @@ export class Meeting {
     if (this.finished) return
     this.finished = true
     this.disarm()
+    if (this.slowTimer !== null) this.deps.clearTimeout(this.slowTimer)
+    this.slowTimer = null
     this.stopMic()
     this.relay?.close()
     if (endOnServer && this.sid) void this.deps.endSession(this.sid).catch(() => undefined)
-    this.set({ ...patch, reconnecting: false, level: 0 })
+    this.set({ ...patch, reconnecting: false, laptopSlow: false, micPaused: false, level: 0 })
   }
 
   private stopMic(): void {

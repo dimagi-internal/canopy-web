@@ -134,6 +134,16 @@ WebSocket `/ws/listen/<sid>/?role=phone|laptop`:
 - `controller.ts`: pairing and a meeting as classes the page drives; REST, socket, storage
   and microphone come in as `ListenDeps`. The notice must be acknowledged once before the
   first recording, and `start` says `notice_accepted`.
+- Waiting for the laptop: after 15 s with no laptop on the session, the page says it hasn't
+  answered yet (asleep, offline, Canopy not running) and keeps waiting. It gives up at
+  100 s, which covers a runner reopening a control socket that went quiet (about 75 s).
+  Once the laptop is connected, it has 45 s to say `ready`.
+- The microphone: the page reads the permission before the tap and, if it is denied, says
+  how to allow it in the browser's settings, because a page can't ask twice. While
+  recording, the screen is kept on (wake lock). If the browser pauses the microphone
+  anyway (screen locked, a call, another app), the page says so. Coming back to the page
+  resumes it when the browser allows; otherwise a tap starts a new capture in the same
+  session.
 
 ## Runner (`listen_pipe.py`)
 
@@ -163,6 +173,8 @@ The runner never holds a key.
   - End, Discard, rename a speaker;
   - choose models;
   - pair a phone (with the QR code) and list or remove paired phones.
+- **Keeping the Mac awake**: while a recorder runs it holds `caffeinate -i -s -w <its pid>`,
+  so the Mac doesn't idle to sleep mid-meeting (closing the lid on battery still sleeps it).
 - **A meeting**, from the page, a tab or the phone:
   1. Serve queues the input (`next-input.json {"relay": id}`, or nothing for the native
      microphone).

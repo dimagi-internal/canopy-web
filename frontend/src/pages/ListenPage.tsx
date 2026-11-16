@@ -40,7 +40,7 @@ export const NOTICE = "What's said here leaves this device for your laptop and y
 type Screen =
   | { kind: 'loading' }
   | { kind: 'unpaired'; problem?: string }
-  | { kind: 'pairing'; name: string; step: PairStep; byCode?: boolean; code?: string; error?: string }
+  | { kind: 'pairing'; name: string; step: PairStep; byCode?: boolean; code?: string; error?: string; slow?: boolean }
   | { kind: 'home'; pairing: Pairing; noticeAccepted: boolean }
   | { kind: 'meeting'; pairing: Pairing; meeting: Meeting }
 
@@ -118,8 +118,11 @@ export function ListenPage({ deps: given }: { deps?: ListenDeps } = {}): JSX.Ele
   const startCodePairing = useCallback(
     (runner: ListenRunner) => {
       setScreen({ kind: 'pairing', name: runner.name, step: 'connecting', byCode: true })
-      pairByCode(runner, deps, (step, code) =>
-        setScreen((s) => (s.kind === 'pairing' ? { ...s, step, code: code ?? s.code } : s)),
+      pairByCode(
+        runner,
+        deps,
+        (step, code) => setScreen((s) => (s.kind === 'pairing' ? { ...s, step, code: code ?? s.code, slow: false } : s)),
+        () => setScreen((s) => (s.kind === 'pairing' ? { ...s, slow: true } : s)),
       )
         .then(() => window.setTimeout(() => void goHome(), 900))
         .catch((e: unknown) =>
@@ -200,6 +203,18 @@ function Problem({ children }: { children: ReactNode }) {
       <TriangleAlert className="size-4 mt-0.5 shrink-0" aria-hidden />
       <span>{children}</span>
     </div>
+  )
+}
+
+/** The laptop hasn't connected yet: most often asleep, or its connection to Canopy is down. */
+function SlowLaptop({ name }: { name: string }) {
+  return (
+    <p role="status" className="flex gap-2 rounded-xl bg-muted px-4 py-3 text-sm text-muted-foreground text-left">
+      <WifiOff className="size-4 mt-0.5 shrink-0" aria-hidden />
+      <span>
+        {name} hasn’t answered yet. Make sure it’s awake and online, with Canopy running. Still trying…
+      </span>
+    </p>
   )
 }
 
@@ -319,6 +334,7 @@ function PairingScreen({ screen, onDone }: { screen: Extract<Screen, { kind: 'pa
           </li>
         ))}
       </ul>
+      {screen.slow && !screen.error && screen.step !== 'confirm' && <SlowLaptop name={name} />}
       {screen.error && (
         <div className="w-full space-y-3">
           <Problem>{screen.error}</Problem>
@@ -357,6 +373,44 @@ function useRunnerOnline(deps: ListenDeps, runnerId: string): { online: boolean 
   return state
 }
 
+const ON_A_PHONE = typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+
+/**
+ * Whether this site may use the microphone, without asking: 'denied' means a tap would
+ * fail, and the page can't ask again. Only the browser's settings can undo that, so say
+ * how before the tap rather than after it. Browsers that can't tell answer 'unknown'.
+ */
+function useMicPermission(): PermissionState | 'unknown' {
+  const [state, setState] = useState<PermissionState | 'unknown'>('unknown')
+  useEffect(() => {
+    let status: PermissionStatus | null = null
+    let alive = true
+    const update = () => alive && status && setState(status.state)
+    navigator.permissions
+      ?.query({ name: 'microphone' as PermissionName })
+      .then((s) => {
+        status = s
+        update()
+        s.addEventListener('change', update)
+      })
+      .catch(() => undefined)
+    return () => {
+      alive = false
+      status?.removeEventListener('change', update)
+    }
+  }, [])
+  return state
+}
+
+function micSettingsHelp(): string {
+  const ua = typeof navigator === 'undefined' ? '' : navigator.userAgent
+  if (/iPhone|iPad|iPod/i.test(ua)) {
+    return 'On iPhone: tap aA in the address bar → Website Settings → Microphone → Allow. If that doesn’t show it, check Settings → Apps → Safari → Microphone.'
+  }
+  if (/Android/i.test(ua)) return 'On Android: tap the icon left of the address → Permissions → Microphone → Allow.'
+  return 'Click the icon left of the address bar, set Microphone to Allow, then reload.'
+}
+
 function Home({
   deps, pairing, noticeAccepted, onAccept, onUnpair, onRecord,
 }: {
@@ -368,6 +422,7 @@ function Home({
   onRecord: (source: AudioSource) => void
 }) {
   const { online, gone } = useRunnerOnline(deps, pairing.runner_id)
+  const mic = useMicPermission()
   const [confirmUnpair, setConfirmUnpair] = useState(false)
   const canRecord = online === true && noticeAccepted
   return (
@@ -393,6 +448,13 @@ function Home({
             ? 'This laptop is no longer one of your computers on Canopy. Pair again from the laptop you want to use.'
             : `Open ${pairing.laptop_name} and make sure Canopy Runner is running. This updates by itself.`}
         </p>
+      )}
+
+      {mic === 'denied' && (
+        <Problem>
+          Microphone access is turned off for this site, and the page can’t ask again. {micSettingsHelp()} Then come
+          back here.
+        </Problem>
       )}
 
       {!noticeAccepted && (
@@ -536,6 +598,14 @@ function MeetingScreen({ meeting, onBack }: { meeting: Meeting; onBack: () => vo
     if (el) el.scrollTop = el.scrollHeight
   }, [view.segments.length, view.partial])
 
+  // Back from the lock screen or another app: carry on if the browser lets the old
+  // microphone run again; otherwise the paused banner asks for a tap.
+  useEffect(() => {
+    const onVisible = () => document.visibilityState === 'visible' && void meeting.resumeMic(false)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [meeting])
+
   if (view.status === 'saved' || view.status === 'discarded' || view.status === 'failed') {
     return <Ended view={view} onBack={onBack} />
   }
@@ -562,7 +632,26 @@ function MeetingScreen({ meeting, onBack }: { meeting: Meeting; onBack: () => vo
           <span aria-hidden>·</span>
           <span>{view.reconnecting ? 'Reconnecting…' : view.laptopConnected ? 'connected' : 'not connected yet'}</span>
         </div>
+        <div className={`text-xs text-muted-foreground ${ON_A_PHONE ? '' : 'hidden'}`}>
+          Keep this page open: locking the phone or switching apps pauses the recording.
+        </div>
       </section>
+
+      {view.status === 'waiting' && view.laptopSlow && <SlowLaptop name={view.laptopName} />}
+
+      {view.micPaused && view.status !== 'ending' && (
+        <section role="alert" className="rounded-2xl border border-warning/40 bg-warning/10 px-4 py-3 space-y-2.5">
+          <p className="text-sm text-foreground">
+            Your phone paused the microphone, so nothing is being recorded. This happens when the screen locks, a call
+            comes in, or you switch apps.
+          </p>
+          {view.error && <p className="text-sm text-destructive">{view.error}</p>}
+          <Button className="w-full h-12 rounded-xl gap-2" onClick={() => void meeting.resumeMic()}>
+            <Mic className="size-4" aria-hidden />
+            Resume recording
+          </Button>
+        </section>
+      )}
 
       {view.chatUrl && (
         <a

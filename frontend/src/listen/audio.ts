@@ -111,13 +111,30 @@ export class MicDenied extends Error {
 
 export interface MicCapture {
   stop(): void
+  /**
+   * Try to carry on after a pause (see `onPause`). True if sound is flowing again; false
+   * means this capture is finished and a new one has to be started from a tap.
+   */
+  resume(): Promise<boolean>
 }
+
+/**
+ * Called once each time the browser stops the sound under a running capture: the screen
+ * locked, a phone call came in, another app took the microphone, or a shared tab stopped.
+ * Phones do this without asking, and a recording that just goes quiet looks like it's
+ * still running, so the page has to be told.
+ */
+export type OnPause = () => void
 
 /**
  * Start the microphone. Call from the tap itself: phones only let audio start in a
  * gesture. `onChunk` gets each 0.5 s of PCM; `onLevel` a smoothed 0..1 level.
  */
-export async function startMic(onChunk: (pcm: Uint8Array) => void, onLevel: (level: number) => void): Promise<MicCapture> {
+export async function startMic(
+  onChunk: (pcm: Uint8Array) => void,
+  onLevel: (level: number) => void,
+  onPause?: OnPause,
+): Promise<MicCapture> {
   if (!navigator.mediaDevices?.getUserMedia || typeof AudioWorkletNode === 'undefined') {
     throw new MicDenied('unsupported', 'This browser cannot record audio here.')
   }
@@ -140,7 +157,7 @@ export async function startMic(onChunk: (pcm: Uint8Array) => void, onLevel: (lev
     }
     throw new MicDenied('other', 'The microphone could not start.')
   }
-  return tapStream(ctx, resumed, [stream], onChunk, onLevel)
+  return tapStream(ctx, resumed, [stream], onChunk, onLevel, onPause)
 }
 
 /** Run `streams`, mixed, through the tap: 16 kHz int16 chunks to `onChunk`, a level to `onLevel`. */
@@ -150,6 +167,7 @@ async function tapStream(
   streams: MediaStream[],
   onChunk: (pcm: Uint8Array) => void,
   onLevel: (level: number) => void,
+  onPause?: OnPause,
 ): Promise<MicCapture> {
   const url = URL.createObjectURL(new Blob([WORKLET], { type: 'text/javascript' }))
   try {
@@ -174,10 +192,43 @@ async function tapStream(
     for (const chunk of chunker.push(down.push(ev.data))) onChunk(chunk)
   }
   let stopped = false
+  let paused = false
+  // The first stream is the one that matters: the microphone, or the shared tab.
+  const main = streams[0].getAudioTracks()
+  const pause = () => {
+    if (stopped || paused) return
+    paused = true
+    onPause?.()
+  }
+  for (const track of main) {
+    track.addEventListener('ended', pause)
+    track.addEventListener('mute', pause)
+  }
+  ctx.onstatechange = () => {
+    if (ctx.state !== 'running') pause()
+  }
+  if (ctx.state !== 'running' || main.some((t) => t.muted)) queueMicrotask(pause)
   return {
+    async resume() {
+      if (stopped) return false
+      if (main.some((t) => t.readyState === 'ended')) return false
+      try {
+        await ctx.resume()
+      } catch {
+        return false
+      }
+      const flowing = ctx.state === 'running' && main.every((t) => !t.muted)
+      if (flowing) paused = false
+      return flowing
+    },
     stop() {
       if (stopped) return
       stopped = true
+      ctx.onstatechange = null
+      for (const track of main) {
+        track.removeEventListener('ended', pause)
+        track.removeEventListener('mute', pause)
+      }
       tap.port.onmessage = null
       const rest = chunker.flush()
       if (rest) onChunk(rest)
@@ -200,7 +251,11 @@ export function canCaptureTab(): boolean {
  * computer's microphone, mixed. Call from a click. The browser asks which tab; the person
  * must tick "Also share tab audio". The picture is stopped at once: only sound is used.
  */
-export async function startTab(onChunk: (pcm: Uint8Array) => void, onLevel: (level: number) => void): Promise<MicCapture> {
+export async function startTab(
+  onChunk: (pcm: Uint8Array) => void,
+  onLevel: (level: number) => void,
+  onPause?: OnPause,
+): Promise<MicCapture> {
   if (!canCaptureTab() || typeof AudioWorkletNode === 'undefined') {
     throw new MicDenied('unsupported', 'This browser cannot share a tab’s audio. Use Chrome or Edge on a computer.')
   }
@@ -235,5 +290,5 @@ export async function startTab(onChunk: (pcm: Uint8Array) => void, onLevel: (lev
   } catch {
     // No microphone, or refused: the tab alone still records the others.
   }
-  return tapStream(ctx, resumed, streams, onChunk, onLevel)
+  return tapStream(ctx, resumed, streams, onChunk, onLevel, onPause)
 }
