@@ -278,7 +278,8 @@ def test_ready_comes_first_and_says_who_this_is():
         session, _, down, sent = await meeting_session(s, phone)
         assert await session.open()
         got = opened(down, sent)
-        assert got == [{"type": "ready", "name": "Test Mac", "nonce": session.start_nonce}]
+        assert got == [{"type": "ready", "name": "Test Mac", "nonce": session.start_nonce,
+                        "modes": ["meeting", "note"]}]
     asyncio.run(go())
 
 
@@ -792,7 +793,8 @@ def test_a_meeting_waits_for_its_runner_to_rejoin_and_carries_on():
         second.frame(up.control({"type": "resume", "have": 0}))
         await asyncio.sleep(0.05)
         assert inp.seconds > 0 and session.bad_frames == 0
-        assert opened(down, first.out)[0] == {"type": "ready", "name": "Test Mac", "nonce": session.start_nonce}
+        assert opened(down, first.out)[0] == {"type": "ready", "name": "Test Mac", "nonce": session.start_nonce,
+                                              "modes": ["meeting", "note"]}
         assert all(m["type"] != "ready" for m in opened(down, second.out))  # no second ready
 
         second.end()  # the server ended the session
@@ -877,3 +879,162 @@ def test_a_deep_home_gets_the_socket_the_runner_looks_for(monkeypatch):
     runner/canopy_runner/tests/test_listen_pipe.py pins the same pair."""
     monkeypatch.setenv("CANOPY_LISTEN_HOME", "/Users/someone/" + "deep/" * 20 + "listen")
     assert store.socket_path().name == "canopy-listen-a69ff3d2bc9d.sock"
+
+
+# --- a voice note ---------------------------------------------------------------------
+
+
+class Reader:
+    """`canopy-listen _transcribe`, faked: what it was given, and what it says."""
+
+    def __init__(self, answer=None):
+        self.given: list[bytes] = []
+        self.answer = answer if answer is not None else {"text": "Remind me to call Sam."}
+        self.release = asyncio.Event()
+        self.release.set()
+
+    async def __call__(self, pcm):
+        self.given.append(pcm)
+        await self.release.wait()
+        return self.answer
+
+
+async def note_session(s, phone, sid="note-1"):
+    session, up, down, sent = await meeting_session(s, phone, sid)
+    await session.open()
+    nonce = opened(down, sent)[0]["nonce"]
+    return session, up, down, sent, nonce
+
+
+async def finished(session):
+    if session.note and session.note.task:
+        await session.note.task
+
+
+def test_a_voice_note_is_read_here_and_its_words_go_back_with_no_meeting():
+    async def go():
+        runner, reader = Runner(), Reader()
+        s, phone = serve.Serve(run=runner, name="Test Mac", transcribe=reader), Phone()
+        s.phones.add(phone.key, "Pixel")
+        session, up, down, sent, nonce = await note_session(s, phone)
+        assert await session.receive(up.control({"type": "start", "mode": "note", "nonce": nonce}))
+        assert session.input is None and not s.controller.busy()  # no app, no meeting, nothing queued
+        assert not (store.home() / "next-input.json").exists()
+        audio = b"\x01\x00" * SAMPLE_RATE  # a second
+        assert await session.receive(up.seal(rc.AUDIO, audio))
+        assert await session.receive(up.control({"type": "end"}))
+        await finished(session)
+        assert reader.given == [audio] and runner.calls == []
+        assert opened(down, sent[1:]) == [
+            {"type": "state", "state": "recording", "detail": "note"},
+            {"type": "state", "state": "ending", "detail": "transcribing"},
+            {"type": "note", "text": "Remind me to call Sam."},
+            {"type": "state", "state": "ended", "detail": "transcribed"},
+        ]
+    asyncio.run(go())
+
+
+def test_a_note_start_must_answer_this_sessions_ready():
+    async def go():
+        s, phone = serve.Serve(run=Runner(), name="Test Mac", transcribe=Reader()), Phone()
+        s.phones.add(phone.key, "Pixel")
+        session, up, _, sent, _ = await note_session(s, phone)
+        assert await session.receive(up.control({"type": "start", "mode": "note", "nonce": "b2xk"}))
+        assert await session.receive(up.control({"type": "start", "mode": "note"}))
+        assert session.note is None and len(sent) == 1
+    asyncio.run(go())
+
+
+def test_a_discarded_note_is_never_read():
+    async def go():
+        reader = Reader()
+        s, phone = serve.Serve(run=Runner(), name="Test Mac", transcribe=reader), Phone()
+        s.phones.add(phone.key, "Pixel")
+        session, up, down, sent, nonce = await note_session(s, phone)
+        await session.receive(up.control({"type": "start", "mode": "note", "nonce": nonce}))
+        await session.receive(up.seal(rc.AUDIO, b"\x01\x00" * SAMPLE_RATE))
+        await session.receive(up.control({"type": "discard"}))
+        await session.receive(up.control({"type": "end"}))
+        assert reader.given == [] and session.note.pcm == bytearray()
+        assert opened(down, sent[1:])[-1] == {"type": "state", "state": "ended", "detail": "discarded"}
+    asyncio.run(go())
+
+
+@pytest.mark.parametrize("seconds,answer,detail", [
+    (0.1, None, "no_words"),  # too short to read: not even tried
+    (2, {"text": "  "}, "no_words"),
+    (2, {"error": "transcribe_failed"}, "transcribe_failed"),
+])
+def test_a_note_with_no_words_says_so(seconds, answer, detail):
+    async def go():
+        reader = Reader(answer or {"text": "never"})
+        s, phone = serve.Serve(run=Runner(), name="Test Mac", transcribe=reader), Phone()
+        s.phones.add(phone.key, "Pixel")
+        session, up, down, sent, nonce = await note_session(s, phone)
+        await session.receive(up.control({"type": "start", "mode": "note", "nonce": nonce}))
+        await session.receive(up.seal(rc.AUDIO, b"\x01\x00" * int(SAMPLE_RATE * seconds)))
+        await session.receive(up.control({"type": "end"}))
+        await finished(session)
+        assert len(reader.given) == (0 if answer is None else 1)
+        assert opened(down, sent[1:])[-1] == {"type": "state", "state": "failed", "detail": detail}
+    asyncio.run(go())
+
+
+def test_a_note_is_cut_at_its_limit(monkeypatch):
+    monkeypatch.setattr(serve, "NOTE_MAX_SECONDS", 1)
+    note = serve.Note()
+    note.push(b"\x01\x00" * SAMPLE_RATE * 3)
+    assert note.seconds == 1
+
+
+def test_words_read_while_the_pipe_was_down_reach_the_phone_when_it_asks_again():
+    async def go():
+        reader = Reader()
+        reader.release.clear()
+        s, phone = serve.Serve(run=Runner(), name="Test Mac", transcribe=reader), Phone()
+        s.phones.add(phone.key, "Pixel")
+        hello, up, down = phone.session(s.key.public(), "note-r")
+        first = Pipe()
+        task = await run_pipe(s, "note-r", hello, first)
+        await asyncio.sleep(0.05)
+        first.frame(up.control({"type": "start", "mode": "note", "nonce": s.relays["note-r"].start_nonce}))
+        first.frame(up.seal(rc.AUDIO, b"\x01\x00" * SAMPLE_RATE))
+        first.frame(up.control({"type": "end"}))
+        await asyncio.sleep(0.05)
+        first.hang_up()  # the runner restarted while the note was being read
+        await task
+        reader.release.set()
+        await finished(s.relays["note-r"])
+        assert all(m["type"] != "note" for m in opened(down, first.out))
+
+        second = Pipe()
+        task = await run_pipe(s, "note-r", hello, second)
+        await asyncio.sleep(0.05)
+        second.frame(up.control({"type": "resume", "have": 0}))
+        await asyncio.sleep(0.05)
+        assert {"type": "note", "text": "Remind me to call Sam."} in opened(down, second.out)
+        second.end()
+        await task
+    asyncio.run(go())
+
+
+def test_the_note_audio_is_written_privately_and_deleted_after(monkeypatch):
+    seen = {}
+
+    class Proc:
+        returncode = 0
+
+        async def communicate(self):
+            return b'{"text": "hello"}', b""
+
+    async def fake_exec(*argv, **kw):
+        path = argv[-1]
+        seen["argv"], seen["mode"] = argv[1:4], os.stat(path).st_mode & 0o777
+        seen["bytes"] = open(path, "rb").read()
+        seen["path"] = path
+        return Proc()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    assert asyncio.run(serve.transcribe_note(b"\x01\x00" * 10)) == {"text": "hello"}
+    assert seen["argv"] == ("-m", "canopy_listen", "_transcribe") and seen["mode"] == 0o600
+    assert seen["bytes"] == b"\x01\x00" * 10 and not os.path.exists(seen["path"])

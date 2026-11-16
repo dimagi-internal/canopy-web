@@ -259,6 +259,19 @@ def cmd_turns(args) -> int:
     return 0
 
 
+def cmd_transcribe(args) -> int:
+    """Read a voice note (raw int16 PCM, 16 kHz) with the configured speech model and print
+    {"text": ...}. Serve runs it, so the model is loaded only while a note is read."""
+    from . import config, engines, note
+
+    chosen = config.load()
+    with open(args.pcm, "rb") as f:
+        pcm = f.read()
+    recognise = engines.Recogniser(chosen["asr"], chosen.get("language", "en"))
+    print(json.dumps({"text": note.read(pcm, recognise)}))
+    return 0
+
+
 def cmd_record(args) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     if args.relay:
@@ -327,6 +340,9 @@ def parser() -> argparse.ArgumentParser:
     tu.add_argument("name")
     tu.add_argument("wav")
     tu.set_defaults(func=cmd_turns)
+    tr = sub.add_parser("_transcribe")
+    tr.add_argument("pcm")
+    tr.set_defaults(func=cmd_transcribe)
     r = sub.add_parser("_record")
     r.add_argument("id")
     r.add_argument("--file")

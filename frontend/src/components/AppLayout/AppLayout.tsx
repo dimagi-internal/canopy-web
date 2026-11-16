@@ -16,6 +16,7 @@ import { useAuth } from '@/auth/AuthProvider'
 import { useTheme } from '@/theme/ThemeProvider'
 import { WorkspaceProvider, useGuestWorkspace, useWorkspace, useWorkspaceRole } from '@/workspace/WorkspaceProvider'
 import { guestAppKeys } from '@/api/guests'
+import { getLocalAppMenu, menuItemHref, type LocalAppMenu } from '@/api/localApps'
 import { scopedPath } from '@/lib/scopedLinks'
 import { wsUrl } from '@/lib/wsUrl'
 import { usePresenceReconnectNonce } from '@/presence/usePresenceReconnectNonce'
@@ -26,6 +27,72 @@ import { KeyboardHelp } from '@/components/work/KeyboardHelp'
 import { ACCOUNT_ITEMS, HELP_ITEMS, activeHref, guestNav, isNavEntryActive, menuSections, resolveNav, switchWorkspacePath, type ResolvedNavEntry, type ResolvedNavItem } from './nav'
 import { CanopyWordmark } from '@/brand/CanopyWordmark'
 import { useAppBarHidden } from './appBarStore'
+
+/**
+ * What the person's installed apps add to this menu, each one they turned on in the app's
+ * settings. An item that asks for an agent opens to list them (a second tap, not a hover,
+ * so it works on a phone); each agent goes to the item's page for that agent.
+ */
+export function AppMenuItems({ onNavigate }: { onNavigate: () => void }) {
+  const [menu, setMenu] = useState<LocalAppMenu | null>(null)
+  const [openKey, setOpenKey] = useState<string | null>(null)
+
+  useEffect(() => {
+    let live = true
+    getLocalAppMenu()
+      .then((m) => { if (live) setMenu(m) })
+      .catch(() => { if (live) setMenu(null) /* the menu works without them */ })
+    return () => { live = false }
+  }, [])
+
+  if (!menu?.items.length) return null
+  const row = 'block w-full px-3 py-2 text-left text-sm text-foreground-secondary hover:bg-muted'
+  return (
+    <div className="border-t border-border" data-testid="app-menu-items">
+      {menu.items.map((item) => {
+        const id = `${item.app}:${item.key}`
+        if (item.pick !== 'agent') {
+          return (
+            <Link key={id} to={menuItemHref(item)} onClick={onNavigate} className={row}>
+              {item.label}
+            </Link>
+          )
+        }
+        const expanded = openKey === id
+        return (
+          <div key={id}>
+            <button
+              type="button"
+              aria-expanded={expanded}
+              onClick={() => setOpenKey(expanded ? null : id)}
+              className={clsx(row, 'flex items-center justify-between')}
+            >
+              {item.label}
+              <ChevronDown className={clsx('h-3.5 w-3.5 transition-transform', expanded && 'rotate-180')} aria-hidden />
+            </button>
+            {expanded && (
+              <div className="pb-1">
+                {menu.agents.length === 0 && (
+                  <div className="py-1.5 pl-6 pr-3 text-xs text-muted-foreground">No agents you can use yet</div>
+                )}
+                {menu.agents.map((agent) => (
+                  <Link
+                    key={`${agent.workspace}/${agent.slug}`}
+                    to={menuItemHref(item, agent)}
+                    onClick={onNavigate}
+                    className="block py-1.5 pl-6 pr-3 text-sm text-foreground-secondary hover:bg-muted"
+                  >
+                    {agent.name}
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
 
 function UserMenu() {
   const auth = useAuth()
@@ -111,6 +178,8 @@ function UserMenu() {
               {label}
             </Link>
           ))}
+
+          <AppMenuItems onNavigate={() => setOpen(false)} />
 
           <form method="post" action="/accounts/logout/" className="border-t border-border">
             <input type="hidden" name="csrfmiddlewaretoken" value={decodeURIComponent(csrfToken)} />

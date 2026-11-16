@@ -44,6 +44,7 @@ from .schemas import (
     LocalAppFinishIn,
     LocalAppInstallationOut,
     LocalAppInstallIn,
+    LocalAppMenuOut,
     LocalAppReviewOut,
     LocalAppRevokeIn,
     LocalAppRunOut,
@@ -235,6 +236,29 @@ def list_my_local_apps(request: HttpRequest) -> list[LocalAppInstallationOut]:
         "template", "runner", "workspace", "accepted"
     )
     return [_installation_out(i, request.user) for i in rows]
+
+
+@router.get("/menu/", response=LocalAppMenuOut, summary="What your apps add to your account menu")
+@gate("self")
+def list_local_app_menu(request: HttpRequest) -> LocalAppMenuOut:
+    """Items your installed apps add to the account menu, the ones you turned on in each
+    app's settings. An item that asks for an agent comes with the agents you may use."""
+    items = services.menu_items(request.user)
+    agents = _usable_agents(request.user) if any(item["pick"] == "agent" for _, item in items) else []
+    return LocalAppMenuOut(
+        items=[
+            {
+                "app": inst.template.key,
+                "app_name": inst.template.name,
+                "key": item["key"],
+                "label": item["label"],
+                "path": item["path"],
+                "pick": item["pick"],
+            }
+            for inst, item in items
+        ],
+        agents=agents,
+    )
 
 
 @router.patch("/installations/{installation_id}", response=LocalAppInstallationOut, summary="Configure a local app")

@@ -12,6 +12,9 @@
   * A meeting, from the page or a phone: queue the input (next-input.json), run
     `canopy-runner app start meeting-assistant --accept-notice`, follow meeting.json and the
     app's run.json, and push state and words back. End runs `app end`, Discard `app stop`.
+  * A voice note, from a phone: no app and no meeting. The audio is held here, and at End
+    `canopy-listen _transcribe` reads it once and the words go back to the phone, which
+    sends them to an agent. The audio is deleted as soon as it is read.
 
 It logs states and counts only: never a word, a frame, or a key.
 
@@ -597,6 +600,68 @@ def rename(meeting_id: str, number, name) -> dict | None:
     return meeting
 
 
+#: A voice note longer than this is cut here (the phone stops at the same length).
+NOTE_MAX_SECONDS = 600
+#: How long reading a note may take, the first time including the speech model's download.
+TRANSCRIBE_TIMEOUT = 300
+#: What a phone may ask this Mac for, told in `ready` so a phone never asks an older Mac
+#: for a note, which it would take for a meeting.
+MODES = ("meeting", "note")
+
+
+async def transcribe_note(pcm: bytes) -> dict:
+    """Read a voice note once, in its own process so the model doesn't stay loaded here:
+    {"text": ...}, or {"error": code}. The audio is written privately and deleted after."""
+    folder = store.home() / "notes"
+    folder.mkdir(parents=True, exist_ok=True)
+    os.chmod(folder, 0o700)
+    path = folder / f"{uuid.uuid4().hex}.pcm"
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(pcm)
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, "-m", "canopy_listen", "_transcribe", str(path),
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        try:
+            out, _ = await asyncio.wait_for(proc.communicate(), TRANSCRIBE_TIMEOUT)
+        except (TimeoutError, asyncio.CancelledError) as stopped:
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+            if isinstance(stopped, asyncio.CancelledError):
+                raise
+            return {"error": "transcribe_timeout"}
+        try:
+            answer = json.loads(out.decode() or "{}")
+        except ValueError:
+            answer = {}
+        if proc.returncode != 0 or not isinstance(answer.get("text"), str):
+            return {"error": "transcribe_failed"}
+        return {"text": answer["text"]}
+    finally:
+        path.unlink(missing_ok=True)
+
+
+class Note:
+    """One voice note's audio, held here until End."""
+
+    def __init__(self):
+        self.pcm = bytearray()
+        self.text: str | None = None
+        self.error = ""
+        self.task: asyncio.Task | None = None
+        self.discarded = False
+
+    def push(self, pcm: bytes) -> None:
+        room = NOTE_MAX_SECONDS * SAMPLE_RATE * 2 - len(self.pcm)
+        if room > 0 and self.task is None:
+            self.pcm += pcm[:room - room % 2]
+
+    @property
+    def seconds(self) -> float:
+        return len(self.pcm) / (SAMPLE_RATE * 2)
+
+
 def _first_line(text: str) -> str:
     lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
     return lines[0][:160] if lines else ""
@@ -636,6 +701,7 @@ class RelaySession:
         self.input: Input | None = None
         self.current: dict | None = None
         self.follow: asyncio.Task | None = None
+        self.note: Note | None = None
 
     async def open(self) -> bool:
         if not isinstance(self.sid, str) or not self.sid:
@@ -664,7 +730,8 @@ class RelaySession:
         # phone's side and the session id alone, so a server that kept an old session's
         # frames could otherwise replay them here and start a meeting nobody is having.
         self.start_nonce = rc.b64u(os.urandom(16))
-        await self.control({"type": "ready", "name": self.serve.name, "nonce": self.start_nonce})
+        await self.control({"type": "ready", "name": self.serve.name, "nonce": self.start_nonce,
+                            "modes": list(MODES)})
         log.info("phone session open")
         return True
 
@@ -718,7 +785,9 @@ class RelaySession:
             log.info("dropped a %s frame from the phone", bad.args[0])
             return self.bad_frames <= 200  # a stream of them is something else: end it
         if kind == rc.AUDIO:
-            if self.input is not None:
+            if self.note is not None:
+                self.note.push(body)
+            elif self.input is not None:
                 self.input.push(body)
             return True
         if kind != rc.CONTROL:
@@ -734,9 +803,13 @@ class RelaySession:
 
     async def _on_control(self, message: dict) -> bool:
         what = message.get("type")
+        if self.note is not None:
+            return await self._on_note_control(what, message)
         if what == "start":
             if self.input is not None:
                 return True
+            if message.get("mode") == "note":
+                return await self._start_note(message.get("nonce"))
             if message.get("notice_accepted") is not True:
                 await self.control({"type": "state", "state": "failed", "detail": "notice_not_accepted"})
                 return True
@@ -774,6 +847,48 @@ class RelaySession:
                 if isinstance(name, str) and len(name) <= 200:
                     rename(self.current["meeting_id"], message.get("speaker"), name)
         return True
+
+    async def _start_note(self, nonce) -> bool:
+        """A voice note: held here, read at End. No meeting, so no notice and not busy."""
+        if not isinstance(nonce, str) or not hmac.compare_digest(nonce, self.start_nonce):
+            log.info("dropped a note start that doesn't answer this session's ready")
+            return True
+        self.note = Note()
+        await self.control({"type": "state", "state": "recording", "detail": "note"})
+        log.info("voice note started")
+        return True
+
+    async def _on_note_control(self, what, message: dict) -> bool:
+        note = self.note
+        if what == "end" and note.task is None and not note.discarded:
+            await self.control({"type": "state", "state": "ending", "detail": "transcribing"})
+            note.task = asyncio.get_running_loop().create_task(self._read_note())
+        elif what == "discard" and note.task is None:
+            note.discarded, note.pcm = True, bytearray()
+            await self.control({"type": "state", "state": "ended", "detail": "discarded"})
+            log.info("voice note discarded")
+        elif what == "resume" and note.task is not None and note.task.done():
+            await self._tell_note()  # the phone missed it while its connection was down
+        return True
+
+    async def _read_note(self) -> None:
+        note = self.note
+        pcm, note.pcm = bytes(note.pcm), bytearray()
+        seconds = len(pcm) / (SAMPLE_RATE * 2)
+        answer = await self.serve.transcribe(pcm) if seconds >= 0.5 else {"text": ""}
+        note.text, note.error = answer.get("text"), str(answer.get("error") or "")
+        if note.text is not None and not note.text.strip():
+            note.text, note.error = None, "no_words"
+        log.info("voice note read: %.0fs, %s", seconds, note.error or f"{len(note.text or '')} characters")
+        await self._tell_note()
+
+    async def _tell_note(self) -> None:
+        note = self.note
+        if note.text is not None:
+            await self.control({"type": "note", "text": note.text[:20_000]})
+            await self.control({"type": "state", "state": "ended", "detail": "transcribed"})
+        else:
+            await self.control({"type": "state", "state": "failed", "detail": note.error or "transcribe_failed"})
 
     def _owns(self) -> bool:
         return self.current is not None and self.serve.controller.current is self.current
@@ -932,6 +1047,8 @@ class RelaySession:
                 await self.follow
         if self.input is not None:
             self.input.end()  # the recorder hears the end of its input and finishes the meeting
+        if self.note is not None and self.note.task is not None:
+            self.note.task.cancel()  # nobody is left to hear what it says
 
 
 def _hello(hello) -> dict:
@@ -991,8 +1108,10 @@ async def ask_on_screen(label: str, code: str, name: str, seconds: int = CONFIRM
 
 
 class Serve:
-    def __init__(self, *, run=None, clock=time.time, name: str | None = None, confirm=None):
+    def __init__(self, *, run=None, clock=time.time, name: str | None = None, confirm=None,
+                 transcribe=None):
         self.name = name or laptop_name()
+        self.transcribe = transcribe or transcribe_note
         self.key = LaptopKey()
         self.phones = Phones()
         self.pairings = Pairings(clock)

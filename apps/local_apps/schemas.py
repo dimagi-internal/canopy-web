@@ -88,6 +88,30 @@ class LocalAppInstallationOut(Schema):
     last_run: LocalAppRunOut | None = None
 
 
+class LocalAppMenuItemOut(Schema):
+    #: The app that adds it, and the item's own key within that app.
+    app: str
+    app_name: str
+    key: str
+    label: str
+    #: A canopy-web path. With `pick` = "agent" the menu lists your agents under the item,
+    #: and each opens `path?agent=<slug>&workspace=<slug>`.
+    path: str
+    pick: str = ""
+
+
+class LocalAppMenuAgentOut(Schema):
+    slug: str
+    name: str
+    workspace: str
+
+
+class LocalAppMenuOut(Schema):
+    items: list[LocalAppMenuItemOut]
+    #: Your agents, when an item asks for one; empty otherwise.
+    agents: list[LocalAppMenuAgentOut] = []
+
+
 class LocalAppConfigureIn(Schema):
     settings: dict[str, Any]
 
