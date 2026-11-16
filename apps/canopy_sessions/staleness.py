@@ -324,7 +324,8 @@ OPEN_REASONS = (
     "turn_running",       # cloud: a turn that drives it is queued, claimed or running
     "dialog_up",          # cloud: a question is waiting for an answer
     "manual_turn",        # cloud: its first claimed turn ran in manual mode
-    "person_started",     # cloud: a person's web chat, Slack thread, member's mail or an agent's work for a person, with a turn within CLOUD_CHAT_IDLE
+    "person_started",     # cloud: a person's chat, Slack thread, member's mail or work for a person; a turn
+                          # within CLOUD_CHAT_IDLE
     "no_turn_found",      # cloud: no claimed turn drives it, so nothing can finish it
     "unbound",            # a web chat no runner has picked up yet
     "unobservable",       # held by a box that has never sent a session report
