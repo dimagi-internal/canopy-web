@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 from canopy_listen import cli, store
 from canopy_listen.live import SAMPLE_RATE, Sentence
+from canopy_listen.recorder import keep_awake as real_keep_awake
 from canopy_listen.recorder import record
 
 
@@ -109,3 +110,21 @@ def test_a_failure_names_the_error_and_not_the_words():
 def test_meeting_ids_cannot_climb_out_of_the_store():
     with pytest.raises(ValueError):
         store.meeting_dir("../etc")
+
+
+def test_the_mac_is_kept_awake_while_recording_and_let_go_after(_no_caffeinate):
+    meeting = store.new_meeting("standup", "fake")
+    assert record(meeting["id"], FakeSource(1.0), recognise=recognise, keep_audio=False) == 0
+    assert len(_no_caffeinate) == 2 and _no_caffeinate[1] == "released"
+
+
+def test_keep_awake_waits_on_the_recorder_and_only_on_a_mac(monkeypatch):
+    import sys
+
+    calls = []
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/caffeinate")
+    assert real_keep_awake(4242, spawn=lambda argv, **kw: calls.append(argv) or "holder") == "holder"
+    assert calls == [["caffeinate", "-i", "-s", "-w", "4242"]]
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert real_keep_awake(4242, spawn=lambda argv, **kw: calls.append(argv)) is None and len(calls) == 1

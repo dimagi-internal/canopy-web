@@ -183,11 +183,35 @@ def _transcript(meeting: dict) -> str:
     return "\n".join(f"{names.get(s['speaker'], 'Speaker')}: {s['text']}" for s in meeting["segments"])
 
 
+def keep_awake(pid: int, spawn=None):
+    """Hold the Mac awake while this recorder runs; returns the holder (or None).
+
+    A Mac that idles to sleep mid-meeting stops transcribing, and on a phone meeting its
+    connection goes too. `caffeinate -i -s -w pid` blocks idle sleep, and system sleep on
+    power, until `pid` exits, so even a recorder that is killed lets go of it. Closing the
+    lid on battery still sleeps the Mac: macOS doesn't let an app stop that."""
+    import shutil
+    import subprocess
+    import sys
+
+    if sys.platform != "darwin" or not shutil.which("caffeinate"):
+        return None
+    try:
+        return (spawn or subprocess.Popen)(
+            ["caffeinate", "-i", "-s", "-w", str(pid)],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        log.warning("could not keep the Mac awake; it may sleep during the meeting")
+        return None
+
+
 def record(meeting_id: str, source, *, recognise=None, embed=None, keep_audio: bool = True,
-           settings: dict | None = None) -> int:
+           settings: dict | None = None, awake: bool = True) -> int:
     meeting = store.load(meeting_id)
     if meeting is None:
         return 1
+    holder = keep_awake(os.getpid()) if awake else None
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     signal.signal(signal.SIGINT, lambda *_: stop.set())
@@ -281,6 +305,8 @@ def record(meeting_id: str, source, *, recognise=None, embed=None, keep_audio: b
         if store.active() == meeting_id:
             store.set_active(None)
         (store.meeting_dir(meeting_id) / "pid").unlink(missing_ok=True)
+        if holder is not None:
+            holder.terminate()
 
 
 def _final_pass(meeting: dict, name: str) -> None:
