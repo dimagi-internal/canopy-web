@@ -79,7 +79,11 @@ def heartbeat(runner: Runner, payload: HeartbeatIn, *, device_key: bool = False)
     `RunnerAccessToken` its approved device key bought — not a person's token. A
     data mode is believed only from such a beat of a CLOUD runner
     (`data_mode_trusted`); from anything else it is recorded as none."""
-    if payload.host and payload.host != runner.host:
+    # A cloud box's host is its name (`set_runner_name` keeps them one string), so the
+    # box's own `RUNNER_HOST` only fills a blank host; after that a person owns it and
+    # the box's beat must not put the old name back. A laptop's host is a fact about
+    # the machine (`user@machine`), so its beat still wins.
+    if payload.host and payload.host != runner.host and (runner.kind != Runner.CLOUD or not runner.host):
         runner.host = payload.host
         runner.save(update_fields=["host"])
     if payload.platform in ("macos", "windows", "linux") and payload.platform != runner.platform:

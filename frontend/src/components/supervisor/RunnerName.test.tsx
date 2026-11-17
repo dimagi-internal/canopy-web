@@ -40,8 +40,9 @@ describe('RunnerName', () => {
     expect(setRunnerName).not.toHaveBeenCalled()
   })
 
-  it('says what the box paired as once renamed', () => {
+  it('shows one name, and nothing about what the box paired as', () => {
     render(<RunnerName runner={{ ...box, name: 'cloud-ec2-live' } as RunnerOut} onChange={onChange} />)
-    expect(screen.getByTestId('runner-name').textContent).toContain('Paired as cloud-ec2-2.')
+    expect(screen.getByTestId('runner-name').textContent).toContain('cloud-ec2-live')
+    expect(screen.getByTestId('runner-name').textContent).not.toContain('cloud-ec2-2')
   })
 })

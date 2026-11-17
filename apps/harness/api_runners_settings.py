@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 
 from canopy_sdk import contract
+from django.db import transaction
 from django.db.models import Q
 from django.http import HttpRequest
 from ninja.errors import HttpError
@@ -12,6 +13,7 @@ from ninja.errors import HttpError
 from apps.agents.models import Agent
 from apps.api.route_gates import gate
 from apps.events import audit as events_audit
+from apps.canopy_sessions.models import RunnerBinding
 from apps.workspaces import services as wsvc
 
 from . import (
@@ -151,22 +153,31 @@ def set_runner_directed(request: HttpRequest, runner_id: uuid.UUID, payload: Run
             summary="Rename this runner")
 @gate("runner-admin", setting=True)
 def set_runner_name(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerNameIn):
-    """The name people see for this runner everywhere in canopy. Owner or a runner
-    administrator. Routing, pins and the vault follow the runner, not its name, so
-    nothing else changes. The box keeps the name it paired as (`paired_as`)."""
-    # Pairing matches on `paired_as` as well as `name` (api_runner_invitations
-    # pair_by_role, machine_pairing._machine_runner), so a replaced instance still
-    # re-attaches to a renamed runner.
+    """The one name this runner goes by, everywhere in canopy. Owner or a runner
+    administrator. Routing, pins and the vault follow the runner's id, so they do not
+    change. A cloud box's host IS its name (one string, not two): renaming it moves
+    the host with it, and the runner's session records follow so they still resume.
+    `paired_as` stays as the box's internal pairing key (what it asks as when it
+    re-attaches); it is no longer shown."""
     runner = runner_admin_or_404(request, runner_id)
     name = payload.name.strip()
     if not name:
         raise HttpError(422, "a runner's name cannot be blank")
-    before = {"name": runner.name}
-    if runner.name != name:
-        runner.name = name
-        runner.save(update_fields=["name"])
+    before = {"name": runner.name, "host": runner.host}
+    if runner.name != name or (runner.kind == Runner.CLOUD and runner.host != name):
+        with transaction.atomic():
+            old_host = runner.host
+            runner.name = name
+            fields = ["name"]
+            if runner.kind == Runner.CLOUD:
+                runner.host = name
+                fields.append("host")
+                if old_host and old_host != name:
+                    RunnerBinding.objects.filter(Q(runner=runner) | Q(runner__isnull=True),
+                                                 host=old_host).update(host=name)
+            runner.save(update_fields=fields)
     events_audit.note_change(scope=f"runner-name:{runner.pk}", before=before,
-                             after={"name": runner.name}, workspace=runner.workspace)
+                             after={"name": runner.name, "host": runner.host}, workspace=runner.workspace)
     out = (Runner.objects.select_related("owner", "paused_by", "private_runner")
            .prefetch_related("declared_flags").get(pk=runner.pk))
     out.can_manage = out.owner_id in (request.user.id, None)
