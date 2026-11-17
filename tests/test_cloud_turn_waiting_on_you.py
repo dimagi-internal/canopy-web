@@ -98,7 +98,7 @@ def test_it_leaves_the_feed_once_someone_replies(world):
     jj, agent, cloud = world
     session, _turn = _email_turn_finished(agent, cloud, mode="manual")
     Message.objects.create(session=session, turn_index=3, role=Message.USER,
-                           plaintext="Send it", content={})
+                           plaintext="Send it", content={}, typed=True)
     assert _row(jj, session)["feed_status"] == ""
 
 

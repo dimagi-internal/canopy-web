@@ -45,8 +45,9 @@ def _web_session(world, *rows):
     s = Session.objects.create(workspace_id=world["ws"].pk, created_by=world["me"],
                                agent=world["hal"], title="a chat")
     for i, (role, text) in enumerate(rows):
+        # A person's words are marked `typed` as they are stored (send / ingest).
         Message.objects.create(session=s, turn_index=i, role=role, plaintext=text,
-                               content={"text": text})
+                               content={"text": text}, typed=role == Message.USER)
     return s
 
 
@@ -114,6 +115,45 @@ def test_a_runner_session_reads_the_reported_tail(world):
     [row] = [r for r in rows if r["title"] == "flaky-test" or r["session_key"] == "flaky-test"]
     assert row["last_reply"] == "Done — PR #12 is green."
     assert row["agent_spoke_last"] is True
+
+
+COMPACTION = ("This session is being continued from a previous conversation that ran out of "
+              "context. The summary below covers the earlier portion of the conversation.")
+
+
+def test_a_compaction_summary_is_not_the_person_speaking(world):
+    """Claude Code writes its compaction summary as a USER record. Counted as the
+    person's turn, a finished session read as "the agent owes you a reply" and
+    dropped off Home while /ide still listed it."""
+    s = _web_session(world, (Message.USER, "fix it"), (Message.ASSISTANT, "Fixed. Ship it?"))
+    Message.objects.create(session=s, turn_index=2, role=Message.USER, plaintext=COMPACTION,
+                           content={"text": COMPACTION, "record": {"compact_summary": True}})
+    row = _row(world, s)
+    assert row["agent_spoke_last"] is True
+    assert row["last_reply"] == "Fixed. Ship it?"
+
+
+def test_a_compaction_summary_in_the_tail_is_not_the_person_speaking(world):
+    runner = Runner.objects.create(
+        name="jj-mbp", kind=Runner.EMDASH, host="jj-mac", owner=world["me"], workspace=world["ws"],
+        status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
+    )
+    world["client"].post(
+        f"/api/harness/runners/{runner.id}/sessions",
+        {"sessions": [{
+            "emdash_task": "audio", "project": "hal",
+            "recent_messages": [
+                {"role": "user", "text": "make the menu faster"},
+                {"role": "assistant", "text": "Both changes are live."},
+                {"role": "user", "text": COMPACTION},
+            ],
+        }]},
+        content_type="application/json",
+    )
+    rows = world["client"].get("/api/canopy-sessions/?reply=true").json()
+    [row] = [r for r in rows if r["title"] == "audio" or r["session_key"] == "audio"]
+    assert row["agent_spoke_last"] is True
+    assert row["last_reply"] == "Both changes are live."
 
 
 def test_a_long_reply_arrives_whole(world):

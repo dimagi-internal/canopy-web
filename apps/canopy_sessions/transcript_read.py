@@ -9,7 +9,7 @@ import logging
 from dataclasses import dataclass
 
 from canopy_transcript import BLOCK_STRIDE, contract
-from django.db.models import OuterRef, Subquery
+from django.db.models import OuterRef, Q, Subquery
 from django.utils import timezone
 
 from apps.agents.credentials import secret_requests
@@ -231,11 +231,18 @@ class InjectedPrompts:
         if len(text) >= _DISPATCHED_MIN and (
                 text in self.exact or any(len(p) >= 150 and text.startswith(p) for p in self.prefixes)):
             return True
-        # `_squash` is whitespace-BLIND (see its docstring), so the shapes are too.
-        head = text[:_SHAPE_WINDOW].lower()
-        return (transcript_ingest._squash(_COMPACTION_SHAPE) in head
-                or any(head.startswith(transcript_ingest._squash(p)) for p in _NOT_TYPED_PREFIXES)
-                or head in {transcript_ingest._squash(e) for e in _NOT_TYPED_EXACT})
+        return _harness_shaped(text)
+
+
+def _harness_shaped(text: str) -> bool:
+    """Does `text` (already `_squash`ed) carry one of the harness's own shapes —
+    a compaction summary, a peer message, an auto-continue? The last-resort
+    test for a row with no captured provenance."""
+    # `_squash` is whitespace-BLIND (see its docstring), so the shapes are too.
+    head = text[:_SHAPE_WINDOW].lower()
+    return (transcript_ingest._squash(_COMPACTION_SHAPE) in head
+            or any(head.startswith(transcript_ingest._squash(p)) for p in _NOT_TYPED_PREFIXES)
+            or head in {transcript_ingest._squash(e) for e in _NOT_TYPED_EXACT})
 
 
 def is_human_input(message, program: set[str], injected: InjectedPrompts | None = None) -> bool:
@@ -391,8 +398,12 @@ def with_last_reply(sessions):
     """`sessions` annotated with `_last_speaker` (role of the newest user/agent
     row) and `_last_reply` (text of the newest agent row) — the supervisor feed's
     "is it my turn, and what did it say?", in the same query as the list."""
+    # Only a row a PERSON typed is their turn: a compaction summary, a skill body
+    # or a program's prompt is a USER row too, and counting it left a finished
+    # session reading as "the agent owes you a reply" — off Home for good.
     spoken = (
-        Message.objects.filter(session=OuterRef("pk"), role__in=_SPOKEN_ROLES)
+        Message.objects.filter(session=OuterRef("pk"))
+        .filter(Q(role=Message.ASSISTANT) | Q(role=Message.USER, typed=True))
         .exclude(plaintext="")
         .order_by("-turn_index")
     )
@@ -447,11 +458,23 @@ def last_reply_of(session, binding) -> tuple[str, bool]:
     """
     tail = tail_as_messages(session, binding)
     if tail:
-        return last_reply_from([(m.role, m.plaintext) for m in tail])
+        return last_reply_from([(m.role, m.plaintext) for m in tail if not _tail_injected(m)])
     speaker = getattr(session, "_last_speaker", None)
     if speaker is None:
         return "", False
     return (getattr(session, "_last_reply", None) or "").strip(), speaker == Message.ASSISTANT
+
+
+def _tail_injected(message) -> bool:
+    """A tail USER row the harness wrote, not the person: by the record's own
+    flags when the runner shipped them, else by its text shape (`with_last_reply`
+    asks `typed` for the same question on stored rows)."""
+    if message.role != Message.USER:
+        return False
+    flags = record_flags(message)
+    if flags is not None:
+        return not typed_by_flags(flags)
+    return _harness_shaped(transcript_ingest._squash(_normalized_prompt(message.plaintext)))
 
 
 def all_messages(session: Session):
@@ -643,7 +666,8 @@ def tail_as_messages(session, binding) -> list[TailMessage]:
         idx = i - n
         rows.append(TailMessage(
             pk=f"tail:{idx}", turn_index=idx, role=role,
-            plaintext=text, content={"text": text}, created_at=ts, author=author,
+            plaintext=text, created_at=ts, author=author,
+            content={"text": text, **({"record": m["record"]} if isinstance(m.get("record"), dict) else {})},
         ))
     return rows
 
