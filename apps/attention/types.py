@@ -22,12 +22,16 @@ YOUR_MOVE = "your_move"
 #: Waiting on you, but held behind a runner that is paused or offline: a reply
 #: would queue until that box is back.
 PARKED = "parked"
+#: Yours, and nobody is acting on it: you spoke last and no reply came, or
+#: your message is queued and no runner has picked it up. Listed so a session
+#: that fell through every other rule never just disappears.
+STALLED = "stalled"
 #: Not waiting on you: yours and being worked right now.
 RUNNING = "running"
 #: Not waiting on you: an agent running on its own (auto mode), yours to watch.
 RUNNING_AUTO = "running_auto"
 
-STATES = (ASKING, YOUR_MOVE, PARKED, RUNNING, RUNNING_AUTO)
+STATES = (ASKING, YOUR_MOVE, PARKED, STALLED, RUNNING, RUNNING_AUTO)
 IN_FLIGHT = (RUNNING, RUNNING_AUTO)
 
 

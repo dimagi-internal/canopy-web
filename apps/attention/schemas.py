@@ -4,7 +4,7 @@ from typing import Literal
 from ninja import Field, Schema
 
 # Mirrors `types.STATES`; `tests/test_attention.py` keeps the two equal.
-State = Literal["asking", "your_move", "parked", "running", "running_auto"]
+State = Literal["asking", "your_move", "parked", "stalled", "running", "running_auto"]
 
 
 class AttentionRowOut(Schema):

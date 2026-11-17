@@ -14,8 +14,8 @@ from django.utils import timezone
 
 from apps.agents.credentials import secret_requests
 from apps.harness import runner_requirements, sensitivity
-from apps.mcp_apps_host import mcp_apps_views
 from apps.harness.models import Turn
+from apps.mcp_apps_host import mcp_apps_views
 
 from . import authorship, staleness, transcript_ingest
 from .models import Message, Session
@@ -463,6 +463,18 @@ def last_reply_of(session, binding) -> tuple[str, bool]:
     if speaker is None:
         return "", False
     return (getattr(session, "_last_reply", None) or "").strip(), speaker == Message.ASSISTANT
+
+
+def person_spoke_last(session, binding) -> bool:
+    """The newest spoken row is one a person typed — the same reading as
+    `last_reply_of` (tail first, else `with_last_reply`), and False when nobody
+    has said anything yet."""
+    tail = tail_as_messages(session, binding)
+    if tail:
+        spoken = [m for m in tail if m.role in _SPOKEN_ROLES and (m.plaintext or "").strip()
+                  and not _tail_injected(m)]
+        return bool(spoken) and spoken[-1].role == Message.USER
+    return getattr(session, "_last_speaker", None) == Message.USER
 
 
 def _tail_injected(message) -> bool:
