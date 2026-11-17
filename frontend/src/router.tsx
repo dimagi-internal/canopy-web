@@ -599,7 +599,7 @@ export const routeTable: RouteObject[] = [
   // signed-out phone to sign in. The server serves its shell to anyone so the page can
   // lift the pairing secret out of `#pair=` before that bounce (pairLink.ts).
   { path: '/listen', element: <ListenPage /> },
-  // A voice note to an agent (the account menu's Voice session, from Meeting assistant):
+  // A voice note to an agent (the account menu's Voice assistant, from the app of that name):
   // the paired laptop reads it, then it opens a chat. Same phone screen as /listen.
   { path: '/listen/voice', element: <VoiceNotePage /> },
   // Public, chrome-less route — mounted OUTSIDE AppLayout so anonymous

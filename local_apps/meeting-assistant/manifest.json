@@ -1,9 +1,9 @@
 {
   "key": "meeting-assistant",
-  "name": "Meeting assistant",
-  "description": "Live feedback from an agent during a meeting.",
-  "version": "0.6.0",
-  "changelog": "Voice session: turn it on under Configure and your account menu gets Voice session. Pick an agent, talk on your phone, this Mac turns it into words, and you send them to the agent as a new chat.",
+  "name": "Voice assistant",
+  "description": "Talk to your agents from your phone, and get an agent's feedback during a meeting. This Mac turns what's said into words.",
+  "version": "0.7.0",
+  "changelog": "Renamed from Meeting assistant. The account menu item is now Voice assistant: pick an agent to send a voice note, or Meeting to record a meeting from your phone.",
   "entry": [
     "{python}",
     "app.py"
@@ -54,18 +54,24 @@
     },
     "voice_session": {
       "type": "bool",
-      "label": "Show Voice session in my account menu",
-      "help": "Record a voice note on your phone, to any of your agents. This Mac turns it into words (no audio leaves it), and you check them before they're sent as a new chat.",
+      "label": "Show Voice assistant in my account menu",
+      "help": "From your phone: record a voice note to any of your agents, or record a meeting. This Mac turns it into words (no audio leaves it). You check a note's words before they're sent as a new chat.",
       "default": false
     }
   },
   "menu": [
     {
       "key": "voice-session",
-      "label": "Voice session",
+      "label": "Voice assistant",
       "path": "/listen/voice",
       "pick": "agent",
-      "shown_when": "voice_session"
+      "shown_when": "voice_session",
+      "links": [
+        {
+          "label": "Meeting",
+          "path": "/listen"
+        }
+      ]
     }
   ],
   "checks": [

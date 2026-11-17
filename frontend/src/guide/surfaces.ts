@@ -213,7 +213,7 @@ export const SURFACES: SurfaceDescriptor[] = [
     path: '/listen/voice',
     group: 'Recording a meeting from your phone',
     flat: 'personal/global: your phone and your own laptop; the agent named in the address says where the chat lands',
-    title: 'Voice session: a voice note to an agent',
+    title: 'Voice assistant: a voice note to an agent',
     use: 'When you want to start a chat with an agent by talking to your phone; your laptop reads it.',
   },
   {

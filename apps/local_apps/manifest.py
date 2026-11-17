@@ -160,8 +160,8 @@ def _menu(raw, settings: dict) -> list[dict]:
     out: list[dict] = []
     for i, item in enumerate(raw):
         where = f"menu[{i}]"
-        if not isinstance(item, dict) or set(item) - {"key", "label", "path", "pick", "shown_when"}:
-            _fail(where, "must be {key, label, path, pick, shown_when}")
+        if not isinstance(item, dict) or set(item) - {"key", "label", "path", "pick", "shown_when", "links"}:
+            _fail(where, "must be {key, label, path, pick, shown_when, links}")
         key = item.get("key")
         if not isinstance(key, str) or not KEY.match(key) or any(o["key"] == key for o in out):
             _fail(f"{where}.key", "must be a unique key: lowercase letters, numbers and hyphens")
@@ -178,7 +178,37 @@ def _menu(raw, settings: dict) -> list[dict]:
         if not isinstance(label, str) or not label.strip() or len(label) > 40:
             _fail(f"{where}.label", "must be non-empty text of at most 40 characters")
         label = label.strip()
-        out.append({"key": key, "label": label, "path": path, "pick": pick, "shown_when": shown_when or ""})
+        links = _menu_links(where, item.get("links"), pick)
+        out.append(
+            {"key": key, "label": label, "path": path, "pick": pick, "shown_when": shown_when or "", "links": links}
+        )
+    return out
+
+
+def _menu_path(where: str, path) -> str:
+    if not isinstance(path, str) or not MENU_PATH.match(path) or "//" in path or ".." in path:
+        _fail(where, "must be a path on Canopy, such as /listen/voice")
+    return path
+
+
+def _menu_links(where: str, raw, pick: str) -> list[dict]:
+    """Other pages listed beside an item's agents, such as Meeting beside them under Voice
+    assistant: each opens its own path, with no agent."""
+    if raw in (None, ""):
+        return []
+    if pick != "agent":
+        _fail(f"{where}.links", "only an item that lists agents can list links beside them")
+    if not isinstance(raw, list) or len(raw) > 3:
+        _fail(f"{where}.links", "must be a list of at most 3")
+    out: list[dict] = []
+    for j, link in enumerate(raw):
+        at = f"{where}.links[{j}]"
+        if not isinstance(link, dict) or set(link) - {"label", "path"}:
+            _fail(at, "must be {label, path}")
+        label = link.get("label")
+        if not isinstance(label, str) or not label.strip() or len(label) > 40:
+            _fail(f"{at}.label", "must be non-empty text of at most 40 characters")
+        out.append({"label": label.strip(), "path": _menu_path(f"{at}.path", link.get("path"))})
     return out
 
 

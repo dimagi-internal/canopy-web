@@ -37,7 +37,8 @@ const agentRef = (a: { workspace: string; slug: string }) => `${a.workspace}/${a
 /**
  * What the person's installed apps add to this menu, each one they turned on in the app's
  * settings. An item that asks for an agent opens to list them (a second tap, not a hover,
- * so it works on a phone); each agent goes to the item's page for that agent. "Choose
+ * so it works on a phone); each agent goes to the item's page for that agent, and any
+ * links the item lists beside them (Meeting, under Voice assistant) go to their own. "Choose
  * agents…" under the list picks which ones it shows. The items come from a store loaded
  * with the page, so they're there the moment the menu opens.
  */
@@ -80,6 +81,11 @@ export function AppMenuItems({ onNavigate }: { onNavigate: () => void }) {
             )}
             {expanded && choosing !== id && (
               <div className="pb-1">
+                {(item.links ?? []).map((link) => (
+                  <Link key={link.path} to={link.path} onClick={onNavigate} className={sub}>
+                    {link.label}
+                  </Link>
+                ))}
                 {item.agents.length === 0 && (
                   <div className="py-1.5 pl-6 pr-3 text-xs text-muted-foreground">No agents you can use yet</div>
                 )}

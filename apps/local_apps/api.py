@@ -285,6 +285,7 @@ def _menu_out(user) -> LocalAppMenuOut:
                 "pick": item["pick"],
                 "agents": agents,
                 "chosen": ref in choices,
+                "links": item.get("links") or [],
             }
         )
     return LocalAppMenuOut(items=out)

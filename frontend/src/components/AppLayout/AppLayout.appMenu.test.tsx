@@ -51,6 +51,18 @@ describe('AppMenuItems', () => {
     expect(onNavigate).toHaveBeenCalledTimes(1)
   })
 
+  it('lists the item’s other pages, such as Meeting, beside its agents', async () => {
+    getLocalAppMenu.mockResolvedValue({ items: [{ ...VOICE, label: 'Voice assistant', links: [{ label: 'Meeting', path: '/listen' }] }] })
+    const onNavigate = vi.fn()
+    render(<MemoryRouter><AppMenuItems onNavigate={onNavigate} /></MemoryRouter>)
+    fireEvent.click(await screen.findByRole('button', { name: 'Voice assistant' }))
+    const meeting = screen.getByRole('link', { name: 'Meeting' })
+    expect(meeting.getAttribute('href')).toBe('/listen')
+    expect(screen.getByRole('link', { name: 'Hal' })).toBeTruthy()
+    fireEvent.click(meeting)
+    expect(onNavigate).toHaveBeenCalledTimes(1)
+  })
+
   it('shows what it loaded before at once when the menu opens again', async () => {
     getLocalAppMenu.mockResolvedValue({ items: [VOICE] })
     draw()

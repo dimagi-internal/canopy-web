@@ -64,8 +64,8 @@ const LAPTOP_FAILURES: Record<string, (name: string) => string> = {
   recorder_stopped: (n) => `The recorder on ${n} stopped unexpectedly. What it heard so far is saved there.`,
   busy: (n) => `${n} is already recording a meeting. End it there first.`,
   notice_not_accepted: () => 'The recording notice has to be acknowledged first.',
-  app_did_not_start: (n) => `Meeting assistant didn't start on ${n}. Check it's installed there.`,
-  did_not_start: (n) => `${n} started Meeting assistant, but it never began recording. Try again.`,
+  app_did_not_start: (n) => `Voice assistant didn't start on ${n}. Check it's installed there.`,
+  did_not_start: (n) => `${n} started Voice assistant, but it never began recording. Try again.`,
   update_page: (n) => `Reload this page: Canopy Listen on ${n} needs its newest version.`,
 }
 
@@ -328,7 +328,7 @@ export interface Segment {
 export type AudioSource = 'mic' | 'tab'
 
 /**
- * `saved`: the laptop said Meeting assistant saved it. `unsaved`: it ended, but no save was
+ * `saved`: the laptop said Voice assistant saved it. `unsaved`: it ended, but no save was
  * confirmed (`note` says why); the recording is still on the laptop.
  */
 export type MeetingStatus = 'connecting' | 'waiting' | 'recording' | 'ending' | 'saved' | 'unsaved' | 'discarded' | 'failed'
@@ -614,7 +614,7 @@ export class Meeting {
   /** The laptop's recording is over: saved only if it says so. */
   private laptopEnded(detail: string): void {
     if (detail === 'not_saved') {
-      this.close({ status: 'unsaved', note: `The recording ended on ${this.pairing.laptop_name}, but Meeting assistant didn't save notes. The transcript is in Canopy Listen there.` })
+      this.close({ status: 'unsaved', note: `The recording ended on ${this.pairing.laptop_name}, but Voice assistant didn't save notes. The transcript is in Canopy Listen there.` })
     } else if (detail === 'discarded') {
       this.close({ status: 'discarded' })
     } else if (detail === 'saved') {
