@@ -57,6 +57,27 @@ describe('MicBlocked', () => {
     expect(screen.getByText(/can’t ask again/)).toBeTruthy()
   })
 
+  it('asks for the microphone the way Chrome accepts, and survives a browser that throws', () => {
+    ;(window as unknown as Record<string, unknown>).HTMLUserMediaElement = class {}
+    const asked: unknown[] = []
+    const proto = HTMLElement.prototype as unknown as Record<string, unknown>
+    // Chrome throws a TypeError for `audio: true`; only an object is allowed.
+    proto.setConstraints = (c: { audio?: unknown }) => {
+      asked.push(c)
+      if (typeof c.audio !== 'object') throw new TypeError('not a MediaTrackConstraintSet')
+    }
+    try {
+      render(<MicBlocked />)
+      expect(asked).toEqual([{ audio: {} }])
+      cleanup()
+      proto.setConstraints = () => { throw new TypeError('anything') }
+      render(<MicBlocked />)
+      expect(screen.getByText(/microphone is blocked/)).toBeTruthy()
+    } finally {
+      delete proto.setConstraints
+    }
+  })
+
   it('offers the browser’s allow button, closes the stream it hands over, and goes on', () => {
     ;(window as unknown as Record<string, unknown>).HTMLUserMediaElement = class {}
     const onAllowed = vi.fn()
