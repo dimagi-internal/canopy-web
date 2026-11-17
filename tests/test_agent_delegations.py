@@ -46,7 +46,8 @@ from tests.fixtures.vault_zk import ref
 
 pytestmark = pytest.mark.django_db
 
-EXPIRY = "2026-12-01 10:00:00 UTC"
+# Far off, so no test lands inside the "expires soon" window as the calendar moves on.
+EXPIRY = "2099-12-01 10:00:00 UTC"
 
 
 class FakeGitHub:
@@ -168,9 +169,9 @@ def test_the_owner_delegates_a_working_token_sealed_to_the_machines_that_run_the
     assert entry.identity == {"login": "olive", "user_id": 4242, "name": "Olive Owner"}
     assert entry.checks == [{"repo": "dimagi-internal/echo", "ok": True,
                              "detail": "can push and open pull requests"}]
-    assert entry.provider_expires_at == dt.datetime(2026, 12, 1, 10, 0, tzinfo=dt.UTC)
+    assert entry.provider_expires_at == dt.datetime(2099, 12, 1, 10, 0, tzinfo=dt.UTC)
     assert accounts.label(entry, agent) == (
-        "GitHub · delegated by Olive · GitHub says it expires 1 Dec 2026")
+        "GitHub · delegated by Olive · GitHub says it expires 1 Dec 2099")
 
 
 def test_a_token_is_refused_when_no_machine_that_runs_the_agent_can_open_it(agent, owner, github):

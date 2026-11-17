@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type JSX, type ReactNode } from 'react'
+import { createElement, useCallback, useEffect, useMemo, useRef, useState, type JSX, type ReactNode } from 'react'
 import {
   Check,
   CircleCheck,
@@ -58,9 +58,7 @@ export function defaultDeps(store: ListenStore = browserStore): ListenDeps {
         return await startMic(onChunk, onLevel)
       } catch (e) {
         if (e instanceof MicDenied && e.why === 'denied') {
-          throw new Error(
-            'Microphone access is off for this site. Allow it in your browser’s site settings (on iPhone: aA → Website Settings → Microphone), then try again.',
-          )
+          throw new Error(`Microphone access is off for this site. ${micSettingsHelp()}`)
         }
         throw e
       }
@@ -411,13 +409,112 @@ export function useMicPermission(): PermissionState | 'unknown' {
   return state
 }
 
-export function micSettingsHelp(): string {
-  const ua = typeof navigator === 'undefined' ? '' : navigator.userAgent
-  if (/iPhone|iPad|iPod/i.test(ua)) {
+/**
+ * Where to turn the microphone back on, for the phone and browser this page is open in. A
+ * page can't open the browser's or the phone's settings itself, so the steps name the taps.
+ * Each one also says where the phone's own switch for the browser is, because that blocks
+ * the microphone in the same way and the site setting can't show it.
+ */
+export function micSettingsHelp(
+  ua: string = typeof navigator === 'undefined' ? '' : navigator.userAgent,
+  installed: boolean = runningInstalled(),
+  host: string = typeof location === 'undefined' ? 'this site' : location.host,
+): string {
+  const ios = /iPhone|iPad|iPod/i.test(ua)
+  if (installed && /Android/i.test(ua)) {
+    // An installed app has no address bar, but it shares the browser's setting for the site.
+    return `This app has no address bar, so open ${host} in Chrome, tap the icon left of the address → Permissions → Microphone → Allow, then come back here. If it already says Allow, open your phone’s Settings → Apps → Chrome → Permissions → Microphone → Allow.`
+  }
+  if (installed && ios) {
+    return 'On iPhone, open Settings → Apps → Safari → Microphone and choose Ask or Allow, then come back here and try again.'
+  }
+  if (ios && /CriOS/i.test(ua)) {
+    return 'On iPhone in Chrome: open Settings → Apps → Chrome and turn Microphone on, then come back and try again.'
+  }
+  if (ios && /FxiOS/i.test(ua)) {
+    return 'On iPhone in Firefox: open Settings → Apps → Firefox and turn Microphone on, then come back and try again.'
+  }
+  if (ios) {
     return 'On iPhone: tap aA in the address bar → Website Settings → Microphone → Allow. If that doesn’t show it, check Settings → Apps → Safari → Microphone.'
   }
-  if (/Android/i.test(ua)) return 'On Android: tap the icon left of the address → Permissions → Microphone → Allow.'
+  if (/Android/i.test(ua)) {
+    const [browser, steps] = /SamsungBrowser/i.test(ua)
+      ? ['Samsung Internet', 'tap the lock left of the address → Permissions → Microphone → Allow']
+      : /Firefox/i.test(ua)
+        ? ['Firefox', 'tap the lock left of the address and switch Microphone to Allowed']
+        : /EdgA/i.test(ua)
+          ? ['Edge', 'tap the lock left of the address → Permissions → Microphone → Allow']
+          : ['Chrome', 'tap the icon left of the address → Permissions → Microphone → Allow']
+    return `On Android in ${browser}: ${steps}, then try again. If Microphone isn’t there or is already allowed, open your phone’s Settings → Apps → ${browser} → Permissions → Microphone → Allow.`
+  }
   return 'Click the icon left of the address bar, set Microphone to Allow, then reload.'
+}
+
+function runningInstalled(): boolean {
+  if (typeof window === 'undefined' || !window.matchMedia) return false
+  return ['standalone', 'fullscreen', 'minimal-ui'].some((m) => window.matchMedia(`(display-mode: ${m})`).matches)
+}
+
+/** Whether this browser has Chrome's <usermedia> element, which can undo a blocked microphone in place. */
+export function canRegrantMic(): boolean {
+  return typeof window !== 'undefined' && 'HTMLUserMediaElement' in window
+}
+
+interface UserMediaElement extends HTMLElement {
+  setConstraints?(c: MediaStreamConstraints): void
+  readonly stream?: MediaStream | null
+}
+
+/**
+ * The browser's own "allow the microphone" button. A page can't reopen a permission the
+ * person blocked, but this element can: tapping it shows the browser's screen for turning
+ * it back on, right here. Once allowed, the stream it hands over is closed at once (the
+ * recording opens its own) and `onAllowed` runs. Draws nothing where the browser lacks it,
+ * so the written steps beside it stay the way there.
+ */
+export function MicRegrant({ onAllowed }: { onAllowed: () => void }): JSX.Element | null {
+  const ref = useRef<UserMediaElement | null>(null)
+  const allowed = useRef(onAllowed)
+  allowed.current = onAllowed
+  const supported = canRegrantMic()
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    el.setConstraints?.({ audio: true, video: false })
+    const onStream = () => {
+      el.stream?.getTracks().forEach((t) => t.stop())
+      allowed.current()
+    }
+    el.addEventListener('stream', onStream)
+    return () => el.removeEventListener('stream', onStream)
+  }, [supported])
+  if (!supported) return null
+  return createElement('usermedia', {
+    ref,
+    className: 'block mx-auto rounded-xl bg-primary text-primary-foreground px-5 py-3 text-base font-medium',
+  })
+}
+
+/**
+ * The microphone is blocked for this site. Where the browser can undo that in place, its
+ * button comes first and the written steps are the fallback; elsewhere the steps are all
+ * there is.
+ */
+export function MicBlocked({ onAllowed = () => undefined }: { onAllowed?: () => void }): JSX.Element {
+  if (!canRegrantMic()) {
+    return (
+      <Problem>
+        Microphone access is turned off for this site, and the page can’t ask again. {micSettingsHelp()}
+      </Problem>
+    )
+  }
+  return (
+    <div className="space-y-3">
+      <Problem>The microphone is blocked for this site. Tap the button below to allow it.</Problem>
+      <MicRegrant onAllowed={onAllowed} />
+      <p className="text-xs text-muted-foreground">If that doesn’t work: {micSettingsHelp()}</p>
+    </div>
+  )
 }
 
 function Home({
@@ -459,12 +556,7 @@ function Home({
         </p>
       )}
 
-      {mic === 'denied' && (
-        <Problem>
-          Microphone access is turned off for this site, and the page can’t ask again. {micSettingsHelp()} Then come
-          back here.
-        </Problem>
-      )}
+      {mic === 'denied' && <MicBlocked />}
 
       {!noticeAccepted && (
         <section className="rounded-2xl border border-warning/30 bg-warning/10 px-4 py-4 space-y-3">
