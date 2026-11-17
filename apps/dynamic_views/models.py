@@ -38,6 +38,9 @@ class DynamicView(models.Model):
     #: shared connection (`apps/connections/declarations.py`). Empty for a view that
     #: calls nothing.
     connections = models.JSONField(default=list, db_default=[], blank=True)
+    #: The status moves the code may make on its OWN project's tasks, as the viewer: a subset of
+    #: ["done", "reopen"] (`task_actions.py`). Empty on a workspace view, always.
+    task_actions = models.JSONField(default=list, db_default=[], blank=True)
     version = models.PositiveIntegerField(default=1)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
                                    related_name="dynamic_views_created")
@@ -67,6 +70,7 @@ class DynamicViewRevision(models.Model):
     sources = models.JSONField(default=list, blank=True)
     agent_tasks = models.JSONField(default=list, blank=True)
     connections = models.JSONField(default=list, db_default=[], blank=True)
+    task_actions = models.JSONField(default=list, db_default=[], blank=True)
     note = models.CharField(max_length=300, blank=True, default="")
     changed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
                                    related_name="+")

@@ -16,10 +16,11 @@ it as the viewer.
 | The catalog: every read a view may ask for | `apps/dynamic_views/catalog.py` (docstring) |
 | Declared agent tasks | `apps/dynamic_views/declared_tasks.py` |
 | Declared connections | `apps/connections/declarations.py` |
+| Declared task actions (a project view's done / reopen) | `apps/dynamic_views/task_actions.py` |
 | Routes (each an MCP tool) | `apps/dynamic_views/api.py` |
 | The contract served to an author: render contract, kit, example | `apps/dynamic_views/guide.py`, `GET /api/dynamic-views/guide/` (`get_dynamic_view_guide`) |
 | The frame (document, CSP) | `apps/dynamic_views/frame.py`; its runtime `frontend/src/dynamicViews/frame/` |
-| The canopy page's side (bridge) | `frontend/src/dynamicViews/bridge.ts`, `agentTasks.ts`, `connectionCalls.ts`, `pagePanel.ts`, `DynamicViewFrame.tsx`; message types in `protocol.ts` |
+| The canopy page's side (bridge) | `frontend/src/dynamicViews/bridge.ts`, `agentTasks.ts`, `connectionCalls.ts`, `taskActions.ts`, `pagePanel.ts`, `DynamicViewFrame.tsx`; message types in `protocol.ts` |
 
 ## How a view is drawn
 
@@ -49,7 +50,9 @@ session, so the route's own gate decides what comes back. A view can show nothin
 not already read. `services.create`/`update` check declared sources against the same catalog, so a
 bad source is refused when the view is written, not on every draw.
 
-**The one write: an agent task the view declares.** Nothing else about a view writes. Its code may
+**Its writes are what it declares**: an agent task (below), a Salesforce call (§ Declared
+connections) and, on a project view, a status move on that project's tasks (§ Declared task
+actions). Nothing else about a view writes. For an agent task, its code may
 call `canopy.runAgentTask(...)`, and the page starts that agent task
 ([agent-tasks.md](agent-tasks.md)) — but only for an `{agent, name}` pair in the view's
 `agent_tasks`:
@@ -115,6 +118,25 @@ agent's admin to have approved the project's declared lines. A rejection carries
 when connecting would fix it, which the frame can only reach through `canopy.navigate`. Readers see
 the declaration beside the declared tasks (`DeclaredConnections.tsx`). The trade and its limits:
 [`vault-connections.md`](vault-connections.md) § Calls from screens.
+
+## Declared task actions (done / reopen on the view's own project)
+
+A project view may mark its project's tasks done or reopen them inline, without an agent turn per
+click: `task_actions` on the view (a subset of `agents.services.SCREEN_STATUS_ACTIONS`, snapshotted
+on every revision), and `canopy.tasks.act(key, action)` in its code. The rules are in
+`apps/dynamic_views/task_actions.py`'s docstring; the ones to keep:
+
+- **Project views only, declared by an editor.** A workspace view declaring one, or a view that
+  declares one moving to the workspace, is refused; declaring one or writing new code for such a
+  view needs the editor role (`task_actions.may_declare`), as declared agent tasks do.
+- **One writer, one gate.** The move runs as the viewer through
+  `agents.services.task_actions.finish_or_reopen`, the writer a workspace app's `done` / `reopen`
+  also use, so it never starts a turn and history names the viewer. Who may is the task page's own
+  gate, `agents.gates.may_edit_task`; a task outside the view's project, or one the viewer cannot
+  read, is a 404; the server checks the view's CURRENT declaration.
+- **A click, judged by the page.** `taskActions.ts` refuses an undeclared action, an unsaved
+  preview, an app page, and anything not started by a click on this frame (`pageClickedFrame`, read
+  when the message arrives), before sending.
 
 ## Adding to the catalog
 

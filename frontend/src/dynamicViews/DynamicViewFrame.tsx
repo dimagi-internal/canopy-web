@@ -7,15 +7,17 @@
  * frame has an opaque origin, and its messages arrive with `origin === "null"`;
  * we accept one only when `event.source` is this frame's own window. Every read
  * it asks for goes through `resolveRead` (bridge.ts) and is made here, as the
- * viewer, under the view's workspace. The one thing it may make happen is an agent
- * task the view declares (`agentTasks.ts`): started here as the viewer, cancelled if
- * this frame goes away while it runs. Design: docs/architecture/dynamic-views.md.
+ * viewer, under the view's workspace. What it may make happen is what the view declares:
+ * an agent task (`agentTasks.ts`), started here as the viewer and cancelled if this frame
+ * goes away while it runs; a Salesforce call (`connectionCalls.ts`); and, on a project view,
+ * a task of that project marked done or reopened from a click (`taskActions.ts`).
+ * Design: docs/architecture/dynamic-views.md.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { cancelAgentTask, createAgentTask, getAgentTask, type AgentTask } from '@/api/agentTasks'
 import { apiUrl } from '@/api/base'
-import { getDynamicViewGuide, type DynamicViewSource } from '@/api/dynamicViews'
+import { actOnDynamicViewTask, getDynamicViewGuide, type DynamicViewSource } from '@/api/dynamicViews'
 import { ViewAgentTasks, type DeclaredTask } from './agentTasks'
 import { connectionClient } from '@/api/connectionCalls'
 import { ConnectionCalls, pageClickedFrame, refusalMembers, type DeclaredConnection } from './connectionCalls'
@@ -23,6 +25,7 @@ import { checkConnect, connectOutcome, disconnectLent, lendStartPath, type LendR
 import { checkAsk, endGoogleAccess, GoogleAccessDialog, type GoogleAccessAsk, type GoogleAccessRequest } from './googleAccess'
 import { resolveNavigation, resolveRead, type CatalogModel, type ReadContext } from './bridge'
 import { ViewPagePanel } from './pagePanel'
+import { runTaskAction, type TaskAction } from './taskActions'
 import { currentAssistant } from '@/widget/assistant'
 import {
   CHANNEL,
@@ -43,6 +46,8 @@ export interface FrameView {
   agent_tasks?: readonly DeclaredTask[]
   /** The calls the code may make on a connected account (the view's `connections`). */
   connections?: readonly DeclaredConnection[]
+  /** The status moves the code may make on its project's tasks (the view's `task_actions`). */
+  task_actions?: readonly string[]
   /** Drawn from unsaved edits: there is no revision to call as. */
   preview?: boolean
 }
@@ -317,6 +322,22 @@ export function DynamicViewFrame({ view, scope, onError, app, pagePanel = false 
           connectionCalls.current!.handle(msg.request)
             .then((data) => post({ channel: CHANNEL, type: 'read-result', id, ok: true, data }))
             .catch((e) => post({ channel: CHANNEL, type: 'read-result', id, ok: false, error: message(e), ...refusalMembers(e) }))
+          return
+        }
+        case 'task-action': {
+          const id = msg.id
+          // The click is read NOW, in the message event, before any await (taskActions.ts).
+          const clicked = pageClickedFrame(frame.current)
+          const { view: v, scope: sc, app: a } = screen.current
+          const saved = !v.preview && sc.view.id > 0 && sc.view.version > 0
+          runTaskAction(
+            (viewId: number, key: string, action: TaskAction) => actOnDynamicViewTask(viewId, key, action),
+            { viewId: saved ? sc.view.id : null, declared: v.task_actions ?? [], app: !!a },
+            msg.request,
+            clicked,
+          )
+            .then((data) => post({ channel: CHANNEL, type: 'read-result', id, ok: true, data }))
+            .catch((e) => post({ channel: CHANNEL, type: 'read-result', id, ok: false, error: message(e) }))
           return
         }
         case 'connection-begin': {

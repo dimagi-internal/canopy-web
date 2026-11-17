@@ -16,6 +16,7 @@ from ninja.errors import HttpError
 from apps.agents import services as agent_services
 from apps.agents.gates import listed_agent_workspaces, may_edit_project, visible_agent_workspaces
 from apps.agents.models import AgentProject
+from apps.agents.schemas import AgentTaskOut
 from apps.api.auth import session_auth
 from apps.api.errors import refusals
 from apps.api.route_gates import gate
@@ -24,7 +25,7 @@ from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.links import scoped_path_or_none
 
-from . import catalog, guide, services
+from . import catalog, guide, services, task_actions
 from .models import DynamicView
 from .schemas import (
     DynamicViewGuideOut,
@@ -34,6 +35,7 @@ from .schemas import (
     DynamicViewRevisionOut,
     DynamicViewRollbackIn,
     DynamicViewSummaryOut,
+    DynamicViewTaskActionIn,
 )
 
 router = Router(auth=session_auth, tags=["dynamic-views"])
@@ -56,6 +58,7 @@ def _summary_fields(view: DynamicView) -> dict:
 def _out(view: DynamicView) -> DynamicViewOut:
     return DynamicViewOut(**_summary_fields(view), code=view.code, sources=view.sources or [],
                           agent_tasks=view.agent_tasks or [], connections=view.connections or [],
+                          task_actions=view.task_actions or [],
                           created_by_email=view.created_by.email if view.created_by_id else None,
                           created_at=view.created_at)
 
@@ -231,7 +234,8 @@ def list_dynamic_view_revisions(request: HttpRequest, view_id: int) -> list[Dyna
     return [DynamicViewRevisionOut(version=r.version, title=r.title, note=r.note,
                                    changed_by_email=r.changed_by.email if r.changed_by_id else None,
                                    changed_at=r.changed_at, code=r.code, sources=r.sources or [],
-                                   agent_tasks=r.agent_tasks or [], connections=r.connections or [])
+                                   agent_tasks=r.agent_tasks or [], connections=r.connections or [],
+                                   task_actions=r.task_actions or [])
             for r in view.revisions.select_related("changed_by")]
 
 
@@ -245,4 +249,31 @@ def rollback_dynamic_view(request: HttpRequest, view_id: int, payload: DynamicVi
         view = services.rollback(view, version=payload.version, user=request.user)
     except LookupError as exc:
         raise HttpError(404, str(exc)) from exc
+    except ValueError as exc:
+        # A declaration the restorer may not make, or task actions on a view now on the workspace.
+        raise HttpError(422, str(exc)) from exc
     return _out(_view_or_404(request, view.pk))
+
+
+@router.post("/{view_id}/task-actions", response=AgentTaskOut,
+             summary="Mark a task of a view's project done, or reopen it, as the view declares")
+# Reading the view is membership; the move itself is `may_edit_task` on the task (an editor, its
+# assignee or its agent) — the task page's own gate, so a viewer passes only on a task that is theirs.
+@gate(
+    "member",
+    "agent.work",
+    kind="content",
+    viewer_write="a view's viewer may finish or reopen a task assigned to them, as on the task's own page",
+)
+def act_on_dynamic_view_task(request: HttpRequest, view_id: int, payload: DynamicViewTaskActionIn) -> AgentTaskOut:
+    """What a view's `canopy.tasks.act(key, action)` sends, as the viewer. The action must be in the
+    view's current `task_actions`, the task one of the view's project's that you can read (else 404),
+    and one you may change (the editor role, being its assignee, or being its agent; else 403). Done
+    and reopen never start an agent's turn; the task's history records you. 409 when the task is not
+    in a state the move applies to."""
+    view = _view_or_404(request, view_id)
+    try:
+        task = task_actions.act(request, view, payload.key, payload.action)
+    except task_actions.Refused as exc:
+        raise HttpError(exc.status, str(exc)) from exc
+    return AgentTaskOut.model_validate(task)

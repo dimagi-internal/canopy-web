@@ -66,10 +66,10 @@ export function ProjectViewsSection({ workspace, handle, projectName }: { worksp
                 </Link>
                 <span className="text-[11.5px] text-muted-foreground">v{v.version}</span>
               </div>
-              <DeclaredTasks tasks={v.agent_tasks} className="mb-1" />
+              <DeclaredTasks tasks={v.agent_tasks} taskActions={v.task_actions} className="mb-1" />
               <DeclaredConnections connections={v.connections as DeclaredConnection[] | undefined} className="mb-1" />
               <DynamicViewFrame
-                view={{ code: v.code, sources: v.sources as DynamicViewSource[], agent_tasks: v.agent_tasks, connections: v.connections as DeclaredConnection[] | undefined }}
+                view={{ code: v.code, sources: v.sources as DynamicViewSource[], agent_tasks: v.agent_tasks, connections: v.connections as DeclaredConnection[] | undefined, task_actions: v.task_actions }}
                 scope={{
                   workspace: { slug: workspace, name: workspaceName },
                   project: { handle, name: projectName },

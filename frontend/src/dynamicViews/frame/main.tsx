@@ -132,6 +132,13 @@ const canopy = {
       return ask((id) => ({ channel: CHANNEL, type: 'connection-begin', id }))
     },
   },
+  /** The view's project's tasks: a status move the view declares (`task_actions`), as the viewer, from a click.
+   * Resolves with the task as it now is, or rejects with a sentence. */
+  tasks: {
+    act(key: string, action: string) {
+      return ask((id) => ({ channel: CHANNEL, type: 'task-action', id, request: { key, action } }))
+    },
+  },
   /** canopy's panel, beside a view on its own page (see the guide): tell the agent what is
    * on screen, offer it actions, or ask it something from a button. */
   page: {

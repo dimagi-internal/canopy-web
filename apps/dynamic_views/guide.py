@@ -31,6 +31,9 @@ PROPS
     canopy.connection.begin() -> Promise<{expires_at, hard_limit_at, writes}>
                                          open this click's window before any write (see SALESFORCE CALLS)
     canopy.agentTask(id) -> Promise<task>  re-read a task this view started (status, error, ...)
+    canopy.tasks.act(key, action) -> Promise<task>
+                                         on a PROJECT view: mark one of its project's tasks "done", or
+                                         "reopen" it, as the viewer, from a click (TASK ACTIONS below)
     canopy.googleAccess.start({agent, account?, services?: ["gmail"], minutes?: 60, purpose?})
                                          -> Promise<{ok, account, until}>  the VIEWER lends an agent
                                          the view declares tasks for their own Google account for
@@ -111,6 +114,29 @@ AGENT TASKS (the one thing a view may make happen; docs/architecture/agent-tasks
       } catch (e) { setStatus(e.message) }
     }
 
+TASK ACTIONS (a project view changing its own project's tasks, without opening each task page)
+- Declare the moves the code may make on the view: "task_actions": ["done", "reopen"] (either or
+  both; nothing else). Only a view on a project may declare them, and only its workspace's editors
+  may write such a view. canopy refuses any canopy.tasks.act whose action is not declared.
+- canopy.tasks.act(key, action) marks the task `key` ("CON-12") done, or reopens a done or declined
+  one (back to todo), and resolves with the task as it now is ({key, title, status, ...}, the shape
+  of a `tasks` read). It runs AS THE VIEWER: the task must be in the view's project, and the viewer
+  must be able to change it on its own page (an editor of the workspace, or its assignee) — anyone
+  else gets the refusal as a rejected promise. Show its message. It never starts an agent's turn,
+  and the task's history names the viewer.
+- It must start from a click on this screen, as a Salesforce write does: call it straight from an
+  onClick handler. Otherwise it rejects with a sentence and nothing is sent. A view that has not
+  been saved yet cannot call it.
+- Example, a list where each row is marked done in place:
+    <Table rows={tasks} columns={[
+      { key: "title", label: "Proposed email" },
+      { key: "status", label: "", render: (t) => t.status === "done"
+          ? <Button size="sm" onClick={() => canopy.tasks.act(t.key, "reopen").then(canopy.refresh)
+              .catch((e) => setError(e.message))}>Reopen</Button>
+          : <Button size="sm" tone="primary" onClick={() => canopy.tasks.act(t.key, "done").then(canopy.refresh)
+              .catch((e) => setError(e.message))}>Done</Button> },
+    ]} />
+
 GLOBALS (no imports — the code is not a module)
 - React, and its hooks as bare names: useState, useEffect, useMemo, useCallback, useRef.
 - The kit, styled in canopy's look:
@@ -183,11 +209,13 @@ SALESFORCE CALLS
 
 RULES (the frame enforces them; breaking one fails, it is not "best effort")
 - No network: fetch, XHR, WebSocket and remote images are blocked by the frame's CSP.
-  Everything comes through props.data, canopy.read, canopy.runAgentTask or canopy.connection.request.
-- No writes, except starting an agent task the view declares and the Salesforce writes it declares
-  (and only from a click): the catalog is read-only, canopy.runAgentTask is refused for any {agent,
-  name} not in the view's agent_tasks, and canopy.connection.request for any call not in its
-  connections.
+  Everything comes through props.data, canopy.read, canopy.runAgentTask, canopy.connection.request
+  or canopy.tasks.act.
+- No writes, except starting an agent task the view declares, the Salesforce writes it declares
+  (only from a click) and the task moves it declares (only from a click): the catalog is read-only,
+  canopy.runAgentTask is refused for any {agent, name} not in the view's agent_tasks,
+  canopy.connection.request for any call not in its connections, and canopy.tasks.act for any
+  action not in its task_actions.
 - No storage, cookies or access to the page around the frame.
 - What a view shows, its viewers may see — and so may its author. Read only what the view needs.
 
