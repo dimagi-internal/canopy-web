@@ -33,6 +33,21 @@ import {
   useSessionDetail,
 } from './embedChatHooks'
 
+/** The appended page block, once — or nothing when the host DECLARES its page
+ *  state. A declared page already reaches the agent through the caller envelope
+ *  (`current_page` + the backing tool), so pasting a snapshot too puts a stale
+ *  JSON dump under the person's words: the snapshot is taken when the panel
+ *  loads, and the person has usually moved on by the time they type. Same rule
+ *  as the create path in EmbedApp. Consumed either way, so it never rides later. */
+export function takePageContext(
+  link: Pick<HostLink, 'pageState'>,
+  preamble: React.MutableRefObject<string | null>,
+): string | null {
+  const context = preamble.current
+  preamble.current = null
+  return link.pageState() ? null : context
+}
+
 export function EmbedChat({
   sessionId,
   firstMessage,
@@ -107,15 +122,14 @@ export function EmbedChat({
   // snapshot rides the first message, as it does for a member.
   const sendOverHttp = useCallback(
     (typed: string, clientId: string) => {
-      const context = contextPreamble.current
-      contextPreamble.current = null
+      const context = takePageContext(link, contextPreamble)
       const body = context ? `${typed}\n\n${context}` : typed
       return client.rest.json(`${sessionBase(isContact, sessionId)}/send`, {
         method: 'POST',
         body: JSON.stringify({ text: body, client_id: clientId }),
       })
     },
-    [client, sessionId, contextPreamble, isContact],
+    [client, sessionId, contextPreamble, isContact, link],
   )
   // Unknown (null) until the session is read: memory's switches wait for it.
   const [sensitive, setSensitive] = useState<boolean | null>(null)
@@ -240,12 +254,11 @@ export function EmbedChat({
     // The ask leads here too. This path only runs for a message sent after the
     // session already exists, so it does not name an emdash task — but a reader
     // scrolling the transcript should still see the question before the JSON.
-    const context = contextPreamble.current
-    contextPreamble.current = null
+    const context = takePageContext(link, contextPreamble)
     // The server takes whatever files this person staged with the send.
     clearAttachments()
     void withGrant().catch(() => undefined).then(() => socket.sendChat(context ? `${body}\n\n${context}` : body))
-  }, [socket, contextPreamble, clearAttachments, withGrant])
+  }, [socket, contextPreamble, clearAttachments, withGrant, link])
   const onContactSend = useCallback((body: string) => {
     void withGrant().catch(() => undefined).then(() => socket.sendChat(body))
   }, [socket, withGrant])
