@@ -372,9 +372,13 @@ def menu_items(user) -> list[tuple[LocalAppInstallation, dict]]:
     not part of what they accepted."""
     seen: set[tuple[str, str]] = set()
     out: list[tuple[LocalAppInstallation, dict]] = []
+    newest: dict[str, LocalAppSubmission | None] = {}
     rows = LocalAppInstallation.objects.filter(user=user).select_related("template").order_by("template__name", "id")
     for inst in rows:
-        top = latest(inst.template.key)
+        key = inst.template.key
+        if key not in newest:
+            newest[key] = latest(key)
+        top = newest[key]
         if top is None:
             continue
         spec = top.manifest.get("settings") or {}
