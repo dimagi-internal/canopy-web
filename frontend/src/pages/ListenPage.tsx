@@ -58,9 +58,7 @@ export function defaultDeps(store: ListenStore = browserStore): ListenDeps {
         return await startMic(onChunk, onLevel)
       } catch (e) {
         if (e instanceof MicDenied && e.why === 'denied') {
-          throw new Error(
-            'Microphone access is off for this site. Allow it in your browser’s site settings (on iPhone: aA → Website Settings → Microphone), then try again.',
-          )
+          throw new Error(`Microphone access is off for this site. ${micSettingsHelp()}`)
         }
         throw e
       }
@@ -411,12 +409,33 @@ export function useMicPermission(): PermissionState | 'unknown' {
   return state
 }
 
-export function micSettingsHelp(): string {
-  const ua = typeof navigator === 'undefined' ? '' : navigator.userAgent
-  if (/iPhone|iPad|iPod/i.test(ua)) {
+/**
+ * Where to turn the microphone back on, for the phone and browser this page is open in. A
+ * page can't open the browser's or the phone's settings itself, so the steps name the taps.
+ * Each one also says where the phone's own switch for the browser is, because that blocks
+ * the microphone in the same way and the site setting can't show it.
+ */
+export function micSettingsHelp(ua: string = typeof navigator === 'undefined' ? '' : navigator.userAgent): string {
+  const ios = /iPhone|iPad|iPod/i.test(ua)
+  if (ios && /CriOS/i.test(ua)) {
+    return 'On iPhone in Chrome: open Settings → Apps → Chrome and turn Microphone on, then come back and try again.'
+  }
+  if (ios && /FxiOS/i.test(ua)) {
+    return 'On iPhone in Firefox: open Settings → Apps → Firefox and turn Microphone on, then come back and try again.'
+  }
+  if (ios) {
     return 'On iPhone: tap aA in the address bar → Website Settings → Microphone → Allow. If that doesn’t show it, check Settings → Apps → Safari → Microphone.'
   }
-  if (/Android/i.test(ua)) return 'On Android: tap the icon left of the address → Permissions → Microphone → Allow.'
+  if (/Android/i.test(ua)) {
+    const [browser, steps] = /SamsungBrowser/i.test(ua)
+      ? ['Samsung Internet', 'tap the lock left of the address → Permissions → Microphone → Allow']
+      : /Firefox/i.test(ua)
+        ? ['Firefox', 'tap the lock left of the address and switch Microphone to Allowed']
+        : /EdgA/i.test(ua)
+          ? ['Edge', 'tap the lock left of the address → Permissions → Microphone → Allow']
+          : ['Chrome', 'tap the icon left of the address → Permissions → Microphone → Allow']
+    return `On Android in ${browser}: ${steps}, then try again. If Microphone isn’t there or is already allowed, open your phone’s Settings → Apps → ${browser} → Permissions → Microphone → Allow.`
+  }
   return 'Click the icon left of the address bar, set Microphone to Allow, then reload.'
 }
 
