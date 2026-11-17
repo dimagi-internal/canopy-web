@@ -425,7 +425,7 @@ function useDesktop(): boolean {
 const isRunning = (r: AttentionRow) => r.state === 'running' || r.state === 'running_auto'
 
 const TONE: Record<AttentionState, DotTone> = {
-  asking: 'asking', your_move: 'idle', parked: 'held', running: 'running', running_auto: 'running',
+  asking: 'asking', your_move: 'idle', parked: 'held', stalled: 'held', running: 'running', running_auto: 'running',
 }
 
 // Which session groups are folded — a per-browser convenience, so storage that
@@ -492,7 +492,7 @@ function SessionRow({ item, workspaceName, showAgent = true, onHide }: {
         {item.title}
         {asking && <span className="ml-2 text-[11px] text-warning">needs an answer</span>}
         {item.state === 'running_auto' && <span className="ml-2 text-[11px] text-muted-foreground">auto</span>}
-        {item.state === 'parked' && <span className="ml-2 text-[11px] text-muted-foreground">{item.reason}</span>}
+        {(item.state === 'parked' || item.state === 'stalled') && <span className="ml-2 text-[11px] text-muted-foreground">{item.reason}</span>}
       </Link>
       <span className="hidden max-w-[140px] truncate rounded border border-border px-1 text-[11px] text-muted-foreground empty:border-0 sm:inline">
         {showAgent ? item.agent_slug : ''}

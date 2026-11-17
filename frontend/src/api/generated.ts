@@ -15802,7 +15802,8 @@ export interface paths {
          *     `quiet` (nothing has for a while) and `hidden` (taken off your list by you;
          *     each returns when something new happens on it), plus `running` — not
          *     waiting on you, but yours and being worked right now. Newest first. Branch
-         *     on each row's `state` (asking, your_move, parked, running, running_auto);
+         *     on each row's `state` (asking, your_move, parked, stalled, running,
+         *     running_auto);
          *     `reason` is display text.
          */
         readonly get: operations["list_attention"];
@@ -45441,7 +45442,7 @@ export interface components {
              * State
              * @enum {string}
              */
-            readonly state: "asking" | "your_move" | "parked" | "running" | "running_auto";
+            readonly state: "asking" | "your_move" | "parked" | "stalled" | "running" | "running_auto";
             /** Reason */
             readonly reason: string;
             /** Title */

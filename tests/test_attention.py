@@ -233,3 +233,60 @@ def test_user_level_views_read_every_organisation_where_flat_lists_refuse(two_or
     assert [a["slug"] for a in agents["items"]] == ["eva", "nan"]
     # Pinned, a user-level view is that one organisation.
     assert [s["title"] for s in c.get("/api/w/family/me/sessions/").json()] == ["h"]
+
+
+# ── A session nobody is acting on is listed as stalled, never dropped ──────────
+
+def _said_last(jj, *, runner=None, ago=dt.timedelta(minutes=20), title="quiet"):
+    """A session of jj's whose newest spoken row is jj's own message, `ago` old."""
+    from apps.canopy_sessions.models import Message
+
+    s = Session.objects.create(workspace=jj["ws"], agent=jj["agent"], title=title, created_by=jj["user"])
+    Message.objects.create(session=s, turn_index=1, role=Message.ASSISTANT, plaintext="Done.", content={})
+    Message.objects.create(session=s, turn_index=2, role=Message.USER, plaintext="Now do the next bit",
+                           content={}, typed=True)
+    Message.objects.filter(session=s).update(created_at=timezone.now() - ago)
+    if runner is not None:
+        RunnerBinding.objects.create(session=s, runner=runner, session_key=title,
+                                     last_interacted_at=timezone.now() - ago)
+    return s
+
+
+def _session_rows(jj, group="now"):
+    return {i["key"]: i for i in jj["client"].get("/api/me/attention/").json()[group] if i["kind"] == "session"}
+
+
+def test_no_reply_after_your_message_is_listed_as_stalled(jj):
+    s = _said_last(jj)
+    item = _session_rows(jj)[f"session:{s.id}"]
+    assert item["state"] == "stalled"
+    assert item["reason"] == "No reply after your message"
+
+
+def test_a_queued_turn_nobody_claimed_is_listed_as_stalled(jj):
+    from apps.harness.models import Turn
+
+    s = _said_last(jj)
+    Turn.objects.create(chat_session=s, origin=Turn.ORIGIN_CANOPY_WEB_CHAT, prompt="Now do the next bit")
+    item = _session_rows(jj)[f"session:{s.id}"]
+    assert item["state"] == "stalled"
+    assert item["reason"] == "Your message is queued — no runner has picked it up"
+
+
+def test_a_message_you_just_sent_is_not_stalled_yet(jj):
+    s = _said_last(jj, ago=dt.timedelta(minutes=2))
+    assert f"session:{s.id}" not in _session_rows(jj)
+
+
+def test_an_idle_session_on_a_paused_runner_stays_off_home(jj):
+    runner = Runner.objects.create(name="jj-mbp", kind=Runner.EMDASH, host="jj-mac", owner=jj["user"],
+                                   workspace=jj["ws"], status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
+                                   paused=True)
+    s = _said_last(jj, runner=runner)
+    assert f"session:{s.id}" not in _session_rows(jj)
+
+
+def test_a_session_you_never_spoke_in_is_not_stalled(jj):
+    s = Session.objects.create(workspace=jj["ws"], agent=jj["agent"], title="empty", created_by=jj["user"])
+    Session.objects.filter(pk=s.pk).update(created_at=timezone.now() - dt.timedelta(hours=1))
+    assert f"session:{s.id}" not in _session_rows(jj)

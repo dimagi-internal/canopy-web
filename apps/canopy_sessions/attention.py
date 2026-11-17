@@ -4,8 +4,19 @@ can never disagree about which session needs you — and the person's chats that
 are running right now, listed apart (`running`) so nothing reads them as asks.
 
 A waiting chat held behind a paused or offline runner is listed as `parked`,
-naming the box, rather than dropped: it is still yours, a reply just queues."""
+naming the box, rather than dropped: it is still yours, a reply just queues.
+
+A chat of yours that nobody is acting on — you spoke last and no reply came,
+or your message is queued and no runner has claimed it — is listed as
+`stalled` once it has sat `STALLED_AFTER`. The feed rule calls those "not
+waiting on you" (the agent owes the reply), which is true, but without this
+they were on no list at all: a session never drops off Home without a reason
+(someone else's, deliberately paused, or ran on its own)."""
 from __future__ import annotations
+
+import datetime as dt
+
+from django.utils import timezone
 
 from apps.attention import types as att
 from apps.attention.types import AttentionRow
@@ -14,6 +25,10 @@ from apps.workspaces.links import scoped_path
 from . import feed, session_state, transcript_read
 from .api import _filtered_sessions
 from .session_row import session_out
+
+#: How long a session sits with nobody acting on it before Home lists it as
+#: stalled — past a runner's claim tick and a slow first token.
+STALLED_AFTER = dt.timedelta(minutes=10)
 
 
 def items(request, *, slugs: set[str]) -> list[AttentionRow]:
@@ -78,4 +93,22 @@ def _state(viewer, session, row) -> tuple[str, str] | None:
             return att.RUNNING, "Running"
         if held == feed.AUTO:
             return att.RUNNING_AUTO, "Running on its own"
+        return None
+    if status == "":
+        return _stalled(viewer, session, row)
+    return None
+
+
+def _stalled(viewer, session, row) -> tuple[str, str] | None:
+    """Yours, on a live (or not yet bound) runner, not an auto run, and nobody
+    is acting: the feed rule's "the agent owes the reply", gone quiet."""
+    if feed.held(viewer, session, auto=feed.ran_on_its_own(session)) != "":
+        return None
+    if timezone.now() - row["last_activity_at"] < STALLED_AFTER:
+        return None
+    if session_state.turn_open(session):
+        return att.STALLED, "Your message is queued — no runner has picked it up"
+    binding = getattr(session, "runner_binding", None)
+    if transcript_read.person_spoke_last(session, binding):
+        return att.STALLED, "No reply after your message"
     return None
