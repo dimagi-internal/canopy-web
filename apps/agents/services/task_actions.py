@@ -11,7 +11,7 @@ from apps.harness.models import Turn
 
 from .. import work
 from ..models import Agent, AgentTask, AgentTaskAction
-from .tasks import get_task
+from .tasks import get_task, patch_task
 
 
 class ClosedAskError(Exception):
@@ -226,6 +226,33 @@ def act(task: AgentTask, *, action: str, comment: str = "", by: str, by_user=Non
     if duplicate_of is not None:
         work.add_relation(task, "duplicate", duplicate_of, by_user=actor, by_agent=by_agent)
     return task, row, turns
+
+
+#: The status moves a person makes from a screen (a workspace app's page, a dynamic view): `finish_or_reopen`.
+SCREEN_STATUS_ACTIONS = ("done", "reopen")
+#: Statuses `reopen` brings back from (the task is finished or dropped).
+REOPENABLE = (AgentTask.DONE, AgentTask.DECLINED)
+
+
+def finish_or_reopen(task: AgentTask, action: str, *, by_user, acting_agent: Agent | None = None) -> AgentTask:
+    """`done` or `reopen` one task AS `by_user`, from a screen: the one write path both a workspace
+    app's task actions (`workspace_apps.tasks.act_task`) and a dynamic view's (`dynamic_views.
+    task_actions`) take. Never a turn: done goes through `act` with no turn allowed; reopen is a
+    field write back to todo. Who may is the CALLER's question — each screen asks its own gate.
+    Raises ClosedAskError when the task is not in a state the move applies to (409)."""
+    if action == "done":
+        by = (f"{acting_agent.slug} for {by_user.email}" if acting_agent is not None
+              else (by_user.email or by_user.get_username()))
+        task, _row, turns = act(task, action=AgentTaskAction.DONE, by=by, by_user=by_user,
+                                actor_workspace_ids=set(), may_start_turns=False, acting_agent=acting_agent)
+        if turns:  # pragma: no cover — done starts none; a regression must not ship one
+            raise RuntimeError("marking a task done from a screen started a turn")
+        return task
+    if action == "reopen":
+        if task.status not in REOPENABLE:
+            raise ClosedAskError(f"{task.key} is {task.status}, not finished — nothing to reopen")
+        return patch_task(task, {"status": AgentTask.TODO}, by_user=by_user, by_agent=acting_agent)
+    raise ValueError(f"a screen moves a task only by {' or '.join(SCREEN_STATUS_ACTIONS)}, not {action!r}")
 
 
 def _comment(task: AgentTask, body: str, *, by: str, by_user=None, by_agent: Agent | None = None,

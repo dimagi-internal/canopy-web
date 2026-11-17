@@ -56,7 +56,8 @@ allowlist (`TASK_FIELDS`: title, notes, due, priority, labels; a create also rec
   consent: a holder of the action's role runs it AS THEMSELVES through the task writers, recorded
   under their name. Everything outside the bound project or the declared actions is a 404; reads are
   `task_read_q` AND the project, so a personal project stays its lead's.
-- **Never a turn.** Done and comment go through `task_actions.act`; reopen and patch are field
+- **Never a turn.** Done and reopen go through `task_actions.finish_or_reopen` (shared with a
+  dynamic view's task actions), comment through `task_actions.act`; reopen and patch are field
   writes; create files with no agent assignee (a person assignee must hold the `read` role); spawn
   copies a template. Status moves only through done and reopen.
 - **Live work only.** A draft's test copy has no tasks: the routes refuse `?draft` (409), the page

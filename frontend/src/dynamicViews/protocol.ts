@@ -119,6 +119,9 @@ export type FrameMessage =
   | { channel: typeof CHANNEL; type: 'connection-call'; id: number; request: unknown }
   // Open the lease for this click, answered by a `read-result` with `{expires_at, hard_limit_at, writes}`.
   | { channel: typeof CHANNEL; type: 'connection-begin'; id: number }
+  // Mark a task of the view's project done, or reopen it (`canopy.tasks.act`), answered by a `read-result`.
+  // Like a connection write it carries no claim about clicks: the page reads its own activation (taskActions.ts).
+  | { channel: typeof CHANNEL; type: 'task-action'; id: number; request: unknown }
   | { channel: typeof CHANNEL; type: 'navigate'; path: string }
   | { channel: typeof CHANNEL; type: 'app'; id: number; request: AppOp }
   | { channel: typeof CHANNEL; type: 'go'; page: string; params: Record<string, string> }

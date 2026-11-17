@@ -3739,6 +3739,30 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/dynamic-views/{view_id}/task-actions": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Mark a task of a view's project done, or reopen it, as the view declares
+         * @description What a view's `canopy.tasks.act(key, action)` sends, as the viewer. The action must be in the
+         *     view's current `task_actions`, the task one of the view's project's that you can read (else 404),
+         *     and one you may change (the editor role, being its assignee, or being its agent; else 403). Done
+         *     and reopen never start an agent's turn; the task's history records you. 409 when the task is not
+         *     in a state the move applies to.
+         */
+        readonly post: operations["act_on_dynamic_view_task"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/workspace-app-store/{workspace}/": {
         readonly parameters: {
             readonly query?: never;
@@ -25988,6 +26012,11 @@ export interface components {
             readonly connections?: readonly {
                 readonly [key: string]: unknown;
             }[];
+            /**
+             * Task Actions
+             * @description The status moves the view's code may make on its project's tasks, as its viewer: done, reopen.
+             */
+            readonly task_actions?: readonly string[];
             /** Created By Email */
             readonly created_by_email?: string | null;
             /**
@@ -26049,6 +26078,11 @@ export interface components {
                 readonly [key: string]: unknown;
             }[];
             /**
+             * Task Actions
+             * @description On a project view only: the status moves the code may make on the project's tasks with canopy.tasks.act, as the viewer — any of done, reopen. Needs the editor role to declare.
+             */
+            readonly task_actions?: readonly string[];
+            /**
              * Note
              * @default
              */
@@ -26076,6 +26110,8 @@ export interface components {
             readonly connections?: readonly {
                 readonly [key: string]: unknown;
             }[] | null;
+            /** Task Actions */
+            readonly task_actions?: readonly string[] | null;
             /**
              * Project
              * @description A project handle; an empty string moves it to the workspace.
@@ -26114,11 +26150,272 @@ export interface components {
             readonly connections?: readonly {
                 readonly [key: string]: unknown;
             }[];
+            /** Task Actions */
+            readonly task_actions?: readonly string[];
         };
         /** DynamicViewRollbackIn */
         readonly DynamicViewRollbackIn: {
             /** Version */
             readonly version: number;
+        };
+        /** AgentTaskLink */
+        readonly AgentTaskLink: {
+            /** Label */
+            readonly label: string;
+            /** Url */
+            readonly url: string;
+            /**
+             * Kind
+             * @default
+             * @enum {string}
+             */
+            readonly kind: "" | "decision" | "live";
+            /**
+             * Waiting On
+             * @default
+             */
+            readonly waiting_on: string;
+        };
+        /**
+         * AgentTaskOut
+         * @description A task, addressed by its `key` (`DIM-142`) anywhere, and on an agent's
+         *     route also by `ext_id` (that agent's alias, else the key).
+         */
+        readonly AgentTaskOut: {
+            /**
+             * Key
+             * @default
+             */
+            readonly key: string;
+            /**
+             * Url
+             * @default
+             */
+            readonly url: string;
+            /** Agent Slug */
+            readonly agent_slug?: string | null;
+            /** Assignee Email */
+            readonly assignee_email?: string | null;
+            /** Created By Agent Slug */
+            readonly created_by_agent_slug?: string | null;
+            /**
+             * Workspace
+             * @default
+             */
+            readonly workspace: string;
+            /** Ext Id */
+            readonly ext_id: string;
+            /** Project Ext Id */
+            readonly project_ext_id?: string | null;
+            /** Project Handle */
+            readonly project_handle?: string | null;
+            /** Project Name */
+            readonly project_name?: string | null;
+            /** Project Address */
+            readonly project_address?: string | null;
+            /** Parent Ext Id */
+            readonly parent_ext_id?: string | null;
+            /** Parent Key */
+            readonly parent_key?: string | null;
+            /**
+             * Kind
+             * @default work
+             * @enum {string}
+             */
+            readonly kind: "work" | "idea";
+            /**
+             * Drive Folder Id
+             * @default
+             */
+            readonly drive_folder_id: string;
+            /**
+             * Drive Folder Url
+             * @default
+             */
+            readonly drive_folder_url: string;
+            /** Title */
+            readonly title: string;
+            /** Human Why */
+            readonly human_why?: readonly components["schemas"]["HumanWhyOut"][];
+            /** Next Action */
+            readonly next_action: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "suggested" | "backlog" | "todo" | "in_progress" | "done" | "declined";
+            /**
+             * Category
+             * @default
+             */
+            readonly category: string;
+            /**
+             * Priority
+             * @default 0
+             */
+            readonly priority: number;
+            /** Labels */
+            readonly labels?: readonly components["schemas"]["LabelBriefOut"][];
+            /** Milestone */
+            readonly milestone?: string | null;
+            /** Snoozed Until */
+            readonly snoozed_until?: string | null;
+            /** Owner */
+            readonly owner: string;
+            /** Assigned */
+            readonly assigned: string;
+            /** Waiting On Email */
+            readonly waiting_on_email?: string | null;
+            /**
+             * Ask Kind
+             * @default
+             */
+            readonly ask_kind: string;
+            /**
+             * Ask Body
+             * @default
+             */
+            readonly ask_body: string;
+            /**
+             * Ask Open
+             * @default false
+             */
+            readonly ask_open: boolean;
+            /** Ask Closed At */
+            readonly ask_closed_at?: string | null;
+            /** On Approve */
+            readonly on_approve?: readonly {
+                readonly [key: string]: unknown;
+            }[];
+            /** Job Schedule Id */
+            readonly job_schedule_id?: number | null;
+            /** Dispatched At */
+            readonly dispatched_at?: string | null;
+            /**
+             * Batch Key
+             * @default
+             */
+            readonly batch_key: string;
+            /**
+             * Idempotency Key
+             * @default
+             */
+            readonly idempotency_key: string;
+            /**
+             * Origin
+             * @default
+             */
+            readonly origin: string;
+            /** Confidence */
+            readonly confidence: string;
+            /** Score */
+            readonly score: string;
+            /** Review */
+            readonly review: string;
+            /** Rationale */
+            readonly rationale: string;
+            /** Source Url */
+            readonly source_url: string;
+            /** Plan */
+            readonly plan: string;
+            /** Due */
+            readonly due?: string | null;
+            /** Links */
+            readonly links?: readonly components["schemas"]["AgentTaskLink"][];
+            /** Notes */
+            readonly notes: string;
+            /** Position */
+            readonly position: number;
+            /**
+             * Rank
+             * @default 0
+             */
+            readonly rank: number;
+            readonly recurrence?: components["schemas"]["Recurrence"] | null;
+            /** Template Key */
+            readonly template_key?: string | null;
+            /** Last Done */
+            readonly last_done?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
+        };
+        /** HumanWhoOut */
+        readonly HumanWhoOut: {
+            /** Person Id */
+            readonly person_id?: number | null;
+            /**
+             * Email
+             * @default
+             */
+            readonly email: string;
+            /**
+             * Name
+             * @default
+             */
+            readonly name: string;
+        };
+        /** HumanWhyOut */
+        readonly HumanWhyOut: {
+            /** Quote */
+            readonly quote: string;
+            readonly who: components["schemas"]["HumanWhoOut"];
+            /**
+             * Source Url
+             * @default
+             */
+            readonly source_url: string;
+            /** Said At */
+            readonly said_at?: string | null;
+        };
+        /** LabelBriefOut */
+        readonly LabelBriefOut: {
+            /** Name */
+            readonly name: string;
+            /**
+             * Color
+             * @default muted
+             */
+            readonly color: string;
+        };
+        /**
+         * Recurrence
+         * @description A recurring task's rhythm. The task is then a TEMPLATE: it stays in backlog, and each
+         *     period's work is an instance of it (`POST /api/tasks/{key}/spawn`, or the tick when `auto`).
+         */
+        readonly Recurrence: {
+            /**
+             * Every
+             * @enum {string}
+             */
+            readonly every: "day" | "week" | "2weeks" | "month" | "as_needed";
+            /** Weekday */
+            readonly weekday?: ("mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun") | null;
+            /**
+             * Auto
+             * @default false
+             */
+            readonly auto: boolean;
+        };
+        /** DynamicViewTaskActionIn */
+        readonly DynamicViewTaskActionIn: {
+            /**
+             * Key
+             * @description The task's key, e.g. `CON-12`: a task of the view's project.
+             */
+            readonly key: string;
+            /**
+             * Action
+             * @description A status move the view declares in `task_actions`: done or reopen.
+             */
+            readonly action: string;
         };
         /** StoreAppOut */
         readonly StoreAppOut: {
@@ -31198,24 +31495,6 @@ export interface components {
              */
             readonly updated_at: string;
         };
-        /** AgentTaskLink */
-        readonly AgentTaskLink: {
-            /** Label */
-            readonly label: string;
-            /** Url */
-            readonly url: string;
-            /**
-             * Kind
-             * @default
-             * @enum {string}
-             */
-            readonly kind: "" | "decision" | "live";
-            /**
-             * Waiting On
-             * @default
-             */
-            readonly waiting_on: string;
-        };
         /** AgentProjectIn */
         readonly AgentProjectIn: {
             /** Name */
@@ -31466,215 +31745,6 @@ export interface components {
             /** Vaults */
             readonly vaults?: readonly components["schemas"]["ProjectVaultOut"][];
         };
-        /**
-         * AgentTaskOut
-         * @description A task, addressed by its `key` (`DIM-142`) anywhere, and on an agent's
-         *     route also by `ext_id` (that agent's alias, else the key).
-         */
-        readonly AgentTaskOut: {
-            /**
-             * Key
-             * @default
-             */
-            readonly key: string;
-            /**
-             * Url
-             * @default
-             */
-            readonly url: string;
-            /** Agent Slug */
-            readonly agent_slug?: string | null;
-            /** Assignee Email */
-            readonly assignee_email?: string | null;
-            /** Created By Agent Slug */
-            readonly created_by_agent_slug?: string | null;
-            /**
-             * Workspace
-             * @default
-             */
-            readonly workspace: string;
-            /** Ext Id */
-            readonly ext_id: string;
-            /** Project Ext Id */
-            readonly project_ext_id?: string | null;
-            /** Project Handle */
-            readonly project_handle?: string | null;
-            /** Project Name */
-            readonly project_name?: string | null;
-            /** Project Address */
-            readonly project_address?: string | null;
-            /** Parent Ext Id */
-            readonly parent_ext_id?: string | null;
-            /** Parent Key */
-            readonly parent_key?: string | null;
-            /**
-             * Kind
-             * @default work
-             * @enum {string}
-             */
-            readonly kind: "work" | "idea";
-            /**
-             * Drive Folder Id
-             * @default
-             */
-            readonly drive_folder_id: string;
-            /**
-             * Drive Folder Url
-             * @default
-             */
-            readonly drive_folder_url: string;
-            /** Title */
-            readonly title: string;
-            /** Human Why */
-            readonly human_why?: readonly components["schemas"]["HumanWhyOut"][];
-            /** Next Action */
-            readonly next_action: string;
-            /**
-             * Status
-             * @enum {string}
-             */
-            readonly status: "suggested" | "backlog" | "todo" | "in_progress" | "done" | "declined";
-            /**
-             * Category
-             * @default
-             */
-            readonly category: string;
-            /**
-             * Priority
-             * @default 0
-             */
-            readonly priority: number;
-            /** Labels */
-            readonly labels?: readonly components["schemas"]["LabelBriefOut"][];
-            /** Milestone */
-            readonly milestone?: string | null;
-            /** Snoozed Until */
-            readonly snoozed_until?: string | null;
-            /** Owner */
-            readonly owner: string;
-            /** Assigned */
-            readonly assigned: string;
-            /** Waiting On Email */
-            readonly waiting_on_email?: string | null;
-            /**
-             * Ask Kind
-             * @default
-             */
-            readonly ask_kind: string;
-            /**
-             * Ask Body
-             * @default
-             */
-            readonly ask_body: string;
-            /**
-             * Ask Open
-             * @default false
-             */
-            readonly ask_open: boolean;
-            /** Ask Closed At */
-            readonly ask_closed_at?: string | null;
-            /** On Approve */
-            readonly on_approve?: readonly {
-                readonly [key: string]: unknown;
-            }[];
-            /** Job Schedule Id */
-            readonly job_schedule_id?: number | null;
-            /** Dispatched At */
-            readonly dispatched_at?: string | null;
-            /**
-             * Batch Key
-             * @default
-             */
-            readonly batch_key: string;
-            /**
-             * Idempotency Key
-             * @default
-             */
-            readonly idempotency_key: string;
-            /**
-             * Origin
-             * @default
-             */
-            readonly origin: string;
-            /** Confidence */
-            readonly confidence: string;
-            /** Score */
-            readonly score: string;
-            /** Review */
-            readonly review: string;
-            /** Rationale */
-            readonly rationale: string;
-            /** Source Url */
-            readonly source_url: string;
-            /** Plan */
-            readonly plan: string;
-            /** Due */
-            readonly due?: string | null;
-            /** Links */
-            readonly links?: readonly components["schemas"]["AgentTaskLink"][];
-            /** Notes */
-            readonly notes: string;
-            /** Position */
-            readonly position: number;
-            /**
-             * Rank
-             * @default 0
-             */
-            readonly rank: number;
-            readonly recurrence?: components["schemas"]["Recurrence"] | null;
-            /** Template Key */
-            readonly template_key?: string | null;
-            /** Last Done */
-            readonly last_done?: string | null;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            readonly created_at: string;
-            /**
-             * Updated At
-             * Format: date-time
-             */
-            readonly updated_at: string;
-        };
-        /** HumanWhoOut */
-        readonly HumanWhoOut: {
-            /** Person Id */
-            readonly person_id?: number | null;
-            /**
-             * Email
-             * @default
-             */
-            readonly email: string;
-            /**
-             * Name
-             * @default
-             */
-            readonly name: string;
-        };
-        /** HumanWhyOut */
-        readonly HumanWhyOut: {
-            /** Quote */
-            readonly quote: string;
-            readonly who: components["schemas"]["HumanWhoOut"];
-            /**
-             * Source Url
-             * @default
-             */
-            readonly source_url: string;
-            /** Said At */
-            readonly said_at?: string | null;
-        };
-        /** LabelBriefOut */
-        readonly LabelBriefOut: {
-            /** Name */
-            readonly name: string;
-            /**
-             * Color
-             * @default muted
-             */
-            readonly color: string;
-        };
         /** MilestoneOut */
         readonly MilestoneOut: {
             /** Id */
@@ -31863,25 +31933,6 @@ export interface components {
              * @default false
              */
             readonly project_outside_tree: boolean;
-        };
-        /**
-         * Recurrence
-         * @description A recurring task's rhythm. The task is then a TEMPLATE: it stays in backlog, and each
-         *     period's work is an instance of it (`POST /api/tasks/{key}/spawn`, or the tick when `auto`).
-         */
-        readonly Recurrence: {
-            /**
-             * Every
-             * @enum {string}
-             */
-            readonly every: "day" | "week" | "2weeks" | "month" | "as_needed";
-            /** Weekday */
-            readonly weekday?: ("mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun") | null;
-            /**
-             * Auto
-             * @default false
-             */
-            readonly auto: boolean;
         };
         /** TurnBriefOut */
         readonly TurnBriefOut: {
@@ -55395,6 +55446,32 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["DynamicViewOut"];
+                };
+            };
+        };
+    };
+    readonly act_on_dynamic_view_task: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly view_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["DynamicViewTaskActionIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentTaskOut"];
                 };
             };
         };

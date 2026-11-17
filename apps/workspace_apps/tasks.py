@@ -12,11 +12,12 @@ The rules this module is:
   unbound setting, a switched-off app — is a 404.
 * **The app role replaces the workspace task gates, for exactly that.** The admin who installed
   the app consented to its declaration, so a person holding the action's app role runs it AS
-  THEMSELVES through the task services (`services.create_tasks` / `patch_task`, `task_actions.act`,
+  THEMSELVES through the task services (`services.create_tasks` / `patch_task`, `finish_or_reopen`, `task_actions.act`,
   `recurrence.spawn`), recorded under their name, whatever their workspace role. Nothing else
   about a task opens: no other field, no other action, no other project.
-* **Never a turn.** `done` and `comment` go through `task_actions.act`, whose only turn-starting
-  actions (approve, reply, nudge) no declaration can name; `reopen` and `patch` are a field write;
+* **Never a turn.** `done` and `reopen` go through `task_actions.finish_or_reopen` (shared with dynamic
+  views), `comment` through `task_actions.act`, whose only turn-starting actions (approve, reply, nudge)
+  no declaration can name; `reopen` and `patch` are a field write;
   `create` files the task with NO agent assignee; `spawn` copies a template. Status moves only
   through `done` / `reopen`.
 * **Live work only.** A draft's test copy has sample records, never tasks: the routes refuse a
@@ -43,8 +44,6 @@ from .models import AppInstallation
 from .services import Refused
 
 MAX_QUERY = 200
-#: Statuses `reopen` brings back from (the task is finished or dropped).
-_CLOSED = (AgentTask.DONE, AgentTask.DECLINED)
 
 
 def declared(manifest: dict) -> dict | None:
@@ -193,17 +192,14 @@ def act_task(inst: AppInstallation, user, name: str, key: str | None, input: dic
     try:
         if do == "patch":
             task = task_services.patch_task(task, _fields(inst, decl, spec, input), by_user=user, by_agent=agent)
-        elif do == "reopen":
-            if task.status not in _CLOSED:
-                raise Refused(f"{task.key} is {task.status}, not finished — nothing to reopen", status=409)
-            task = task_services.patch_task(task, {"status": AgentTask.TODO}, by_user=user, by_agent=agent)
-        elif do in ("done", "comment"):
-            action = "done" if do == "done" else "comment"
-            body = _text("body", input.get("body"), required=True) if do == "comment" else ""
-            task, _row, turns = task_services.act(task, action=action, comment=body, by=by, by_user=user,
+        elif do in task_services.SCREEN_STATUS_ACTIONS:
+            task = task_services.finish_or_reopen(task, do, by_user=user, acting_agent=agent)
+        elif do == "comment":
+            body = _text("body", input.get("body"), required=True)
+            task, _row, turns = task_services.act(task, action="comment", comment=body, by=by, by_user=user,
                                                   actor_workspace_ids=set(), may_start_turns=False,
                                                   acting_agent=agent)
-            if turns:  # pragma: no cover — done and comment start none; a regression must not ship one
+            if turns:  # pragma: no cover — a comment starts none; a regression must not ship one
                 raise RuntimeError("an app task action started a turn")
         elif do == "spawn":
             try:
