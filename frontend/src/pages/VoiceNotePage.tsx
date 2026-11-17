@@ -39,7 +39,7 @@ type Screen =
 
 /**
  * /listen/voice?agent=<slug>&workspace=<slug> — a voice note to an agent, from the account
- * menu (Meeting assistant adds it there when its person turns it on). Record here, the paired
+ * menu (Voice assistant adds it there when its person turns it on). Record here, the paired
  * laptop reads it with its own speech model (voiceNote.ts), the words come back to edit, and
  * Send opens a chat with the agent with them as the first message. Mounted outside the app
  * shell, like /listen.
@@ -77,7 +77,7 @@ export function VoiceNotePage({ deps: given, sender = browserSender }: { deps?: 
     return (
       <Shell>
         <Centered>
-          <Problem>Pick an agent from your account menu: Voice session, then the agent.</Problem>
+          <Problem>Pick an agent from your account menu: Voice assistant, then the agent.</Problem>
           <Link to="/" className="text-sm underline underline-offset-4">Back to Canopy</Link>
         </Centered>
       </Shell>

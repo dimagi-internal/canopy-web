@@ -27271,6 +27271,18 @@ export interface components {
              * @default false
              */
             readonly chosen: boolean;
+            /**
+             * Links
+             * @default []
+             */
+            readonly links: readonly components["schemas"]["LocalAppMenuLinkOut"][];
+        };
+        /** LocalAppMenuLinkOut */
+        readonly LocalAppMenuLinkOut: {
+            /** Label */
+            readonly label: string;
+            /** Path */
+            readonly path: string;
         };
         /** LocalAppMenuOut */
         readonly LocalAppMenuOut: {

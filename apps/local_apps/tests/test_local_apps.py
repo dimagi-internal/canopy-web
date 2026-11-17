@@ -797,8 +797,9 @@ def test_a_run_without_the_op_cannot_save_a_meeting(world):
 
 # --- account-menu items ------------------------------------------------------------------
 
+MEETING = {"label": "Meeting", "path": "/listen"}
 VOICE = {"key": "voice-session", "label": "Voice session", "path": "/listen/voice", "pick": "agent",
-         "shown_when": "voice_session"}
+         "shown_when": "voice_session", "links": [MEETING]}
 
 
 def with_menu(**over) -> dict:
@@ -815,7 +816,11 @@ def test_a_menu_item_is_checked_for_shape_and_left_out_of_what_people_accept():
     assert trust.digest(m) == trust.digest({**m, "menu": []})
     for bad in ({"path": "https://evil.example/x"}, {"path": "//evil.example"}, {"path": "/listen/../admin"},
                 {"pick": "person"}, {"shown_when": "brief"}, {"shown_when": "nope"}, {"label": ""},
-                {"key": "Not A Key"}, {"colour": "red"}):
+                {"key": "Not A Key"}, {"colour": "red"},
+                # Links sit beside an item's agents, so only an agent-picking item has them.
+                {"pick": ""}, {"links": [{"label": "Meeting", "path": "https://evil.example"}]},
+                {"links": [{"label": "", "path": "/listen"}]}, {"links": [{**MEETING, "colour": "red"}]},
+                {"links": [MEETING] * 4}, {"links": "Meeting"}):
         with pytest.raises(pkg.BadPackage, match="menu"):
             pkg.read(package({**with_menu(), "menu": [{**VOICE, **bad}]}))
     with pytest.raises(pkg.BadPackage, match="menu"):
@@ -840,7 +845,7 @@ def test_a_menu_item_shows_only_once_its_person_turns_it_on(world):
     assert menu["items"] == [{"app": "meeting-assistant", "app_name": "Meeting assistant", "key": "voice-session",
                               "label": "Voice session", "path": "/listen/voice", "pick": "agent",
                               "agents": [{"slug": "helper", "name": "Helper", "workspace": "dimagi"}],
-                              "chosen": False}]
+                              "chosen": False, "links": [MEETING]}]
     # Someone else's apps add nothing to your menu.
     assert _menu(world, world["other"])["items"] == []
 

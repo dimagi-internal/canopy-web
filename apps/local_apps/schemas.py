@@ -94,6 +94,11 @@ class LocalAppMenuAgentOut(Schema):
     workspace: str
 
 
+class LocalAppMenuLinkOut(Schema):
+    label: str
+    path: str
+
+
 class LocalAppMenuEntryOut(Schema):
     #: The app that adds it, and the item's own key within that app.
     app: str
@@ -108,6 +113,8 @@ class LocalAppMenuEntryOut(Schema):
     agents: list[LocalAppMenuAgentOut] = []
     #: True once you've chosen which agents it lists.
     chosen: bool = False
+    #: Other pages listed beside the agents (such as Meeting), each opening its own path.
+    links: list[LocalAppMenuLinkOut] = []
 
 
 class LocalAppMenuOut(Schema):
