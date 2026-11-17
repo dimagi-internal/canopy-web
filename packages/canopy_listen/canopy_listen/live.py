@@ -50,10 +50,15 @@ Embed = Callable[[np.ndarray], np.ndarray]  # audio -> voice vector
 class Speakers:
     """Voices heard so far, as running means of unit vectors."""
 
-    # TitaNet-small cosine. Measured on a three-voice test: same voice 0.61-0.95 (mean
-    # 0.81), two similar voices up to 0.67 (mean 0.56); 0.55 merged them, 0.62-0.74 didn't.
-    same_voice: float = 0.66
-    min_new_seconds: float = 1.5
+    # TitaNet-small cosine, on a segment with half a second of audio either side. Tuned on
+    # `canopy-listen bench`'s two sets with speakers (meeting4, the pyannote conversation),
+    # each clean and through a phone-like channel: 0.66 with 1.5 s found 6 people where
+    # there were 2 or 4; 0.5-0.6 with 2.5 s found the right number in all four, and 86% /
+    # 80% of the real conversation's speech went to the right person (56% before). A
+    # sentence of a second or two is too little voice to tell someone new from a familiar
+    # voice on a phone microphone, so it joins the closest person heard.
+    same_voice: float = 0.55
+    min_new_seconds: float = 2.5
     centroids: list = field(default_factory=list)
     counts: list = field(default_factory=list)
 
@@ -135,11 +140,13 @@ class TimelineLabeller(Labeller):
 
 #: Seconds kept when a full window held sound but no words.
 KEEP_AFTER_NOISE = 2.0
+#: Seconds of audio either side of a sentence read for its voice.
+VOICE_PAD = 0.5
 
 
 class LiveTranscriber:
     def __init__(self, recognise: Recognise, embed: Embed | None = None, *, labeller: Labeller | None = None,
-                 timed: bool = True, stable_lag: float = 1.2, max_window: float | None = None,
+                 timed: bool = True, stable_lag: float = 0.8, max_window: float | None = None,
                  silence_rms: float = 0.004, min_pause: float = 0.45, speakers: Speakers | None = None):
         self.recognise, self.timed = recognise, timed
         if labeller is None:
@@ -265,7 +272,10 @@ class LiveTranscriber:
     # --- shared ------------------------------------------------------------------------
 
     def _segment(self, s: Sentence) -> Segment:
-        a, b = int(s.start * SAMPLE_RATE), int(s.end * SAMPLE_RATE)
+        # The voice is read with a little audio either side: a sentence's own timing clips
+        # its edges, and a second or two is little to go on.
+        pad = int(VOICE_PAD * SAMPLE_RATE)
+        a, b = max(0, int(s.start * SAMPLE_RATE) - pad), int(s.end * SAMPLE_RATE) + pad
         start, end = round(self.base + s.start, 2), round(self.base + s.end, 2)
         speaker = self.labeller.label(start, end, self.buffer[a:b], self.last_speaker)
         self.last_speaker = speaker

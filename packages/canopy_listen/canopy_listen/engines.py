@@ -222,7 +222,7 @@ class SortformerStream:
         return [(float(s.start), float(s.end), int(s.speaker)) for s in out.segments]
 
 
-def make_labeller(name: str, same_voice: float = 0.66) -> Labeller:
+def make_labeller(name: str, same_voice: float = 0.55) -> Labeller:
     if name == "titanet":
         return EmbeddingLabeller(VoiceEmbedder(), Speakers(same_voice=same_voice))
     if name == "sortformer":
