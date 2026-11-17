@@ -24,7 +24,7 @@ const HAL = { slug: 'hal', name: 'Hal', workspace: 'jonathan' }
 const ACE = { slug: 'ace', name: 'ACE', workspace: 'dimagi' }
 const VOICE = {
   app: 'meeting-assistant', app_name: 'Meeting assistant', key: 'voice-session', label: 'Voice session',
-  path: '/listen/voice', pick: 'agent', agents: [HAL, ACE], chosen: false,
+  path: '/listen/voice', pick: 'agent', agents: [HAL, ACE], chosen: false, links: [],
 }
 
 afterEach(() => {
