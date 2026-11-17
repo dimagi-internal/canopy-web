@@ -9,7 +9,7 @@ import { scopedPath } from '@/lib/scopedLinks'
 import type { ListenDeps } from '@/listen/controller'
 import type { Pairing } from '@/listen/store'
 import { VoiceNote, type NoteView } from '@/listen/voiceNote'
-import { Centered, defaultDeps, Meter, micSettingsHelp, Problem, SlowLaptop, useClock, useMicPermission, useWakeLock } from './ListenPage'
+import { Centered, defaultDeps, Meter, MicBlocked, Problem, SlowLaptop, useClock, useMicPermission, useWakeLock } from './ListenPage'
 
 /** Sends the words to the agent, as this person: a new chat, the note its first message. */
 export interface NoteSender {
@@ -148,9 +148,7 @@ function Ready({ pairing, agentName, onRecord }: { pairing: Pairing; agentName: 
   const mic = useMicPermission()
   return (
     <div className="flex-1 flex flex-col items-center justify-center gap-5 py-6 text-center">
-      {mic === 'denied' && (
-        <Problem>Microphone access is turned off for this site, and the page can’t ask again. {micSettingsHelp()}</Problem>
-      )}
+      {mic === 'denied' && <MicBlocked />}
       <h1 className="text-lg font-semibold">Talk to {agentName}</h1>
       <button
         type="button"
@@ -189,6 +187,7 @@ function NoteScreen({
   onRepair: () => void
 }) {
   const view = useNoteView(note)
+  const mic = useMicPermission()
   const navigate = useNavigate()
   const recording = view.status === 'connecting' || view.status === 'waiting' || view.status === 'recording'
   useWakeLock(recording || view.status === 'transcribing')
@@ -269,7 +268,7 @@ function NoteScreen({
 
   return (
     <Centered>
-      {view.status === 'failed' && view.error && <Problem>{view.error}</Problem>}
+      {view.status === 'failed' && view.error && (mic === 'denied' ? <MicBlocked onAllowed={onAgain} /> : <Problem>{view.error}</Problem>)}
       {view.status === 'discarded' && <p className="text-sm text-muted-foreground">Cancelled. Nothing was sent.</p>}
       {view.unpaired ? (
         <Button className="h-11 rounded-xl" onClick={onRepair}>Pair again</Button>
