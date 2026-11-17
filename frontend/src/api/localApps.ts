@@ -86,6 +86,25 @@ export async function getLocalAppMenu(): Promise<LocalAppMenu> {
   return unwrap(res, "Failed to load your apps' menu") as LocalAppMenu;
 }
 
+/** Every agent this person may use, to choose which ones a menu item lists. */
+export async function getLocalAppMenuAgents(): Promise<LocalAppMenuAgent[]> {
+  const res = await apiV2.GET("/api/local-apps/menu/agents/");
+  return (unwrap(res, "Failed to load your agents") as { agents: LocalAppMenuAgent[] }).agents;
+}
+
+/** Which agents one menu item lists, in order; an empty list goes back to all of them. */
+export async function setLocalAppMenuAgents(
+  app: string,
+  item: string,
+  agents: { workspace: string; slug: string }[],
+): Promise<LocalAppMenu> {
+  const res = await apiV2.PUT("/api/local-apps/menu/{app}/{item}/agents", {
+    params: { path: { app, item } },
+    body: { agents },
+  });
+  return unwrap(res, "Failed to save your agents") as LocalAppMenu;
+}
+
 /** Where a menu item goes: its page, with the agent it was opened for when it asks for one. */
 export function menuItemHref(item: LocalAppMenuItem, agent?: LocalAppMenuAgent): string {
   if (!agent) return item.path;

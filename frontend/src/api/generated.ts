@@ -4530,6 +4530,47 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/local-apps/menu/agents/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Agents you may list in your account menu
+         * @description Every agent you may use, to choose which ones an account-menu item lists.
+         */
+        readonly get: operations["list_local_app_menu_agents"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/local-apps/menu/{app}/{item}/agents": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Choose the agents a menu item lists
+         * @description Which agents one of your account-menu items lists, in order. An empty list goes back
+         *     to every agent you may use.
+         */
+        readonly put: operations["set_local_app_menu_agents"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/local-apps/installations/{installation_id}": {
         readonly parameters: {
             readonly query?: never;
@@ -26923,16 +26964,38 @@ export interface components {
              * @default
              */
             readonly pick: string;
-        };
-        /** LocalAppMenuOut */
-        readonly LocalAppMenuOut: {
-            /** Items */
-            readonly items: readonly components["schemas"]["LocalAppMenuEntryOut"][];
             /**
              * Agents
              * @default []
              */
             readonly agents: readonly components["schemas"]["LocalAppMenuAgentOut"][];
+            /**
+             * Chosen
+             * @default false
+             */
+            readonly chosen: boolean;
+        };
+        /** LocalAppMenuOut */
+        readonly LocalAppMenuOut: {
+            /** Items */
+            readonly items: readonly components["schemas"]["LocalAppMenuEntryOut"][];
+        };
+        /** LocalAppMenuAgentsOut */
+        readonly LocalAppMenuAgentsOut: {
+            /** Agents */
+            readonly agents: readonly components["schemas"]["LocalAppMenuAgentOut"][];
+        };
+        /** LocalAppMenuAgentRef */
+        readonly LocalAppMenuAgentRef: {
+            /** Workspace */
+            readonly workspace: string;
+            /** Slug */
+            readonly slug: string;
+        };
+        /** LocalAppMenuChoiceIn */
+        readonly LocalAppMenuChoiceIn: {
+            /** Agents */
+            readonly agents: readonly components["schemas"]["LocalAppMenuAgentRef"][];
         };
         /** LocalAppConfigureIn */
         readonly LocalAppConfigureIn: {
@@ -56630,6 +56693,53 @@ export interface operations {
             readonly cookie?: never;
         };
         readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LocalAppMenuOut"];
+                };
+            };
+        };
+    };
+    readonly list_local_app_menu_agents: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LocalAppMenuAgentsOut"];
+                };
+            };
+        };
+    };
+    readonly set_local_app_menu_agents: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly app: string;
+                readonly item: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LocalAppMenuChoiceIn"];
+            };
+        };
         readonly responses: {
             /** @description OK */
             readonly 200: {

@@ -12,6 +12,7 @@ what's different because this is real code running as a person:
   token later asks the server to do for this app.
 * `LocalAppRun` — one Start, from its first heartbeat to its stop reason. It holds
   counts and ids, never anything said.
+* `LocalAppMenuChoice` — which agents a person keeps under an app's account-menu item.
 """
 
 from __future__ import annotations
@@ -114,3 +115,19 @@ class LocalAppRun(models.Model):
     class Meta:
         ordering = ["-started_at"]
         indexes = [models.Index(fields=["installation", "-started_at"])]
+
+
+class LocalAppMenuChoice(models.Model):
+    """The agents a person keeps under one of their apps' account-menu items. One per
+    person and item, not per computer: the menu shows an item once however many computers
+    have the app. No row means every agent they may use."""
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
+    app = models.CharField(max_length=64)
+    item = models.CharField(max_length=64)
+    #: [{"workspace": slug, "slug": slug}], in the order the person keeps them.
+    agents = models.JSONField(default=list, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["user", "app", "item"], name="local_app_menu_choice_once")]

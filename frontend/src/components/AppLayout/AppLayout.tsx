@@ -16,7 +16,9 @@ import { useAuth } from '@/auth/AuthProvider'
 import { useTheme } from '@/theme/ThemeProvider'
 import { WorkspaceProvider, useGuestWorkspace, useWorkspace, useWorkspaceRole } from '@/workspace/WorkspaceProvider'
 import { guestAppKeys } from '@/api/guests'
-import { getLocalAppMenu, menuItemHref, type LocalAppMenu } from '@/api/localApps'
+import { getLocalAppMenuAgents, menuItemHref, setLocalAppMenuAgents, type LocalAppMenuAgent, type LocalAppMenuItem } from '@/api/localApps'
+import { errorText } from '@/api/problem'
+import { refreshAppMenu, setAppMenu, useAppMenu } from './appMenuStore'
 import { scopedPath } from '@/lib/scopedLinks'
 import { wsUrl } from '@/lib/wsUrl'
 import { usePresenceReconnectNonce } from '@/presence/usePresenceReconnectNonce'
@@ -28,25 +30,28 @@ import { ACCOUNT_ITEMS, HELP_ITEMS, activeHref, guestNav, isNavEntryActive, menu
 import { CanopyWordmark } from '@/brand/CanopyWordmark'
 import { useAppBarHidden } from './appBarStore'
 
+/** Most agents a menu item lists; the server holds the same limit. */
+const MENU_MAX_AGENTS = 12
+const agentRef = (a: { workspace: string; slug: string }) => `${a.workspace}/${a.slug}`
+
 /**
  * What the person's installed apps add to this menu, each one they turned on in the app's
  * settings. An item that asks for an agent opens to list them (a second tap, not a hover,
- * so it works on a phone); each agent goes to the item's page for that agent.
+ * so it works on a phone); each agent goes to the item's page for that agent. "Choose
+ * agents…" under the list picks which ones it shows. The items come from a store loaded
+ * with the page, so they're there the moment the menu opens.
  */
 export function AppMenuItems({ onNavigate }: { onNavigate: () => void }) {
-  const [menu, setMenu] = useState<LocalAppMenu | null>(null)
+  const menu = useAppMenu()
   const [openKey, setOpenKey] = useState<string | null>(null)
+  const [choosing, setChoosing] = useState<string | null>(null)
 
-  useEffect(() => {
-    let live = true
-    getLocalAppMenu()
-      .then((m) => { if (live) setMenu(m) })
-      .catch(() => { if (live) setMenu(null) /* the menu works without them */ })
-    return () => { live = false }
-  }, [])
+  // Shown from the store at once; refreshed in the background each time the menu opens.
+  useEffect(() => { void refreshAppMenu() }, [])
 
   if (!menu?.items.length) return null
   const row = 'block w-full px-3 py-2 text-left text-sm text-foreground-secondary hover:bg-muted'
+  const sub = 'block w-full py-1.5 pl-6 pr-3 text-left text-sm text-foreground-secondary hover:bg-muted'
   return (
     <div className="border-t border-border" data-testid="app-menu-items">
       {menu.items.map((item) => {
@@ -64,32 +69,112 @@ export function AppMenuItems({ onNavigate }: { onNavigate: () => void }) {
             <button
               type="button"
               aria-expanded={expanded}
-              onClick={() => setOpenKey(expanded ? null : id)}
+              onClick={() => { setOpenKey(expanded ? null : id); setChoosing(null) }}
               className={clsx(row, 'flex items-center justify-between')}
             >
               {item.label}
               <ChevronDown className={clsx('h-3.5 w-3.5 transition-transform', expanded && 'rotate-180')} aria-hidden />
             </button>
-            {expanded && (
+            {expanded && choosing === id && (
+              <ChooseAgents item={item} onDone={() => setChoosing(null)} />
+            )}
+            {expanded && choosing !== id && (
               <div className="pb-1">
-                {menu.agents.length === 0 && (
+                {item.agents.length === 0 && (
                   <div className="py-1.5 pl-6 pr-3 text-xs text-muted-foreground">No agents you can use yet</div>
                 )}
-                {menu.agents.map((agent) => (
-                  <Link
-                    key={`${agent.workspace}/${agent.slug}`}
-                    to={menuItemHref(item, agent)}
-                    onClick={onNavigate}
-                    className="block py-1.5 pl-6 pr-3 text-sm text-foreground-secondary hover:bg-muted"
-                  >
+                {item.agents.map((agent) => (
+                  <Link key={agentRef(agent)} to={menuItemHref(item, agent)} onClick={onNavigate} className={sub}>
                     {agent.name}
                   </Link>
                 ))}
+                <button type="button" onClick={() => setChoosing(id)} className={clsx(sub, 'text-xs text-muted-foreground')}>
+                  Choose agents…
+                </button>
               </div>
             )}
           </div>
         )
       })}
+    </div>
+  )
+}
+
+/** Tick the agents a menu item lists. The ones it lists now come first, in their order. */
+function ChooseAgents({ item, onDone }: { item: LocalAppMenuItem; onDone: () => void }) {
+  const [all, setAll] = useState<LocalAppMenuAgent[] | null>(null)
+  const [picked, setPicked] = useState<string[]>(() => (item.chosen ? item.agents.map(agentRef) : []))
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    let live = true
+    getLocalAppMenuAgents()
+      .then((agents) => { if (live) setAll(agents) })
+      .catch((e: unknown) => { if (live) setError(errorText(e, 'Failed to load your agents')) })
+    return () => { live = false }
+  }, [])
+
+  const order = new Map(picked.map((r, i) => [r, i]))
+  const shown = [...(all ?? [])].sort((a, b) => (order.get(agentRef(a)) ?? 1e9) - (order.get(agentRef(b)) ?? 1e9))
+
+  function toggle(ref: string) {
+    setPicked((p) => (p.includes(ref) ? p.filter((r) => r !== ref) : [...p, ref]))
+  }
+
+  async function save(refs: string[]) {
+    setBusy(true)
+    setError(null)
+    try {
+      const agents = refs.map((r) => { const [workspace, slug] = r.split('/'); return { workspace, slug } })
+      setAppMenu(await setLocalAppMenuAgents(item.app, item.key, agents))
+      onDone()
+    } catch (e) {
+      setError(errorText(e, 'Failed to save your agents'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="pb-2 pl-6 pr-3" data-testid="choose-agents">
+      <div className="py-1 text-xs text-muted-foreground">
+        {picked.length ? `Showing ${picked.length}` : 'Showing every agent you can use'}
+      </div>
+      {all === null && !error && <div className="py-1 text-xs text-muted-foreground">Loading…</div>}
+      <div className="max-h-64 overflow-y-auto">
+        {shown.map((agent) => {
+          const ref = agentRef(agent)
+          const on = picked.includes(ref)
+          return (
+            <label key={ref} className="flex min-h-9 cursor-pointer items-center gap-2 text-sm text-foreground-secondary">
+              <input
+                type="checkbox"
+                checked={on}
+                disabled={busy || (!on && picked.length >= MENU_MAX_AGENTS)}
+                onChange={() => toggle(ref)}
+              />
+              <span className="truncate">{agent.name}</span>
+            </label>
+          )
+        })}
+      </div>
+      {error && <div role="alert" className="py-1 text-xs text-destructive">{error}</div>}
+      <div className="mt-1 flex items-center gap-2">
+        <button type="button" disabled={busy} onClick={() => void save(picked)}
+          className="rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground disabled:opacity-50">
+          Save
+        </button>
+        <button type="button" disabled={busy} onClick={onDone} className="px-1 py-1 text-xs text-muted-foreground hover:text-foreground">
+          Cancel
+        </button>
+        {item.chosen && (
+          <button type="button" disabled={busy} onClick={() => void save([])}
+            className="ml-auto px-1 py-1 text-xs text-muted-foreground hover:text-foreground">
+            Show all
+          </button>
+        )}
+      </div>
     </div>
   )
 }
@@ -111,6 +196,10 @@ function UserMenu() {
     document.addEventListener('mousedown', handleClick)
     return () => document.removeEventListener('mousedown', handleClick)
   }, [open])
+
+  // Load what apps add to the menu before it's opened, so it doesn't wait on the server.
+  const signedIn = auth.status === 'authenticated'
+  useEffect(() => { if (signedIn) void refreshAppMenu() }, [signedIn])
 
   if (auth.status !== 'authenticated') return null
 
