@@ -623,6 +623,11 @@ class Client:
     def fail_turn(self, turn_id: str, note: str) -> None:
         self._call("POST", f"/turns/{turn_id}/finish", {"status": "failed", "result_note": note})
 
+    def abort_turn(self, turn_id: str, reason: str, tool: str = "") -> None:
+        """End a turn FAILED and raise it as a failure investigation — also a turn that
+        already reads DONE, as every laptop turn does once its session exists."""
+        self._call("POST", f"/turns/{turn_id}/abort", {"reason": reason, "tool": tool})
+
     def get_turn(self, turn_id: str) -> dict:
         _, payload = self._call("GET", f"/turns/{turn_id}")
         return payload or {}

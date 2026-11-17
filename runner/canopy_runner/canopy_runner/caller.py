@@ -139,6 +139,41 @@ def pending_root() -> pathlib.Path:
     return CALLER_ROOT / "pending"
 
 
+def turns_root() -> pathlib.Path:
+    return CALLER_ROOT / "turns"
+
+
+def note_task_turn(task: str, turn_id: str, *, root: pathlib.Path | None = None,
+                   now=time.time) -> None:
+    """Remember which turn drove emdash task `task`, for a failure found after the turn
+    reads done (`turn_for_task`). Unlike the pending pointer, nothing consumes it:
+    it ages out with the rest. Best-effort."""
+    if not task or not _TASK_KEY.match(task) or not _TURN_ID.match(str(turn_id or "")):
+        return
+    root = root or turns_root()
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        os.chmod(root, 0o700)
+        _prune(root, now())
+        path = root / f"{task}.json"
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as fh:
+            json.dump({"turn_id": str(turn_id), "task": task, "written_at": now()}, fh)
+    except OSError:
+        logger.warning("could not note the turn for task %s", task, exc_info=True)
+
+
+def turn_for_task(task: str, *, root: pathlib.Path | None = None) -> str:
+    """The turn id `note_task_turn` recorded for this emdash task, or ""."""
+    if not task or not _TASK_KEY.match(task):
+        return ""
+    try:
+        got = json.loads(((root or turns_root()) / f"{task}.json").read_text()).get("turn_id")
+    except (OSError, ValueError, AttributeError):
+        return ""
+    return got if isinstance(got, str) and _TURN_ID.match(got) else ""
+
+
 def write_pending(task: str, turn: dict, envelope: pathlib.Path | None, *,
                   root: pathlib.Path | None = None, now=time.time) -> pathlib.Path | None:
     """Leave the hook a pointer to this turn's envelope, keyed by `task`. Best-effort.
@@ -147,6 +182,7 @@ def write_pending(task: str, turn: dict, envelope: pathlib.Path | None, *,
     the hook could have derived. A failure here costs the agent the summary, never
     the turn: `who_is_asking` and the envelope file are still there.
     """
+    note_task_turn(task, str(turn.get("id") or ""), now=now)
     if envelope is None or not task or not _TASK_KEY.match(task):
         return None
     tid = str(turn.get("id") or "")

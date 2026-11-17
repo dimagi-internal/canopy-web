@@ -666,6 +666,33 @@ def note_signed_in(cfg: Config) -> None:
         logger.info("Claude answered on this box again — signed-out mark cleared")
 
 
+def report_api_error(client: Client, payload: dict, keys, text: str) -> None:
+    """A canopy-launched session's turn ended on a generic API error — fail the turn it
+    served, so canopy-web opens a failure investigation as it does for a cloud turn.
+
+    The turn reads DONE already (an emdash turn is finished at spawn), and the abort route
+    accepts that. Keyed by the emdash task: the project/task candidates all come from one
+    worktree path, so at most one has a recorded turn. Posted off the hook's thread."""
+    from . import caller
+
+    turn_id = ""
+    for _project, task in keys:
+        turn_id = caller.turn_for_task(task)
+        if turn_id:
+            break
+    if not turn_id:
+        return  # a session canopy did not launch: not ours to report
+
+    def post():
+        try:
+            client.abort_turn(turn_id, f"Claude Code ended the turn on an API error: {text}",
+                              tool="claude-code")
+        except Exception:  # noqa: BLE001
+            logger.warning("could not report turn %s's API error", turn_id, exc_info=True)
+
+    threading.Thread(target=post, daemon=True, name="api-error-report").start()
+
+
 def send_owner_ask(client: Client, payload: dict, keys, *, profile_root=None,
                    background: bool = True) -> None:
     """A caller's session just ended a turn: if its final message carries the
@@ -756,6 +783,7 @@ def start_hook_listener(cfg: Config, client: Client):
         on_signed_out=lambda text: report_signed_out(cfg, client, text),
         on_answered=lambda: note_signed_in(cfg),
         on_stop=lambda payload, keys: send_owner_ask(client, payload, keys),
+        on_api_error=lambda payload, keys, text: report_api_error(client, payload, keys, text),
     )
     listener.bind_sender(
         lambda session_id, events: client.post_session_stream(

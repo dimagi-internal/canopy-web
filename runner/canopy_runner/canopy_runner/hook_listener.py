@@ -31,7 +31,11 @@ import json
 import logging
 import os
 import socket
+import shutil
+import subprocess
+import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from canopy_transcript import (
@@ -44,8 +48,28 @@ from canopy_transcript import (
     menu_from_permission_request,
     turn_ended_without_stop,
 )
+from canopy_transcript.api_error import api_error_at_transcript_end
 from canopy_transcript.signed_out import answered_at_transcript_end, signed_out_at_transcript_end
 from canopy_transcript.usage_limit import limit_at_transcript_end
+
+
+#: A session in-turn that no hook has spoken for in this long no longer holds the Mac awake.
+AWAKE_SILENCE_LIMIT = 3 * 3600
+
+
+def keep_awake_for(pid: int, spawn=None):
+    """`caffeinate -i -w pid`: block idle sleep until `pid` exits (so a killed runner lets
+    go too). Idle sleep only — closing the lid still sleeps, which macOS does not let an
+    app stop. None off macOS or when it cannot start. Mirrors canopy_listen's recorder."""
+    if sys.platform != "darwin" or not shutil.which("caffeinate"):
+        return None
+    try:
+        return (spawn or subprocess.Popen)(
+            ["caffeinate", "-i", "-w", str(pid)],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        logger.warning("could not keep the Mac awake; it may sleep mid-turn")
+        return None
 
 
 class _Server(ThreadingHTTPServer):
@@ -87,7 +111,8 @@ class HookListener:
 
     def __init__(self, *, port: int, nonce: str, resolve_session, forward,
                  read_menu=None, resolve_task=None, menu_store=None,
-                 on_usage_limit=None, on_stop=None, on_signed_out=None, on_answered=None):
+                 on_usage_limit=None, on_stop=None, on_signed_out=None, on_answered=None,
+                 on_api_error=None, keep_awake=None):
         self.port = port
         self.nonce = nonce
         # Injected: called with a `Stop` payload and its (project, task) keys —
@@ -134,6 +159,18 @@ class HookListener:
         # see `_track_menu`. Deliberately NOT persisted: after a restart we
         # genuinely do not know, and the safe answer there is silence.
         self._in_turn: set[tuple[str, str]] = set()
+        # Injected: called with (payload, keys, text) when a session mid-turn ends on a
+        # generic API error (not a cap, not signed out) — "went to sleep mid-response", a
+        # 5xx, a dropped connection. Once per error record.
+        self._on_api_error = on_api_error
+        self._last_api_error_record = ""
+        # While any session is in-turn the Mac is held awake: `keep_awake(pid)` returns
+        # a handle with `.terminate()` (or None), defaulting to `caffeinate`. When each
+        # in-turn key was last heard from, so a session that died with no `Stop` cannot
+        # hold the Mac awake forever.
+        self._keep_awake = keep_awake or keep_awake_for
+        self._awake = None
+        self._in_turn_seen: dict[tuple[str, str], float] = {}
         if menu_store is not None:
             try:
                 self._pending_menus.update(menu_store.load())
@@ -160,7 +197,9 @@ class HookListener:
             # session report to read, not an event to ship — so it must survive
             # `forward_sessions` being off, and it must be recorded even for a
             # hook kind that forwards nothing.
+            self._check_api_error(payload)   # before `_track_menu` retires the turn
             self._track_menu(payload)
+            self._sync_awake()
             self._check_usage_limit(payload)
             self._check_signed_out(payload)
             self._note_stop(payload)
@@ -223,6 +262,51 @@ class HookListener:
                 self._on_stop(payload, keys)
         except Exception:  # noqa: BLE001 — a hook must never see a failure
             logger.debug("stop handling failed (non-fatal)", exc_info=True)
+
+    def _check_api_error(self, payload: dict) -> None:
+        """Did a canopy-launched session's turn just end on an API error?
+
+        Same reading as `_check_usage_limit`: the transcript tail's `isApiErrorMessage`
+        record, never the hook's text; a cap and a signed-out login are excluded (they
+        pause the box instead). Only for a session this listener saw start a turn, so a
+        human's own session never raises a failure. Checked before `_track_menu`, which
+        drops the session from `_in_turn` on this very notification."""
+        if self._on_api_error is None or self._resolve_task is None:
+            return
+        if payload.get("hook_event_name") not in ("Stop", "Notification"):
+            return
+        path = payload.get("transcript_path")
+        if not isinstance(path, str) or not path:
+            return
+        try:
+            keys = self._resolve_task(payload.get("cwd") or "")
+            if not keys or not any(k in self._in_turn for k in keys):
+                return
+            hit = api_error_at_transcript_end(path)
+            if hit is None or (hit[0] and hit[0] == self._last_api_error_record):
+                return
+            self._last_api_error_record = hit[0]
+            self._on_api_error(payload, keys, hit[1])
+        except Exception:  # noqa: BLE001 — a hook must never see a failure
+            logger.warning("api-error check failed (non-fatal)", exc_info=True)
+
+    def _sync_awake(self) -> None:
+        """Hold the Mac awake exactly while some session is in-turn."""
+        try:
+            now = time.monotonic()
+            for key in list(self._in_turn):
+                if now - self._in_turn_seen.get(key, now) > AWAKE_SILENCE_LIMIT:
+                    self._in_turn.discard(key)
+            for key in list(self._in_turn_seen):
+                if key not in self._in_turn:
+                    del self._in_turn_seen[key]
+            if self._in_turn and self._awake is None:
+                self._awake = self._keep_awake(os.getpid())
+            elif not self._in_turn and self._awake is not None:
+                holder, self._awake = self._awake, None
+                holder.terminate()
+        except Exception:  # noqa: BLE001 — a hook must never see a failure
+            logger.debug("keep-awake sync failed (non-fatal)", exc_info=True)
 
     def _check_usage_limit(self, payload: dict) -> None:
         """Did this session's turn just end on a Claude usage cap?
@@ -307,6 +391,10 @@ class HookListener:
             # with words that do not.
             # Turn state first — a Notification's meaning depends on it.
             event = payload.get("hook_event_name")
+            now = time.monotonic()
+            for k in keys:
+                if k in self._in_turn or event == "UserPromptSubmit":
+                    self._in_turn_seen[k] = now
             if event == "UserPromptSubmit":
                 self._in_turn.update(keys)
             elif event == "Stop":
@@ -506,6 +594,9 @@ class HookListener:
                     self.port, self._forward())
 
     def stop(self) -> None:
+        holder, self._awake = self._awake, None
+        if holder is not None:
+            holder.terminate()
         if self._server is not None:
             self._server.shutdown()
             self._server = None
