@@ -26,6 +26,7 @@ import {
 } from './meta'
 import type { Directory } from './useDirectory'
 import { Td, Th, Tr } from '@/components/DataTable'
+import { dueLabel, isOverdue, rhythmLabel } from './recurring'
 
 export type GroupBy = '' | 'status' | 'project' | 'assignee' | 'priority'
 
@@ -64,6 +65,10 @@ export interface TaskTableProps {
   canEdit?: (task: Task) => boolean
   /** Indent subtasks under their parent (a project's list). */
   nest?: boolean
+  /** Rows finished here, kept in place (struck through) until the list is reloaded. */
+  kept?: ReadonlySet<string>
+  /** Put a kept row back as it was: one tap. */
+  onUndo?: (task: Task) => void
 }
 
 export interface Group {
@@ -130,6 +135,8 @@ export function TaskTable({
   empty,
   canEdit,
   nest = false,
+  kept,
+  onUndo,
 }: TaskTableProps): JSX.Element {
   const defaultCanEdit = useCanEditTask()
   const editable = canEdit ?? defaultCanEdit
@@ -142,14 +149,17 @@ export function TaskTable({
     <div className="overflow-x-auto rounded-lg border border-border bg-card" data-testid="task-table">
       <table className="w-full table-fixed border-collapse text-[13px]">
         <colgroup>
-          {onToggle && <col className="w-7" />}
-          <col className="w-7" />
-          <col className="w-7" />
-          <col className="w-[5.5rem]" />
+          {/* On a phone a row is its status and its title (with a line under it saying
+              when, how often and who): selection, priority, key and assignee columns
+              give their width to the title. */}
+          {onToggle && <col className="hidden w-7 sm:table-column" />}
+          <col className="hidden w-7 sm:table-column" />
+          <col className="w-8 sm:w-7" />
+          <col className="hidden w-[5.5rem] sm:table-column" />
           <col />
           {show.has('labels') && <col className="hidden w-40 md:table-column" />}
           {show.has('project') && <col className="hidden w-40 lg:table-column" />}
-          {show.has('assignee') && <col className="w-32" />}
+          {show.has('assignee') && <col className="hidden w-32 sm:table-column" />}
           {show.has('due') && <col className="hidden w-[8rem] sm:table-column" />}
           {show.has('updated') && <col className="hidden w-14 md:table-column" />}
         </colgroup>
@@ -176,6 +186,8 @@ export function TaskTable({
                 focused={focused === task.key}
                 names={names}
                 editable={editable(task)}
+                kept={kept?.has(task.key) ?? false}
+                onUndo={onUndo}
               />
             ))}
           </tbody>
@@ -197,6 +209,8 @@ function TaskRow({
   focused,
   names,
   editable,
+  kept,
+  onUndo,
 }: {
   task: Task
   depth: number
@@ -209,6 +223,8 @@ function TaskRow({
   focused: boolean
   names?: Record<string, string> | null
   editable: boolean
+  kept: boolean
+  onUndo?: (task: Task) => void
 }): JSX.Element {
   const page = scopedPath(task.workspace, `/tasks/${task.key}`)
   const done = STATUS_CATEGORY[task.status] === 'completed' || STATUS_CATEGORY[task.status] === 'canceled'
@@ -226,7 +242,7 @@ function TaskRow({
       )}
     >
       {onToggle && (
-        <td className="pl-2">
+        <Td density="none" hideBelow="sm" className="pl-2">
           <input
             type="checkbox"
             checked={selected}
@@ -234,9 +250,9 @@ function TaskRow({
             onChange={(e) => onToggle(task.key, (e.nativeEvent as MouseEvent).shiftKey)}
             className={cn('size-3.5 accent-primary', !selected && 'opacity-30 group-hover:opacity-100')}
           />
-        </td>
+        </Td>
       )}
-      <Td density="narrow">
+      <Td density="narrow" hideBelow="sm">
         <PriorityPicker
           priority={task.priority ?? 0}
           disabled={!editable}
@@ -251,21 +267,38 @@ function TaskRow({
           onChange={(status) => onPatch(task.key, { status }, { status })}
         />
       </Td>
-      <Td density="narrow" tone="muted" nowrap mono className="text-[11.5px]">{task.key}</Td>
+      <Td density="narrow" tone="muted" nowrap mono hideBelow="sm" className="text-[11.5px]">{task.key}</Td>
       <Td density="cozy-gutter" className="min-w-0">
-        <div className="flex min-w-0 items-center gap-2" style={depth ? { paddingLeft: `${depth * 1.1}rem` } : undefined}>
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 sm:flex-nowrap" style={depth ? { paddingLeft: `${depth * 1.1}rem` } : undefined}>
+          {/* The whole title on a phone (it wraps); one dense line from sm up. */}
           {onOpen ? (
             <button
               type="button"
               onClick={() => onOpen(task)}
-              className={cn('truncate text-left font-medium hover:text-primary', done ? 'text-muted-foreground line-through' : 'text-foreground')}
+              className={cn('min-w-0 break-words text-left font-medium hover:text-primary sm:truncate', done ? 'text-muted-foreground line-through' : 'text-foreground')}
             >
               {task.title}
             </button>
           ) : (
-            <Link to={page} className={cn('truncate font-medium hover:text-primary', done ? 'text-muted-foreground line-through' : 'text-foreground')}>
+            <Link to={page} className={cn('min-w-0 break-words font-medium hover:text-primary sm:truncate', done ? 'text-muted-foreground line-through' : 'text-foreground')}>
               {task.title}
             </Link>
+          )}
+          {kept && onUndo && (
+            <button
+              type="button"
+              onClick={() => onUndo(task)}
+              data-testid={`undo-${task.key}`}
+              className="shrink-0 rounded border border-border px-1.5 text-[11.5px] text-primary hover:bg-muted"
+            >
+              Undo
+            </button>
+          )}
+          <RecurringChips task={task} className="hidden sm:inline-flex" />
+          {task.recurrence && (
+            <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline">
+              {task.last_done ? `last done ${relativeAge(task.last_done, new Date(), { seconds: false, words: true })}` : 'not done yet'}
+            </span>
           )}
           {asking && (
             <span className="shrink-0 rounded border border-warning/30 bg-warning/10 px-1 text-[10.5px] font-medium text-warning">
@@ -286,11 +319,12 @@ function TaskRow({
           )}
           {/* Its one-line brief — what happens next — so a reader need not open it. */}
           {task.next_action && (
-            <span className="min-w-0 flex-1 basis-0 truncate text-[12px] text-muted-foreground" title={task.next_action} data-testid={`brief-${task.key}`}>
+            <span className="hidden min-w-0 flex-1 basis-0 truncate text-[12px] text-muted-foreground sm:inline" title={task.next_action} data-testid={`brief-${task.key}`}>
               {task.next_action}
             </span>
           )}
         </div>
+        <PhoneLine task={task} done={done} />
       </Td>
       {show.has('labels') && (
         <Td density="cozy-gutter" hideBelow="md">
@@ -309,7 +343,7 @@ function TaskRow({
         </Td>
       )}
       {show.has('assignee') && (
-        <Td density="cozy-gutter" className="truncate text-[12px]">
+        <Td density="cozy-gutter" hideBelow="sm" className="truncate text-[12px]">
           <AssigneePicker
             task={task}
             directory={directory}
@@ -333,5 +367,49 @@ function TaskRow({
         </Td>
       )}
     </Tr>
+  )
+}
+
+/** A template's rhythm ("Every Wed") and an instance's template ("copy of MAR-10"). */
+export function RecurringChips({ task, className }: { task: Task; className?: string }): JSX.Element | null {
+  if (task.recurrence) {
+    return (
+      <span
+        className={cn('shrink-0 items-center rounded border border-info/30 bg-info/10 px-1 text-[10.5px] text-info', className)}
+        data-testid={`rhythm-${task.key}`}
+      >
+        {rhythmLabel(task.recurrence)}
+      </span>
+    )
+  }
+  if (task.template_key) {
+    return (
+      <span
+        className={cn('shrink-0 items-center text-[11px] text-muted-foreground', className)}
+        title={task.template_title ? `A copy of ${task.template_key} ${task.template_title}` : undefined}
+        data-testid={`copy-of-${task.key}`}
+      >
+        copy of {task.template_key}
+      </span>
+    )
+  }
+  return null
+}
+
+/** A phone row's second line: when it is due, how it repeats, who has it (only when someone
+ *  does), and — de-emphasized — its key. Hidden from sm up, where the columns say it. */
+function PhoneLine({ task, done }: { task: Task; done: boolean }): JSX.Element {
+  const late = !done && task.due && isOverdue(task.due)
+  const who = task.agent_slug ? displayAgent(task.agent_slug) : task.assignee_email ? displayPerson(task.assignee_email) : ''
+  return (
+    <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11.5px] text-muted-foreground sm:hidden" data-testid={`phone-line-${task.key}`}>
+      {task.due && <span className={late ? 'text-destructive' : undefined}>{dueLabel(task.due)}</span>}
+      <RecurringChips task={task} className="inline-flex" />
+      {task.recurrence && task.last_done && (
+        <span>last done {relativeAge(task.last_done, new Date(), { seconds: false, words: true })}</span>
+      )}
+      {who && <span>{who}</span>}
+      <span className="font-mono text-[10.5px] text-foreground-subtle">{task.key}</span>
+    </div>
   )
 }

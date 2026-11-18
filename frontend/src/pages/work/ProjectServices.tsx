@@ -59,8 +59,9 @@ function HowItLoads({ s }: { s: ProjectService }): JSX.Element {
 function HowToUse({ address }: { address: string }): JSX.Element {
   const origin = typeof window === 'undefined' ? '' : window.location.origin
   return (
-    <div className="mb-3 rounded-lg border border-border bg-card px-3 py-2 text-[13px] text-foreground" data-testid="toolbox-how">
-      <p className="text-muted-foreground">
+    <details className="mb-3 rounded-lg border border-border bg-card px-3 py-2 text-[13px] text-foreground" data-testid="toolbox-how">
+      <summary className="cursor-pointer text-muted-foreground">How this reaches Claude</summary>
+      <p className="mt-1.5 text-muted-foreground">
         Nothing here reaches anyone&apos;s Claude until the work asks for it, so a project costs nothing in sessions that don&apos;t use it.
       </p>
       <ul className="mt-1.5 list-disc space-y-1 pl-5">
@@ -77,7 +78,7 @@ function HowToUse({ address }: { address: string }): JSX.Element {
           the line that adds it.
         </li>
       </ul>
-    </div>
+    </details>
   )
 }
 
@@ -134,7 +135,7 @@ export function ProjectServices({
     <Section
       id="project-services"
       title="Toolbox"
-      description="What this project gives the people and agents working on it: its knowledge base, skills, and the MCP servers and plugins it shares."
+      description="Knowledge, skills and tools this project shares with its people and agents."
     >
       <HowToUse address={`${workspace}/${handle}`} />
       {services.length > 0 && (

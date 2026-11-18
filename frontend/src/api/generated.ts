@@ -26170,7 +26170,7 @@ export interface components {
              * @default
              * @enum {string}
              */
-            readonly kind: "" | "decision" | "live";
+            readonly kind: "" | "decision" | "live" | "primary";
             /**
              * Waiting On
              * @default
@@ -26335,6 +26335,8 @@ export interface components {
             readonly recurrence?: components["schemas"]["Recurrence"] | null;
             /** Template Key */
             readonly template_key?: string | null;
+            /** Template Title */
+            readonly template_title?: string | null;
             /** Last Done */
             readonly last_done?: string | null;
             /**
@@ -31822,7 +31824,11 @@ export interface components {
              */
             readonly since: string;
         };
-        /** ProjectProgressOut */
+        /**
+         * ProjectProgressOut
+         * @description Scope against done, counted over the project's work: canceled tasks and recurring
+         *     templates (which never complete) are out of scope.
+         */
         readonly ProjectProgressOut: {
             /**
              * Total
@@ -32439,6 +32445,8 @@ export interface components {
             readonly recurrence?: components["schemas"]["Recurrence"] | null;
             /** Template Key */
             readonly template_key?: string | null;
+            /** Template Title */
+            readonly template_title?: string | null;
             /** Last Done */
             readonly last_done?: string | null;
             /**
@@ -37242,6 +37250,8 @@ export interface components {
             readonly recurrence?: components["schemas"]["Recurrence"] | null;
             /** Template Key */
             readonly template_key?: string | null;
+            /** Template Title */
+            readonly template_title?: string | null;
             /** Last Done */
             readonly last_done?: string | null;
             /**

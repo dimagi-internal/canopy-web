@@ -28,7 +28,12 @@ Tasks and projects belong to a **workspace**, not to an agent. Every route: `api
 
 - **The tick** (`agents.recurrence`, `AgentsConfig.ready`, every 10 minutes) gives each `auto` template the current period's instance once that period has begun, in the workspace's `TaskSettings.timezone`. A template made part-way through a period starts at the next one; `as_needed` is never auto. A run that is late, or runs twice, still makes each period's instance once.
 - **`2weeks`** alternates from the period of the template's first instance (a first one spawned by hand sets it), else from the week the template was made.
+- **A template is not work.** Every count of a project's scope and done leaves templates out (`work.WORK_Q`: `progress_of`, `milestones_of`, the list's task counts), or a project of chores could never be done. An instance names its template by `template_key` and `template_title`.
 - **A personal project's template** spawns into that project, and only to an assignee who may still have work there (`_refuse_outsiders`); its instances are as private as any of its tasks.
+
+## A project's main screen
+
+A project may name ONE main screen: a link of `kind: "primary"`, a page of its own workspace (`/w/<workspace>/…`, an app page or a view), shown as the page's main button. `services.projects.clean_project_links` is the rule on every write; a task never carries one.
 
 ## Sharing a project across its workspace tree
 

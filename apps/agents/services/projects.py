@@ -543,6 +543,8 @@ def create_project(agent: Agent | None, data, *, workspace: str = "", by_user=No
         payload["links"] = [link.model_dump() for link in data.links]
     via_agent = agent is not None and not workspace
     ws = workspace or agent.workspace_id
+    if payload.get("links"):
+        payload["links"] = clean_project_links(ws, payload["links"])
     owner_email = getattr(data, "owner_email", "") or getattr(data, "lead_email", "")
     payload["owner_user"] = resolve_project_owner_in(ws, owner_email)
     if getattr(data, "visibility", AgentProject.WORKSPACE) == AgentProject.PERSONAL:
@@ -569,6 +571,30 @@ def _personal_owner(agent: Agent | None, via_agent: bool, named, by_user):
     return owner
 
 
+#: A primary screen's address: a page of canopy-web itself, under the project's own workspace.
+_PRIMARY_PATH = re.compile(r"^/w/(?P<ws>[A-Za-z0-9_-]+)/[^\s?#]*(\?[^\s#]*)?(#\S*)?$")
+
+
+def clean_project_links(workspace: str, links: list[dict] | None) -> list[dict]:
+    """A project's links as stored. At most one is `primary` (its main screen), and that one
+    must be a canopy-web path in the project's own workspace (`/w/<workspace>/…`): the page's
+    main button opens it in place, so it may never lead off canopy or into another tenant."""
+    out = [dict(link) for link in links or []]
+    primary = [link for link in out if link.get("kind") == "primary"]
+    if len(primary) > 1:
+        raise ValueError("a project has at most one primary screen")
+    for link in primary:
+        url = (link.get("url") or "").strip()
+        m = _PRIMARY_PATH.match(url)
+        if m is None or "//" in url or ".." in url.split("?")[0].split("/"):
+            raise ValueError("a primary screen is a canopy page of this workspace, like "
+                             f"/w/{workspace}/apps/<app>/<page>")
+        if m.group("ws") != workspace:
+            raise ValueError(f"a primary screen must be a page of the project's workspace ({workspace})")
+        link["url"] = url
+    return out
+
+
 def patch_project(project: AgentProject, data: dict) -> AgentProject:
     if "status" in data and data["status"] is not None:
         new = _norm_project_status(data["status"])
@@ -587,7 +613,7 @@ def patch_project(project: AgentProject, data: dict) -> AgentProject:
                     raise ValueError("priority is 0 (none) to 4 (low)")
             setattr(project, f, value)
     if "links" in data:
-        project.links = data["links"]
+        project.links = clean_project_links(project.workspace_id, data["links"])
     for key in ("owner_email", "lead_email"):
         if key in data:
             owner = resolve_project_owner_in(project.workspace_id, data[key])

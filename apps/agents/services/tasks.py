@@ -217,7 +217,10 @@ _ASK_KINDS = {AgentTask.ASK_NONE, AgentTask.ASK_REVIEW, AgentTask.ASK_QUESTION}
 
 
 def _plain_links(links) -> list:
-    return [link.model_dump() if hasattr(link, "model_dump") else dict(link) for link in links or []]
+    out = [link.model_dump() if hasattr(link, "model_dump") else dict(link) for link in links or []]
+    if any(link.get("kind") == "primary" for link in out):
+        raise ValueError("a primary screen is a project's, not a task's")
+    return out
 
 
 class AssigneeError(ValueError):
@@ -478,7 +481,7 @@ def patch_task(task: AgentTask, data, *, by_user=None, by_agent=None) -> AgentTa
         if f in data:
             setattr(task, f, _norm_field(f, data[f]))
     if "links" in data:
-        task.links = data["links"]
+        task.links = _plain_links(data["links"])
     if "waiting_on_email" in data:
         task.waiting_on_user = _workspace_member(task.workspace_id, data["waiting_on_email"],
                                                  instead="assigned")

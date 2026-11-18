@@ -141,9 +141,11 @@ def project_detail(request: HttpRequest, project) -> AgentProjectDetailOut:
     live_first = Case(When(status__in=services.LIVE_STATUSES, then=0), default=1,
                       output_field=IntegerField())
     tasks = list(work.task_rows(project.tasks).order_by(live_first, "rank", "id"))
-    project._task_count = len(tasks)
-    project._open_task_count = sum(t.status in services.LIVE_STATUSES for t in tasks)
-    project._done_task_count = sum(t.status == AgentTask.DONE for t in tasks)
+    # Recurring templates never complete: they are not counted as the project's work (`work.WORK_Q`).
+    work_tasks = [t for t in tasks if t.recurrence is None]
+    project._task_count = len(work_tasks)
+    project._open_task_count = sum(t.status in services.LIVE_STATUSES for t in work_tasks)
+    project._done_task_count = sum(t.status == AgentTask.DONE for t in work_tasks)
     # `waiting_task_count` is left to the model property: one COUNT through
     # `services.waiting_q`, rather than a second Python copy of that predicate.
     # Everyone sees what the agent did; a turn's prompt is a log (turn_access).

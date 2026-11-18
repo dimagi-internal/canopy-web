@@ -171,6 +171,11 @@ def task_rows(qs):
             .prefetch_related("human_whys", "labels"))
 
 
+#: A project's WORK: every task but a recurring template. A template never completes (each
+#: period's work is its instance), so it is left out of every count of scope and done.
+WORK_Q = Q(recurrence__isnull=True)
+
+
 def annotate_projects(projects: list[AgentProject]) -> list[AgentProject]:
     """Cache every list figure on each project (`AgentProjectOut`) in a fixed
     number of queries: task counts, done count, health, update_missing and its
@@ -182,9 +187,9 @@ def annotate_projects(projects: list[AgentProject]) -> list[AgentProject]:
     prefetch_related_objects(projects, "served")
     ids = [p.pk for p in projects]
     counts = {r["project_id"]: r for r in AgentTask.objects.filter(project_id__in=ids).values("project_id")
-              .annotate(n=Count("id"), live=Count("id", filter=Q(status__in=LIVE_STATUSES)),
+              .annotate(n=Count("id", filter=WORK_Q), live=Count("id", filter=WORK_Q & Q(status__in=LIVE_STATUSES)),
                         waiting=Count("id", filter=waiting_q()),
-                        done=Count("id", filter=Q(status=AgentTask.DONE)))}
+                        done=Count("id", filter=WORK_Q & Q(status=AgentTask.DONE)))}
     latest: dict[int, ProjectUpdate] = {}
     for u in (ProjectUpdate.objects.filter(project_id__in=ids, status=ProjectUpdate.PUBLISHED)
               .order_by("project_id", "-published_at", "-id")):
@@ -441,10 +446,11 @@ def is_blocked(task: AgentTask) -> bool:
 
 
 def milestones_of(project: AgentProject) -> list[ProjectMilestone]:
-    """Its milestones, each with `done` and `total` task counts."""
+    """Its milestones, each with `done` and `total` task counts (recurring templates left out)."""
+    work = Q(tasks__recurrence__isnull=True)
     rows = list(project.milestones.annotate(
-        total=Count("tasks", filter=~Q(tasks__status=AgentTask.DECLINED)),
-        done=Count("tasks", filter=Q(tasks__status=AgentTask.DONE))))
+        total=Count("tasks", filter=work & ~Q(tasks__status=AgentTask.DECLINED)),
+        done=Count("tasks", filter=work & Q(tasks__status=AgentTask.DONE))))
     return rows
 
 
@@ -492,14 +498,16 @@ def resolve_milestone(project: AgentProject | None, name_or_id) -> ProjectMilest
 
 def progress_of(project: AgentProject) -> dict:
     """`{total, done, started, scope_history}` — counted by category. Canceled
-    tasks are out of scope. `scope_history` is weekly (scope, done) points for
-    the scope-versus-done graph, oldest first, at most 12."""
-    tasks = project.tasks.exclude(status=AgentTask.DECLINED)
+    tasks are out of scope, and so are recurring templates (`WORK_Q`): a template
+    never completes, so counting it would keep a project from ever being done.
+    `scope_history` is weekly (scope, done) points for the scope-versus-done
+    graph, oldest first, at most 12."""
+    tasks = project.tasks.filter(WORK_Q).exclude(status=AgentTask.DECLINED)
     total = tasks.count()
     done = tasks.filter(status=AgentTask.DONE).count()
     started = tasks.filter(status=AgentTask.IN_PROGRESS).count()
     history = []
-    created = list(project.tasks.values_list("created_at", "status", "updated_at"))
+    created = list(project.tasks.filter(WORK_Q).values_list("created_at", "status", "updated_at"))
     if created:
         start = min(c for c, _, _ in created)
         now = timezone.now()
@@ -531,7 +539,7 @@ def update_missing(project: AgentProject, latest: ProjectUpdate | None = None, *
 
 def _diff_since(project: AgentProject, previous: ProjectUpdate | None) -> dict:
     since = previous.published_at if previous is not None else project.created_at
-    tasks = project.tasks
+    tasks = project.tasks.filter(WORK_Q)
     diff = {
         "tasks_done": tasks.filter(status=AgentTask.DONE, updated_at__gt=since).count(),
         "tasks_added": tasks.filter(created_at__gt=since).count(),

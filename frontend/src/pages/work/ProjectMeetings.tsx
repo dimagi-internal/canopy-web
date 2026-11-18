@@ -14,11 +14,14 @@ export function ProjectMeetings({
   workspace,
   handle,
   onSaveInstructions,
+  onContent,
 }: {
   detail: ProjectDetail
   workspace: string
   handle: string
   onSaveInstructions: (text: string) => void
+  /** Whether it has meetings or instructions (the page hides an empty section). */
+  onContent?: (has: boolean) => void
 }): JSX.Element {
   const [rows, setRows] = useState<MeetingRow[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -33,9 +36,11 @@ export function ProjectMeetings({
       .catch((err: unknown) => setError(errorText(err, 'Could not load meetings')))
   }, [address])
   useEffect(() => load(), [load])
+  const has = rows.length > 0 || Boolean(detail.meeting_instructions)
+  useEffect(() => onContent?.(has), [has, onContent])
 
   return (
-    <Section id="project-meetings" title="Meetings" description="What this project's people have talked about, and what to do with the notes.">
+    <Section id="project-meetings" title="Meetings" description="Notes from this project's meetings, and what to do with them.">
       <div className="space-y-3" data-testid="project-meetings">
         <div className="rounded-lg border border-border bg-card p-4 text-[13px]">
           <div className="flex items-center justify-between gap-2">
