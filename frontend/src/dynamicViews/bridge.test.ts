@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resolveNavigation, resolveRead, type CatalogModel } from './bridge'
+import { connectReturnTo, resolveNavigation, resolveRead, type CatalogModel } from './bridge'
 
 const CATALOG: CatalogModel[] = [
   { name: 'tasks', path: '/tasks/', description: '', params: ['project', 'category', 'limit'], path_params: [] },
@@ -69,5 +69,36 @@ describe('resolveNavigation', () => {
     expect(resolveNavigation('dimagi', 'mailto:leave@list.example?subject=unsubscribe'))
       .toEqual({ kind: 'external', url: 'mailto:leave@list.example?subject=unsubscribe' })
     expect(resolveNavigation('dimagi', 'mailto:a b')).toEqual({ kind: 'refused' })
+  })
+})
+
+describe('screen access sign-in', () => {
+  const here = { origin: 'https://canopy.dimagi.com', base: '' }
+  const start = 'https://canopy.dimagi.com/auth/connections/google/dimagi/start/?temporary=1&for_screens=1'
+
+  it('goes to canopy\'s own screen-access start in this tab, not as an outside link', () => {
+    const to = resolveNavigation('dimagi', start, here)
+    expect(to.kind).toBe('connect')
+  })
+
+  it('treats anything else at that address as an outside link', () => {
+    for (const p of [
+      'https://canopy.dimagi.com/auth/connections/google/other/start/?temporary=1&for_screens=1',
+      'https://canopy.dimagi.com/auth/connections/google/dimagi/start/?temporary=1&for_agent=eva',
+      'https://canopy.dimagi.com/auth/connections/google/dimagi/start/?temporary=1&for_screens=1&return_to=/x',
+      'https://evil.example/auth/connections/google/dimagi/start/?temporary=1&for_screens=1',
+    ]) expect(resolveNavigation('dimagi', p, here).kind).toBe('external')
+    expect(resolveNavigation('dimagi', start).kind).toBe('external')
+  })
+
+  it('honours the deployment prefix', () => {
+    const to = resolveNavigation('dimagi', 'https://labs.example/canopy/auth/connections/google/dimagi/start/?temporary=1&for_screens=1',
+      { origin: 'https://labs.example', base: '/canopy' })
+    expect(to.kind).toBe('connect')
+  })
+
+  it('comes back to this page, without the last outcome', () => {
+    expect(connectReturnTo('/w/dimagi/views/x', '?a=1&connection=google&status=error&reason=r', '')).toBe('/w/dimagi/views/x?a=1')
+    expect(connectReturnTo('/canopy/w/dimagi/views/x', '', '/canopy')).toBe('/w/dimagi/views/x')
   })
 })
