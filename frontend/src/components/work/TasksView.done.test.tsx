@@ -113,4 +113,26 @@ describe('TasksView done stays in place', () => {
     fireEvent.click(screen.getByTestId('category-backlog'))
     await waitFor(() => expect(screen.queryByText('Ship it')).toBeNull())
   })
+
+  it('one tap on the circle finishes it in place, and a second tap puts it back', async () => {
+    api.listTasks.mockResolvedValue([task({ key: 'DIM-1', status: 'in_progress', category: 'started' })])
+    show('?tab=all')
+    const circle = await screen.findByRole('button', { name: 'Mark DIM-1 done' })
+    await act(async () => {
+      fireEvent.click(circle)
+    })
+    await waitFor(() => expect(api.updateTask).toHaveBeenCalledWith('DIM-1', { status: 'done' }))
+    api.listTasks.mockResolvedValue([])
+    await act(async () => {
+      resourceChanged(TASK_RESOURCE)
+      await new Promise((r) => setTimeout(r, 700))
+    })
+    expect(screen.getByText('Ship it').className).toContain('line-through')
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Reopen DIM-1' }))
+    })
+    // Back to what it was, not just todo.
+    await waitFor(() => expect(api.updateTask).toHaveBeenLastCalledWith('DIM-1', { status: 'in_progress' }))
+  })
 })
+

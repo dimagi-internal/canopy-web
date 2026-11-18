@@ -3,7 +3,8 @@
 // task looks and behaves the same wherever you meet it. Status, priority,
 // assignee and due are edited in place; the title opens the peek (or the
 // page); `X` / the checkbox selects for a bulk change.
-import { useMemo, type JSX, type ReactNode } from 'react'
+import { useMemo, useRef, useState, type JSX, type ReactNode } from 'react'
+import { ChevronDown, Repeat } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { cn } from 'canopy-ui/lib'
 
@@ -14,7 +15,7 @@ import { roleAllows } from '@/lib/workspaceRoles'
 import { scopedPath } from '@/lib/scopedLinks'
 import { useWorkspaceList } from '@/workspace/WorkspaceProvider'
 
-import { AssigneePicker, DueInput, LabelChips, PriorityPicker, StatusPicker } from './bits'
+import { AssigneePicker, DueInput, LabelChips, PriorityPicker, StatusIcon, StatusPicker } from './bits'
 import {
   STATUS_CATEGORY,
   STATUS_ORDER,
@@ -154,7 +155,7 @@ export function TaskTable({
               give their width to the title. */}
           {onToggle && <col className="hidden w-7 sm:table-column" />}
           <col className="hidden w-7 sm:table-column" />
-          <col className="w-8 sm:w-7" />
+          <col className="w-12 sm:w-11" />
           <col className="hidden w-[5.5rem] sm:table-column" />
           <col />
           {show.has('labels') && <col className="hidden w-40 md:table-column" />}
@@ -260,12 +261,7 @@ function TaskRow({
         />
       </Td>
       <Td density="narrow">
-        <StatusPicker
-          status={task.status}
-          names={names}
-          disabled={!editable}
-          onChange={(status) => onPatch(task.key, { status }, { status })}
-        />
+        <StatusToggle task={task} names={names} editable={editable} kept={kept} onPatch={onPatch} onUndo={onUndo} />
       </Td>
       <Td density="narrow" tone="muted" nowrap mono hideBelow="sm" className="text-[11.5px]">{task.key}</Td>
       <Td density="cozy-gutter" className="min-w-0">
@@ -411,5 +407,98 @@ function PhoneLine({ task, done }: { task: Task; done: boolean }): JSX.Element {
       {who && <span>{who}</span>}
       <span className="font-mono text-[10.5px] text-foreground-subtle">{task.key}</span>
     </div>
+  )
+}
+
+/** How long a press on the status circle is held to open the status menu instead. */
+const LONG_PRESS_MS = 500
+
+/** The row's status circle: ONE tap finishes an open task, or reopens a finished one
+ *  (to what it was, when it was finished here; else to todo). The full status menu is
+ *  the chevron beside it, a long-press or a right-click on the circle, and the task's
+ *  own page. A recurring template never completes (each copy does): it shows the
+ *  repeat icon and no toggle. */
+export function StatusToggle({
+  task,
+  names,
+  editable,
+  kept,
+  onPatch,
+  onUndo,
+}: {
+  task: Task
+  names?: Record<string, string> | null
+  editable: boolean
+  kept: boolean
+  onPatch: TaskTableProps['onPatch']
+  onUndo?: (task: Task) => void
+}): JSX.Element {
+  const [menu, setMenu] = useState(false)
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const longPressed = useRef(false)
+  if (task.recurrence) {
+    return (
+      <span
+        className="inline-flex size-6 items-center justify-center text-info"
+        title={`Repeats ${rhythmLabel(task.recurrence, true)}: each copy is done, not this`}
+        data-testid={`repeats-${task.key}`}
+      >
+        <Repeat aria-hidden="true" className="size-3.5" />
+        <span className="sr-only">Repeats {rhythmLabel(task.recurrence, true)}</span>
+      </span>
+    )
+  }
+  const change = (status: Task['status']) => onPatch(task.key, { status }, { status })
+  if (!editable) return <StatusPicker status={task.status} names={names} disabled onChange={change} />
+  const cat = STATUS_CATEGORY[task.status]
+  const closed = cat === 'completed' || cat === 'canceled'
+  const toggle = () => {
+    if (!closed) change('done')
+    else if (kept && onUndo) onUndo(task)
+    else change('todo')
+  }
+  const clear = () => {
+    if (timer.current) clearTimeout(timer.current)
+    timer.current = null
+  }
+  return (
+    <span className="inline-flex items-center">
+      <button
+        type="button"
+        aria-label={closed ? `Reopen ${task.key}` : `Mark ${task.key} done`}
+        title={closed ? 'Reopen' : 'Mark done (hold for every status)'}
+        data-testid={`toggle-${task.key}`}
+        className="inline-flex size-6 items-center justify-center rounded hover:bg-muted"
+        onPointerDown={() => {
+          longPressed.current = false
+          clear()
+          timer.current = setTimeout(() => {
+            longPressed.current = true
+            setMenu(true)
+          }, LONG_PRESS_MS)
+        }}
+        onPointerUp={clear}
+        onPointerLeave={clear}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          clear()
+          longPressed.current = true
+          setMenu(true)
+        }}
+        onClick={(e) => {
+          e.stopPropagation()
+          if (longPressed.current) {
+            longPressed.current = false
+            return
+          }
+          toggle()
+        }}
+      >
+        <StatusIcon status={task.status} className="size-4 sm:size-3.5" />
+      </button>
+      <StatusPicker status={task.status} names={names} onChange={change} open={menu} onOpenChange={setMenu}>
+        <ChevronDown aria-hidden="true" className="size-3 text-muted-foreground" />
+      </StatusPicker>
+    </span>
   )
 }
