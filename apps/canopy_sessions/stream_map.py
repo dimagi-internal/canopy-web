@@ -77,6 +77,9 @@ def turn_event_to_frames(evt: dict, resolve_message_id: Callable[[int], str]) ->
         # summary renders as one live, not as a line the human typed.
         if isinstance(payload.get("record"), dict):
             data["record"] = payload["record"]
+        # No person typed it (`MessageOut.automatic`), as the stored row says.
+        if payload.get("automatic") is True:
+            data["automatic"] = True
         return [{"event": "chat.user_message", "data": data}]
     if kind == "assistant":
         mid = resolve_message_id(ordinal)

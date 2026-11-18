@@ -37,6 +37,44 @@ describe("MessageItem — a compaction summary", () => {
   });
 });
 
+describe("MessageItem — a line no person typed", () => {
+  function automatic(plaintext: string, content: Record<string, unknown> = {}): Message {
+    return { ...userRow(content), plaintext, automatic: true };
+  }
+
+  it("draws an agent's scheduled wake-up on the right, labelled, not as the person's bubble", () => {
+    render(<MessageItem message={automatic("PR #2716 is in the merge queue. Check it merged and tell Jonathan.",
+      { record: { meta: true, prompt_source: "system" } })} />);
+    const row = screen.getByTestId("automatic-row");
+    expect(row.className).toContain("ml-auto");
+    expect(row.textContent).toContain("not typed by a person");
+    expect(screen.queryByTestId("message-row")).toBeNull();
+  });
+
+  it("shows a command a trigger ran as the command, not its raw tags", () => {
+    render(<MessageItem message={automatic(
+      "<command-message>ace:turn</command-message>\n<command-name>/ace:turn</command-name>\n<command-args>--thread 1a1f</command-args>",
+    )} />);
+    const row = screen.getByTestId("automatic-row");
+    expect(row.textContent).toContain("Command");
+    expect(row.textContent).toContain("/ace:turn --thread 1a1f");
+    expect(row.textContent).not.toContain("<command-name>");
+  });
+
+  it("collapses a skill's instructions", () => {
+    render(<MessageItem message={automatic("# /ace:turn\n\nProcess ACE's inbound surfaces…", { record: { meta: true } })} />);
+    const row = screen.getByTestId("automatic-row");
+    expect(row.textContent).toContain("Skill instructions");
+    expect(row.hasAttribute("open")).toBe(false);
+  });
+
+  it("leaves a line without the server's flag as the person's own bubble", () => {
+    render(<MessageItem message={{ ...userRow({ record: { meta: true } }), plaintext: "hello" }} />);
+    expect(screen.queryByTestId("automatic-row")).toBeNull();
+    expect(screen.getByTestId("message-row")).toBeTruthy();
+  });
+});
+
 function agentRow(plaintext: string, content: Record<string, unknown> = {}): Message {
   return { ...userRow(content), role: "assistant", plaintext };
 }

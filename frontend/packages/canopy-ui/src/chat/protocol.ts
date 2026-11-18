@@ -49,6 +49,11 @@ export interface Message {
   /** Who typed this line — a canopy user or a contact. Absent/null on rows
    *  from before authorship was tracked, or on the agent's own messages. */
   author?: MessageAuthor | null;
+  /** On the person's side of the transcript, but no person typed it: an
+   *  agent's scheduled wake-up, a skill's instructions, a command a trigger
+   *  ran. Decided by the server (`Message.typed`), never guessed; absent means
+   *  a person's line. */
+  automatic?: boolean;
   /** MCP Apps: this tool result has a View. Set by the
    *  server on REST rows, the snapshot and the live frame — never guessed. */
   app?: MessageAppRef | null;
@@ -463,7 +468,7 @@ export type WsEvent =
   // this row to the server's queued-turn projection, and a contact's or
   // widget's own send rendered twice: once as their bubble, once as a "queued"
   // placeholder for the same send.
-  | { event: "chat.user_message"; data: { message_id: string; turn_index: number; plaintext: string; author?: MessageAuthor | null; client_id?: string; record?: Record<string, unknown> } }
+  | { event: "chat.user_message"; data: { message_id: string; turn_index: number; plaintext: string; author?: MessageAuthor | null; client_id?: string; record?: Record<string, unknown>; automatic?: boolean } }
   | { event: "chat.delta"; data: { message_id: string; text: string } }
   // `turn_index` is the row's transcript ordinal — the same key the persisted
   // Message carries, so a live tool row sorts into exactly the position it will

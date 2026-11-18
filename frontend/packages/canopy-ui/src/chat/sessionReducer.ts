@@ -225,6 +225,7 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
           ...(frame.data.record
             ? { content: { ...existing.content, record: frame.data.record } }
             : {}),
+          ...(frame.data.automatic ? { automatic: true } : {}),
           // The agent read it, so a pending or unconfirmed row is sent.
           status: "complete" as const,
           error_detail: null,
@@ -251,6 +252,7 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
         completed_at: null,
         created_at: nowIso,
         author: frame.data.author ?? null,
+        ...(frame.data.automatic ? { automatic: true } : {}),
       };
       return { ...prev, messages: placeByOrdinal(prev.messages, user) };
     }

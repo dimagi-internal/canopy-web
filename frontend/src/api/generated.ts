@@ -24296,6 +24296,8 @@ export interface components {
             readonly secret_request?: components["schemas"]["MessageSecretRequestOut"] | null;
             /** Sealed */
             readonly sealed?: string | null;
+            /** Automatic */
+            readonly automatic?: boolean | null;
         };
         /**
          * MessagePageOut

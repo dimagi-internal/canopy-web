@@ -1682,6 +1682,11 @@ def _ingest(session, *, transcript_id, events, live, epoch=None, fan_out_held=Tr
                 event_payload = {**(event_payload or {}), "author": row.author}
             if row.client_id:
                 event_payload = {**(event_payload or {}), "client_id": row.client_id}
+            # Not typed by a person (a wake-up, a skill's body, a trigger's
+            # command), as the stored row was judged — so a watcher never sees
+            # it drawn as the person's words, live or after a reload.
+            if row.automatic:
+                event_payload = {**(event_payload or {}), "automatic": True}
         event = {"kind": e.kind, "seq": e.seq, "payload": event_payload}
         if row is not None:
             event["turn_index"] = row.turn_index
