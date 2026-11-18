@@ -1,16 +1,16 @@
-"""A plugin that stopped updating shows on the runner page, not only in a log file.
+"""A turn runs the agent's plugin as pulled at claim, and a plugin that did not install
+shows on the runner page, not only in a log file.
 
-cloud-ec2-live, 2026-11-06 → 11-18: ace@ace stayed at 0.13.2204 while its clone on the box
-(the directory marketplace it is installed from) moved 58 commits to 0.13.2233. Turns load
-the plugin CACHE, not the clone, so ACE's Slack turns ran a skill text twelve days old. The
-canopy updater that should have moved it failed every session with ENOENT and wrote that only
-to ~/.claude/canopy/fleet-update.log. The `plugins` check compares each installed plugin's
-`gitCommitSha` with HEAD of the clone it was installed from.
+Turns load the plugin CACHE, not the clone. A claim pulls the agent's clone and installs it
+with canopy's updater (`--refresh`); the `plugins` check goes amber when an installed plugin
+still lags its clone PLUGIN_REFRESH_GRACE_SECONDS after the clone last moved.
 """
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 
@@ -58,39 +58,47 @@ def _check(mod):
     return mod._HEALTH.get("plugins") or {}
 
 
-def test_a_plugin_days_behind_its_clone_turns_the_check_amber(box):
+def _moved(clone, when):
+    os.utime(clone / ".git" / "logs" / "HEAD", (when, when))
+
+
+def test_a_plugin_behind_a_clone_that_moved_long_ago_turns_the_check_amber(box):
     mod, home, clone, install = box
     installed = _commit(clone, "0.13.2204", NOW - 13 * DAY)
     _commit(clone, "fix the doc", NOW - 12 * DAY)
     _commit(clone, "0.13.2233", NOW - 1 * DAY)
+    _moved(clone, NOW - 12 * DAY)
     install(installed)
     mod._plugins_check(now=NOW, home=home)
     c = _check(mod)
     assert c["status"] == "warn"
     assert "ace@ace 0.13.2204 is 2 commits behind" in c["detail"]
-    assert "12 days" in c["detail"]
+    assert "moved 12 days ago" in c["detail"]
     assert "fleet-update.log" in c["detail"]
 
 
-def test_a_plugin_at_its_clone_or_just_behind_is_ok(box):
+def test_one_old_commit_not_installed_past_the_grace_is_amber(box):
+    """The commit's own date does not matter: a claim installs what it pulls, at once."""
+    mod, home, clone, install = box
+    installed = _commit(clone, "a", NOW - 3 * DAY)
+    _commit(clone, "b", NOW - 3 * DAY)
+    _moved(clone, NOW - mod.PLUGIN_REFRESH_GRACE_SECONDS - 60)
+    install(installed)
+    mod._plugins_check(now=NOW, home=home)
+    assert _check(mod)["status"] == "warn"
+    assert "1 commit behind" in _check(mod)["detail"]
+
+
+def test_a_plugin_at_its_clone_or_inside_the_grace_is_ok(box):
     mod, home, clone, install = box
     installed = _commit(clone, "a", NOW - 3 * DAY)
     install(installed)
     mod._plugins_check(now=NOW, home=home)
     assert _check(mod)["status"] == "ok"
-    _commit(clone, "merged an hour ago", NOW - 3600)
+    _commit(clone, "pulled a minute ago", NOW - 30 * DAY)
+    _moved(clone, NOW - 60)
     mod._plugins_check(now=NOW, home=home)
-    assert _check(mod)["status"] == "ok"           # the next session's updater takes it
-
-
-def test_many_commits_behind_warns_even_when_recent(box, monkeypatch):
-    mod, home, clone, install = box
-    installed = _commit(clone, "base", NOW - 7200)
-    for i in range(mod.PLUGIN_STALE_COMMITS + 1):
-        _commit(clone, f"c{i}", NOW - 3600)
-    install(installed)
-    mod._plugins_check(now=NOW, home=home)
-    assert _check(mod)["status"] == "warn"
+    assert _check(mod)["status"] == "ok"           # the claim that pulled it is installing it
 
 
 def test_a_sha_the_clone_does_not_know_is_not_judged(box):
@@ -98,6 +106,7 @@ def test_a_sha_the_clone_does_not_know_is_not_judged(box):
     not in the clone's history, so there is nothing honest to compare."""
     mod, home, clone, install = box
     _commit(clone, "marketplace", NOW - 30 * DAY)
+    _moved(clone, NOW - 30 * DAY)
     install("0123456789abcdef0123456789abcdef01234567")
     mod._plugins_check(now=NOW, home=home)
     assert _check(mod)["status"] == "ok"
@@ -107,3 +116,71 @@ def test_unreadable_registry_reports_nothing(box):
     mod, home, _, _ = box
     mod._plugins_check(now=NOW, home=home)
     assert "plugins" not in mod._HEALTH
+
+
+# ── the claim installs what it pulled ───────────────────────────────────────
+
+
+@pytest.fixture
+def updater(cloud_runner, monkeypatch, tmp_path):
+    script = tmp_path / "canopy" / "hooks" / "fleet_session_start_update.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("def refresh_plugin(): ...\n")
+    monkeypatch.setattr(cloud_runner, "_canopy_fleet_updater", lambda: script)
+    calls, logs = [], []
+    monkeypatch.setattr(cloud_runner, "_log", logs.append)
+
+    def answer(rc, out):
+        def run(argv, **kw):
+            calls.append((argv, kw.get("timeout")))
+            return SimpleNamespace(returncode=rc, stdout=out, stderr="")
+        monkeypatch.setattr(cloud_runner.subprocess, "run", run)
+
+    return cloud_runner, script, calls, logs, answer
+
+
+def test_a_claim_installs_the_pulled_clone_with_canopys_updater(updater, tmp_path):
+    mod, script, calls, logs, answer = updater
+    answer(0, "ace 0.13.2204→0.13.2234 (sha 3012a80e→41502e5a)\n")
+    mod._refresh_agent_plugin("ace", tmp_path / "agents" / "ace")
+    assert calls == [(["python3", str(script), "--refresh", "ace", "--clone",
+                       str(tmp_path / "agents" / "ace")], mod.PLUGIN_REFRESH_TIMEOUT)]
+    assert logs == ["plugin: ace 0.13.2204→0.13.2234 (sha 3012a80e→41502e5a)"]
+
+
+def test_an_installed_clone_logs_nothing(updater, tmp_path):
+    mod, _script, calls, logs, answer = updater
+    answer(0, "ace up-to-date\n")
+    mod._refresh_agent_plugin("ace", tmp_path / "agents" / "ace")
+    assert len(calls) == 1 and logs == []
+
+
+def test_a_failed_install_is_logged_and_the_turn_still_runs(updater, tmp_path):
+    mod, _script, _calls, logs, answer = updater
+    answer(1, "ace error: sync: copy failed\n")
+    mod._refresh_agent_plugin("ace", tmp_path / "agents" / "ace")
+    assert len(logs) == 1 and "ace error: sync: copy failed" in logs[0]
+    assert "runs the version already installed" in logs[0]
+
+
+def test_no_canopy_updater_on_the_box_means_nothing_is_run(cloud_runner, monkeypatch, tmp_path):
+    monkeypatch.setattr(cloud_runner.subprocess, "run",
+                        lambda *a, **k: pytest.fail("nothing to run"))
+    cloud_runner._refresh_agent_plugin("ace", tmp_path / "agents" / "ace")
+
+
+def test_an_updater_without_refresh_is_never_used(load_cloud_runner, monkeypatch, tmp_path):
+    """An older canopy updater ignores `--refresh` and runs a whole-fleet update: never at claim."""
+    mod = load_cloud_runner()
+    root = tmp_path / "canopy"
+    (root / "hooks").mkdir(parents=True)
+    (root / "hooks" / "fleet_session_start_update.py").write_text("def main(): ...\n")
+    monkeypatch.setattr(mod, "_canopy_plugin_root", lambda: root)
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("cr_real", mod.__file__)
+    real = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(real)
+    monkeypatch.setattr(real, "_canopy_plugin_root", lambda: root)
+    assert real._canopy_fleet_updater() is None
+    (root / "hooks" / "fleet_session_start_update.py").write_text("def refresh_plugin(): ...\n")
+    assert real._canopy_fleet_updater() == root / "hooks" / "fleet_session_start_update.py"
