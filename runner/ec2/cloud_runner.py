@@ -1260,7 +1260,125 @@ def _canopy_cli_check() -> None:
         _set_check("canopy.cli", "ok", f"canopy {cli}")
 
 
+#: Seconds a plugin may lag the clone it is installed from, counted from when the clone last
+#: moved, before the `plugins` check goes amber. A claim pulls the clone and installs it at once
+#: (`_refresh_agent_plugin`), so any lag past this means that install failed.
+PLUGIN_REFRESH_GRACE_SECONDS = int(os.environ.get("PLUGIN_REFRESH_GRACE_SECONDS", "600"))
+#: Seconds a claim waits for that install: canopy's updater waits up to two minutes for another
+#: update of the same plugin, then copies the agent's files (about a second for ACE).
+PLUGIN_REFRESH_TIMEOUT = int(os.environ.get("PLUGIN_REFRESH_TIMEOUT", "240"))
+
+
+def _canopy_fleet_updater() -> pathlib.Path | None:
+    """The installed canopy plugin's fleet updater, or None when it has no `--refresh`: an
+    older one ignores the flag and runs a whole-fleet update, which would hold the claim."""
+    root = _canopy_plugin_root()
+    script = root / "hooks" / "fleet_session_start_update.py" if root else None
+    try:
+        return script if script and "def refresh_plugin(" in script.read_text() else None
+    except OSError:
+        return None
+
+
+def _refresh_agent_plugin(slug: str, clone: pathlib.Path) -> None:
+    """Install the agent's just-pulled clone as its plugin, before its turn starts.
+
+    Turns load the plugin cache, never the clone, and canopy's session-start updater runs in
+    the background, so without this a turn runs the version installed before it began. canopy's
+    updater does the copy (`--refresh`): one `git rev-parse` when nothing changed, the agent's
+    own files when something did (its node_modules is linked, not copied). A failure is logged
+    and the turn runs what is installed; the `plugins` check turns amber."""
+    updater = _canopy_fleet_updater()
+    if updater is None:
+        return
+    try:
+        r = subprocess.run(["python3", str(updater), "--refresh", slug, "--clone", str(clone)],
+                           capture_output=True, text=True, timeout=PLUGIN_REFRESH_TIMEOUT)
+    except (OSError, subprocess.SubprocessError) as exc:
+        _log(f"warn: could not install {slug}'s pulled clone as its plugin ({exc}); "
+             "the turn runs the version already installed")
+        return
+    said = " ".join((r.stdout or r.stderr or f"exit {r.returncode}").split())[-300:]
+    if r.returncode != 0:
+        _log(f"warn: could not install {slug}'s pulled clone as its plugin ({said}); "
+             "the turn runs the version already installed")
+    elif "up-to-date" not in said:
+        _log(f"plugin: {said}")
+
+
+def _clone_moved_at(loc: str) -> float:
+    """When the clone's HEAD last moved (its reflog), else when it last fetched; 0 if neither."""
+    for f in (pathlib.Path(loc) / ".git" / "logs" / "HEAD", pathlib.Path(loc) / ".git" / "FETCH_HEAD"):
+        try:
+            return f.stat().st_mtime
+        except OSError:
+            continue
+    return 0.0
+
+
+def _plugins_check(now: float | None = None, home: pathlib.Path | None = None) -> None:
+    """The `plugins` health check: amber when an installed plugin still lags the clone it is
+    installed from PLUGIN_REFRESH_GRACE_SECONDS after that clone last moved.
+
+    Turns load the plugin CACHE (installed_plugins.json's installPath), never the clone. A claim
+    pulls the agent's clone and installs it (`_refresh_agent_plugin`), and `canopy agent
+    prepare` does the same for the plugins an agent requires, so a lag that outlives the grace
+    is a failed install, whose reason canopy's updater writes to ~/.claude/canopy/fleet-update.log.
+    A plugin whose installed sha is not in its clone's history (a marketplace that points at
+    another repo, or one installed ahead of it) is not judged: there is nothing honest to compare."""
+    now = time.time() if now is None else now
+    plugins = (pathlib.Path.home() if home is None else home) / ".claude" / "plugins"
+    try:
+        installed = json.loads((plugins / "installed_plugins.json").read_text()).get("plugins") or {}
+        markets = json.loads((plugins / "known_marketplaces.json").read_text())
+    except (OSError, ValueError, AttributeError):
+        return
+
+    def git(loc: str, *args: str) -> subprocess.CompletedProcess | None:
+        try:
+            return subprocess.run(["git", "-C", loc, *args], capture_output=True, text=True,
+                                  timeout=20)
+        except (OSError, subprocess.SubprocessError):
+            return None
+
+    behind = []
+    for key, entries in sorted(installed.items()):
+        entry = entries[0] if isinstance(entries, list) and entries else {}
+        sha = str(entry.get("gitCommitSha") or "")
+        loc = str((markets.get(key.rpartition("@")[2]) or {}).get("installLocation") or "")
+        if not sha or not loc or not (pathlib.Path(loc) / ".git").exists():
+            continue
+        anc = git(loc, "merge-base", "--is-ancestor", sha, "HEAD")
+        if anc is None or anc.returncode != 0:
+            continue                          # unknown here, or installed ahead of the clone
+        missing = git(loc, "rev-list", "--count", f"{sha}..HEAD")
+        n = int(missing.stdout.strip() or 0) if missing and missing.returncode == 0 \
+            and missing.stdout.strip().isdigit() else 0
+        if not n:
+            continue
+        waited = now - _clone_moved_at(loc)
+        if waited > PLUGIN_REFRESH_GRACE_SECONDS:
+            behind.append(f"{key} {entry.get('version') or '?'} is {n} commit{'s' if n != 1 else ''} "
+                          f"behind {loc}, which moved {_ago(waited)} ago")
+    if behind:
+        _set_check("plugins", "warn",
+                   "turns load the installed plugin, not the clone, so they run old skills and "
+                   "rails — " + "; ".join(behind) + ". Why the install failed is in "
+                   "~/.claude/canopy/fleet-update.log and this runner's log.")
+    else:
+        _set_check("plugins", "ok", "")
+
+
+def _ago(seconds: float) -> str:
+    if seconds >= 2 * 86400:
+        return f"{int(seconds // 86400)} days"
+    if seconds >= 7200:
+        return f"{int(seconds // 3600)} hours"
+    return f"{max(1, int(seconds // 60))} minutes"
+
+
 def _slow_checks() -> None:
+    _plugins_check()
     claude = _version_of([CLAUDE_BIN, "--version"])
     _set_check("claude.version", *(("ok", f"Claude Code {claude}") if claude
                                    else ("fail", f"`{CLAUDE_BIN} --version` did not run")))
@@ -8160,6 +8278,7 @@ def _turn_cwd(turn: dict, turn_id: str, env: dict | None = None) -> pathlib.Path
             # fails leaves it on the agent's old skills. Never put in the turn's env.
             fetch_env = _clone_refresh_env(slug, env)
             _fetch_clone(clone, fetch_env, pull=True)
+            _refresh_agent_plugin(slug, clone)
             _ensure_session_worktree(clone, path, env=fetch_env)
         elif project:
             _project_worktree(project, path, env)
@@ -8169,6 +8288,7 @@ def _turn_cwd(turn: dict, turn_id: str, env: dict | None = None) -> pathlib.Path
         if (agent_dir / ".git").is_dir() and _safe_session_dirname(slug) == slug:
             # The clone is still pulled: the agent's plugin is installed from it.
             _fetch_clone(agent_dir, _clone_refresh_env(slug, env), pull=True)
+            _refresh_agent_plugin(slug, agent_dir)
             return _agent_turn_worktree(slug, agent_dir, turn_id, env=env)
     path = pathlib.Path(WORK_DIR) / turn_id[:8]
     if project:

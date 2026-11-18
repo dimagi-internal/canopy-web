@@ -44,6 +44,9 @@ def _load_cloud_runner():
     # would clone real private repos. Tests that exercise it set their own.
     module._LAZY_BOOTSTRAPPER = lambda slug, env=None: None
     module._LAZY_CLONER = lambda slug, env: None
+    # A claim installs the agent's pulled clone with the canopy plugin in the developer's
+    # real home; tests of that set their own updater.
+    module._canopy_fleet_updater = lambda: None
     # Also when a test replaces PATH: `_canopy_cli` falls back to ~/.local/bin.
     module._canopy_cli = lambda: CANOPY_STANDIN
     # A finish a fake `_api` refused is kept on disk for a retry: never in the
