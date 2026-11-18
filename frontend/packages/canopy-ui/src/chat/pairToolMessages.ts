@@ -43,10 +43,11 @@ function toolResultId(message: Message): string | null {
   return typeof id === "string" && id !== "" ? id : null;
 }
 
-/** A line a person sent (not a compaction summary, not a withdrawn send). */
+/** A line a person sent (not a compaction summary, not a withdrawn send, not
+ *  one a program put on their side of the transcript). */
 function isPersonLine(m: Message): boolean {
   const record = m.content?.record as Record<string, unknown> | undefined;
-  return m.role === "user" && m.content?.cancelled !== true && !record?.compact_summary;
+  return m.role === "user" && m.content?.cancelled !== true && !record?.compact_summary && !m.automatic;
 }
 
 /**

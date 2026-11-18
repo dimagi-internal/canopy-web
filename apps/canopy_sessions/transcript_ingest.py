@@ -367,6 +367,8 @@ class StoredRow:
     client_id: str
     #: Written by this call; False when the session already held it.
     fresh: bool
+    #: A USER row no person typed (`transcript_read.is_automatic`).
+    automatic: bool = False
 
 
 @dataclass
@@ -666,10 +668,11 @@ def record_transcript(session, rows, *, transcript_id: str = "", epoch: int | No
         new_indices = {m.turn_index for m in fresh}
         stored = [
             StoredRow(index=shipped[ti], turn_index=ti, message_id=str(pk), role=role,
-                      author=author, client_id=_client_id_of(content), fresh=ti in new_indices)
-            for pk, ti, role, author, content in Message.objects.filter(
+                      author=author, client_id=_client_id_of(content), fresh=ti in new_indices,
+                      automatic=role == Message.USER and not typed)
+            for pk, ti, role, author, content, typed in Message.objects.filter(
                 session=locked, turn_index__in=[p[0] for p in prepared if p[0] in shipped],
-            ).order_by("turn_index").values_list("pk", "turn_index", "role", "author", "content")
+            ).order_by("turn_index").values_list("pk", "turn_index", "role", "author", "content", "typed")
         ]
         return Recorded(session=locked, rows=stored, created=len(fresh))
 

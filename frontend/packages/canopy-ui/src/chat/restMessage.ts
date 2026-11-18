@@ -36,6 +36,8 @@ export interface RestMessage {
   secret_request?: Message["secret_request"];
   /** A sensitive conversation's sealed words (`MessageOut.sealed`). */
   sealed?: string | null;
+  /** No person typed this line (`MessageOut.automatic`). Absent on an older server. */
+  automatic?: boolean | null;
 }
 
 /**
@@ -64,5 +66,6 @@ export function restToKitMessage(m: RestMessage): Message {
     ...(m.app ? { app: m.app } : {}),
     ...(m.secret_request ? { secret_request: m.secret_request } : {}),
     ...(m.sealed ? { sealed: m.sealed } : {}),
+    ...(m.automatic ? { automatic: true } : {}),
   };
 }

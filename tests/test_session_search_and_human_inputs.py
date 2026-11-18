@@ -353,3 +353,26 @@ def test_provenance_beats_a_misleading_text():
                            content={"text": "Do a turn of work as Hal.", "record": {"meta": True}})
     body = c.get(f"/api/canopy-sessions/{s.id}/human-inputs").json()
     assert [m["plaintext"] for m in body["messages"]] == [quoted]
+
+
+def test_the_chat_is_told_which_lines_no_person_typed():
+    """`MessageOut.automatic`: the chat draws a wake-up, a skill body or a summary
+    on the person's side but not as their words. Only the server's judgement says
+    so; every line a person typed stays unflagged."""
+    user, ws, c = _ctx()
+    s = _web(ws, user, "supply-chat", at=T0)
+    _ingest(s)
+    body = c.get(f"/api/canopy-sessions/{s.id}").json()
+    users = [m for m in body["messages"] if m["role"] == Message.USER]
+    assert [m["plaintext"] for m in users if not m["automatic"]] == TYPED
+    assert sum(bool(m["automatic"]) for m in users) == len(users) - len(TYPED)
+    # True or null, never false: an unflagged line is the person's.
+    assert {m["automatic"] for m in body["messages"]} == {True, None}
+
+
+def test_a_send_not_yet_judged_is_never_automatic():
+    from apps.canopy_sessions.transcript_read import is_automatic
+
+    unsaved = Message(role=Message.USER, plaintext="hi", content={"text": "hi"})
+    unsaved.pk = "transient:abc"
+    assert not is_automatic(unsaved)

@@ -276,6 +276,20 @@ def is_human_input(message, program: set[str], injected: InjectedPrompts | None 
     return _normalized_prompt(text) not in program
 
 
+def is_automatic(message) -> bool:
+    """Is this a stored USER row that no person typed (`Message.typed` False)?
+
+    Only a saved `Message` answers yes: an unsaved send's echo (`send.py`'s
+    transient row, pk `transient:…`) and a local session's tail (`TailMessage`)
+    have not been judged, and a person's words drawn as automatic is the worse
+    error than the reverse."""
+    if not isinstance(message, Message) or message.role != Message.USER:
+        return False
+    if message.pk is None or str(message.pk).startswith("transient:"):
+        return False
+    return not message.typed
+
+
 def mark_typed(session: Session, turn_indices) -> int:
     """Set `Message.typed` on those of `session`'s USER rows at `turn_indices` that
     a person typed (`is_human_input`). Run once as rows are stored, so every

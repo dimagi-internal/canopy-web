@@ -12,6 +12,8 @@ from pydantic import AliasChoices, Field, field_validator
 from apps.harness import clis
 from apps.harness.schemas import ChatSendOrigin, ParentIn, TurnOut, chat_send_origin
 
+from . import transcript_read
+
 
 class ConversationKeyWrapIn(Schema):
     """A conversation key's private half wrapped to a vault key: `{alg: "ecdh-es", epk,
@@ -297,6 +299,12 @@ class MessageOut(Schema):
     #: conversation's own people on its chat surfaces (`sensitivity.readable`); null
     #: for every other reader and every ordinary conversation.
     sealed: str | None = None
+    #: A line on the person's side of the transcript that no person typed — an
+    #: agent's scheduled wake-up, a skill's instructions, a command a trigger ran
+    #: (`Message.typed`, the `transcript_read.is_human_input` rule). The chat shows
+    #: it on the person's side but not as their words. True or null, never false:
+    #: null whenever unsure, so an unjudged line stays the person's.
+    automatic: bool | None = None
 
     @staticmethod
     def resolve_id(obj) -> str:
@@ -311,6 +319,12 @@ class MessageOut(Schema):
         if isinstance(obj, MessageOut):  # already built (a response re-validates it)
             return obj.sealed
         return getattr(obj, "readable_sealed", None)
+
+    @staticmethod
+    def resolve_automatic(obj) -> bool | None:
+        if isinstance(obj, MessageOut):  # already built (a response re-validates it)
+            return obj.automatic
+        return True if transcript_read.is_automatic(obj) else None
 
 
 class SealedKeyWrapOut(Schema):

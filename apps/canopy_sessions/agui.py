@@ -286,7 +286,8 @@ def project(frame: dict, *, thread_id: str, run_id: str = "") -> list[E.BaseEven
                 # And `client_id`, the send's own nonce: the sender's page matches
                 # the line it drew when the button was pressed to this echo by it.
                 metadata=_meta(turn_index=data.get("turn_index"), author=data.get("author"),
-                               record=data.get("record"), client_id=data.get("client_id") or None),
+                               record=data.get("record"), client_id=data.get("client_id") or None,
+                               automatic=data.get("automatic") or None),
             )
         ]
 
