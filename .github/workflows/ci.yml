@@ -489,6 +489,13 @@ jobs:
         env:
           DJANGO_SETTINGS_MODULE: config.settings.test
 
+      # A rename, a raw-SQL drop, or a drop the deploy cannot hold back breaks the
+      # release still serving while the new one rolls out.
+      - name: New migrations are safe for the running release
+        run: uv run python manage.py check_migration_rollout --base "${{ github.event.pull_request.base.sha }}"
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings.test
+
       - uses: actions/setup-node@v7
         with:
           node-version: "20"
