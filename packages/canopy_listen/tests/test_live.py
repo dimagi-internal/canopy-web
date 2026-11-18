@@ -110,14 +110,26 @@ def test_voices_are_told_apart_and_short_audio_never_invents_a_person():
 
 def test_segments_carry_meeting_time_and_speaker():
     voices = {0: np.array([1.0, 0.0]), 1: np.array([0.0, 1.0])}
-    t = make([(0.0, 2.0, "from alice"), (2.2, 4.5, "from bob")])
+    t = make([(0.0, 2.0, "from alice"), (2.2, 5.0, "from bob"), (5.2, 6.4, "and me")])
     t.embed = lambda clip: voices[0] if t.base < 1 else voices[1]
     t.feed(audio(3.5))
     first = t.step()
-    t.feed(audio(3.0))
+    t.feed(audio(3.5))
     second = t.step()
     assert [(s.text, s.speaker) for s in first + second] == [("from alice", 0), ("from bob", 1)]
     assert second[0].start == 2.2
+
+
+def test_a_short_sentence_in_a_new_voice_joins_the_closest_person():
+    """A second or two of a phone microphone is too little voice to start a new person."""
+    voices = {0: np.array([1.0, 0.0]), 1: np.array([0.0, 1.0])}
+    t = make([(0.0, 3.0, "from alice"), (3.2, 5.0, "short")])
+    t.embed = lambda clip: voices[0] if t.base < 1 else voices[1]
+    t.feed(audio(4.0))
+    first = t.step()
+    t.feed(audio(2.5))
+    second = t.step()
+    assert [(s.text, s.speaker) for s in first + second] == [("from alice", 0), ("short", 0)]
 
 
 # --- by pause: for models that return text with no timings ---------------------------

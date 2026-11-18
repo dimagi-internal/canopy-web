@@ -1,6 +1,6 @@
 """Compare models on real speech, the way a live meeting uses them.
 
-Each recording is replayed through the live engine in 2-second steps, as fast as the
+Each recording is replayed through the live engine in the recorder's own steps, as fast as the
 models allow, so what is measured is what a meeting gets:
 
   * WER: words wrong / reference words, after lower-casing and dropping punctuation.
@@ -25,8 +25,11 @@ from pathlib import Path
 import numpy as np
 
 from .live import SAMPLE_RATE, Labeller, LiveTranscriber
+from .recorder import STEP_SECONDS
 
-STEP = 2.0
+# What a meeting gets: words committed early are read with less audio after them, so a
+# longer step than the recorder's would measure a different transcript.
+STEP = STEP_SECONDS
 
 
 def words(text: str) -> list[str]:

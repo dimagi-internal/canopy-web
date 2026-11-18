@@ -14,7 +14,7 @@ DEFAULTS = {
     "speakers": "titanet",
     "final": "none",
     "language": "en",
-    "same_voice": 0.66,
+    "same_voice": 0.55,
 }
 
 
