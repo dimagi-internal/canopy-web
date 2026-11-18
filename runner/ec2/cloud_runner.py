@@ -1260,7 +1260,70 @@ def _canopy_cli_check() -> None:
         _set_check("canopy.cli", "ok", f"canopy {cli}")
 
 
+#: A plugin whose clone moved on is "stale" once the oldest commit it is missing is older than
+#: this, or it misses more than PLUGIN_STALE_COMMITS commits. Under either, canopy's
+#: session-start updater is expected to have moved it already.
+PLUGIN_STALE_SECONDS = int(os.environ.get("PLUGIN_STALE_SECONDS", str(2 * 86400)))
+PLUGIN_STALE_COMMITS = int(os.environ.get("PLUGIN_STALE_COMMITS", "20"))
+
+
+def _plugins_check(now: float | None = None, home: pathlib.Path | None = None) -> None:
+    """The `plugins` health check: amber when an installed plugin lags the clone it is
+    installed from.
+
+    Turns load the plugin CACHE (installed_plugins.json's installPath), never the clone. An
+    agent's clone is pulled for every turn, but the cache moves only when canopy's
+    session-start updater succeeds, and that updater swallows its errors into
+    ~/.claude/canopy/fleet-update.log. On cloud-ec2-live it failed every session for twelve
+    days (2026-11-06 → 11-18), so ACE's turns ran skill text 58 commits old with nothing on
+    this page. A plugin whose installed sha is not in its clone's history (a marketplace that
+    points at another repo) is not judged: there is nothing honest to compare."""
+    now = time.time() if now is None else now
+    plugins = (pathlib.Path.home() if home is None else home) / ".claude" / "plugins"
+    try:
+        installed = json.loads((plugins / "installed_plugins.json").read_text()).get("plugins") or {}
+        markets = json.loads((plugins / "known_marketplaces.json").read_text())
+    except (OSError, ValueError, AttributeError):
+        return
+
+    def git(loc: str, *args: str) -> subprocess.CompletedProcess | None:
+        try:
+            return subprocess.run(["git", "-C", loc, *args], capture_output=True, text=True,
+                                  timeout=20)
+        except (OSError, subprocess.SubprocessError):
+            return None
+
+    behind = []
+    for key, entries in sorted(installed.items()):
+        entry = entries[0] if isinstance(entries, list) and entries else {}
+        sha = str(entry.get("gitCommitSha") or "")
+        loc = str((markets.get(key.rpartition("@")[2]) or {}).get("installLocation") or "")
+        if not sha or not loc or not (pathlib.Path(loc) / ".git").exists():
+            continue
+        anc = git(loc, "merge-base", "--is-ancestor", sha, "HEAD")
+        if anc is None or anc.returncode != 0:
+            continue                          # unknown here, or installed ahead of the clone
+        missing = git(loc, "log", "--format=%ct", f"{sha}..HEAD")
+        stamps = [int(s) for s in (missing.stdout.split() if missing and missing.returncode == 0 else [])
+                  if s.isdigit()]
+        if not stamps:
+            continue
+        waited = now - min(stamps)
+        if waited > PLUGIN_STALE_SECONDS or len(stamps) > PLUGIN_STALE_COMMITS:
+            n = len(stamps)
+            behind.append(f"{key} {entry.get('version') or '?'} is {n} commit{'s' if n != 1 else ''} "
+                          f"behind {loc} (waiting {int(waited // 86400)} days)")
+    if behind:
+        _set_check("plugins", "warn",
+                   "turns load the installed plugin, not the clone, so they run old skills and "
+                   "rails — " + "; ".join(behind) + ". Why it did not move is in "
+                   "~/.claude/canopy/fleet-update.log (canopy's session-start updater).")
+    else:
+        _set_check("plugins", "ok", "")
+
+
 def _slow_checks() -> None:
+    _plugins_check()
     claude = _version_of([CLAUDE_BIN, "--version"])
     _set_check("claude.version", *(("ok", f"Claude Code {claude}") if claude
                                    else ("fail", f"`{CLAUDE_BIN} --version` did not run")))
