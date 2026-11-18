@@ -60,7 +60,7 @@ export function UpdatesSection({
   const drafts = detail.draft_updates ?? []
   const diff = diffSummary(latest?.diff)
   return (
-    <Section id="project-update" title="Latest update" description="How it is going, in a line and a health: on track, at risk or off track.">
+    <Section id="project-update" title="Latest update" description="How it is going, in a line.">
       {detail.update_missing && (
         <p className="mb-3 rounded border border-warning/30 bg-warning/10 px-3 py-2 text-[12px] text-warning" data-testid="update-missing">
           Update missing — this project has had no update for longer than the workspace expects.

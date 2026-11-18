@@ -1,9 +1,9 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 
 import { apiV2 } from '@/api/client.v2'
 import { API_BASE, CSRF_COOKIE_NAME, apiUrl } from '@/api/base'
-import { setAssistant } from './assistant'
+import { PHONE_QUERY, hasInlineLauncher, onInlineLauncherChanged, setAssistant } from './assistant'
 import { buildPageContext } from './pageContext'
 import { tokenUrlFor } from './grantPage'
 import { currentPageState, hasPageState, onPageStateChanged } from './pageState'
@@ -256,7 +256,10 @@ export function CanopyWidget() {
   // launcher is hidden, and it comes back on the next non-chat route.
   // Deliberately `location.pathname` in the deps, so it re-evaluates per route;
   // before the handle exists this is a no-op and the mount effect applies it.
-  const onChatPage = isChatRoute(location.pathname)
+  // A page that draws its own Canopy AI button for phones (`useInlineLauncher`) hides
+  // the bubble at phone width too, where it would sit over that page's controls.
+  const inlineOnPhone = useInlineOnPhone()
+  const onChatPage = isChatRoute(location.pathname) || inlineOnPhone
   const onChatPageRef = useRef(onChatPage)
   onChatPageRef.current = onChatPage
   useEffect(() => {
@@ -270,6 +273,23 @@ export function CanopyWidget() {
   }, [theme])
 
   return null
+}
+
+/** A page with its own Canopy AI button is mounted and the screen is phone-sized. */
+function useInlineOnPhone(): boolean {
+  const [on, setOn] = useState(false)
+  useEffect(() => {
+    const mq = typeof window !== 'undefined' && window.matchMedia ? window.matchMedia(PHONE_QUERY) : null
+    const read = () => setOn(hasInlineLauncher() && Boolean(mq?.matches))
+    read()
+    const stop = onInlineLauncherChanged(read)
+    mq?.addEventListener?.('change', read)
+    return () => {
+      stop()
+      mq?.removeEventListener?.('change', read)
+    }
+  }, [])
+  return on
 }
 
 /** A chat session page, the chat home (`/w/:workspace/sessions[/:id]`), or the

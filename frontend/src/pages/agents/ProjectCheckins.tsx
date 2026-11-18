@@ -23,6 +23,7 @@ export function CheckinsPanel({
   projectAgent,
   canAdd,
   onRan,
+  onContent,
 }: {
   project: ProjectKey
   /** The project's own agent — always one of a check-in's agents. */
@@ -31,6 +32,8 @@ export function CheckinsPanel({
   canAdd: boolean
   /** A run was started here: the timeline should re-read. */
   onRan: () => void
+  /** Whether the project has a check-in (the project page hides an empty section). */
+  onContent?: (has: boolean) => void
 }): JSX.Element {
   const [rows, setRows] = useState<Checkin[] | null>(null)
   const [error, setError] = useState('')
@@ -53,6 +56,10 @@ export function CheckinsPanel({
   useEffect(() => {
     void load()
   }, [load])
+  const has = rows === null ? null : rows.length > 0
+  useEffect(() => {
+    if (has !== null) onContent?.(has)
+  }, [has, onContent])
 
   const act = (c: Checkin, what: 'run' | 'delete') => {
     if (what === 'delete' && !window.confirm(`Delete the check-in “${c.name}”? Its past runs stay on the timeline.`)) return

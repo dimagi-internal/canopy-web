@@ -22,11 +22,14 @@ export function ProjectShares({
   workspace,
   handle,
   onChanged,
+  onContent,
 }: {
   detail: ProjectDetail
   workspace: string
   handle: string
   onChanged: () => void
+  /** Whether it is shared anywhere (the page hides an empty section). */
+  onContent?: (has: boolean) => void
 }): JSX.Element | null {
   const [shares, setShares] = useState<ProjectShare[]>([])
   const [tree, setTree] = useState<WorkspaceOut[]>([])
@@ -47,6 +50,9 @@ export function ProjectShares({
       .then(setTree)
       .catch(() => setTree([]))
   }, [detail.may_edit])
+
+  const has = shares.length > 0
+  useEffect(() => onContent?.(has), [has, onContent])
 
   if (!shares.length && !detail.may_edit) return null
 
@@ -93,7 +99,7 @@ export function ProjectShares({
     <Section
       id="project-shares"
       title="Shared with"
-      description="Other workspaces of this organisation that can read this project, and whose agents can join it. A share covers the workspaces below it too."
+      description="Other workspaces of this organisation that can see this project (and the ones below them)."
     >
       {shares.length > 0 && (
         <ul className="mb-3 divide-y divide-border rounded-lg border border-border bg-card text-[13px]" data-testid="project-shares">

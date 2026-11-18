@@ -134,8 +134,21 @@ export function CheckinForm({
 }
 
 /** Every check-in run on the project, newest first. `version` re-reads it. */
-export function CheckinTimeline({ project, version = 0 }: { project: ProjectKey; version?: number }): JSX.Element | null {
+export function CheckinTimeline({
+  project,
+  version = 0,
+  onContent,
+}: {
+  project: ProjectKey
+  version?: number
+  /** Whether any check-in has run (the project page hides an empty section). */
+  onContent?: (has: boolean) => void
+}): JSX.Element | null {
   const [runs, setRuns] = useState<CheckinTimelineRun[] | null>(null)
+  const has = runs === null ? null : runs.length > 0
+  useEffect(() => {
+    if (has !== null) onContent?.(has)
+  }, [has, onContent])
   const [error, setError] = useState('')
   const key = `${project.agent}/${project.ref}/${project.workspace ?? ''}`
   useEffect(() => {

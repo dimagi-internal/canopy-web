@@ -22,11 +22,14 @@ export function ProjectMembers({
   workspace,
   handle,
   onChanged,
+  onContent,
 }: {
   detail: ProjectDetail
   workspace: string
   handle: string
   onChanged: () => void
+  /** Whether anyone is on it by name (the page hides an empty section). */
+  onContent?: (has: boolean) => void
 }): JSX.Element | null {
   const [people, setPeople] = useState<ProjectPeople | null>(null)
   const [email, setEmail] = useState('')
@@ -58,6 +61,11 @@ export function ProjectMembers({
     [onChanged],
   )
 
+  const has = people ? (people.members ?? []).length > 0 : null
+  useEffect(() => {
+    if (has !== null) onContent?.(has)
+  }, [has, onContent])
+
   if (!people) return null
   const members = people.members ?? []
   const missing = people.box_owners_missing ?? []
@@ -78,8 +86,8 @@ export function ProjectMembers({
       title="People"
       description={
         hasVaults
-          ? 'Who is on this project. They can change it and open its vaults. Having access to one of its agents is not enough.'
-          : 'Who is on this project. They can change it, and they will open any vault attached to it.'
+          ? 'Who is on this project. They can change it and open its vaults.'
+          : 'Who is on this project. They can change it.'
       }
     >
       {members.length > 0 && (

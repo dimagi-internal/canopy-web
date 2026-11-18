@@ -38,6 +38,7 @@ import {
   statusName,
 } from './meta'
 import { JobReviewDecision } from './JobReviewDecision'
+import { rhythmLabel } from './recurring'
 import { TaskTable } from './TaskTable'
 import { invalidateDirectory, useDirectory } from './useDirectory'
 
@@ -165,6 +166,22 @@ export function TaskDetailView({
           </span>
         </div>
         <EditableTitle value={task.title} disabled={!editable} onSave={(title) => patch({ title })} />
+        {task.recurrence && (
+          <p className="mt-1 text-[12.5px] text-muted-foreground" data-testid="task-repeats">
+            Repeats {rhythmLabel(task.recurrence, true)}
+            {' · '}
+            {task.last_done ? `last done ${relativeAge(task.last_done, new Date(), { seconds: false, words: true })}` : 'not done yet'}
+          </p>
+        )}
+        {task.template_key && (
+          <p className="mt-1 text-[12.5px] text-muted-foreground" data-testid="task-copy-of">
+            Copy of{' '}
+            <Link to={scopedPath(workspace, `/tasks/${task.template_key}`)} className="hover:text-primary">
+              <span className="font-mono">{task.template_key}</span>
+              {task.template_title ? ` ${task.template_title}` : ''}
+            </Link>
+          </p>
+        )}
       </header>
 
       <dl className="mb-5 grid grid-cols-[7rem_1fr] gap-x-3 gap-y-1.5 text-[13px]" data-testid="task-properties">
