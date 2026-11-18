@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, render, screen, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 
 const m = vi.hoisted(() => ({ getDynamicView: vi.fn(), getInstalledApp: vi.fn() }))
@@ -16,6 +16,7 @@ vi.mock('./DynamicViewsPage', () => ({ useCanEditViews: () => false }))
 
 import DynamicViewPage from './DynamicViewPage'
 import WorkspaceAppPage from './WorkspaceAppPage'
+import { hasInlineLauncher, setAssistant } from '@/widget/assistant'
 
 const CONNECTIONS = [{ provider: 'salesforce', as: 'viewer', reads: [{ method: 'GET', path: 'query' }], writes: [{ method: 'PATCH', path: 'sobjects/Lead/*' }] }]
 
@@ -54,4 +55,19 @@ describe('an app page', () => {
     await screen.findByTestId('frame')
     expect(screen.queryByText(/This screen can use/)).toBeNull()
   })
+
+  it('offers Canopy AI beside its tabs on a phone, and hides the floating bubble there', async () => {
+    m.getInstalledApp.mockResolvedValue(app())
+    const view = open('/w/apps/crm')
+    await screen.findByTestId('frame')
+    expect(hasInlineLauncher()).toBe(true)
+    act(() => setAssistant({ toggle: vi.fn() }))
+    const slot = screen.getByTestId('app-canopy-ai')
+    expect(slot.className).toContain('sm:hidden')
+    expect(within(slot).getByRole('button', { name: 'Canopy AI' })).toBeTruthy()
+    act(() => setAssistant(null))
+    view.unmount()
+    expect(hasInlineLauncher()).toBe(false)
+  })
 })
+
