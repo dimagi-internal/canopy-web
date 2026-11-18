@@ -349,9 +349,16 @@ def test_a_method_override_in_the_query_refused(w):
     token.assert_not_called()
 
 
-def test_google_not_supported(w):
-    r = w.client.post("/api/connections/google/request", json.dumps(body_of(w)), content_type=J)
+def test_an_unknown_provider_not_supported(w):
+    r = w.client.post("/api/connections/nope/request", json.dumps(body_of(w)), content_type=J)
     assert r.status_code == 409 and error_of(r) == "provider_not_supported"
+
+
+def test_a_google_call_the_view_did_not_declare(w):
+    # Drive itself is `test_connection_calls_google`; this view declares Salesforce only.
+    r = w.client.post("/api/connections/google/request", json.dumps(body_of(w, path="files", query=None)),
+                      content_type=J)
+    assert r.status_code == 403 and error_of(r) == "not_declared"
 
 
 def _redeclare(world, *reads):

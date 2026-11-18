@@ -173,7 +173,8 @@ class TemporaryAccessOut(StrictModel):
     id: uuid.UUID
     provider: str
     workspace: str
-    agent: str = Field(description="The slug of the agent it is lent to.")
+    agent: str | None = Field(description="The slug of the agent it is lent to; null: for my own calls from screens "
+                                          "in that workspace (Google Drive pages).")
     account_label: str
     expires_at: datetime = Field(description="When the token runs out. It cannot be renewed.")
 

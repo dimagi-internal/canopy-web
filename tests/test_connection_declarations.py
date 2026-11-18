@@ -84,7 +84,8 @@ def test_valid_declaration_saved_and_snapshotted(world):
     ([{**DECL, "writes": [{"method": "POST", "path": "sobjects/*"}]}], "exact"),
     ([{**DECL, "writes": [{"method": "POST", "path": "actions/custom/flow/*"}]}], "exact"),
     ([{**DECL, "writes": [{"method": "POST", "path": "apexrest/*"}]}], "exact"),
-    ([{**DECL, "provider": "google"}], "Google"),
+    # Salesforce's paths are not on Google's (Drive) list (`test_connection_calls_google`).
+    ([{**DECL, "provider": "google"}], "may not call that path"),
     ([{**DECL, "provider": "nope"}], "cannot be called"),
     ([{**DECL, "as": "somebody"}], "viewer"),
     ([{**DECL, "extra": 1}], "extra"),

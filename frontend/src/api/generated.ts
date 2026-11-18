@@ -20468,9 +20468,9 @@ export interface components {
             readonly workspace: string;
             /**
              * Agent
-             * @description The slug of the agent it is lent to.
+             * @description The slug of the agent it is lent to; null: for my own calls from screens in that workspace (Google Drive pages).
              */
-            readonly agent: string;
+            readonly agent: string | null;
             /** Account Label */
             readonly account_label: string;
             /**

@@ -46,3 +46,20 @@ describe('describeLines', () => {
     }, 'eva')).toEqual(['Delete Contacts', 'Change Contacts', 'Create Contacts', 'Read Contacts', 'Search any record eva can see'])
   })
 })
+
+describe('Google Drive lines', () => {
+  it.each([
+    [{ method: 'GET', path: 'files' }, 'List files in Drive'],
+    [{ method: 'GET', path: 'files/*' }, 'Read file details in Drive'],
+    [{ method: 'GET', path: 'files/*/listLabels' }, "Read files' labels in Drive"],
+    [{ method: 'POST', path: 'files/*/modifyLabels' }, "Change files' labels in Drive"],
+    [{ method: 'GET', path: 'about' }, 'Other Google access: GET about'],
+  ])('%j reads as %s', (line, text) => {
+    expect(describeLine(line, 'you', 'google')).toBe(text)
+  })
+
+  it('describeLines uses the entry\'s provider, never Salesforce words', () => {
+    expect(describeLines({ provider: 'google', reads: [{ method: 'GET', path: 'files' }], writes: [{ method: 'POST', path: 'files/*/modifyLabels' }] })
+      .map((l) => l.words)).toEqual(["Change files' labels in Drive", 'List files in Drive'])
+  })
+})

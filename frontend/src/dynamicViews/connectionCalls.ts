@@ -1,5 +1,5 @@
 /**
- * A screen's calls to a connected account (Salesforce), made through canopy-web.
+ * A screen's calls to a connected account (Salesforce, the viewer's Google Drive), made through canopy-web.
  *
  * A view's code runs in a sandboxed frame with no network, and is not trusted. It
  * asks `canopy.connection.request(...)`; the frame posts it to the page around it,

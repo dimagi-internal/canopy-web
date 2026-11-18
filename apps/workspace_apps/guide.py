@@ -70,6 +70,13 @@ first write, call canopy.connection.begin() first thing in the onClick: it opens
 a full minute rejects with a sentence. Not connected, the message says where and the rejection has
 e.connect_url: a button that calls canopy.navigate(e.connect_url) asks the viewer and opens it in a new
 tab. Only on a member's page, never a public one and never a draft's test copy.
+GOOGLE DRIVE: the same calls with provider "google" reach the VIEWER's own Drive (as "viewer" only),
+relative to https://www.googleapis.com/drive/v3/: reads GET files, GET files/<id>, GET
+files/<id>/listLabels; write POST files/<id>/modifyLabels (a click, as any write). Declare paths
+with * for the id (files/*/modifyLabels). Query names are limited to Drive's listing ones (q,
+pageSize, pageToken, fields, orderBy, spaces, corpora, driveId, supportsAllDrives,
+includeItemsFromAllDrives, includeLabels, maxResults). It runs only on an hour of access the viewer
+grants (never a stored connection): without one the rejection has e.connect_url, as above.
 
 WHAT THE TEMPLATE DECLARES (read it in the manifest; a workspace change cannot add these):
   an action's `when` (it applies only to a record in that state — offer the button only then),
