@@ -1,11 +1,14 @@
 """What a view or app page declares it may ask a connection to do.
 
-A screen that calls Salesforce through canopy-web says so up front, in a
+A screen that calls Salesforce or Google Drive through canopy-web says so up front, in a
 `connections` declaration saved with the view (or in an app manifest):
 
     [{"provider": "salesforce", "as": "viewer" | "shared", "agent": "<slug>",
       "reads":  [{"method": "GET",   "path": "query"}],
-      "writes": [{"method": "PATCH", "path": "sobjects/Lead/*"}]}]
+      "writes": [{"method": "PATCH", "path": "sobjects/Lead/*"}]},
+     {"provider": "google", "as": "viewer",
+      "reads":  [{"method": "GET",  "path": "files"}, {"method": "GET", "path": "files/*/listLabels"}],
+      "writes": [{"method": "POST", "path": "files/*/modifyLabels"}]}]
 
 `path` is a pattern in the canonical, decoded form `calls.match` returns: literal
 segments, and `*` standing for exactly one segment. A write names its object
@@ -17,7 +20,8 @@ against the same lines. The two checks are separate on purpose: saving can be
 wrong, a run is where a token is used.
 
 `as: "viewer"` calls with the viewer's own connection; `as: "shared"` with the
-connection `agent` shared. One entry per (provider, as, agent).
+connection `agent` shared (never for a `calls.VIEWER_ONLY` provider). One entry per
+(provider, as, agent).
 
 This module imports only `calls`: the view and app code that saves a declaration
 may import it, and it knows no model. So it also holds the registry of surfaces:
@@ -41,9 +45,9 @@ AS_VALUES = ("viewer", "shared")
 #: An agent's slug as canopy-web makes one (a Django slug, at most 80 characters).
 AGENT_RE = re.compile(r"[A-Za-z0-9_-]{1,80}")
 
-# One id-shaped segment standing in for `*` when a pattern is checked: it fits an
-# id and an object name both, so a read's `*` may be either.
-_PLACEHOLDER = "A00000000000000"
+# One id-shaped segment standing in for `*` when a pattern is checked: for Salesforce it fits an
+# id and an object name both, so a read's `*` may be either; for Google, a Drive id.
+_PLACEHOLDER = {"salesforce": "A00000000000000", "google": "A000000000000000000000000000"}
 _ENTRY_KEYS = {"provider", "as", "agent", "reads", "writes"}
 
 
@@ -186,7 +190,8 @@ def _line(where: str, raw, kind: str) -> dict:
 def _check_line(entry_provider: str, line: dict) -> dict:
     shown, kind, method, path = line["shown"], line["kind"], line["method"], line["path"]
     segments = path.split("/")
-    probe = "/".join(_PLACEHOLDER if s == "*" else s for s in segments)
+    stand_in = _PLACEHOLDER.get(entry_provider, _PLACEHOLDER["salesforce"])
+    probe = "/".join(stand_in if s == "*" else s for s in segments)
     try:
         found = calls.match(entry_provider, method, probe)
     except calls.NotAllowed as exc:
@@ -238,6 +243,9 @@ def validate(raw, *, agent_exists: Callable[[str], bool] | None = None) -> list[
         as_ = entry.get("as", "viewer")
         if as_ not in AS_VALUES:
             raise ValueError(f"{at}: as must be 'viewer' or 'shared'")
+        if as_ == "shared" and provider in calls.VIEWER_ONLY:
+            raise ValueError(f"{at}: {provider} calls from a screen use the viewer's own account only, "
+                             "not an agent's shared one")
         agent = entry.get("agent")
         if as_ == "viewer":
             if agent not in (None, ""):

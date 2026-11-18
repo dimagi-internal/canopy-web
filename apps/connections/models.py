@@ -334,7 +334,8 @@ class ConnectionSurfaceShare(models.Model):
 
 
 class TemporaryAccess(models.Model):
-    """A person's short-lived access token, lent to one agent for turns that person starts.
+    """A person's short-lived access token, lent to one agent for turns that person starts, or, with
+    no agent, kept for that person's own calls from screens in the app's workspace (`temporary.for_screens`).
 
     The other way to lend an account, for a clean-up rather than a standing connection: no refresh
     token is ever asked for, so nothing can renew it, and it dies with the token (about an hour at
@@ -349,7 +350,8 @@ class TemporaryAccess(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     app = models.ForeignKey(ConnectionApp, on_delete=models.CASCADE, related_name="temporary_accesses")
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
-    agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE, related_name="+")
+    # None: for the person's own screen calls, never handed to any turn.
+    agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE, related_name="+", null=True, blank=True)
     provider = models.CharField(max_length=40)
     account_id = models.CharField(max_length=255)
     account_label = models.CharField(max_length=255, blank=True, default="")
@@ -363,7 +365,10 @@ class TemporaryAccess(models.Model):
             # One per person, agent and provider: a new sign-in replaces it, so which token a
             # turn gets is never a guess.
             models.UniqueConstraint(fields=["user", "agent", "provider"], name="one_temporary_access_per_lend"),
+            # One for a person's screens per workspace app: which token a screen call uses is never a guess.
+            models.UniqueConstraint(fields=["user", "app"], condition=models.Q(agent__isnull=True),
+                                    name="one_temporary_access_for_screens"),
         ]
 
     def __str__(self) -> str:
-        return f"{self.provider} {self.account_label} for {self.agent_id} until {self.expires_at}"
+        return f"{self.provider} {self.account_label} for {self.agent_id or 'screens'} until {self.expires_at}"

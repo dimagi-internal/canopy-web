@@ -27,7 +27,8 @@ PROPS
                                          it fails, is cancelled, times out or the viewer may not
                                          give that agent tasks
     canopy.connection.request({provider, method, path, query?, body?, as?, agent?}) -> Promise<{status, body}>
-                                         a Salesforce call the view declares (see SALESFORCE CALLS)
+                                         a Salesforce or Google Drive call the view declares (see
+                                         SALESFORCE CALLS, GOOGLE DRIVE CALLS)
     canopy.connection.begin() -> Promise<{expires_at, hard_limit_at, writes}>
                                          open this click's window before any write (see SALESFORCE CALLS)
     canopy.agentTask(id) -> Promise<task>  re-read a task this view started (status, error, ...)
@@ -207,11 +208,35 @@ SALESFORCE CALLS
       path: "sobjects/Lead/" + lead.Id, body: {Status: "Contacted"}})
         .then(() => canopy.refresh()).catch((e) => setError(e.message))}>Mark contacted</Button>
 
+GOOGLE DRIVE CALLS
+- The same canopy.connection.request and begin(), with provider "google", on the VIEWER's own Google
+  account only (as "viewer"; "shared" is refused). Paths are relative to
+  https://www.googleapis.com/drive/v3/, and these are all there are:
+    reads:  GET files (list; query q, pageSize, pageToken, fields, orderBy, spaces, corpora, driveId,
+            supportsAllDrives, includeItemsFromAllDrives, includeLabels), GET files/<id>,
+            GET files/<id>/listLabels (query maxResults, pageToken, fields)
+    writes: POST files/<id>/modifyLabels, body {labelModifications: [...]} (a click, as any write)
+  Any other query name (alt, uploadType, ...) is refused. Declare them with * for the id:
+  "connections": [{"provider": "google", "as": "viewer",
+    "reads": [{"method": "GET", "path": "files"}, {"method": "GET", "path": "files/*"},
+              {"method": "GET", "path": "files/*/listLabels"}],
+    "writes": [{"method": "POST", "path": "files/*/modifyLabels"}]}]
+- It never uses a stored Google connection: only an hour of access the viewer grants for their own
+  screens. Without one (or once it ends) the call rejects with code "not_connected" (or
+  "session_ended") and e.connect_url: offer a button that calls canopy.navigate(e.connect_url); the
+  viewer approves at Google in a new tab, comes back and tries again. Nothing renews it. The
+  workspace's Google app must ask for "See and change file details and labels in Drive" (an admin,
+  in Settings → Connections).
+- Example, a folder's children: canopy.connection.request({provider: "google", method: "GET", path:
+  "files", query: {q: "'" + folderId + "' in parents and trashed = false", fields:
+  "nextPageToken, files(id, name, mimeType, labelInfo)", includeLabels: labelId, supportsAllDrives:
+  "true", includeItemsFromAllDrives: "true", pageSize: "1000"}}).
+
 RULES (the frame enforces them; breaking one fails, it is not "best effort")
 - No network: fetch, XHR, WebSocket and remote images are blocked by the frame's CSP.
   Everything comes through props.data, canopy.read, canopy.runAgentTask, canopy.connection.request
   or canopy.tasks.act.
-- No writes, except starting an agent task the view declares, the Salesforce writes it declares
+- No writes, except starting an agent task the view declares, the Salesforce or Drive writes it declares
   (only from a click) and the task moves it declares (only from a click): the catalog is read-only,
   canopy.runAgentTask is refused for any {agent, name} not in the view's agent_tasks,
   canopy.connection.request for any call not in its connections, and canopy.tasks.act for any

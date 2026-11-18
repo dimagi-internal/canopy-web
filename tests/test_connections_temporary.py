@@ -194,3 +194,62 @@ def test_someone_elses_is_a_404(world):
     row = _row(world, user=world.other)
     assert world.client.delete(f"/api/connections/temporary/{row.pk}").status_code == 404
     assert TemporaryAccess.objects.exists()
+
+
+# ---- for the person's own screens (Google Drive pages) -----------------------------------------
+
+def _connect_for_screens(client):
+    start = client.get(START, {"temporary": "1", "for_screens": "1", "return_to": "/w/w/views/2"})
+    query = parse_qs(urlparse(start["Location"]).query)
+    assert query["access_type"] == ["online"]
+    return client.get(CALLBACK, {"code": "c", "state": query["state"][0]})
+
+
+def test_for_screens_keeps_an_hour_for_the_person_and_no_agent(world, fake):
+    resp = _connect_for_screens(world.client)
+    assert resp["Location"].startswith("/w/w/views/2?") and "status=ok" in resp["Location"]
+    row = TemporaryAccess.objects.get()
+    assert row.agent is None and row.user == world.lender and row.app == world.app
+    assert row.expires_at <= timezone.now() + temporary.MAX_LIFETIME
+    assert not Connection.objects.exists()
+    assert temporary.for_screens(world.lender, "google", "w") == row
+    assert temporary.for_screens(world.other, "google", "w") is None
+
+
+def test_for_screens_refuses_a_refresh_token(world, fake):
+    fake.refresh_anyway = True
+    assert "reason=provider_error" in _connect_for_screens(world.client)["Location"]
+    assert not TemporaryAccess.objects.exists()
+
+
+def test_for_screens_is_never_handed_to_a_turn(world, fake):
+    _connect_for_screens(world.client)
+    assert temporary.for_turn(world.agent, "google", _turn(world.lender)) is None
+
+
+def test_for_screens_replaces_the_last_and_sits_beside_a_lend(world, fake):
+    _row(world)
+    _connect_for_screens(world.client)
+    first = TemporaryAccess.objects.get(agent__isnull=True).token
+    _connect_for_screens(world.client)
+    assert TemporaryAccess.objects.filter(agent__isnull=True).count() == 1
+    assert TemporaryAccess.objects.get(agent__isnull=True).token != first
+    assert TemporaryAccess.objects.filter(agent=world.agent).count() == 1
+
+
+def test_for_screens_ran_out_or_left_is_none(world):
+    row = TemporaryAccess.objects.create(app=world.app, user=world.lender, agent=None, provider="google",
+                                         account_id="1098", account_label="someone@gmail.com",
+                                         token=encrypt_secret("ya29.t"), expires_at=timezone.now() + timedelta(minutes=5))
+    assert temporary.for_screens(world.lender, "google", "w") == row
+    WorkspaceMembership.objects.filter(user=world.lender).delete()
+    assert temporary.for_screens(world.lender, "google", "w") is None
+    WorkspaceMembership.objects.create(workspace=world.ws, user=world.lender, role=WorkspaceMembership.EDITOR)
+    TemporaryAccess.objects.filter(pk=row.pk).update(expires_at=timezone.now() - timedelta(seconds=1))
+    assert temporary.for_screens(world.lender, "google", "w") is None
+
+
+def test_my_connections_lists_one_for_screens_with_no_agent(world, fake):
+    _connect_for_screens(world.client)
+    body = world.client.get("/api/connections/").json()
+    assert [(t["agent"], t["provider"]) for t in body["temporary"]] == [(None, "google")]

@@ -42,6 +42,8 @@ A person's start may instead name `temporary=1` with `for_agent=<slug>`
 starts. No vault key is needed, there is no share screen, and it lands back on `return_to` with
 `?connection=<provider>&status=ok`. Reasons of its own: `temporary_unsupported`, for a provider
 that cannot be asked for no refresh token, and `bad_agent`, for a slug not in this workspace.
+`temporary=1&for_screens=1` (and no `for_agent`) keeps it instead for the person's own calls
+from screens in this workspace (`temporary.for_screens`): how a Drive page gets its access.
 
 A connect that succeeds lands on the success screen,
 `/w/<workspace>/connections/<id>/connected?return_to=<return_to>&just_connected=1`, which says plainly
@@ -175,11 +177,13 @@ def connections_start(request: HttpRequest, provider: str, workspace: str) -> Ht
     if short_lived:
         if not temporary.supported(provider):
             return _land(request, return_to, provider, "error", "temporary_unsupported")
-        if temporary.agent_for(workspace, for_agent) is None:
+        # For the person's own screens (no agent), or lent to one agent.
+        screens = params.get("for_screens") == "1" and not for_agent
+        if not screens and temporary.agent_for(workspace, for_agent) is None:
             return _land(request, return_to, provider, "error", "bad_agent")
         return HttpResponseRedirect(services.begin(
             request.session, app=app, owner=owner, redirect_uri=_redirect_uri(request, provider, workspace),
-            return_to=return_to, for_agent=for_agent, temporary=True))
+            return_to=return_to, for_agent=for_agent, temporary=True, for_screens=screens))
     try:
         services.owner_keyset(owner[0], owner_obj, request.user)
     except services.ConnectionError as e:  # no vault key: nothing to seal to, so nothing is begun

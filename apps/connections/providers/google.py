@@ -62,6 +62,8 @@ class GoogleProvider(Provider):
         f"{_SCOPE}calendar.readonly": "Read calendars",
         # An agent reading a meeting transcript's Doc in a turn, on a connection the person lent it.
         f"{_SCOPE}drive.readonly": "Read files in Drive",
+        # A screen listing a folder tree and changing files' labels as the viewer (`calls.GOOGLE_RULES`).
+        f"{_SCOPE}drive.metadata": "See and change file details and labels in Drive (not contents)",
         f"{_SCOPE}calendar.events": "Edit calendar events",
     }
     rotates_refresh_token = False
@@ -70,6 +72,8 @@ class GoogleProvider(Provider):
     revokes_refused_grant = False
     temporary_access = True
     server_use_default = False
+    # A screen's Drive call never uses a sealed connection: only the viewer's own short-lived
+    # access (`calls.TEMPORARY_ONLY`, `temporary.for_screens`), so there is no switch to show.
     server_calls = False
     option_fields = (
         # Empty (the default): any Google account, including personal @gmail.com

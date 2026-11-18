@@ -8,7 +8,7 @@ whether the person may open it, the allowlist (`calls`), what that surface decla
 answer capped, and a limit on how many wait at once and how long each may take.
 
 The route is a plain `def`: Django runs it on a worker thread, as it does every route that calls a
-provider, so the wait for Salesforce blocks that thread and not the event loop. That is why
+provider, so the wait for the provider blocks that thread and not the event loop. That is why
 `_in_flight` exists, and why the read has a wall-clock limit.
 
 Every refusal is a `services.ConnectionError` whose message is a sentence for the screen
@@ -44,7 +44,7 @@ from apps.common.rate_limit import over
 from apps.common.views_debug import is_machine
 from apps.workspaces.links import base_url
 
-from . import calls, declarations, providers, server_key, server_tokens, services
+from . import calls, declarations, providers, server_key, server_tokens, services, temporary
 from .models import Connection, ConnectionOperation, ConnectionSurfaceShare
 
 CALLS_PER_MINUTE = 300
@@ -99,6 +99,8 @@ def call(request, provider: str, payload) -> dict:
         raise services.ConnectionError("not_declared", f"This screen didn't declare that {_title(provider)} call, "
                                                        "so it can't make it.")
     try:
+        if provider in calls.TEMPORARY_ONLY:
+            return _call_on_temporary(user, provider, surface, matched, query, payload)
         conn = (_shared_connection(user, provider, surface, payload.agent) if payload.as_ == "shared"
                 else _viewer_connection(user, provider, surface))
         if matched.rule.kind == "write":
@@ -119,8 +121,42 @@ def call(request, provider: str, payload) -> dict:
         # Connecting their own account wouldn't bring an agent's back.
         if payload.as_ == "viewer" and (said.code == "not_connected" or getattr(said, "connect_again", False)):
             start = reverse("connections_start", args=[provider, surface.workspace])
+            if provider in calls.TEMPORARY_ONLY:  # an hour's access for this person's screens, nothing stored
+                start += "?temporary=1&for_screens=1"
             said.members = {"connect_url": f"{base_url()}{start}"}
         raise said from None
+
+
+def _call_on_temporary(user, provider: str, surface: declarations.Surface, matched: calls.Match, query: dict,
+                       payload) -> dict:
+    """A call for a `calls.TEMPORARY_ONLY` provider: on the viewer's own short-lived access for screens in
+    the surface's workspace (`temporary.for_screens`), never a stored connection, so no refresh token is
+    ever behind it. None, or one the provider no longer takes, is `not_connected` / `session_ended` with a
+    `connect_url` that grants a new one. The same order of checks, limits and audit as any other call."""
+    title = _title(provider)
+    row = temporary.for_screens(user, provider, surface.workspace)
+    if row is None:
+        raise services.NotConnected(f"This page needs your {title} for the next hour. Allow it, then try again.")
+    if matched.rule.kind == "write":
+        _spend_write(user, payload.operation_id, surface)
+    if over(f"connections:calls:{user.pk}:{provider}", CALLS_PER_MINUTE, RATE_WINDOW_SECONDS):
+        raise services.ConnectionError("rate_limited", f"Too many {title} calls in the last minute; "
+                                                       "wait a moment and try again.")
+    sent = _Sent()
+    subject = replace(temporary._subject(row), workspace=row.app.workspace)
+    with _in_flight(user.pk):
+        try:
+            got = server_tokens.Access(temporary.token_of(row), "", "")
+            status, raw = _ask(provider, matched, query, payload.body, got, _monotonic() + TOTAL_SECONDS, sent)
+            if status == 401:  # refused, so it did not land; this token can't be renewed
+                ended = services.ConnectionError("session_ended", f"Your hour of {title} for this page has ended. "
+                                                                  "Allow it again, then try again.")
+                ended.connect_again = True
+                raise ended
+            return _answer(status, raw, provider, matched, sent)
+        finally:
+            if sent.sent:
+                _audit_subject(subject, provider, user, surface, matched, payload.operation_id, "viewer", sent)
 
 
 def open_operation(request, surface_ref: dict) -> dict:
@@ -207,9 +243,11 @@ def _require_session(request) -> None:
 
 
 def _allowed(provider: str, payload) -> tuple[calls.Match, dict]:
+    if payload.as_ == "shared" and provider in calls.VIEWER_ONLY:
+        raise services.ConnectionError("not_allowed", f"A screen can only use your own {_title(provider)} account.")
     try:
         matched = calls.match(provider, payload.method, payload.path)
-        query = calls.check_query(payload.query)
+        query = calls.check_query(payload.query, provider)
     except calls.NotSupported as exc:
         raise services.ConnectionError("provider_not_supported", str(exc)) from None
     except calls.NotAllowed as exc:
@@ -485,11 +523,16 @@ def _audit(conn: Connection, user, surface: declarations.Surface, matched: calls
     """A write as an Event in the connection's workspace, a person's connection too: `Subject.of` has
     no workspace for one, and who changed what from which screen is the workspace's history. `by` is
     who was looking and `connection` whose account it was, which differ on a shared one."""
+    _audit_subject(replace(services.Subject.of(conn), workspace=conn.app.workspace), conn.provider, user, surface,
+                   matched, operation_id, as_, sent)
+
+
+def _audit_subject(subject: services.Subject, provider: str, user, surface: declarations.Surface,
+                   matched: calls.Match, operation_id: str | None, as_: str, sent: _Sent) -> None:
     kind = "connection_call" if matched.rule.kind == "write" else "connection_read"
-    subject = replace(services.Subject.of(conn), workspace=conn.app.workspace)
     method, path = matched.rule.method, matched.path
     services.record(subject, kind, by=user, surface=f"{surface.kind}:{surface.ref}", revision=surface.revision,
                     operation_id=operation_id, method=method, path=path, status=sent.status, outcome=sent.outcome,
                     **{"as": as_},
-                    summary=f"{method} {path} on {conn.provider} from {surface.kind} {surface.ref}: "
+                    summary=f"{method} {path} on {provider} from {surface.kind} {surface.ref}: "
                             f"{sent.status or sent.outcome}")

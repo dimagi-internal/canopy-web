@@ -1,4 +1,4 @@
-/** Plain words for a Salesforce call a screen declares: "Read Leads", never `GET sobjects/Lead/*`. */
+/** Plain words for a Salesforce or Google Drive call a screen declares: "Read Leads", never `GET sobjects/Lead/*`. */
 export interface DeclaredLine {
   method: string
   path: string
@@ -16,9 +16,19 @@ function plural(type: string): string {
   return `${type}s`
 }
 
-/** `who`: whose records a search reaches, "you" or the agent the screen acts as. */
-export function lineWords({ method, path }: DeclaredLine, who = 'you'): LineWords {
+/** The Drive calls a screen may declare (apps/connections/calls.py `GOOGLE_RULES`). */
+function driveWords(m: string, path: string): LineWords {
+  if (m === 'GET' && path === 'files') return { words: 'List files in Drive' }
+  if (m === 'GET' && /^files\/[^/]+$/.test(path)) return { words: 'Read file details in Drive' }
+  if (m === 'GET' && /^files\/[^/]+\/listLabels$/.test(path)) return { words: "Read files' labels in Drive" }
+  if (m === 'POST' && /^files\/[^/]+\/modifyLabels$/.test(path)) return { words: "Change files' labels in Drive" }
+  return { words: 'Other Google access:', code: `${m} ${path}` }
+}
+
+/** `who`: whose records a search reaches, "you" or the agent the screen acts as. Salesforce unless `provider` says. */
+export function lineWords({ method, path }: DeclaredLine, who = 'you', provider = 'salesforce'): LineWords {
   const m = method.toUpperCase()
+  if (provider === 'google') return driveWords(m, path)
   if (m === 'GET' && path === 'sobjects/*/*') return { words: 'Read any record' }
   const object = path.match(/^sobjects\/([A-Za-z0-9_]+)(\/\*)?$/)
   if (object) {
@@ -33,22 +43,22 @@ export function lineWords({ method, path }: DeclaredLine, who = 'you'): LineWord
   return { words: 'Other Salesforce access:', code: `${method} ${path}` }
 }
 
-export function describeLine(line: DeclaredLine, who = 'you'): string {
-  const { words, code } = lineWords(line, who)
+export function describeLine(line: DeclaredLine, who = 'you', provider = 'salesforce'): string {
+  const { words, code } = lineWords(line, who, provider)
   return code ? `${words} ${code}` : words
 }
 
 /** Each thing a screen may do, once: what deletes first, then what else changes, then what only reads. */
 export function describeLines(
-  { reads = [], writes = [] }: { reads?: readonly DeclaredLine[]; writes?: readonly DeclaredLine[] },
+  { reads = [], writes = [], provider = 'salesforce' }: { reads?: readonly DeclaredLine[]; writes?: readonly DeclaredLine[]; provider?: string },
   who = 'you',
 ): LineWords[] {
   const isDelete = (l: DeclaredLine) => l.method.toUpperCase() === 'DELETE'
   const ordered = [...writes.filter(isDelete), ...writes.filter((l) => !isDelete(l)), ...reads]
   const seen = new Map<string, LineWords>()
   for (const line of ordered) {
-    const said = describeLine(line, who)
-    if (!seen.has(said)) seen.set(said, lineWords(line, who))
+    const said = describeLine(line, who, provider)
+    if (!seen.has(said)) seen.set(said, lineWords(line, who, provider))
   }
   return [...seen.values()]
 }

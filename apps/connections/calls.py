@@ -1,15 +1,17 @@
 """What a screen may ask a connection to do: the allowlist, and where a call goes.
 
-A view or app page calls a person's Salesforce through canopy-web, which attaches
-the token. This module is the boundary: `match` says whether a method and path is
+A view or app page calls a person's Salesforce (or the viewer's own Google Drive)
+through canopy-web, which attaches the token. This module is the boundary: `match` says whether a method and path is
 on the list (and whether it is a read or a write), and `build_url` makes the one
 URL a call goes to. Both refuse anything that is not plainly a short path of
 ordinary names, before any token is read, so a path can never move the call to
 another host or another part of the API.
 
-`path` is relative to the API root (`services/data/<SF_API_VERSION>/`), for
-example `query` or `sobjects/Lead/00Q…`. The host never comes from `path`: it is
-the connection's own sealed instance URL, checked by the provider's host rule.
+`path` is relative to the API root: Salesforce's `services/data/<SF_API_VERSION>/`
+(for example `query` or `sobjects/Lead/00Q…`), Google's `DRIVE_API_ROOT` (for
+example `files` or `files/<id>/listLabels`). The host never comes from `path`:
+for Salesforce it is the connection's own sealed instance URL, checked by the
+provider's host rule; for Google it is fixed here.
 """
 from __future__ import annotations
 
@@ -22,6 +24,8 @@ from .providers.salesforce import _instance_url
 
 # The API version the org uses (the extension's SF_API_VERSION). One place.
 SF_API_VERSION = "v65.0"
+# Google has one host for every account: the only root a screen's Google call can reach.
+DRIVE_API_ROOT = "https://www.googleapis.com/drive/v3"
 
 Kind = Literal["read", "write"]
 
@@ -53,9 +57,15 @@ _SEGMENT = re.compile(r"[A-Za-z0-9_\-]+")
 _SF_ID = re.compile(r"[A-Za-z0-9]{15}(?:[A-Za-z0-9]{3})?")
 _SF_TYPE = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
 _SF_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_\-]*")
+# A Drive file, folder or shared drive id (shared drives are 19 characters, files up to 44). The
+# lower bound also keeps Drive's own words under `files/` (`generateIds`, `trash`) from fitting.
+_DRIVE_ID = re.compile(r"[A-Za-z0-9_\-]{19,64}")
 
-# Placeholders in a pattern: a segment that must fit this expression.
-_PLACEHOLDERS = {"{type}": _SF_TYPE, "{id}": _SF_ID, "{name}": _SF_NAME}
+# Placeholders in a pattern, per provider: a segment that must fit this expression.
+_PLACEHOLDERS = {
+    "salesforce": {"{type}": _SF_TYPE, "{id}": _SF_ID, "{name}": _SF_NAME},
+    "google": {"{id}": _DRIVE_ID},
+}
 # `...` as the last segment: zero or more further ordinary segments.
 _REST = "..."
 
@@ -90,7 +100,31 @@ SALESFORCE_RULES = _rules(
     ("GET", "ui-api/...", "read", "ui-api"),
 )
 
-_RULES = {"salesforce": SALESFORCE_RULES}
+# Google: Drive v3 file metadata and labels, nothing else (no content, no sharing, no Gmail or
+# Calendar). Only the viewer's own account (`VIEWER_ONLY`), and only its short-lived access
+# (`TEMPORARY_ONLY`).
+GOOGLE_RULES = _rules(
+    ("GET", "files", "read", "files"),
+    ("GET", "files/{id}", "read", "files"),
+    ("GET", "files/{id}/listLabels", "read", "labels"),
+    ("POST", "files/{id}/modifyLabels", "write", "labels"),
+)
+
+_RULES = {"salesforce": SALESFORCE_RULES, "google": GOOGLE_RULES}
+
+# Providers whose screen calls may use only the viewer's own connection, never an agent's shared one.
+VIEWER_ONLY = frozenset({"google"})
+# Providers whose screen calls run only on the viewer's short-lived access for screens
+# (`temporary.for_screens`: no refresh token, about an hour), never on a stored connection.
+TEMPORARY_ONLY = frozenset({"google"})
+
+# The query names a Google call may carry, exactly as spelled. Everything else is refused: `alt`
+# (`alt=media` turns a metadata read into a download of the file), `uploadType`, `access_token`,
+# `oauth_token`, `key`, `callback`, `$.xgafv` and the like.
+GOOGLE_QUERY_NAMES = frozenset({
+    "q", "pageSize", "pageToken", "fields", "orderBy", "spaces", "corpora", "driveId",
+    "supportsAllDrives", "includeItemsFromAllDrives", "includeLabels", "maxResults",
+})
 
 
 # Objects a screen may read but never write, whatever a view declares: who people
@@ -134,10 +168,12 @@ def _segments(path: object) -> list[str]:
     return segments
 
 
-def check_query(query: object) -> dict[str, str | list[str]]:
+def check_query(query: object, provider: str = "salesforce") -> dict[str, str | list[str]]:
     """The query as a plain dict of str -> str | list[str], or NotAllowed.
     `_HttpMethod` is refused (any case): Salesforce honours it as a method
-    override, which would turn a declared POST into a PATCH or DELETE."""
+    override, which would turn a declared POST into a PATCH or DELETE. A Google
+    query may only use `GOOGLE_QUERY_NAMES`; its values are any text (a Drive `q`
+    such as `'<id>' in parents and trashed = false`), encoded into the query only."""
     if query is None:
         return {}
     if not isinstance(query, dict):
@@ -148,10 +184,12 @@ def check_query(query: object) -> dict[str, str | list[str]]:
             raise NotAllowed("The query must be a set of names and text values.")
         if key.strip().lower() == "_httpmethod":
             raise NotAllowed("Screens may not change the method of a call.")
+        if provider == "google" and key not in GOOGLE_QUERY_NAMES:
+            raise NotAllowed(f"Screens may not send {key[:40]!r} to Google.")
     return dict(query)
 
 
-def _fits(pattern: str, segments: list[str]) -> bool:
+def _fits(pattern: str, segments: list[str], placeholders: dict[str, re.Pattern]) -> bool:
     want = pattern.split("/")
     rest = want[-1] == _REST
     if rest:
@@ -159,7 +197,7 @@ def _fits(pattern: str, segments: list[str]) -> bool:
     if len(segments) < len(want) or (not rest and len(segments) != len(want)):
         return False
     for token, seg in zip(want, segments):
-        expr = _PLACEHOLDERS.get(token)
+        expr = placeholders.get(token)
         if not (expr.fullmatch(seg) if expr else token == seg):
             return False
     return True
@@ -168,8 +206,6 @@ def _fits(pattern: str, segments: list[str]) -> bool:
 def _rules_for(provider: object) -> tuple[Rule, ...]:
     if not isinstance(provider, str):
         raise NotSupported("That kind of connection cannot be called from a screen.")
-    if provider == "google":
-        raise NotSupported("Google calls from screens are not available yet.")
     try:
         return _RULES[provider]
     except KeyError:
@@ -185,8 +221,9 @@ def match(provider: str, method: str, path: str) -> Match:
         raise NotAllowed("Screens may not use that method.")
     verb = method.upper()
     shape_known = False
+    placeholders = _PLACEHOLDERS[provider]
     for rule in rules:
-        if _fits(rule.pattern, segments):
+        if _fits(rule.pattern, segments, placeholders):
             shape_known = True
             if rule.method == verb:
                 if rule.kind == "write" and rule.name == "sobject" and segments[1].lower() in GUARDED_OBJECTS:
@@ -200,15 +237,22 @@ def match(provider: str, method: str, path: str) -> Match:
 def build_url(provider: str, instance_url: str, path: str, query: object, *, method: str) -> str:
     """The one URL the call goes to. The call must pass `match`; the host is the
     connection's own sealed instance URL, which must pass the provider's host
-    rule; the decoded path is only ever appended, as quoted plain segments, and
+    rule (Google: always `DRIVE_API_ROOT`, and the connection names none); the
+    decoded path is only ever appended, as quoted plain segments, and
     `query` is checked and encoded."""
     allowed = match(provider, method, path)
-    params = check_query(query)
+    params = check_query(query, provider)
+    segments = allowed.path.split("/")
+    quoted = "/".join(quote(s, safe="") for s in segments)
+    if provider == "google":
+        # Google's host is fixed; a connection naming one of its own is not a Google connection.
+        if instance_url not in (None, ""):
+            raise NotAllowed("This connection's Google address cannot be used.")
+        url = f"{DRIVE_API_ROOT}/{quoted}"
+        return url + ("?" + urlencode(params, doseq=True) if params else "")
     base, _host = _instance_url(instance_url if isinstance(instance_url, str) else "")
     if not base:
         raise NotAllowed("This connection's Salesforce address cannot be used.")
-    segments = allowed.path.split("/")
-    quoted = "/".join(quote(s, safe="") for s in segments)
     if segments[0] == "apexrest":
         url = f"{base}/services/{quoted}"
     else:

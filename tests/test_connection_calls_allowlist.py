@@ -1,4 +1,5 @@
-"""The allowlist for connection calls: which Salesforce paths a screen may reach.
+"""The allowlist for connection calls: which Salesforce paths a screen may reach (Google's:
+`test_connection_calls_google`).
 
 A security boundary: a path that slips out would send a real token somewhere
 unintended, so the refusals here are tested against every escape we know of.
@@ -155,11 +156,11 @@ def test_refuses_shapes_outside_the_list(path):
             calls.match("salesforce", method, path)
 
 
-def test_google_not_supported():
+def test_google_is_drive_only():
+    # Google's own list is `test_connection_calls_google`: Gmail is not on it.
     with pytest.raises(NotAllowed) as exc:
         calls.match("google", "GET", "users/me/messages")
-    assert isinstance(exc.value, calls.NotSupported)
-    assert "Google" in str(exc.value)
+    assert not isinstance(exc.value, calls.NotSupported)
 
 
 def test_unknown_provider_not_supported():
@@ -211,9 +212,9 @@ def test_build_url_refuses_a_host_that_is_not_a_my_domain(instance):
         calls.build_url("salesforce", instance, "query", None, method="GET")
 
 
-def test_build_url_google_not_supported():
+def test_build_url_unknown_provider_not_supported():
     with pytest.raises(calls.NotSupported):
-        calls.build_url("google", "", "users/me/messages", None, method="GET")
+        calls.build_url("nope", "", "query", None, method="GET")
 
 
 def test_percent_encoded_letters_decode_to_the_canonical_path():

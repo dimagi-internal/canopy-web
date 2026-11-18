@@ -240,7 +240,8 @@ def my_connections(request: HttpRequest) -> ConnectionsOut:
                                             replaced=replaced)
                                        for c in rows],
                           temporary=[TemporaryAccessOut(id=t.pk, provider=t.provider, workspace=t.app.workspace_id,
-                                                        agent=t.agent.slug, account_label=t.account_label,
+                                                        agent=t.agent.slug if t.agent else None,
+                                                        account_label=t.account_label,
                                                         expires_at=t.expires_at)
                                      for t in temporary.mine(request.user)])
 
