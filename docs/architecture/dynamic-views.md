@@ -115,7 +115,9 @@ A view may call Salesforce through canopy-web only as it declared: `connections`
 (`connectionCalls.ts`) and the server checks again against the revision the page drew. Writes need
 a click and an operation lease, bounded by the screen's declaration; `as: "shared"` needs the
 agent's admin to have approved the project's declared lines. A rejection carries `e.connect_url`
-when connecting would fix it, which the frame can only reach through `canopy.navigate`. Readers see
+when connecting would fix it, which the frame can only reach through `canopy.navigate`. A screen
+access start (`temporary=1&for_screens=1`, this workspace) is canopy's own: on a click the page goes
+there in the same tab with `return_to` set to itself, so it comes back here (`bridge.ts::resolveNavigation`). Readers see
 the declaration beside the declared tasks (`DeclaredConnections.tsx`). The trade and its limits:
 [`vault-connections.md`](vault-connections.md) § Calls from screens.
 

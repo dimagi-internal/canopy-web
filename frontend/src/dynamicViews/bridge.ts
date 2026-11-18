@@ -78,16 +78,39 @@ export function resolveRead(catalog: CatalogModel[], ctx: ReadContext, req: Read
 
 const VAULT_KEY_SETUP = '/settings#vault-key'
 
+// canopy's own start of a person's connect (apps/connections/views.py::connections_start), the
+// `connect_url` a refused screen call carries. Only the screens form is let through.
+const CONNECT_START = /^\/auth\/connections\/[a-z][a-z0-9_-]{0,39}\/[a-z0-9][a-z0-9_-]{0,63}\/start\/$/
+
+/** The router path a connect comes back to: this page, without the outcome an earlier one left. */
+export function connectReturnTo(pathname: string, search: string, base: string): string {
+  const path = base && pathname.startsWith(`${base}/`) ? pathname.slice(base.length) : pathname
+  const q = new URLSearchParams(search)
+  for (const k of ['connection', 'status', 'reason']) q.delete(k)
+  const qs = q.toString()
+  return `${path}${qs ? `?${qs}` : ''}`
+}
+
 /** Where a view's navigate() lands: a canopy page, under the view's workspace
- * unless it names one; or an outside https or mailto: link, which the page confirms
- * first (a mailto: only opens the viewer's own mail app; nothing is sent for them). */
-export function resolveNavigation(workspace: string, path: string):
-  { kind: 'app'; to: string } | { kind: 'external'; url: string } | { kind: 'refused' } {
+ * unless it names one; canopy's own sign-in for the viewer's screen access (`connect`:
+ * the page goes there in this tab and comes back, Google's own screen being the ask);
+ * or an outside https or mailto: link, which the page confirms first (a mailto: only
+ * opens the viewer's own mail app; nothing is sent for them). */
+export function resolveNavigation(workspace: string, path: string, here?: { origin: string; base: string }):
+  { kind: 'app'; to: string } | { kind: 'connect'; url: URL } | { kind: 'external'; url: string } | { kind: 'refused' } {
   if (typeof path !== 'string' || !path) return { kind: 'refused' }
   if (/^mailto:[^\s]+$/i.test(path)) return { kind: 'external', url: path }
   if (/^https?:\/\//i.test(path)) {
     try {
       const u = new URL(path)
+      if (here && u.origin === here.origin) {
+        const p = here.base && u.pathname.startsWith(`${here.base}/`) ? u.pathname.slice(here.base.length) : u.pathname
+        const q = u.searchParams
+        if (CONNECT_START.test(p) && p.split('/')[4] === workspace && q.get('temporary') === '1'
+            && q.get('for_screens') === '1' && !q.has('for_agent') && !q.has('return_to')) {
+          return { kind: 'connect', url: u }
+        }
+      }
       return u.protocol === 'https:' ? { kind: 'external', url: u.toString() } : { kind: 'refused' }
     } catch {
       return { kind: 'refused' }

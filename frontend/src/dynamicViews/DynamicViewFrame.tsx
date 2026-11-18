@@ -23,7 +23,7 @@ import { connectionClient } from '@/api/connectionCalls'
 import { ConnectionCalls, pageClickedFrame, refusalMembers, type DeclaredConnection } from './connectionCalls'
 import { checkConnect, connectOutcome, disconnectLent, lendStartPath, type LendRequest } from './connections'
 import { checkAsk, endGoogleAccess, GoogleAccessDialog, type GoogleAccessAsk, type GoogleAccessRequest } from './googleAccess'
-import { resolveNavigation, resolveRead, type CatalogModel, type ReadContext } from './bridge'
+import { connectReturnTo, resolveNavigation, resolveRead, type CatalogModel, type ReadContext } from './bridge'
 import { ViewPagePanel } from './pagePanel'
 import { runTaskAction, type TaskAction } from './taskActions'
 import { currentAssistant } from '@/widget/assistant'
@@ -349,8 +349,15 @@ export function DynamicViewFrame({ view, scope, onError, app, pagePanel = false 
           return
         }
         case 'navigate': {
-          const to = resolveNavigation(ctx.workspace, msg.path)
+          const base = import.meta.env.BASE_URL.replace(/\/$/, '')
+          const to = resolveNavigation(ctx.workspace, msg.path, { origin: window.location.origin, base })
           if (to.kind === 'app') navigate(to.to)
+          else if (to.kind === 'connect') {
+            // Only on a click in this view; Google's own consent screen is the ask, and it comes back here.
+            if (!pageClickedFrame(frame.current)) return
+            to.url.searchParams.set('return_to', connectReturnTo(window.location.pathname, window.location.search, base))
+            window.location.assign(to.url.toString())
+          }
           else if (to.kind === 'external' && window.confirm(to.url.toLowerCase().startsWith('mailto:')
             ? `Open your email app to write to ${to.url.slice(7).split('?')[0]}?`
             : `Open ${new URL(to.url).host} in a new tab?\n\n${to.url}`)) {

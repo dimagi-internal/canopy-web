@@ -223,8 +223,9 @@ GOOGLE DRIVE CALLS
     "writes": [{"method": "POST", "path": "files/*/modifyLabels"}]}]
 - It never uses a stored Google connection: only an hour of access the viewer grants for their own
   screens. Without one (or once it ends) the call rejects with code "not_connected" (or
-  "session_ended") and e.connect_url: offer a button that calls canopy.navigate(e.connect_url); the
-  viewer approves at Google in a new tab, comes back and tries again. Nothing renews it. The
+  "session_ended") and e.connect_url: offer a button that calls canopy.navigate(e.connect_url) in
+  its click; the page goes to Google in the same tab, with no extra prompt, and comes back to this
+  page, where the viewer tries again. Nothing renews it. The
   workspace's Google app must ask for "See and change file details and labels in Drive" (an admin,
   in Settings → Connections).
 - Example, a folder's children: canopy.connection.request({provider: "google", method: "GET", path:
