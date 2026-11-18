@@ -8,6 +8,8 @@ import { useScopedPath } from '@/lib/scopedLinks'
 import { AppFrame } from '@/workspaceApps/AppFrame'
 import { SetupList } from '@/workspaceApps/SetupList'
 import { useWorkspaceList } from '@/workspace/WorkspaceProvider'
+import { CanopyAIButton } from '@/widget/CanopyAIButton'
+import { useInlineLauncher } from '@/widget/assistant'
 
 /**
  * One installed app, for a member: its member pages as tabs (the ones the
@@ -18,6 +20,10 @@ import { useWorkspaceList } from '@/workspace/WorkspaceProvider'
  * version of the app over sample records, where nothing is sent and nothing
  * touches live data — and its public pages are drawn here too, as a visitor
  * would see them, so the whole change is tried before it is published.
+ *
+ * On a phone the floating Canopy AI bubble would sit on the app's own rows, so the
+ * page offers the panel from a small button beside its tabs instead
+ * (`useInlineLauncher` hides the bubble below `sm` while it is mounted).
  */
 export default function WorkspaceAppPage() {
   const { workspace = '', appKey = '', page: pageSlug = '' } = useParams()
@@ -29,6 +35,7 @@ export default function WorkspaceAppPage() {
   const draft = Number(search.get('draft')) || null
   const [app, setApp] = useState<InstalledApp | null>(null)
   const [error, setError] = useState<string | null>(null)
+  useInlineLauncher()
 
   useEffect(() => {
     let cancelled = false
@@ -96,6 +103,9 @@ export default function WorkspaceAppPage() {
               Customize{app.has_draft ? ' (draft open)' : app.upgrade_available ? ' (update available)' : ''}
             </Link>
           )}
+          <span className="ml-1 sm:hidden" data-testid="app-canopy-ai">
+            <CanopyAIButton />
+          </span>
         </nav>
       </header>
       {app.may_maintain && !draft && <SetupList workspace={workspace} appKey={app.key} />}
