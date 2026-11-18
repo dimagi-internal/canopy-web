@@ -106,6 +106,14 @@ A template update is taken as a draft (`upgrade=true`), then the same steps.
 - **Pages**: the dynamic-view sandbox (`apps/dynamic_views/frame.py`: opaque origin,
   `connect-src 'none'`, no `allow-forms`), compiler, kit and protocol. An app page gets an
   `app` prop; a plain view still refuses writes.
+- **Seeing a page as an agent**: an agent QAs an app page it builds by opening
+  `/w/<ws>/apps/<key>/<page>` in a headless browser that sends `Authorization: Bearer
+  <its own PAT>` on every request (Playwright `extraHTTPHeaders`, gstack `browse` headers);
+  never a token in the URL, which signs nobody in. It sees exactly what its login reads
+  through the REST routes (its app roles, guest scope and gates). The sandbox frame's
+  scripts are then preflighted cross-origin requests (opaque origin plus the header);
+  `config/static_middleware.py::asset_preflight` answers that preflight for `/assets/`
+  only, which are public files, so it grants nothing.
 - **Public pages**: scoped path `/w/<ws>/app/<key>/`, `auth=None` routes that 404 alike
   when the app is off or not public, a honeypot (`api.py`), a DB-counted per-address
   limit (`services._rate_limit`). Files use the chat-attachment bucket.
