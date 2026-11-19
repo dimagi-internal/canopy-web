@@ -91,6 +91,37 @@ def _coaches(session) -> dict[int, str]:
     return {g.agent.user_id: (g.agent.name or g.agent.slug) for g in grants}
 
 
+def _grantor(session):
+    """The person whose session this is for leg 5 and 7: its creator, or the owner of the box a
+    discovered session (not an agent's) runs on. None for a contact's, a deleted one's and a sensitive one."""
+    if session.contact_id or session.content_deleted_at or sensitivity.is_sensitive(session):
+        return None
+    person = session.created_by_id
+    if person is None and _discovered(session) and not session.agent_id:
+        b = _binding(session)
+        person = b.runner.owner_id if (b is not None and b.runner_id) else None
+    return person
+
+
+def _coach_admins(session) -> dict[int, str]:
+    """Leg 7: the admins of every agent the session's person let review their sessions
+    (`access._coach_admin_q`). {user id: agent name}. An admin agent's own login reads only inside a
+    running turn; it is named here as the ACL's widest case."""
+    person = _grantor(session)
+    if person is None:
+        return {}
+    out: dict[int, str] = {}
+    grants = SessionReviewGrant.objects.filter(user_id=person, revoked_at__isnull=True).select_related("agent")
+    for g in grants:
+        ids = set(AgentAdmin.objects.filter(agent=g.agent).values_list("user_id", flat=True))
+        if g.agent.owner_id:
+            ids.add(g.agent.owner_id)
+        ids |= wsvc.owner_user_ids(g.agent.workspace_id)
+        for uid in ids:
+            out[uid] = g.agent.name or g.agent.slug
+    return out
+
+
 def _asked_reviewers(session) -> dict[int, str]:
     """Agents the session's person asked to review this one session: {agent id: name}. Not a
     leg (their turn reads as the person, `access.turn_reach`), so `readers` leaves them out;
@@ -131,6 +162,7 @@ def pieces(session) -> dict:
         "agent_admins": within(_agent_admins(session)),
         "own_login": within(_own_login(session)),
         "coaches": {uid: name for uid, name in coaches.items() if uid in members},
+        "coach_admins": {uid: name for uid, name in _coach_admins(session).items() if uid in members},
         "asked_reviewers": asked,
         "runner_admins": within(_runner_admins(session)),
     }
@@ -141,7 +173,7 @@ def readers(session) -> set[int]:
     session (the panel) has no member readers beyond these."""
     p = pieces(session)
     out = p["creator"] | p["participants"] | p["box_owner"] | p["agent_admins"] | p["own_login"]
-    out |= set(p["coaches"]) | p["runner_admins"]
+    out |= set(p["coaches"]) | set(p["coach_admins"]) | p["runner_admins"]
     return out
 
 
@@ -197,6 +229,9 @@ def summary(session, viewer) -> dict:
 
     for name in sorted(set(p["coaches"].values())):
         extras.append(f"{name} may review (coaching)")
+    admin_of = {name for uid, name in p["coach_admins"].items() if uid != _grantor(session)}
+    for name in sorted(admin_of):
+        extras.append(f"The admins of {name} may read it (coaching)")
     for name in sorted(set(p["asked_reviewers"].values())):
         extras.append(f"{name} may review this one session (asked from its page)")
     if p["runner_admins"] - p["box_owner"]:

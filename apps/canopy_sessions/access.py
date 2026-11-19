@@ -207,7 +207,7 @@ def visible_session_q(user) -> Q:
     Tenancy is a separate and prior gate (`_visible_slugs`) — this narrows
     inside it and must never be used as the only check.
 
-    Six ways in, and no seventh:
+    Seven ways in, and no eighth:
 
     1. you created it;
     2. you were made a participant — `SessionParticipant` is what "multiplayer"
@@ -240,6 +240,14 @@ def visible_session_q(user) -> Q:
        `sensitivity.is_sensitive`, failing closed). Another agent's login, or a
        person who administers the agent, gains nothing from the grant; revoking
        it drops the next read.
+    7. you ADMINISTER an agent a person let review their sessions (a live
+       `SessionReviewGrant`: the coaching program), and it is one of that person's
+       sessions as in leg 5 (`_coach_admin_q`). The person opted into coaching, which
+       is a program run by an agent today, so those who run the program read what the
+       program reads, as themselves, in the app, through a step-up or through an
+       admin agent's own turn. Same exclusions as leg 5 (never sensitive, never a
+       contact's, never words the person deleted), read-only, no pull. Not "every
+       user": only grantors of an agent you administer.
     6. you administer the runner it is bound to (`RunnerAdmin`, an explicit
        per-box grant its owner made) and it is a runner-discovered session
        (`_runner_admin_q`). READ-ONLY (`role_for` gives a viewer) and no pull
@@ -261,6 +269,7 @@ def visible_session_q(user) -> Q:
         | (Q(origin=Session.ORIGIN_RUNNER) & _agent_admin_q(user))
         | _own_work_q(user)
         | _review_grant_q(user)
+        | _coach_admin_q(user)
         | _runner_admin_q(user)
     )
     reach = reach_of(user)
@@ -460,6 +469,35 @@ def _review_grant_q(user) -> Q:
         return Q(pk__in=[])
     return (sessions_of_q(review_grantors(user).values("user_id"))
             & Q(contact__isnull=True, content_deleted_at__isnull=True) & _not_sensitive_q())
+
+
+def coached_agents(user):
+    """Agents `user` administers (the three ways in of `Agent.is_admin`), as a queryset of ids.
+    The tenant gate is the caller's, as in `_agent_admin_q`."""
+    from apps.agents.models import Agent  # noqa: PLC0415 — access imports nothing of agents at load
+    from apps.workspaces import permissions as perms  # noqa: PLC0415 — as `_tenant_slugs`
+
+    owned = perms.slugs_with(user, perms.OWN)
+    return (Agent.objects.filter(Q(owner=user) | Q(admin_grants__user=user) | Q(workspace_id__in=owned))
+            .values("pk"))
+
+
+def _coach_admin_q(user) -> Q:
+    """Leg 7: the sessions of everyone who let an agent `user` administers review them.
+
+    An agent's OWN login that is made an admin (an admin agent such as Ada) reads this only
+    inside a running turn, like leg 5 (`turn_asker.standing`): no turn, no read."""
+    if not getattr(user, "is_authenticated", False):
+        return Q(pk__in=[])
+    from apps.agents.models import Agent  # noqa: PLC0415 — access imports nothing of agents at load
+    from apps.harness import turn_asker  # noqa: PLC0415 — harness imports this module
+
+    if Agent.objects.filter(user=user).exists() and turn_asker.standing(user) is None:
+        return Q(pk__in=[])
+    grantors = (SessionReviewGrant.objects.filter(revoked_at__isnull=True, agent__in=coached_agents(user))
+                .values("user_id"))
+    return (sessions_of_q(grantors) & Q(contact__isnull=True, content_deleted_at__isnull=True)
+            & _not_sensitive_q())
 
 
 def _agent_admin_q(user) -> Q:
