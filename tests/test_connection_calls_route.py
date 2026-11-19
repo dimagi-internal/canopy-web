@@ -20,7 +20,6 @@ from django.core.cache import cache
 from django.test import Client
 from django.utils import timezone
 
-from apps.common import rate_limit
 from apps.connections import call_service, server_key, server_tokens
 from apps.connections.models import Connection
 from apps.dynamic_views import services as view_services
@@ -432,24 +431,12 @@ def test_a_switched_off_app_is_404_even_to_its_manager(w):
 
 # ---- limits ---------------------------------------------------------------------------------
 
-def test_rate_limit_429(w):
-    with mock.patch.object(call_service, "CALLS_PER_MINUTE", 2), \
-            mock.patch.object(server_tokens, "access", return_value=server_tokens.Access(ACCESS, INSTANCE, "d")) as token, \
-            Salesforce() as sf:
-        assert post(w).status_code == 200
-        assert post(w).status_code == 200
-        r = post(w)
-    assert r.status_code == 429 and error_of(r) == "rate_limited"
-    assert "rate-limit" in r.json()["type"]
-    assert r.headers["Retry-After"]
-    assert token.call_count == 2 and len(sf.calls) == 2, "refused before the token is read"
-    assert cache.get(rate_limit.slot(f"connections:calls:{w.person.pk}:salesforce", 60)) is not None
-
-
-def test_a_refused_call_spends_no_budget(w):
-    with mock.patch.object(call_service, "CALLS_PER_MINUTE", 1), FakeSF(), Salesforce():
-        assert error_of(post(w, path="limits", query=None)) == "not_declared"
-        assert post(w).status_code == 200
+def test_no_count_of_calls_over_time(w):
+    """How many calls a person makes is the provider's to limit; canopy passes its 429 back."""
+    assert not hasattr(call_service, "CALLS_PER_MINUTE")
+    with mock.patch.object(server_tokens, "access", return_value=server_tokens.Access(ACCESS, INSTANCE, "d")), \
+            Salesforce():
+        assert all(post(w).status_code == 200 for _ in range(5))
 
 
 def test_response_over_5mb_refused(w):

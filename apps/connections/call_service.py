@@ -3,7 +3,7 @@
 A dynamic view or app page never holds a token. It asks here, on the signed-in person's session,
 and this does the checks in order, each before anything more is read: a session, the surface and
 whether the person may open it, the allowlist (`calls`), what that surface declared
-(`declarations`), whose connection, a write's operation, the rate limit. Only then is a token read
+(`declarations`), whose connection, a write's operation. Only then is a token read
 (`server_tokens`) and the provider called, with no transaction held, no redirect followed, the
 answer capped, and a limit on how many wait at once and how long each may take.
 
@@ -47,8 +47,10 @@ from apps.workspaces.links import base_url
 from . import calls, declarations, providers, server_key, server_tokens, services, temporary
 from .models import Connection, ConnectionOperation, ConnectionSurfaceShare
 
-CALLS_PER_MINUTE = 300
 RATE_WINDOW_SECONDS = 60
+# No count of calls over time: how many a person makes is the provider's to limit, and its own
+# refusal (a 429) goes back to the screen as the provider's answer. Only the threads they hold are
+# bounded here (`MAX_IN_FLIGHT_*`), and clicks that open a write (`OPERATIONS_PER_MINUTE`).
 CONNECT_SECONDS, READ_SECONDS = 5, 30
 #: The whole call, however the bytes arrive: `READ_SECONDS` only bounds one wait for them.
 TOTAL_SECONDS = 35
@@ -105,9 +107,6 @@ def call(request, provider: str, payload) -> dict:
                 else _viewer_connection(user, provider, surface))
         if matched.rule.kind == "write":
             _check_operation(user, conn, surface, matched, payload.operation_id)
-        if over(f"connections:calls:{user.pk}:{provider}", CALLS_PER_MINUTE, RATE_WINDOW_SECONDS):
-            raise services.ConnectionError("rate_limited", f"Too many {_title(provider)} calls in the last minute; "
-                                                           "wait a moment and try again.")
         sent = _Sent()
         with _in_flight(user.pk):
             try:
@@ -139,9 +138,6 @@ def _call_on_temporary(user, provider: str, surface: declarations.Surface, match
         raise services.NotConnected(f"This page needs your {title} for the next hour. Allow it, then try again.")
     if matched.rule.kind == "write":
         _spend_write(user, payload.operation_id, surface)
-    if over(f"connections:calls:{user.pk}:{provider}", CALLS_PER_MINUTE, RATE_WINDOW_SECONDS):
-        raise services.ConnectionError("rate_limited", f"Too many {title} calls in the last minute; "
-                                                       "wait a moment and try again.")
     sent = _Sent()
     subject = replace(temporary._subject(row), workspace=row.app.workspace)
     with _in_flight(user.pk):
