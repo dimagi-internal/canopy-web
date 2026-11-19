@@ -11,7 +11,7 @@ import pytest
 from django.test import Client
 from django.utils import timezone
 
-from apps.agents.models import AgentProject, ProjectParticipant
+from apps.agents.models import Agent, AgentProject, ProjectParticipant
 from apps.canopy_sessions import access, audience
 from apps.canopy_sessions.models import RunnerBinding, Session, SessionParticipant
 from apps.contacts import services as contacts
@@ -112,3 +112,21 @@ def test_the_session_view_carries_it():
     body = c.get(f"/api/canopy-sessions/{shapes['shared_web'].id}").json()
     assert body["audience"]["label"] == "Only you and 1 person you added"
     assert body["audience"]["count"] == 3     # owner, the viewer added, Trellis reviewing
+
+
+def test_the_audience_names_the_coaching_agents_admins():
+    from apps.canopy_sessions.models import Session, SessionReviewGrant
+
+    people, shapes, ws = _world()
+    chat = Session.objects.create(workspace=ws, created_by=people["mate"], origin=Session.ORIGIN_WEB)
+    shapes["mate_chat"] = chat
+    SessionReviewGrant.objects.create(user=people["mate"], agent=Agent.objects.get(slug="trellis"))
+    from apps.harness import turn_asker
+
+    setattr(people["coach"], turn_asker.STANDING_ATTR,
+            turn_asker.AnsweringTo("t", person_id=people["mate"].pk, operator=False))
+    readers = audience.readers(chat)
+    assert people["owner"].pk in readers and people["viewer"].pk not in readers
+    for who, user in people.items():
+        assert (user.pk in readers) is access.can_read(user, chat), who
+    assert "The admins of Trellis may read it (coaching)" in audience.summary(chat, people["mate"])["extras"]

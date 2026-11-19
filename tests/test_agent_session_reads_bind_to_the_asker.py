@@ -209,7 +209,10 @@ def test_the_grantor_and_everyone_else_are_unchanged(w):
     assert lili.get(f"/api/canopy-sessions/{w['chat']['lili'].pk}").status_code == 200
     assert lili.get(f"/api/canopy-sessions/{w['chat']['bo'].pk}").status_code == 404
     assert access.can_read(w["bo"], w["chat"]["bo"])
-    assert not access.can_read(w["owner"], w["chat"]["bo"])
+    # The agent's owner administers the coaching agent, so they read what its grantors let it read
+    # (leg 7, `access._coach_admin_q`); a member who never granted it stays unreadable.
+    assert access.can_read(w["owner"], w["chat"]["bo"])
+    assert not access.can_read(w["owner"], w["chat"]["col"])
 
 
 def test_a_revoked_grant_ends_it_inside_the_turn(w):

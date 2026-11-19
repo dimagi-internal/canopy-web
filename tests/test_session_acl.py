@@ -395,3 +395,57 @@ def test_who_you_could_add_is_the_workspace_s_members_not_yet_in_it():
     # A viewer of it may not add, so may not list.
     assert _client(people["viewer"]).get(
         f"/api/canopy-sessions/{chat.id}/participants/candidates").status_code == 403
+
+
+def test_the_admins_of_a_coaching_agent_read_what_it_reads_without_asking_it():
+    """Leg 7: a person opted into coaching (a program an agent runs today); whoever administers
+    that agent reads that person's sessions as themselves: read-only, never sensitive, never a
+    contact's, never words the person deleted, and nobody who is not an admin of it."""
+    from django.utils import timezone
+
+    from apps.agents.models import AgentAdmin
+    from apps.canopy_sessions.models import Session, SessionReviewGrant
+
+    people, s, ws = _world()
+    mate_chat = Session.objects.create(workspace=ws, created_by=people["mate"], origin=Session.ORIGIN_WEB)
+    sealed = Session.objects.create(workspace=ws, created_by=people["mate"], origin=Session.ORIGIN_WEB,
+                                    metadata={"runner_requirements": ["sensitive_data"]})
+    deleted = Session.objects.create(workspace=ws, created_by=people["mate"], origin=Session.ORIGIN_WEB,
+                                     content_deleted_at=timezone.now())
+    trellis = Agent.objects.get(slug="trellis")
+    # Before mate opts in: the owner (an admin of Trellis, and of the workspace) sees none of it.
+    # (The owner owns the workspace, so a workspace owner reads mate's chat only through a grant.)
+    assert access.can_read(people["owner"], mate_chat) is False
+    grant = SessionReviewGrant.objects.create(user=people["mate"], agent=trellis)
+    assert access.can_read(people["owner"], mate_chat) is True
+    assert access.role_for(people["owner"], mate_chat) == SessionParticipant.VIEWER
+    assert access.can_write(people["owner"], mate_chat) is False and access.may_pull(people["owner"], mate_chat) is False
+    assert access.can_read(people["owner"], sealed) is False
+    assert access.can_read(people["owner"], deleted) is False
+    # Only an admin of the coaching agent: not a plain member, not a runner admin, not another agent's login.
+    for who in ("viewer", "box_admin", "hal_login", "outsider"):
+        assert access.can_read(people[who], mate_chat) is False, who
+    # Make `viewer` an admin of Trellis: they now read it too (the rule is admin of the agent).
+    AgentAdmin.objects.create(agent=trellis, user=people["viewer"], granted_by=people["owner"])
+    assert access.can_read(people["viewer"], mate_chat) is True
+    assert access.can_read(people["viewer"], s["agent_thread"]) is False       # not a grantor's session
+    # Revoking ends it at once, and so does a grant to a different agent.
+    grant.revoked_at = timezone.now()
+    grant.save(update_fields=["revoked_at"])
+    assert access.can_read(people["viewer"], mate_chat) is False
+    SessionReviewGrant.objects.create(user=people["mate"], agent=Agent.objects.get(slug="hal"))
+    assert access.can_read(people["viewer"], mate_chat) is False
+
+
+def test_an_admin_agents_own_login_reads_coached_sessions_only_inside_a_running_turn():
+    from apps.agents.models import AgentAdmin
+    from apps.canopy_sessions.models import Session, SessionReviewGrant
+
+    people, s, ws = _world()
+    mate_chat = Session.objects.create(workspace=ws, created_by=people["mate"], origin=Session.ORIGIN_WEB)
+    trellis = Agent.objects.get(slug="trellis")
+    SessionReviewGrant.objects.create(user=people["mate"], agent=trellis)
+    AgentAdmin.objects.create(agent=trellis, user=people["hal_login"], granted_by=people["owner"])
+    assert access.can_read(people["hal_login"], mate_chat) is False             # no turn, no read
+    setattr(people["hal_login"], turn_asker.STANDING_ATTR, turn_asker.AnsweringTo("t", unattended=True))
+    assert access.can_read(people["hal_login"], mate_chat) is True
