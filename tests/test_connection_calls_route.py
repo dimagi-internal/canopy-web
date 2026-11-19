@@ -20,6 +20,7 @@ from django.core.cache import cache
 from django.test import Client
 from django.utils import timezone
 
+from apps.common import rate_limit
 from apps.connections import call_service, server_key, server_tokens
 from apps.connections.models import Connection
 from apps.dynamic_views import services as view_services
@@ -442,7 +443,7 @@ def test_rate_limit_429(w):
     assert "rate-limit" in r.json()["type"]
     assert r.headers["Retry-After"]
     assert token.call_count == 2 and len(sf.calls) == 2, "refused before the token is read"
-    assert cache.get(f"connections:calls:{w.person.pk}:salesforce") is not None
+    assert cache.get(rate_limit.slot(f"connections:calls:{w.person.pk}:salesforce", 60)) is not None
 
 
 def test_a_refused_call_spends_no_budget(w):
