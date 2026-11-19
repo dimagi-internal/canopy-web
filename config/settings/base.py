@@ -884,6 +884,10 @@ CANOPY_FLEET_HOLDERS = env.list("CANOPY_FLEET_HOLDERS", default=["ada@dimagi-ai.
 # switch on /people/me, shown only where this agent is in a workspace the person is
 # in or may ask to join. Blank = no coach is offered anywhere.
 COACHING_AGENT_SLUG = env("COACHING_AGENT_SLUG", default="trellis")
+# The agents that coach today, comma-separated: each gets a `CoachingRole` in its own workspace when
+# the coaching tables are first filled (migration 0072). After that, who coaches is data
+# (`/api/workspaces/{slug}/coaches/`), never this setting.
+COACHING_AGENT_SLUGS = env("COACHING_AGENT_SLUGS", default="trellis,ada")
 # Django mails ADMINS on every unhandled 500 once a real backend is live;
 # connect-labs learned that the hard way (a message every two minutes into
 # DeliveryDelay on a fresh domain). Errors go to CloudWatch; never mail them.

@@ -190,10 +190,10 @@ def check_reads_for(request: HttpRequest, payload: TurnIn, agent) -> int | None:
     if (agent is None or not agent.is_own_login(request.user) or stand is None or not stand.unattended):
         raise HttpError(403, "only an agent's own login, inside a turn nobody asked for, may scope a "
                              "turn to one person")
-    grant = (session_access.review_grantors(request.user).filter(agent=agent, user__email__iexact=email)
-             .first())
+    grant = session_access.review_grantors(request.user).filter(user__email__iexact=email).first()
     if grant is None:
-        raise HttpError(422, f"{email} has no live review grant to {agent.slug} that this turn may use")
+        raise HttpError(422, f"{email} has not opted into coaching, or {agent.slug} does not coach them "
+                             "in a way this turn may use")
     return grant.user_id
 
 

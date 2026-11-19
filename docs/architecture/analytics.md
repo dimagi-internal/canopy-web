@@ -42,7 +42,7 @@ producer by grepping its constant. What the code does not make obvious:
   (`apps/canopy_sessions/api_coaching.py`, whose docstring is the rule): only from the
   per-turn login of a running, unconfined turn of the agent (`turn_asker.serving_turn`),
   with a closed kind, closed words and ids and no field that can hold text; a person
-  must hold a live review grant this turn may use (`access.review_grantors`);
+  must have opted into coaching, within what this turn may use (`access.review_grantors`);
   `finding_routed` refuses `person_id`, because a friction pattern has no one in it.
   `actor` is the agent's login, so the person is in `meta` and never counts as
   active. Facts are deduped on `(kind, ref)`. Nothing reads them yet (`TODOS.md`).

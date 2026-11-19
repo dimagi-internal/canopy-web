@@ -27,8 +27,8 @@ from apps.api.auth import session_auth
 from apps.api.errors import TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError, refusals
 from apps.api.route_gates import gate
 from apps.embedding import defaults as agent_defaults
-from apps.workspaces import services as wsvc
 from apps.tokens import kinds
+from apps.workspaces import services as wsvc
 
 from . import hcp, people, session_review_asks, session_reviewers, viewers
 from . import services as contact_services
@@ -676,7 +676,7 @@ def list_person_conversations(request: HttpRequest, person_id: int, agent: str,
         if since_dt is None:
             raise _bad("since is not an ISO-8601 datetime")
         if since_dt.tzinfo is None:
-            since_dt = since_dt.replace(tzinfo=dt.timezone.utc)
+            since_dt = since_dt.replace(tzinfo=dt.UTC)
     rows = list(people.conversations(person, target, since=since_dt))
     if not own_login:
         # An admin who is not the agent itself gets no NEW read: only the turns
@@ -928,7 +928,6 @@ def _pickable_agents(user):
 
 
 def _viewers(person: Person, user) -> dict:
-    from . import viewers
 
     live = viewers.live(person)
     taken = {v.agent_id for v in live}
@@ -957,7 +956,6 @@ def add_my_viewer(request: HttpRequest, payload: MemoryViewerIn) -> dict:
     """Your act: the agent's own login may then read everything this page shows
     you — what is held, who may read it, what happened, how agents searched it —
     and change nothing. Each look goes in your audit. Only you can do this."""
-    from . import viewers
 
     person = _the_person_themself(request)
     agent = _pickable_agents(request.user).filter(slug=payload.agent.strip()).first()
@@ -974,7 +972,6 @@ def remove_my_viewer(request: HttpRequest, agent_slug: str) -> dict:
     """At once: its next read is "not found". Only you can do this."""
     from apps.agents.models import Agent
 
-    from . import viewers
 
     person = _the_person_themself(request)
     agent = Agent.objects.filter(slug=agent_slug).first()
@@ -989,7 +986,6 @@ def remove_my_viewer(request: HttpRequest, agent_slug: str) -> dict:
 def list_shared_pages(request: HttpRequest) -> dict:
     """For an agent's own login: whose memory page it may read, and where.
     Anyone else gets an empty list."""
-    from . import viewers
 
     agent = viewers.viewing_agent(request)
     if agent is None:
@@ -1000,12 +996,14 @@ def list_shared_pages(request: HttpRequest) -> dict:
 
 
 def _session_reviewers(person: Person, user) -> dict:
-    live = list(session_reviewers.live(user))
-    taken = {g.agent_id for g in live}
-    return {"reviewers": [{"agent": g.agent.slug, "name": g.agent.name or g.agent.slug,
-                           "granted_at": g.created_at} for g in live],
-            "agents": [{"slug": a.slug, "name": a.name or a.slug}
-                       for a in _pickable_agents(user) if a.pk not in taken],
+    """The coaching state: opted in or not, since when, and who coaches them now (what they agree to)."""
+    row = session_reviewers.live(user).first()
+    coaches = session_reviewers.coaches_for(user)
+    return {"on": row is not None, "since": row.created_at if row is not None else None,
+            "coaches": coaches,
+            "reviewers": [{"agent": c["slug"], "name": c["name"], "granted_at": row.created_at}
+                          for c in coaches if row is not None and c["kind"] == "agent"],
+            "agents": [],
             "coach": session_reviewers.coach_offer(user, wsvc.user_workspace_slugs(user))}
 
 
@@ -1014,7 +1012,9 @@ def _asker_turn_agent(request: HttpRequest):
     (a caller token, `kinds.CALLER_TOKEN`), else None. The token is already the
     asker's own user (re-resolved per call); this also requires the turn to be an
     agent's, asked by a verified canopy user who is that very user."""
-    from apps.harness import caller_context  # noqa: PLC0415 — only a caller-token request pays for it; harness imports contacts
+    from apps.harness import (
+        caller_context,  # noqa: PLC0415 — only a caller-token request pays for it; harness imports contacts
+    )
     from apps.harness import initiator as who  # noqa: PLC0415 — same
     from apps.harness.models import Turn  # noqa: PLC0415 — same
 
@@ -1029,54 +1029,56 @@ def _asker_turn_agent(request: HttpRequest):
 
 
 @router.get("/me/session-reviewers/", response=SessionReviewersOut,
-            summary="The agents you let review your sessions")
-# Letting an agent review your sessions, read-only (apps/contacts/session_reviewers.py):
-# choosing who is the person's own act; canopy_sessions.access (leg 5) enforces it.
-# The ONE read a caller token also reaches (the agent asks "has my asker enrolled?");
-# changing consent stays the person's alone.
+            summary="Your coaching: whether you opted in, and who coaches you")
+# Opting into coaching, read-only (apps/contacts/session_reviewers.py): choosing is the person's own
+# act; canopy_sessions.access (leg 5) enforces it. The ONE read a caller token also reaches (an agent
+# asks "has my asker opted in, and am I one of their coaches?"); changing consent stays the person's alone.
 @gate("self")
 def list_my_session_reviewers(request: HttpRequest) -> dict:
-    """Which agents may read your sessions to review them, which you could let
-    in (the agents of workspaces you belong to), and the coach canopy offers
-    you, if any. Only you see this. An agent's turn, asked by you, sees only
-    whether it is itself among them."""
+    """Whether you opted into coaching, and who coaches you now (agents and people designated for your
+    workspaces): the list you agree to by opting in. Only you see this. An agent's turn, asked by you,
+    sees only whether it is itself one of your coaches and you are opted in."""
     agent = _asker_turn_agent(request)
     if agent is not None:
         person = contact_services.person_for(user=request.user)
         if person is None:
             raise _not_found()
         out = _session_reviewers(person, request.user)
-        out["reviewers"] = [r for r in out["reviewers"] if r["agent"] == agent.slug]
-        return {**out, "agents": [], "coach": None}
+        mine = [c for c in out["coaches"] if c["kind"] == "agent" and c["slug"] == agent.slug]
+        return {**out, "coaches": mine, "reviewers": [r for r in out["reviewers"] if r["agent"] == agent.slug],
+                "agents": [], "coach": None}
     return _session_reviewers(_the_person_themself(request), request.user)
 
 
 @router.post("/me/session-reviewers/", response=SessionReviewersOut,
-             summary="Let an agent review your sessions, read-only")
+             summary="Opt in to coaching, read-only")
 @gate("self", setting=True)  # who may read your sessions
-def add_my_session_reviewer(request: HttpRequest, payload: SessionReviewerIn) -> dict:
-    """Your act: the agent's own login may then read the chats you started and
-    the runner sessions on your own boxes, to review them — never a sensitive
-    conversation, and it can change, send or share nothing. On your audit.
-    Only you can do this, and only for an agent of a workspace you are in."""
+def add_my_session_reviewer(request: HttpRequest, payload: SessionReviewerIn | None = None) -> dict:
+    """Your act: canopy's coaches (the ones `coaches` lists, now and as they change) may read the chats
+    you started and the runner sessions on your own boxes, to review them, never a sensitive
+    conversation, and they can change, send or share nothing. On your audit. Only you can do this."""
     person = _the_person_themself(request)
-    agent = _pickable_agents(request.user).filter(slug=payload.agent.strip()).first()
-    if agent is None:
-        raise _not_found("Agent not found")
-    session_reviewers.grant(person, agent, user=request.user)
+    session_reviewers.opt_in(person, user=request.user)
     return _session_reviewers(person, request.user)
 
 
-@router.delete("/me/session-reviewers/{agent_slug}/", response=SessionReviewersOut,
-               summary="Stop an agent reviewing your sessions")
+@router.delete("/me/session-reviewers/", response=SessionReviewersOut,
+               summary="Opt out of coaching")
 @gate("self", setting=True)  # who may read your sessions
-def remove_my_session_reviewer(request: HttpRequest, agent_slug: str) -> dict:
-    """At once: its next read of your sessions is "not found". Only you can do this."""
+def remove_my_session_reviewer(request: HttpRequest) -> dict:
+    """At once: every coach's next read of your sessions is "not found". Only you can do this."""
     person = _the_person_themself(request)
-    agent = session_reviewers.agent_named(agent_slug)
-    if agent is None or not session_reviewers.revoke(person, agent, user=request.user):
-        raise _not_found("That agent cannot review your sessions")
+    if not session_reviewers.opt_out(person, user=request.user):
+        raise _not_found("You have not opted into coaching")
     return _session_reviewers(person, request.user)
+
+
+@router.delete("/me/session-reviewers/{agent_slug}/", response=SessionReviewersOut, deprecated=True,
+               summary="Deprecated alias of opting out of coaching")
+@gate("self", setting=True)  # who may read your sessions
+def remove_my_session_reviewer_by_agent(request: HttpRequest, agent_slug: str) -> dict:
+    """Deprecated: coaching is no longer opted into per agent. Same as `DELETE /me/session-reviewers/`."""
+    return remove_my_session_reviewer(request)
 
 
 def _session_for_review(request: HttpRequest, session_id: uuid.UUID):
@@ -1125,23 +1127,19 @@ def withdraw_my_session_review(request: HttpRequest, session_id: uuid.UUID) -> d
 
 
 @router.get("/session-reviewers/granted-to-me/", response=SessionGrantersOut,
-            summary="The people who let this agent review their sessions")
-@gate("authenticated")  # empty unless the caller is an agent's own login
+            summary="The people who opted into coaching, within this coach's reach")
+@gate("authenticated")  # empty unless the caller is a coach (an agent's own login or a designated person)
 def list_session_granters(request: HttpRequest) -> dict:
-    """For an agent's own login: who let it review their sessions. List one
-    person's with `GET /api/canopy-sessions/?of_user=<user_id>`. Anyone else
-    gets an empty list."""
-    agent = viewers.viewing_agent(request)
-    if agent is None:
-        return {"people": []}
+    """For a coach: who opted into coaching among the people it may coach (an agent coach sees only the
+    ones its turn may use). List one person's sessions with `GET /api/canopy-sessions/?of_user=<user_id>`.
+    Anyone else gets an empty list."""
     return {"people": [{"user_id": g.user_id, "username": g.user.username, "email": g.user.email or "",
                         "display_name": g.user.get_full_name() or g.user.username,
                         "granted_at": g.created_at}
-                       for g in session_reviewers.granted_to(agent, request.user)]}
+                       for g in session_reviewers.granted_to(request.user)]}
 
 
 def _page_of(request: HttpRequest, person_id: int) -> Person:
-    from . import viewers
 
     person = viewers.page_of(request, person_id)
     if person is None:

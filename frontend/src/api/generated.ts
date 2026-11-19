@@ -8338,6 +8338,54 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/coaching/workspaces/{slug}/coaches/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Who coaches this workspace's people (the coaching program)
+         * @description The agents and people designated to coach this workspace and everything below it: what a person
+         *     agrees to when they opt into coaching. Any member may see who they are.
+         */
+        readonly get: operations["list_coaches"];
+        readonly put?: never;
+        /**
+         * Designate a coach for this workspace and below (owner-only)
+         * @description Owner-only. Name an `agent` (its slug; it must live in this workspace's tree) or a person (`email`;
+         *     a member of it). The coach may then read people who opted into coaching and are in this workspace or
+         *     below, read-only, never sensitive sessions (`canopy_sessions.access`, leg 5). Nobody is read until
+         *     they opt in themselves. Designating the same coach again is a no-op.
+         */
+        readonly post: operations["add_coach"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/coaching/workspaces/{slug}/coaches/{role_id}/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Stop a coach coaching this workspace (owner-only)
+         * @description Owner-only. At once: that coach's next read of anyone's sessions through this role is "not found".
+         */
+        readonly delete: operations["remove_coach"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/projects/{ref}/team/": {
         readonly parameters: {
             readonly query?: never;
@@ -19114,23 +19162,25 @@ export interface paths {
             readonly cookie?: never;
         };
         /**
-         * The agents you let review your sessions
-         * @description Which agents may read your sessions to review them, which you could let
-         *     in (the agents of workspaces you belong to), and the coach canopy offers
-         *     you, if any. Only you see this. An agent's turn, asked by you, sees only
-         *     whether it is itself among them.
+         * Your coaching: whether you opted in, and who coaches you
+         * @description Whether you opted into coaching, and who coaches you now (agents and people designated for your
+         *     workspaces): the list you agree to by opting in. Only you see this. An agent's turn, asked by you,
+         *     sees only whether it is itself one of your coaches and you are opted in.
          */
         readonly get: operations["list_my_session_reviewers"];
         readonly put?: never;
         /**
-         * Let an agent review your sessions, read-only
-         * @description Your act: the agent's own login may then read the chats you started and
-         *     the runner sessions on your own boxes, to review them — never a sensitive
-         *     conversation, and it can change, send or share nothing. On your audit.
-         *     Only you can do this, and only for an agent of a workspace you are in.
+         * Opt in to coaching, read-only
+         * @description Your act: canopy's coaches (the ones `coaches` lists, now and as they change) may read the chats
+         *     you started and the runner sessions on your own boxes, to review them, never a sensitive
+         *     conversation, and they can change, send or share nothing. On your audit. Only you can do this.
          */
         readonly post: operations["add_my_session_reviewer"];
-        readonly delete?: never;
+        /**
+         * Opt out of coaching
+         * @description At once: every coach's next read of your sessions is "not found". Only you can do this.
+         */
+        readonly delete: operations["remove_my_session_reviewer"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -19147,10 +19197,11 @@ export interface paths {
         readonly put?: never;
         readonly post?: never;
         /**
-         * Stop an agent reviewing your sessions
-         * @description At once: its next read of your sessions is "not found". Only you can do this.
+         * Deprecated alias of opting out of coaching
+         * @deprecated
+         * @description Deprecated: coaching is no longer opted into per agent. Same as `DELETE /me/session-reviewers/`.
          */
-        readonly delete: operations["remove_my_session_reviewer"];
+        readonly delete: operations["remove_my_session_reviewer_by_agent"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -19196,10 +19247,10 @@ export interface paths {
             readonly cookie?: never;
         };
         /**
-         * The people who let this agent review their sessions
-         * @description For an agent's own login: who let it review their sessions. List one
-         *     person's with `GET /api/canopy-sessions/?of_user=<user_id>`. Anyone else
-         *     gets an empty list.
+         * The people who opted into coaching, within this coach's reach
+         * @description For a coach: who opted into coaching among the people it may coach (an agent coach sees only the
+         *     ones its turn may use). List one person's sessions with `GET /api/canopy-sessions/?of_user=<user_id>`.
+         *     Anyone else gets an empty list.
          */
         readonly get: operations["list_session_granters"];
         readonly put?: never;
@@ -35357,6 +35408,43 @@ export interface components {
             /** Finding Type */
             readonly finding_type?: ("knowledge-gap" | "session-mistake" | "system-defect") | null;
         };
+        /** CoachingRoleOut */
+        readonly CoachingRoleOut: {
+            /** Id */
+            readonly id: number;
+            /** Kind */
+            readonly kind: string;
+            /**
+             * Slug
+             * @default
+             */
+            readonly slug: string;
+            /** Name */
+            readonly name: string;
+            /** Workspace */
+            readonly workspace: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+        };
+        /**
+         * CoachingRoleIn
+         * @description Owner-only. Name exactly one: an `agent` (its slug) or a person (their `email`, a member).
+         */
+        readonly CoachingRoleIn: {
+            /**
+             * Agent
+             * @default
+             */
+            readonly agent: string;
+            /**
+             * Email
+             * @default
+             */
+            readonly email: string;
+        };
         /** ContributorBriefOut */
         readonly ContributorBriefOut: {
             /** Id */
@@ -50034,6 +50122,26 @@ export interface components {
              */
             readonly on: boolean;
         };
+        /** CoachOut */
+        readonly CoachOut: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "agent" | "person";
+            /** Name */
+            readonly name: string;
+            /**
+             * Slug
+             * @description The agent's slug; empty for a person.
+             */
+            readonly slug: string;
+            /**
+             * Workspace
+             * @description The workspace this coach is designated for (and everything below it).
+             */
+            readonly workspace: string;
+        };
         /** SessionReviewerOut */
         readonly SessionReviewerOut: {
             /** Agent */
@@ -50048,23 +50156,41 @@ export interface components {
         };
         /** SessionReviewersOut */
         readonly SessionReviewersOut: {
-            /** Reviewers */
+            /**
+             * On
+             * @description Whether you have opted into coaching.
+             */
+            readonly on: boolean;
+            /**
+             * Since
+             * @description When you opted in.
+             */
+            readonly since?: string | null;
+            /**
+             * Coaches
+             * @description Who coaches you now: what you agree to when you opt in. Empty means no coach reaches your workspaces, so opting in would read nothing.
+             */
+            readonly coaches: readonly components["schemas"]["CoachOut"][];
+            /**
+             * Reviewers
+             * @description Compatibility: the agents among `coaches`, while you are opted in. An agent's turn asked by you sees only itself.
+             */
             readonly reviewers: readonly components["schemas"]["SessionReviewerOut"][];
             /**
              * Agents
-             * @description Agents you could let review your sessions.
+             * @description Deprecated: always empty.
              */
             readonly agents: readonly components["schemas"]["ViewerChoiceOut"][];
-            /** @description The coach canopy offers, when there is one you can reach. */
+            /** @description The agent canopy offers for one-session reviews, when there is one you can reach. */
             readonly coach?: components["schemas"]["CoachOfferOut"] | null;
         };
         /** SessionReviewerIn */
         readonly SessionReviewerIn: {
             /**
              * Agent
-             * @description The slug of an agent in a workspace you belong to.
+             * @description DEPRECATED and ignored: opting in names no agent. Coaching is canopy's; who coaches you is shown in `coaches`.
              */
-            readonly agent: string;
+            readonly agent?: string | null;
         };
         /** SessionReviewAskLiveOut */
         readonly SessionReviewAskLiveOut: {
@@ -62410,6 +62536,129 @@ export interface operations {
             };
             /** @description Unprocessable Entity */
             readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly list_coaches: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["CoachingRoleOut"][];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly add_coach: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["CoachingRoleIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CoachingRoleOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly remove_coach: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly role_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
@@ -75328,9 +75577,9 @@ export interface operations {
             readonly path?: never;
             readonly cookie?: never;
         };
-        readonly requestBody: {
+        readonly requestBody?: {
             readonly content: {
-                readonly "application/json": components["schemas"]["SessionReviewerIn"];
+                readonly "application/json": components["schemas"]["SessionReviewerIn"] | null;
             };
         };
         readonly responses: {
@@ -75346,6 +75595,26 @@ export interface operations {
         };
     };
     readonly remove_my_session_reviewer: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SessionReviewersOut"];
+                };
+            };
+        };
+    };
+    readonly remove_my_session_reviewer_by_agent: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;

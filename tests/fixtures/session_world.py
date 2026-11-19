@@ -6,9 +6,19 @@ from django.contrib.auth.models import User
 from django.utils import timezone
 
 from apps.agents.models import Agent
-from apps.canopy_sessions.models import RunnerBinding, Session, SessionParticipant, SessionReviewGrant
+from apps.canopy_sessions.models import CoachingOptIn, CoachingRole, RunnerBinding, Session, SessionParticipant
 from apps.harness.models import Runner, RunnerAdmin
 from apps.workspaces.models import Workspace, WorkspaceMembership
+
+
+def grant_coaching(user, agent):
+    """Opt `user` into coaching and make `agent` a coach for its own workspace (and below): the
+    program-level shape that replaced one grant per agent. Returns the opt-in."""
+    from apps.canopy_sessions.models import CoachingOptIn, CoachingRole
+
+    opt, _ = CoachingOptIn.objects.get_or_create(user=user, revoked_at=None)
+    CoachingRole.objects.get_or_create(workspace_id=agent.workspace_id, agent=agent, revoked_at=None)
+    return opt
 
 
 def make_user(name):
@@ -41,7 +51,8 @@ def session_world():
     trellis.user = make_user("coach")
     trellis.save(update_fields=["user"])
     make_member(trellis.user, ws)
-    SessionReviewGrant.objects.create(user=owner, agent=trellis)
+    CoachingOptIn.objects.create(user=owner)
+    CoachingRole.objects.create(workspace=ws, agent=trellis)
     runner = Runner.objects.create(name="r", kind=Runner.EMDASH, host="h", owner=owner,
                                    status=Runner.ONLINE, last_heartbeat_at=timezone.now())
     RunnerAdmin.objects.create(runner=runner, user=box_admin, granted_by=owner)

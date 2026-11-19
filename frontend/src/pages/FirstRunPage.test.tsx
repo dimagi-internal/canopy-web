@@ -8,8 +8,8 @@ const requestWorkspaceAccess = vi.fn()
 const createWorkspace = vi.fn()
 vi.mock('@/api/workspaces', () => ({ listRequestableWorkspaces, requestWorkspaceAccess, createWorkspace }))
 
-const listMySessionReviewers = vi.fn().mockResolvedValue({ reviewers: [], agents: [], coach: null })
-const addMySessionReviewer = vi.fn().mockResolvedValue({ reviewers: [], agents: [], coach: null })
+const listMySessionReviewers = vi.fn().mockResolvedValue({ on: false, since: null, coaches: [], reviewers: [], agents: [], coach: null })
+const addMySessionReviewer = vi.fn().mockResolvedValue({ on: false, since: null, coaches: [], reviewers: [], agents: [], coach: null })
 const removeMySessionReviewer = vi.fn()
 vi.mock('@/api/people', () => ({ listMySessionReviewers, addMySessionReviewer, removeMySessionReviewer }))
 
@@ -40,7 +40,7 @@ function renderPage() {
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
-  listMySessionReviewers.mockResolvedValue({ reviewers: [], agents: [], coach: null })
+  listMySessionReviewers.mockResolvedValue({ on: false, since: null, coaches: [], reviewers: [], agents: [], coach: null })
   wsState.value = { workspaces: [], active: null }
 })
 
@@ -111,29 +111,29 @@ describe('FirstRunPage — coaching opt-in', () => {
     listRequestableWorkspaces.mockResolvedValue([dimagi])
     renderPage()
     await screen.findByRole('button', { name: 'Request an invitation to Dimagi' })
-    expect(screen.queryByRole('checkbox', { name: /coach me/i })).toBeNull()
+    expect(screen.queryByRole('checkbox', { name: /Opt in to coaching/i })).toBeNull()
   })
 
   it('ticked on an auto-approved request, it lets the coach review their sessions', async () => {
     listRequestableWorkspaces.mockResolvedValue([dimagi])
-    listMySessionReviewers.mockResolvedValue({ reviewers: [], agents: [], coach: trellis })
+    listMySessionReviewers.mockResolvedValue({ on: false, since: null, coaches: [], reviewers: [], agents: [], coach: trellis })
     requestWorkspaceAccess.mockResolvedValue({ id: 1, status: 'approved', role: 'editor' })
     renderPage()
-    const box = await screen.findByRole('checkbox', { name: /Have Trellis coach me/ })
+    const box = await screen.findByRole('checkbox', { name: /Opt in to coaching/ })
     expect((box as HTMLInputElement).checked).toBe(false) // opt-in, never pre-ticked
     expect(screen.getByText(/upload those sessions in full/)).toBeTruthy()
     fireEvent.click(box)
     fireEvent.click(screen.getByRole('button', { name: 'Request an invitation to Dimagi' }))
     expect(await screen.findByText('workspace home')).toBeTruthy()
-    expect(addMySessionReviewer).toHaveBeenCalledWith('trellis')
+    expect(addMySessionReviewer).toHaveBeenCalledWith()
   })
 
   it('left unticked, nothing is granted', async () => {
     listRequestableWorkspaces.mockResolvedValue([dimagi])
-    listMySessionReviewers.mockResolvedValue({ reviewers: [], agents: [], coach: trellis })
+    listMySessionReviewers.mockResolvedValue({ on: false, since: null, coaches: [], reviewers: [], agents: [], coach: trellis })
     requestWorkspaceAccess.mockResolvedValue({ id: 1, status: 'approved', role: 'editor' })
     renderPage()
-    await screen.findByRole('checkbox', { name: /Have Trellis coach me/ })
+    await screen.findByRole('checkbox', { name: /Opt in to coaching/ })
     fireEvent.click(screen.getByRole('button', { name: 'Request an invitation to Dimagi' }))
     expect(await screen.findByText('workspace home')).toBeTruthy()
     expect(addMySessionReviewer).not.toHaveBeenCalled()
@@ -141,12 +141,12 @@ describe('FirstRunPage — coaching opt-in', () => {
 
   it('ticked on a pending request, it grants nothing yet and says where to turn it on', async () => {
     listRequestableWorkspaces.mockResolvedValue([dimagi])
-    listMySessionReviewers.mockResolvedValue({ reviewers: [], agents: [], coach: trellis })
+    listMySessionReviewers.mockResolvedValue({ on: false, since: null, coaches: [], reviewers: [], agents: [], coach: trellis })
     requestWorkspaceAccess.mockResolvedValue({ id: 1, status: 'pending' })
     renderPage()
-    fireEvent.click(await screen.findByRole('checkbox', { name: /Have Trellis coach me/ }))
+    fireEvent.click(await screen.findByRole('checkbox', { name: /Opt in to coaching/ }))
     fireEvent.click(screen.getByRole('button', { name: 'Request an invitation to Dimagi' }))
-    expect(await screen.findByText(/turn on Trellis's coaching from Settings/)).toBeTruthy()
+    expect(await screen.findByText(/opt in to coaching from Settings/)).toBeTruthy()
     expect(addMySessionReviewer).not.toHaveBeenCalled()
   })
 })

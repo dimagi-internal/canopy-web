@@ -292,7 +292,9 @@ class DeletedTranscript(models.Model):
 
 
 class SessionReviewGrant(models.Model):
-    """A person's consent that ONE agent may read their sessions, to review them
+    """DEPRECATED: replaced by `CoachingOptIn` + `CoachingRole` (nothing reads this table; it is
+    dropped in a later release, once the copy migration is behind us). It was a person's consent
+    that ONE agent may read their sessions, to review them
     (a coach). The fifth leg of `access.visible_session_q`, scoped to that agent's
     own login (`Agent.user`) and this person's sessions, never a sensitive one.
 
@@ -316,6 +318,66 @@ class SessionReviewGrant(models.Model):
         constraints = [models.UniqueConstraint(fields=["user", "agent"],
                                                condition=models.Q(revoked_at__isnull=True),
                                                name="session_review_grant_one_live")]
+
+
+class CoachingOptIn(models.Model):
+    """A person's consent to COACHING in canopy: "have canopy's coaches review how I work".
+
+    Deliberately names no agent. Who coaches is a separate, evolving fact (`CoachingRole`):
+    today Trellis and Ada, tomorrow a division's director and their agents. A person opts in
+    to the program; the program says who is coaching them now, and the person sees that list
+    before and after. Only the person makes or ends it (`apps/contacts/session_reviewers.py`,
+    from `/api/people/me/coaching/`), each act on their audit. Revoking sets `revoked_at` and
+    every coach's next read drops. Read-only: it never lets a coach write, share or send into a
+    conversation (`access.role_for` gives it a viewer at most)."""
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+                             related_name="coaching_opt_ins")
+    created_at = models.DateTimeField(auto_now_add=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "canopy_sessions_coaching_opt_in"
+        ordering = ["-created_at", "-pk"]
+        constraints = [models.UniqueConstraint(fields=["user"], condition=models.Q(revoked_at__isnull=True),
+                                               name="coaching_opt_in_one_live")]
+
+
+class CoachingRole(models.Model):
+    """Who coaches, and for whom: an agent or a person designated to coach the workspace
+    `workspace` and everything below it in the tree.
+
+    A workspace owner makes or ends it (`apps/workspaces`'s coaches API); it opens nothing by
+    itself: a coach reads only people who opted in (`CoachingOptIn`) and only sessions that live
+    in a workspace its role covers (`access._coach_scope`). An AGENT coach reads through its own
+    login inside a running turn (`access.review_grantors`); a PERSON coach reads as themselves.
+    Exactly one of `agent` and `user` is set. Revoking sets `revoked_at`."""
+
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE,
+                                  related_name="coaching_roles")
+    agent = models.ForeignKey("agents.Agent", null=True, blank=True, on_delete=models.CASCADE,
+                              related_name="coaching_roles")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.CASCADE,
+                             related_name="coaching_roles")
+    granted_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
+                                   on_delete=models.SET_NULL, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "canopy_sessions_coaching_role"
+        ordering = ["created_at", "pk"]
+        constraints = [
+            models.CheckConstraint(condition=(models.Q(agent__isnull=False, user__isnull=True)
+                                              | models.Q(agent__isnull=True, user__isnull=False)),
+                                   name="coaching_role_one_coach"),
+            models.UniqueConstraint(fields=["workspace", "agent"],
+                                    condition=models.Q(revoked_at__isnull=True, agent__isnull=False),
+                                    name="coaching_role_one_live_agent"),
+            models.UniqueConstraint(fields=["workspace", "user"],
+                                    condition=models.Q(revoked_at__isnull=True, user__isnull=False),
+                                    name="coaching_role_one_live_user"),
+        ]
 
 
 #: On a `Session.metadata`: this chat was opened by a `SessionReviewAsk` for that session id.

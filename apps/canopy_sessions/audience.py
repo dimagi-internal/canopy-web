@@ -20,8 +20,9 @@ from apps.agents.models import AgentAdmin
 from apps.harness import sensitivity
 from apps.harness.models import Runner, RunnerAdmin
 from apps.workspaces import services as wsvc
+from apps.workspaces.models import WorkspaceMembership
 
-from .models import RunnerBinding, Session, SessionReviewAsk, SessionReviewGrant
+from .models import CoachingOptIn, CoachingRole, RunnerBinding, Session, SessionReviewAsk
 
 #: Where an email-born session keeps its thread (`harness.session_sync.EMAIL_THREAD_KEY`).
 EMAIL_THREAD_KEY = "email_thread_key"
@@ -75,50 +76,41 @@ def _own_login(session) -> set[int]:
     return set()
 
 
-def _coaches(session) -> dict[int, str]:
-    """Leg 5: the logins of agents the session's person let review their sessions
-    (`access.sessions_of_q`), never a sensitive or a contact's session. {user id: agent name}."""
-    if session.contact_id or session.content_deleted_at or sensitivity.is_sensitive(session):
-        return {}
-    person = session.created_by_id
-    if person is None and _discovered(session) and not session.agent_id:
-        b = _binding(session)
-        person = b.runner.owner_id if (b is not None and b.runner_id) else None
-    if person is None:
-        return {}
-    grants = (SessionReviewGrant.objects.filter(user_id=person, revoked_at__isnull=True,
-                                                agent__user__isnull=False).select_related("agent"))
-    return {g.agent.user_id: (g.agent.name or g.agent.slug) for g in grants}
-
-
 def _grantor(session):
-    """The person whose session this is for leg 5 and 7: its creator, or the owner of the box a
-    discovered session (not an agent's) runs on. None for a contact's, a deleted one's and a sensitive one."""
+    """The person whose session this is, for coaching: its creator, or the owner of the box a
+    discovered session (not an agent's) runs on. None for a contact's, a deleted one's, a sensitive
+    one, and a person who has not opted in to coaching."""
     if session.contact_id or session.content_deleted_at or sensitivity.is_sensitive(session):
         return None
     person = session.created_by_id
     if person is None and _discovered(session) and not session.agent_id:
         b = _binding(session)
         person = b.runner.owner_id if (b is not None and b.runner_id) else None
+    if person is None or not CoachingOptIn.objects.filter(user_id=person, revoked_at__isnull=True).exists():
+        return None
     return person
 
 
-def _coach_admins(session) -> dict[int, str]:
-    """Leg 7: the admins of every agent the session's person let review their sessions
-    (`access._coach_admin_q`). {user id: agent name}. An admin agent's own login reads only inside a
-    running turn; it is named here as the ACL's widest case."""
+def _coaches(session) -> dict[int, str]:
+    """Leg 5: the coaches of the session's person: every agent login and every person holding a live
+    `CoachingRole` that covers this session's workspace (that workspace or one above it), when the
+    person opted in. {user id: name}. An agent coach reads only inside a running turn; it is named here
+    as the ACL's widest case."""
     person = _grantor(session)
     if person is None:
         return {}
+    covering = wsvc.with_ancestors({session.workspace_id})
     out: dict[int, str] = {}
-    grants = SessionReviewGrant.objects.filter(user_id=person, revoked_at__isnull=True).select_related("agent")
-    for g in grants:
-        ids = set(AgentAdmin.objects.filter(agent=g.agent).values_list("user_id", flat=True))
-        if g.agent.owner_id:
-            ids.add(g.agent.owner_id)
-        ids |= wsvc.owner_user_ids(g.agent.workspace_id)
-        for uid in ids:
-            out[uid] = g.agent.name or g.agent.slug
+    roles = (CoachingRole.objects.filter(revoked_at__isnull=True, workspace_id__in=covering)
+             .select_related("agent", "user"))
+    for r in roles:
+        scope = {r.workspace_id} | wsvc.descendant_slugs({r.workspace_id})
+        if not WorkspaceMembership.objects.filter(user_id=person, workspace_id__in=scope).exists():
+            continue                      # the rule reads only people in a workspace the coach covers
+        if r.agent_id and r.agent.user_id:
+            out[r.agent.user_id] = r.agent.name or r.agent.slug
+        elif r.user_id:
+            out[r.user_id] = r.user.get_full_name() or r.user.email or r.user.username
     return out
 
 
@@ -162,7 +154,6 @@ def pieces(session) -> dict:
         "agent_admins": within(_agent_admins(session)),
         "own_login": within(_own_login(session)),
         "coaches": {uid: name for uid, name in coaches.items() if uid in members},
-        "coach_admins": {uid: name for uid, name in _coach_admins(session).items() if uid in members},
         "asked_reviewers": asked,
         "runner_admins": within(_runner_admins(session)),
     }
@@ -173,7 +164,7 @@ def readers(session) -> set[int]:
     session (the panel) has no member readers beyond these."""
     p = pieces(session)
     out = p["creator"] | p["participants"] | p["box_owner"] | p["agent_admins"] | p["own_login"]
-    out |= set(p["coaches"]) | set(p["coach_admins"]) | p["runner_admins"]
+    out |= set(p["coaches"]) | p["runner_admins"]
     return out
 
 
@@ -227,11 +218,8 @@ def summary(session, viewer) -> dict:
         label = ("Only you" + _added(added, True)) if vid == session.created_by_id \
             else (_name(creator) + _added(added, False))
 
-    for name in sorted(set(p["coaches"].values())):
-        extras.append(f"{name} may review (coaching)")
-    admin_of = {name for uid, name in p["coach_admins"].items() if uid != _grantor(session)}
-    for name in sorted(admin_of):
-        extras.append(f"The admins of {name} may read it (coaching)")
+    if p["coaches"]:
+        extras.append(", ".join(sorted(set(p["coaches"].values()))) + " may review (coaching)")
     for name in sorted(set(p["asked_reviewers"].values())):
         extras.append(f"{name} may review this one session (asked from its page)")
     if p["runner_admins"] - p["box_owner"]:

@@ -18,7 +18,7 @@ someone merely for being in the same workspace:
   made a participant; it is a runner-discovered session on a box YOU OWN (a
   laptop session is its owner's alone); it is the own thread of an agent you
   run; you are an agent's own login and its person let that agent review
-  their sessions (`SessionReviewGrant`, read-only, never a sensitive one); or
+  their sessions (`CoachingOptIn` + `CoachingRole`, read-only, never a sensitive one); or
   you administer the runner it sits on (`RunnerAdmin`, read-only, so a box
   can be emptied — `may_move`).
 * **Reach** — a request made with an agent turn's caller token reads as the asker, but
@@ -91,11 +91,12 @@ from apps.harness.models import Runner, Turn
 from . import channel_bindings, staleness
 from .models import (
     REVIEW_METADATA_KEY,
+    CoachingOptIn,
+    CoachingRole,
     RunnerBinding,
     Session,
     SessionParticipant,
     SessionReviewAsk,
-    SessionReviewGrant,
 )
 
 #: On a request's user: the `Reach` an agent turn's caller token holds its reads to (`limit_reach`).
@@ -207,7 +208,7 @@ def visible_session_q(user) -> Q:
     Tenancy is a separate and prior gate (`_visible_slugs`) — this narrows
     inside it and must never be used as the only check.
 
-    Seven ways in, and no eighth:
+    Six ways in, and no seventh:
 
     1. you created it;
     2. you were made a participant — `SessionParticipant` is what "multiplayer"
@@ -230,24 +231,18 @@ def visible_session_q(user) -> Q:
        agent's OWN login also reads its own work (`_own_work_q`: no creator,
        its agent) — read-only, no pull; never a conversation a person started
        with it, which has a creator.
-    5. you are an agent's own login (`Agent.user`) and the session's person let
-       THAT agent review their sessions (a live `SessionReviewGrant`, the
-       person's own act), and only inside a running turn of that agent whose asker is that
-       same person, nobody, or the agent's admin (`review_grantors`). Their sessions are the ones they created and the
-       runner-discovered sessions on a box they own that are not an agent's own
-       work (`sessions_of_q`). Never a sensitive one: a session carrying any
-       runner requirement is left out (`_not_sensitive_q`, the SQL form of
-       `sensitivity.is_sensitive`, failing closed). Another agent's login, or a
-       person who administers the agent, gains nothing from the grant; revoking
-       it drops the next read.
-    7. you ADMINISTER an agent a person let review their sessions (a live
-       `SessionReviewGrant`: the coaching program), and it is one of that person's
-       sessions as in leg 5 (`_coach_admin_q`). The person opted into coaching, which
-       is a program run by an agent today, so those who run the program read what the
-       program reads, as themselves, in the app, through a step-up or through an
-       admin agent's own turn. Same exclusions as leg 5 (never sensitive, never a
-       contact's, never words the person deleted), read-only, no pull. Not "every
-       user": only grantors of an agent you administer.
+    5. you are a COACH of the session's person (`_coach_q`): they opted into coaching
+       (a live `CoachingOptIn`, the person's own act, naming no agent), and you hold a
+       `CoachingRole` covering the workspace the session lives in: an agent's own login or
+       a person designated for that workspace and below (today Trellis and Ada, tomorrow
+       a division's director). Their sessions are the ones they created and the
+       runner-discovered sessions on a box they own that are not an agent's own work
+       (`sessions_of_q`). Never a sensitive one (a session carrying any runner requirement
+       is left out, `_not_sensitive_q`, failing closed), never a contact's, never words
+       the person deleted. An AGENT coach reads only inside a running turn and only as that
+       turn answers to someone (`review_grantors`); a PERSON coach reads as themselves,
+       in the app or on a step-up. Another agent, a plain member, or an admin who holds no
+       role gains nothing; revoking the opt-in or the role drops the next read.
     6. you administer the runner it is bound to (`RunnerAdmin`, an explicit
        per-box grant its owner made) and it is a runner-discovered session
        (`_runner_admin_q`). READ-ONLY (`role_for` gives a viewer) and no pull
@@ -268,8 +263,7 @@ def visible_session_q(user) -> Q:
         | _box_owner_q(user)
         | (Q(origin=Session.ORIGIN_RUNNER) & _agent_admin_q(user))
         | _own_work_q(user)
-        | _review_grant_q(user)
-        | _coach_admin_q(user)
+        | _coach_q(user)
         | _runner_admin_q(user)
     )
     reach = reach_of(user)
@@ -417,34 +411,54 @@ def _not_sensitive_q() -> Q:
     return ~Q(metadata__has_key=rr.METADATA_KEY)
 
 
+def coach_scope(user) -> set[str]:
+    """The workspaces `user` coaches: every live `CoachingRole` held by `user` (a person) or by the
+    agent whose own login `user` is, each covering its workspace and everything below it.
+    Empty for anyone who coaches nothing. Membership is the caller's tenant gate."""
+    if not getattr(user, "is_authenticated", False):
+        return set()
+    from apps.workspaces import services as wsvc  # noqa: PLC0415 — as `_tenant_slugs`
+
+    roots = set(CoachingRole.objects.filter(revoked_at__isnull=True)
+                .filter(Q(user=user) | Q(agent__user=user)).values_list("workspace_id", flat=True))
+    return roots | wsvc.descendant_slugs(roots) if roots else set()
+
+
 def review_grantors(user):
-    """THE rule for leg 5, in one place: whose review grants `user`'s request may use.
+    """THE rule for who a coach may read, in one place: the opt-ins `user`'s request may use.
 
-    `user` must be an agent's own login, and the request must be made INSIDE a running
-    turn of that agent (`turn_asker.standing`, worked out from the turn's server-side
-    record, never from anything the agent sends). Then:
+    `user` is a coach (`coach_scope`), and an opt-in counts only for people who are members of a
+    workspace the coach covers. Then:
 
-    * a turn a person asked for (verified, or the person an agent was started for)
-      reads the sessions of THAT person alone — "coach me" is me only — so only their
-      own grant counts;
-    * a turn canopy started on a PERSON's account (a schedule, an agent task's follow-up)
-      answers to that person, as if they had asked: whoever may create it chose its prompt;
-    * a turn nobody asked for (a schedule or trigger no person owns, or a dispatch from
-      such a turn: the server stamps `unattended_dispatch`) sees every grantor on the
-      ROSTER, which is what the coaching sweep needs, and reads none of their sessions
-      (`_review_grant_q`) unless it was dispatched for one of them (`turn_asker.READS_FOR`),
-      when both the roster and the reads are that one person;
-    * a turn asked by an administrator of the agent itself reads every grantor's: they
-      run it for all it serves (`Agent.is_admin`);
-    * no turn at all — a stored token, a session, a socket, a finished, confined or
-      unverified-asker turn, or a dispatch from a turn like those — reads nobody's: it
-      cannot show whom it is answering to.
+    * a PERSON coach reads every such person, as themselves (no turn is involved);
+    * an AGENT coach must make the request INSIDE a running turn of that agent (`turn_asker.standing`,
+      worked out from the turn's server-side record, never from anything the agent sends). Then:
+      - a turn a person asked for (verified, or the person an agent was started for) reads the sessions
+        of THAT person alone, "coach me" is me only, so only their own opt-in counts;
+      - a turn canopy started on a PERSON's account (a schedule, an agent task's follow-up) answers to
+        that person, as if they had asked: whoever may create it chose its prompt;
+      - a turn nobody asked for (a schedule or trigger no person owns, or a dispatch from such a turn:
+        the server stamps `unattended_dispatch`) sees every opt-in in scope, which is what the coaching
+        sweep needs, and reads none of their sessions (`_coach_q`) unless it was dispatched for one of
+        them (`turn_asker.READS_FOR`), when both the roster and the reads are that one person;
+      - a turn asked by an administrator of the agent reads every opt-in in scope: they run it for all
+        it serves (`Agent.is_admin`);
+      - no turn at all (a stored token, a session, a socket, a finished, confined or unverified-asker
+        turn, or a dispatch from a turn like those) reads nobody's: it cannot show whom it answers to.
 
-    Returns a `SessionReviewGrant` queryset (user ids via `.values("user_id")`). The
-    agent's roster of who enrolled (`granted-to-me`) is this same queryset."""
+    Returns a `CoachingOptIn` queryset (user ids via `.values("user_id")`). The coach's roster of who
+    enrolled (`granted-to-me`) is this same queryset."""
+    from apps.agents.models import Agent  # noqa: PLC0415 — access imports nothing of agents at load
     from apps.harness import turn_asker  # noqa: PLC0415 — harness imports this module
+    from apps.workspaces.models import WorkspaceMembership  # noqa: PLC0415 — as `_tenant_slugs`
 
-    grants = SessionReviewGrant.objects.filter(agent__user=user, revoked_at__isnull=True)
+    scope = coach_scope(user)
+    if not scope:
+        return CoachingOptIn.objects.none()
+    in_scope = WorkspaceMembership.objects.filter(workspace_id__in=scope).values("user_id")
+    grants = CoachingOptIn.objects.filter(revoked_at__isnull=True, user_id__in=in_scope)
+    if not Agent.objects.filter(user=user).exists():
+        return grants                                   # a person coaching as themselves
     stand = turn_asker.standing(user)
     if stand is None:
         return grants.none()
@@ -455,49 +469,25 @@ def review_grantors(user):
     return grants.filter(user_id=stand.person_id)
 
 
-def _review_grant_q(user) -> Q:
-    """Leg 5: the sessions of the people `review_grantors` allows this request to read.
-    Empty for anyone else, and for a turn nobody asked that names no one grantor: it holds the
-    roster and no transcript, so a dispatch from an older plugin, with no scope, reads nothing.
-    Never a session whose words its person deleted: a coach has no business with the row left."""
+def _coach_q(user) -> Q:
+    """Leg 5: the sessions of the people `review_grantors` allows this request to read, in the
+    workspaces the coach covers. Empty for anyone else, and for an agent turn nobody asked that names no
+    one opt-in: it holds the roster and no transcript, so a dispatch from an older plugin, with no scope,
+    reads nothing. Never a session whose words were deleted, a contact's, or a sensitive one."""
     if not getattr(user, "is_authenticated", False):
         return Q(pk__in=[])
+    from apps.agents.models import Agent  # noqa: PLC0415 — access imports nothing of agents at load
     from apps.harness import turn_asker  # noqa: PLC0415 — harness imports this module
 
-    stand = turn_asker.standing(user)
-    if stand is not None and stand.unattended and stand.reads_for is None:
+    if Agent.objects.filter(user=user).exists():
+        stand = turn_asker.standing(user)
+        if stand is not None and stand.unattended and stand.reads_for is None:
+            return Q(pk__in=[])
+    scope = coach_scope(user)
+    if not scope:
         return Q(pk__in=[])
-    return (sessions_of_q(review_grantors(user).values("user_id"))
+    return (sessions_of_q(review_grantors(user).values("user_id")) & Q(workspace_id__in=scope)
             & Q(contact__isnull=True, content_deleted_at__isnull=True) & _not_sensitive_q())
-
-
-def coached_agents(user):
-    """Agents `user` administers (the three ways in of `Agent.is_admin`), as a queryset of ids.
-    The tenant gate is the caller's, as in `_agent_admin_q`."""
-    from apps.agents.models import Agent  # noqa: PLC0415 — access imports nothing of agents at load
-    from apps.workspaces import permissions as perms  # noqa: PLC0415 — as `_tenant_slugs`
-
-    owned = perms.slugs_with(user, perms.OWN)
-    return (Agent.objects.filter(Q(owner=user) | Q(admin_grants__user=user) | Q(workspace_id__in=owned))
-            .values("pk"))
-
-
-def _coach_admin_q(user) -> Q:
-    """Leg 7: the sessions of everyone who let an agent `user` administers review them.
-
-    An agent's OWN login that is made an admin (an admin agent such as Ada) reads this only
-    inside a running turn, like leg 5 (`turn_asker.standing`): no turn, no read."""
-    if not getattr(user, "is_authenticated", False):
-        return Q(pk__in=[])
-    from apps.agents.models import Agent  # noqa: PLC0415 — access imports nothing of agents at load
-    from apps.harness import turn_asker  # noqa: PLC0415 — harness imports this module
-
-    if Agent.objects.filter(user=user).exists() and turn_asker.standing(user) is None:
-        return Q(pk__in=[])
-    grantors = (SessionReviewGrant.objects.filter(revoked_at__isnull=True, agent__in=coached_agents(user))
-                .values("user_id"))
-    return (sessions_of_q(grantors) & Q(contact__isnull=True, content_deleted_at__isnull=True)
-            & _not_sensitive_q())
 
 
 def _agent_admin_q(user) -> Q:
