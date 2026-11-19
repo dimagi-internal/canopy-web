@@ -551,9 +551,16 @@ def test_link_rejects_a_tampered_token(slack, installation, alice):
 # ---- installing -----------------------------------------------------------------
 
 
-def test_only_an_owner_may_install(slack, ws, alice):
+def test_only_an_admin_or_owner_may_install(slack, ws, alice):
     resp = _link_client(alice).get("/auth/slack/install/", {"workspace": ws.slug})
     assert resp.status_code == 403
+
+
+def test_a_workspace_admin_may_install(slack, ws):
+    admin = a_user("admin@dimagi.com")
+    wsvc.ensure_member(ws, admin, WorkspaceMembership.ADMIN)
+    resp = _link_client(admin).get("/auth/slack/install/", {"workspace": ws.slug})
+    assert resp.status_code == 302
 
 
 def test_install_round_trip_stores_an_encrypted_token(slack, ws):

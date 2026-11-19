@@ -1508,14 +1508,14 @@ export interface paths {
         };
         readonly get?: never;
         /**
-         * Let canopy manage the Slack app's slash commands (owner)
+         * Let canopy manage the Slack app's slash commands (admin or owner)
          * @description Takes the REFRESH token of a Slack app configuration token, then syncs
          *     the app's slash commands to the agents that are on for Slack. A browser needs
          *     a fresh passkey step-up (403 `step_up_required` otherwise); a token may call it.
          */
         readonly put: operations["set_config_token"];
         readonly post?: never;
-        /** Stop managing the Slack app's slash commands (owner) */
+        /** Stop managing the Slack app's slash commands (admin or owner) */
         readonly delete: operations["clear_config_token"];
         readonly options?: never;
         readonly head?: never;
@@ -1552,7 +1552,7 @@ export interface paths {
         };
         readonly get?: never;
         /**
-         * Allow this workspace's agents to ask to read a whole channel (owner)
+         * Allow this workspace's agents to ask to read a whole channel (admin or owner)
          * @description The opt-in for permissioned whole-channel reads (`/api/slack-ingests/`).
          *
          *     On, an agent may ASK; every read still waits for an approval posted in the
@@ -1634,7 +1634,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /**
-         * Declare the Slack app an agent (owner)
+         * Declare the Slack app an agent (admin or owner)
          * @description Turn on Slack's own working indicator for this workspace's Slack app.
          *
          *     Three manifest edits through the configuration token canopy already holds —
