@@ -1,8 +1,8 @@
 """Django Ninja router for /api/slack-config — a workspace's Slack connection.
 
 Deliberately NOT under /api/slack/: that prefix is allowlisted in the login
-middleware for Slack's own signed webhooks, and nothing an owner configures
-should share a route with an anonymous caller. Reads are member, writes owner,
+middleware for Slack's own signed webhooks, and nothing an admin configures
+should share a route with an anonymous caller. Reads are member, writes admin or owner,
 the same split `apps/inbound` uses for its config.
 """
 from __future__ import annotations
@@ -126,8 +126,8 @@ def get_config(request: HttpRequest, workspace: str) -> dict:
 
 
 @router.put("/{workspace}/config-token", response=SlackSyncOut,
-            summary="Let canopy manage the Slack app's slash commands (owner)")
-@gate("own", setting=True, step_up=True)
+            summary="Let canopy manage the Slack app's slash commands (admin or owner)")
+@gate("integrations", setting=True, step_up=True)
 def set_config_token(request: HttpRequest, workspace: str, payload: SlackConfigTokenIn) -> dict:
     """Takes the REFRESH token of a Slack app configuration token, then syncs
     the app's slash commands to the agents that are on for Slack. A browser needs
@@ -144,8 +144,8 @@ def set_config_token(request: HttpRequest, workspace: str, payload: SlackConfigT
 
 
 @router.delete("/{workspace}/config-token", response=SlackConfigOut,
-               summary="Stop managing the Slack app's slash commands (owner)")
-@gate("own", setting=True)
+               summary="Stop managing the Slack app's slash commands (admin or owner)")
+@gate("integrations", setting=True)
 def clear_config_token(request: HttpRequest, workspace: str) -> dict:
     ws = workspace_for(request.user, workspace, perms.OWN)
     commands.clear_config_token(_installation_or_409(ws))
@@ -166,8 +166,8 @@ def set_history(request: HttpRequest, workspace: str, payload: SlackHistoryIn) -
 
 
 @router.put("/{workspace}/channel-ingest", response=SlackConfigOut,
-            summary="Allow this workspace's agents to ask to read a whole channel (owner)")
-@gate("own", setting=True)  # revoking withdraws an agent's access to a channel
+            summary="Allow this workspace's agents to ask to read a whole channel (admin or owner)")
+@gate("integrations", setting=True)  # revoking withdraws an agent's access to a channel
 def set_channel_ingest(request: HttpRequest, workspace: str, payload: SlackChannelIngestSwitchIn) -> dict:
     """The opt-in for permissioned whole-channel reads (`/api/slack-ingests/`).
 
@@ -228,8 +228,8 @@ def sync(request: HttpRequest, workspace: str) -> dict:
 
 
 @router.post("/{workspace}/declare-agent", response=SlackDeclareAgentOut,
-             summary="Declare the Slack app an agent (owner)")
-@gate("own", setting=True)
+             summary="Declare the Slack app an agent (admin or owner)")
+@gate("integrations", setting=True)
 def declare_agent(request: HttpRequest, workspace: str) -> dict:
     """Turn on Slack's own working indicator for this workspace's Slack app.
 
