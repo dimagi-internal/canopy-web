@@ -104,7 +104,7 @@ def record_coaching_fact(request: HttpRequest, payload: CoachingFactIn) -> dict:
 
 # ---- who coaches: a workspace owner designates agents and people --------------------------------------
 
-class CoachIn(Schema):
+class CoachingRoleIn(Schema):
     """Owner-only. Name exactly one: an `agent` (its slug) or a person (their `email`, a member)."""
 
     model_config = ConfigDict(extra="forbid")
@@ -113,7 +113,7 @@ class CoachIn(Schema):
     email: str = ""
 
 
-class CoachOut(Schema):
+class CoachingRoleOut(Schema):
     id: int
     kind: str  # "agent" | "person"
     slug: str = ""
@@ -130,7 +130,7 @@ def _coach_out(role) -> dict:
             "workspace": role.workspace_id, "created_at": role.created_at}
 
 
-@router.get("/workspaces/{slug}/coaches/", response={200: list[CoachOut], **refusals(404)},
+@router.get("/workspaces/{slug}/coaches/", response={200: list[CoachingRoleOut], **refusals(404)},
             summary="Who coaches this workspace's people (the coaching program)")
 @gate("member")
 def list_coaches(request: HttpRequest, slug: str) -> list[dict]:
@@ -140,10 +140,10 @@ def list_coaches(request: HttpRequest, slug: str) -> list[dict]:
     return [_coach_out(r) for r in coaching.roles_in(m.workspace)]
 
 
-@router.post("/workspaces/{slug}/coaches/", response={200: CoachOut, **refusals(403, 404, 422)},
+@router.post("/workspaces/{slug}/coaches/", response={200: CoachingRoleOut, **refusals(403, 404, 422)},
              summary="Designate a coach for this workspace and below (owner-only)")
 @gate("own", setting=True)
-def add_coach(request: HttpRequest, slug: str, payload: CoachIn) -> dict:
+def add_coach(request: HttpRequest, slug: str, payload: CoachingRoleIn) -> dict:
     """Owner-only. Name an `agent` (its slug; it must live in this workspace's tree) or a person (`email`;
     a member of it). The coach may then read people who opted into coaching and are in this workspace or
     below, read-only, never sensitive sessions (`canopy_sessions.access`, leg 5). Nobody is read until

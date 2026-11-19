@@ -35408,31 +35408,32 @@ export interface components {
             /** Finding Type */
             readonly finding_type?: ("knowledge-gap" | "session-mistake" | "system-defect") | null;
         };
-        /** CoachOut */
-        readonly CoachOut: {
-            /**
-             * Kind
-             * @enum {string}
-             */
-            readonly kind: "agent" | "person";
-            /** Name */
-            readonly name: string;
+        /** CoachingRoleOut */
+        readonly CoachingRoleOut: {
+            /** Id */
+            readonly id: number;
+            /** Kind */
+            readonly kind: string;
             /**
              * Slug
-             * @description The agent's slug; empty for a person.
+             * @default
              */
             readonly slug: string;
-            /**
-             * Workspace
-             * @description The workspace this coach is designated for (and everything below it).
-             */
+            /** Name */
+            readonly name: string;
+            /** Workspace */
             readonly workspace: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
         };
         /**
-         * CoachIn
+         * CoachingRoleIn
          * @description Owner-only. Name exactly one: an `agent` (its slug) or a person (their `email`, a member).
          */
-        readonly CoachIn: {
+        readonly CoachingRoleIn: {
             /**
              * Agent
              * @default
@@ -50121,6 +50122,26 @@ export interface components {
              */
             readonly on: boolean;
         };
+        /** CoachOut */
+        readonly CoachOut: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "agent" | "person";
+            /** Name */
+            readonly name: string;
+            /**
+             * Slug
+             * @description The agent's slug; empty for a person.
+             */
+            readonly slug: string;
+            /**
+             * Workspace
+             * @description The workspace this coach is designated for (and everything below it).
+             */
+            readonly workspace: string;
+        };
         /** SessionReviewerOut */
         readonly SessionReviewerOut: {
             /** Agent */
@@ -62541,7 +62562,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": readonly components["schemas"]["CoachOut"][];
+                    readonly "application/json": readonly components["schemas"]["CoachingRoleOut"][];
                 };
             };
             /** @description Not Found */
@@ -62566,7 +62587,7 @@ export interface operations {
         };
         readonly requestBody: {
             readonly content: {
-                readonly "application/json": components["schemas"]["CoachIn"];
+                readonly "application/json": components["schemas"]["CoachingRoleIn"];
             };
         };
         readonly responses: {
@@ -62576,7 +62597,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["CoachOut"];
+                    readonly "application/json": components["schemas"]["CoachingRoleOut"];
                 };
             };
             /** @description Forbidden */
