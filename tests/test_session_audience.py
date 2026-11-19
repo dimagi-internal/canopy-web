@@ -24,7 +24,6 @@ pytestmark = pytest.mark.django_db
 
 def _more_shapes(people, shapes, ws):
     """Add the shapes `_world` lacks: an email thread, a laptop session in a project's repo, a dispatched session, a sensitive laptop session."""
-    from apps.agents.models import Agent
 
     hal = Agent.objects.get(slug="hal")
     email = Session.objects.create(workspace=ws, agent=hal, origin=Session.ORIGIN_RUNNER,
@@ -114,19 +113,20 @@ def test_the_session_view_carries_it():
     assert body["audience"]["count"] == 3     # owner, the viewer added, Trellis reviewing
 
 
-def test_the_audience_names_the_coaching_agents_admins():
-    from apps.canopy_sessions.models import Session, SessionReviewGrant
+def test_the_audience_names_the_coaches_of_a_person_who_opted_in():
+    from apps.canopy_sessions.models import CoachingOptIn, CoachingRole, Session
 
     people, shapes, ws = _world()
     chat = Session.objects.create(workspace=ws, created_by=people["mate"], origin=Session.ORIGIN_WEB)
-    shapes["mate_chat"] = chat
-    SessionReviewGrant.objects.create(user=people["mate"], agent=Agent.objects.get(slug="trellis"))
+    CoachingOptIn.objects.create(user=people["mate"])
+    CoachingRole.objects.create(workspace=ws, user=people["viewer"])
     from apps.harness import turn_asker
 
     setattr(people["coach"], turn_asker.STANDING_ATTR,
             turn_asker.AnsweringTo("t", person_id=people["mate"].pk, operator=False))
     readers = audience.readers(chat)
-    assert people["owner"].pk in readers and people["viewer"].pk not in readers
+    assert people["viewer"].pk in readers and people["owner"].pk not in readers
     for who, user in people.items():
         assert (user.pk in readers) is access.can_read(user, chat), who
-    assert "The admins of Trellis may read it (coaching)" in audience.summary(chat, people["mate"])["extras"]
+    extras = audience.summary(chat, people["mate"])["extras"]
+    assert any("Trellis" in e and "may review (coaching)" in e and "viewer" in e for e in extras), extras

@@ -1,6 +1,6 @@
 """Coaching uploads: which of a box's sessions its OWN runner ships in full.
 
-A person who lets a coach (a live `SessionReviewGrant`) review their sessions has
+A person who opted into coaching (a live `CoachingOptIn`) has
 also told their own machine to send those sessions up — canopy never reaches down
 to a laptop for them, and a reviewer reads only stored rows. The runner already
 ships every ACTIVE session it backs; this widens that, for a coached person, to
@@ -16,19 +16,22 @@ and `archive` keeps them; neither deletes anything.
 """
 from __future__ import annotations
 
+from django.db import transaction
 from django.db.models import Q
+from django.utils import timezone
 
 from apps.harness import runner_requirements as rr
 
+from . import lifecycle
 from .access import sessions_of_q
-from .models import Session, SessionReviewGrant
+from .models import CoachingOptIn, CoachingRole, Session
 
 
 def is_coached(user_id) -> bool:
-    """Whether this person has at least one live review grant."""
+    """Whether this person has opted into coaching (a live `CoachingOptIn`)."""
     if user_id is None:
         return False
-    return SessionReviewGrant.objects.filter(user_id=user_id, revoked_at__isnull=True).exists()
+    return CoachingOptIn.objects.filter(user_id=user_id, revoked_at__isnull=True).exists()
 
 
 def full_upload_session_ids(runner) -> set:
@@ -52,3 +55,35 @@ def full_upload_session_ids(runner) -> set:
         .exclude(metadata__has_key=rr.METADATA_KEY)
         .values_list("id", flat=True)
     )
+
+
+# ---- who coaches (a workspace owner's act) ----------------------------------------------------------
+
+def designate(workspace, *, agent=None, user=None, by) -> CoachingRole:
+    """Make an agent or a person a coach for `workspace` and everything below it. Doing it again is a
+    no-op. The caller has checked `by` owns the workspace and that `agent`/`user` is one of its own."""
+    assert (agent is None) != (user is None)
+    with transaction.atomic():
+        existing = CoachingRole.objects.filter(workspace=workspace, agent=agent, user=user,
+                                               revoked_at__isnull=True).first()
+        if existing is not None:
+            return existing
+        role = CoachingRole.objects.create(workspace=workspace, agent=agent, user=user, granted_by=by)
+        lifecycle.record(lifecycle.SHARING_CHANGED, None, by=by, workspace_id=workspace.slug,
+                         change={"field": "coach", "agent": agent.slug if agent else "",
+                                 "user_id": user.pk if user else None, "before": False, "after": True})
+    return role
+
+
+def remove(role: CoachingRole, *, by) -> None:
+    with transaction.atomic():
+        role.revoked_at = timezone.now()
+        role.save(update_fields=["revoked_at"])
+        lifecycle.record(lifecycle.SHARING_CHANGED, None, by=by, workspace_id=role.workspace_id,
+                         change={"field": "coach", "agent": role.agent.slug if role.agent_id else "",
+                                 "user_id": role.user_id, "before": True, "after": False})
+
+
+def roles_in(workspace) -> list[CoachingRole]:
+    return list(CoachingRole.objects.filter(workspace=workspace, revoked_at__isnull=True)
+                .select_related("agent", "user").order_by("created_at"))

@@ -1,15 +1,19 @@
-"""Letting an agent review your sessions (a coach), read-only.
+"""Opting into coaching, and who coaches (read-only).
 
-The person's own act, on their memory page or the first-run screen: they name an
-agent of a workspace they belong to, and that agent's OWN canopy login may then
-read their sessions — the chats they started and the runner-discovered sessions
-on their own boxes — through the one session ACL (`canopy_sessions.access`, leg
-5). Never a sensitive conversation, never a write. Revoking ends it at once.
+COACHING IS CANOPY'S, NOT AN AGENT'S. The person's own act, on their memory page or the first-run
+screen, is to opt in to coaching: `CoachingOptIn`, naming no agent. Who coaches them is a separate fact
+(`CoachingRole`: an agent or a person designated for a workspace and everything below it, by that
+workspace's owner), so the program can change hands without anyone opting in again: today Trellis and
+Ada, later a division's director and their agents. The person is always shown who coaches them now
+(`coaches_for`) and the session ACL (`canopy_sessions.access`, leg 5) enforces it: coaches read the
+chats the person started and the runner-discovered sessions on their own boxes, never a sensitive
+conversation, never a write. Revoking ends it at once.
 
-Every grant and revoke is on the person's audit (`sessionReviewer.granted` /
-`.revoked`). The agent lists who let it in (`granted_to`); nobody else can.
+Every opt-in and opt-out is on the person's audit (`sessionReviewer.granted` / `.revoked`) and in the
+event log of each workspace that coaches them; every coach designated or removed is in that workspace's
+event log. The coach lists who opted in within its reach (`granted_to`); nobody else can.
 
-Which agent the product offers as THE coach is a setting
+The agent the product offers for one-session reviews and the weekly note's sender is still a setting
 (`settings.COACHING_AGENT_SLUG`, `coach_offer`), never named in logic.
 """
 from __future__ import annotations
@@ -21,7 +25,7 @@ from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.canopy_sessions import lifecycle
-from apps.canopy_sessions.models import SessionReviewGrant
+from apps.canopy_sessions.models import CoachingOptIn, CoachingRole
 from apps.harness.signals import session_content_deleted
 from apps.workspaces import access_requests
 
@@ -31,41 +35,62 @@ from .services import person_for
 
 
 def live(user):
-    return (SessionReviewGrant.objects.filter(user=user, revoked_at__isnull=True)
-            .select_related("agent").order_by("created_at"))
+    return CoachingOptIn.objects.filter(user=user, revoked_at__isnull=True)
 
 
-def grant(person: Person, agent, *, user) -> SessionReviewGrant:
-    """Let `agent` review `user`'s sessions. Granting again is a no-op. The
-    caller has already checked `agent` is one of `user`'s workspaces'."""
+def coaches_for(user) -> list[dict]:
+    """Who coaches `user` now: every live role that covers a workspace they are in (that workspace or
+    one above it). Agents by slug and name, people by name. Shown to the person before they opt in
+    and after, because this list is what they are agreeing to."""
+    from apps.workspaces import services as wsvc  # noqa: PLC0415 — as the other lazy imports here
+
+    mine = wsvc.user_workspace_slugs(user)
+    if not mine:
+        return []
+    out = []
+    roles = (CoachingRole.objects.filter(revoked_at__isnull=True, workspace_id__in=wsvc.with_ancestors(mine))
+             .select_related("agent", "user", "workspace").order_by("created_at"))
+    for r in roles:
+        if r.agent_id:
+            out.append({"kind": "agent", "slug": r.agent.slug, "name": r.agent.name or r.agent.slug,
+                        "workspace": r.workspace_id})
+        else:
+            out.append({"kind": "person", "slug": "", "name": r.user.get_full_name() or r.user.email
+                        or r.user.username, "workspace": r.workspace_id})
+    return out
+
+
+def opt_in(person: Person, *, user) -> CoachingOptIn:
+    """Opt `user` into coaching. Doing it again is a no-op."""
     with transaction.atomic():
-        current = live(user).filter(agent=agent).first()
+        current = live(user).first()
         if current is not None:
             return current
-        row = SessionReviewGrant.objects.create(user=user, agent=agent)
-        _sharing_changed(user, agent, granted=True)
+        row = CoachingOptIn.objects.create(user=user)
+        _sharing_changed(user, granted=True)
         hcp.audit(person, "sessionReviewer.granted", actor=hcp.user_actor(user),
-                  purpose=f"let {agent.name or agent.slug} review your sessions, read-only")
+                  purpose="opt in to coaching: canopy's coaches may review your sessions, read-only")
     return row
 
 
-def revoke(person: Person, agent, *, user) -> bool:
-    """Stop `agent` reviewing `user`'s sessions. False when it could not."""
+def opt_out(person: Person, *, user) -> bool:
+    """Opt `user` out. False when they were not opted in."""
     with transaction.atomic():
-        n = live(user).filter(agent=agent).update(revoked_at=timezone.now())
+        n = live(user).update(revoked_at=timezone.now())
         if n:
-            _sharing_changed(user, agent, granted=False)
+            _sharing_changed(user, granted=False)
             hcp.audit(person, "sessionReviewer.revoked", actor=hcp.user_actor(user),
-                      purpose=f"stop {agent.name or agent.slug} reviewing your sessions")
+                      purpose="opt out of coaching: no coach may review your sessions")
     return bool(n)
 
 
-def _sharing_changed(user, agent, *, granted: bool) -> None:
-    """A coach's read of a person's sessions began or ended: one event in the agent's
-    workspace (`canopy_sessions.lifecycle`)."""
-    lifecycle.record(lifecycle.SHARING_CHANGED, None, by=user, workspace_id=agent.workspace_id,
-                     change={"field": "review_grant", "user_id": user.pk, "agent": agent.slug,
-                             "before": not granted, "after": granted})
+def _sharing_changed(user, *, granted: bool) -> None:
+    """Coaching of a person began or ended: one event in each workspace whose coaches reach them
+    (`canopy_sessions.lifecycle`)."""
+    for ws in sorted({c["workspace"] for c in coaches_for(user)}):
+        lifecycle.record(lifecycle.SHARING_CHANGED, None, by=user, workspace_id=ws,
+                         change={"field": "coaching", "user_id": user.pk, "before": not granted,
+                                 "after": granted})
 
 
 @receiver(session_content_deleted, dispatch_uid="person_audit_session_content_deleted")
@@ -79,14 +104,13 @@ def _on_content_deleted(sender, session, by, **kwargs) -> None:
               detail=str(session.pk))
 
 
-def granted_to(agent, user) -> list[SessionReviewGrant]:
-    """Who let `agent` review their sessions, oldest grant first — as many as `user`'s request
-    (the agent's own login) may read now: the same rule as the sessions themselves
+def granted_to(user) -> list[CoachingOptIn]:
+    """Who opted into coaching, among the people `user`'s request (a coach: an agent's own login or a
+    person with a role) may read now: the same rule as the sessions themselves
     (`access.review_grantors`), so a turn asked by one person is not told who else enrolled."""
     from apps.canopy_sessions import access  # noqa: PLC0415 — as this module's other lazy imports
 
-    return list(access.review_grantors(user).filter(agent=agent).select_related("user")
-                .order_by("created_at"))
+    return list(access.review_grantors(user).select_related("user").order_by("created_at"))
 
 
 def agent_named(slug: str):
@@ -115,4 +139,4 @@ def coach_offer(user, member_slugs) -> dict | None:
         if agent.workspace_id not in requestable:
             return None
     return {"agent": agent.slug, "name": agent.name or agent.slug, "workspace": agent.workspace_id,
-            "member": member, "on": member and live(user).filter(agent=agent).exists()}
+            "member": member, "on": member and live(user).exists()}

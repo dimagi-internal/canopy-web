@@ -41,7 +41,6 @@ from apps.canopy_sessions.models import (
     SessionKey,
     SessionKeyWrap,
     SessionParticipant,
-    SessionReviewGrant,
     SessionSecret,
     TransferRequest,
 )
@@ -59,6 +58,7 @@ from apps.harness.models import (
     TurnTranscript,
 )
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.fixtures.session_world import grant_coaching
 from tests.token_helpers import pat_token
 
 pytestmark = pytest.mark.django_db
@@ -355,7 +355,7 @@ def test_a_turn_starting_after_the_bytes_went_keeps_the_words(w, monkeypatch):
 # ---------------------------------------------------------------- the runner must not re-upload it
 
 def test_a_reupload_is_dropped_on_every_path(w):
-    SessionReviewGrant.objects.create(user=w["lili"], agent=w["trellis"])
+    grant_coaching(w["lili"], w["trellis"])
     kept, gone = _laptop_session(w, key="kept"), _laptop_session(w)
     RunnerBinding.objects.filter(session=kept).update(transcript_id="another-file")
     # The same calls store rows while nothing has been deleted.
@@ -375,7 +375,7 @@ def test_a_reupload_is_dropped_on_every_path(w):
 
 
 def test_a_coached_box_stops_being_asked_for_it(w):
-    SessionReviewGrant.objects.create(user=w["lili"], agent=w["trellis"])
+    grant_coaching(w["lili"], w["trellis"])
     s = _laptop_session(w, status=Session.ARCHIVED)
     _said(s)
     assert _streams(w)[str(s.pk)]["ship_full"] is True
@@ -389,7 +389,7 @@ def test_a_review_grant_given_afterwards_resurrects_nothing(w):
     s = _laptop_session(w)
     _said(s)
     assert _delete(w["lili"], s).status_code == 200
-    SessionReviewGrant.objects.create(user=w["lili"], agent=w["trellis"])
+    grant_coaching(w["lili"], w["trellis"])
     assert str(s.pk) not in _streams(w)
     assert _ship(w, s).status_code == 200
     assert not Message.objects.filter(session=s).exists()
@@ -555,7 +555,7 @@ def _lili_chat(w):
 
 
 def test_an_agents_login_is_refused(w):
-    SessionReviewGrant.objects.create(user=w["lili"], agent=w["trellis"])
+    grant_coaching(w["lili"], w["trellis"])
     s = _lili_chat(w)
     r = _delete(w["login"], s)
     assert r.status_code in (403, 404)
@@ -691,7 +691,7 @@ def _coach_turn_token(w):
 
 
 def test_a_coach_reads_nothing_of_it_afterwards(w):
-    SessionReviewGrant.objects.create(user=w["lili"], agent=w["trellis"])
+    grant_coaching(w["lili"], w["trellis"])
     gone, kept = _lili_chat(w), _lili_chat(w)
     bearer = {"HTTP_AUTHORIZATION": f"Bearer {_coach_turn_token(w)}"}
 

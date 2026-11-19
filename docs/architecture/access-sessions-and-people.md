@@ -32,7 +32,7 @@ their own people (`tenancy-sensitive-conversations.md` § Sensitive conversation
 | **Panel** (an embedded widget) | the visitor (a contact: `contact_session_q`) | the visitor |
 | **An agent's own work** (an alarm, a scheduled turn) | the agent's admins (`Agent.is_admin`) | the agent's admins |
 | **Work an agent starts for you** (a dispatched session) | you + the parent conversation's people (`services._inherit_participants`) | the same |
-| **Coaching** | + the admins of the agent the person granted (`SessionReviewGrant`; leg 7, as themselves, read-only), + the agent the person granted, read-only, in a turn asked by them or by the agent's admin, or dispatched for that one person, never a sensitive one, never one whose words its person deleted | no — it reads what is already uploaded |
+| **Coaching** | + the coaches of the person (`CoachingOptIn` + `CoachingRole`: an agent's login in a running turn, or a person designated for the workspace and below, as themselves), read-only, in a turn asked by them or by the agent's admin, or dispatched for that one person, never a sensitive one, never one whose words its person deleted | no — it reads what is already uploaded |
 | **One session, asked from its page** | + the coach the person asked (`SessionReviewAsk`), as the person, with a token pinned to that session, only inside the chat the ask opened, never a sensitive one, never one whose words its person deleted | no — it reads what is already uploaded |
 
 **Every session says who can see it.** `GET /api/canopy-sessions/{id}` carries `audience`
@@ -54,7 +54,7 @@ happened to a session without reading it (`apps/canopy_sessions/lifecycle.py`,
 ## The weekly coaching pass
 
 A turn nobody asked for (the schedule's sweep) sees the coach's whole roster and reads no session
-(`access._review_grant_q`). It starts one turn per person with `reads_for` (`POST /api/harness/turns/`,
+(`access._coach_q`). It starts one turn per person with `reads_for` (`POST /api/harness/turns/`,
 `canopy agent dispatch --reads-for`), which only that agent's own login, inside such a turn, may name, and only
 for a live grantor (`turn_gates.check_reads_for`). The stamp is the server's (`turn_asker.READS_FOR`,
 `enqueue_turn` drops a client's copy). Held by canopy-web on that turn:
@@ -67,7 +67,7 @@ for a live grantor (`turn_gates.check_reads_for`). The stamp is the server's (`t
 
 The envelope's `reads_for` names the person to the turn, which is who its scripts treat as asking.
 
-A dispatch with no scope is still a turn nobody asked for: it reads nothing (`access._review_grant_q`).
+A dispatch with no scope is still a turn nobody asked for: it reads nothing (`access._coach_q`).
 It keeps the full profile, because it must run the mail and ledger scripts. So the box's other
 credentials and its ledger file are still in its hands, and the ledger's limits are the script's.
 
@@ -117,7 +117,7 @@ is what stays open, and no canopy check covers it.
 
 **Nothing a grant reads, reads this.** It enrols no one in the weekly pass, uploads no other session
 and appears on no roster: `is_coached`, `full_upload_session_ids`, `session_reviewers.live`,
-`coach_offer`, `granted_to` and `audience._coaches` read only `SessionReviewGrant`, which is why the
+`coach_offer`, `granted_to` and `audience._coaches` read only `CoachingOptIn` and `CoachingRole`, which is why the
 scope is a separate table (`tests/test_session_review_asks.py`).
 
 **Who is offered it** (`session_review_asks.state`): only the agent `COACHING_AGENT_SLUG` names, and

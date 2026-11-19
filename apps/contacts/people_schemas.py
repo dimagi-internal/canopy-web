@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field
 
@@ -459,7 +459,8 @@ class MemoryViewersOut(StrictModel):
 
 
 class SessionReviewerIn(StrictModel):
-    agent: str = Field(description="The slug of an agent in a workspace you belong to.")
+    agent: str | None = Field(None, description="DEPRECATED and ignored: opting in names no agent. Coaching is "
+                                       "canopy's; who coaches you is shown in `coaches`.")
 
 
 class SessionReviewerOut(StrictModel):
@@ -496,11 +497,25 @@ class SessionReviewStateOut(StrictModel):
         None, description="Null when this is not your own session or no coach is within your reach.")
 
 
+class CoachOut(StrictModel):
+    kind: Literal["agent", "person"]
+    name: str
+    slug: str = Field(description="The agent's slug; empty for a person.")
+    workspace: str = Field(description="The workspace this coach is designated for (and everything below it).")
+
+
 class SessionReviewersOut(StrictModel):
-    reviewers: list[SessionReviewerOut]
-    agents: list[ViewerChoiceOut] = Field(description="Agents you could let review your sessions.")
+    on: bool = Field(description="Whether you have opted into coaching.")
+    since: dt.datetime | None = Field(None, description="When you opted in.")
+    coaches: list[CoachOut] = Field(
+        description="Who coaches you now: what you agree to when you opt in. Empty means no coach "
+                    "reaches your workspaces, so opting in would read nothing.")
+    reviewers: list[SessionReviewerOut] = Field(
+        description="Compatibility: the agents among `coaches`, while you are opted in. An agent's turn "
+                    "asked by you sees only itself.")
+    agents: list[ViewerChoiceOut] = Field(description="Deprecated: always empty.")
     coach: CoachOfferOut | None = Field(
-        None, description="The coach canopy offers, when there is one you can reach.")
+        None, description="The agent canopy offers for one-session reviews, when there is one you can reach.")
 
 
 class SessionGranterOut(StrictModel):

@@ -13,13 +13,12 @@ import pytest
 from django.contrib.auth.models import User
 
 from apps.agents.models import Agent
-from apps.canopy_sessions.models import Session, SessionReviewGrant
-from apps.contacts import services as contacts
-from apps.contacts import session_reviewers
+from apps.canopy_sessions.models import CoachingOptIn, Session
 from apps.harness import caller_tokens
 from apps.harness import initiator as who
 from apps.harness.models import Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.fixtures.session_world import grant_coaching
 from tests.token_helpers import bearer_headers
 
 pytestmark = pytest.mark.django_db
@@ -53,9 +52,8 @@ def _turn(w, user, agent=None, *, assurance=who.SESSION, session=None):
 
 
 def _enrol(user, *agents):
-    person = contacts.person_for(user=user)
     for a in agents:
-        session_reviewers.grant(person, a, user=user)
+        grant_coaching(user, a)
 
 
 def _token(turn):
@@ -85,7 +83,7 @@ def test_a_caller_token_cannot_change_consent(client, w):
     repo = _token(_turn(w, w["jj"]))                              # a repo chat: not read-only
     assert client.post(URL, data={"agent": "echo"}, content_type="application/json", **repo).status_code == 403
     assert client.get(URL, **repo).status_code == 403             # no agent to answer for
-    assert not SessionReviewGrant.objects.exists()
+    assert not CoachingOptIn.objects.exists()
 
 
 def test_an_unverified_asker_is_refused(client, w):
@@ -100,4 +98,6 @@ def test_the_person_keeps_the_full_view(client, w):
     client.force_login(w["lili"])
     body = client.get(URL).json()
     assert [r["agent"] for r in body["reviewers"]] == ["echo"]
-    assert [a["slug"] for a in body["agents"]] == ["hal"]
+    # The person sees the whole list of who coaches them (what they agreed to); the agent's turn sees itself.
+    assert body["on"] is True and {c["slug"] for c in body["coaches"]} == {"echo"}
+    assert body["agents"] == []

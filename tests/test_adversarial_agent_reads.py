@@ -16,7 +16,7 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.agents.models import Agent, AgentGrant
-from apps.canopy_sessions.models import Session, SessionReviewGrant
+from apps.canopy_sessions.models import Session
 from apps.contacts.models import Contact
 from apps.harness import turn_agent_tokens
 from apps.harness.models import Runner, Turn
@@ -24,6 +24,7 @@ from apps.tokens.models import PersonalToken
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import WorkspaceMembership
 from apps.workspaces.testing import a_workspace
+from tests.fixtures.session_world import grant_coaching
 
 pytestmark = pytest.mark.django_db
 
@@ -51,7 +52,7 @@ def w():
                 AgentGrant.objects.create(agent=agents[slug], kind=AgentGrant.PERSON, user=logins[other],
                                           role="read_write")
     for name in ("lili", "bo"):
-        SessionReviewGrant.objects.create(user=people[name], agent=agents["trellis"])
+        grant_coaching(people[name], agents["trellis"])
     chat = {n: Session.objects.create(workspace=ws, created_by=people[n], title=f"{n}'s chat")
             for n in ("lili", "bo")}
     return {"ws": ws, "owner": owner, **people, "agents": agents, "logins": logins, "box": box, "chat": chat}
