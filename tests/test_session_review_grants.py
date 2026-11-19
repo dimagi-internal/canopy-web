@@ -158,10 +158,13 @@ def test_another_agent_or_a_person_cannot_use_the_coachs_grant(w):
     assert not _reads(w["hal"], w["chat"])
     assert not _reads(w["stranger"], w["chat"])
     assert _as(w["bo"]).get(f"/api/canopy-sessions/{w['chat'].pk}").status_code == 404
-    # The agent's owner administers it, but is not its login: the grant is not theirs.
+    # The agent's owner administers it (the coaching program's admin): leg 7 lets them read what it reads.
     jj = User.objects.get(username="jj")
     WorkspaceMembership.objects.create(user=jj, workspace=w["ws"], role=WorkspaceMembership.EDITOR)
-    assert not access.can_read(jj, w["chat"])
+    assert access.can_read(jj, w["chat"])
+    assert not access.can_read(jj, w["sealed"])                     # never a sensitive one
+    # A plain member who administers nothing gains nothing.
+    assert not access.can_read(User.objects.get(username="bo"), w["chat"])
 
 
 @override_settings(COACHING_AGENT_SLUG="")
