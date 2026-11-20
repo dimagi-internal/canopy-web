@@ -112,6 +112,7 @@ EXCLUDED: dict[str, str] = {
                               "itself access would be authorization inferred from its own request",
     "get_my_learning": _BRAIN, "set_my_learning": _BRAIN, "revoke_my_learning": _BRAIN,
     "exclude_my_session": _BRAIN, "include_my_session": _BRAIN, "get_my_session_learning": _BRAIN,
+    "declare_my_session_project": _BRAIN, "undeclare_my_session_project": _BRAIN,
     "contact_token": _HOST,
     "public_stats": _ANON,
     "submit_beta_request": _ANON,

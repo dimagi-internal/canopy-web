@@ -12,16 +12,19 @@ from django.http import HttpRequest
 from ninja import Router
 
 from apps.api.auth import session_auth
-from apps.api.errors import TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError, refusals
+from apps.api.errors import TYPE_CONFLICT, TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError, refusals
 from apps.api.route_gates import gate
+from apps.agents.models import AgentProject
+from apps.agents.services.projects import may_read_project
 from apps.canopy_sessions import access
 from apps.canopy_sessions.models import Session
 from apps.contacts import people
 from apps.harness import acting_person
+from apps.workspaces import services as wsvc
 
-from . import consent, participants, sources
-from .models import CLASSES, SourceExclusion
-from .schemas import LearningIn, LearningOut, LearningSourceOut
+from . import associate, consent, participants, sources
+from .models import CLASSES, SourceExclusion, SourceLink
+from .schemas import AgentLinkIn, LearningIn, LearningOut, LearningSourceOut, PersonLinkIn
 
 router = Router(auth=session_auth, tags=["brain"])
 
@@ -87,6 +90,18 @@ def _my_session(request: HttpRequest, user, session_id: uuid.UUID) -> Session:
     return session
 
 
+def _source_out(user, session) -> dict:
+    source = sources.existing(session)
+    out = source is not None and SourceExclusion.objects.filter(user=user, source=source).exists()
+    links = []
+    if source is not None:
+        for link in source.links.filter(subject_type=SourceLink.PROJECT_SUBJECT).order_by("pk"):
+            project = AgentProject.objects.filter(pk=link.subject).first()
+            if project is not None and may_read_project(user, project):   # never reveal a project they cannot read
+                links.append({"project": project.handle, "name": project.name, "tier": link.tier, "how": link.how})
+    return {"session_id": session.pk, "excluded": out, "projects": links}
+
+
 @router.put("/me/learning/sessions/{session_id}/", response={200: LearningSourceOut, **refusals(403, 404)},
             summary="Take one of your sessions out of canopy learning")
 @gate("self", setting=True)  # who may learn from this session
@@ -97,7 +112,7 @@ def exclude_my_session(request: HttpRequest, session_id: uuid.UUID) -> dict:
     user = _the_person(request)
     session = _my_session(request, user, session_id)
     consent.exclude(user, sources.for_session(session))
-    return {"session_id": session.pk, "excluded": True}
+    return _source_out(user, session)
 
 
 @router.delete("/me/learning/sessions/{session_id}/", response={200: LearningSourceOut, **refusals(403, 404)},
@@ -110,7 +125,7 @@ def include_my_session(request: HttpRequest, session_id: uuid.UUID) -> dict:
     source = sources.existing(session)
     if source is not None:
         consent.include(user, source)
-    return {"session_id": session.pk, "excluded": False}
+    return _source_out(user, session)
 
 
 @router.get("/me/learning/sessions/{session_id}/", response={200: LearningSourceOut, **refusals(403, 404)},
@@ -119,6 +134,83 @@ def include_my_session(request: HttpRequest, session_id: uuid.UUID) -> dict:
 def get_my_session_learning(request: HttpRequest, session_id: uuid.UUID) -> dict:
     user = _the_person(request)
     session = _my_session(request, user, session_id)
+    return _source_out(user, session)
+
+
+# ---- which project a session belongs to (layer 4: declared) -------------------------------------------
+
+def _project_of(user, session, handle: str) -> AgentProject:
+    """A project of the session's own workspace that `user` is in and may read, else "not found"."""
+    project = AgentProject.objects.filter(workspace_id=session.workspace_id, handle=handle.lower()).first()
+    if project is None or not wsvc.is_member(user, project.workspace_id) or not may_read_project(user, project):
+        raise ProblemError(404, "Project not found", type_=TYPE_NOT_FOUND)
+    return project
+
+
+@router.put("/me/learning/sessions/{session_id}/projects/{handle}/",
+            response={200: LearningSourceOut, **refusals(403, 404, 409)},
+            summary="Say whether one of your sessions belongs to a project")
+@gate("self", setting=True)  # who may read this session as part of a project
+def declare_my_session_project(request: HttpRequest, session_id: uuid.UUID, handle: str,
+                               payload: PersonLinkIn) -> dict:
+    """Your act: `core` ties the session to the project (its readers may then learn from it, if everyone
+    in it agreed), `rejected` says it does not belong and stays rejected whatever the automatic layers
+    later find. Overrides what canopy guessed. Only you can do this. A rejection by someone else in the
+    session is theirs to undo (409)."""
+    user = _the_person(request)
+    session = _my_session(request, user, session_id)
+    project = _project_of(user, session, handle)
+    source = sources.for_session(session)
+    row = associate.declare(source, project, tier=payload.tier, by=user)
+    if row.by_id != user.pk or row.tier != payload.tier:
+        raise ProblemError(409, "Conflict", type_=TYPE_CONFLICT,
+                           detail="Someone else in this session rejected this link; only they can undo it")
+    return _source_out(user, session)
+
+
+@router.delete("/me/learning/sessions/{session_id}/projects/{handle}/",
+               response={200: LearningSourceOut, **refusals(403, 404)},
+               summary="Take back what you said about a session and a project")
+@gate("self", setting=True)  # who may read this session as part of a project
+def undeclare_my_session_project(request: HttpRequest, session_id: uuid.UUID, handle: str) -> dict:
+    """Withdraws your own declaration (not anyone else's); canopy's automatic guess resumes."""
+    user = _the_person(request)
+    session = _my_session(request, user, session_id)
+    project = _project_of(user, session, handle)
     source = sources.existing(session)
-    out = source is not None and SourceExclusion.objects.filter(user=user, source=source).exists()
-    return {"session_id": session.pk, "excluded": out}
+    if source is not None:
+        associate.undeclare(source, project, by=user)
+    return _source_out(user, session)
+
+
+@router.put("/brain/sessions/{session_id}/projects/{handle}/",
+            response={200: LearningSourceOut, **refusals(403, 404)},
+            summary="An agent says which project the session it is running in worked on")
+@gate("agent-login", kind="content")  # the per-turn login of a running turn, for that turn's own conversation
+def declare_session_project(request: HttpRequest, session_id: uuid.UUID, handle: str,
+                            payload: AgentLinkIn) -> dict:
+    """For an agent's own login INSIDE its running turn, at close-out: the conversation this turn runs
+    in worked on project `handle` of its workspace (`core`, or `adjacent` if it only touched it).
+    Only that conversation (not another session), only a project the agent's own login may read. It
+    outranks canopy's guess but never a person's call, and it makes no one's session readable."""
+    from apps.harness import turn_asker  # noqa: PLC0415 — harness imports contacts, which imports this app
+
+    turn = turn_asker.serving_turn(request.user)
+    agent = turn_asker.turn_agent(turn) if turn is not None else None
+    if agent is None or not agent.is_own_login(request.user):
+        raise ProblemError(403, "Only an agent's own login, inside its running turn, may do this",
+                           type_=TYPE_FORBIDDEN)
+    if session_id not in {turn.canopy_session_id, turn.chat_session_id}:
+        raise ProblemError(404, "Session not found", type_=TYPE_NOT_FOUND)
+    session = Session.objects.filter(pk=session_id).first()
+    project = (AgentProject.objects.filter(workspace_id=session.workspace_id, handle=handle.lower()).first()
+               if session is not None else None)
+    if project is None or project.is_personal and not may_read_project(request.user, project):
+        raise ProblemError(404, "Project not found", type_=TYPE_NOT_FOUND)
+    if participants.sealed_reason(session):
+        raise ProblemError(404, "Session not found", type_=TYPE_NOT_FOUND)
+    associate.declare(sources.for_session(session), project, tier=payload.tier, by_agent=agent)
+    source = sources.existing(session)
+    return {"session_id": session.pk, "excluded": False,
+            "projects": [{"project": project.handle, "name": project.name, "tier": link.tier, "how": link.how}
+                         for link in source.links.filter(subject=str(project.pk))]}
