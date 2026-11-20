@@ -229,13 +229,16 @@ def test_a_run_reads_only_its_subject_s_eligible_sessions_scrubbed_and_the_hosti
     assert set(run.reads.values_list("source__ref", flat=True)) == {str(w["mine"].pk), str(w["shared"].pk)}
 
 
-def test_about_a_person_only_that_person_s_lines_come_with_the_replies(w):
+def test_a_shared_session_comes_whole_to_a_person_learner(w):
+    # Consent decides WHICH sessions a learner reads, never which lines of one: everyone in a shared session saw
+    # it at the time and knew they were talking to canopy's AI.
     run, _turn, raw = _start(w)
     with as_token(raw):
         page = _call("brain_read", {"limit": 5})
-    all_text = " ".join(m["text"] for s in page["sources"] for m in s["messages"])
-    assert "alice's line in a shared chat" in all_text and "ok, done" in all_text
-    assert "bob says hi" not in all_text                                 # another person's words in the same chat
+    shared = next(s for s in page["sources"] if s["title"] == "about alice" and len(s["messages"]) > 2)
+    assert [m["text"] for m in shared["messages"]] == ["alice's line in a shared chat", "ok, done", "bob says hi"]
+    assert shared["messages"][2]["author"] == {"user_id": w["bob"].pk, "name": ""}
+    assert page["view"] == "full"
 
 
 def test_each_read_is_recorded_and_the_run_walks_its_sources_once(w):
@@ -285,7 +288,7 @@ def test_a_project_run_reads_only_the_projects_core_linked_sessions_of_people_wh
     with as_token(raw):
         page = _call("brain_read", {"limit": 5})
     assert {s["title"] for s in page["sources"]} == {"about alice"}
-    assert any(m.get("author_user_id") == w["alice"].pk for s in page["sources"] for m in s["messages"])
+    assert any((m.get("author") or {}).get("user_id") == w["alice"].pk for s in page["sources"] for m in s["messages"])
 
 
 # ---- emitting --------------------------------------------------------------------------------------
@@ -367,26 +370,47 @@ def test_the_two_functions_are_what_the_routes_call(w):
 
 # ---- review fixes: what a person-learner is served, budgets, emitted shapes --------------------------
 
-def test_about_a_person_the_replies_to_someone_else_and_lines_of_no_known_author_are_left_out(w):
-    s = Session.objects.create(workspace=w["ws"], created_by=w["alice"], origin=Session.ORIGIN_WEB, title="three")
-    SessionParticipant.objects.create(session=s, user=w["bob"])
-    rows = [(Message.USER, "alice asks a thing", {"user_id": w["alice"].pk}),
-            (Message.ASSISTANT, "reply to alice", None),
-            (Message.USER, "bob's question about his divorce", {"user_id": w["bob"].pk}),
-            (Message.ASSISTANT, "reply quoting bob's divorce", None),
-            (Message.USER, "a line with no author", None),
-            (Message.ASSISTANT, "reply to nobody known", None)]
-    for i, (role, text, author) in enumerate(rows):
-        Message.objects.create(session=s, role=role, turn_index=i, plaintext=text, author=author)
-    solo = Session.objects.create(workspace=w["ws"], created_by=w["alice"], origin=Session.ORIGIN_WEB, title="solo")
-    Message.objects.create(session=solo, role=Message.USER, turn_index=0, plaintext="typed in the cli")
-    Message.objects.create(session=solo, role=Message.ASSISTANT, turn_index=1, plaintext="cli reply")
-    for x in (s, solo):
-        sources.for_session(x)
+def test_a_run_reads_tool_calls_and_results_and_honours_a_narrowed_scope(w):
+    s = Session.objects.create(workspace=w["ws"], created_by=w["alice"], origin=Session.ORIGIN_WEB, title="tools")
+    rows = [(Message.USER, "run the tests", {}, {"user_id": w["alice"].pk}),
+            (Message.TOOL_USE, "", {"id": "t1", "name": "Bash", "input": {"command": f"echo {SECRET}"}}, None),
+            (Message.TOOL_RESULT, "3 passed", {"tool_use_id": "t1", "is_error": False}, None),
+            (Message.ASSISTANT, "all green", {}, None)]
+    for i, (role, text, content, author) in enumerate(rows):
+        Message.objects.create(session=s, role=role, turn_index=i, plaintext=text, content=content, author=author)
+    sources.for_session(s)
     run, _turn, _raw = _start(w)
-    texts = {src["title"]: [m["text"] for m in src["messages"]] for src in reading.read_next(run, limit=5)["sources"]}
-    assert texts["three"] == ["alice asks a thing", "reply to alice"]
-    assert texts["solo"] == ["typed in the cli", "cli reply"]          # nobody else is in it: the line is hers
+    src = next(x for x in reading.read_next(run, limit=5)["sources"] if x["title"] == "tools")
+    assert [m["role"] for m in src["messages"]] == ["user", "tool_use", "tool_result", "assistant"]
+    assert src["messages"][1]["tool"] == {"name": "Bash"} and src["messages"][2]["tool"] == {"name": "Bash"}
+    assert SECRET not in src["messages"][1]["text"] and "redacted" in src["messages"][1]["text"]
+    runs.finish(run, ok=False)
+    registry.update(w["pace"], scope="conversation", by=w["root"])
+    run2, _t2, _r2 = _start(w)
+    src = next(x for x in reading.read_next(run2, limit=5)["sources"] if x["title"] == "tools")
+    assert [m["role"] for m in src["messages"]] == ["user", "assistant"]
+
+
+def test_a_session_larger_than_a_call_pages_across_calls_without_splitting_a_row(w, monkeypatch):
+    s = Session.objects.create(workspace=w["ws"], created_by=w["carol"], origin=Session.ORIGIN_WEB, title="long")
+    for i in range(5):
+        Message.objects.create(session=s, role=Message.USER, turn_index=i, plaintext=f"{i}" * 40,
+                               author={"user_id": w["carol"].pk})
+    sources.for_session(s)
+    w["other_session"].delete()
+    LearningConsent.objects.create(user=w["carol"], classes=["individual"])
+    run = runs.start(w["pace"], subject=w["carol"])
+    monkeypatch.setattr(reading, "MAX_CHARS", 100)
+    got, after, index, calls = [], 0, None, 0
+    while True:
+        page = reading.read_next(run, after=after, index=index, limit=5)
+        calls += 1
+        got += [m["text"] for src in page["sources"] for m in src["messages"]]
+        after, index = page["next_after"], page["next_index"]
+        if page["done"]:
+            break
+    assert got == [f"{i}" * 40 for i in range(5)] and calls == 3      # 2 + 2 + 1 rows; no row cut
+    assert BrainRunRead.objects.filter(run=run).count() == 1
 
 
 def test_one_read_serves_at_most_the_call_budget_and_never_splits_a_source(w, monkeypatch):

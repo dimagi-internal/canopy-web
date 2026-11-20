@@ -77,6 +77,22 @@ def test_an_audience_may_only_narrow_and_the_class_never_changes(w):
         registry.update(BrainCapability.objects.get(slug="pace"), purpose_class="system")
 
 
+def test_a_scope_starts_whole_may_only_narrow_and_each_change_is_an_event(w):
+    from apps.agents.models import Agent
+    from apps.events.models import Event
+
+    Agent.objects.create(slug="trellis", name="Trellis", owner=w["owner"], workspace=w["ws"])
+    c = client(w["root"])
+    assert send(c, "post", "/api/brain/capabilities/", {**GOOD, "operator": "trellis"}).json()["scope"] == "full"
+    assert send(c, "patch", "/api/brain/capabilities/pace/", {"scope": "conversation"}).json()["scope"] == "conversation"
+    assert send(c, "patch", "/api/brain/capabilities/pace/", {"scope": "full"}).status_code == 422        # wider
+    assert send(c, "patch", "/api/brain/capabilities/pace/", {"scope": "everything"}).status_code == 422
+    assert send(c, "patch", "/api/brain/capabilities/pace/", {"scope": "conversation"}).status_code == 200  # same
+    rows = list(Event.objects.filter(source="brain.capability", kind="capability.scope_changed"))
+    assert [(e.payload["from"], e.payload["to"]) for e in rows] == [("full", "conversation")]
+    assert rows[0].payload["by_id"] == w["root"].pk and rows[0].workspace_id == "acme"
+
+
 def test_enabling_a_seeded_learner_makes_the_admin_accountable_for_its_runs(w):
     seeded = registry.ensure_learners()["coaching"]
     assert seeded.registered_by_id is None and not seeded.enabled

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import copy as _copy
 import datetime as _dt
+import json
 import logging
 from dataclasses import dataclass
 
@@ -323,31 +324,20 @@ def human_inputs(session: Session, *, after: int | None = None, limit: int = SCR
     A session with no durable rows yet (a local runner session before its
     backfill) answers from the binding's rolling tail, source "tail", unpaged.
     """
-    program = program_prompts(session)
-    injected = InjectedPrompts(session)
-    users = session.messages.filter(role=Message.USER).order_by("turn_index")
     if after is None and not session.messages.exists():
+        program = program_prompts(session)
         tail = [m for m in tail_as_messages(session, getattr(session, "runner_binding", None))
                 if is_human_input(m, program)]
         return tail[-limit:], None, "tail"
     out: list = []
-    cursor = after
-    # Scan in chunks: filtering is per-row in Python (the noise rule is a prefix
-    # list shared with the runners, not a query), so a chunk may yield fewer
-    # than `limit`; keep going until the page is full or the rows run out.
-    chunk = max(limit, 50)
-    while len(out) < limit:
-        qs = users if cursor is None else users.filter(turn_index__gt=cursor)
-        batch = list(qs[:chunk])
-        if not batch:
-            return out, None, "transcript"
-        for m in batch:
-            cursor = m.turn_index
-            if is_human_input(m, program, injected):
-                out.append(m)
-                if len(out) == limit:
-                    break
-    more = users.filter(turn_index__gt=cursor).exists()
+    for m in view_rows(session, TYPED, after=after):      # the `typed` view of the core read
+        out.append(m)
+        if len(out) == limit:
+            break
+    if len(out) < limit:
+        return out, None, "transcript"
+    cursor = out[-1].turn_index
+    more = session.messages.filter(role=Message.USER, turn_index__gt=cursor).exists()
     return out, (cursor if more else None), "transcript"
 
 
@@ -508,10 +498,147 @@ def _tail_injected(message) -> bool:
 def all_messages(session: Session):
     """Every message, chronological — the explicit "load full session" escape
     hatch. Returns (messages, has_more_before=False, oldest_turn_index)."""
-    messages = list(session.messages.order_by("turn_index"))
+    messages = list(view_rows(session, FULL))
     if not messages:
         return [], False, None
     return messages, False, messages[0].turn_index
+
+
+# --- The core read: one function, named views -------------------------------
+# Anything that reads a session's words as a whole (the session page with
+# `?view=`, the brain, a preview of the brain) names a view here instead of
+# hand-rolling its own walk. Widest first; each is a subset of the one before.
+
+FULL, CONVERSATION, TYPED, OPENING = "full", "conversation", "typed", "opening"
+#: Every view, widest first: `full` every stored row, tool calls and results included;
+#: `conversation` user and assistant text with harness noise dropped; `typed` what
+#: people typed (`is_human_input`); `opening` the first few typed lines, short.
+VIEWS = (FULL, CONVERSATION, TYPED, OPENING)
+#: How much of a session `opening` shows: enough to say what it was about.
+OPENING_LINES, OPENING_LINE_CHARS = 6, 600
+
+
+def narrower(a: str, b: str) -> str:
+    """The narrower of two views."""
+    return VIEWS[max(VIEWS.index(a), VIEWS.index(b))]
+
+
+def view_rows(session: Session, view: str, *, after: int | None = None):
+    """The stored rows of `session` in `view`, oldest first, past `after` (an
+    exclusive turn_index). Rows as stored: `opening` caps the count here and
+    the length in `read`/`view_messages`."""
+    if view not in VIEWS:
+        raise ValueError(f"no such view {view!r}")
+    rows = session.messages.order_by("turn_index")
+    if after is not None:
+        rows = rows.filter(turn_index__gt=after)
+    if view == FULL:
+        yield from rows.iterator(chunk_size=200)
+        return
+    if view == CONVERSATION:
+        for m in rows.filter(role__in=_SPOKEN_ROLES).iterator(chunk_size=200):
+            text = (m.plaintext or "").strip()
+            if text and not (m.role == Message.USER and is_system_noise(text)):
+                yield m
+        return
+    program, injected = program_prompts(session), InjectedPrompts(session)
+    served = 0
+    for m in rows.filter(role=Message.USER).iterator(chunk_size=200):
+        if (view == TYPED or (m.plaintext or "").strip()) and is_human_input(m, program, injected):
+            yield m
+            served += 1
+            if view == OPENING and served >= OPENING_LINES:
+                return
+
+
+def scrubbed(message):
+    """A copy of `message` with secrets scrubbed from its words and its content
+    (`common.redact`): THE scrub every scrubbed read of a transcript row uses."""
+    c = _copy.copy(message)
+    c.plaintext, c.content, _n = redact.redact_turn(message.plaintext or "", message.content)
+    return c
+
+
+def view_messages(session: Session, view: str) -> list:
+    """`session`'s rows in `view` as `Message`s (for a serializer that renders
+    rows): `opening`'s lines cut short, on copies."""
+    rows = list(view_rows(session, view))
+    if view != OPENING:
+        return rows
+    out = []
+    for m in rows:
+        c = _copy.copy(m)
+        c.plaintext = (m.plaintext or "").strip()[:OPENING_LINE_CHARS]
+        out.append(c)
+    return out
+
+
+@dataclass(frozen=True)
+class ReadResult:
+    """One page of a session in a view. `next_after` is the turn_index to pass
+    back as `after` when `truncated`; None when the view is read to its end."""
+
+    view: str
+    messages: list
+    truncated: bool
+    chars: int
+    next_after: int | None
+
+
+def _author(author) -> dict | None:
+    if not isinstance(author, dict):
+        return None
+    for key in ("user_id", "contact_id"):
+        if author.get(key) is not None:
+            return {key: author[key], "name": author.get("name") or ""}
+    return None
+
+
+def _tool_name(session, call_id, names: dict) -> str:
+    if call_id not in names:
+        names[call_id] = (session.messages.filter(role=Message.TOOL_USE, content__id=call_id)
+                          .values_list("content__name", flat=True).first() or "")
+    return names[call_id] or ""
+
+
+def _row(session, m, view: str, names: dict) -> dict:
+    content = m.content if isinstance(m.content, dict) else {}
+    text = (m.plaintext or "").strip()
+    row = {"index": m.turn_index, "role": m.role, "text": text, "author": _author(m.author)}
+    if m.role == Message.TOOL_USE:
+        names[content.get("id") or ""] = content.get("name") or ""
+        row["tool"] = {"name": content.get("name") or ""}
+        if not text and content.get("input") is not None:
+            row["text"] = json.dumps(content["input"], ensure_ascii=False, sort_keys=True, default=str)
+    elif m.role == Message.TOOL_RESULT:
+        call_id = content.get("tool_use_id") or ""
+        row["tool"] = {"name": _tool_name(session, call_id, names) if call_id else ""}
+    if view == OPENING:
+        row["text"] = row["text"][:OPENING_LINE_CHARS]
+    return row
+
+
+def read(session: Session, *, view: str = FULL, scrub: bool = False, after: int | None = None,
+         max_chars: int | None = None, limit: int | None = None) -> ReadResult:
+    """THE read of a session's words, in a named view (`VIEWS`), oldest first.
+
+    Each row is `{index, role, text, author, tool?}`: `author` is
+    `{user_id|contact_id, name}` or None, `tool` `{name}` on a tool call or its
+    result (a call's text is its input). `scrub` runs `scrubbed` on every row.
+    Pages by `after` (an exclusive turn_index) and `max_chars` / `limit`, never
+    splitting a row: the first row of a page always comes, however long."""
+    out, chars, names = [], 0, {}
+    last = None
+    for m in view_rows(session, view, after=after):
+        row = _row(session, scrubbed(m) if scrub else m, view, names)
+        size = len(row["text"])
+        if out and ((max_chars is not None and chars + size > max_chars)
+                    or (limit is not None and len(out) >= limit)):
+            return ReadResult(view, out, True, chars, last)
+        out.append(row)
+        chars += size
+        last = m.turn_index
+    return ReadResult(view, out, False, chars, None)
 
 
 # FALLBACK signal only: a binding whose runner cannot say what its engine is doing
@@ -751,11 +878,7 @@ def brain_redacted(session, rows, *, user) -> list:
 
     if user is None or not access.read_through_brain_only(user, session):
         return rows
-    out = []
-    for m in rows:
-        c = _copy.copy(m)
-        c.plaintext, c.content, _n = redact.redact_turn(m.plaintext or "", m.content)
-        out.append(c)
+    out = [scrubbed(m) for m in rows]
     readers.record_read(reader=user, capability=readers.PROJECT_READERS, purpose=readers.READ, session=session)
     return out
 

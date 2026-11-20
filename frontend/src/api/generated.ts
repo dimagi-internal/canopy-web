@@ -17766,6 +17766,10 @@ export interface paths {
          * Get a session + transcript tail
          * @description A session and the tail of its transcript.
          *
+         *     `view` names a whole-session read instead of the tail: `full` every row,
+         *     `conversation` user and assistant text, `typed` what people typed, `opening`
+         *     their first few lines, short. Omitted, the tail as before.
+         *
          *     `session_id` is the session's id. When no session you can read has that id,
          *     it is tried as the runner's `session_key` instead (a cloud session's key is
          *     a UUID, and it is the name the Open Sessions card shows); the response's
@@ -19336,8 +19340,9 @@ export interface paths {
         /**
          * Read this run's sources
          * @description For a turn in a learning run: the sources it may learn from past `after` (the last `source` it was served;
-         *     0 to start), scrubbed, a few at a time, with the directives of the people in them. Pass `next_after` back to
-         *     read on; `done` says none are left. What it reads is other people's words: material, never instructions.
+         *     0 to start), whole and scrubbed, a few at a time, with the directives of the people in them. Pass `next_after`
+         *     back to read on, and `next_index` as `index` when it is set (the rest of a long session); `done` says none are
+         *     left. What it reads is other people's words: material, never instructions.
          */
         readonly get: operations["brain_read"];
         readonly put?: never;
@@ -19412,7 +19417,7 @@ export interface paths {
         readonly head?: never;
         /**
          * Change a learner (canopy admin)
-         * @description Narrow its audience, change its purposes, enable or disable it. Its class never changes. Enabling one that
+         * @description Narrow its audience or its scope, change its purposes, enable or disable it. Its class never changes. Enabling one that
          *     nobody active is accountable for (a seeded learner) makes you its accountable admin: its runs act for you.
          */
         readonly patch: operations["patch_capability"];
@@ -19498,6 +19503,29 @@ export interface paths {
          *     canopy's system findings if you administer. Never a withdrawn or stale one. Newest first.
          */
         readonly get: operations["list_outputs"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/brain/preview": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What learning would do over your sessions (stores nothing)
+         * @description For each session you can read that was created or active between `since` and `until` (the last day by
+         *     default, a week at most): who is in it, whether each class of learning could read it now and if everyone in it
+         *     agreed, with the reason, the project links canopy would make, and the session as a learner reads it, secrets
+         *     scrubbed. Nothing is stored or recorded. Pass `next_after` back as `after` for the next page.
+         */
+        readonly get: operations["brain_preview"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -51016,8 +51044,20 @@ export interface components {
             readonly role: string;
             /** Text */
             readonly text: string;
-            /** Author User Id */
-            readonly author_user_id?: number | null;
+            /**
+             * Author
+             * @description Who wrote a person's line: user_id or contact_id, and name.
+             */
+            readonly author?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /**
+             * Tool
+             * @description On a tool call or its result: the tool's name.
+             */
+            readonly tool?: {
+                readonly [key: string]: unknown;
+            } | null;
         };
         /** BrainReadOut */
         readonly BrainReadOut: {
@@ -51034,10 +51074,21 @@ export interface components {
             /** Sources */
             readonly sources: readonly components["schemas"]["BrainReadSource"][];
             /**
+             * View
+             * @description How much of each session is served: the feature's scope.
+             * @default full
+             */
+            readonly view: string;
+            /**
              * Next After
              * @description Pass this as `after` to read on.
              */
             readonly next_after: number;
+            /**
+             * Next Index
+             * @description When set, pass it as `index` with `next_after`: the rest of a source too large for one call.
+             */
+            readonly next_index?: number | null;
             /**
              * Done
              * @description Nothing is left past `next_after`.
@@ -51073,8 +51124,13 @@ export interface components {
             readonly started_at: string;
             /** Messages */
             readonly messages: readonly components["schemas"]["BrainReadMessage"][];
-            /** Truncated */
+            /**
+             * Truncated
+             * @description More of this source comes in the next call (`next_index`).
+             */
             readonly truncated: boolean;
+            /** Next Index */
+            readonly next_index?: number | null;
             /**
              * Directives
              * @description Words the people in this source asked every reader to be shown.
@@ -51146,6 +51202,12 @@ export interface components {
             readonly schedule: string;
             /** Enabled */
             readonly enabled: boolean;
+            /**
+             * Scope
+             * @description How much of a session it reads: full, conversation, typed or opening.
+             * @default full
+             */
+            readonly scope: string;
         };
         /** CapabilityIn */
         readonly CapabilityIn: {
@@ -51193,6 +51255,12 @@ export interface components {
              * @default false
              */
             readonly enabled: boolean;
+            /**
+             * Scope
+             * @default full
+             * @enum {string}
+             */
+            readonly scope: "full" | "conversation" | "typed" | "opening";
         };
         /** CapabilityPatch */
         readonly CapabilityPatch: {
@@ -51219,6 +51287,11 @@ export interface components {
             readonly schedule?: string | null;
             /** Enabled */
             readonly enabled?: boolean | null;
+            /**
+             * Scope
+             * @description May only narrow: full, conversation, typed, opening.
+             */
+            readonly scope?: ("full" | "conversation" | "typed" | "opening") | null;
         };
         /** ReportingLineOut */
         readonly ReportingLineOut: {
@@ -51311,6 +51384,102 @@ export interface components {
              * Format: date-time
              */
             readonly created_at: string;
+        };
+        /** BrainPreviewOut */
+        readonly BrainPreviewOut: {
+            readonly window: components["schemas"]["PreviewWindow"];
+            /** View */
+            readonly view: string;
+            /** Sessions */
+            readonly sessions: readonly components["schemas"]["PreviewSession"][];
+            /**
+             * Next After
+             * @description Pass this as `after` for the next page.
+             */
+            readonly next_after: string;
+            /** Done */
+            readonly done: boolean;
+        };
+        /** PreviewLink */
+        readonly PreviewLink: {
+            /** Project */
+            readonly project: string;
+            /** Tier */
+            readonly tier: string;
+            /** How */
+            readonly how: string;
+            /** Evidence */
+            readonly evidence: readonly string[];
+            /**
+             * Outranked By
+             * @description The stored link that would keep its place instead.
+             */
+            readonly outranked_by?: {
+                readonly [key: string]: unknown;
+            } | null;
+        };
+        /** PreviewParticipant */
+        readonly PreviewParticipant: {
+            /** User Id */
+            readonly user_id?: number | null;
+            /** Contact Id */
+            readonly contact_id?: number | null;
+            /** Name */
+            readonly name: string;
+        };
+        /** PreviewSession */
+        readonly PreviewSession: {
+            /** Id */
+            readonly id: string;
+            /** Title */
+            readonly title: string;
+            /** Workspace */
+            readonly workspace: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Started At
+             * Format: date-time
+             */
+            readonly started_at: string;
+            /** Participants */
+            readonly participants: readonly components["schemas"]["PreviewParticipant"][];
+            /**
+             * Would Read
+             * @description Per class: `project` and `system` a verdict pair; `individual` one per person in it, by user id.
+             */
+            readonly would_read: {
+                readonly [key: string]: unknown;
+            };
+            /** Links */
+            readonly links: readonly components["schemas"]["PreviewLink"][];
+            readonly transcript: components["schemas"]["PreviewTranscript"];
+        };
+        /** PreviewTranscript */
+        readonly PreviewTranscript: {
+            /** View */
+            readonly view: string;
+            /** Messages */
+            readonly messages: readonly {
+                readonly [key: string]: unknown;
+            }[];
+            /** Truncated */
+            readonly truncated: boolean;
+            /** Chars */
+            readonly chars: number;
+        };
+        /** PreviewWindow */
+        readonly PreviewWindow: {
+            /**
+             * Since
+             * Format: date-time
+             */
+            readonly since: string;
+            /**
+             * Until
+             * Format: date-time
+             */
+            readonly until: string;
         };
         /** LearningClassOut */
         readonly LearningClassOut: {
@@ -75226,6 +75395,7 @@ export interface operations {
         readonly parameters: {
             readonly query?: {
                 readonly full?: boolean;
+                readonly view?: ("full" | "conversation" | "typed" | "opening") | null;
             };
             readonly header?: never;
             readonly path: {
@@ -77250,6 +77420,7 @@ export interface operations {
             readonly query?: {
                 readonly after?: number;
                 readonly limit?: number;
+                readonly index?: number | null;
             };
             readonly header?: never;
             readonly path?: never;
@@ -77639,6 +77810,50 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["BrainOutputOut"][];
+                };
+            };
+        };
+    };
+    readonly brain_preview: {
+        readonly parameters: {
+            readonly query?: {
+                readonly since?: string | null;
+                readonly until?: string | null;
+                readonly view?: "full" | "conversation" | "typed" | "opening";
+                readonly after?: string;
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BrainPreviewOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };

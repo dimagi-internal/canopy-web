@@ -81,6 +81,7 @@ class CapabilityOut(StrictModel):
     entry: str = Field("", description="The plugin command a run starts with.")
     schedule: str
     enabled: bool
+    scope: str = Field("full", description="How much of a session it reads: full, conversation, typed or opening.")
 
 
 class CapabilityIn(StrictModel):
@@ -98,6 +99,7 @@ class CapabilityIn(StrictModel):
     entry: str = Field("", description="One plugin command, `/<plugin>:<skill> [args]`.")
     schedule: str = ""
     enabled: bool = False
+    scope: Literal["full", "conversation", "typed", "opening"] = "full"
 
 
 class CapabilityPatch(StrictModel):
@@ -113,6 +115,8 @@ class CapabilityPatch(StrictModel):
     entry: str | None = None
     schedule: str | None = None
     enabled: bool | None = None
+    scope: Literal["full", "conversation", "typed", "opening"] | None = Field(
+        None, description="May only narrow: full, conversation, typed, opening.")
 
 
 class ReportingLineOut(StrictModel):
@@ -147,7 +151,8 @@ class BrainReadMessage(StrictModel):
     index: int
     role: str
     text: str
-    author_user_id: int | None = None
+    author: dict | None = Field(None, description="Who wrote a person's line: user_id or contact_id, and name.")
+    tool: dict | None = Field(None, description="On a tool call or its result: the tool's name.")
 
 
 class BrainReadSource(StrictModel):
@@ -157,7 +162,8 @@ class BrainReadSource(StrictModel):
     title: str
     started_at: dt.datetime
     messages: list[BrainReadMessage]
-    truncated: bool
+    truncated: bool = Field(description="More of this source comes in the next call (`next_index`).")
+    next_index: int | None = None
     directives: list[str] = Field(description="Words the people in this source asked every reader to be shown.")
 
 
@@ -168,7 +174,10 @@ class BrainReadOut(StrictModel):
     subject_type: str
     subject: str
     sources: list[BrainReadSource]
+    view: str = Field("full", description="How much of each session is served: the feature's scope.")
     next_after: int = Field(description="Pass this as `after` to read on.")
+    next_index: int | None = Field(None, description="When set, pass it as `index` with `next_after`: the rest "
+                                   "of a source too large for one call.")
     done: bool = Field(description="Nothing is left past `next_after`.")
     project: dict | None = Field(None, description="For a project judge: its outcome and open tasks.")
     revoked: list[int] = Field(default_factory=list, description="Sources removed since this learner learned from "
@@ -210,3 +219,63 @@ class ProjectSessionOut(StrictModel):
     how: str = Field(description="dispatched | signals | judged | declared.")
     confidence: float | None = None
     started_at: dt.datetime
+
+
+# ---- the preview: what the brain WOULD do over the sessions you can read, storing nothing ----------------
+
+class PreviewVerdict(StrictModel):
+    ok: bool
+    reason: str = Field(description="Why not, as `eligibility.explain` names it; empty when ok.")
+
+
+class PreviewWouldRead(StrictModel):
+    now: PreviewVerdict
+    if_everyone_agreed: PreviewVerdict = Field(description="Every missing consent taken as given; every other "
+                                               "fence kept (sealed, removed, a contact, a non-member, a "
+                                               "consent ended or narrowed).")
+
+
+class PreviewParticipant(StrictModel):
+    user_id: int | None = None
+    contact_id: int | None = None
+    name: str
+
+
+class PreviewLink(StrictModel):
+    project: str
+    tier: str
+    how: str
+    evidence: list[str]
+    outranked_by: dict | None = Field(None, description="The stored link that would keep its place instead.")
+
+
+class PreviewTranscript(StrictModel):
+    view: str
+    messages: list[dict]
+    truncated: bool
+    chars: int
+
+
+class PreviewSession(StrictModel):
+    id: str
+    title: str
+    workspace: dict
+    started_at: dt.datetime
+    participants: list[PreviewParticipant]
+    would_read: dict = Field(description="Per class: `project` and `system` a verdict pair; `individual` one per "
+                             "person in it, by user id.")
+    links: list[PreviewLink]
+    transcript: PreviewTranscript
+
+
+class PreviewWindow(StrictModel):
+    since: dt.datetime
+    until: dt.datetime
+
+
+class BrainPreviewOut(StrictModel):
+    window: PreviewWindow
+    view: str
+    sessions: list[PreviewSession]
+    next_after: str = Field(description="Pass this as `after` for the next page.")
+    done: bool

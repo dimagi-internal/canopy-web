@@ -24,10 +24,13 @@ PLUMBING = "plumbing that moves, deletes, seals or annotates rows and reads no m
 SHARING = "the session's own person sharing it: their act, scrubbed on the way out"
 BRAIN = "the brain's one learning read: eligible, scrubbed, recorded (`apps/brain/reading.py`)"
 PRESENCE = "asks whether any row exists; reads no words"
+PREVIEW = ("a person's own dry run of the brain over the sessions they already read (legs 1 to 6), scrubbed, "
+           "storing nothing (`apps/brain/preview.py`)")
 
 READERS: dict[str, str] = {
     "apps/agents/credentials/secret_requests.py": PLUMBING,
     "apps/agents/move.py": PLUMBING,
+    "apps/brain/preview.py": PREVIEW,
     "apps/brain/reading.py": BRAIN,
     "apps/canopy_sessions/access.py": CHAT,
     "apps/canopy_sessions/activity.py": INGEST,
@@ -57,10 +60,18 @@ READERS: dict[str, str] = {
 }
 
 
+#: The core read's functions (`transcript_read`): a module outside the chat app calling one reads the words.
+CORE_READS = frozenset({"read", "view_rows", "view_messages"})
+
+
 def _reads_transcript_rows(tree: ast.Module, rel: str) -> bool:
-    """Imports `Message` from the chat app (by absolute or, inside it, relative import), or a module of the chat
-    app's session surface uses a session's `.messages` rows."""
+    """Imports `Message` from the chat app (by absolute or, inside it, relative import), calls the core read
+    (`transcript_read.read` and its views), or a module of the chat app's session surface uses a session's
+    `.messages` rows."""
     for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in CORE_READS
+                and isinstance(node.func.value, ast.Name) and node.func.value.id == "transcript_read"):
+            return True
         if isinstance(node, ast.ImportFrom) and any(a.name == "Message" for a in node.names):
             if (node.module or "").startswith("apps.canopy_sessions") or (
                     node.level and rel.startswith("apps/canopy_sessions/")):

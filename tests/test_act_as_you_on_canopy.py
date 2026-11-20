@@ -386,6 +386,20 @@ def test_a_read_grant_reads_and_refuses_every_write(w):
     assert r.status_code == 403 and "read-only" in r.json()["detail"]
 
 
+def test_a_read_grant_reaches_the_brain_preview_and_nothing_else_off_mcp(w):
+    """`act_as.REST_READS`: the person's own dry run of learning, read as them on a step-up. GET under READ only:
+    a write grant, a write, and any other route MCP does not serve stay refused."""
+    token, _, _ = _live_token(w, "read")
+    r = Client().get("/api/brain/preview", **bearer_headers(token))
+    assert r.status_code == 200, r.content
+    assert Client().post("/api/brain/preview", **bearer_headers(token)).status_code in (403, 405)
+    write, _, _ = _live_token(w, "write", turn=_turn(w))
+    assert Client().get("/api/brain/preview", **bearer_headers(write)).status_code == 403
+    assert act_as.route_refusal("GET", "/api/brain/preview", "read", is_tool=False) is None
+    assert act_as.route_refusal("GET", "/api/brain/preview", "write", is_tool=False) is not None
+    assert act_as.route_refusal("GET", "/api/me/learning/", "read", is_tool=False) is not None
+
+
 def test_a_write_grant_writes_as_the_person(w):
     token, _, _ = _live_token(w, "write")
     r = Client().patch("/api/agents/hal/turn-mode", json.dumps({"turn_mode": "auto"}),
