@@ -205,7 +205,8 @@ def check_repo(get: Fetch, tracked: set[tuple[int, int, int]], token: str | None
                 "detail": (f"{SPEC_REPO} has {', '.join(label(v) for v in news)}; the conformance doc names "
                            f"{', '.join(label(v) for v in sorted(tracked)) or 'none'}")}
     return {"state": "no-newer-draft", "news": False, "versions": [label(v) for v in found],
-            "detail": f"{SPEC_REPO} drafts: {', '.join(label(v) for v in found) or 'none'}; all already named in the doc"}
+            "detail": (f"{SPEC_REPO} drafts: {', '.join(label(v) for v in found) or 'none'}; "
+                       "all already named in the doc")}
 
 
 def probe(get: Fetch = fetch, implemented: int | None = None, token: str | None = None,
