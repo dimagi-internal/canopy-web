@@ -17,6 +17,8 @@ class BrainConfig(AppConfig):
         # is compacted into each person's disclosure summary (`disclosure.compact`).
         ticks.register("brain.cascade", _cascade, 15 * 60)
         ticks.register("brain.disclosure", _disclosure, 60 * 60)
+        # Learning runs start off-request too, per active project, only when there is something new.
+        ticks.register("brain.schedule", _schedule, 300)
 
 
 def _associate() -> None:
@@ -35,3 +37,8 @@ def _disclosure() -> None:
     from . import disclosure  # noqa: PLC0415 — models: the app registry is not ready at module load
 
     disclosure.compact()
+
+def _schedule() -> None:
+    from . import schedule  # noqa: PLC0415 — models: the app registry is not ready at module load
+
+    schedule.run_due()

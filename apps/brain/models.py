@@ -118,7 +118,7 @@ class LearningConsent(models.Model):
 
 class SourceExclusion(models.Model):
     """One person taking one source out of learning. Its own row, so removing it later
-    restores nothing the cascade already withdrew (P5)."""
+    restores nothing the cascade already withdrew (`cascade.py`)."""
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
     source = models.ForeignKey(BrainSource, on_delete=models.CASCADE, related_name="exclusions")
@@ -129,7 +129,7 @@ class SourceExclusion(models.Model):
 
 
 class BrainCapability(models.Model):
-    """Something that learns: registered by a canopy admin (P4's routes), in one purpose
+    """Something that learns: registered by a canopy admin (`registry.py`), in one purpose
     class, declaring the purposes it reads for. A capability may only NARROW its class's
     audience, never widen it."""
 
@@ -182,7 +182,7 @@ class ProjectSignature(models.Model):
 
 class SourceLink(models.Model):
     """A source's tie to a subject. Metadata only: a link confers no read by itself, and only a `core`
-    link ever opens the project read leg (P4). One row per (source, subject); the strongest layer
+    link ever opens the project read leg (`readers.py`). One row per (source, subject); the strongest layer
     wins (`associate.RANK`), and a person's own rejection sticks."""
 
     PERSON, PROJECT_SUBJECT = "person", "project"
@@ -300,6 +300,8 @@ class BrainRun(models.Model):
     subject = models.CharField(max_length=64, blank=True, default="")
     #: The one purpose this run reads for (one of its feature's declared purposes).
     purpose = models.CharField(max_length=40)
+    #: Sources at or before this pk were learned from in an earlier run (`BrainCursor`): a run reads past it.
+    floor = models.BigIntegerField(default=0)
     #: Its conversation (`canopy_sessions.Session`, `metadata.brain_run`).
     session = models.ForeignKey("canopy_sessions.Session", null=True, blank=True, on_delete=models.SET_NULL,
                                 related_name="+")
@@ -322,7 +324,7 @@ class BrainRunRead(models.Model):
 
 class RederiveRequest(models.Model):
     """An output derived from several sources lost one: it is marked `stale` and asks to be derived again
-    from what is left. The scheduler that runs learning (a later phase) consumes these (`done_at`)."""
+    from what is left. The scheduler that runs learning (`schedule.py`) consumes these (`done_at`)."""
 
     output = models.ForeignKey(BrainOutput, on_delete=models.CASCADE, related_name="rederive_requests")
     reason = models.CharField(max_length=200, blank=True, default="")
@@ -362,3 +364,19 @@ class DisclosureDay(models.Model):
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["person", "capability_slug", "day"], name="brain_disclosure_one")]
+
+
+class BrainCursor(models.Model):
+    """Where a feature has got to for one subject (one project): the last source a finished run learned
+    from, and when a run last started, so the scheduler (`schedule.py`) starts the next one only when there
+    is something new and it is due."""
+
+    capability = models.ForeignKey(BrainCapability, on_delete=models.CASCADE, related_name="cursors")
+    subject_type = models.CharField(max_length=16)
+    subject = models.CharField(max_length=64)
+    last_source = models.BigIntegerField(default=0)
+    last_run_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["capability", "subject_type", "subject"],
+                                               name="brain_cursor_one")]

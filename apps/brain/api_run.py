@@ -65,4 +65,4 @@ def brain_emit(request: HttpRequest, payload: BrainEmitIn) -> dict:
                             source_ids=payload.sources, turn_id=str(turn.pk))
     except emit_mod.EmitRefusedError as e:
         raise ProblemError(422, "Invalid request", type_=TYPE_VALIDATION, detail=str(e)) from e
-    return {"id": out.pk, "state": out.state}
+    return {"id": out.pk, "state": getattr(out, "state", "linked")}

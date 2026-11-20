@@ -168,6 +168,7 @@ class BrainReadOut(StrictModel):
     sources: list[BrainReadSource]
     next_after: int = Field(description="Pass this as `after` to read on.")
     done: bool = Field(description="Nothing is left past `next_after`.")
+    project: dict | None = Field(None, description="For a project judge: its outcome and open tasks.")
 
 
 class BrainEmitIn(StrictModel):
@@ -194,3 +195,13 @@ class DisclosureDayOut(StrictModel):
 class RemovedSessionOut(StrictModel):
     session_id: uuid.UUID
     title: str = ""
+
+
+class ProjectSessionOut(StrictModel):
+    session_id: uuid.UUID
+    title: str
+    workspace: str
+    tier: str = Field(description="core | adjacent | candidate.")
+    how: str = Field(description="dispatched | signals | judged | declared.")
+    confidence: float | None = None
+    started_at: dt.datetime

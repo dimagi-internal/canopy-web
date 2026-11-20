@@ -21,7 +21,7 @@ session, never copied.
   (empty = all of theirs), `include_new`, `standing_rules`, `directives`. **`SourceExclusion`**: one
   person taking one source out, its own row.
 - **`BrainCapability`**: something that learns, in one purpose class, declaring the purposes it reads
-  for. Registered by a canopy admin (the routes are a later phase); only the model exists.
+  for. Registered by a canopy admin (`registry.py`, `/api/brain/capabilities/`).
 
 Sources are made lazily (`sources.for_session`) and warmed by `manage.py brain_backfill`.
 
@@ -50,7 +50,7 @@ names matches. A rule the code cannot read denies (`rule_denies`).
 
 `/api/me/learning/` reads, sets and ends a person's consent; `/api/me/learning/sessions/{id}/` takes
 one of their sessions out and back. Each route asks `harness.acting_person.refusal`: an agent's login, a
-turn's token, a runner and a request naming a turn are a 403, and none of the six is an MCP tool
+turn's token, a runner and a request naming a turn are a 403, and none of them is an MCP tool
 (`apps/mcp/api_tools.py` `EXCLUDED`). Nobody opts anyone in; there is no admin route.
 
 Every change is on the person's own audit (`learning.consented|class_added|class_removed|revoked|
@@ -71,9 +71,9 @@ carried every live opt-in over; the old table stays until a later release drops 
 `SourceLink` ties a source to a subject (a project today), one row per pair, in four layers where the
 strongest wins (`associate.rank`): **dispatched** (a turn raised from a task of the project ran in the
 session: certain), **signals** (the project's `ProjectSignature` matched against the session's recorded
-`activity`; `associate.classify` is canopy's `project_history.classify`, ported), **judged** (a later
-phase) and **declared** (an agent at close-out, or a person). A link is metadata and confers no read
-by itself; only a `core` link will open the project leg.
+`activity`; `associate.classify` is canopy's `project_history.classify`, ported), **judged** (a judge
+run's ruling, below) and **declared** (an agent at close-out, or a person). A link is metadata and
+confers no read by itself; only a `core` link opens the project leg.
 
 - **Signals, not words.** Layer 2 reads `Session.activity` (repos, edited paths, PRs, MCP tool calls,
   branches) and the title; it never reads a message. Strong signals (owns a project PR, edits project
@@ -175,6 +175,28 @@ reader's own reads, never a word; recomputable from the raw events (`disclosure.
 `GET /api/me/learning/disclosure/` and `/api/me/learning/removed/` are the person's own and off MCP.
 The Settings page `/settings/learning` shows them beside the class switches.
 
+## Scheduled project learning and the judge (`apps/brain/schedule.py`)
+
+A project feature (`purpose_class` project) with an operator, an enabled flag and a `schedule` (`hourly`, `daily`,
+`weekly`) is run by the `brain.schedule` tick for each ACTIVE workspace project of the operator's workspace tree (never a
+personal one), only when a run is due and there is something new: eligible sources past the feature's `BrainCursor` for
+that project. The run reads past that cursor (`BrainRun.floor`); a clean end of its turn (`signals`, `runs.finish`) moves
+the cursor past what it read, a failed one moves nothing and the next interval tries again. One run per feature and project
+at a time.
+
+The **judge** (layer 3 of the associations; the registered `project-link-judge`) is such a run with the purpose `judge`:
+it is served only the sessions weakly tied to the project (a `candidate` link made by signals, never one a person or a
+dispatch settled), each as the title and the person's first few lines, short, beside the project's outcome and open tasks.
+Its one output kind, `link`, is a ruling on exactly one source it read: a tier, a confidence from 0 to 1 and the model
+that judged, written as a `judged` `SourceLink`, which never overrides a person's call or a dispatch. Only sessions whose
+people agreed to project learning can be judged, since reading them is a project read. canopy makes no model calls: the
+judge is the operator agent's own turn. `manage.py brain_validate_links --how judged` measures its rulings against a
+hand-checked list; the plumbing is tested with a rule standing in for the model.
+
+`GET /api/brain/workspaces/{slug}/projects/{handle}/sessions/` lists the sessions tied to a project that the caller may read
+(by the same rule as every session read): ids, titles and how each tie was made, never a word of a transcript. It is what a
+project history reads instead of re-deriving the selection.
+
 ## Every reader is placed
 
 The learners canopy has today and will have are registered, dark, by migration `0007` (coaching, personal memory, the project
@@ -188,7 +210,7 @@ server module; moving them to runs of a registered learner is work in the canopy
 
 ## Not built yet
 
-The scheduler that starts runs per active project and the model judge (layer 3), the capability leg's other readers
-(coach and manager reading of transcripts stays on the existing coaching leg), and the HCP entry store's cascade hook (it
-follows the HCP v2 `derivedFrom` work). No capability reads a transcript through the brain in production:
-`BRAIN_READS_ENABLED` is the rollout gate and stays off until the owner turns it on.
+A per-person scheduler for `individual` and `memory` features, the capability leg's other readers (coach and manager
+reading of transcripts stays on the existing coaching leg), and the HCP entry store's cascade hook (it follows the HCP v2
+`derivedFrom` work). No capability reads a transcript through the brain in production: `BRAIN_READS_ENABLED` is the rollout
+gate and stays off until the owner turns it on.

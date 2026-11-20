@@ -6,7 +6,8 @@ from django.contrib.auth import get_user_model
 from django.http import HttpRequest
 from ninja import Router, Status
 
-from apps.agents.models import Agent
+from apps.agents.models import Agent, AgentProject
+from apps.agents.services.projects import may_read_project
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError, refusals
 from apps.api.route_gates import gate
@@ -14,13 +15,17 @@ from apps.workspaces import permissions as perms
 from apps.workspaces.gates import membership_or_404
 from apps.workspaces.gates import require as require_role
 
+from apps.canopy_sessions import access
+from apps.common import redact
+
 from . import outputs, registry, reporting
-from .models import BrainCapability
+from .models import BrainCapability, SourceLink
 from .schemas import (
     BrainOutputOut,
     CapabilityIn,
     CapabilityOut,
     CapabilityPatch,
+    ProjectSessionOut,
     ReportingLineIn,
     ReportingLineOut,
 )
@@ -142,6 +147,38 @@ def end_reporting(request: HttpRequest, slug: str, person_id: int):
     if person is None or not reporting.end(m.workspace, person=person, by=request.user):
         raise ProblemError(404, "No such line", type_=TYPE_NOT_FOUND)
     return Status(204, None)
+
+
+# ---- the sessions a project is tied to --------------------------------------------------------------
+
+@router.get("/brain/workspaces/{slug}/projects/{handle}/sessions/",
+            response={200: list[ProjectSessionOut], **refusals(404)},
+            summary="The sessions tied to a project that you may read")
+@gate("member")
+def list_project_sessions(request: HttpRequest, slug: str, handle: str, tiers: str = "core,adjacent",
+                          limit: int = 200) -> list[dict]:
+    """Which sessions a project's history is made of: the ones tied to it (`tiers`: core, adjacent, candidate,
+    comma separated) that YOU may read, by the same rule as every session read: your own, and a teammate's through
+    the project leg once everyone in it agreed. Ids, titles and how each tie was made, never a word of a transcript.
+    A project you may not read is not found."""
+    m = membership_or_404(request.user, slug)
+    project = AgentProject.objects.filter(workspace=m.workspace, handle=handle.lower()).first()
+    if project is None or not may_read_project(request.user, project):
+        raise ProblemError(404, "No such project", type_=TYPE_NOT_FOUND)
+    wanted = [t for t in tiers.split(",") if t in ("core", "adjacent", "candidate")] or ["core", "adjacent"]
+    links = (SourceLink.objects.filter(subject_type=SourceLink.PROJECT_SUBJECT, subject=str(project.pk),
+                                       tier__in=wanted, source__session__isnull=False)
+             .select_related("source__session").order_by("-source__session__created_at"))
+    readable = access.readable_ids(request.user, [lnk.source.session_id for lnk in links[:2000]])
+    out = []
+    for link in links[:2000]:
+        s = link.source.session
+        if s.pk in readable:
+            out.append({"session_id": s.pk, "title": redact.redact_text(s.title or "")[0], "workspace": s.workspace_id,
+                        "tier": link.tier, "how": link.how, "confidence": link.confidence, "started_at": s.created_at})
+        if len(out) >= max(1, min(limit, 500)):
+            break
+    return out
 
 
 # ---- what was produced ----------------------------------------------------------------------------

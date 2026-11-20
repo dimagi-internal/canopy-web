@@ -144,7 +144,7 @@ def set_consent(user, *, classes, workspaces=(), include_new: bool = True, stand
 @transaction.atomic
 def revoke(user) -> bool:
     """End all consent at once: every capability's next read of the person's sessions is a no.
-    False when they had none. Derived outputs are withdrawn by the cascade (P5)."""
+    False when they had none. Derived outputs are withdrawn by the cascade (`cascade.py`)."""
     row = live(user)
     if row is None:
         return False
@@ -212,7 +212,7 @@ def exclude(user, source: BrainSource) -> bool:
 
 def include(user, source: BrainSource) -> bool:
     """Undo `exclude`. It restores eligibility only: what the cascade already withdrew stays
-    withdrawn (P5)."""
+    withdrawn (`cascade.py`)."""
     with transaction.atomic():
         n, _ = SourceExclusion.objects.filter(user=user, source=source).delete()
         if n:

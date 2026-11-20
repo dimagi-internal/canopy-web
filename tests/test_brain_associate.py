@@ -1,4 +1,4 @@
-"""Associations (P3): the four layers, the port of canopy's `classify`, the precedence between them, and
+"""Associations: the four layers, the port of canopy's `classify`, the precedence between them, and
 the two things a person can rely on: a rejection sticks, and nothing sealed or foreign is ever linked."""
 from __future__ import annotations
 

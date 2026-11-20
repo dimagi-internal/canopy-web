@@ -23,10 +23,11 @@ class Command(BaseCommand):
         parser.add_argument("--workspace", required=True)
         parser.add_argument("--truth", required=True, help="a JSON file: a list of session ids")
         parser.add_argument("--tiers", nargs="+", default=["core"])
+        parser.add_argument("--how", default="", help="only links made this way: dispatched, signals, judged, declared")
         parser.add_argument("--seed", action="store_true")
         parser.add_argument("--rerun", action="store_true")
 
-    def handle(self, *args, handle, workspace, truth, tiers, seed, rerun, **opts):
+    def handle(self, *args, handle, workspace, truth, tiers, how, seed, rerun, **opts):
         project = AgentProject.objects.filter(workspace_id=workspace, handle=handle).first()
         if project is None:
             raise CommandError(f"no project {handle!r} in {workspace!r}")
@@ -37,4 +38,4 @@ class Command(BaseCommand):
         if rerun:
             for s in Session.objects.filter(workspace_id=workspace).iterator():
                 associate.associate(sources.for_session(s))
-        self.stdout.write(json.dumps(associate.compare(project, ids, tiers=tiers), indent=2))
+        self.stdout.write(json.dumps(associate.compare(project, ids, tiers=tiers, how=how), indent=2))

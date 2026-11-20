@@ -7,7 +7,7 @@
    (`canopy_sessions.activity`: repos, edited paths, PRs, MCP tool calls, branches). `classify` is
    the classifier of `project_history` in the canopy repo, ported: strong signals make `core` (a
    lone owned PR makes `adjacent`), weak ones make a `candidate`.
-3. **Judged**: a model's ruling on candidates (a later phase; `put` already takes it).
+3. **Judged**: a model's ruling on candidates, made by a judge run (`schedule.py`, `emit._emit_link`).
 4. **Declared**: an agent at close-out or a person. Overrides all; a PERSON's rejection sticks.
 
 Everything here reads stored metadata, never a message. A sealed source (sensitive, a contact's,
@@ -334,12 +334,15 @@ def seed_signature(project: AgentProject, *, min_sessions: int = 2) -> ProjectSi
     return sig
 
 
-def compare(project: AgentProject, truth, *, tiers=(SourceLink.CORE,)) -> dict:
-    """Precision and recall of the project's stored links against a hand-checked set of session ids:
-    how a signature is validated before it is trusted."""
+def compare(project: AgentProject, truth, *, tiers=(SourceLink.CORE,), how: str = "") -> dict:
+    """Precision and recall of the project's stored links (those made `how`, when named) against a hand-checked
+    set of session ids: how a signature, or a judge, is validated before it is trusted."""
     truth = {str(t) for t in truth}
-    chosen = set(SourceLink.objects.filter(subject_type=SourceLink.PROJECT_SUBJECT, subject=str(project.pk),
-                                           tier__in=list(tiers)).values_list("source__ref", flat=True))
+    links = SourceLink.objects.filter(subject_type=SourceLink.PROJECT_SUBJECT, subject=str(project.pk),
+                                      tier__in=list(tiers))
+    if how:
+        links = links.filter(how=how)
+    chosen = set(links.values_list("source__ref", flat=True))
     hits = chosen & truth
     return {"selected": len(chosen), "truth": len(truth), "hits": len(hits),
             "precision": round(len(hits) / len(chosen), 3) if chosen else None,
