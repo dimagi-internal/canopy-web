@@ -272,6 +272,14 @@ def _unproven_member(turn, agent) -> dict | None:
     }
 
 
+def _slack_identity(turn, ref: dict) -> dict | None:
+    """`origin_ref.slack_identity` for a Slack turn whose initiator is a contact, else None."""
+    if turn.origin != "slack" or turn.initiator_kind != who.CONTACT:
+        return None
+    found = ref.get("slack_identity")
+    return found if isinstance(found, dict) else None
+
+
 #: The TurnEvent kind that logs `sender_trust` on the turn. Canopy-written only,
 #: like `UNPROVEN_MEMBER_EVENT`.
 SENDER_TRUST_EVENT = "sender_trust"
@@ -347,6 +355,12 @@ def build(turn, *, reader_user=None) -> dict:
         # `relationship`/`profile`/`granted_by`, and must not be read as proof of
         # who sent the message — the whole point is that it is NOT proven.
         "unproven_member": _unproven_member(turn, agent),
+        # Non-null when a SLACK sender was answered as a contact: which step of
+        # `apps/slack/services.py::resolve_principal` failed (guest, other team, no
+        # verified-email match, …) and the Slack facts it read, so the agent can tell
+        # them the real cause and fix instead of "you are outside the workspace".
+        # Information only, like `unproven_member`.
+        "slack_identity": _slack_identity(turn, ref),
         # Non-null when the reverse happened: the message is NOT aligned, but a
         # temporary `SenderTrust` an agent admin set for this exact address tied
         # it to the member anyway (relationship is then theirs; `verified` stays

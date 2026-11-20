@@ -26,7 +26,9 @@ from dataclasses import dataclass, field, replace
 from urllib.parse import urlencode
 
 import requests
+from allauth.account.models import EmailAddress
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AnonymousUser
 from django.core import signing
 from django.db import transaction
@@ -41,6 +43,7 @@ from apps.events import services as events_services
 from apps.events.models import Event
 from apps.harness import clis, sensitivity
 from apps.harness import initiator as who
+from apps.harness.ledger import append_events
 from apps.harness.models import Turn
 from apps.workspaces import links
 from apps.workspaces import services as wsvc
@@ -210,6 +213,9 @@ class Principal:
     user: object = None
     contact: object = None
     assurance: str = ""
+    #: Why a Slack sender was answered as a contact (`identity_reason`), written onto
+    #: the turn as `origin_ref.slack_identity`. None for a member.
+    identity: dict | None = None
 
     def initiator(self, team_id: str):
         via = f"slack:{team_id}"
@@ -452,7 +458,92 @@ def resolve_principal(installation: SlackInstallation, slack_user_id: str,
     )
     if contact is None or contact.is_blocked:
         return None, Outcome(BLOCKED, "You can't reach agents from this Slack.", workspace_id=workspace_id)
-    return Principal(contact=contact), None
+    why = identity_reason(installation, slack_user_id, info, user=user, assurance=assurance,
+                          workspace_id=workspace_id)
+    logger.info("slack %s:%s answered as contact %s in %s: %s", installation.team_id, slack_user_id,
+                contact.pk, workspace_id, why["reason"])
+    return Principal(contact=contact, identity=why), None
+
+
+#: `identity_reason` codes, in the order `resolve_principal` tests them.
+LINKED_NOT_MEMBER = "linked_account_not_a_member"
+MATCHED_NOT_MEMBER = "matched_account_not_a_member"
+NO_PROFILE = "no_slack_profile"
+BOT = "slack_bot"
+DEACTIVATED = "slack_account_deactivated"
+GUEST = "slack_guest"
+OTHER_TEAM = "other_slack_team"
+NO_EMAIL = "no_profile_email"
+AMBIGUOUS = "email_on_several_accounts"
+NO_VERIFIED_ACCOUNT = "no_account_with_verified_email"
+
+
+def identity_reason(installation: SlackInstallation, slack_user_id: str, info: dict | None, *,
+                    user, assurance: str, workspace_id: str) -> dict:
+    """Why this Slack user was answered as a CONTACT rather than as a canopy member.
+
+    `resolve_principal` decides in several steps (an existing link, then the
+    home-member test, then a verified-email match, then membership) and every
+    failure produces the same contact row. This records which step failed and
+    the Slack facts it read, so an admin reading the turn (or the agent reading
+    its caller envelope) sees the cause instead of inferring it from a grade.
+    Logging only: it grants nothing and changes no decision.
+    """
+    info = info or {}
+    profile = info.get("profile") or {}
+    email = str(profile.get("email") or "").strip().lower()
+    facts = {
+        "slack_user_id": slack_user_id,
+        "profile_email": email,
+        "linked": assurance == who.SLACK_LINKED,
+        "is_guest": _is_guest(info) if info else None,
+        "is_bot": bool(info.get("is_bot")) if info else None,
+        "deleted": bool(info.get("deleted")) if info else None,
+        "slack_team": str(info.get("team_id") or "") if info else None,
+        "installed_team": installation.team_id,
+    }
+    near = None
+    if user is not None:
+        code = LINKED_NOT_MEMBER if facts["linked"] else MATCHED_NOT_MEMBER
+        text = (f"Slack resolved to canopy user {user.pk}, who is not a member of workspace "
+                f"{workspace_id}.")
+        facts["account"] = user.pk
+    elif not info:
+        code, text = NO_PROFILE, "Slack returned no profile for this user, so no email could be matched."
+    elif info.get("is_bot"):
+        code, text = BOT, "This Slack user is a bot."
+    elif info.get("deleted"):
+        code, text = DEACTIVATED, "This Slack account is deactivated."
+    elif _is_guest(info):
+        code, text = GUEST, ("This Slack account is a guest of the Slack, so its profile email is not "
+                             "trusted and no email match was tried. Fix: make them a full Slack member, "
+                             "or have them link Slack to canopy by hand.")
+    elif facts["slack_team"] != installation.team_id:
+        code, text = OTHER_TEAM, (f"This Slack account belongs to team {facts['slack_team'] or '(none)'}, "
+                                  f"not {installation.team_id}, so its profile email is not trusted.")
+    elif not email:
+        code, text = NO_EMAIL, "This Slack profile has no email to match."
+    else:
+        code, text, near = _email_miss(email)
+    out = {**facts, "reason": code, "detail": text}
+    if near is not None:
+        out["account_email_unverified"] = near
+    return out
+
+
+def _email_miss(email: str) -> tuple[str, str, int | None]:
+    """(code, detail, near-match user id) for a profile email no account verifiably holds."""
+    holders = EmailAddress.objects.filter(email__iexact=email, verified=True).values_list("user_id", flat=True)
+    if len(set(holders)) > 1:
+        return AMBIGUOUS, f"{email} is a verified email on several canopy accounts.", None
+    near = list(get_user_model().objects.filter(email__iexact=email, is_active=True)
+                .values_list("pk", flat=True)[:2])
+    if len(near) == 1:
+        return (NO_VERIFIED_ACCOUNT,
+                f"Canopy account {near[0]} shows {email}, but it is not a VERIFIED login email there "
+                "(they likely sign in with a different address). Fix: add and verify it on their "
+                "account, or have them link Slack to canopy by hand.", near[0])
+    return NO_VERIFIED_ACCOUNT, f"No canopy account has {email} as a verified login email.", None
 
 
 def named_agent(installation: SlackInstallation, text: str) -> tuple[Agent | None, str]:
@@ -1185,6 +1276,20 @@ def _record_window(agent: Agent, principal: Principal, inbound: Inbound, win: wi
         logger.exception("could not record a Slack window read")
 
 
+#: The TurnEvent kind that logs why a Slack sender was a contact (`identity_reason`).
+IDENTITY_EVENT = "slack_identity"
+
+
+def _log_identity(turn, principal: Principal) -> None:
+    """Put `principal.identity` in the turn's history (`read_turn_events`). Never raises."""
+    if turn is None or principal.identity is None:
+        return
+    try:
+        append_events(turn, [{"kind": IDENTITY_EVENT, "payload": principal.identity}])
+    except Exception:  # noqa: BLE001 — a log line is not worth failing someone's message
+        logger.exception("could not log the Slack identity for turn %s", turn.pk)
+
+
 def _continue_shared(session: Session, principal: Principal, text: str, inbound: Inbound) -> Outcome:
     """A reply in a thread a repo session was bound to by a share.
 
@@ -1305,6 +1410,8 @@ def _send(session: Session, created: bool, agent: Agent | None, principal: Princ
         if stored:
             origin_ref = {**(origin_ref or {}), "attachments": stored}
         prompt = "\n\n".join(p for p in (prompt, *notes) if p) or "(sent an attachment)"
+    if principal.identity is not None:
+        origin_ref = {**(origin_ref or {}), "slack_identity": principal.identity}
     _remember_location(session, inbound)
     _message, turn = send_paths.send_from(
         "slack",
@@ -1328,6 +1435,7 @@ def _send(session: Session, created: bool, agent: Agent | None, principal: Princ
         # channel's — see `status.adoption`.
         origin_ref=origin_ref,
     )
+    _log_identity(turn, principal)
     if turn is not None and turn.status == Turn.CANCELLED and agent is not None:
         # Written already-cancelled: the agent's access list gives this caller
         # nothing (harness `_apply_capability`). The public line says "not run";
