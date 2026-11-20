@@ -335,7 +335,10 @@ jobs:
     name: Backend pytest (PostgreSQL)
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Most of it is the walk-back migration tests (`-m needs_migrations`), which re-render the project state for every
+    # operation they replay; that grows with each model that points at users, sessions or workspaces (the brain added
+    # a dozen), so 15 minutes ejected a green PR from the queue.
+    timeout-minutes: 25
     services:
       postgres:
         image: pgvector/pgvector:pg18
