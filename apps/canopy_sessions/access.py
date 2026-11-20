@@ -90,6 +90,7 @@ from apps.harness.models import Runner, Turn
 
 from . import channel_bindings, staleness
 from .models import (
+    BRAIN_RUN_METADATA_KEY,
     REVIEW_METADATA_KEY,
     CoachingOptIn,
     CoachingRole,
@@ -121,6 +122,12 @@ def is_review_conversation(session) -> bool:
     """A chat opened by asking an agent to review one session. Everything in it runs in the
     `published_profiles.SESSION_REVIEW` profile, because what it read stays in its context."""
     return session is not None and REVIEW_METADATA_KEY in (session.metadata or {})
+
+
+def is_brain_conversation(session) -> bool:
+    """A chat that is one run of a brain learning feature. Everything in it runs in the
+    `published_profiles.BRAIN` profile: it reads sources through `brain_read` and nothing else."""
+    return session is not None and BRAIN_RUN_METADATA_KEY in (session.metadata or {})
 
 
 def live_review_ask(conversation_id, *, user_id):
@@ -157,6 +164,8 @@ def turn_reach(turn) -> Reach | None:
     conversation = turn_conversation(turn)
     own = Q(pk=conversation.pk) if conversation is not None else Q(pk__in=[])
     turn_id = str(turn.pk)
+    if is_brain_conversation(conversation):
+        return Reach(own, turn_id=turn_id)         # its own conversation; what it reads comes through the brain
     if is_review_conversation(conversation):
         ask = live_review_ask(conversation.pk, user_id=turn.initiator_user_id)
         return Reach(own | Q(pk=ask.session_id) if ask is not None else own, turn_id=turn_id)
@@ -208,7 +217,7 @@ def visible_session_q(user) -> Q:
     Tenancy is a separate and prior gate (`_visible_slugs`) — this narrows
     inside it and must never be used as the only check.
 
-    Six ways in, and no seventh:
+    Six ways in, and a seventh that is the brain's (`_brain_project_q`, inert until its rollout gate):
 
     1. you created it;
     2. you were made a participant — `SessionParticipant` is what "multiplayer"
@@ -243,6 +252,9 @@ def visible_session_q(user) -> Q:
        turn answers to someone (`review_grantors`); a PERSON coach reads as themselves,
        in the app or on a step-up. Another agent, a plain member, or an admin who holds no
        role gains nothing; revoking the opt-in or the role drops the next read.
+    7. (the brain's) the session is tied to a project you may read and everyone whose words are in it
+       agreed to project learning (`brain.readers.project_q`): read-only, redacted, stored rows, never
+       a pull; off while `BRAIN_READS_ENABLED` is off.
     6. you administer the runner it is bound to (`RunnerAdmin`, an explicit
        per-box grant its owner made) and it is a runner-discovered session
        (`_runner_admin_q`). READ-ONLY (`role_for` gives a viewer) and no pull
@@ -257,7 +269,16 @@ def visible_session_q(user) -> Q:
     everyone. Losing them from a list is the cheaper mistake than handing a
     departed colleague's conversations to every co-tenant.
     """
-    legs = (
+    legs = _own_legs_q(user) | _brain_project_q(user)
+    reach = reach_of(user)
+    return legs if reach is None else legs & reach.q
+
+
+def _own_legs_q(user) -> Q:
+    """Legs 1 to 6: the sessions of people, boxes, agents and review grants. The brain's project leg
+    (`_brain_project_q`) is the seventh and is kept apart, so `read_through_brain_only` can ask whether
+    it was the ONLY way in."""
+    return (
         Q(created_by=user)
         | Q(participants__user=user)
         | _box_owner_q(user)
@@ -266,8 +287,28 @@ def visible_session_q(user) -> Q:
         | _coach_q(user)
         | _runner_admin_q(user)
     )
-    reach = reach_of(user)
-    return legs if reach is None else legs & reach.q
+
+
+def _brain_project_q(user) -> Q:
+    """Leg 7: a session tied to a project, readable by that project's readers, read-only and redacted,
+    when everyone whose words are in it agreed (`apps.brain.readers.project_q`). Inert until the
+    rollout gate (`BRAIN_READS_ENABLED`) is on. Never `may_pull`, never a write: `role_for` gives it a
+    viewer, the role every read-only leg gets."""
+    from apps.brain import readers  # noqa: PLC0415 — brain imports this module
+
+    return readers.project_q(user)
+
+
+def read_through_brain_only(user, session) -> bool:
+    """Whether the brain's project leg is the ONLY thing that lets `user` read `session`: such a read is
+    redacted (`transcript_read.readable_window`) and recorded. False when the gate is off, so this
+    costs nothing while the brain reads nothing."""
+    from apps.brain import readers  # noqa: PLC0415 — brain imports this module
+
+    if session is None or not readers.enabled() or not getattr(user, "is_authenticated", False):
+        return False
+    own = Session.objects.filter(pk=session.pk).filter(_own_legs_q(user)).exists()
+    return not own and Session.objects.filter(pk=session.pk).filter(_brain_project_q(user)).exists()
 
 
 def _discovered_q() -> Q:

@@ -20,7 +20,7 @@ from .models import Agent
 
 #: The fields of a profile, in either setting. A host site adds `ceiling`, `own_login`, `sensitive`.
 PROFILE_FIELDS = ("description", "entry", "tools", "bash", "read_paths", "write_paths")
-_RESERVED_KEYS = frozenset({*profiles_mod.READ_MODE_NAMES, profiles_mod.SESSION_REVIEW})
+_RESERVED_KEYS = frozenset({*profiles_mod.READ_MODE_NAMES, profiles_mod.SESSION_REVIEW, profiles_mod.BRAIN})
 _MAX_ENTRIES = 50
 
 

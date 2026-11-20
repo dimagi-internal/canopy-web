@@ -63,3 +63,122 @@ class AgentLinkIn(StrictModel):
     model_config = ConfigDict(extra="forbid")
 
     tier: Literal["core", "adjacent"]
+
+
+class CapabilityOut(StrictModel):
+    slug: str
+    name: str
+    description: str
+    purpose_class: str
+    subject_type: str
+    purposes: list[str]
+    source_kinds: list[str]
+    output_kinds: list[str]
+    audience: list[str]
+    operator: str = Field("", description="The agent that runs it, by slug.")
+    entry: str = Field("", description="The plugin command a run starts with.")
+    schedule: str
+    enabled: bool
+
+
+class CapabilityIn(StrictModel):
+    model_config = ConfigDict(extra="forbid")
+
+    slug: str = Field(pattern=r"^[a-z][a-z0-9-]{1,63}$")
+    name: str
+    description: str = ""
+    purpose_class: str
+    purposes: list[str]
+    source_kinds: list[str] = Field(default_factory=lambda: ["session"])
+    output_kinds: list[str] = Field(default_factory=list)
+    audience: list[str] | None = Field(None, description="At most its class's audience; omitted means all of it.")
+    operator: str = Field("", description="An agent's slug, or empty.")
+    entry: str = Field("", description="One plugin command, `/<plugin>:<skill> [args]`.")
+    schedule: str = ""
+    enabled: bool = False
+
+
+class CapabilityPatch(StrictModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = None
+    description: str | None = None
+    purposes: list[str] | None = None
+    source_kinds: list[str] | None = None
+    output_kinds: list[str] | None = None
+    audience: list[str] | None = Field(None, description="May only narrow what the class allows.")
+    operator: str | None = None
+    entry: str | None = None
+    schedule: str | None = None
+    enabled: bool | None = None
+
+
+class ReportingLineOut(StrictModel):
+    person_id: int
+    person: str
+    manager_id: int
+    manager: str
+    since: dt.datetime
+
+
+class ReportingLineIn(StrictModel):
+    model_config = ConfigDict(extra="forbid")
+
+    person: str = Field(description="The person's email; a member of the workspace.")
+    manager: str = Field(description="Their manager's email; a member of the workspace.")
+
+
+class BrainOutputOut(StrictModel):
+    id: int
+    learner: str = Field(description="The slug of the learning feature that produced it.")
+    kind: str
+    workspace: str
+    subject_type: str
+    subject: str
+    title: str
+    body: dict
+    state: str = Field(description="active | stale (a source it came from was removed).")
+    created_at: dt.datetime
+
+
+class BrainReadMessage(StrictModel):
+    index: int
+    role: str
+    text: str
+    author_user_id: int | None = None
+
+
+class BrainReadSource(StrictModel):
+    source: int
+    kind: str
+    workspace: str
+    title: str
+    started_at: dt.datetime
+    messages: list[BrainReadMessage]
+    truncated: bool
+    directives: list[str] = Field(description="Words the people in this source asked every reader to be shown.")
+
+
+class BrainReadOut(StrictModel):
+    run: int
+    learner: str
+    purpose: str
+    subject_type: str
+    subject: str
+    sources: list[BrainReadSource]
+    next_after: int = Field(description="Pass this as `after` to read on.")
+    done: bool = Field(description="Nothing is left past `next_after`.")
+
+
+class BrainEmitIn(StrictModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: str = Field(description="One of the output kinds this run's feature declares.")
+    title: str = ""
+    body: dict
+    sources: list[int] = Field(description="The `source` ids this output came from; each must have been read in this run.")
+
+
+class BrainEmitOut(StrictModel):
+    id: int
+    state: str

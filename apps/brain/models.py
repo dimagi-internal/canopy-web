@@ -18,6 +18,8 @@ CLASSES = (INDIVIDUAL, MEMORY, PROJECT, SYSTEM)
 #: Classes that learn about ONE PERSON from their own words (only that person's consent
 #: counts) versus the ones that learn about a project or canopy from everyone's (every
 #: human participant must agree).
+#: Where a brain run's conversation records its run (`canopy_sessions.models.BRAIN_RUN_METADATA_KEY`).
+BRAIN_RUN_KEY = "brain_run"
 ABOUT_A_PERSON = frozenset({INDIVIDUAL, MEMORY})
 SHARED = frozenset({PROJECT, SYSTEM})
 
@@ -145,6 +147,11 @@ class BrainCapability(models.Model):
     operator = models.ForeignKey("agents.Agent", null=True, blank=True, on_delete=models.SET_NULL,
                                  related_name="+")
     schedule = models.CharField(max_length=64, blank=True, default="")
+    #: What a run of it starts with: one plugin command, `/<plugin>:<skill> [args]`, run by `operator`.
+    entry = models.CharField(max_length=300, blank=True, default="")
+    #: The canopy admin who registered it: whom its runs answer to (`runs.start`).
+    registered_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+                                      related_name="+")
     enabled = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -207,3 +214,107 @@ class SourceLink(models.Model):
         constraints = [models.UniqueConstraint(fields=["source", "subject_type", "subject"],
                                                name="brain_link_one_per_subject")]
         indexes = [models.Index(fields=["subject_type", "subject", "tier"], name="brain_link_by_subject")]
+
+
+class ReportingLine(models.Model):
+    """`manager` is `person`'s manager in `workspace`, set by a workspace owner (`reporting.py`). The
+    one thing it opens is a manager reading their reports' `individual` OUTPUTS (never a transcript):
+    canopy had no manager relationship before this. Ending one sets `ended_at`; every change is an
+    event."""
+
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE, related_name="+")
+    person = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
+    manager = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
+    set_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+                               related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    ended_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["workspace", "person"], condition=models.Q(ended_at__isnull=True),
+                                    name="brain_one_live_manager"),
+            models.CheckConstraint(condition=~models.Q(person=models.F("manager")), name="brain_not_own_manager"),
+        ]
+
+
+class BrainOutput(models.Model):
+    """What a learning feature produced, through `brain_emit`: about one subject, for its audience. The
+    `body` is the output's own words; `OutputLineage` says which sources it came from, so a removal can
+    reach it."""
+
+    ACTIVE, WITHDRAWN, STALE = "active", "withdrawn", "stale"
+    STATE_CHOICES = [(ACTIVE, "Active"), (WITHDRAWN, "Withdrawn"), (STALE, "A source was removed")]
+
+    capability = models.ForeignKey(BrainCapability, on_delete=models.PROTECT, related_name="outputs")
+    kind = models.CharField(max_length=40)
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE, related_name="+")
+    #: Who or what it is about: `person` (a user id) or `project` (an `AgentProject` pk).
+    subject_type = models.CharField(max_length=16)
+    subject = models.CharField(max_length=64)
+    title = models.CharField(max_length=300, blank=True, default="")
+    body = models.JSONField(default=dict, blank=True)
+    state = models.CharField(max_length=12, choices=STATE_CHOICES, default=ACTIVE)
+    turn_id = models.CharField(max_length=40, blank=True, default="")
+    #: The run that emitted it, and a hash of what it said and cited, so emitting twice is one output.
+    run = models.ForeignKey("brain.BrainRun", null=True, blank=True, on_delete=models.SET_NULL, related_name="outputs")
+    fingerprint = models.CharField(max_length=64, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["subject_type", "subject", "state"], name="brain_output_by_subject")]
+        constraints = [models.UniqueConstraint(fields=["run", "fingerprint"], condition=~models.Q(fingerprint=""),
+                                               name="brain_output_once_per_run")]
+
+
+class OutputLineage(models.Model):
+    """One output's one source: written by `brain_emit` from the turn's ACTUAL reads, so the cascade
+    knows what to withdraw. `output_kind` names the store (`brain.output` now; an existing store later
+    carries its own kind). `participant_scope` is the people whose words were in the source at the time:
+    the consents the output carries."""
+
+    output_kind = models.CharField(max_length=40, default="brain.output")
+    output_id = models.CharField(max_length=64)
+    source = models.ForeignKey(BrainSource, on_delete=models.CASCADE, related_name="lineage")
+    participant_scope = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["output_kind", "output_id", "source"],
+                                               name="brain_lineage_one")]
+        indexes = [models.Index(fields=["output_kind", "output_id"], name="brain_lineage_by_output")]
+
+
+class BrainRun(models.Model):
+    """One run of a learning feature: a conversation of its operator agent, confined to the brain's own
+    profile (`published_profiles.BRAIN`), that reads sources and emits outputs, nothing else. The server
+    makes it (`runs.start`); nothing a turn says makes one."""
+
+    OPEN, DONE, FAILED = "open", "done", "failed"
+    STATE_CHOICES = [(OPEN, "Open"), (DONE, "Done"), (FAILED, "Failed")]
+
+    capability = models.ForeignKey(BrainCapability, on_delete=models.PROTECT, related_name="runs")
+    #: What it is about: `person` (a user id), `project` (a project pk) or `system`.
+    subject_type = models.CharField(max_length=16)
+    subject = models.CharField(max_length=64, blank=True, default="")
+    #: The one purpose this run reads for (one of its feature's declared purposes).
+    purpose = models.CharField(max_length=40)
+    #: Its conversation (`canopy_sessions.Session`, `metadata.brain_run`).
+    session = models.ForeignKey("canopy_sessions.Session", null=True, blank=True, on_delete=models.SET_NULL,
+                                related_name="+")
+    state = models.CharField(max_length=8, choices=STATE_CHOICES, default=OPEN)
+    created_at = models.DateTimeField(auto_now_add=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+
+class BrainRunRead(models.Model):
+    """A source a run actually read: what `brain_emit` checks every cited source against, and the
+    lineage an output is written from."""
+
+    run = models.ForeignKey(BrainRun, on_delete=models.CASCADE, related_name="reads")
+    source = models.ForeignKey(BrainSource, on_delete=models.CASCADE, related_name="+")
+    read_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["run", "source"], name="brain_run_reads_once")]

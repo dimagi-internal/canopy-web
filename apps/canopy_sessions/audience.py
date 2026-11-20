@@ -141,6 +141,14 @@ def _runner_admins(session) -> set[int]:
     return set(RunnerAdmin.objects.filter(runner_id=b.runner_id).values_list("user_id", flat=True))
 
 
+def _project_readers(session) -> set[int]:
+    """Leg 7, the brain's: the people who read this session because it is tied to a project they may read
+    (`brain.readers.project_reader_ids`; empty while the brain's rollout gate is off)."""
+    from apps.brain import readers  # noqa: PLC0415 — brain imports this module's neighbours
+
+    return readers.project_reader_ids(session)
+
+
 def pieces(session) -> dict:
     """Every leg's people for this session, each already inside the tenant."""
     members = wsvc.member_user_ids(session.workspace_id)
@@ -156,6 +164,7 @@ def pieces(session) -> dict:
         "coaches": {uid: name for uid, name in coaches.items() if uid in members},
         "asked_reviewers": asked,
         "runner_admins": within(_runner_admins(session)),
+        "project_readers": within(_project_readers(session)),
     }
 
 
@@ -164,7 +173,7 @@ def readers(session) -> set[int]:
     session (the panel) has no member readers beyond these."""
     p = pieces(session)
     out = p["creator"] | p["participants"] | p["box_owner"] | p["agent_admins"] | p["own_login"]
-    out |= set(p["coaches"]) | p["runner_admins"]
+    out |= set(p["coaches"]) | p["runner_admins"] | p["project_readers"]
     return out
 
 
@@ -224,4 +233,6 @@ def summary(session, viewer) -> dict:
         extras.append(f"{name} may review this one session (asked from its page)")
     if p["runner_admins"] - p["box_owner"]:
         extras.append("This machine's admins can read it, to move it")
+    if p["project_readers"] - set(p["participants"]) - p["creator"]:
+        extras.append("People who can read its project may read it (read-only, secrets scrubbed)")
     return {"label": label, "extras": extras, "count": total}

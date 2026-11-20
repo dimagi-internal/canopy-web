@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 
+from apps.common import redact
 from apps.harness import clis, provenance, sensitivity
 from apps.harness import runner_requirements as rr
 from apps.harness.models import Runner
@@ -127,7 +128,7 @@ def session_out(session: Session, *, reply: bool = False, viewer=None) -> dict:
     )
     prefer_own = bool(session.title) and not is_fallback
     sensitive = sensitivity.is_sensitive(session)
-    return {
+    row = {
         "id": session.id,
         "agent_slug": session.agent.slug if session.agent_id else None,
         "project": session.project,
@@ -222,6 +223,20 @@ def session_out(session: Session, *, reply: bool = False, viewer=None) -> dict:
         # a task name can say what the session was about, so it is not served.
         **({"title": "", "session_key": ""} if session.content_deleted_at else {}),
     }
+    return _brain_scrubbed(session, row, viewer)
+
+
+def _brain_scrubbed(session, row: dict, viewer) -> dict:
+    """A reader who has this session only through the brain's project leg gets the words it lists
+    (title, opening, last reply) with secrets scrubbed, as the transcript is (`transcript_read.readable_window`)."""
+    from . import access  # noqa: PLC0415 — access imports this module's neighbours at load
+
+    if viewer is None or not access.read_through_brain_only(viewer, session):
+        return row
+    for key in ("title", "opening", "last_reply"):
+        if isinstance(row.get(key), str):
+            row[key] = redact.redact_text(row[key])[0]
+    return row
 
 
 def _started_by_name(session: Session) -> str:
