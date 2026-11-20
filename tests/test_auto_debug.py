@@ -431,7 +431,8 @@ def test_a_recurrence_on_a_runner_that_runs_the_fix_reopens_it_for_a_person(
     assert _debug_turns().count() == 1 and _notified(inv) == [[ada.owner_id]]
 
 
-def test_the_debugger_hands_off_and_can_no_longer_resolve(ada, ws, runner, django_capture_on_commit_callbacks):
+def test_the_debugger_hands_off_then_closes_it_once_the_person_fixed_it(
+        ada, ws, runner, django_capture_on_commit_callbacks):
     ada_login = a_user("ada@dimagi-ai.com")
     WorkspaceMembership.objects.create(workspace=ws, user=ada_login, role=WorkspaceMembership.EDITOR)
     Agent.objects.filter(pk=ada.pk).update(user=ada_login)
@@ -453,18 +454,22 @@ def test_the_debugger_hands_off_and_can_no_longer_resolve(ada, ws, runner, djang
     assert assigned.last().payload["ask"] == "Sign Claude back in on cloud-ec2-2."
     assert _notified(inv) == [[ada.owner_id]]
 
-    # The escalation loop: resolve was the debugger's only verb, and resolving
-    # "needs Jonathan" cleared the alert and re-armed the next escalation.
-    r = c.post(f"{base}/resolve", data={"note": "handed off"}, content_type="application/json")
-    assert r.status_code == 409, r.content
-    inv.refresh_from_db()
-    assert inv.status == FailureInvestigation.ESCALATED and _alert(inv).status == Alert.OPEN
-
-    # A person may close it.
-    r = _client(ada.owner).post(f"{base}/resolve", data={"note": "signed back in"},
-                                content_type="application/json")
+    # Once the person says they made the fix, the debugger closes it itself,
+    # and its note keeps what the hand-off asked for.
+    r = c.post(f"{base}/resolve", data={"note": "Checked: Claude is signed in on cloud-ec2-2."},
+               content_type="application/json")
     assert r.status_code == 200, r.content
-    assert _alert(inv).status == Alert.RESOLVED
+    inv.refresh_from_db()
+    assert inv.status == FailureInvestigation.RESOLVED and _alert(inv).status == Alert.RESOLVED
+    assert inv.resolution_note == ("Checked: Claude is signed in on cloud-ec2-2. "
+                                   "It needed: Sign Claude back in on cloud-ec2-2.")
+
+    # If it comes back anyway, the person is told what was needed, not just the note.
+    with django_capture_on_commit_callbacks(execute=True):
+        _fail(_agent(ws, "ace"), runner, "boom")
+    inv.refresh_from_db()
+    assert inv.status == FailureInvestigation.ESCALATED
+    assert "It needed: Sign Claude back in on cloud-ec2-2." in inv.ask
 
 
 def test_a_hand_off_to_someone_who_cannot_handle_it_is_refused(ada, ws, runner):
