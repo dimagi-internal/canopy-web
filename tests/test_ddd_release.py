@@ -183,3 +183,51 @@ def test_release_page_lives_under_its_workspace(db, owner):
 
     page = Client().get(f"/ddd-release/demo/{RUN_ID}?t={token}")
     assert page.status_code == 404 and "Location" not in page
+
+
+@pytest.fixture
+def attacker(db):
+    u = get_user_model().objects.create_user(
+        username="mallory@dimagi.com", email="mallory@dimagi.com",
+    )
+    ws = Workspace.objects.create(slug="mallory", display_name="Mallory", created_by=u)
+    wsvc.ensure_member(ws, u, WorkspaceMembership.OWNER)
+    return u
+
+
+@override_settings(REQUIRE_AUTH=True)
+def test_release_never_reads_another_workspaces_narrative(db, owner, attacker):
+    """`run_id` and `narrative_slug` are free text the uploader picks. An editor of
+    workspace B who stamps workspace A's narrative slug on their own link-shared
+    upload must not read A's private narrative through B's release page."""
+    _rev(owner, run_id="victim-run", request_json={"narrative": "Victim Secret Story\nPrivate plan."})
+    mine = _hero(
+        attacker, workspace=Workspace.objects.get(slug="mallory"),
+        run_id="mallory-run", narrative_slug="demo", visibility="private",
+    )
+    mine.visibility = "link"
+    mine.share_token = "t" * 32
+    mine.save()
+
+    resp = Client().get("/api/ddd/release/mallory-run/?t=" + "t" * 32 + "&ws=mallory")
+    assert resp.status_code == 200
+    assert "Victim Secret Story" not in resp.content.decode()
+    assert resp.json()["narrative"] is None
+
+
+@override_settings(REQUIRE_AUTH=True)
+def test_release_ignores_rows_from_other_workspaces_on_the_same_run_id(db, owner, attacker):
+    """Another workspace's newer upload under the same run_id neither displaces
+    the run's primary artifact nor lends its links to the page."""
+    _hero(owner, visibility="private")
+    _rev(owner)
+    aggregate.set_narrative_visibility("demo", "link")
+    token = Walkthrough.objects.get(run_id=RUN_ID, workspace_id="dimagi").share_token
+    _hero(
+        attacker, workspace=Workspace.objects.get(slug="mallory"), title="Imposter",
+        links=[{"label": "Evil", "url": "https://evil.example/", "kind": "reference"}],
+    )
+
+    body = Client().get(f"/api/ddd/release/{RUN_ID}/?t={token}&ws=dimagi").json()
+    assert body["video"]["title"] == "Hero"
+    assert all(link["label"] != "Evil" for link in body["product_links"])
