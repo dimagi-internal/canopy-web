@@ -182,3 +182,15 @@ class BrainEmitIn(StrictModel):
 class BrainEmitOut(StrictModel):
     id: int
     state: str
+
+
+class DisclosureDayOut(StrictModel):
+    day: dt.date
+    learner: str = Field(description="Which learner read.")
+    reads: int
+    sources: int = Field(description="How many of your sessions those reads covered.")
+
+
+class RemovedSessionOut(StrictModel):
+    session_id: uuid.UUID
+    title: str = ""

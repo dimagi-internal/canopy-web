@@ -8,7 +8,10 @@ from django.db import transaction
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
-from . import associate
+from apps.harness.signals import session_content_deleted
+
+from . import associate, cascade
+from .models import BrainSource
 
 
 @receiver(post_save, sender="canopy_sessions.Session", dispatch_uid="brain_activity_fold_schedules_association")
@@ -17,3 +20,12 @@ def _schedule_after_fold(sender, instance, created, update_fields=None, **kwargs
         return
     session_id = instance.pk
     transaction.on_commit(lambda: associate.schedule(session_id))
+
+
+@receiver(session_content_deleted, dispatch_uid="brain_content_deleted_cascades")
+def _cascade_content_deletion(sender, session, **kwargs):
+    """The person deleted a session's words: its source is withdrawn for good and what came from it goes
+    (`cascade`), once the deleting transaction commits."""
+    ids = list(BrainSource.objects.filter(kind=BrainSource.SESSION, ref=str(session.pk)).values_list("pk", flat=True))
+    if ids:
+        cascade.after_commit(ids)

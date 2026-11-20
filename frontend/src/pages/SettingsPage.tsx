@@ -18,6 +18,7 @@ import { DelegatedCredentialsPanel } from '@/components/settings/DelegatedCreden
 import { SessionWorkspacePanel } from '@/components/settings/SessionWorkspacePanel'
 import { CanopyProjectsPanel } from '@/components/settings/CanopyProjectsPanel'
 import { RunnerAppPanel } from '@/components/settings/RunnerAppPanel'
+import { LearningPanel } from '@/components/settings/LearningPanel'
 import { SessionReviewersPanel } from '@/components/settings/SessionReviewersPanel'
 import { AgentLoginRequestsPanel } from '@/components/settings/AgentLoginRequestsPanel'
 import { runnerHref } from '@/lib/scopedLinks'
@@ -116,6 +117,7 @@ export function SettingsPage() {
             <RunnerAppPanel />
           </>
         )}
+        {current === 'learning' && <LearningPanel />}
         {current === 'connections' && (
           <>
             <GitHubPanel />

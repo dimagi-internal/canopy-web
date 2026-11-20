@@ -21,6 +21,7 @@ from apps.events import services as events
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
+from . import cascade
 from .models import CLASSES, INDIVIDUAL, BrainSource, LearningConsent, SourceExclusion
 
 logger = logging.getLogger(__name__)
@@ -134,6 +135,8 @@ def set_consent(user, *, classes, workspaces=(), include_new: bool = True, stand
         for cls in sorted(before - set(classes)):
             _record(user, CLASS_REMOVED, purpose=f"stop canopy learning for {cls}", detail=cls,
                     ids={"class": cls})
+    if before - set(classes):
+        cascade.after_commit(cascade.sources_of(user))
     _sync_coaching(user, on=INDIVIDUAL in classes)
     return row
 
@@ -148,6 +151,7 @@ def revoke(user) -> bool:
     row.revoked_at = timezone.now()
     row.save(update_fields=["revoked_at"])
     _record(user, REVOKED, purpose="stop all canopy learning from your sessions")
+    cascade.after_commit(cascade.sources_of(user))
     _sync_coaching(user, on=False)
     return True
 
@@ -184,10 +188,12 @@ def mirror_coaching(user, *, on: bool) -> None:
             row.save(update_fields=["classes"])
             _record(user, CLASS_REMOVED, purpose="stop canopy learning for individual",
                     detail=INDIVIDUAL, ids={"class": INDIVIDUAL})
+            cascade.after_commit(cascade.sources_of(user))
         else:
             row.revoked_at = timezone.now()
             row.save(update_fields=["revoked_at"])
             _record(user, REVOKED, purpose="stop all canopy learning from your sessions")
+            cascade.after_commit(cascade.sources_of(user))
 
 
 # ---- one source at a time ------------------------------------------------------------------------
@@ -200,6 +206,7 @@ def exclude(user, source: BrainSource) -> bool:
         if made:
             _record(user, SOURCE_WITHDRAWN, purpose="remove a session from canopy learning",
                     detail=source.ref, ids={"source": source.pk, "ref": source.ref})
+            cascade.after_commit([source.pk])
     return made
 
 
