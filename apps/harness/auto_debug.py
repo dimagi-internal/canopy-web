@@ -862,7 +862,9 @@ def render_prompt(inv: FailureInvestigation, turn: Turn, riders=(), *, alert=Non
         f"- NEEDS A PERSON: POST {base}/api/harness/failure-investigations/<id>/hand-off "
         "(MCP `hand_off_failure_investigation`) with a one-line `ask` (and `to`, an "
         "email, if not the owner). That is the one notification; the alert stays "
-        "open with them, and you can no longer resolve it.",
+        "open with them. When they say they made the fix, check it against live "
+        "state and resolve it yourself, saying in `note` what you checked: do not "
+        "leave them a Mark resolved click.",
         "If it comes back after a fix, canopy does not start another debug turn: it "
         "only counts on a runner without the fix, and hands it to a person otherwise.",
     ]
@@ -870,10 +872,6 @@ def render_prompt(inv: FailureInvestigation, turn: Turn, riders=(), *, alert=Non
 
 
 # ---- resolving -------------------------------------------------------------------
-
-
-class WithAPersonError(ValueError):
-    """The debugger tried to resolve an investigation it handed to a person."""
 
 
 def _is_debugger(user) -> bool:
@@ -889,14 +887,16 @@ def resolve(inv: FailureInvestigation, *, note: str, by=None, fix_commit: str = 
     some runner it hit does not run yet, leaves it open and quiet as
     `pending_deploy` until the fix is live (`close_live_fixes`).
 
-    A row with a person (`escalated`) is theirs: the debugger's own login is
-    refused (`WithAPersonError`, a 409 from the API). Resolving must not clear an alert
-    that needs a person, or the next repeat would escalate again. The debugger
-    hands off instead (`hand_off`); only a person closes."""
+    A row with a person (`escalated`) may be closed by the debugger too, once it
+    has checked that the person's fix is in place (Jonathan 2026-11-20: "I need you
+    to be able to clean up the system and self prune" — an alert only a person can
+    close is one more click left on him). Handing off is still `hand_off`, never a
+    resolve. So a repeat still says what was needed, the debugger's note on such a
+    row carries the hand-off's ask (`It needed: …`), which `_came_back_ask` repeats."""
     if inv.status == FailureInvestigation.ESCALATED and _is_debugger(by):
-        raise WithAPersonError(
-            f"investigation {inv.pk} is with a person ({inv.ask or 'handed off'}); only a "
-            f"person closes it, or the fix going live — nothing was changed")
+        ask = _SPACE.sub(" ", inv.ask or "").strip()
+        if ask and "It needed:" not in note:
+            note = f"{note.rstrip()} It needed: {ask}"
     inv.resolved_at = timezone.now()
     inv.resolution_note = note
     inv.recurred_after_resolve = False
