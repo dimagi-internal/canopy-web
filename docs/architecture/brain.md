@@ -98,9 +98,38 @@ by itself; only a `core` link will open the project leg.
 - **Validating a signature.** `associate.compare` measures a project's stored links against a
   hand-checked list of session ids (precision and recall); `manage.py brain_validate_links` runs it.
 
+## Removal and the cascade (`apps/brain/cascade.py`)
+
+What a learner produced is written with its sources (`OutputLineage`), so a removal finds it. `cascade.sweep`
+runs on the tick `brain.cascade` (every 15 minutes) and also right after the act that removed something
+(`cascade.after_commit`, from `consent.exclude`, `consent.revoke`, a dropped class and a session's content
+deletion, `signals._cascade_content_deletion`). It is idempotent.
+
+- A source is **removed** for an output when its words are gone (deleted, `withdrawn`, its session gone;
+  such a source becomes `withdrawn` for good), or when the person the output is about, or for a shared
+  output ANY person in the source (`participant_scope`), excluded it or stopped agreeing to the class
+  (`cascade.removed_reason`). Removing X withdraws what was learned about X; what was learned about Y from
+  Y's own words stays.
+- An output derived only from removed sources is **withdrawn**: body and title emptied, lineage kept as ids,
+  seen by no one. One derived from several is **stale** and gets a `RederiveRequest` for the scheduler to take.
+  The links' evidence is deleted and the learner gets a `RevocationNotice`.
+- **A tombstone, not a toggle.** `consent.include` restores eligibility only; a withdrawn output stays
+  withdrawn, a replay cannot cite a removed source (`cascade.emit_allowed`), and a runner re-ship of deleted
+  words is refused as before (`transcript_ingest.refuses_ship`).
+- Another store (an HCP entry) registers with `cascade.register_store` and is asked to withdraw or mark stale;
+  nothing in this app touches the memory store itself.
+
+## Disclosure (`apps/brain/disclosure.py`)
+
+Each read the brain allows leaves a `brain.read` event (`readers.record_read`). `disclosure.compact` (tick
+`brain.disclosure`, hourly, and on each read of the summary) folds them into `DisclosureDay`: per person whose
+words were in the sources, per learner and day, how many reads and how many of their sessions. Never the
+reader's own reads, never a word; recomputable from the raw events (`disclosure.raw_rows`).
+`GET /api/me/learning/disclosure/` and `/api/me/learning/removed/` are the person's own and off MCP.
+The Settings page `/settings/learning` shows them beside the class switches.
+
 ## Not built yet
 
-New read legs (project, capability, coach/manager), confined brain turns with their read and emit tools,
-lineage and the cascade on removal, the model judge, and the managers' reporting line. No capability
-reads a transcript through the brain: `BRAIN_READS_ENABLED` is the rollout gate and stays off until the
+New read legs (capability, coach/manager), confined brain turns with their read and emit tools,
+the model judge. No capability reads a transcript through the brain: `BRAIN_READS_ENABLED` is the rollout gate and stays off until the
 read paths and the cascade are merged.

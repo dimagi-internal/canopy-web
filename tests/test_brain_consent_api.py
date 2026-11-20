@@ -190,7 +190,7 @@ def test_no_learning_route_is_an_mcp_tool():
             if isinstance(op, dict):
                 seen += 1
                 assert excluded_reason(path, method, op), f"{method} {path} would be an MCP tool"
-    assert seen == 8
+    assert seen == 10
 
 
 # ---- coaching and this consent are one fact ------------------------------------------------------

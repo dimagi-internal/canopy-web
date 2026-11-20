@@ -272,3 +272,47 @@ class OutputLineage(models.Model):
         constraints = [models.UniqueConstraint(fields=["output_kind", "output_id", "source"],
                                                name="brain_lineage_one")]
         indexes = [models.Index(fields=["output_kind", "output_id"], name="brain_lineage_by_output")]
+
+
+class RederiveRequest(models.Model):
+    """An output derived from several sources lost one: it is marked `stale` and asks to be derived again
+    from what is left. The scheduler that runs learning (a later phase) consumes these (`done_at`)."""
+
+    output = models.ForeignKey(BrainOutput, on_delete=models.CASCADE, related_name="rederive_requests")
+    reason = models.CharField(max_length=200, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    done_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["output"], condition=models.Q(done_at__isnull=True),
+                                               name="brain_one_open_rederive")]
+
+
+class RevocationNotice(models.Model):
+    """What a learner that holds something derived from `source` is told when it goes: the source is
+    removed, so what came from it is to be dropped. One per (learner, source); `delivered_at` is set when
+    the learner's store has acted (`cascade.register_store`)."""
+
+    capability_slug = models.CharField(max_length=64)
+    source = models.ForeignKey(BrainSource, on_delete=models.CASCADE, related_name="revocations")
+    reason = models.CharField(max_length=40, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    delivered_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["capability_slug", "source"], name="brain_one_revocation")]
+
+
+class DisclosureDay(models.Model):
+    """A person's disclosure summary, one row per (person, learner, day): how many times what they said was
+    read and how many of their sources it covered. Compacted from the raw `brain.read` events
+    (`disclosure.compact`) and recomputable from them; ids and counts only, never a word."""
+
+    person = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
+    capability_slug = models.CharField(max_length=64)
+    day = models.DateField()
+    reads = models.PositiveIntegerField(default=0)
+    sources = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["person", "capability_slug", "day"], name="brain_disclosure_one")]

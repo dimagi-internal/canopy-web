@@ -7,7 +7,7 @@
 // in runner output and in bookmarks; they keep working by forwarding to the
 // section that now holds the anchor, and the page scrolls to it there.
 
-export type SettingsSection = 'profile' | 'account' | 'security' | 'agents' | 'runners' | 'connections'
+export type SettingsSection = 'profile' | 'account' | 'security' | 'agents' | 'runners' | 'connections' | 'learning'
 
 export const SETTINGS_SECTIONS: { section: SettingsSection; label: string }[] = [
   { section: 'profile', label: 'Profile' },
@@ -16,6 +16,7 @@ export const SETTINGS_SECTIONS: { section: SettingsSection; label: string }[] = 
   { section: 'agents', label: 'Agents acting for you' },
   { section: 'runners', label: 'Runners' },
   { section: 'connections', label: 'Connections' },
+  { section: 'learning', label: 'Learning' },
 ]
 
 const ANCHORS: Record<string, SettingsSection> = {

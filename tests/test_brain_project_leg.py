@@ -10,14 +10,14 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.agents.models import Agent, AgentProject
-from apps.brain import associate, consent, readers, sources
+from apps.brain import associate, consent, sources
 from apps.brain.eligibility import eligible, eligible_sources
 from apps.brain.models import BrainCapability, BrainSource, LearningConsent, SourceParticipant
 from apps.canopy_sessions import access, audience
 from apps.canopy_sessions.models import Message, Session, SessionParticipant
 from apps.events.models import Event
 from apps.harness import runner_requirements as rr
-from apps.workspaces.models import Workspace, WorkspaceMembership
+from apps.workspaces.models import WorkspaceMembership
 from tests.fixtures.brain_world import brain_world, capability, member, user
 
 pytestmark = pytest.mark.django_db

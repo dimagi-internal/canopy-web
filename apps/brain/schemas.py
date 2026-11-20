@@ -127,7 +127,7 @@ class ReportingLineIn(StrictModel):
 
 class BrainOutputOut(StrictModel):
     id: int
-    capability: str
+    learner: str
     kind: str
     workspace: str
     subject_type: str
@@ -136,3 +136,15 @@ class BrainOutputOut(StrictModel):
     body: dict
     state: str = Field(description="active | stale (a source it came from was removed).")
     created_at: dt.datetime
+
+
+class DisclosureDayOut(StrictModel):
+    day: dt.date
+    learner: str = Field(description="Which learner read.")
+    reads: int
+    sources: int = Field(description="How many of your sessions those reads covered.")
+
+
+class RemovedSessionOut(StrictModel):
+    session_id: uuid.UUID
+    title: str = ""
