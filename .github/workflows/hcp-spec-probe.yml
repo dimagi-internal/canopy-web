@@ -3,7 +3,10 @@ name: HCP spec probe (weekly)
 # Does the Human Context Protocol spec site publish the JSON Schema (conformance
 # 2.1.1, the one open Core MUST in docs/architecture/hcp-conformance.md), or a draft
 # newer than the one canopy implements? scripts/hcp_spec_probe.py answers from
-# https://hcp.me and always exits 0: a site that is down or has changed shape must
+# https://hcp.me and from the spec repository loyalagents/hcp-spec (public today, so the
+# workflow's own token is enough; if it goes private again, add an HCP_SPEC_TOKEN secret, a
+# fine-grained token with read access to that repo's contents; a token that cannot read it
+# makes the repo check say "no-access", quietly) and always exits 0: a site that is down or has changed shape must
 # never fail anyone's work, so this is its own workflow, not part of ci.yml or the
 # contract nightly. The only write is one issue per kind of news (fixed title prefix
 # "HCP spec:"), commented on instead of duplicated.
@@ -25,8 +28,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Probe hcp.me
+      - name: Probe hcp.me and the spec repository
         id: probe
+        env:
+          GH_SPEC_TOKEN: ${{ secrets.HCP_SPEC_TOKEN || github.token }}
         run: python3 scripts/hcp_spec_probe.py --github-output "$GITHUB_OUTPUT" --body-file /tmp/hcp-spec-body.md | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Open or update the issue

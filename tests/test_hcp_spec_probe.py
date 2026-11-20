@@ -24,7 +24,7 @@ SHELL = b'<!doctype html><html><body><div id="root"></div><script type="module" 
 
 def site(pages: dict):
     """A fake network: url -> (status, content type, body); anything else is a 404."""
-    def get(url):
+    def get(url, headers=None):
         return pages.get(url, (404, "text/plain", b""))
     return get
 
@@ -62,7 +62,7 @@ def test_any_other_answer_is_not_the_schema(answer):
 
 
 def test_an_unreachable_site_is_reported_and_is_not_news():
-    r = probe_mod.probe(lambda url: (None, "URLError: down", b""), implemented=4)
+    r = probe_mod.probe(lambda url, headers=None: (None, "URLError: down", b""), implemented=4)
     assert r["schema"]["state"] == "unreachable" and r["site"]["state"] == "unreachable"
     assert r["news"] is False
 
@@ -118,7 +118,7 @@ def test_it_writes_the_title_and_body_when_there_is_news(monkeypatch, tmp_path):
 
 
 def test_it_exits_zero_even_when_the_network_is_down(monkeypatch, tmp_path):
-    monkeypatch.setattr(probe_mod, "fetch", lambda url: (None, "URLError: down", b""))
+    monkeypatch.setattr(probe_mod, "fetch", lambda url, headers=None: (None, "URLError: down", b""))
     real = probe_mod.probe
     monkeypatch.setattr(probe_mod, "probe", lambda: real(probe_mod.fetch))
     out = tmp_path / "out"
@@ -130,6 +130,66 @@ def test_the_draft_it_compares_with_is_the_one_the_audit_names():
     assert probe_mod.implemented_draft() == 4
     audit = (ROOT / "docs/architecture/hcp-conformance.md").read_text()
     assert "1.0-draft-4" in audit
+
+
+def _listing(*names):
+    return (200, "application/json", json.dumps([{"name": n, "type": "dir"} for n in names]).encode())
+
+
+def test_a_2_0_draft_3_fixture_in_the_spec_repo_is_news_until_the_doc_names_it():
+    fixture = pages()
+    fixture[probe_mod.SPEC_DIR_URL] = _listing("2.0-draft-2", "2.0-draft-3")
+    r = probe_mod.probe(site(fixture), implemented=4, token="t", tracked={(1, 0, 4)})
+    assert r["repo"]["state"] == "newer-draft" and r["news"] is True
+    assert r["repo"]["newer"] == ["2.0-draft-2", "2.0-draft-3"]
+    assert probe_mod.title_for(r).startswith("HCP spec: ") and "spec repository" in probe_mod.title_for(r)
+    assert "path-to-v2-final" in probe_mod.body_for(r)
+    # Once the doc names the newest v2 draft it models, the same listing is quiet ...
+    quiet = probe_mod.probe(site(fixture), implemented=4, token="t", tracked={(1, 0, 4), (2, 0, 3)})
+    assert quiet["repo"]["state"] == "no-newer-draft" and quiet["news"] is False
+    # ... and the next draft is news again.
+    fixture[probe_mod.SPEC_DIR_URL] = _listing("2.0-draft-3", "2.0-draft-4")
+    nxt = probe_mod.probe(site(fixture), implemented=4, token="t", tracked={(1, 0, 4), (2, 0, 3)})
+    assert nxt["repo"]["newer"] == ["2.0-draft-4"]
+
+
+def test_a_new_v1_draft_in_the_spec_repo_is_news_against_v1_only():
+    fixture = pages()
+    fixture[probe_mod.SPEC_DIR_URL] = _listing("1.0-draft-5", "2.0-draft-3")
+    r = probe_mod.probe(site(fixture), implemented=4, token="t", tracked={(1, 0, 4), (2, 0, 3)})
+    assert r["repo"]["newer"] == ["1.0-draft-5"]
+
+
+def test_the_private_repo_without_a_token_is_quiet_and_says_what_to_add():
+    r = probe_mod.probe(site(pages()), implemented=4, token="", tracked={(1, 0, 4)})
+    assert r["repo"]["state"] == "no-access" and r["news"] is False
+    assert probe_mod.TOKEN_ENV in r["repo"]["detail"] and "no token" in r["repo"]["detail"]
+    r = probe_mod.probe(site(pages()), implemented=4, token="wrong", tracked={(1, 0, 4)})
+    assert "cannot read" in r["repo"]["detail"] and r["news"] is False
+
+
+def test_the_token_is_sent_only_to_the_github_api_and_never_reported():
+    seen = []
+
+    def get(url, headers=None):
+        seen.append((url, dict(headers or {})))
+        return pages().get(url, (404, "text/plain", b""))
+    r = probe_mod.probe(get, implemented=4, token="s3cret", tracked={(1, 0, 4)})
+    assert [u for u, h in seen if "Authorization" in h] == [probe_mod.SPEC_DIR_URL]
+    assert "s3cret" not in json.dumps(r)
+
+
+@pytest.mark.parametrize("answer", [(None, "URLError: down", b""), (200, "text/html", b"<html>"),
+                                    (200, "application/json", b'{"message": "x"}')])
+def test_a_spec_repo_that_is_down_or_odd_is_not_news(answer):
+    fixture = pages()
+    fixture[probe_mod.SPEC_DIR_URL] = answer
+    assert probe_mod.probe(site(fixture), implemented=4, token="t", tracked={(1, 0, 4)})["news"] is False
+
+
+def test_the_workflow_hands_the_probe_the_token_secret():
+    wf = (ROOT / ".github/workflows/hcp-spec-probe.yml").read_text()
+    assert "GH_SPEC_TOKEN: ${{ secrets.HCP_SPEC_TOKEN || github.token }}" in wf
 
 
 def test_the_workflow_runs_the_probe_on_a_schedule_and_cannot_fail_unrelated_work():
