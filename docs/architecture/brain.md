@@ -66,9 +66,41 @@ both directions: coaching's own opt-in or out mirrors into the `individual` clas
 the learning routes writes the opt-in (`consent._sync_coaching`). Migration `0002_copy_coaching_opt_ins`
 carried every live opt-in over; the old table stays until a later release drops it.
 
+## Which project a source belongs to (`apps/brain/associate.py`)
+
+`SourceLink` ties a source to a subject (a project today), one row per pair, in four layers where the
+strongest wins (`associate.rank`): **dispatched** (a turn raised from a task of the project ran in the
+session: certain), **signals** (the project's `ProjectSignature` matched against the session's recorded
+`activity`; `associate.classify` is canopy's `project_history.classify`, ported), **judged** (a later
+phase) and **declared** (an agent at close-out, or a person). A link is metadata and confers no read
+by itself; only a `core` link will open the project leg.
+
+- **Signals, not words.** Layer 2 reads `Session.activity` (repos, edited paths, PRs, MCP tool calls,
+  branches) and the title; it never reads a message. Strong signals (owns a project PR, edits project
+  paths, `mcp_min` or more project tool calls) make `core`, a lone owned PR makes `adjacent`, name terms
+  and branch patterns alone make a `candidate`.
+- **A signature is seeded from certain sessions only** (`associate.seed_signature`): from `core` links
+  that were dispatched or declared, never from a signals link, so a guess cannot feed itself. It only
+  widens; nothing a person added is removed.
+- **A person's rejection sticks.** A person's `rejected` declaration outranks every automatic layer and
+  every agent; only that same person undoes it (`undeclare`), and a different participant's attempt is a
+  409. An agent's declaration outranks the automatic layers but never a person's.
+- **Never across a workspace, never a personal project.** Automatic layers link only workspace-visible
+  projects of the source's own workspace.
+- **Off-request and debounced.** An activity fold (a `Session` save naming `activity`) only marks its
+  source due (`associate.schedule`, five minutes, so a burst is one look); the tick `brain.associate`
+  (`associate.run_due`) makes sources for sessions that have none and looks at what is due. A sealed
+  source (sensitive, a contact's, deleted words) is never looked at.
+- **Declaring.** A person: `PUT /api/me/learning/sessions/{id}/projects/{handle}/` (`core` or
+  `rejected`), person-only and off MCP like the rest of `/api/me/learning/`. An agent:
+  `PUT /api/brain/sessions/{id}/projects/{handle}/` from its own login inside its running turn, for that
+  turn's own conversation only (`core` or `adjacent`).
+- **Validating a signature.** `associate.compare` measures a project's stored links against a
+  hand-checked list of session ids (precision and recall); `manage.py brain_validate_links` runs it.
+
 ## Not built yet
 
 New read legs (project, capability, coach/manager), confined brain turns with their read and emit tools,
-lineage and the cascade on removal, associations between sources and projects, and the managers' reporting line. No
-capability reads a transcript through the brain: `BRAIN_READS_ENABLED` is the rollout gate and stays off
-until the read paths and the cascade are merged.
+lineage and the cascade on removal, the model judge, and the managers' reporting line. No capability
+reads a transcript through the brain: `BRAIN_READS_ENABLED` is the rollout gate and stays off until the
+read paths and the cascade are merged.
