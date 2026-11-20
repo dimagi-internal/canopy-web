@@ -470,3 +470,32 @@ def test_a_token_request_without_the_redirect_uri_is_refused(lili, client_id):
     r = _token(client_id, verifier, code, redirect="")
     assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
     assert r["Cache-Control"] == "no-store"
+
+
+def test_revocation_webhook_goes_through_the_outbound_guard_and_never_follows_a_redirect(monkeypatch):
+    """The webhook URL is checked when it is SENT to (a name can be re-pointed
+    after registration), and a 30x is the answer, not a second request to an
+    internal address."""
+    from apps.contacts import hcp_webhooks
+    from apps.host_grants import outbound
+
+    with pytest.raises(OSError):
+        hcp_webhooks._post("http://app.example.org/hook", b"{}", {})
+    monkeypatch.setattr(outbound, "refuse_private", lambda host: (_ for _ in ()).throw(
+        outbound.OutboundError("private")))
+    with pytest.raises(OSError):
+        hcp_webhooks._post("https://rebound.example.org/hook", b"{}", {})
+
+    seen = {}
+
+    class _Resp:
+        status_code = 302
+
+    def fake_post(url, **kw):
+        seen.update(kw)
+        return _Resp()
+
+    monkeypatch.setattr(outbound, "refuse_private", lambda host: None)
+    monkeypatch.setattr(hcp_webhooks.requests, "post", fake_post)
+    assert hcp_webhooks._post("https://app.example.org/hook", b"{}", {}) == 302
+    assert seen["allow_redirects"] is False
