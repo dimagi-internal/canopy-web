@@ -13,13 +13,15 @@ here, once. The credentials are minted per claim and exist only in this answer.
 """
 from __future__ import annotations
 
+from django.conf import settings
+
 
 def issue_credentials(turn):
     """Mint what only the claiming runner may hold, onto the turn object:
     a chat's key, and a confined turn's caller token — plus the model its CLI
     starts on (`cli_model`), which both claim channels send. Returns the turn."""
     agent = turn.acting_agent
-    turn.cli_model = str((agent.cli_models or {}).get(turn.cli) or "")[:64] if agent else ""
+    turn.cli_model = start_model(agent, turn.cli)
     if turn.chat_session_id:
         # The chat's key (canopy_sessions.ChatKey): the one credential that lets
         # the session driving this chat reach the chat's own secrets and page.
@@ -46,6 +48,17 @@ def issue_credentials(turn):
         if is_caller_scoped(turn):
             turn.mcp_token = mint(turn, scoped=True)
     return turn
+
+
+def start_model(agent, cli: str | None) -> str:
+    """The model a turn's CLI starts on: its agent's `cli_models` entry for that CLI,
+    else the server's `DEFAULT_CLI_MODELS` for it, else "" (the CLI's own default on
+    that box, which is whatever the box's account defaults to, not what a person
+    gets on their own machine). A project's turn has no agent, so it always takes
+    the server default."""
+    cli = cli or "claude-code"
+    named = (agent.cli_models or {}).get(cli) if agent else None
+    return str(named or (settings.DEFAULT_CLI_MODELS or {}).get(cli) or "")[:64]
 
 
 def claim_payload(turn) -> dict:

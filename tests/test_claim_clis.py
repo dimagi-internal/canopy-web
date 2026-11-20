@@ -86,7 +86,7 @@ def test_legacy_box_claims_as_before():
     claimed = claim.claim_next_turn(runner)
     assert claimed == turn
     assert claimed.cli == "claude-code"
-    assert claim_payload(claimed)["cli_model"] == ""
+    assert claim_payload(claimed)["cli_model"] == "opus"
 
 
 def test_confined_turn_runs_only_where_its_cli_confines():
@@ -247,3 +247,20 @@ def test_a_fleet_member_signed_in_to_codex_is_still_wakeable():
     assert runner.wakeable is True
     runner.capabilities = {**runner.capabilities, "clis": {"codex": {"signed_in": False}}}
     assert runner.wakeable is False
+
+
+def test_start_model_prefers_the_agent_then_the_server_default(settings):
+    from apps.harness.claim_payload import start_model
+
+    settings.DEFAULT_CLI_MODELS = {"claude-code": "opus"}
+    named = Agent(slug="a", name="A", cli_models={"claude-code": "claude-sonnet-5-5"})
+    unnamed = Agent(slug="b", name="B", cli_models={})
+    assert start_model(named, "claude-code") == "claude-sonnet-5-5"
+    assert start_model(unnamed, "claude-code") == "opus"
+    # A project turn has no agent: the server default, never the box's account default.
+    assert start_model(None, "claude-code") == "opus"
+    assert start_model(None, None) == "opus"
+    # A CLI with no server default starts on its own.
+    assert start_model(None, "codex") == ""
+    settings.DEFAULT_CLI_MODELS = {}
+    assert start_model(None, "claude-code") == ""
