@@ -43,6 +43,20 @@ or `test_hcp_relevance.py`.
 |---|---|---|
 | **4.1.4 / 4.1.6 for canopy's own agents** (no grant presumed persistent by the control plane). | Grants are per agent and only the person's act. In a session's UI the person is shown the agent, categories, actions and expiry, then **allows it for this session** (temporary, the default outcome, ≤ 24 h and ending with the session). **Keeping it** is a second, separate act asked afterwards, with what persistent means stated first and nothing preselected; the server refuses `always` unless that session already allows it. Each act is a `grant.issued` recording type, modality (`canopy-chat` / `canopy-widget`) and what was shown. The person's settings are policy that bounds a grant, never a grant. No presumed grant is active: migration `contacts/0022` revokes each, with a `grant.revoked` on the person's log. | `hcp.issue_agent_grant`, `hcp._record_grant`; `tests/test_hcp_agent_grants.py`: `test_nothing_is_granted_without_the_persons_act`, `test_one_act_never_both_allows_and_keeps_it`, `test_a_session_grant_is_temporary_shown_logged_and_works`, `test_a_session_grant_lapses_with_the_session_and_after_the_cap`, `test_an_always_grant_is_reused_in_later_sessions_without_asking`, `test_granting_one_agent_grants_no_other`, `test_widening_is_its_own_act_and_replaces_the_grant`; frontend `SessionMemoryToggles.test.tsx` |
 
+## HCP v2 (2.0-draft-3), tracked
+
+The v1 audit above is what discovery claims. canopy also models HCP v2 internally and serves a
+v2 HTTP binding at `/api/hcp/v2/` (`docs/architecture/hcp-service.md`, "HCP v2"). It does **not**
+yet claim any v2 conformance identifier: this page names the draft it has read so that
+`scripts/hcp_spec_probe.py` reports the next draft rather than this one. v2 is an
+unstable draft in invited partner review; each v2 concept lands as its own piece and this section
+grows a row per piece, with the same evidence rule as above.
+
+| v2 concept | Status | Evidence |
+|---|---|---|
+| Purposes on every grant and every read (6.1.5.2), per-entry limits (4.2.6, 7.1) | built | `hcp.read_purpose`, `hcp.restrict_purposes`; `tests/test_hcp_purposes.py`: `test_a_search_naming_a_purpose_the_grant_does_not_carry_is_refused`, `test_an_entry_limited_to_other_purposes_is_not_served_for_this_one` |
+| Restrict purposes is governance: the person, HTTP only (1.6, 9.4.10) | built | `test_the_governance_route_is_the_persons_and_refuses_an_agent_login` |
+
 ## Data model
 
 | Criterion | Status | Evidence |

@@ -263,6 +263,7 @@ class HcpSearchIn(_Body):
     purpose: str = Field(description="Plain language statement of purpose. Logged to the person's audit trail.")
     maxEntries: int = Field(default=hcp.DEFAULT_MAX_ENTRIES, description="Maximum entries to return. Default 5, maximum 20.")
     responseDetail: str = Field(default="full", description='"full" or "minimal" (id, category, dimension, value).')
+    purposeCode: str | None = Field(default=None, description="Optional (v2): the purpose code this read is for, one your grant carries. Omitted, the grant's own default is used.")
 
 
 class HcpAddIn(_Body):
@@ -275,6 +276,7 @@ class HcpAddIn(_Body):
     confidence: str | None = Field(default=None, description="high | medium | low — required for model-inferred, omitted otherwise.")
     sourceContext: str = Field(description="Conversation or document id this was derived from (e.g. turn:<id>).")
     model: str | None = Field(default=None, description="The model id that produced a model-inferred entry, e.g. claude-opus-5-5")
+    permittedPurposes: list[str] | None = Field(default=None, description="Optional (v2): purpose codes this entry may be used for. Omitted means no limit.")
 
 
 class HcpEntryIn(_Body):
@@ -390,7 +392,7 @@ def hcp_search_preferences(request: HttpRequest, payload: HcpSearchIn, turn: str
         p.person, workspace_slugs=_search_workspace(p, workspace), query=payload.query,
         categories=payload.categories, purpose=payload.purpose, max_entries=payload.maxEntries,
         grant=p.grant, actor=p.actor, turn=p.turn,
-        project_id=project.pk if project is not None else None)
+        project_id=project.pk if project is not None else None, purpose_code=payload.purposeCode)
     return _ok({"entries": [_render(f, p, payload.responseDetail) for f in hits],
                 "retrievalId": f"urn:uuid:{retrieval}",
                 "minimization": hcp.minimization(p.actor),
@@ -427,7 +429,8 @@ def hcp_add_preference(request: HttpRequest, payload: HcpAddIn, turn: str | None
             # Learned while working on a board project: filed against it, so a later
             # turn on that project finds it first.
             project=hcp.project_of(p.turn, ws) if ws is not None else None,
-            captured_by_override="" if captured == p.actor.id else captured)
+            captured_by_override="" if captured == p.actor.id else captured,
+            permitted_purposes=payload.permittedPurposes)
         return _ok({"entry": _render(fact, p)}, status=201)
     return _idempotent(request, body, run)
 
@@ -482,7 +485,8 @@ def hcp_create_entry(request: HttpRequest, payload: HcpEntryIn, turn: str | None
 @hcp_route
 @gate("self", "hcp-grant")
 def hcp_get_preference(request: HttpRequest, entry_id: str, purpose: str = "",
-                       version: int | None = None, turn: str | None = None):
+                       version: int | None = None, turn: str | None = None,
+                       purposeCode: str | None = None):
     """GET /v1/preferences/{entryId} (3.3.6). `purpose` is required and logged.
     `version` returns an earlier version. 403 for a missing entry too."""
     p = _principal(request, turn, hcp.USE)
@@ -493,7 +497,8 @@ def hcp_get_preference(request: HttpRequest, entry_id: str, purpose: str = "",
         fact = hcp.version_of(fact.entry_id, version) or None
         if fact is None:
             raise hcp.denied()
-    hcp.read_one(fact, actor=p.actor, grant=p.grant, purpose=purpose, turn=p.turn)
+    hcp.read_one(fact, actor=p.actor, grant=p.grant, purpose=purpose, turn=p.turn,
+                 purpose_code=purposeCode)
     return _ok({"entry": _render(fact, p), "retrievalId": f"urn:uuid:{uuid.uuid4()}",
                 "minimization": hcp.minimization(p.actor), "timestamp": timezone.now().isoformat()})
 
@@ -570,6 +575,7 @@ def _event_dict(e: PersonAuditEvent) -> dict:
             "entryId": hcp.entry_urn(e.entry_id) if e.entry_id else None,
             "relatedEntryId": hcp.entry_urn(e.related_entry_id) if e.related_entry_id else None,
             "category": e.category or None, "purpose": e.purpose or None,
+            "purposeCode": e.purpose_code or None,
             "grantId": hcp.entry_urn(e.grant_id) if e.grant_id else None,
             "detail": e.detail or None}
 

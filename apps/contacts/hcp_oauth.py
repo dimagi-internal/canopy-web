@@ -56,14 +56,22 @@ from django.core.cache import cache
 from django.db import transaction
 from django.utils import timezone
 
-from apps.common.token_hash import hash_token
 from apps.common import oauth_core
 from apps.common.oauth_core import OAuthError
+from apps.common.token_hash import hash_token
 
 from . import hcp
 from .hcp_webhooks import _deliver_soon
-from .models import (HcpAuthorizationCode, HcpClient, HcpRevocationDelivery, HcpToken, Person,
-                     PersonAuditEvent, PersonFact, PersonGrant)
+from .models import (
+    HcpAuthorizationCode,
+    HcpClient,
+    HcpRevocationDelivery,
+    HcpToken,
+    Person,
+    PersonAuditEvent,
+    PersonFact,
+    PersonGrant,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -279,6 +287,12 @@ def _restrictions(scopes: list[str], sources: list[str]) -> list[dict]:
     return [{"scope": s, "narrowedTo": {"sources": named}} for s in scopes]
 
 
+def client_purposes(client: HcpClient, scopes: list[str]) -> list[str]:
+    """What a grant to this client carries and the consent screen shows (6.1.5.2): the purposes it
+    was registered for, else those of the scopes it asks for."""
+    return list(client.purposes or []) or hcp.purposes.for_scopes(scopes)
+
+
 @transaction.atomic
 def issue_grant(pending: dict, *, person: Person, user, persistent: bool) -> PersonGrant:
     """Write the grant both acts produced, and audit it (4.1.4: the elected type and
@@ -292,6 +306,7 @@ def issue_grant(pending: dict, *, person: Person, user, persistent: bool) -> Per
         person=person, workspace=None, agent=None, hcp_client=client, channel="oauth", host="",
         client_key=f"oauth-client={client.client_id}|grant={uuid.uuid4()}",
         client_name=client.name[:200], scopes=list(pending["scopes"]),
+        purposes=client_purposes(client, pending["scopes"]),
         restrictions=_restrictions(pending["scopes"], sources),
         grant_type=PersonGrant.PERSISTENT if persistent else PersonGrant.TEMPORARY,
         modality="oauth2", expires_at=expires)
@@ -300,6 +315,7 @@ def issue_grant(pending: dict, *, person: Person, user, persistent: bool) -> Per
                       f"type={grant.grant_type}"
                       + (f"; expires={expires.isoformat()}" if expires else "; until revoked")
                       + f"; modality={MODALITY}; scopes={' '.join(grant.scopes)}; "
+                        f"purposes={' '.join(grant.purposes)}; "
                         f"restrictions={json.dumps(grant.restrictions)}"))
     return grant
 

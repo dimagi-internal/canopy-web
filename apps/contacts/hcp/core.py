@@ -50,7 +50,8 @@ class HcpError(Exception):
     """A request the protocol refuses. `problem` is a registered type (3.4.4)."""
 
     STATUS = {"invalid-token": 401, "scope-denied": 403, "malformed-request": 422,
-              "idempotency-conflict": 409, "rate-limited": 429, "unsupported-version": 400}
+              "idempotency-conflict": 409, "rate-limited": 429, "unsupported-version": 400,
+              "version-conflict": 409}
 
     def __init__(self, problem: str, detail: str = ""):
         super().__init__(detail or problem)
@@ -166,7 +167,7 @@ def parse_entry_id(raw: str) -> uuid.UUID:
 def audit(person: Person, event_type: str, *, actor: Actor, entry: PersonFact | None = None,
           entry_id=None, related_entry_id=None, category: str = "", purpose: str = "",
           grant: PersonGrant | None = None, workspace_slug: str | None = None, turn=None,
-          detail: str = "") -> PersonAuditEvent:
+          detail: str = "", purpose_code: str = "") -> PersonAuditEvent:
     """Append one event. Durable before the operation is acknowledged (4.3.4):
     it is written in the caller's transaction, so a failed write fails the call."""
     assert event_type in PersonAuditEvent.EVENT_TYPES, event_type
@@ -177,5 +178,5 @@ def audit(person: Person, event_type: str, *, actor: Actor, entry: PersonFact | 
     return PersonAuditEvent.objects.create(
         person=person, event_type=event_type, actor_id=actor.id[:200], actor_type=actor.type,
         entry_id=entry_id, related_entry_id=related_entry_id, category=category[:80],
-        purpose=(purpose or "")[:500], grant_id=grant.grant_id if grant is not None else None,
+        purpose=(purpose or "")[:500], purpose_code=(purpose_code or "")[:200], grant_id=grant.grant_id if grant is not None else None,
         workspace_id=workspace_slug or None, turn=turn, detail=detail or "")

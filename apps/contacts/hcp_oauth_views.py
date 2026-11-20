@@ -111,6 +111,7 @@ def authorize(request: HttpRequest) -> HttpResponse:
         expiry_labels = {"1h": "1 hour", "4h": "4 hours", "24h": "24 hours"}
         return render(request, "contacts/hcp_consent.html", {
             "client": req.client, "rows": hcp_oauth.describe_scopes(req.scopes),
+            "purposes": hcp.purposes.describe(hcp_oauth.client_purposes(req.client, req.scopes)),
             "workspaces": hcp_oauth.workspace_sources(person),
             "expiries": [(k, expiry_labels[k]) for k in hcp_oauth.TEMPORARY_CHOICES],
             "expiry_default": hcp_oauth.TEMPORARY_DEFAULT,

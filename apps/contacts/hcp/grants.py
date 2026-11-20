@@ -8,6 +8,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from ..models import Person, PersonFact, PersonGrant
+from . import purposes
 from .consent import FEATURES, ON, SENSITIVE_OFF, memory_state, require_rollout, set_session_memory
 from .core import (
     ACTIONS,
@@ -354,7 +355,12 @@ def _disclosure(agent, features, sources, duration: str, expires_at) -> str:
     how = ("for this session, until " + _iso(expires_at) if duration == TEMPORARY_FOR_SESSION
            else f"always for {agent.name or agent.slug}, until you revoke it")
     return (f"shown: agent={agent.slug}; categories={cats}; actions={acts}; "
+            f"purposes={'; '.join(c + ' (' + d + ')' for c, d in _shown_purposes(features))}; "
             f"reach=only {reach_label(sources)}; {how}")
+
+
+def _shown_purposes(features) -> list[tuple[str, str]]:
+    return [(c, purposes.PURPOSES[c]) for c in purposes.for_scopes(feature_scopes(features))]
 
 
 def _record_grant(person: Person, *, agent, features, sources, gtype: str, actor: Actor,
@@ -387,7 +393,7 @@ def _record_grant(person: Person, *, agent, features, sources, gtype: str, actor
         person=person, workspace_id=agent.workspace_id, agent=agent,
         attributes={"session": str(session.pk)} if gtype == PersonGrant.TEMPORARY else {},
         client_key=key, client_name=client_name(agent, "", ""),
-        scopes=feature_scopes(want),
+        scopes=feature_scopes(want), purposes=purposes.for_scopes(feature_scopes(want)),
         restrictions=restrictions_for(feature_scopes(want), reach),
         grant_type=gtype, modality=SURFACES[surface], expires_at=expires_at,
         collection=collection or (current.collection if current is not None else None))
@@ -395,6 +401,7 @@ def _record_grant(person: Person, *, agent, features, sources, gtype: str, actor
           detail=(f"client={grant.client_name}; key={key}; type={gtype}; "
                   f"modality={grant.modality} (the person's act){why}; "
                   f"expires={_iso(expires_at) or 'never'}; scopes={' '.join(grant.scopes)}; "
+                  f"purposes={' '.join(grant.purposes)}; "
                   f"restrictions={json.dumps(grant.restrictions)}; "
                   f"{_disclosure(agent, want, reach, duration, expires_at)}"))
     return grant
@@ -521,6 +528,7 @@ def grant_dict(grant: PersonGrant) -> dict:
         "client": ({"id": client.client_id, "name": client.name} if client is not None
                    else {"id": grant.client_key, "name": grant.client_name}),
         "scopes": list(grant.scopes or []),
+        "purposes": purposes.describe(purposes.of_grant(grant)),
         "restrictions": list(grant.restrictions or []),
         "grantType": grant.grant_type,
         "grantor": grant.grantor or None,

@@ -19530,6 +19530,28 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/hcp/v2/entries/{entry_id}/purposes": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * HCP v2 governance: limit what an entry may be used for
+         * @description Set or clear the Authorizing Principal's narrowing of an entry's permitted purposes (HCP v2
+         *     4.2.6, a governance operation: the person, never an agent, over HTTP only). It can only narrow;
+         *     recorded as `context.restricted` naming the lists before and after.
+         */
+        readonly put: operations["hcp_v2_restrictPurposes"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/hcp-admin/clients": {
         readonly parameters: {
             readonly query?: never;
@@ -23941,6 +23963,18 @@ export interface components {
              */
             readonly categories?: readonly string[];
             /**
+             * Purposes
+             * @description What a grant is for, each in words (HCP v2 6.1.5.2), shown before you grant.
+             */
+            readonly purposes?: readonly components["schemas"]["PurposeOut"][];
+            /**
+             * Purposes By Feature
+             * @description Which purpose codes each feature (record, use) serves.
+             */
+            readonly purposes_by_feature?: {
+                readonly [key: string]: readonly string[];
+            };
+            /**
              * Reach
              * @description What a grant here would reach, in words — by default the agent's organisation, all divisions (HCP 4.1.5.1). Derived, never chosen here.
              * @default
@@ -23966,6 +24000,13 @@ export interface components {
             readonly memory_enabled: boolean;
             /** Manage Path */
             readonly manage_path: string;
+        };
+        /** PurposeOut */
+        readonly PurposeOut: {
+            /** Code */
+            readonly code: string;
+            /** Description */
+            readonly description: string;
         };
         /** SessionAgentOut */
         readonly SessionAgentOut: {
@@ -49345,6 +49386,18 @@ export interface components {
              */
             readonly categories?: readonly string[];
             /**
+             * Purposes
+             * @description What a grant is for, each in words (HCP v2 6.1.5.2), shown before you grant.
+             */
+            readonly purposes?: readonly components["schemas"]["PurposeOut"][];
+            /**
+             * Purposes By Feature
+             * @description Which purpose codes each feature (record, use) serves.
+             */
+            readonly purposes_by_feature?: {
+                readonly [key: string]: readonly string[];
+            };
+            /**
              * Reach
              * @description What a grant here would reach, in words — by default the agent's organisation, all divisions (HCP 4.1.5.1). Derived, never chosen here.
              * @default
@@ -50321,6 +50374,11 @@ export interface components {
              * @default full
              */
             readonly responseDetail: string;
+            /**
+             * Purposecode
+             * @description Optional (v2): the purpose code this read is for, one your grant carries. Omitted, the grant's own default is used.
+             */
+            readonly purposeCode?: string | null;
         };
         /**
          * HcpAddIn
@@ -50362,6 +50420,11 @@ export interface components {
              * @description The model id that produced a model-inferred entry, e.g. claude-opus-5-5
              */
             readonly model?: string | null;
+            /**
+             * Permittedpurposes
+             * @description Optional (v2): purpose codes this entry may be used for. Omitted means no limit.
+             */
+            readonly permittedPurposes?: readonly string[] | null;
         };
         /**
          * HcpEntryIn
@@ -50412,6 +50475,19 @@ export interface components {
              */
             readonly model?: string | null;
         };
+        /** PurposesIn */
+        readonly PurposesIn: {
+            /**
+             * Permittedpurposes
+             * @description The purpose codes the entry may be used for, narrower than its writer permitted; null removes your narrowing (never the writer's).
+             */
+            readonly permittedPurposes: readonly string[] | null;
+            /**
+             * Expectedversion
+             * @description The version you are looking at.
+             */
+            readonly expectedVersion?: number | null;
+        };
         /** HcpClientOut */
         readonly HcpClientOut: {
             /** Client Id */
@@ -50429,6 +50505,11 @@ export interface components {
             readonly redirect_uris: readonly string[];
             /** Allowed Scopes */
             readonly allowed_scopes: readonly string[];
+            /**
+             * Purposes
+             * @description The purposes (HCP v2 6.1.5.2) it may read for; empty = those of the scopes it is granted.
+             */
+            readonly purposes?: readonly string[];
             /** First Party */
             readonly first_party: boolean;
             /**
@@ -50463,6 +50544,11 @@ export interface components {
             readonly redirect_uris: readonly string[];
             /** Allowed Scopes */
             readonly allowed_scopes: readonly string[];
+            /**
+             * Purposes
+             * @description The purposes (HCP v2 6.1.5.2) it may read for; empty = those of the scopes it is granted.
+             */
+            readonly purposes?: readonly string[];
             /** First Party */
             readonly first_party: boolean;
             /**
@@ -50507,6 +50593,11 @@ export interface components {
              */
             readonly allowed_scopes: readonly string[];
             /**
+             * Purposes
+             * @description Purpose codes it may read for (the registry in discovery `canopy.purposes`); empty = those of the scopes.
+             */
+            readonly purposes?: readonly string[];
+            /**
              * First Party
              * @default false
              */
@@ -50529,6 +50620,8 @@ export interface components {
             readonly redirect_uris?: readonly string[] | null;
             /** Allowed Scopes */
             readonly allowed_scopes?: readonly string[] | null;
+            /** Purposes */
+            readonly purposes?: readonly string[] | null;
             /** First Party */
             readonly first_party?: boolean | null;
             /** Webhook Url */
@@ -75901,6 +75994,7 @@ export interface operations {
                 readonly purpose?: string;
                 readonly version?: number | null;
                 readonly turn?: string | null;
+                readonly purposeCode?: string | null;
             };
             readonly header?: never;
             readonly path: {
@@ -76047,6 +76141,30 @@ export interface operations {
             readonly cookie?: never;
         };
         readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly hcp_v2_restrictPurposes: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly entry_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["PurposesIn"];
+            };
+        };
         readonly responses: {
             /** @description OK */
             readonly 200: {

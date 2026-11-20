@@ -337,6 +337,9 @@ def session_memory_payload(person: Person, session) -> dict:
             "agent": ({"slug": agent.slug, "name": agent.name or agent.slug}
                       if agent is not None else None),
             "categories": list(hcp.HELD_CATEGORIES),
+            # HCP v2 6.1.5.2: what a grant is for, in words, shown before the act.
+            "purposes": hcp.purposes.describe(hcp.purposes.FOR_ACTION.values()),
+            "purposes_by_feature": {f: [hcp.purposes.FOR_ACTION[hcp._ACTION_OF[f]]] for f in hcp.FEATURES},
             # 4.1.5.1: what a grant here would reach (derived, never chosen in the prompt),
             # and the organisation it serves, for the prompt's words.
             "reach": (hcp.reach_label(hcp.default_reach(person, agent)[0])
