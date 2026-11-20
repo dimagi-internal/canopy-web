@@ -108,3 +108,35 @@ def ensure_builtin() -> BrainCapability:
     cap, _ = BrainCapability.objects.get_or_create(
         slug=PROJECT_READERS["slug"], defaults={k: v for k, v in PROJECT_READERS.items() if k != "slug"})
     return cap
+
+
+#: The learners canopy has and will have, registered dark: migration `0007_register_the_learners` seeds the same
+#: rows and `tests/test_brain_admin_api.py` holds the two equal. `ensure_learners` is for a database built without
+#: migrations (tests).
+LEARNERS = [
+    {"slug": "coaching", "name": "Individual coaching", "purpose_class": INDIVIDUAL, "purposes": ["coach", "review"],
+     "output_kinds": ["coaching_note", "pattern", "practice"],
+     "description": "Coaches learn how you work and suggest how to work better."},
+    {"slug": "agent-memory", "name": "Personal memory", "purpose_class": MEMORY, "purposes": ["remember"],
+     "output_kinds": ["hcp_entry"], "description": "Agents remember what you tell them about yourself and your work."},
+    {"slug": "project-link-judge", "name": "Project links", "purpose_class": PROJECT, "purposes": ["judge"],
+     "output_kinds": ["link"],
+     "description": "Decides which project a session belongs to when its activity alone does not say."},
+    {"slug": "project-learning", "name": "Project learning", "purpose_class": PROJECT, "purposes": ["learn"],
+     "output_kinds": ["idea", "task", "update_draft", "contributor_page", "risk"],
+     "description": "Your sessions on a project help it move forward; its team can read them."},
+    {"slug": "system-learning", "name": "System learning", "purpose_class": SYSTEM, "purposes": ["improve"],
+     "output_kinds": ["finding"], "description": "Canopy learns where its agents and tools fail, to fix them."},
+]
+
+
+def ensure_learners() -> dict[str, BrainCapability]:
+    """Register the dark learners that are missing; the ones there are left as they are."""
+    out = {}
+    for spec in LEARNERS:
+        cls = spec["purpose_class"]
+        cap, _ = BrainCapability.objects.get_or_create(slug=spec["slug"], defaults={
+            **{k: v for k, v in spec.items() if k != "slug"}, "subject_type": CLASS_SUBJECT[cls],
+            "source_kinds": [BrainSource.SESSION], "audience": list(CLASS_AUDIENCE[cls]), "enabled": False})
+        out[spec["slug"]] = cap
+    return out

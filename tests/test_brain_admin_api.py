@@ -190,3 +190,26 @@ def test_the_migrated_built_in_is_the_one_the_code_ensures():
     row = BrainCapability.objects.get(slug="project-readers")
     for field, value in registry.PROJECT_READERS.items():
         assert getattr(row, field) == value, field
+
+
+@pytest.mark.needs_migrations
+def test_what_learns_is_registered_dark_by_migration_and_equals_the_code(w):
+    from apps.brain import registry
+    from apps.brain.registry import CLASS_AUDIENCE
+
+    rows = {c.slug: c for c in BrainCapability.objects.filter(slug__in=[s["slug"] for s in registry.LEARNERS])}
+    assert set(rows) == {s["slug"] for s in registry.LEARNERS}
+    for spec in registry.LEARNERS:
+        c = rows[spec["slug"]]
+        assert tuple(c.audience) == CLASS_AUDIENCE[c.purpose_class] and c.purposes == spec["purposes"], spec["slug"]
+        assert c.output_kinds == spec["output_kinds"] and c.enabled is False and c.operator_id is None, spec["slug"]
+
+
+def test_ensure_learners_registers_the_missing_ones_dark_and_leaves_the_rest_alone(w):
+    from apps.brain import registry
+
+    BrainCapability.objects.filter(slug="coaching").delete()
+    registry.update(registry.ensure_learners()["system-learning"], schedule="daily")
+    again = registry.ensure_learners()
+    assert set(again) == {s["slug"] for s in registry.LEARNERS} and again["coaching"].enabled is False
+    assert BrainCapability.objects.get(slug="system-learning").schedule == "daily"
