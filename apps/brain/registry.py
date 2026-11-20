@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from django.db import transaction
 
+from apps.harness import invocations
+
 from .models import INDIVIDUAL, MEMORY, PROJECT, SYSTEM, BrainCapability, BrainSource
 
 #: Who may see what a class's features produce: the widest a feature of that class may be.
@@ -43,13 +45,19 @@ def _audience(cls: str, audience) -> list[str]:
     return got
 
 
+def _entry(entry: str) -> None:
+    if entry.strip() and (len(entry) > 300 or "\n" in entry or invocations.parse(entry) is None):
+        raise RefusedError("entry must be one plugin command: /<plugin>:<skill> [args]")
+
+
 def register(*, slug: str, name: str, purpose_class: str, purposes, description: str = "",
              source_kinds=(BrainSource.SESSION,), output_kinds=(), audience=None, operator=None,
-             schedule: str = "", enabled: bool = False) -> BrainCapability:
+             schedule: str = "", enabled: bool = False, entry: str = "", registered_by=None) -> BrainCapability:
     if purpose_class not in CLASS_AUDIENCE:
         raise RefusedError(f"purpose_class must be one of {', '.join(CLASS_AUDIENCE)}")
     if BrainCapability.objects.filter(slug=slug).exists():
         raise RefusedError(f"{slug} is already registered")
+    _entry(entry)
     kinds = _words("source_kinds", list(source_kinds))
     if set(kinds) - {k for k, _ in BrainSource.KIND_CHOICES}:
         raise RefusedError("source_kinds names a kind of source canopy does not hold")
@@ -58,7 +66,7 @@ def register(*, slug: str, name: str, purpose_class: str, purposes, description:
         subject_type=CLASS_SUBJECT[purpose_class], purposes=_words("purposes", list(purposes)),
         source_kinds=kinds, output_kinds=_words("output_kinds", list(output_kinds)),
         audience=_audience(purpose_class, audience), operator=operator, schedule=schedule[:64],
-        enabled=bool(enabled))
+        entry=entry.strip(), registered_by=registered_by, enabled=bool(enabled))
 
 
 @transaction.atomic
@@ -72,6 +80,9 @@ def update(cap: BrainCapability, **changes) -> BrainCapability:
     for key in ("purposes", "source_kinds", "output_kinds"):
         if key in changes:
             setattr(cap, key, _words(key, changes.pop(key)))
+    if "entry" in changes:
+        _entry(changes["entry"])
+        cap.entry = changes.pop("entry").strip()
     for key in ("name", "description", "schedule", "enabled", "operator"):
         if key in changes:
             setattr(cap, key, changes.pop(key))

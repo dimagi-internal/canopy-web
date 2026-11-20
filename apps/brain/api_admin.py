@@ -32,7 +32,8 @@ def _cap_out(c: BrainCapability) -> dict:
     return {"slug": c.slug, "name": c.name, "description": c.description, "purpose_class": c.purpose_class,
             "subject_type": c.subject_type, "purposes": c.purposes, "source_kinds": c.source_kinds,
             "output_kinds": c.output_kinds, "audience": c.audience,
-            "operator": c.operator.slug if c.operator_id else "", "schedule": c.schedule, "enabled": c.enabled}
+            "operator": c.operator.slug if c.operator_id else "", "entry": c.entry, "schedule": c.schedule,
+            "enabled": c.enabled}
 
 
 def _superuser(request: HttpRequest) -> None:
@@ -58,7 +59,7 @@ def list_capabilities(request: HttpRequest) -> list[dict]:
 
 
 @router.post("/brain/capabilities/", response={200: CapabilityOut, **refusals(403, 422)},
-             summary="Register a capability (canopy admin)")
+             summary="Register a learner (canopy admin)")
 @gate("superuser", setting=True)
 def register_capability(request: HttpRequest, payload: CapabilityIn) -> dict:
     """A canopy admin registers something that learns: one class, the purposes it declares and an audience
@@ -66,21 +67,22 @@ def register_capability(request: HttpRequest, payload: CapabilityIn) -> dict:
     only what people agreed to."""
     _superuser(request)
     try:
-        cap = registry.register(**{**payload.model_dump(), "operator": _operator(payload.operator)})
+        cap = registry.register(**{**payload.model_dump(), "operator": _operator(payload.operator),
+                                   "registered_by": request.user})
     except registry.RefusedError as e:
         raise ProblemError(422, "Invalid request", type_=TYPE_VALIDATION, detail=str(e)) from e
     return _cap_out(cap)
 
 
 @router.patch("/brain/capabilities/{slug}/", response={200: CapabilityOut, **refusals(403, 404, 422)},
-              summary="Change a capability (canopy admin)")
+              summary="Change a learner (canopy admin)")
 @gate("superuser", setting=True)
 def patch_capability(request: HttpRequest, slug: str, payload: CapabilityPatch) -> dict:
     """Narrow its audience, change its purposes, enable or disable it. Its class never changes."""
     _superuser(request)
     cap = BrainCapability.objects.filter(slug=slug).first()
     if cap is None:
-        raise ProblemError(404, "No such capability", type_=TYPE_NOT_FOUND)
+        raise ProblemError(404, "No such learner", type_=TYPE_NOT_FOUND)
     changes = payload.model_dump(exclude_unset=True)
     if "operator" in changes:
         changes["operator"] = _operator(changes["operator"] or "")
@@ -154,6 +156,6 @@ def list_outputs(request: HttpRequest, subject_type: str = "", subject: str = ""
         qs = qs.filter(subject_type=subject_type)
     if subject:
         qs = qs.filter(subject=subject)
-    return [{"id": o.pk, "capability": o.capability.slug, "kind": o.kind, "workspace": o.workspace_id,
+    return [{"id": o.pk, "learner": o.capability.slug, "kind": o.kind, "workspace": o.workspace_id,
              "subject_type": o.subject_type, "subject": o.subject, "title": o.title, "body": o.body,
              "state": o.state, "created_at": o.created_at} for o in qs[:max(1, min(limit, 500))]]

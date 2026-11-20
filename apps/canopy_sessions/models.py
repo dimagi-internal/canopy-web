@@ -382,6 +382,8 @@ class CoachingRole(models.Model):
 
 #: On a `Session.metadata`: this chat was opened by a `SessionReviewAsk` for that session id.
 REVIEW_METADATA_KEY = "reviews_session"
+#: On a `Session.metadata`: this chat is one run of a brain learning feature (`brain.BrainRun`, its pk).
+BRAIN_RUN_METADATA_KEY = "brain_run"
 
 
 class SessionReviewAsk(models.Model):
