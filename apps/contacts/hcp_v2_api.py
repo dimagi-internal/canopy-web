@@ -81,7 +81,7 @@ def _entry(p, entry_id: str, expected_version: int | None):
 # --- governance: an entry's purposes (4.2.6, 9.4.10) ---------------------------------
 
 
-class PurposesIn(_Body):
+class HcpV2PurposesIn(_Body):
     permittedPurposes: list[str] | None = Field(
         description="The purpose codes the entry may be used for, narrower than its writer permitted; "
                     "null removes your narrowing (never the writer's).")
@@ -92,7 +92,7 @@ class PurposesIn(_Body):
             summary="HCP v2 governance: limit what an entry may be used for")
 @v2_route
 @gate("self", setting=True)  # the person only: a Management Client acting for the Authorizing Principal
-def hcp_v2_restrict_purposes(request: HttpRequest, entry_id: str, payload: PurposesIn):
+def hcp_v2_restrict_purposes(request: HttpRequest, entry_id: str, payload: HcpV2PurposesIn):
     """Set or clear the Authorizing Principal's narrowing of an entry's permitted purposes (HCP v2
     4.2.6, a governance operation: the person, never an agent, over HTTP only). It can only narrow;
     recorded as `context.restricted` naming the lists before and after."""
@@ -105,7 +105,7 @@ def hcp_v2_restrict_purposes(request: HttpRequest, entry_id: str, payload: Purpo
 # --- governance: confirm or reject (3.8, 9.4.9) ---------------------------------------
 
 
-class ConfirmationIn(_Body):
+class HcpV2ConfirmationIn(_Body):
     disposition: str = Field(description="confirmed or rejected.")
     expectedVersion: int | None = Field(default=None, description="The version you are looking at.")
 
@@ -114,7 +114,7 @@ class ConfirmationIn(_Body):
              summary="HCP v2 governance: confirm or reject an entry")
 @v2_route
 @gate("self", setting=True)  # the person only: a Management Client acting for the Authorizing Principal
-def hcp_v2_confirm_entry(request: HttpRequest, entry_id: str, payload: ConfirmationIn):
+def hcp_v2_confirm_entry(request: HttpRequest, entry_id: str, payload: HcpV2ConfirmationIn):
     """Confirm or reject the current version of one of your entries (HCP v2 3.8): the person only,
     over HTTP only. A confirmation appends a record to that version and gives it standing in a
     conflict; it changes neither the entry's declaration type nor who asserted it. A rejection
@@ -128,7 +128,7 @@ def hcp_v2_confirm_entry(request: HttpRequest, entry_id: str, payload: Confirmat
 # --- governance: standing rules (6.3, 9.4.14) and directives (6.4, 9.4.15) ----------------
 
 
-class RuleIn(_Body):
+class HcpV2RuleIn(_Body):
     operators: list[str] | None = Field(default=None, description="Client operators it denies: a DNS domain "
                                         "(that host and its subdomains) or one operator identifier.")
     requires: list[str] | None = Field(default=None, description="Client claims: it denies only clients that "
@@ -136,7 +136,7 @@ class RuleIn(_Body):
     categories: list[str] | None = Field(default=None, description="Categories it applies to; absent = every one.")
 
 
-class DirectiveIn(_Body):
+class HcpV2DirectiveIn(_Body):
     action: str = Field(description="share, sign, transact, or an absolute URI.")
     effect: str = Field(description="deny, ask-first or permit.")
     text: str = Field(description="The directive in your own words: every client it applies to is shown it.")
@@ -156,7 +156,7 @@ def hcp_v2_list_rules(request: HttpRequest):
 @router.post("/rules", operation_id="hcp_v2_setRule", summary="HCP v2 governance: set a standing rule")
 @v2_route
 @gate("self", setting=True)  # the person only
-def hcp_v2_set_rule(request: HttpRequest, payload: RuleIn):
+def hcp_v2_set_rule(request: HttpRequest, payload: HcpV2RuleIn):
     """Set a deny rule (HCP v2 6.3): enforced on every grant, existing and future, from now. A grant
     it covers entirely is revoked and its client notified. The person only, over HTTP only."""
     p = hcp_api._person_principal(request)
@@ -189,7 +189,7 @@ def hcp_v2_list_directives(request: HttpRequest):
 @router.post("/directives", operation_id="hcp_v2_setDirective", summary="HCP v2 governance: set a directive")
 @v2_route
 @gate("self", setting=True)  # the person only
-def hcp_v2_set_directive(request: HttpRequest, payload: DirectiveIn):
+def hcp_v2_set_directive(request: HttpRequest, payload: HcpV2DirectiveIn):
     """Set a directive (HCP v2 6.4). Every client it applies to receives its text with each result,
     so keep a directive about sensitive context to its categories. Directives only narrow."""
     p = hcp_api._person_principal(request)
@@ -249,7 +249,7 @@ def _by_name(p, name: str, action: str):
     return fact       # the purpose is checked where the read is made (`hcp.read_one`, `hcp.search`)
 
 
-class QueryIn(_Body):
+class HcpV2QueryIn(_Body):
     query: str = Field(description="Natural language description of the context or task.")
     categories: list[str] | None = Field(default=None, description="Categories to query; omitted = every one the "
                                          "grant can read for the purpose named.")
@@ -263,7 +263,7 @@ class QueryIn(_Body):
              summary="HCP v2: recall what is relevant about the person you are serving")
 @v2_route
 @gate("self", "hcp-grant", kind="action")
-def hcp_v2_query(request: HttpRequest, payload: QueryIn, turn: str | None = None, workspace: str | None = None):
+def hcp_v2_query(request: HttpRequest, payload: HcpV2QueryIn, turn: str | None = None, workspace: str | None = None):
     """Query (HCP v2 5.2.1). A client receives disclosures: the content, the assertion, the categories
     its grant covers, `standing`, a grant-scoped `ref` and `useUntil` (7.4, 7.6), with the directives that
     apply. Never paginated, at most 20, never padded; every read is on the person's audit log."""
@@ -285,14 +285,14 @@ def hcp_v2_query(request: HttpRequest, payload: QueryIn, turn: str | None = None
     return _ok(out)
 
 
-@router.get("/entries/{entry_ref}", operation_id="hcp_v2_getEntry", summary="HCP v2: one entry")
+@router.get("/entries/{entry_id}", operation_id="hcp_v2_getEntry", summary="HCP v2: one entry")
 @v2_route
 @gate("self", "hcp-grant")
-def hcp_v2_get_entry(request: HttpRequest, entry_ref: str, purpose: str = "", purposeDescription: str = "",
+def hcp_v2_get_entry(request: HttpRequest, entry_id: str, purpose: str = "", purposeDescription: str = "",
                      turn: str | None = None):
     """Get entry (HCP v2 5.2.2): by `ref` for a client, by id for the person. 403 for a missing entry too."""
     p = hcp_api._principal(request, turn, hcp.USE)
-    fact = _by_name(p, entry_ref, "read")
+    fact = _by_name(p, entry_id, "read")
     if not p.actor.is_person:
         hcp.read_one(fact, actor=p.actor, grant=p.grant, purpose=purposeDescription or "get entry", turn=p.turn,
                      purpose_code=purpose or None)
@@ -303,13 +303,13 @@ def hcp_v2_get_entry(request: HttpRequest, entry_ref: str, purpose: str = "", pu
     return _ok(out)
 
 
-class ContentIn(_Body):
+class HcpV2ContentIn(_Body):
     profile: str
     value: str
     language: str | None = None
 
 
-class AssertionIn(_Body):
+class HcpV2AssertionIn(_Body):
     declarationType: str
     confidence: str | None = None
     validUntil: str | None = None
@@ -317,41 +317,41 @@ class AssertionIn(_Body):
     permittedPurposes: list[str] | None = None
 
 
-class ClassificationIn(_Body):
+class HcpV2ClassificationIn(_Body):
     categories: list[str]
     dimension: str | None = None
 
 
-class RelationshipIn(_Body):
+class HcpV2RelationshipIn(_Body):
     type: str
     target: str = Field(description="The target entry's `ref` (a client) or id (the person), or "
                                     "`urn:canopy:source:<kind>:<ref>` for a source a derivedFrom was drawn from.")
 
 
-class ProvenanceIn(_Body):
+class HcpV2ProvenanceIn(_Body):
     assertedBy: dict | None = None
     assertedAt: str | None = None
     source: str
 
 
-class RecordIn(_Body):
-    provenance: ProvenanceIn
-    relationships: list[RelationshipIn] | None = None
+class HcpV2RecordIn(_Body):
+    provenance: HcpV2ProvenanceIn
+    relationships: list[HcpV2RelationshipIn] | None = None
 
 
-class SubjectIn(_Body):
+class HcpV2SubjectIn(_Body):
     id: str
     relationship: str | None = None
 
 
-class EntryIn(_Body):
+class HcpV2EntryIn(_Body):
     schema_: str = Field(alias="schema", description="The entry structure version (4.2).")
-    subject: SubjectIn
-    content: ContentIn
-    classification: ClassificationIn
-    assertion: AssertionIn
+    subject: HcpV2SubjectIn
+    content: HcpV2ContentIn
+    classification: HcpV2ClassificationIn
+    assertion: HcpV2AssertionIn
     evidence: list[dict] | None = None
-    record: RecordIn
+    record: HcpV2RecordIn
 
 
 _BASIS_KEYS = {"drawnFrom", "task", "setting", "rationale"}
@@ -387,7 +387,7 @@ def _target(p, name: str):
 @router.post("/entries", operation_id="hcp_v2_createEntry", summary="HCP v2: remember something about the person")
 @v2_route
 @gate("self", "hcp-grant", kind="person-data")
-def hcp_v2_create_entry(request: HttpRequest, payload: EntryIn, turn: str | None = None,
+def hcp_v2_create_entry(request: HttpRequest, payload: HcpV2EntryIn, turn: str | None = None,
                         workspace: str | None = None):
     """Create (HCP v2 5.2.3): about the person who started `turn`, in categories your grant may write.
     `model-inferred` needs a `confidence`. A client's `person-declared` is recorded `unverified` (3.7):
@@ -462,17 +462,17 @@ def hcp_v2_create_entry(request: HttpRequest, payload: EntryIn, turn: str | None
     return hcp_api._idempotent(request, body, run)
 
 
-class RevisionIn(_Body):
+class HcpV2RevisionIn(_Body):
     expectedVersion: int
-    content: ContentIn
+    content: HcpV2ContentIn
     reason: str = Field(description="Why. Recorded in the audit log.")
     model: str | None = Field(default=None, description="The model id behind a model-inferred revision.")
 
 
-@router.post("/entries/{entry_ref}/revisions", operation_id="hcp_v2_reviseEntry", summary="HCP v2: revise an entry")
+@router.post("/entries/{entry_id}/revisions", operation_id="hcp_v2_reviseEntry", summary="HCP v2: revise an entry")
 @v2_route
 @gate("self", "hcp-grant", kind="person-data")
-def hcp_v2_revise_entry(request: HttpRequest, entry_ref: str, payload: RevisionIn, turn: str | None = None):
+def hcp_v2_revise_entry(request: HttpRequest, entry_id: str, payload: HcpV2RevisionIn, turn: str | None = None):
     """Revise (HCP v2 5.2.4): a new version of the same entry, replacing its content whole; a stale
     `expectedVersion` is a `version-conflict` and changes nothing. A client may not revise what the person
     rejected (3.8); the new version starts with no confirmations."""
@@ -481,7 +481,7 @@ def hcp_v2_revise_entry(request: HttpRequest, entry_ref: str, payload: RevisionI
         raise hcp.malformed(f"content.profile is {v2.GENERAL_CONTEXT}")
 
     def run():
-        fact = _by_name(p, entry_ref, "write")
+        fact = _by_name(p, entry_id, "write")
         if not p.actor.is_person and not hcp.within_grant(fact, p.grant, "write"):
             raise hcp.denied()
         if fact.version != payload.expectedVersion:
@@ -489,18 +489,18 @@ def hcp_v2_revise_entry(request: HttpRequest, entry_ref: str, payload: RevisionI
         new = hcp.update_entry(fact, statement=payload.content.value, reason=payload.reason, actor=p.actor,
                                by_user=hcp_api._by_user(request), source_turn=p.turn, model=payload.model)
         return _ok(_render_one(p, new))
-    return hcp_api._idempotent(request, {"entry": entry_ref, **payload.model_dump()}, run)
+    return hcp_api._idempotent(request, {"entry": entry_id, **payload.model_dump()}, run)
 
 
-@router.delete("/entries/{entry_ref}", operation_id="hcp_v2_withdrawEntry", summary="HCP v2: withdraw an entry")
+@router.delete("/entries/{entry_id}", operation_id="hcp_v2_withdrawEntry", summary="HCP v2: withdraw an entry")
 @v2_route
 @gate("self", "hcp-grant", kind="person-data")  # hardDelete: the person only (governance)
-def hcp_v2_withdraw_entry(request: HttpRequest, entry_ref: str, reason: str = "", hardDelete: bool = False,
+def hcp_v2_withdraw_entry(request: HttpRequest, entry_id: str, reason: str = "", hardDelete: bool = False,
                           turn: str | None = None):
     """Withdraw (HCP v2 5.2.5): the entry is hidden from clients at once and still held and visible to
     you. `hardDelete=true` removes it entirely and is the person's alone, over HTTP only (5.4.2)."""
     p = hcp_api._principal(request, turn, hcp.RECORD)
-    fact = _by_name(p, entry_ref, "write")
+    fact = _by_name(p, entry_id, "write")
     if not p.actor.is_person and not hcp.within_grant(fact, p.grant, "write"):
         raise hcp.denied()
     if hardDelete and not p.actor.is_person:

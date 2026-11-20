@@ -19687,7 +19687,7 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/hcp/v2/entries/{entry_ref}": {
+    readonly "/api/hcp/v2/entries/{entry_id}": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19736,7 +19736,7 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/hcp/v2/entries/{entry_ref}/revisions": {
+    readonly "/api/hcp/v2/entries/{entry_id}/revisions": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -23779,20 +23779,23 @@ export interface components {
         };
         /** EntryIn */
         readonly EntryIn: {
+            /** Narrative Slug */
+            readonly narrative_slug: string;
             /**
-             * Schema
-             * @description The entry structure version (4.2).
+             * Pinned Run Id
+             * @default
              */
-            readonly schema: string;
-            readonly subject: components["schemas"]["SubjectIn"];
-            readonly content: components["schemas"]["ContentIn"];
-            readonly classification: components["schemas"]["ClassificationIn"];
-            readonly assertion: components["schemas"]["AssertionIn"];
-            /** Evidence */
-            readonly evidence?: readonly {
-                readonly [key: string]: unknown;
-            }[] | null;
-            readonly record: components["schemas"]["RecordIn"];
+            readonly pinned_run_id: string;
+            /**
+             * Title
+             * @default
+             */
+            readonly title: string;
+            /**
+             * Blurb
+             * @default
+             */
+            readonly blurb: string;
         };
         /** StoryboardIn */
         readonly StoryboardIn: {
@@ -50813,8 +50816,8 @@ export interface components {
              */
             readonly model?: string | null;
         };
-        /** PurposesIn */
-        readonly PurposesIn: {
+        /** HcpV2PurposesIn */
+        readonly HcpV2PurposesIn: {
             /**
              * Permittedpurposes
              * @description The purpose codes the entry may be used for, narrower than its writer permitted; null removes your narrowing (never the writer's).
@@ -50826,8 +50829,8 @@ export interface components {
              */
             readonly expectedVersion?: number | null;
         };
-        /** ConfirmationIn */
-        readonly ConfirmationIn: {
+        /** HcpV2ConfirmationIn */
+        readonly HcpV2ConfirmationIn: {
             /**
              * Disposition
              * @description confirmed or rejected.
@@ -50839,8 +50842,8 @@ export interface components {
              */
             readonly expectedVersion?: number | null;
         };
-        /** RuleIn */
-        readonly RuleIn: {
+        /** HcpV2RuleIn */
+        readonly HcpV2RuleIn: {
             /**
              * Operators
              * @description Client operators it denies: a DNS domain (that host and its subdomains) or one operator identifier.
@@ -50857,8 +50860,8 @@ export interface components {
              */
             readonly categories?: readonly string[] | null;
         };
-        /** DirectiveIn */
-        readonly DirectiveIn: {
+        /** HcpV2DirectiveIn */
+        readonly HcpV2DirectiveIn: {
             /**
              * Action
              * @description share, sign, transact, or an absolute URI.
@@ -50879,8 +50882,8 @@ export interface components {
             /** Operators */
             readonly operators?: readonly string[] | null;
         };
-        /** QueryIn */
-        readonly QueryIn: {
+        /** HcpV2QueryIn */
+        readonly HcpV2QueryIn: {
             /**
              * Query
              * @description Natural language description of the context or task.
@@ -50908,8 +50911,8 @@ export interface components {
              */
             readonly maxEntries: number;
         };
-        /** AssertionIn */
-        readonly AssertionIn: {
+        /** HcpV2AssertionIn */
+        readonly HcpV2AssertionIn: {
             /** Declarationtype */
             readonly declarationType: string;
             /** Confidence */
@@ -50923,15 +50926,15 @@ export interface components {
             /** Permittedpurposes */
             readonly permittedPurposes?: readonly string[] | null;
         };
-        /** ClassificationIn */
-        readonly ClassificationIn: {
+        /** HcpV2ClassificationIn */
+        readonly HcpV2ClassificationIn: {
             /** Categories */
             readonly categories: readonly string[];
             /** Dimension */
             readonly dimension?: string | null;
         };
-        /** ContentIn */
-        readonly ContentIn: {
+        /** HcpV2ContentIn */
+        readonly HcpV2ContentIn: {
             /** Profile */
             readonly profile: string;
             /** Value */
@@ -50939,8 +50942,25 @@ export interface components {
             /** Language */
             readonly language?: string | null;
         };
-        /** ProvenanceIn */
-        readonly ProvenanceIn: {
+        /** HcpV2EntryIn */
+        readonly HcpV2EntryIn: {
+            /**
+             * Schema
+             * @description The entry structure version (4.2).
+             */
+            readonly schema: string;
+            readonly subject: components["schemas"]["HcpV2SubjectIn"];
+            readonly content: components["schemas"]["HcpV2ContentIn"];
+            readonly classification: components["schemas"]["HcpV2ClassificationIn"];
+            readonly assertion: components["schemas"]["HcpV2AssertionIn"];
+            /** Evidence */
+            readonly evidence?: readonly {
+                readonly [key: string]: unknown;
+            }[] | null;
+            readonly record: components["schemas"]["HcpV2RecordIn"];
+        };
+        /** HcpV2ProvenanceIn */
+        readonly HcpV2ProvenanceIn: {
             /** Assertedby */
             readonly assertedBy?: {
                 readonly [key: string]: unknown;
@@ -50950,14 +50970,14 @@ export interface components {
             /** Source */
             readonly source: string;
         };
-        /** RecordIn */
-        readonly RecordIn: {
-            readonly provenance: components["schemas"]["ProvenanceIn"];
+        /** HcpV2RecordIn */
+        readonly HcpV2RecordIn: {
+            readonly provenance: components["schemas"]["HcpV2ProvenanceIn"];
             /** Relationships */
-            readonly relationships?: readonly components["schemas"]["RelationshipIn"][] | null;
+            readonly relationships?: readonly components["schemas"]["HcpV2RelationshipIn"][] | null;
         };
-        /** RelationshipIn */
-        readonly RelationshipIn: {
+        /** HcpV2RelationshipIn */
+        readonly HcpV2RelationshipIn: {
             /** Type */
             readonly type: string;
             /**
@@ -50966,18 +50986,18 @@ export interface components {
              */
             readonly target: string;
         };
-        /** SubjectIn */
-        readonly SubjectIn: {
+        /** HcpV2SubjectIn */
+        readonly HcpV2SubjectIn: {
             /** Id */
             readonly id: string;
             /** Relationship */
             readonly relationship?: string | null;
         };
-        /** RevisionIn */
-        readonly RevisionIn: {
+        /** HcpV2RevisionIn */
+        readonly HcpV2RevisionIn: {
             /** Expectedversion */
             readonly expectedVersion: number;
-            readonly content: components["schemas"]["ContentIn"];
+            readonly content: components["schemas"]["HcpV2ContentIn"];
             /**
              * Reason
              * @description Why. Recorded in the audit log.
@@ -76691,7 +76711,7 @@ export interface operations {
         };
         readonly requestBody: {
             readonly content: {
-                readonly "application/json": components["schemas"]["PurposesIn"];
+                readonly "application/json": components["schemas"]["HcpV2PurposesIn"];
             };
         };
         readonly responses: {
@@ -76715,7 +76735,7 @@ export interface operations {
         };
         readonly requestBody: {
             readonly content: {
-                readonly "application/json": components["schemas"]["ConfirmationIn"];
+                readonly "application/json": components["schemas"]["HcpV2ConfirmationIn"];
             };
         };
         readonly responses: {
@@ -76755,7 +76775,7 @@ export interface operations {
         };
         readonly requestBody: {
             readonly content: {
-                readonly "application/json": components["schemas"]["RuleIn"];
+                readonly "application/json": components["schemas"]["HcpV2RuleIn"];
             };
         };
         readonly responses: {
@@ -76815,7 +76835,7 @@ export interface operations {
         };
         readonly requestBody: {
             readonly content: {
-                readonly "application/json": components["schemas"]["DirectiveIn"];
+                readonly "application/json": components["schemas"]["HcpV2DirectiveIn"];
             };
         };
         readonly responses: {
@@ -76860,7 +76880,7 @@ export interface operations {
         };
         readonly requestBody: {
             readonly content: {
-                readonly "application/json": components["schemas"]["QueryIn"];
+                readonly "application/json": components["schemas"]["HcpV2QueryIn"];
             };
         };
         readonly responses: {
@@ -76882,7 +76902,7 @@ export interface operations {
             };
             readonly header?: never;
             readonly path: {
-                readonly entry_ref: string;
+                readonly entry_id: string;
             };
             readonly cookie?: never;
         };
@@ -76906,7 +76926,7 @@ export interface operations {
             };
             readonly header?: never;
             readonly path: {
-                readonly entry_ref: string;
+                readonly entry_id: string;
             };
             readonly cookie?: never;
         };
@@ -76933,7 +76953,7 @@ export interface operations {
         };
         readonly requestBody: {
             readonly content: {
-                readonly "application/json": components["schemas"]["EntryIn"];
+                readonly "application/json": components["schemas"]["HcpV2EntryIn"];
             };
         };
         readonly responses: {
@@ -76953,13 +76973,13 @@ export interface operations {
             };
             readonly header?: never;
             readonly path: {
-                readonly entry_ref: string;
+                readonly entry_id: string;
             };
             readonly cookie?: never;
         };
         readonly requestBody: {
             readonly content: {
-                readonly "application/json": components["schemas"]["RevisionIn"];
+                readonly "application/json": components["schemas"]["HcpV2RevisionIn"];
             };
         };
         readonly responses: {
