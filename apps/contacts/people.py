@@ -294,6 +294,8 @@ def record_fact(*, person: Person, workspace, kind: str, statement: str,
     hcp.audit(person, event, actor=actor, entry=fact, turn=source_turn,
               detail=audit_detail or (f"version {version}" + (f"; {reason}" if reason else "")))
     if check_conflicts:
+        if supersedes is not None:
+            hcp.reevaluate(fact, actor=actor)               # a revision may end a conflict (15.3)
         hcp.detect_conflicts(fact, actor=actor)
     from . import embeddings
 

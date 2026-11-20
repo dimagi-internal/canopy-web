@@ -87,9 +87,13 @@ def _post(c, path, body, **headers):
 
 def _add(person, ws, statement, *, category="work_context", basis="declared", dimension="",
          kind="role", confidence=None):
+    # A declared entry is the person's own statement here (authenticated, 3.6: standing in a
+    # conflict); anything else is the system's. An agent's claim that the person said it is not
+    # authoritative until confirmed: tests/test_hcp_v2_conflicts.py.
     return people.record_fact(person=person, workspace=ws, kind=kind, statement=statement,
                               basis=basis, category=category, dimension=dimension,
-                              confidence=confidence)
+                              confidence=confidence,
+                              by_user=person.user if basis == "declared" else None)
 
 
 def _events(person, kind):

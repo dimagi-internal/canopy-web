@@ -676,6 +676,72 @@ class PersonFact(models.Model):
         return self.superseded_at is None
 
 
+class EntryConfirmation(models.Model):
+    """HCP v2 3.8 — the person's confirmation or rejection of ONE VERSION of an entry.
+
+    Append-only, and it belongs to the version it was made on: a new version starts with none, so a
+    revision never inherits the person's endorsement of earlier wording. It changes neither the
+    entry's declaration type nor its asserter (invariant 12); it gives the entry standing in a
+    conflict (4.7.1). Replaces v1's `user_verified`."""
+
+    CONFIRMED, REJECTED = "confirmed", "rejected"
+
+    fact = models.ForeignKey(PersonFact, on_delete=models.CASCADE, related_name="confirmations")
+    disposition = models.CharField(max_length=10)
+    #: Who confirmed: the person, as `user:<email>` or `contact:<pk>` (the person's act in canopy's frame).
+    confirmed_by = models.CharField(max_length=200)
+    confirmed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "contact_entry_confirmations"
+        ordering = ["pk"]
+        constraints = [models.CheckConstraint(condition=models.Q(disposition__in=["confirmed", "rejected"]),
+                                              name="entry_confirmation_disposition_known")]
+
+
+class EntryRelationship(models.Model):
+    """HCP v2 4.2.3 — how one entry relates to another entry of the same person, or to the source
+    it was derived from.
+
+    A `contradicts` relationship is symmetric: one row on each entry. The target is an entry
+    (`target_entry_id`) or, for `derivedFrom` only, a SOURCE named by a loose `(source_kind,
+    source_ref)` pair (a session the entry was learned from; the pair is keyed like the brain's
+    `BrainSource.kind/ref`, deliberately not a foreign key, so this app depends on none)."""
+
+    DERIVED_FROM, SUPERSEDES, CONTRADICTS, DUPLICATES = "derivedFrom", "supersedes", "contradicts", "duplicates"
+    TYPES = (DERIVED_FROM, SUPERSEDES, CONTRADICTS, DUPLICATES)
+    #: 3.9 roles that may assert one.
+    MANAGEMENT_CLIENT, CONTEXT_CLIENT, HCP_PROVIDER = "management-client", "context-client", "hcp-provider"
+
+    person = models.ForeignKey(Person, on_delete=models.CASCADE, related_name="entry_relationships")
+    entry_id = models.UUIDField(db_index=True)
+    type = models.CharField(max_length=12)
+    target_entry_id = models.UUIDField(null=True, blank=True, db_index=True)
+    source_kind = models.CharField(max_length=40, blank=True, default="")
+    source_ref = models.CharField(max_length=200, blank=True, default="")
+    #: Set by the provider, never taken from a request (4.2.3).
+    asserted_by_role = models.CharField(max_length=24)
+    asserted_by_id = models.CharField(max_length=200)
+    recorded_at = models.DateTimeField(auto_now_add=True)
+    #: 4.7.4 — a way to resolve a `contradicts`, which changes nothing until the person acts.
+    proposal = models.JSONField(null=True, blank=True, default=None)
+
+    class Meta:
+        db_table = "contact_entry_relationships"
+        ordering = ["pk"]
+        indexes = [models.Index(fields=["person", "entry_id"])]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(type__in=["derivedFrom", "supersedes", "contradicts", "duplicates"]),
+                name="entry_relationship_type_known"),
+            models.CheckConstraint(
+                condition=(models.Q(target_entry_id__isnull=False, source_kind="")
+                           | (models.Q(target_entry_id__isnull=True, type="derivedFrom")
+                              & ~models.Q(source_kind="") & ~models.Q(source_ref=""))),
+                name="entry_relationship_targets_an_entry_or_a_source"),
+        ]
+
+
 class PersonAccess(models.Model):
     """Append-only audit: who READ what canopy knows about a person, and how.
 
@@ -876,6 +942,8 @@ class PersonAuditEvent(models.Model):
         "session.contentDeleted",
         # HCP v2 (hcp-service.md, "HCP v2"): the person narrowed an entry's purposes.
         "context.restricted",
+        # v2 3.8 / 4.7: the person confirmed or rejected a version; a provider's proposal for a conflict.
+        "context.confirmed", "conflict.proposed",
     )
     USER, AGENT, SYSTEM = "user", "agent", "system"
 

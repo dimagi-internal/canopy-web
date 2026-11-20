@@ -19552,6 +19552,29 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/hcp/v2/entries/{entry_id}/confirmation": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * HCP v2 governance: confirm or reject an entry
+         * @description Confirm or reject the current version of one of your entries (HCP v2 3.8): the person only,
+         *     over HTTP only. A confirmation appends a record to that version and gives it standing in a
+         *     conflict; it changes neither the entry's declaration type nor who asserted it. A rejection
+         *     withdraws the entry and returns anything it held to active (4.7.3).
+         */
+        readonly post: operations["hcp_v2_confirmEntry"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/hcp-admin/clients": {
         readonly parameters: {
             readonly query?: never;
@@ -50425,6 +50448,13 @@ export interface components {
              * @description Optional (v2): purpose codes this entry may be used for. Omitted means no limit.
              */
             readonly permittedPurposes?: readonly string[] | null;
+            /**
+             * Derivedfrom
+             * @description Optional (v2): what this was inferred from — each {entryId} of another entry, or {source: {kind, ref}} such as a session. Recorded as a derivedFrom relationship.
+             */
+            readonly derivedFrom?: readonly {
+                readonly [key: string]: unknown;
+            }[] | null;
         };
         /**
          * HcpEntryIn
@@ -50482,6 +50512,19 @@ export interface components {
              * @description The purpose codes the entry may be used for, narrower than its writer permitted; null removes your narrowing (never the writer's).
              */
             readonly permittedPurposes: readonly string[] | null;
+            /**
+             * Expectedversion
+             * @description The version you are looking at.
+             */
+            readonly expectedVersion?: number | null;
+        };
+        /** ConfirmationIn */
+        readonly ConfirmationIn: {
+            /**
+             * Disposition
+             * @description confirmed or rejected.
+             */
+            readonly disposition: string;
             /**
              * Expectedversion
              * @description The version you are looking at.
@@ -76163,6 +76206,30 @@ export interface operations {
         readonly requestBody: {
             readonly content: {
                 readonly "application/json": components["schemas"]["PurposesIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly hcp_v2_confirmEntry: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly entry_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ConfirmationIn"];
             };
         };
         readonly responses: {
