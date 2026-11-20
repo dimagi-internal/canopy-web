@@ -12,11 +12,12 @@ import json
 
 from django.db import transaction
 
+from apps.agents.models import AgentProject
 from apps.common import redact
 
-from . import readers
+from . import associate, readers
 from .eligibility import eligible
-from .models import BrainOutput, BrainRun, BrainRunRead, BrainSource, OutputLineage
+from .models import BrainOutput, BrainRun, BrainRunRead, BrainSource, OutputLineage, SourceLink
 
 MAX_BODY_CHARS, MAX_SOURCES = 20_000, 50
 
@@ -25,12 +26,19 @@ class EmitRefusedError(ValueError):
     """The output asked for may not be written (a 422 at the route), with the reason in words."""
 
 
-def emit(run: BrainRun, *, kind: str, title: str, body: dict, source_ids, turn_id: str = "") -> BrainOutput:
+#: The output kind of a project judge: not a `BrainOutput` but a `SourceLink` (layer 3 of `associate`).
+LINK = "link"
+LINK_TIERS = ("core", "adjacent", "candidate", "rejected")
+
+
+def emit(run: BrainRun, *, kind: str, title: str, body: dict, source_ids, turn_id: str = ""):
     cap = run.capability
     if not readers.enabled() or not cap.enabled or run.state != BrainRun.OPEN:
         raise EmitRefusedError("this run may not emit")
     if kind not in (cap.output_kinds or []):
         raise EmitRefusedError(f"{cap.slug} emits {', '.join(cap.output_kinds) or 'nothing'}, not {kind!r}")
+    if kind == LINK:
+        return _emit_link(run, body=body, source_ids=source_ids)
     if not isinstance(body, dict) or len(json.dumps(body, default=str)) > MAX_BODY_CHARS:
         raise EmitRefusedError(f"body must be an object of at most {MAX_BODY_CHARS} characters")
     ids = sorted({int(i) for i in source_ids})
@@ -64,3 +72,32 @@ def emit(run: BrainRun, *, kind: str, title: str, body: dict, source_ids, turn_i
             OutputLineage.objects.create(output_kind="brain.output", output_id=str(out.pk), source=s,
                                          participant_scope=people)
     return out
+
+
+def _emit_link(run: BrainRun, *, body: dict, source_ids):
+    """A judge's ruling: which tier one session belongs to for the run's project, with a confidence and the
+    model that judged. It must be a session this run read and one still open to it, and it never overrides
+    what outranks a judgment (a person's call, a dispatch): `associate.put` decides."""
+    if run.subject_type != "project":
+        raise EmitRefusedError("a link is a ruling about one project")
+    ids = sorted({int(i) for i in source_ids})
+    if len(ids) != 1:
+        raise EmitRefusedError("a link rules on exactly one source")
+    if not BrainRunRead.objects.filter(run=run, source_id=ids[0]).exists():
+        raise EmitRefusedError(f"cites a source this run did not read: {ids}")
+    tier, confidence, model = body.get("tier"), body.get("confidence"), str(body.get("model") or "")[:64]
+    if tier not in LINK_TIERS:
+        raise EmitRefusedError(f"tier must be one of {', '.join(LINK_TIERS)}")
+    if not isinstance(confidence, int | float) or isinstance(confidence, bool) or not 0 <= confidence <= 1:
+        raise EmitRefusedError("confidence is a number from 0 to 1")
+    if not model:
+        raise EmitRefusedError("name the model that judged")
+    source = BrainSource.objects.select_related("session").get(pk=ids[0])
+    if not eligible(source, run.capability, run.purpose):
+        raise EmitRefusedError(f"source {source.pk} is no longer open to this feature")
+    project = AgentProject.objects.filter(pk=run.subject, workspace_id=source.workspace_id).first()
+    if project is None or project.is_personal:
+        raise EmitRefusedError("a link rules on a workspace project of the source's own workspace")
+    evidence = [redact.redact_text(str(e))[0][:200] for e in (body.get("evidence") or [])[:5]]
+    return associate.put(source, project, how=SourceLink.JUDGED, tier=tier, evidence=evidence,
+                         confidence=float(confidence), model=model)

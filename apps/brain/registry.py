@@ -23,6 +23,10 @@ CLASS_AUDIENCE = {
 CLASS_SUBJECT = {INDIVIDUAL: "person", MEMORY: "person", PROJECT: "project", SYSTEM: "system"}
 
 
+#: How often a scheduled feature runs, per subject (`schedule.py`). Empty means by hand only.
+SCHEDULES = {"": None, "hourly": 3600, "daily": 86400, "weekly": 7 * 86400}
+
+
 class RefusedError(ValueError):
     """The registration asked for is not one a canopy admin may make (a 422 at the route)."""
 
@@ -50,6 +54,11 @@ def _entry(entry: str) -> None:
         raise RefusedError("entry must be one plugin command: /<plugin>:<skill> [args]")
 
 
+def _schedule(schedule: str) -> None:
+    if schedule not in SCHEDULES:
+        raise RefusedError(f"schedule must be one of {', '.join(repr(s) for s in SCHEDULES)}")
+
+
 def register(*, slug: str, name: str, purpose_class: str, purposes, description: str = "",
              source_kinds=(BrainSource.SESSION,), output_kinds=(), audience=None, operator=None,
              schedule: str = "", enabled: bool = False, entry: str = "", registered_by=None) -> BrainCapability:
@@ -58,6 +67,7 @@ def register(*, slug: str, name: str, purpose_class: str, purposes, description:
     if BrainCapability.objects.filter(slug=slug).exists():
         raise RefusedError(f"{slug} is already registered")
     _entry(entry)
+    _schedule(schedule)
     kinds = _words("source_kinds", list(source_kinds))
     if set(kinds) - {k for k, _ in BrainSource.KIND_CHOICES}:
         raise RefusedError("source_kinds names a kind of source canopy does not hold")
@@ -80,6 +90,8 @@ def update(cap: BrainCapability, **changes) -> BrainCapability:
     for key in ("purposes", "source_kinds", "output_kinds"):
         if key in changes:
             setattr(cap, key, _words(key, changes.pop(key)))
+    if "schedule" in changes:
+        _schedule(changes["schedule"])
     if "entry" in changes:
         _entry(changes["entry"])
         cap.entry = changes.pop("entry").strip()

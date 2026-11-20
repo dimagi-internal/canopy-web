@@ -19459,6 +19459,29 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/brain/workspaces/{slug}/projects/{handle}/sessions/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The sessions tied to a project that you may read
+         * @description Which sessions a project's history is made of: the ones tied to it (`tiers`: core, adjacent, candidate,
+         *     comma separated) that YOU may read, by the same rule as every session read: your own, and a teammate's through
+         *     the project leg once everyone in it agreed. Ids, titles and how each tie was made, never a word of a transcript.
+         *     A project you may not read is not found.
+         */
+        readonly get: operations["list_project_sessions"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/brain/outputs/": {
         readonly parameters: {
             readonly query?: never;
@@ -51017,6 +51040,13 @@ export interface components {
              * @description Nothing is left past `next_after`.
              */
             readonly done: boolean;
+            /**
+             * Project
+             * @description For a project judge: its outcome and open tasks.
+             */
+            readonly project?: {
+                readonly [key: string]: unknown;
+            } | null;
         };
         /** BrainReadSource */
         readonly BrainReadSource: {
@@ -51210,6 +51240,35 @@ export interface components {
              * @description Their manager's email; a member of the workspace.
              */
             readonly manager: string;
+        };
+        /** ProjectSessionOut */
+        readonly ProjectSessionOut: {
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            readonly session_id: string;
+            /** Title */
+            readonly title: string;
+            /** Workspace */
+            readonly workspace: string;
+            /**
+             * Tier
+             * @description core | adjacent | candidate.
+             */
+            readonly tier: string;
+            /**
+             * How
+             * @description dispatched | signals | judged | declared.
+             */
+            readonly how: string;
+            /** Confidence */
+            readonly confidence?: number | null;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            readonly started_at: string;
         };
         /** BrainOutputOut */
         readonly BrainOutputOut: {
@@ -77489,6 +77548,41 @@ export interface operations {
                 };
                 content: {
                     readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly list_project_sessions: {
+        readonly parameters: {
+            readonly query?: {
+                readonly tiers?: string;
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["ProjectSessionOut"][];
                 };
             };
             /** @description Not Found */

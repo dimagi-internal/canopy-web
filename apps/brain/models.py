@@ -300,6 +300,8 @@ class BrainRun(models.Model):
     subject = models.CharField(max_length=64, blank=True, default="")
     #: The one purpose this run reads for (one of its feature's declared purposes).
     purpose = models.CharField(max_length=40)
+    #: Sources at or before this pk were learned from in an earlier run (`BrainCursor`): a run reads past it.
+    floor = models.BigIntegerField(default=0)
     #: Its conversation (`canopy_sessions.Session`, `metadata.brain_run`).
     session = models.ForeignKey("canopy_sessions.Session", null=True, blank=True, on_delete=models.SET_NULL,
                                 related_name="+")
@@ -362,3 +364,19 @@ class DisclosureDay(models.Model):
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["person", "capability_slug", "day"], name="brain_disclosure_one")]
+
+
+class BrainCursor(models.Model):
+    """Where a feature has got to for one subject (one project): the last source a finished run learned
+    from, and when a run last started, so the scheduler (`schedule.py`) starts the next one only when there
+    is something new and it is due."""
+
+    capability = models.ForeignKey(BrainCapability, on_delete=models.CASCADE, related_name="cursors")
+    subject_type = models.CharField(max_length=16)
+    subject = models.CharField(max_length=64)
+    last_source = models.BigIntegerField(default=0)
+    last_run_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["capability", "subject_type", "subject"],
+                                               name="brain_cursor_one")]
