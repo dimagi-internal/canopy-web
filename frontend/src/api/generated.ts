@@ -4461,6 +4461,28 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/browser/apps": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Your apps with a page for a browser tab
+         * @description The installed, enabled apps you can use, in every workspace you are in, whose pages
+         *     declare (manifest `browser`) that they run beside a tab at `url`. An unusable or
+         *     non-https URL matches nothing.
+         */
+        readonly get: operations["list_browser_apps"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/local-apps/store/": {
         readonly parameters: {
             readonly query?: never;
@@ -27805,6 +27827,32 @@ export interface components {
             };
             /** Draft */
             readonly draft: boolean;
+        };
+        /**
+         * BrowserAppOut
+         * @description One app page the browser extension's panel may show for a tab (`browser.py`).
+         */
+        readonly BrowserAppOut: {
+            /** Workspace */
+            readonly workspace: string;
+            /** Workspace Name */
+            readonly workspace_name: string;
+            /** App Key */
+            readonly app_key: string;
+            /** App Name */
+            readonly app_name: string;
+            /** Page Slug */
+            readonly page_slug: string;
+            /** Page Title */
+            readonly page_title: string;
+            /** Adapter */
+            readonly adapter: string;
+            /** Capabilities */
+            readonly capabilities: readonly string[];
+            /** Events */
+            readonly events: readonly string[];
+            /** Matches */
+            readonly matches: readonly string[];
         };
         /** LocalAppListingOut */
         readonly LocalAppListingOut: {
@@ -58433,6 +58481,28 @@ export interface operations {
                     readonly "application/json": {
                         readonly [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    readonly list_browser_apps: {
+        readonly parameters: {
+            readonly query: {
+                readonly url: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["BrowserAppOut"][];
                 };
             };
         };

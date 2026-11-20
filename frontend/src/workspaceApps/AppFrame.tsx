@@ -11,7 +11,7 @@
 import { useMemo, useState } from 'react'
 import { callApp, type AppPage, type CollectionSource } from '@/api/workspaceApps'
 import { getDynamicViewGuide, type DynamicViewSource } from '@/api/dynamicViews'
-import { DynamicViewFrame, readSources } from '@/dynamicViews/DynamicViewFrame'
+import { DynamicViewFrame, readSources, type BrowserHost } from '@/dynamicViews/DynamicViewFrame'
 import type { DeclaredConnection } from '@/dynamicViews/connectionCalls'
 import type { AppContext, AppOp, ViewScope } from '@/dynamicViews/protocol'
 
@@ -34,13 +34,15 @@ interface Props {
   connections?: readonly DeclaredConnection[]
   viewer: { email: string; name: string }
   onGo: (page: string, params: Record<string, string>) => void
+  /** Drawn in the browser extension's panel (member surface only): what `canopy.browser` reaches. */
+  browser?: BrowserHost
 }
 
 function isCollection(s: Record<string, unknown>): s is CollectionSource {
   return typeof s.collection === 'string'
 }
 
-export function AppFrame({ workspace, app, page, roles, params, surface, draft, link, dataModel, settings, connections, viewer, onGo }: Props) {
+export function AppFrame({ workspace, app, page, roles, params, surface, draft, link, dataModel, settings, connections, viewer, onGo, browser }: Props) {
   const [error, setError] = useState<string | null>(null)
   const paramsKey = JSON.stringify(params)
   const rolesKey = roles.join(',')
@@ -99,7 +101,8 @@ export function AppFrame({ workspace, app, page, roles, params, surface, draft, 
       {error && <div className="mb-3 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
       {/* A live member page is the page canopy's panel is on: it may describe itself to the agent bound
           to this app and offer it actions (its `page_*` tools), as a view does on its own page. */}
-      <DynamicViewFrame view={view} scope={scope} onError={setError} app={hosted} pagePanel={surface === 'member' && !draft} />
+      <DynamicViewFrame view={view} scope={scope} onError={setError} app={hosted} pagePanel={surface === 'member' && !draft}
+        browser={surface === 'member' && !draft ? browser : undefined} />
     </>
   )
 }

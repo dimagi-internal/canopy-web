@@ -89,9 +89,29 @@ export interface AppTaskFilters {
   limit?: number
 }
 
+/**
+ * What an app page drawn in the browser extension's panel may ask of the tab (its
+ * manifest's `browser` entry), told to the frame so `canopy.browser` exists there. Absent
+ * everywhere else, where `canopy.browser` is null. The canopy page enforces it; the frame
+ * only knows it (src/ext/extensionBridge.ts).
+ */
+export interface BrowserInfo {
+  adapter: string
+  capabilities: string[]
+  events: string[]
+}
+
+/** A `canopy.browser` call out of the frame, answered by `read-result`. */
+export type BrowserOp =
+  | { op: 'context' }
+  | { op: 'request'; capability: string; args?: Record<string, unknown> }
+  | { op: 'open'; url: string }
+
 /** Page → frame. */
 export type HostMessage =
-  | { channel: typeof CHANNEL; type: 'render'; code: string; data: Record<string, unknown>; scope: ViewScope; theme: 'light' | 'dark'; app?: AppContext }
+  | { channel: typeof CHANNEL; type: 'render'; code: string; data: Record<string, unknown>; scope: ViewScope; theme: 'light' | 'dark'; app?: AppContext; browser?: BrowserInfo }
+  // A declared adapter event on the tab in front of the person, or `context` when that tab changed.
+  | { channel: typeof CHANNEL; type: 'browser-event'; event: string; data: unknown }
   | { channel: typeof CHANNEL; type: 'data'; data: Record<string, unknown> }
   | { channel: typeof CHANNEL; type: 'read-result'; id: number; ok: true; data: unknown }
   // `code` and `connect_url` come with a refused call to a connected account (`ConnectionRefusal`).
@@ -125,6 +145,8 @@ export type FrameMessage =
   | { channel: typeof CHANNEL; type: 'navigate'; path: string }
   | { channel: typeof CHANNEL; type: 'app'; id: number; request: AppOp }
   | { channel: typeof CHANNEL; type: 'go'; page: string; params: Record<string, string> }
+  // `canopy.browser` in the extension's panel: the tab's context, an adapter capability, opening a tab.
+  | { channel: typeof CHANNEL; type: 'browser'; id: number; request: BrowserOp }
   // canopy's panel (pagePanel.ts): what the view shows, the actions it offers the agent,
   // its answers, and a question for the panel (only on a click on the view).
   | { channel: typeof CHANNEL; type: 'page-state'; state: unknown }

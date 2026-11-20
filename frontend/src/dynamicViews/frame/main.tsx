@@ -10,6 +10,7 @@ import {
   type AppContext,
   type AppOp,
   type AppTaskFilters,
+  type BrowserInfo,
   type FrameMessage,
   type HostMessage,
   type ReadRequest,
@@ -77,6 +78,8 @@ function ask(msg: (id: number) => FrameMessage): Promise<unknown> {
 }
 
 const canopy = {
+  /** The tab beside the extension's panel (`browserApi`); null outside the panel. */
+  browser: null as ReturnType<typeof browserApi> | null,
   read(model: string, opts: Omit<ReadRequest, 'model'> = {}): Promise<unknown> {
     return ask((id) => ({ channel: CHANNEL, type: 'read', id, request: { model, params: opts.params, path: opts.path } }))
   },
@@ -169,6 +172,43 @@ const canopy = {
   },
 }
 
+/** Handlers a page registered with `canopy.browser.on(event, handler)`, by event. */
+const browserHandlers = new Map<string, Set<(data: unknown) => void>>()
+
+/**
+ * `canopy.browser`: the tab beside the browser extension's panel, for an app page whose
+ * manifest declares it. Null everywhere else. Every call is checked again by the canopy
+ * page against the declaration and the tab's URL; what is here only shapes the asking.
+ */
+function browserApi(info: BrowserInfo) {
+  // A refusal's protocol code (`no_adapter`, `timeout`, …) is `e.code` on what rejects.
+  const call = (request: Record<string, unknown>) =>
+    ask((id) => ({ channel: CHANNEL, type: 'browser', id, request } as FrameMessage)).catch((e: Error & { error?: string; code?: string }) => {
+      if (e.error) e.code = e.error
+      throw e
+    })
+  return {
+    adapter: info.adapter,
+    capabilities: [...info.capabilities],
+    events: [...info.events],
+    /** `{tab: {url, title}}` while the tab in front matches this page, else null. */
+    context: () => call({ op: 'context' }) as Promise<{ tab: { url: string; title: string } } | null>,
+    /** Ask the tab's adapter for a declared capability: resolves its result, or rejects (`e.code`). */
+    request: (capability: string, args: Record<string, unknown> = {}) => call({ op: 'request', capability, args }),
+    /** Hear a declared adapter event (or `context`, when the tab changes). Returns an unsubscribe. */
+    on(event: string, handler: (data: unknown) => void) {
+      if (typeof handler !== 'function') throw new Error('canopy.browser.on(event, handler): handler must be a function')
+      if (event !== 'context' && !info.events.includes(event)) throw new Error(`this page does not declare the browser event "${event}"`)
+      const set = browserHandlers.get(event) ?? new Set()
+      set.add(handler)
+      browserHandlers.set(event, set)
+      return () => set.delete(handler)
+    },
+    /** Open an https URL in a new tab, from a click on the page. */
+    open: (url: string) => call({ op: 'open', url }) as Promise<null>,
+  }
+}
+
 /** The `app` prop of a workspace app's page: its context plus the only calls it
  * can make, each a message the page answers by the app's own rules. */
 function appApi(ctx: AppContext): AppApi {
@@ -251,6 +291,8 @@ function App() {
       if (!isMessage(msg)) return
       if (msg.type === 'render') {
         document.documentElement.classList.toggle('dark', msg.theme === 'dark')
+        browserHandlers.clear()
+        canopy.browser = msg.browser ? browserApi(msg.browser) : null
         try {
           const View = compile(msg.code)
           setState({ kind: 'ready', View, data: msg.data ?? {}, scope: msg.scope, code: msg.code, api: msg.app ? appApi(msg.app) : null })
@@ -266,6 +308,14 @@ function App() {
           statusListeners.get(msg.id)?.(msg.task)
         } catch (e) {
           toHost({ channel: CHANNEL, type: 'error', message: e instanceof Error ? e.message : String(e) })
+        }
+      } else if (msg.type === 'browser-event') {
+        for (const handler of browserHandlers.get(msg.event) ?? []) {
+          try {
+            handler(msg.data)
+          } catch (e) {
+            toHost({ channel: CHANNEL, type: 'error', message: e instanceof Error ? e.message : String(e) })
+          }
         }
       } else if (msg.type === 'page-action') {
         void runPageAction(msg.id, msg.name, msg.args)

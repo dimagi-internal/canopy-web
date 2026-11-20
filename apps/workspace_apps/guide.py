@@ -80,6 +80,16 @@ pageSize, pageToken, fields, orderBy, spaces, corpora, driveId, supportsAllDrive
 includeItemsFromAllDrives, includeLabels, maxResults). It runs only on an hour of access the viewer
 grants (never a stored connection): without one the rejection has e.connect_url, as above.
 
+BROWSER EXTENSION: when the manifest declares `browser` for a member page, the Dimagi Canopy
+extension's side panel shows that page beside a matching tab, and there canopy.browser is set
+(null everywhere else — always check): canopy.browser.context() -> Promise<{tab: {url, title}} | null>,
+canopy.browser.request(name, args) -> Promise<result> for a declared adapter capability (gmail:
+read_open_email -> {threadId, messageId, subject, date, from, to, cc, bodyText} or null;
+compose_recipients -> {to, cc, bcc} or null), canopy.browser.on(event, handler) for a declared event
+or "context" (the tab changed), returning an unsubscribe, and canopy.browser.open(url) for an https
+URL from a click. A refusal rejects with e.code (no_adapter, not_ready, unknown_capability,
+adapter_error, timeout, bad_request). The template declares it; a workspace change cannot.
+
 WHAT THE TEMPLATE DECLARES (read it in the manifest; a workspace change cannot add these):
   an action's `when` (it applies only to a record in that state — offer the button only then),
   `actor_field` (only the person the record names may run it: an approver approves), `params` (values

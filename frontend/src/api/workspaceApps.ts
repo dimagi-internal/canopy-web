@@ -367,3 +367,12 @@ export async function subjectExport(workspace: string, key: string, email: strin
   });
   return unwrap(res, "Could not export");
 }
+
+/** One app page the browser extension's panel may show beside a tab (`GET /api/browser/apps`). */
+export type BrowserApp = components["schemas"]["BrowserAppOut"];
+
+/** Your apps, across your workspaces, with a page declared for this tab's URL. */
+export async function listBrowserApps(url: string): Promise<BrowserApp[]> {
+  const res = await apiV2.GET("/api/browser/apps", { params: { query: { url } } });
+  return unwrap(res, "Failed to load the apps for this tab") as unknown as BrowserApp[];
+}

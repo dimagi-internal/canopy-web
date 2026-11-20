@@ -16,6 +16,7 @@ from apps.tokens.cli_authorize_views import cli_authorize as views_cli_authorize
 from apps.tokens.mint_session import mint_session
 from apps.connections.views import connections_callback, connections_start
 from apps.github_connect.views import github_connect_callback, github_connect_start
+from apps.embedding.extension import ext_panel
 from apps.embedding.views_embed import embed_chat, embed_sign_off, embed_widget_js
 from apps.contacts import hcp_oauth_views
 from apps.oauth_server import views as views_mcp_oauth
@@ -100,6 +101,10 @@ urlpatterns = [
     # build like index.html is, not via staticfiles — this is the one URL third
     # parties hard-code, so it must not move with a static prefix.
     path("embed/widget.js", embed_widget_js, name="embed-widget-js"),
+    # The browser extension's side panel: framable ONLY by the allowed extension origins
+    # (apps/embedding/extension.py). Before the SPA catch-all, which would answer it with
+    # X-Frame-Options: DENY.
+    re_path(r"^ext/panel/?$", ext_panel, name="ext-panel"),
     # A walkthrough's bytes, under its workspace like its page. <str:> (not
     # <uuid:>) so a malformed id is handled by the view (bare 404) instead of
     # falling through to the SPA catch-all and painting the whole app inside a

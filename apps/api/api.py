@@ -412,6 +412,7 @@ from apps.listen.api import router as listen_router  # noqa: E402
 from apps.listen.api import runner_router as listen_runner_router  # noqa: E402
 from apps.workspace_apps.api import public_router as public_apps_router  # noqa: E402
 from apps.workspace_apps.api import router as workspace_apps_router  # noqa: E402
+from apps.workspace_apps.api_browser import router as browser_apps_router  # noqa: E402
 from apps.slack.api import router as slack_config_router  # noqa: E402
 from apps.slack.ingest_api import router as slack_ingests_router  # noqa: E402
 from apps.slack.session_api import router as slack_session_router  # noqa: E402
@@ -465,6 +466,7 @@ api.add_router("/shareouts", shareouts_router)
 api.add_router("/dynamic-views", dynamic_views_router)
 api.add_router("", workspace_apps_router)
 api.add_router("", public_apps_router)
+api.add_router("/browser", browser_apps_router)  # the browser extension's panel: apps for a tab
 api.add_router("/local-apps", local_apps_router)
 api.add_router("/meetings", meetings_router)
 api.add_router("/listen", listen_router)

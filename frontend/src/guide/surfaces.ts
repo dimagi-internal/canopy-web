@@ -217,6 +217,20 @@ export const SURFACES: SurfaceDescriptor[] = [
     use: 'When you want to start a chat with an agent by talking to your phone; your laptop reads it.',
   },
   {
+    path: '/ext/panel',
+    group: 'The browser extension',
+    flat: 'personal/global: the browser extension\'s side panel lists your apps for a tab across every workspace you are in',
+    title: 'Canopy side panel',
+    use: 'Opened by the Dimagi Canopy browser extension beside a tab, to use one of your apps on the page you are on.',
+  },
+  {
+    path: '/ext/signed-in',
+    group: 'The browser extension',
+    flat: 'personal/global: the end of the side panel\'s sign-in, in no workspace',
+    title: 'Signed in from the side panel',
+    use: 'Where signing in from the browser extension\'s side panel lands, before you go back to the panel.',
+  },
+  {
     path: '/act-as/:requestId',
     group: 'Letting an agent act as you',
     flat: 'personal/global: a request to act as YOU, from an agent in any of your workspaces',
