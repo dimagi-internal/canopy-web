@@ -442,3 +442,18 @@ export async function listMyInvites(): Promise<MyInviteOut[]> {
   ensureOk(res, 'Failed to load your invites')
   return res.data as unknown as MyInviteOut[]
 }
+
+export type WorkspaceGraphOut = components['schemas']['WorkspaceGraphOut']
+export type GraphNodeOut = components['schemas']['GraphNodeOut']
+export type GraphEdgeOut = components['schemas']['GraphEdgeOut']
+
+/** How people, agents, sessions, projects and tasks relate, as the caller may see them (any member). */
+export async function getWorkspaceGraph(
+  slug: string, opts: { days: number; tree: boolean; proposed: boolean },
+): Promise<WorkspaceGraphOut> {
+  const res = await apiV2.GET('/api/workspaces/{slug}/graph', {
+    params: { path: { slug }, query: { days: opts.days, tree: opts.tree, include: opts.proposed ? 'proposed' : '' } },
+  })
+  ensureOk(res, 'Failed to load the relations')
+  return res.data as unknown as WorkspaceGraphOut
+}

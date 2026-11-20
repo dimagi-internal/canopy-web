@@ -352,7 +352,7 @@ export const SURFACES: SurfaceDescriptor[] = [
     path: '/w/:workspace/network',
     home: '/w/:workspace/health',
     title: 'Network',
-    use: 'When you want to see who works with whom.',
+    use: 'When you want to see who works with whom, and how people, agents, sessions and projects relate.',
   },
   {
     path: '/w/:workspace/settings/topology',

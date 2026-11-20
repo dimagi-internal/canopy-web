@@ -19541,6 +19541,32 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/workspaces/{slug}/graph": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * How people, agents, sessions, projects and tasks relate, as you may see them
+         * @description People, agents, sessions, projects, tasks, workspaces and learning outputs over the last `days` (1-90), in
+         *     this workspace and, with `tree`, every one below it you are in, each edge typed: who is in a session, who
+         *     started it, which agent ran it, which task dispatched it, which project it is tied to (tier and how), who
+         *     reports to whom, who coaches whom, which sessions an output was learned from. Only what you may already
+         *     see: sessions you read yourself, projects and tasks you may read, reporting lines you are shown, your own
+         *     coaching. `include=proposed` adds the links canopy's learning WOULD make, marked `proposed` and stored
+         *     nowhere (only for you as yourself). Capped; `notes` says what was left out.
+         */
+        readonly get: operations["workspace_graph"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/brain/preview": {
         readonly parameters: {
             readonly query?: never;
@@ -51446,6 +51472,137 @@ export interface components {
              */
             readonly created_at: string;
         };
+        /** GraphEdgeOut */
+        readonly GraphEdgeOut: {
+            /** Source */
+            readonly source: string;
+            /** Target */
+            readonly target: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "participates" | "started" | "ran" | "dispatched_from" | "linked" | "reports_to" | "coaches" | "derived_from" | "about" | "within";
+            /**
+             * Weight
+             * @description Turns, for `ran`, `participates` and `dispatched_from`; else 1.
+             */
+            readonly weight: number;
+            /** At */
+            readonly at?: string | null;
+            /**
+             * Tier
+             * @description A `linked` edge's tier: core, adjacent, candidate, or rejected (your own call).
+             * @default
+             */
+            readonly tier: string;
+            /**
+             * How
+             * @description A `linked` edge's layer (dispatched, signals, judged, declared); a `reports_to` edge's workspace.
+             * @default
+             */
+            readonly how: string;
+            /**
+             * Proposed
+             * @description A link the brain WOULD make (`include=proposed`), stored nowhere.
+             * @default false
+             */
+            readonly proposed: boolean;
+            /** Evidence */
+            readonly evidence?: readonly string[];
+            /** Confidence */
+            readonly confidence?: number | null;
+        };
+        /**
+         * GraphNodeOut
+         * @description One thing in the graph. `ref` is what its own page is found by: a session's id, a project's handle, a task's
+         *     key, an agent's slug, a person's user id, a workspace's slug, an output's id.
+         */
+        readonly GraphNodeOut: {
+            /** Id */
+            readonly id: string;
+            /**
+             * Type
+             * @enum {string}
+             */
+            readonly type: "person" | "agent" | "session" | "project" | "task" | "workspace" | "output";
+            /** Label */
+            readonly label: string;
+            /**
+             * Workspace
+             * @description Where it lives; blank for a person.
+             */
+            readonly workspace: string;
+            /** Ref */
+            readonly ref: string;
+            /**
+             * At
+             * @description Its latest activity in the window, when it has one.
+             */
+            readonly at?: string | null;
+            /**
+             * Weight
+             * @description How many edges it has in this graph.
+             */
+            readonly weight: number;
+            /**
+             * Sensitive
+             * @description A sensitive session: drawn with no title and nothing derived.
+             * @default false
+             */
+            readonly sensitive: boolean;
+            /**
+             * Status
+             * @description A task's status; an output's kind.
+             * @default
+             */
+            readonly status: string;
+        };
+        /** GraphTotalsOut */
+        readonly GraphTotalsOut: {
+            /** Nodes */
+            readonly nodes: {
+                readonly [key: string]: number;
+            };
+            /** Edges */
+            readonly edges: {
+                readonly [key: string]: number;
+            };
+        };
+        /** WorkspaceGraphOut */
+        readonly WorkspaceGraphOut: {
+            /** Days */
+            readonly days: number;
+            /**
+             * Since
+             * Format: date-time
+             */
+            readonly since: string;
+            /** Workspaces */
+            readonly workspaces: readonly string[];
+            /**
+             * Proposed
+             * @description Whether the brain's would-be links are in it.
+             */
+            readonly proposed: boolean;
+            /**
+             * Reporting
+             * @description Whether reporting lines could be drawn: only to a person as themselves, never through MCP.
+             */
+            readonly reporting: boolean;
+            /** Nodes */
+            readonly nodes: readonly components["schemas"]["GraphNodeOut"][];
+            /** Edges */
+            readonly edges: readonly components["schemas"]["GraphEdgeOut"][];
+            readonly totals: components["schemas"]["GraphTotalsOut"];
+            /**
+             * Notes
+             * @description What a cap left out.
+             */
+            readonly notes: readonly string[];
+            /** Truncated */
+            readonly truncated: boolean;
+        };
         /** BrainPreviewOut */
         readonly BrainPreviewOut: {
             readonly window: components["schemas"]["PreviewWindow"];
@@ -77893,6 +78050,50 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["BrainOutputOut"][];
+                };
+            };
+        };
+    };
+    readonly workspace_graph: {
+        readonly parameters: {
+            readonly query?: {
+                readonly days?: number;
+                readonly tree?: boolean;
+                readonly include?: "" | "proposed";
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkspaceGraphOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };

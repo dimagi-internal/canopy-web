@@ -264,6 +264,39 @@ def propose(session, workspace_id) -> list[Proposal]:
     return propose_dispatched(session, workspace_id) + propose_signals(session, workspace_id)
 
 
+def propose_many(sessions) -> dict:
+    """`propose` for many sessions at once, each in its own workspace: `{session id: [Proposal]}`, in two
+    queries whatever their number (the turns raised from tasks, the signatures of their workspaces). The same
+    rules as `propose_dispatched` and `propose_signals`, which `tests/test_brain_graph.py` holds equal. Reads
+    only."""
+    sessions = list(sessions)
+    out: dict = {s.pk: [] for s in sessions}
+    if not sessions:
+        return out
+    home = {s.pk: s.workspace_id for s in sessions}
+    made: set = set()
+    turns = (Turn.objects.filter(Q(canopy_session_id__in=home) | Q(chat_session_id__in=home),
+                                 raised_from_task__isnull=False)
+             .select_related("raised_from_task__project").order_by("created_at", "pk"))
+    for turn in turns:
+        sid = turn.canopy_session_id if turn.canopy_session_id in home else turn.chat_session_id
+        task = turn.raised_from_task
+        project = task.project if task is not None else None
+        if project is None or project.is_personal or project.workspace_id != home[sid] or (sid, project.pk) in made:
+            continue
+        made.add((sid, project.pk))
+        out[sid].append(Proposal(project, SourceLink.DISPATCHED, SourceLink.CORE, (f"task:{task.pk}",)))
+    sigs: dict = {}
+    for sig in ProjectSignature.objects.filter(project__workspace_id__in=set(home.values()),
+                                               project__visibility=AgentProject.WORKSPACE).select_related("project"):
+        sigs.setdefault(sig.project.workspace_id, []).append(sig)
+    for s in sessions:
+        for sig in sigs.get(s.workspace_id, ()):
+            tier, evidence = evaluate(s, sig)
+            out[s.pk].append(Proposal(sig.project, SourceLink.SIGNALS, tier, tuple(evidence)))
+    return out
+
+
 def link_dispatched(source: BrainSource, session) -> int:
     """Layer 1: write what `propose_dispatched` computes."""
     made = propose_dispatched(session, source.workspace_id)

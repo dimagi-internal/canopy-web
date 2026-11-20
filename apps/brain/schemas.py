@@ -279,3 +279,52 @@ class BrainPreviewOut(StrictModel):
     sessions: list[PreviewSession]
     next_after: str = Field(description="Pass this as `after` for the next page.")
     done: bool
+
+
+class GraphNodeOut(StrictModel):
+    """One thing in the graph. `ref` is what its own page is found by: a session's id, a project's handle, a task's
+    key, an agent's slug, a person's user id, a workspace's slug, an output's id."""
+
+    id: str
+    type: Literal["person", "agent", "session", "project", "task", "workspace", "output"]
+    label: str
+    workspace: str = Field(description="Where it lives; blank for a person.")
+    ref: str
+    at: dt.datetime | None = Field(None, description="Its latest activity in the window, when it has one.")
+    weight: int = Field(description="How many edges it has in this graph.")
+    sensitive: bool = Field(False, description="A sensitive session: drawn with no title and nothing derived.")
+    status: str = Field("", description="A task's status; an output's kind.")
+
+
+class GraphEdgeOut(StrictModel):
+    source: str
+    target: str
+    kind: Literal["participates", "started", "ran", "dispatched_from", "linked", "reports_to", "coaches",
+                  "derived_from", "about", "within"]
+    weight: float = Field(description="Turns, for `ran`, `participates` and `dispatched_from`; else 1.")
+    at: dt.datetime | None = None
+    tier: str = Field("", description="A `linked` edge's tier: core, adjacent, candidate, or rejected (your own call).")
+    how: str = Field("", description="A `linked` edge's layer (dispatched, signals, judged, declared); a "
+                                     "`reports_to` edge's workspace.")
+    proposed: bool = Field(False, description="A link the brain WOULD make (`include=proposed`), stored nowhere.")
+    evidence: list[str] = Field(default_factory=list)
+    confidence: float | None = None
+
+
+class GraphTotalsOut(StrictModel):
+    nodes: dict[str, int]
+    edges: dict[str, int]
+
+
+class WorkspaceGraphOut(StrictModel):
+    days: int
+    since: dt.datetime
+    workspaces: list[str]
+    proposed: bool = Field(description="Whether the brain's would-be links are in it.")
+    reporting: bool = Field(description="Whether reporting lines could be drawn: only to a person as themselves, "
+                                        "never through MCP.")
+    nodes: list[GraphNodeOut]
+    edges: list[GraphEdgeOut]
+    totals: GraphTotalsOut
+    notes: list[str] = Field(description="What a cap left out.")
+    truncated: bool
