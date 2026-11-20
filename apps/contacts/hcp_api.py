@@ -48,6 +48,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from apps.api.auth import session_auth
 from apps.api.route_gates import gate
+from apps.harness import acting_person
 from apps.tokens import kinds
 
 from . import hcp, people
@@ -197,11 +198,24 @@ def _principal(request: HttpRequest, turn_id: str | None, need: str = hcp.ANY) -
                      workspace_slug=serving.workspace_id, turn=turn)
 
 
+#: The credentials a governance act may arrive with: the person's browser session, or a PAT.
+#: Everything else is refused, however much its user may otherwise reach: an OAuth sign-in
+#: (`oauth`, a connector or a self-registered MCP client acting for the person), a site's or
+#: host grant's delegated token, an act-as token, a caller token, a contact's or a runner's.
+GOVERNANCE_KINDS = frozenset({kinds.SESSION, kinds.PAT})
+
+
 def _person_principal(request: HttpRequest) -> Principal:
-    """The audit log, revocation and export are the PERSON's (4.3.3, 4.2.1,
-    3.3.5): an agent — its own login or a caller token — is refused outright,
-    whatever turn it names."""
+    """The audit log, revocation, export, confirmations, rules and directives are the PERSON's
+    (4.3.3, 4.2.1, 3.3.5; v2 1.6 governance): only their own browser session or a PAT they minted
+    by hand. An agent (its own login, a turn's login, a caller token, anything naming a turn), a
+    token minted through an OAuth grant, a site's token and an HCP client's token are refused
+    outright, whatever turn they name. MCP never reaches these routes (`api_tools.EXCLUDED`)."""
+    kind = kinds.of_request(request)
     if (getattr(request, "hcp_access", None) is not None
+            or kind is None or kind.name not in GOVERNANCE_KINDS
+            or getattr(request, "via_mcp", False)
+            or acting_person.refusal(request) is not None
             or people.agent_of_login(request.user) is not None
             or kinds.speaks_for_a_turn(request)):
         raise hcp.denied("only the person may do this")

@@ -55,7 +55,7 @@ def _add(w, statement, *, basis="declared", by="person", dimension="channel", co
         category=category, dimension=dimension, confidence=confidence, actor=actor,
         by_user=w["lili"] if by == "person" else None, by_agent=w["ada"] if by == "agent" else None,
         source_turn=w["turn"] if by == "agent" else None,
-        captured_by=f"agent:ada/model:{model}" if basis == "inferred" else "")
+        captured_by=f"agent:ada/model:{model}" if basis == "inferred" else "", v2_conflicts=True)
 
 
 def _grant(w, *scopes):
@@ -179,7 +179,7 @@ def test_a_revision_that_no_longer_conflicts_removes_the_relationship_and_releas
     assert i.status == "conflicted"
     i.refresh_from_db()
     hcp.update_entry(i, statement="Prefers Slack for urgent things.", reason="narrower", actor=hcp.agent_actor(w["ada"]),
-                     dimension="urgency", source_turn=w["turn"])
+                     dimension="urgency", source_turn=w["turn"], v2=True)
     i = hcp.current(i.entry_id)
     assert not EntryRelationship.objects.filter(type="contradicts").exists()
     assert _status(d, i) == ["active", "active"]

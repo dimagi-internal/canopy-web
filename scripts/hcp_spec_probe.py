@@ -19,11 +19,15 @@ what it can claim next:
 3. **The spec repository** (`loyalagents/hcp-spec`). The spec moved there: v2 drafts live
    in `spec/<version>-draft-<n>/`, and hcp.me (question 2) never showed them, which is how
    v2 went unnoticed. The probe lists `spec/` through the GitHub contents API and compares
-   the newest `<major>.<minor>-draft-<n>` with the newest draft the conformance doc names
-   for the same major version. The repository is public today. The workflow passes
-   `HCP_SPEC_TOKEN` (or, absent that, its own token) as `GH_SPEC_TOKEN`; if the repository
-   goes private again and the token cannot read it, the answer is `no-access`, which is
-   not news and says what to add.
+   the newest `<major>.<minor>-draft-<n>` with the newest draft the conformance doc TRACKS
+   for the same major version. Tracked means named on the doc's marker line
+   (`<!-- hcp-spec-probe: tracked 1.0-draft-4, 2.0-draft-3 -->`), not merely mentioned
+   somewhere in it: a draft quoted in passing must not quiet the probe. The repository is
+   public today. The workflow passes `HCP_SPEC_TOKEN` (or, absent that, its own token) as
+   `GH_SPEC_TOKEN`; if the repository goes private again and the token cannot read it, the
+   answer is `no-access`, which IS news (the probe has gone blind and would otherwise stay
+   quiet forever) and says what to add. The workflow runs weekly, so that is at most one
+   issue comment a week.
 
 It prints a JSON report and exits 0 whatever it finds: an unreachable site or a changed
 page must never fail unrelated work. `--github-output` / `--body-file` hand the scheduled
@@ -100,9 +104,16 @@ def versions_in(text: str) -> set[tuple[int, int, int]]:
     return {tuple(int(x) for x in m) for m in _VERSIONED.findall(text)}
 
 
+_TRACKED = re.compile(r"<!--\s*hcp-spec-probe:\s*tracked\s+(?P<versions>[^>]*?)\s*-->")
+
+
 def tracked_versions(doc: pathlib.Path = CONFORMANCE_DOC) -> set[tuple[int, int, int]]:
-    """The spec versions the conformance doc names: what this repository has audited or modelled."""
-    return versions_in(doc.read_text(encoding="utf-8"))
+    """The spec versions the conformance doc TRACKS: those on its marker line, and only those.
+    A doc without the marker is an error (the probe would otherwise compare against nothing)."""
+    m = _TRACKED.search(doc.read_text(encoding="utf-8"))
+    if not m:
+        raise SystemExit(f"{doc} has no tracked-version marker (<!-- hcp-spec-probe: tracked 1.0-draft-N, ... -->)")
+    return versions_in(m.group("versions"))
 
 
 def classify_schema(status: int | None, content_type: str, body: bytes) -> dict:
@@ -171,7 +182,8 @@ def check_site(get: Fetch, implemented: int) -> dict:
 def check_repo(get: Fetch, tracked: set[tuple[int, int, int]], token: str | None) -> dict:
     """Is there a spec draft in `loyalagents/hcp-spec` newer than any the doc names, for its major version?
 
-    state: newer-draft | no-newer-draft | no-access | unreachable. Only `newer-draft` is news.
+    state: newer-draft | no-newer-draft | no-access | unreachable. `newer-draft` and `no-access` are
+    news: a repository the probe cannot read would hide every later draft.
     """
     headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
     if token:
@@ -180,9 +192,10 @@ def check_repo(get: Fetch, tracked: set[tuple[int, int, int]], token: str | None
     if status is None:
         return {"state": "unreachable", "news": False, "detail": ctype, "versions": []}
     if status in (401, 403, 404):
-        # A private repo answers 404 to a caller that cannot see it. Quiet, but said.
+        # A private repo answers 404 to a caller that cannot see it. Said out loud: otherwise the
+        # probe goes blind and nobody notices.
         why = "no token" if not token else "the token cannot read it"
-        return {"state": "no-access", "news": False, "versions": [],
+        return {"state": "no-access", "news": True, "versions": [],
                 "detail": f"{SPEC_REPO} answered {status} ({why}); add the {TOKEN_ENV} secret to watch it"}
     try:
         listing = json.loads(body.decode("utf-8"))
@@ -229,11 +242,14 @@ def body_for(report: dict) -> str:
     if site["news"]:
         lines += [f"**A newer draft** — {site['detail']}. Read what changed, then re-audit "
                   "`docs/architecture/hcp-conformance.md` against it (it names the draft it audits).", ""]
-    if repo["news"]:
+    if repo["news"] and repo["state"] == "newer-draft":
         lines += [f"**A newer draft in the spec repository** — {repo['detail']}. Read what changed "
                   "(`path-to-v2-final.md` lists the changes between drafts), then update "
                   "`docs/architecture/hcp-conformance.md` to name the draft it now models; that is "
                   "what quiets this probe.", ""]
+    if repo["state"] == "no-access":
+        lines += [f"**The spec repository cannot be read** — {repo['detail']}. Until it can, a new draft "
+                  "there goes unnoticed.", ""]
     lines += ["```json", json.dumps(report, indent=2), "```"]
     return "\n".join(lines)
 
@@ -244,7 +260,9 @@ def title_for(report: dict) -> str:
         parts.append("the JSON Schema is published (closes conformance 2.1.1)")
     if report["site"]["news"]:
         parts.append("a newer draft is out")
-    if report["repo"]["news"]:
+    if report["repo"]["state"] == "no-access":
+        parts.append("the spec repository cannot be read")
+    elif report["repo"]["news"]:
         parts.append("a newer draft is in the spec repository")
     return "HCP spec: " + " and ".join(parts)
 

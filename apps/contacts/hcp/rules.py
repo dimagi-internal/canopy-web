@@ -39,8 +39,8 @@ def host_of(identifier: str) -> str:
 
 
 def matches(rule_operator: str, operator_id: str) -> bool:
-    """6.3: a DNS domain matches every operator whose identifier's host is that domain or a
-    subdomain of it; any other value matches one operator identifier exactly."""
+    """Does a rule's operator name this operator (6.3)? A bare domain in a rule covers that host and
+    everything under it; anything else in a rule has to equal the identifier, ignoring case."""
     rule_operator = (rule_operator or "").strip().lower()
     if _DOMAIN.match(rule_operator):
         host = host_of(operator_id)

@@ -29,9 +29,17 @@ def site(pages: dict):
     return get
 
 
-def pages(schema=(200, "text/html; charset=utf-8", SHELL), bundle=b"console.log(1)", home=SHELL):
-    return {probe_mod.SCHEMA_URL: schema, probe_mod.SITE_URL: (200, "text/html", home),
-            "https://hcp.me/assets/app.js": (200, "text/javascript", bundle)}
+#: The spec repository as it stands: readable, nothing newer than the doc tracks.
+REPO_TODAY = (200, "application/json", json.dumps([{"name": n, "type": "dir"}
+                                                   for n in ("1.0-draft-4", "2.0-draft-3")]).encode())
+
+
+def pages(schema=(200, "text/html; charset=utf-8", SHELL), bundle=b"console.log(1)", home=SHELL, repo=REPO_TODAY):
+    out = {probe_mod.SCHEMA_URL: schema, probe_mod.SITE_URL: (200, "text/html", home),
+           "https://hcp.me/assets/app.js": (200, "text/javascript", bundle)}
+    if repo is not None:
+        out[probe_mod.SPEC_DIR_URL] = repo
+    return out
 
 
 def test_today_the_schema_url_is_the_html_shell_and_that_is_not_news():
@@ -160,12 +168,29 @@ def test_a_new_v1_draft_in_the_spec_repo_is_news_against_v1_only():
     assert r["repo"]["newer"] == ["1.0-draft-5"]
 
 
-def test_the_private_repo_without_a_token_is_quiet_and_says_what_to_add():
-    r = probe_mod.probe(site(pages()), implemented=4, token="", tracked={(1, 0, 4)})
-    assert r["repo"]["state"] == "no-access" and r["news"] is False
+def test_a_repo_the_probe_cannot_read_is_news_and_says_what_to_add():
+    # A blind probe is not a quiet one: every later draft would go unnoticed.
+    r = probe_mod.probe(site(pages(repo=None)), implemented=4, token="", tracked={(1, 0, 4)})
+    assert r["repo"]["state"] == "no-access" and r["news"] is True
     assert probe_mod.TOKEN_ENV in r["repo"]["detail"] and "no token" in r["repo"]["detail"]
-    r = probe_mod.probe(site(pages()), implemented=4, token="wrong", tracked={(1, 0, 4)})
-    assert "cannot read" in r["repo"]["detail"] and r["news"] is False
+    assert probe_mod.title_for(r) == "HCP spec: the spec repository cannot be read"
+    assert "cannot be read" in probe_mod.body_for(r) and "path-to-v2-final" not in probe_mod.body_for(r)
+    r = probe_mod.probe(site(pages(repo=None)), implemented=4, token="wrong", tracked={(1, 0, 4)})
+    assert "cannot read" in r["repo"]["detail"] and r["news"] is True
+
+
+def test_only_the_marker_line_says_what_is_tracked(tmp_path):
+    doc = tmp_path / "conformance.md"
+    doc.write_text("Audits 1.0-draft-4. A partner mentioned 2.0-draft-9 in passing.\n"
+                   "<!-- hcp-spec-probe: tracked 1.0-draft-4, 2.0-draft-3 -->\n")
+    assert probe_mod.tracked_versions(doc) == {(1, 0, 4), (2, 0, 3)}
+    doc.write_text("Audits 1.0-draft-4 and 2.0-draft-3, but carries no marker.\n")
+    with pytest.raises(SystemExit):
+        probe_mod.tracked_versions(doc)
+
+
+def test_the_conformance_doc_carries_the_marker():
+    assert probe_mod.tracked_versions() >= {(1, 0, 4), (2, 0, 3)}
 
 
 def test_the_token_is_sent_only_to_the_github_api_and_never_reported():

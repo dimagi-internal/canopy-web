@@ -3,9 +3,12 @@
 v2 is canopy's internal model (`hcp/v2.py`); v1 (`hcp_api.py`) stays the wire every existing caller
 uses, as an adapter over the same rows. Here are the v2 routes, planed as the spec has them (1.6):
 
-* **governance** (the person through a Management Client — their own session or PAT, never an
-  agent's login, a caller token, an OAuth client's token or a contact's), HTTP only, never MCP;
-* **context** (any client holding a grant that covers the operation).
+* **governance** (the person through a Management Client — their own browser session or a PAT they
+  minted by hand, never an agent's login, a turn's, a caller token, a connector's OAuth token, a
+  site's token or a contact's), HTTP only, never MCP;
+* **context** (canopy's own agents, each under the grant the person gave it, for the person who
+  started the turn it names). An OAuth client of the HCP service is not served here: its `hcpat_`
+  token opens `/api/hcp/v1/` only (`apps/tokens/middleware.py`), so a third-party app speaks v1.
 
 Every route is HTTP-only for now: an MCP binding for v2 is later work, so each route is listed in
 `apps/mcp/api_tools.py::EXCLUDED`. Errors are RFC 9457 problems with the registered types (9.7),
@@ -18,6 +21,7 @@ import uuid
 from functools import wraps
 
 from django.db import transaction
+from django.db.models import Q
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -26,9 +30,10 @@ from pydantic import Field
 
 from apps.api.route_gates import gate
 
-from . import hcp, hcp_api, hcp_oauth
+from . import hcp, hcp_api
 from .hcp import v2
 from .hcp.core import PROBLEM_BASE
+from .models import EntryRelationship
 
 router = Router(auth=hcp_api._HcpAuth(), tags=["hcp-v2"])
 LD_JSON = "application/ld+json"
@@ -213,9 +218,10 @@ def hcp_v2_remove_directive(request: HttpRequest, directive_id: str):
 
 # --- the context plane (5.2, 9.4) ---------------------------------------------------------------
 #
-# Any client holding a grant that covers the operation: an agent for the person who started its
-# turn (`turn`), or an OAuth client. A client receives *disclosures* (7.4), never stored entries; the
-# person (a management client) may also read and write, and gets the entry itself.
+# canopy's own agents, each for the person who started its turn (`turn`) and under the grant that
+# person gave it (an OAuth client's `hcpat_` token is confined to v1 by the bearer middleware). A
+# client receives *disclosures* (7.4), never stored entries; the person (a management client) may
+# also read and write, and gets the entry itself.
 
 
 def _disclosures(p, facts) -> list[dict]:
@@ -230,9 +236,16 @@ def _render_one(p, fact):
 
 
 def _reachable(p, action: str):
-    """The entries a client's grant reaches for `action`, current and servable, as they stand."""
-    qs = hcp.servable(hcp.PersonFact.objects.filter(person=p.person)).select_related("person", "project")
-    return [f for f in qs if hcp.within_grant(f, p.grant, action)]
+    """The entries a client's grant reaches for `action`, current and servable, as they stand. The
+    grant's reach and categories narrow the query first, and the reach is computed once."""
+    reach = hcp.reach_of(p.grant)
+    named = [s for s in reach if s is not None]
+    where = Q(workspace_id__in=named)
+    if None in reach:
+        where |= Q(workspace__isnull=True)
+    qs = hcp.servable(hcp.PersonFact.objects.filter(
+        where, person=p.person, category__in=hcp.categories_for(p.grant, action))).select_related("person", "project")
+    return [f for f in qs if hcp.within_grant(f, p.grant, action, reach=reach)]
 
 
 def _by_name(p, name: str, action: str):
@@ -250,12 +263,12 @@ def _by_name(p, name: str, action: str):
 
 
 class HcpV2QueryIn(_Body):
-    query: str = Field(description="Natural language description of the context or task.")
+    query: str = Field(description="What you are working on, in a sentence; entries are ranked against it.")
     categories: list[str] | None = Field(default=None, description="Categories to query; omitted = every one the "
                                          "grant can read for the purpose named.")
-    purpose: str = Field(description="A purpose code the grant approved for those categories.")
-    purposeDescription: str | None = Field(default=None, description="Plain language statement of the task; "
-                                           "recorded in the audit log.")
+    purpose: str = Field(description="The purpose code you are reading for; your grant has to carry it.")
+    purposeDescription: str | None = Field(default=None, description="What you are doing for the person, in "
+                                           "words they can read; kept with the read on their log.")
     maxEntries: int = Field(default=hcp.DEFAULT_MAX_ENTRIES, description="At most this many (ceiling 20).")
 
 
@@ -434,7 +447,7 @@ def hcp_v2_create_entry(request: HttpRequest, payload: HcpV2EntryIn, turn: str |
             source_turn=p.turn, by_user=hcp_api._by_user(request), expires_at=expires,
             user_verified=p.actor.is_person, project=hcp.project_of(p.turn, ws) if ws is not None else None,
             captured_by_override=hcp_api._claimed_capture(p, claimed),
-            permitted_purposes=payload.assertion.permittedPurposes, grant=p.grant)
+            permitted_purposes=payload.assertion.permittedPurposes, grant=p.grant, v2=True)
         updates = {}
         if len(cats) > 1:
             updates["extra_categories"] = cats[1:]
@@ -452,6 +465,12 @@ def hcp_v2_create_entry(request: HttpRequest, payload: HcpV2EntryIn, turn: str |
             elif r.type == "derivedFrom":
                 hcp.relationships.assert_derived_from(fact, [{"entry": entry.entry_id}], actor=p.actor, grant=p.grant)
             else:
+                if (r.type in (EntryRelationship.CONTRADICTS, EntryRelationship.SUPERSEDES)
+                        and not p.actor.is_person and not hcp.within_grant(entry, p.grant, "write")):
+                    # Either changes what other clients are served of the target (a conflict holds it,
+                    # a supersession may set it aside), so it takes the right to write the target,
+                    # not only to read it.
+                    raise hcp.denied(f"not authorized to write the entry a {r.type} names")
                 hcp.assert_relationship(fact, r.type, entry, actor=p.actor)
         fact.refresh_from_db()
         return _ok(_render_one(p, fact), status=201)
@@ -487,7 +506,8 @@ def hcp_v2_revise_entry(request: HttpRequest, entry_id: str, payload: HcpV2Revis
         if fact.version != payload.expectedVersion:
             raise hcp.HcpError("version-conflict", f"the entry is at version {fact.version}")
         new = hcp.update_entry(fact, statement=payload.content.value, reason=payload.reason, actor=p.actor,
-                               by_user=hcp_api._by_user(request), source_turn=p.turn, model=payload.model)
+                               by_user=hcp_api._by_user(request), source_turn=p.turn, model=payload.model,
+                               v2=True)
         return _ok(_render_one(p, new))
     return hcp_api._idempotent(request, {"entry": entry_id, **payload.model_dump()}, run)
 
@@ -544,7 +564,7 @@ def grant_v2(grant) -> dict:
 @gate("self", "hcp-grant")  # a client sees only the grant it acts under (5.2.6)
 def hcp_v2_list_grants(request: HttpRequest, status: str = "active", turn: str | None = None):
     """The person (a management client): every grant, `status` = active | revoked | expired | all.
-    A client: only the grant it acts under (5.2.6); a grant is never disclosed to another client."""
+    An agent: only the grant it acts under (5.2.6); a grant is never disclosed to another client."""
     p = hcp_api._principal(request, turn, hcp.ANY)
     if not p.actor.is_person:
         return _ok({"grants": [grant_v2(p.grant)]})
@@ -560,18 +580,13 @@ def hcp_v2_list_grants(request: HttpRequest, status: str = "active", turn: str |
 @v2_route
 @gate("self", "hcp-grant", setting=True)  # the person revokes any; a client may only give up its own
 def hcp_v2_revoke_grant(request: HttpRequest, grant_id: str, turn: str | None = None):
-    """The person revokes any grant of theirs (6.2.1); a client may give up the grant it acts under
-    (5.2.7) and no other. Never rate limited. Every request after it fails, whatever token it carries."""
-    tok = getattr(request, "hcp_access", None)
+    """The person revokes any grant of theirs (6.2.1); an agent may give up the grant it acts under
+    for the turn it names (5.2.7) and no other. Never rate limited. Every request after it fails."""
     try:
         gid = uuid.UUID(grant_id.split(":")[-1])
     except ValueError:
         raise hcp.denied() from None
-    if tok is not None:
-        grant, actor = hcp._expire_if_due(tok.grant), hcp_oauth.client_actor(tok.client)
-        if grant.grant_id != gid:
-            raise hcp.denied()
-    elif hcp_api.people.agent_of_login(request.user) is not None or hcp_api.kinds.speaks_for_a_turn(request):
+    if hcp_api.people.agent_of_login(request.user) is not None or hcp_api.kinds.speaks_for_a_turn(request):
         p = hcp_api._principal(request, turn, hcp.ANY)
         if p.grant is None or p.grant.grant_id != gid:
             raise hcp.denied()

@@ -499,13 +499,14 @@ def _restricted_entry_ids(grant: PersonGrant, category: str, action: str) -> set
     return ids
 
 
-def within_grant(fact: PersonFact, grant: PersonGrant | None, action: str) -> bool:
+def within_grant(fact: PersonFact, grant: PersonGrant | None, action: str, *, reach: set | None = None) -> bool:
     """Is this entry inside what the grant reaches? A first-party agent grant
     reaches its own workspace; an OAuth client's grant reaches the sources its
-    restriction names (the person's personal entries, plus workspaces they chose)."""
+    restriction names (the person's personal entries, plus workspaces they chose).
+    `reach`: `reach_of(grant)` computed once by a caller checking many entries."""
     if grant is None:
         return False
-    if fact.workspace_id not in reach_of(grant):
+    if fact.workspace_id not in (reach if reach is not None else reach_of(grant)):
         return False
     if not allows(grant, fact.category, action) or rules.withholds(grant, fact):
         return False

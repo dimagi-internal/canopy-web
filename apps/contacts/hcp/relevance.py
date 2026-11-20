@@ -24,7 +24,7 @@ from .core import (
     valid_category,
 )
 from .entries import servable
-from .grants import categories_for, within_grant
+from .grants import categories_for, reach_of, within_grant
 from .purposes import entry_serves, read_purpose
 
 # --- search (3.1, 4.4) -----------------------------------------------------------
@@ -211,8 +211,9 @@ def search(person: Person, *, workspace_slugs, query: str, categories: list[str]
         where |= Q(workspace__isnull=True)
     qs = servable(PersonFact.objects.filter(where, person=person, category__in=wanted)
                   ).select_related("project", "person", "workspace") if slugs else PersonFact.objects.none()
+    reach = reach_of(grant) if grant is not None and not actor.is_person else None
     candidates = [f for f in qs if actor.is_person
-                  or (within_grant(f, grant, "read") and entry_serves(f, code))]
+                  or (within_grant(f, grant, "read", reach=reach) and entry_serves(f, code))]
     returned, scores_all, stats = explain(candidates, query, limit=limit, project_id=project_id)
     hits = [sc.fact for sc in returned]
     workspace_slug = slugs[0] if slugs else None
@@ -241,7 +242,9 @@ def search(person: Person, *, workspace_slugs, query: str, categories: list[str]
         best = stats["best_meaning"]
         why = (f"nothing matched (closest meaning {best:.2f}, cutoff {stats['floor']:.2f})"
                if best is not None else "nothing matched")
-        audit(person, "preference.read", actor=actor, category=",".join(wanted)[:80], purpose=purpose,
+        # Nothing was received, so the event names no category; what was searched is in `data`
+        # (`categoriesSearched`), never one category string that no category matches.
+        audit(person, "preference.read", actor=actor, purpose=purpose,
               grant=grant, workspace_slug=workspace_slug, turn=turn, detail=f"{detail}; why={why}; query={asked}",
               purpose_code=code, data=data)
     from django.conf import settings
