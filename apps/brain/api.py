@@ -232,4 +232,5 @@ def list_my_removed_sessions(request: HttpRequest) -> list[dict]:
     user = _the_person(request)
     rows = (SourceExclusion.objects.filter(user=user, source__session__isnull=False)
             .select_related("source__session").order_by("-created_at")[:200])
-    return [{"session_id": r.source.session_id, "title": r.source.session.title or ""} for r in rows]
+    return [{"session_id": r.source.session_id, "title": r.source.session.title or "",
+             "workspace": r.source.session.workspace_id} for r in rows]

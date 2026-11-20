@@ -34,17 +34,20 @@ REVOKED, SOURCE_WITHDRAWN, SOURCE_RESTORED = "learning.revoked", "learning.sourc
 #: the outputs: the contract, not marketing.
 CLASS_COPY = {
     "individual": {"learns_about": "you",
-                   "summary": "Coaches learn how you work and suggest how to work better",
-                   "seen_by": "you, your coaches and your manager"},
+                   "summary": "Coaches learn how you work and suggest how to work better. "
+                              "To do that, your coaches read the full transcripts of your sessions",
+                   "seen_by": "you; your coaches, who read your transcripts; your manager, who sees only "
+                              "what was learned, never a transcript"},
     "memory": {"learns_about": "you",
-               "summary": "Agents remember what you tell them about yourself and your work",
-               "seen_by": "agents serving you, under your grant"},
+               "summary": "Agents remember what you tell them about yourself and your work, in your memory",
+               "seen_by": "only the agents you grant your memory to"},
     "project": {"learns_about": "a project",
-                "summary": "Your sessions on a project help it move forward; its team can read them",
-                "seen_by": "the project's readers"},
+                "summary": "Your sessions tied to a project help it move forward. A session shared with "
+                           "others is used only if everyone in it agreed",
+                "seen_by": "anyone with access to the project, who may read the session with secrets removed"},
     "system": {"learns_about": "canopy and the fleet",
                "summary": "Canopy learns where its agents and tools fail, to fix them",
-               "seen_by": "canopy and agent admins"},
+               "seen_by": "canopy's learning systems and the admins who run them"},
 }
 
 
@@ -101,22 +104,64 @@ def _clean_directives(directives) -> list[str]:
     return list(directives)
 
 
+def _scope(row, workspaces, include_new, mine) -> dict:
+    """The scope fields to write. Nothing sent keeps what the row has (a class toggle never moves the
+    scope, nor what counts as a "new" workspace). Sent workspaces the person has since left drop out;
+    one they were never in is refused; and a list that drops to nothing after that is refused, since
+    an empty list would widen the consent to every workspace."""
+    out = {}
+    if workspaces is not None:
+        asked = set(workspaces)
+        had = set(row.workspaces or []) if row else set()
+        if asked - mine - had:
+            raise RefusedError("workspaces may name only workspaces you are in")
+        kept = sorted(asked & mine)
+        if asked and not kept:
+            raise RefusedError("you are no longer in any of the workspaces named; name one you are in")
+        out["workspaces"] = kept
+        out["known_workspaces"] = sorted(mine) if kept else []
+    elif row is None:
+        out["workspaces"], out["known_workspaces"] = [], []
+    if include_new is not None or row is None:
+        out["include_new"] = True if include_new is None else bool(include_new)
+    return out
+
+
+def _narrows(before: dict, after: dict) -> bool:
+    """Could the change take away a use the consent allowed: a workspace or "new" workspaces no longer
+    covered, or a standing rule added. Dropping a class is checked beside this."""
+    old_ws, new_ws = set(before["workspaces"]), set(after["workspaces"])
+    if new_ws and (not old_ws or old_ws - new_ws):
+        return True
+    if new_ws and before["include_new"] and not after["include_new"]:
+        return True
+    if new_ws and set(after["known_workspaces"]) - set(before["known_workspaces"]) and after["include_new"]:
+        return True                        # a workspace that was "new" (covered) is now known and not listed
+    return any(r not in before["standing_rules"] for r in after["standing_rules"])
+
+
+def _state(row) -> dict:
+    if row is None:
+        return {"workspaces": [], "include_new": True, "known_workspaces": [], "standing_rules": []}
+    return {"workspaces": list(row.workspaces or []), "include_new": bool(row.include_new),
+            "known_workspaces": list(row.known_workspaces or []), "standing_rules": list(row.standing_rules or [])}
+
+
 @transaction.atomic
-def set_consent(user, *, classes, workspaces=(), include_new: bool = True, standing_rules=None,
+def set_consent(user, *, classes, workspaces=None, include_new: bool | None = None, standing_rules=None,
                 directives=None) -> LearningConsent:
-    """Make or change the person's consent so it is exactly this. No classes is refused: ending
-    consent is `revoke`. Writes `CoachingOptIn` to match the `individual` class."""
+    """Make or change the person's consent. `classes` is the whole set; each other field is changed
+    only when sent (None keeps it). No classes is refused: ending consent is `revoke`. Anything that
+    narrows it (a class dropped, fewer workspaces, `include_new` off, a standing rule added) runs the
+    removal cascade over the person's sources. Writes `CoachingOptIn` to match the `individual` class."""
     classes = sorted(set(classes))
     if not classes or set(classes) - set(CLASSES):
         raise RefusedError(f"classes must be a non-empty set of {', '.join(CLASSES)}")
-    mine = wsvc.user_workspace_slugs(user)
-    workspaces = sorted(set(workspaces))
-    if set(workspaces) - mine:
-        raise RefusedError("workspaces may name only workspaces you are in")
+    mine = set(wsvc.user_workspace_slugs(user))
     row = live(user)
     before = set(row.classes) if row else set()
-    fields = {"classes": classes, "workspaces": workspaces, "include_new": bool(include_new),
-              "known_workspaces": sorted(mine) if workspaces else []}
+    was = _state(row)
+    fields = {"classes": classes, **_scope(row, workspaces, include_new, mine)}
     if standing_rules is not None:
         fields["standing_rules"] = validate_rules(standing_rules)
     if directives is not None:
@@ -135,7 +180,7 @@ def set_consent(user, *, classes, workspaces=(), include_new: bool = True, stand
         for cls in sorted(before - set(classes)):
             _record(user, CLASS_REMOVED, purpose=f"stop canopy learning for {cls}", detail=cls,
                     ids={"class": cls})
-    if before - set(classes):
+    if before - set(classes) or (before and _narrows(was, _state(row))):
         cascade.after_commit(cascade.sources_of(user))
     _sync_coaching(user, on=INDIVIDUAL in classes)
     return row

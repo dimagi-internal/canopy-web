@@ -32,8 +32,10 @@ class LearningIn(StrictModel):
     model_config = ConfigDict(extra="forbid")
 
     classes: list[str] = Field(description="Every class you agree to; at least one. Ending it all is DELETE.")
-    workspaces: list[str] = Field(default_factory=list, description="Empty means every workspace you are in.")
-    include_new: bool = True
+    workspaces: list[str] | None = Field(
+        None, description="Empty means every workspace you are in. Omit to keep. A workspace you have left is dropped.")
+    include_new: bool | None = Field(
+        None, description="With workspaces set: whether ones you join later are covered too. Omit to keep.")
     standing_rules: list[dict[str, str]] | None = Field(
         None, description="Deny-only rules, each naming the learner, purpose, class and/or workspace it denies. Omit to keep.")
     directives: list[str] | None = Field(None, description="Words every reader is shown. Omit to keep.")
@@ -195,6 +197,7 @@ class DisclosureDayOut(StrictModel):
 class RemovedSessionOut(StrictModel):
     session_id: uuid.UUID
     title: str = ""
+    workspace: str = Field("", description="The session's workspace, for a link to its page.")
 
 
 class ProjectSessionOut(StrictModel):

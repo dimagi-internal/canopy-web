@@ -27,6 +27,7 @@ import { ShareToSlackForm } from "./ShareToSlack";
 import { ShareSecretForm } from "./ShareSecret";
 import { MoveWorkspaceForm, type MoveTarget } from "./MoveWorkspaceForm";
 import { MemoryDots, SessionMemoryPanel, memorySummary, type SessionMemoryControl } from "./SessionMemoryToggles";
+import { SessionLearningPanel, useSessionLearning } from "./SessionLearning";
 import { SessionInfoPanel } from "./SessionInfoPanel";
 import { SessionReviewPanel, useSessionReviewOffer } from "./SessionReview";
 
@@ -59,6 +60,10 @@ function MenuSection({ children }: { children: React.ReactNode }) {
  * Your memory in this conversation lives here too: a
  * chip in the header would give a setting you rarely change top billing. The item
  * carries its dots (green working, red not) so the state is one tap away.
+ *
+ * "Learning…" is the person's own control over canopy learning from this session:
+ * remove it (or let it back in) and say which project it belongs to. It shows only
+ * to a person who is in the session — the route answers anyone else 404 or 403.
  *
  * Session info sits with People: both are about the conversation rather than
  * something you do to it — who is in it, and where it came from. "Copy join
@@ -151,7 +156,10 @@ export function ChatSessionMenu({
   toolRows?: ToolRowsView;
   onToolRowsChange?: (view: ToolRowsView) => void;
 }) {
-  const [panel, setPanel] = useState<"people" | "info" | "slack" | "secret" | "move" | "memory" | "review" | null>(null);
+  const [panel, setPanel] = useState<
+    "people" | "info" | "slack" | "secret" | "move" | "memory" | "review" | "learning" | null
+  >(null);
+  const [learning, setLearning] = useSessionLearning(sessionId);
   const [reviewOffer, setReviewOffer] = useSessionReviewOffer(sessionId, myRole === "owner");
   const [copied, setCopied] = useState<"yes" | "blocked" | null>(null);
   useEffect(() => {
@@ -242,6 +250,14 @@ export function ChatSessionMenu({
                 <span className="text-[12px] text-muted-foreground">
                   <MemoryDots memory={memory} />
                 </span>
+              </span>
+            </DropdownMenuItem>
+          )}
+          {learning && (
+            <DropdownMenuItem inset data-testid="session-learning" onClick={() => setPanel("learning")}>
+              <span className="flex w-full items-center justify-between gap-2">
+                Learning…
+                {learning.excluded && <span className="text-[12px] text-muted-foreground">removed</span>}
               </span>
             </DropdownMenuItem>
           )}
@@ -343,6 +359,8 @@ export function ChatSessionMenu({
                 ? "Session info"
               : panel === "memory"
                 ? "Your memory in this conversation"
+              : panel === "learning"
+                ? "Learning from this session"
               : panel === "review"
                 ? `Ask ${reviewOffer?.name ?? "a coach"} to review this`
               : panel === "secret"
@@ -361,6 +379,9 @@ export function ChatSessionMenu({
             <div className="text-[12px]">
               <SessionMemoryPanel memory={memory} />
             </div>
+          )}
+          {panel === "learning" && learning && (
+            <SessionLearningPanel sessionId={sessionId} workspace={workspace} state={learning} onChange={setLearning} />
           )}
           {panel === "people" && <ChatPeoplePanel sessionId={sessionId} myRole={myRole} canAddPeople={canAddPeople} />}
           {panel === "info" && <SessionInfoPanel sessionId={sessionId} />}

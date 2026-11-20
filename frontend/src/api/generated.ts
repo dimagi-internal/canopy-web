@@ -51360,14 +51360,14 @@ export interface components {
             readonly classes: readonly string[];
             /**
              * Workspaces
-             * @description Empty means every workspace you are in.
+             * @description Empty means every workspace you are in. Omit to keep. A workspace you have left is dropped.
              */
-            readonly workspaces?: readonly string[];
+            readonly workspaces?: readonly string[] | null;
             /**
              * Include New
-             * @default true
+             * @description With workspaces set: whether ones you join later are covered too. Omit to keep.
              */
-            readonly include_new: boolean;
+            readonly include_new?: boolean | null;
             /**
              * Standing Rules
              * @description Deny-only rules, each naming the learner, purpose, class and/or workspace it denies. Omit to keep.
@@ -51465,6 +51465,12 @@ export interface components {
              * @default
              */
             readonly title: string;
+            /**
+             * Workspace
+             * @description The session's workspace, for a link to its page.
+             * @default
+             */
+            readonly workspace: string;
         };
         /** HcpSearchIn */
         readonly HcpSearchIn: {
