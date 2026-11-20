@@ -450,8 +450,16 @@ export interface paths {
          *     A provider's refusal is a 200 here with its own `status`. A refusal of the call itself is a problem
          *     whose `error` says why and whose `detail` is a sentence to show: `not_connected`, `server_use_off`,
          *     `ambiguous`, `not_declared`, `not_allowed`, `provider_not_supported`, `needs_approval`, `needs_operation`,
-         *     `rate_limited`, `session_ended`, `request_too_large`, `response_too_large`, `response_unreadable`,
-         *     `provider_unavailable`.
+         *     `rate_limited`, `provider_rate_limited` (Salesforce is limiting calls: `retry_after` and `limits` when it
+         *     said them), `session_ended`, `request_too_large`, `response_too_large`, `response_unreadable`,
+         *     `provider_unavailable`. Salesforce's own count of the org's API use comes back as `limits`.
+         *
+         *     `GET query/<locator>` is a query's next page (the locator from its `nextRecordsUrl`), covered by the
+         *     screen's `GET query`. `POST composite/batch` (`{batchRequests: [{method, url, richInput?}], haltOnError?}`,
+         *     at most 25, each `url` under `/services/data/<version>/`) and `composite/sobjects` (`POST`/`PATCH`
+         *     `{records, allOrNone?}`, `DELETE ?ids=…`, `GET composite/sobjects/<type>?ids=…&fields=…`; at most 200
+         *     records) are checked call by call, or record by record, as if each were made alone, and each write in
+         *     them spends one of the lease's writes.
          */
         readonly post: operations["request_connection_call"];
         readonly delete?: never;
@@ -21275,6 +21283,11 @@ export interface components {
              * @description The start of an answer that was not JSON. Absent otherwise.
              */
             readonly text?: string | null;
+            /**
+             * Limits
+             * @description Salesforce's `Sforce-Limit-Info` header as it came (`api-usage=18/15000`): the org's API use. Absent when it sent none.
+             */
+            readonly limits?: string | null;
         };
         /** AppSurfaceIn */
         readonly AppSurfaceIn: {
@@ -21303,7 +21316,7 @@ export interface components {
             readonly method: string;
             /**
              * Path
-             * @description Relative to Salesforce's API root, for example `query` or `sobjects/Lead/00Q…`. Plain names and slashes only.
+             * @description Relative to Salesforce's API root, for example `query`, `query/<nextRecordsUrl locator>` or `sobjects/Lead/00Q…`; `composite/batch` and `composite/sobjects` hold several calls, each checked as if made alone. Plain names and slashes only.
              */
             readonly path: string;
             /**

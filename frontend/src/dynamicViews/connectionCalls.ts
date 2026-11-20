@@ -21,6 +21,9 @@
  * - A line the screen did not declare is refused here as well, as a courtesy. This is
  *   a declared-line match and nothing more: the server is the authority (allowlist,
  *   revision, whose connection), and refuses in a sentence the frame is shown as is.
+ *   A query's next page (`GET query/<locator>`) is covered by `GET query`. A composite call
+ *   (`composite/batch`, `composite/sobjects`) is never declared: the server checks each call in
+ *   it, so here it only decides whether it needs a lease, and spends one write per write in it.
  *
  * Free of React and of the network (the client is passed in): connectionCalls.test.ts.
  */
@@ -56,6 +59,8 @@ export interface CallResult {
   status: number
   body?: unknown
   text?: string | null
+  /** Salesforce's `Sforce-Limit-Info` (`api-usage=18/15000`), when it sent one. */
+  limits?: string | null
 }
 export interface LeaseWindow {
   expires_at: string
@@ -120,8 +125,31 @@ export const NEEDS_CLICK = 'This needs a click.'
 const matches = (line: DeclaredLine, method: string, path: string) => {
   if (line.method !== method) return false
   const want = String(line.path).split('/')
-  const got = path.split('/')
+  // A query's next page is covered by the query (the server's `Rule.declared_as`).
+  const got = method === 'GET' && /^query\/[^/]+$/.test(path) ? ['query'] : path.split('/')
   return want.length === got.length && want.every((w, i) => w === '*' || w === got[i])
+}
+
+const COMPOSITE = /^composite\/(batch|sobjects)(\/[^/]+)?$/
+
+/**
+ * For a composite call, how many writes it holds (0: it is a read); null for any other call.
+ * A batch's call is a write unless it is a GET; a collection's every record is one. The server counts
+ * the same way and has the last word.
+ */
+export function compositeWrites(method: string, path: string, body: unknown, query: unknown): number | null {
+  if (!COMPOSITE.test(path)) return null
+  if (method === 'GET') return 0
+  const b = (body ?? {}) as { batchRequests?: unknown; records?: unknown }
+  if (path === 'composite/batch') {
+    const subs = Array.isArray(b.batchRequests) ? b.batchRequests : []
+    return subs.filter((r) => String((r as { method?: unknown })?.method ?? '').toUpperCase() !== 'GET').length
+  }
+  if (method === 'DELETE') {
+    const ids = (query as { ids?: unknown } | null)?.ids
+    return typeof ids === 'string' ? ids.split(',').length : 1
+  }
+  return Array.isArray(b.records) ? Math.max(b.records.length, 1) : 1
 }
 
 /**
@@ -287,8 +315,11 @@ export class ConnectionCalls {
     const as = r.as === 'shared' ? 'shared' : 'viewer'
     const agent = typeof r.agent === 'string' && r.agent ? r.agent : undefined
 
+    const composite = compositeWrites(method, path, r.body, r.query)
     let isRead = true
-    if (ctx.declared) {
+    if (composite !== null) {
+      isRead = composite === 0
+    } else if (ctx.declared) {
       const entry = ctx.declared.find((e) => e.provider === provider && (e.as ?? 'viewer') === as && (as === 'viewer' || e.agent === agent))
       const read = !!entry?.reads?.some((l) => matches(l, method, path))
       const write = !read && !!entry?.writes?.some((l) => matches(l, method, path))
@@ -298,6 +329,7 @@ export class ConnectionCalls {
       isRead = false // unknown here: treat anything but GET as a write
     }
     if (method === 'GET') isRead = true
+    const writes = isRead ? 0 : Math.max(composite ?? 1, 1)
 
     const base: CallBody = {
       method, path, surface, as,
@@ -308,18 +340,19 @@ export class ConnectionCalls {
     if (isRead) return this.send(provider, base)
 
     const key = surfaceKey(surface)
-    if (this.liveLease(key)) return this.send(provider, base, key)
+    if (this.liveLease(key, writes)) return this.send(provider, base, key, writes)
     let opening = this.opening?.key === key ? this.opening.promise : null
     if (!opening) {
       if (!clicked) throw new Error(NEEDS_CLICK)
       opening = this.open(surface, key)
     }
-    return opening.then(() => this.send(provider, base, key))
+    return opening.then(() => this.send(provider, base, key, writes))
   }
 
-  private liveLease(key: string): Lease | null {
+  /** The live lease on this surface with room for `writes` more. */
+  private liveLease(key: string, writes = 1): Lease | null {
     const l = this.lease
-    if (!l || l.key !== key || l.used >= MAX_WRITES) return null
+    if (!l || l.key !== key || l.used + writes > MAX_WRITES) return null
     const t = this.now()
     return t < l.lastWrite + LEASE_IDLE_MS && t < l.opened + LEASE_HARD_LIMIT_MS ? l : null
   }
@@ -348,13 +381,13 @@ export class ConnectionCalls {
   }
 
   /** `leaseKey`: this is a write on that surface, so it takes its turn and then needs a live lease. */
-  private send(provider: string, body: CallBody, leaseKey?: string): Promise<CallResult> {
+  private send(provider: string, body: CallBody, leaseKey?: string, writes = 1): Promise<CallResult> {
     return this.queue.run(this, () => {
       let lease: Lease | null = null
       if (leaseKey !== undefined) {
-        lease = this.liveLease(leaseKey)
+        lease = this.liveLease(leaseKey, writes)
         if (!lease) throw new Error(NEEDS_CLICK)
-        lease.used += 1
+        lease.used += writes
         lease.lastWrite = this.now()
       }
       const ctl = new AbortController()

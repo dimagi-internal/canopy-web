@@ -102,11 +102,20 @@ def test_refusal_is_a_sentence_without_jargon_leakage():
     assert text.endswith(".") and len(text.split()) >= 4
 
 
-def test_refuses_composite():
+def test_only_the_two_composite_calls_are_on_the_list():
+    """`composite/batch` and sObject Collections, which `expand` takes apart; never `composite` itself,
+    a tree, a graph, or another method on them."""
+    for method, path in (("POST", "composite/batch"), ("POST", "composite/sobjects"), ("PATCH", "composite/sobjects"),
+                         ("DELETE", "composite/sobjects"), ("GET", "composite/sobjects/Lead")):
+        assert calls.is_composite(calls.match("salesforce", method, path))
     for method in ("GET", "POST", "PATCH", "DELETE"):
-        for path in ("composite", "composite/batch", "composite/tree/Account", "composite/sobjects"):
+        for path in ("composite", "composite/tree/Account", "composite/graph", "composite/sobjects/Lead/x/y"):
             with pytest.raises(NotAllowed):
                 calls.match("salesforce", method, path)
+    for method, path in (("GET", "composite/batch"), ("PATCH", "composite/batch"), ("GET", "composite/sobjects"),
+                         ("POST", "composite/sobjects/Lead")):
+        with pytest.raises(NotAllowed):
+            calls.match("salesforce", method, path)
 
 
 @pytest.mark.parametrize("method,path", [
@@ -266,7 +275,7 @@ def test_query_accepts_strings_lists_and_nothing():
 
 
 def test_build_url_matches_the_allowlist_itself():
-    for method, path in (("GET", "composite"), ("POST", "composite/batch"), ("GET", "tooling/query"),
+    for method, path in (("GET", "composite"), ("POST", "composite/tree/Account"), ("GET", "tooling/query"),
                          ("DELETE", "query"), ("POST", f"sobjects/User/{LEAD}")):
         with pytest.raises(NotAllowed):
             calls.build_url("salesforce", INSTANCE, path, None, method=method)
