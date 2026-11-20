@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 from django.db.models import Exists, OuterRef, Q
 
+from apps.agents.models import Agent
 from apps.harness import runner_requirements as rr
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
@@ -102,8 +103,7 @@ def eligible(source: BrainSource, capability, purpose: str, subject=None) -> Eli
         return _no("purpose_not_declared")
     if source.kind not in (cap.source_kinds or []):
         return _no("source_kind_not_declared")
-    people = list(source.participants.all())
-    users = [p.user_id for p in people if p.user_id is not None]
+    users, has_contact = _people(source)
     excluded = set(source.exclusions.values_list("user_id", flat=True))
     if cap.purpose_class in ABOUT_A_PERSON:
         who = getattr(subject, "pk", subject)
@@ -113,13 +113,12 @@ def eligible(source: BrainSource, capability, purpose: str, subject=None) -> Eli
             return _no(f"excluded:{who}")
         needed = [who]
     elif cap.purpose_class in SHARED:
-        if any(p.contact_id is not None for p in people):
+        if has_contact:
             return _no("contact_in_source")
         if not users:
             return _no("no_human_participant")
-        hit = next((u for u in users if u in excluded), None)
-        if hit is not None:
-            return _no(f"excluded:{hit}")
+        if excluded:             # anyone's removal, permanently: still in it or since taken out
+            return _no(f"excluded:{min(excluded)}")
         needed = users
     else:  # pragma: no cover — CLASSES is closed above
         return _no("unknown_class")
@@ -132,6 +131,43 @@ def eligible(source: BrainSource, capability, purpose: str, subject=None) -> Eli
         if member is None or not wsvc.is_member(member, source.workspace_id):
             return _no(f"not_a_member:{uid}")
     return Eligibility(True)
+
+
+def _people(source: BrainSource) -> tuple[list[int], bool]:
+    """The human users in a source and whether a contact is, from the stored rows AND the session read
+    live, so someone who joined since the last refresh counts."""
+    stored = list(source.participants.all())
+    live = participants.people_of(source.session) if source.session is not None else []
+    users = {p.user_id for p in stored if p.user_id is not None} | {u for _h, u, _c in live if u is not None}
+    has_contact = any(p.contact_id is not None for p in stored) or any(c is not None for _h, _u, c in live)
+    return sorted(users), has_contact
+
+
+def everyone_agreed(source: BrainSource, cls: str) -> bool:
+    """May canopy's AUTOMATIC layers even look at this source for a shared class (`associate`'s dispatched
+    and signals layers, a signature's seed)? Only when it is open and unsealed, no contact is in it, no one
+    ever excluded it, and every human in it agreed to `cls` for its workspace and is a member there. No
+    capability is involved, so only a standing rule that names nothing but the class or workspace counts.
+    Fails closed."""
+    source = BrainSource.objects.filter(pk=getattr(source, "pk", None)).select_related("session").first()
+    if source is None or source.state != BrainSource.OPEN or cls not in SHARED:
+        return False
+    if participants.sealed_reason(source.session) or source.exclusions.exists():
+        return False
+    users, has_contact = _people(source)
+    if has_contact or not users:
+        return False
+    consents = {c.user_id: c for c in LearningConsent.objects.filter(user_id__in=users, revoked_at__isnull=True)}
+    for uid in users:
+        c = consents.get(uid)
+        if (c is None or cls not in (c.classes or []) or not covers(c, source.workspace_id)
+                or any(rule_denies(r, capability="", purpose="", cls=cls, workspace=source.workspace_id)
+                       for r in (c.standing_rules or []))):
+            return False
+        member = _user(uid)
+        if member is None or not wsvc.is_member(member, source.workspace_id):
+            return False
+    return True
 
 
 def _user(user_id):
@@ -189,9 +225,39 @@ def eligible_sources(capability, purpose: str, subject=None):
     for ws, people in bad_in.items():
         bad |= Q(source__workspace_id=ws, user_id__in=people)
     contacts = SourceParticipant.objects.filter(source=OuterRef("pk"), contact__isnull=False)
-    out = SourceExclusion.objects.filter(source=OuterRef("pk")).filter(
-        Exists(SourceParticipant.objects.filter(source=OuterRef("source"), user=OuterRef("user"))))
-    return qs.filter(Exists(humans), ~Exists(contacts), ~Exists(out), ~Exists(humans.filter(bad)))
+    out = SourceExclusion.objects.filter(source=OuterRef("pk"))      # anyone's, member or not, for good
+    qs = qs.filter(Exists(humans), ~Exists(contacts), ~Exists(out), ~Exists(humans.filter(bad)))
+    return _live_people_agree(qs, consenting, bad_in)
+
+
+def _live_people_agree(qs, consenting: set[int], bad_in: dict[str, set[int]]):
+    """The session's own rows, read live, so a person added to it or starting a turn in it since the last
+    `sources.refresh` is asked too: no one added (`SessionParticipant`) or who started a turn (`Turn`
+    initiator) may be without consent, and a contact starting a turn is a no. An agent's login is never
+    asked. Indexed foreign keys only; a line written outside a turn is caught by `refresh`."""
+    from apps.canopy_sessions.models import SessionParticipant  # noqa: PLC0415 — as the other lazy imports here
+    from apps.harness.models import Turn  # noqa: PLC0415 — as the other lazy imports here
+
+    agents = Agent.objects.filter(user__isnull=False).values("user_id")
+    added = SessionParticipant.objects.filter(session=OuterRef("session_id")).exclude(user_id__in=agents)
+    by_chat = Turn.objects.filter(chat_session=OuterRef("session_id"))
+    by_canopy = Turn.objects.filter(canopy_session=OuterRef("session_id"))
+
+    def started(turns, people):
+        return turns.filter(initiator_user_id__in=people)
+
+    def unconsented_starter(turns):
+        return turns.filter(Q(initiator_contact__isnull=False)
+                            | (Q(initiator_user__isnull=False) & ~Q(initiator_user_id__in=sorted(consenting))
+                               & ~Q(initiator_user_id__in=agents)))
+
+    qs = qs.filter(~Exists(added.exclude(user_id__in=sorted(consenting))),
+                   ~Exists(unconsented_starter(by_chat)), ~Exists(unconsented_starter(by_canopy)))
+    for ws, people in bad_in.items():
+        people = sorted(people)
+        qs = qs.exclude(Q(workspace_id=ws) & (Exists(added.filter(user_id__in=people))
+                                              | Exists(started(by_chat, people)) | Exists(started(by_canopy, people))))
+    return qs
 
 
 def _users(ids):

@@ -82,10 +82,21 @@ def revoke_my_learning(request: HttpRequest) -> dict:
     return _out(user)
 
 
-def _my_session(request: HttpRequest, user, session_id: uuid.UUID) -> Session:
-    """A session `user` is in, else "not found": a stranger learns nothing about whether it exists."""
-    session = access.readable_sessions(user).filter(pk=session_id).first()
-    if session is None or not any(u == user.pk for _how, u, _c in participants.people_of(session)):
+def _my_session(request: HttpRequest, user, session_id: uuid.UUID, *, readable: bool = False) -> Session:
+    """A session `user` is in, else "not found": a stranger learns nothing about whether it exists.
+
+    "In it" is `participants.people_of`: their words are in it, even once taken out of it, so they can
+    still take it out of learning, see that they did and undo it. A session they excluded stays theirs
+    to see and manage whatever happens to them in it. `readable` (saying which project it belongs to)
+    also needs them to be able to read it now."""
+    session = Session.objects.filter(pk=session_id).first()
+    if session is None:
+        raise ProblemError(404, "Session not found", type_=TYPE_NOT_FOUND)
+    source = sources.existing(session)
+    if not readable and source is not None and SourceExclusion.objects.filter(user=user, source=source).exists():
+        return session
+    in_it = any(u == user.pk for _how, u, _c in participants.people_of(session))
+    if not in_it or (readable and not access.readable_sessions(user).filter(pk=session_id).exists()):
         raise ProblemError(404, "Session not found", type_=TYPE_NOT_FOUND)
     return session
 
@@ -94,7 +105,8 @@ def _source_out(user, session) -> dict:
     source = sources.existing(session)
     out = source is not None and SourceExclusion.objects.filter(user=user, source=source).exists()
     links = []
-    if source is not None:
+    # Which projects it belongs to only for someone who can read it now (not someone since taken out).
+    if source is not None and access.readable_sessions(user).filter(pk=session.pk).exists():
         for link in source.links.filter(subject_type=SourceLink.PROJECT_SUBJECT).order_by("pk"):
             project = AgentProject.objects.filter(pk=link.subject).first()
             if project is not None and may_read_project(user, project):   # never reveal a project they cannot read
@@ -140,9 +152,11 @@ def get_my_session_learning(request: HttpRequest, session_id: uuid.UUID) -> dict
 # ---- which project a session belongs to (layer 4: declared) -------------------------------------------
 
 def _project_of(user, session, handle: str) -> AgentProject:
-    """A project of the session's own workspace that `user` is in and may read, else "not found"."""
+    """A WORKSPACE project of the session's own workspace that `user` is in and may read, else "not
+    found". Never a personal project: a link to one would hand a session to its lead and agents."""
     project = AgentProject.objects.filter(workspace_id=session.workspace_id, handle=handle.lower()).first()
-    if project is None or not wsvc.is_member(user, project.workspace_id) or not may_read_project(user, project):
+    if (project is None or project.is_personal or not wsvc.is_member(user, project.workspace_id)
+            or not may_read_project(user, project)):
         raise ProblemError(404, "Project not found", type_=TYPE_NOT_FOUND)
     return project
 
@@ -158,7 +172,7 @@ def declare_my_session_project(request: HttpRequest, session_id: uuid.UUID, hand
     later find. Overrides what canopy guessed. Only you can do this. A rejection by someone else in the
     session is theirs to undo (409)."""
     user = _the_person(request)
-    session = _my_session(request, user, session_id)
+    session = _my_session(request, user, session_id, readable=True)
     project = _project_of(user, session, handle)
     source = sources.for_session(session)
     row = associate.declare(source, project, tier=payload.tier, by=user)
@@ -175,7 +189,7 @@ def declare_my_session_project(request: HttpRequest, session_id: uuid.UUID, hand
 def undeclare_my_session_project(request: HttpRequest, session_id: uuid.UUID, handle: str) -> dict:
     """Withdraws your own declaration (not anyone else's); canopy's automatic guess resumes."""
     user = _the_person(request)
-    session = _my_session(request, user, session_id)
+    session = _my_session(request, user, session_id, readable=True)
     project = _project_of(user, session, handle)
     source = sources.existing(session)
     if source is not None:
@@ -205,7 +219,7 @@ def declare_session_project(request: HttpRequest, session_id: uuid.UUID, handle:
     session = Session.objects.filter(pk=session_id).first()
     project = (AgentProject.objects.filter(workspace_id=session.workspace_id, handle=handle.lower()).first()
                if session is not None else None)
-    if project is None or project.is_personal and not may_read_project(request.user, project):
+    if project is None or project.is_personal or not may_read_project(request.user, project):
         raise ProblemError(404, "Project not found", type_=TYPE_NOT_FOUND)
     if participants.sealed_reason(session):
         raise ProblemError(404, "Session not found", type_=TYPE_NOT_FOUND)

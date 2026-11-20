@@ -109,6 +109,8 @@ def test_a_contact_in_the_source_makes_it_ineligible_for_every_shared_use(w):
 
 def test_a_source_with_no_human_participant_is_a_no(w):
     agree(w["alice"], "project")
+    type(w["session"]).objects.filter(pk=w["session"].pk).update(created_by=None)
+    w["session"].participants.all().delete()
     w["source"].participants.all().delete()
     assert ok(w, "proj", "learn").reason == "no_human_participant"
 
