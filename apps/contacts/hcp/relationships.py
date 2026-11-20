@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 
 from ..models import EntryRelationship, Person, PersonFact
-from .core import Actor, denied, malformed, parse_entry_id
+from .core import Actor, denied, entry_urn, malformed, parse_entry_id, scope
 
 PROVIDER = "canopy"
 _KIND = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
