@@ -34,7 +34,7 @@ from apps.harness.models import Turn
 
 from . import participants, sources
 from .eligibility import everyone_agreed
-from .models import PROJECT, BrainSource, ProjectSignature, SourceLink
+from .models import BRAIN_RUN_KEY, PROJECT, BrainSource, ProjectSignature, SourceLink
 
 logger = logging.getLogger(__name__)
 
@@ -273,7 +273,9 @@ def run_due(limit: int = BATCH) -> dict:
     """One pass: make a source for sessions that have none, then look at the sources never looked at
     or now due. Safe to run from any number of workers; a second look is a no-op."""
     made = 0
-    for session in Session.objects.filter(brain_sources__isnull=True).order_by("-updated_at")[:limit]:
+    # A learning run's own conversation is never a source (`participants.sealed_reason`): none is made for it.
+    fresh = Session.objects.filter(brain_sources__isnull=True).exclude(metadata__has_key=BRAIN_RUN_KEY)
+    for session in fresh.order_by("-updated_at")[:limit]:
         try:
             sources.for_session(session)
             made += 1

@@ -42,8 +42,10 @@ later taken out of the session; it stays theirs to see and undo (`/api/me/learni
 
 The one question, asked on every request and cached nowhere: may this capability learn from this
 source, for this purpose, about this subject? It fails closed. True only if the source is open and not
-sealed (sensitive, a contact's conversation, words deleted: read live from the session, the sensitive
-test being `access._not_sensitive_q`'s, held equal by `tests/test_brain_sources.py`), the capability is
+sealed (sensitive, a contact's conversation, words deleted, or a learning run's own conversation (`brain_run`:
+it retells the sessions it read, and its only participant would be the admin its turn answers to): read live
+from the session, the sensitive test being `access._not_sensitive_q`'s, held equal by
+`tests/test_brain_sources.py`), the capability is
 registered, enabled and declares the purpose, the right people consented to the class, none excluded the
 source, no standing rule denies it, the source's workspace is within each person's consent and each is a
 member of it (a guest is not). Who is in the source is read from the stored rows AND live from the
@@ -89,8 +91,9 @@ workspace they are in (source `brain.consent`).
 
 `CoachingOptIn` still drives the coaching session ACL (leg 5 of `access.py`) and the runner's full
 upload (`coaching.full_upload_session_ids`). Both honour removal: a session anyone in it took out of learning
-(`access.removed_from_learning`) is read by no coach and shipped for none, and a person whose consent names
-workspaces is coached only in those (`eligibility.covers`). The two are kept the same in
+(`access.removed_from_learning`) is read by no coach and shipped for none, and a person is coached only where
+their consent allows coaching (`eligibility.coaching_allows`): the workspaces it covers, less any where a standing
+rule denies the `individual` class or the `coaching` learner for either of its purposes. The two are kept the same in
 both directions: coaching's own opt-in or out mirrors into the `individual` class
 (`consent.mirror_coaching`, called by `session_reviewers`), and setting or dropping `individual` through
 the learning routes writes the opt-in (`consent._sync_coaching`). Migration `0002_copy_coaching_opt_ins`
@@ -145,13 +148,16 @@ and may only narrow: a wider one is refused, because that is a new class each pe
 ## Who sees what it produced (`apps/brain/outputs.py`)
 
 Outputs (`BrainOutput`) are read by their class's audience (`outputs.visible_to`, `GET /api/brain/outputs/`):
-`individual` by the person, their coaches (the same rule as reading their sessions) and their manager; `memory` by
+`individual` by the person, their coaches (the same rule as reading their sessions, and only outputs made in the
+workspaces they coach, `access.coach_scope`) and their manager; `memory` by
 the person; `project` by the project's readers; `system` by canopy admins and the workspace's owners. Only `active`
 outputs are seen: a withdrawn or stale one is seen by no one. Outputs are derived, so they stay readable while
 `BRAIN_READS_ENABLED` is off; nothing new is made then. `ReportingLine` (`apps/brain/reporting.py`, set by a workspace
 owner by hand, each change an event) is the manager relationship; it opens a manager's reading of their reports'
 `individual` outputs made in the workspace the line is in, and nothing else, and only to the manager as a person
-(`harness.acting_person`: never an agent, a turn's token or an act-as token). The reporting routes are person-only
+(`api_admin.manager_leg_open`: their browser session or a PAT they minted by hand, as HCP's governance acts; never an
+agent, a turn's token, an act-as token, an OAuth or MCP client or a site's delegated token, and never an MCP call:
+`list_outputs` is an MCP tool, and through it the other legs answer but the manager leg stays shut). The reporting routes are person-only
 too and are not MCP tools; setting a line names "no such member" alike for an unknown address and a non-member.
 
 ## Reading as a project's reader (`apps/brain/readers.py`)
@@ -205,13 +211,20 @@ runs on the tick `brain.cascade` (every 15 minutes) and also right after the act
 content deletion, `signals._cascade_content_deletion`). It is idempotent.
 
 - A source is **removed** for an output when its words are gone (deleted, `withdrawn`, its session gone;
-  such a source becomes `withdrawn` for good), or when the person the output is about, or for a shared
-  output ANY person in the source (`participant_scope`), excluded it, stopped agreeing to the class, or narrowed
+  such a source becomes `withdrawn` for good) or it is sealed; for a shared (`project`, `system`) use when ANYONE
+  ever excluded it, still in it or since taken out of it (as `eligible` and `emit_allowed`); or when the person the
+  output is about, or for a shared output any person in the source when it was made (`participant_scope`), excluded
+  it, stopped agreeing to the class, or narrowed
   their consent so it no longer allows the use: the source's workspace no longer covered (`eligibility.covers`)
   or a standing rule now denying it (`eligibility.rule_denies`, on the output's learner and its run's purpose; a
   rule naming a learner or purpose the sweep cannot tell is not taken to match) (`cascade.removed_reason`).
   Removing X withdraws what was learned about X; what was learned about Y from
   Y's own words stays.
+- **Someone joining later.** A run's reads and a link's evidence record no participants, so they are judged against
+  who is in the source now, less anyone who never agreed to the class (`cascade.ever_agreed`): every such use passed
+  `eligible`, which needed everyone's consent, so that person joined after it. Joining without consent closes every
+  later read (`eligible` says no) and destroys nothing already made; someone who once agreed and stopped counts,
+  whenever they joined (fails safe).
 - An output derived only from removed sources is **withdrawn**: body and title emptied, lineage kept as ids,
   seen by no one. One derived from several is **stale**: emptied and hidden the same way (its words cannot be told
   apart by source), with a `RederiveRequest`; the feature's next run for that subject reads the remaining sources again
@@ -222,8 +235,11 @@ content deletion, `signals._cascade_content_deletion`). It is idempotent.
   a run still working is deleted by a later sweep.
 - A personal-memory entry derived from a removed session (HCP `derivedFrom`, `EntryRelationship` with
   `source_kind` "session") is deleted through HCP's own path (`apps/brain/hcp_store.py`, `hcp.delete_entry` as canopy):
-  never served to an agent again, its embedding cleared, still shown to its person marked deleted. Removal here is the
-  entry's own person's: their exclusion, their dropping `memory` after having agreed to it, or the words gone or sealed.
+  never served to an agent again, its embedding cleared, still shown to its person marked deleted. The cascade acts
+  for a canopy user who once agreed to `memory` on any removal (their exclusion, their consent ended or narrowed, the
+  words gone, the session sealed); for anyone else only on their own exclusion of the session or its words being gone.
+  A contact's entries (no canopy account, e.g. a preference recorded through trusted contacts) are never deleted by
+  the cascade, and a seal (a sensitive session, a contact's) deletes nothing for someone who never agreed.
 - **A tombstone, not a toggle.** `consent.include` restores eligibility only; a withdrawn output stays
   withdrawn, a replay cannot cite a removed source (`cascade.emit_allowed`), and a runner re-ship of deleted
   words is refused as before (`transcript_ingest.refuses_ship`).

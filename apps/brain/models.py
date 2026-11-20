@@ -35,6 +35,8 @@ class BrainSource(models.Model):
     #: Why a source is shut to every use. Read LIVE from the session by `eligibility`;
     #: this column is what a screen shows and what the last refresh saw.
     SEALED_SENSITIVE, SEALED_CONTACT, SEALED_DELETED = "sensitive", "contact", "words_deleted"
+    #: A learning run's own conversation (`BRAIN_RUN_KEY`): what it says is other people's sessions retold.
+    SEALED_BRAIN_RUN = "brain_run"
 
     kind = models.CharField(max_length=24, choices=KIND_CHOICES, default=SESSION)
     #: The source's id within its kind (a session's uuid). The key; `session` is the

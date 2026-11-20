@@ -38,11 +38,11 @@ def full_upload_session_ids(runner) -> set:
     """The ids of the sessions `runner` should ship in full for its owner's coach:
     the runner-discovered sessions it backs that are its owner's own work (not an
     agent's, not a contact's), never a sensitive one, never one whose words its person
-    deleted, never one taken out of learning or outside the workspaces its person's learning
-    consent covers (as the coaching leg, `access._coach_q`), and none at all from a sensitive-data
+    deleted, never one taken out of learning or outside what its person's learning consent allows
+    coaching (its workspaces and standing rules, as the coaching leg, `access._coach_q`), and none at all from a sensitive-data
     box or a box whose owner has no live grant. The project opt-in
     is applied where every stream is (`_is_canopys`), not here."""
-    from apps.brain.eligibility import covers  # noqa: PLC0415 — brain imports this app
+    from apps.brain.eligibility import coaching_allows  # noqa: PLC0415 — brain imports this app
     from apps.brain.models import LearningConsent  # noqa: PLC0415 — brain imports this app
 
     if runner.owner_id is None or rr.is_sensitive_data_box(runner):
@@ -61,7 +61,7 @@ def full_upload_session_ids(runner) -> set:
         .values_list("id", "workspace_id")
     )
     consent = LearningConsent.objects.filter(user_id=runner.owner_id, revoked_at__isnull=True).first()
-    return {pk for pk, ws in rows if consent is None or covers(consent, ws)}
+    return {pk for pk, ws in rows if coaching_allows(consent, ws)}
 
 
 # ---- who coaches (a workspace owner's act) ----------------------------------------------------------

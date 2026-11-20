@@ -107,3 +107,40 @@ def test_live_opt_ins_become_individual_consents_and_the_old_rows_stay(w):
     assert [(r.user.username, r.classes, r.revoked_at) for r in rows] == [("alice", ["individual"], None)]
     assert rows[0].created_at == CoachingOptIn.objects.get(user=w["alice"]).created_at
     assert CoachingOptIn.objects.count() == 2                                  # additive: nothing dropped
+
+
+def _brain_run_conversation(w):
+    """What `runs.start` makes: the operator agent's conversation stamped `brain_run`, its turn canopy's own but
+    accountable to the admin who registered the feature (`initiator_user`). Its assistant lines summarise
+    other people's sessions."""
+    import uuid
+
+    from apps.canopy_sessions.models import Message
+    from apps.harness.models import Turn
+
+    bot = Agent.objects.create(slug="learner", name="Learner", owner=w["owner"], workspace=w["ws"],
+                               user=user("learner_login"))
+    talk = Session.objects.create(workspace=w["ws"], origin=Session.ORIGIN_WEB, agent=bot, metadata={"brain_run": "7"})
+    Turn.objects.create(chat_session=talk, origin=Turn.ORIGIN_API, prompt="/learn",
+                        idempotency_key=uuid.uuid4().hex, initiator_user=w["owner"])
+    Message.objects.create(session=talk, role=Message.ASSISTANT, turn_index=0, plaintext="bob said: the plan")
+    return talk
+
+
+def test_a_brain_run_s_own_conversation_is_never_a_learning_source(w):
+    from apps.brain import associate
+    from apps.brain.eligibility import eligible, eligible_sources
+
+    talk = _brain_run_conversation(w)
+    LearningConsent.objects.create(user=w["owner"], classes=["individual", "memory", "project", "system"])
+    associate.run_due()
+    assert not BrainSource.objects.filter(ref=str(talk.pk)).exists()             # the associator makes none
+    assert participants.sealed_reason(talk) == "brain_run"
+    src = sources.for_session(talk)                                               # one made some other way is sealed
+    assert src.sealed_reason == "brain_run"
+    for cap, purpose in ((w["coach"], "coach"), (w["mem"], "remember")):
+        assert not eligible(src, cap, purpose, w["owner"])
+        assert not eligible_sources(cap, purpose, w["owner"]).filter(pk=src.pk).exists()
+    for cap in (w["proj"], w["sys"]):
+        assert not eligible(src, cap, "learn")
+        assert not eligible_sources(cap, "learn").filter(pk=src.pk).exists()

@@ -558,20 +558,21 @@ def _coach_q(user) -> Q:
 
 
 def _grantors_sessions_q(grantor_ids, scope) -> Q:
-    """The grantors' own sessions in the workspaces the coach covers, each person held to the workspaces
-    their learning consent covers (`LearningConsent.workspaces`, `brain.eligibility.covers`) when they
-    scoped it. Coaching is the `individual` class; a person who narrowed it narrowed coaching too."""
-    from apps.brain.eligibility import covers  # noqa: PLC0415 — brain imports this module
+    """The grantors' own sessions in the workspaces the coach covers, each person held to what their learning
+    consent allows coaching (`brain.eligibility.coaching_allows`): the workspaces it covers, less any a standing
+    rule of theirs denies to coaching. Coaching is the `individual` class; a person who narrowed it narrowed
+    coaching too."""
+    from apps.brain.eligibility import coaching_allows  # noqa: PLC0415 — brain imports this module
     from apps.brain.models import LearningConsent  # noqa: PLC0415 — brain imports this module
 
     ids = list(grantor_ids)
     if not ids:
         return Q(pk__in=[])
     scoped = {c.user_id: c for c in LearningConsent.objects.filter(revoked_at__isnull=True, user_id__in=ids)
-              if c.workspaces}
+              if c.workspaces or c.standing_rules}
     q = sessions_of_q([i for i in ids if i not in scoped]) & Q(workspace_id__in=scope)
     for uid, consent in scoped.items():
-        within = {ws for ws in scope if covers(consent, ws)}
+        within = {ws for ws in scope if coaching_allows(consent, ws)}
         if within:
             q |= sessions_of_q([uid]) & Q(workspace_id__in=within)
     return q

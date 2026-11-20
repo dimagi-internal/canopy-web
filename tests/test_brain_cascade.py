@@ -308,3 +308,92 @@ def test_a_rule_naming_a_purpose_matches_only_an_output_whose_run_had_it(w):
     consent.set_consent(w["alice"], classes=["individual", "project", "memory"], standing_rules=[{"purpose": "coach"}])
     cascade.sweep()
     assert reload(o).state == "withdrawn"
+
+
+# ---- a shared removal is anyone's, for good; a later joiner removes nothing already made ------------
+
+def _project_run(w, words="alice said: the plan"):
+    from apps.brain.models import BrainRun, BrainRunRead
+    from apps.canopy_sessions.models import Message
+
+    talk = Session.objects.create(workspace=w["ws"], origin=Session.ORIGIN_WEB, metadata={"brain_run": "9"})
+    Message.objects.create(session=talk, role=Message.ASSISTANT, turn_index=0, plaintext=words)
+    run = BrainRun.objects.create(capability=w["proj"], subject_type="project", subject="1", purpose="learn",
+                                  session=talk, state=BrainRun.DONE)
+    BrainRunRead.objects.create(run=run, source=w["source"])
+    SourceLink.objects.create(source=w["source"], subject="1", how="judged", tier="core", evidence=["alice: x"])
+    return talk
+
+
+def test_a_shared_removal_outlives_the_remover_being_taken_out_of_the_session(w):
+    """Bob removes it; before any sweep runs, the owner takes bob (who never wrote) out of the session, so his
+    participant row goes. The removal still reaches the run conversation, the link evidence and shared outputs."""
+    from apps.canopy_sessions.models import Message
+
+    talk = _project_run(w)
+    shared = emit(w, "proj", "project", 1, [w["source"]], scope=[w["alice"].pk])
+    consent.exclude(w["bob"], w["source"])
+    SessionParticipant.objects.filter(session=w["session"], user=w["bob"]).delete()
+    sources.refresh(w["source"])
+    assert not w["source"].participants.filter(user=w["bob"]).exists()
+    out = cascade.sweep()
+    assert out["runs"] == 1 and not Message.objects.filter(session=talk).exists()
+    assert SourceLink.objects.get().evidence == []
+    assert reload(shared).state == "withdrawn"
+
+
+def test_someone_joining_without_consent_closes_reads_but_destroys_nothing_already_made(w):
+    from apps.brain.eligibility import eligible
+    from apps.canopy_sessions.models import Message
+
+    talk = _project_run(w)
+    SessionParticipant.objects.create(session=w["session"], user=w["carol"])     # carol never agreed to anything
+    sources.refresh(w["source"])
+    assert not eligible(w["source"], w["proj"], "learn")                        # no new read
+    out = cascade.sweep()
+    assert out["runs"] == 0 and Message.objects.filter(session=talk).exists()   # the run's record stays
+    assert SourceLink.objects.get().evidence == ["alice: x"]
+    consent.revoke(w["alice"])                                                  # someone who agreed stops: it goes
+    assert cascade.sweep()["runs"] == 1
+    assert SourceLink.objects.get().evidence == []
+
+
+# ---- a memory entry: only for a user who once agreed, or by their own removal or the words' deletion ---
+
+def test_a_contacts_memory_entry_is_never_deleted_by_the_cascade(w):
+    from apps.contacts import hcp
+    from apps.contacts.models import Contact, EntryRelationship, PersonFact
+    from apps.contacts.services import person_for
+
+    c = Contact.objects.create(workspace=w["ws"], email="z@example.org")
+    chat = Session.objects.create(workspace=w["ws"], contact=c, origin=Session.ORIGIN_WEB)      # sealed: a contact's
+    person = person_for(contact=c)
+    fact = PersonFact.objects.create(person=person, workspace=w["ws"], kind="preference", statement="tea, not coffee")
+    EntryRelationship.objects.create(person=person, entry_id=fact.entry_id, type="derivedFrom", source_kind="session",
+                                     source_ref=str(chat.pk), asserted_by_role="context-client", asserted_by_id="agent:x")
+    assert hcp.current(fact.entry_id) is not None
+    assert cascade.sweep()["memory_entries"] == 0
+    fact.refresh_from_db()
+    assert fact.retracted_at is None
+
+
+def test_a_sensitive_session_deletes_memory_only_for_someone_who_once_agreed(w):
+    from apps.harness import runner_requirements as rr
+
+    Session.objects.filter(pk=w["session"].pk).update(metadata={rr.METADATA_KEY: ["sensitive-data"]})
+    carols = _memory_entry(w, w["carol"], w["session"])                         # carol never answered: kept
+    alices = _memory_entry(w, w["alice"], w["session"], "likes tables")          # alice agreed to memory: goes
+    assert cascade.sweep()["memory_entries"] == 1
+    carols.refresh_from_db()
+    alices.refresh_from_db()
+    assert carols.retracted_at is None and alices.retracted_at is not None
+
+
+def test_a_person_who_never_agreed_still_removes_their_own_memory_by_excluding_the_session(w):
+    carols = _memory_entry(w, w["carol"], w["session"])
+    SessionParticipant.objects.create(session=w["session"], user=w["carol"])
+    sources.refresh(w["source"])
+    consent.exclude(w["carol"], w["source"])
+    assert cascade.sweep()["memory_entries"] == 1
+    carols.refresh_from_db()
+    assert carols.retracted_at is not None
