@@ -4,6 +4,7 @@ session is running, and asking a runner for a backfill.
 """
 from __future__ import annotations
 
+import copy as _copy
 import datetime as _dt
 import logging
 from dataclasses import dataclass
@@ -13,6 +14,7 @@ from django.db.models import OuterRef, Q, Subquery
 from django.utils import timezone
 
 from apps.agents.credentials import secret_requests
+from apps.common import redact
 from apps.harness import runner_requirements, sensitivity
 from apps.harness.models import Turn
 from apps.mcp_apps_host import mcp_apps_views
@@ -730,11 +732,32 @@ def readable_window(session, rows, *, user=None, contact=None, chat_surface: boo
     3. A tool result that opened a request for one of the agent's secrets
        carries the card (`secret_request`).
     4. `widget`: an embedded widget's window drops tool rows (`for_widget`).
+    5. A reader who has this session only through the brain's project leg (`access.read_through_brain_only`)
+       gets the rows with secrets scrubbed (`common.redact`), and the read is recorded.
     """
     rows = sensitivity.readable(rows, session, chat_surface=chat_surface, user=user, contact=contact)
     mcp_apps_views.annotate(session, rows)
     secret_requests.annotate(session, rows)
-    return for_widget(rows) if widget else rows
+    rows = for_widget(rows) if widget else rows
+    return brain_redacted(session, rows, user=user)
+
+
+def brain_redacted(session, rows, *, user) -> list:
+    """`rows` as the brain's project leg shows them: copies with secrets scrubbed, and one `brain.read`
+    recorded. `rows` unchanged for anyone who has the session another way."""
+    from apps.brain import readers  # noqa: PLC0415 — brain imports this module
+
+    from . import access  # noqa: PLC0415 — access imports this module's neighbours at load
+
+    if user is None or not access.read_through_brain_only(user, session):
+        return rows
+    out = []
+    for m in rows:
+        c = _copy.copy(m)
+        c.plaintext, c.content, _n = redact.redact_turn(m.plaintext or "", m.content)
+        out.append(c)
+    readers.record_read(reader=user, capability=readers.PROJECT_READERS, purpose=readers.READ, session=session)
+    return out
 
 
 class BackfillRefusedError(Exception):

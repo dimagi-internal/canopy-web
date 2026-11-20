@@ -71,8 +71,11 @@ def _socket_pulls(user, session):
     return async_to_sync(go)()
 
 
-def test_rest_the_socket_and_the_list_agree_for_every_shape_and_person():
-    """ONE answer per (person, session), whichever route they come in by."""
+@pytest.mark.parametrize("brain", [False, True])
+def test_rest_the_socket_and_the_list_agree_for_every_shape_and_person(brain, settings):
+    """ONE answer per (person, session), whichever route they come in by. With the brain's rollout gate
+    on as well as off: its project leg is a leg like the others."""
+    settings.BRAIN_READS_ENABLED = brain
     people, shapes, _ws = _world()
     for who, user in people.items():
         c = _client(user)

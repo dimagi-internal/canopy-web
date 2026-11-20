@@ -12,10 +12,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from django.db.models import Exists, OuterRef, Q
+
+from apps.harness import runner_requirements as rr
 from apps.workspaces import services as wsvc
 
 from . import participants
-from .models import ABOUT_A_PERSON, CLASSES, SHARED, BrainCapability, BrainSource, LearningConsent
+from .models import (
+    ABOUT_A_PERSON,
+    CLASSES,
+    SHARED,
+    BrainCapability,
+    BrainSource,
+    LearningConsent,
+    SourceExclusion,
+    SourceParticipant,
+)
 
 
 @dataclass(frozen=True)
@@ -87,6 +99,8 @@ def eligible(source: BrainSource, capability, purpose: str, subject=None) -> Eli
         return _no("capability_not_enabled")
     if cap.purpose_class not in CLASSES or purpose not in (cap.purposes or []):
         return _no("purpose_not_declared")
+    if source.kind not in (cap.source_kinds or []):
+        return _no("source_kind_not_declared")
     people = list(source.participants.all())
     users = [p.user_id for p in people if p.user_id is not None]
     excluded = set(source.exclusions.values_list("user_id", flat=True))
@@ -123,3 +137,63 @@ def _user(user_id):
     from django.contrib.auth import get_user_model  # noqa: PLC0415 — as the other lazy imports here
 
     return get_user_model().objects.filter(pk=user_id).first()
+
+
+# ---- the same question for many sources at once -------------------------------------------------------
+
+def eligible_sources(capability, purpose: str, subject=None):
+    """The `BrainSource`s `eligible` says yes to, as ONE queryset, for a read that lists (the project
+    leg, a feature's reach). The structure is SQL; what is not (a consent's classes and workspaces, a
+    standing rule, who is a member where) is judged in Python over the people who consented, once, and
+    handed to the query as sets: still nothing cached, and `tests/test_brain_eligible_sources.py` holds it
+    to `eligible` over a whole world. A subject is a user (or id) for `individual`/`memory`."""
+    none = BrainSource.objects.none()
+    cap = _capability(capability)
+    if (cap is None or not cap.enabled or cap.purpose_class not in CLASSES
+            or purpose not in (cap.purposes or [])):
+        return none
+    qs = (BrainSource.objects.filter(kind__in=cap.source_kinds or [], state=BrainSource.OPEN,
+                                     session__isnull=False, session__contact__isnull=True,
+                                     session__content_deleted_at__isnull=True)
+          .exclude(session__metadata__has_key=rr.METADATA_KEY))
+    consents = [c for c in LearningConsent.objects.filter(revoked_at__isnull=True)
+                if cap.purpose_class in (c.classes or [])]
+    if cap.purpose_class in ABOUT_A_PERSON:
+        who = getattr(subject, "pk", subject)
+        consents = [c for c in consents if c.user_id == who]
+        if who is None or not consents:
+            return none
+    if not consents:
+        return none
+    workspaces = set(qs.values_list("workspace_id", flat=True).distinct())
+    users = list(LearningConsent.objects.filter(pk__in=[c.pk for c in consents]).values_list("user_id", flat=True))
+    roles = wsvc.member_roles_of(_users(users))
+    bad_in: dict[str, set[int]] = {}      # workspace -> people whose consent does not allow a source there
+    for c in consents:
+        for ws in workspaces:
+            denied = (ws not in roles.get(c.user_id, {}) or not covers(c, ws)
+                      or any(rule_denies(r, capability=cap.slug, purpose=purpose, cls=cap.purpose_class,
+                                         workspace=ws) for r in (c.standing_rules or [])))
+            if denied:
+                bad_in.setdefault(ws, set()).add(c.user_id)
+    consenting = set(users)
+    if cap.purpose_class in ABOUT_A_PERSON:
+        subject_id = consents[0].user_id
+        allowed = [ws for ws in workspaces if subject_id not in bad_in.get(ws, set())]
+        mine = SourceParticipant.objects.filter(source=OuterRef("pk"), user_id=subject_id)
+        out = SourceExclusion.objects.filter(source=OuterRef("pk"), user_id=subject_id)
+        return qs.filter(Exists(mine), ~Exists(out), workspace_id__in=allowed)
+    humans = SourceParticipant.objects.filter(source=OuterRef("pk"), user__isnull=False)
+    bad = ~Q(user_id__in=consenting)
+    for ws, people in bad_in.items():
+        bad |= Q(source__workspace_id=ws, user_id__in=people)
+    contacts = SourceParticipant.objects.filter(source=OuterRef("pk"), contact__isnull=False)
+    out = SourceExclusion.objects.filter(source=OuterRef("pk")).filter(
+        Exists(SourceParticipant.objects.filter(source=OuterRef("source"), user=OuterRef("user"))))
+    return qs.filter(Exists(humans), ~Exists(contacts), ~Exists(out), ~Exists(humans.filter(bad)))
+
+
+def _users(ids):
+    from django.contrib.auth import get_user_model  # noqa: PLC0415 — as the other lazy imports here
+
+    return list(get_user_model().objects.filter(pk__in=ids))

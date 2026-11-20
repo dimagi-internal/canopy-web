@@ -54,7 +54,9 @@ def _more_shapes(people, shapes, ws):
     shapes["dispatched"] = dispatched
 
 
-def test_the_audience_is_exactly_who_the_acl_lets_read():
+@pytest.mark.parametrize("brain", [False, True])
+def test_the_audience_is_exactly_who_the_acl_lets_read(brain, settings):
+    settings.BRAIN_READS_ENABLED = brain
     people, shapes, ws = _world()
     _more_shapes(people, shapes, ws)
     # The audience names who MAY read, the coach included: its login reads inside a turn its

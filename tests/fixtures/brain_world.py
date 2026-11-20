@@ -20,7 +20,7 @@ def member(u, ws, role=WorkspaceMembership.EDITOR):
 def capability(slug, cls, purposes=("learn",), enabled=True, **kw):
     return BrainCapability.objects.create(slug=slug, name=slug, purpose_class=cls, purposes=list(purposes),
                                           enabled=enabled, subject_type="project" if cls == "project" else "person",
-                                          **kw)
+                                          source_kinds=["session"], **kw)
 
 
 def brain_world():
