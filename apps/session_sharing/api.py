@@ -306,22 +306,30 @@ def upload_session(
 # ---------------------------------------------------------------------------
 
 
-def _teammate_ids(request) -> set[int]:
-    """Everyone who shares a workspace with the caller, themselves included —
-    under the read rule (`wsvc.request_workspace_slugs`): a pinned list uses the
-    pin and the caller's workspaces below it, and an unpinned list by a caller in
-    two trees is refused (422) rather than listing two organisations' shares
-    together."""
+def _teammate_ids(request, slugs: set[str]) -> set[int]:
+    """Everyone who shares one of `slugs` with the caller, themselves included."""
     from apps.workspaces import services as wsvc
 
     ids: set[int] = {request.user.pk}
-    for slug in wsvc.request_workspace_slugs(request):
+    for slug in slugs:
         ids |= set(wsvc.member_user_ids(slug))
     return ids
 
 
+def _teammates_link_shares(request) -> models.Q:
+    """Link-visible rows a teammate made IN one of the caller's workspaces, under
+    the read rule (`wsvc.request_workspace_slugs`: a pinned list uses the pin and
+    the caller's workspaces below it; an unpinned list by a caller in two trees is
+    refused, 422). The row's own workspace is part of it: a teammate who is also
+    in another organisation shares there too, and the list hands out the token."""
+    from apps.workspaces import services as wsvc
+
+    slugs = wsvc.request_workspace_slugs(request)
+    return models.Q(owner_id__in=_teammate_ids(request, slugs), workspace_id__in=slugs)
+
+
 @router.get("/", response=list[SessionListItemOut], summary="List shared sessions")
-@gate("authenticated")  # own + every link-visibility row, all tenants
+@gate("authenticated")  # own + teammates' link-visible rows in the caller's workspaces
 def list_sessions(
     request: HttpRequest, project: str = ""
 ) -> list[SessionListItemOut]:
@@ -329,8 +337,7 @@ def list_sessions(
         Session.objects.select_related("owner")
         .filter(
             models.Q(owner=request.user)
-            | (models.Q(visibility=Session.VISIBILITY_LINK)
-               & models.Q(owner_id__in=_teammate_ids(request)))
+            | (models.Q(visibility=Session.VISIBILITY_LINK) & _teammates_link_shares(request))
         )
         .prefetch_related("share_tokens")
     )
@@ -475,8 +482,7 @@ def list_arcs(request: HttpRequest, project: str = "") -> list[ArcListItemOut]:
         SessionArc.objects.select_related("owner")
         .filter(
             models.Q(owner=request.user)
-            | (models.Q(visibility=SessionArc.VISIBILITY_LINK)
-               & models.Q(owner_id__in=_teammate_ids(request)))
+            | (models.Q(visibility=SessionArc.VISIBILITY_LINK) & _teammates_link_shares(request))
         )
         .prefetch_related("share_tokens", "items")
     )

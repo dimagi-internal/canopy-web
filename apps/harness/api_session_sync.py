@@ -125,8 +125,22 @@ def resolve_session(request: HttpRequest, runner_id: uuid.UUID, payload: Resolve
             None, payload.thread_key, runner, project=payload.project, workspace=ws,
             turn_id=payload.turn_id,
         )
-    agent = agent_for_read(request, payload.agent_slug)
+    agent = _held_agent(request, runner, payload.agent_slug)
     return session_sync.resolve_session(agent, payload.thread_key, runner, turn_id=payload.turn_id)
+
+
+def _held_agent(request: HttpRequest, runner: Runner, slug: str):
+    """The agent whose thread binding this runner asks about or moves to itself.
+
+    Reading the agent is not enough: `record-session` points the agent's chat
+    binding at THIS box (and `session-stream` then accepts its rows), and
+    `resolve-session` answers with the thread's summary. Only a box that may run
+    the agent's turns has any business doing either, so any other is a 404, the
+    same answer as an agent it cannot see."""
+    agent = agent_for_read(request, slug)
+    if not runner_may_hold_agent(runner, agent):
+        raise HttpError(404, "agent not found")
+    return agent
 
 
 @router.post("/runners/{runner_id}/record-session", response=ResolveSessionOut)
@@ -179,7 +193,7 @@ def _record_session(request: HttpRequest, runner: Runner, payload: RecordSession
         return session_sync.resolve_session(
             None, payload.thread_key, runner, project=payload.project, workspace=ws
         )
-    agent = agent_for_read(request, payload.agent_slug)
+    agent = _held_agent(request, runner, payload.agent_slug)
     title = payload.title
     if turn is not None:
         # The server names the session from the turn when it knows it: the email's
