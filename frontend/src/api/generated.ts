@@ -19382,6 +19382,56 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/me/learning/sessions/{session_id}/projects/{handle}/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Say whether one of your sessions belongs to a project
+         * @description Your act: `core` ties the session to the project (its readers may then learn from it, if everyone
+         *     in it agreed), `rejected` says it does not belong and stays rejected whatever the automatic layers
+         *     later find. Overrides what canopy guessed. Only you can do this. A rejection by someone else in the
+         *     session is theirs to undo (409).
+         */
+        readonly put: operations["declare_my_session_project"];
+        readonly post?: never;
+        /**
+         * Take back what you said about a session and a project
+         * @description Withdraws your own declaration (not anyone else's); canopy's automatic guess resumes.
+         */
+        readonly delete: operations["undeclare_my_session_project"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/brain/sessions/{session_id}/projects/{handle}/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * An agent says which project the session it is running in worked on
+         * @description For an agent's own login INSIDE its running turn, at close-out: the conversation this turn runs
+         *     in worked on project `handle` of its workspace (`core`, or `adjacent` if it only touched it).
+         *     Only that conversation (not another session), only a project the agent's own login may read. It
+         *     outranks canopy's guess but never a person's call, and it makes no one's session readable.
+         */
+        readonly put: operations["declare_session_project"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/hcp/.well-known/hcp-configuration": {
         readonly parameters: {
             readonly query?: never;
@@ -50611,6 +50661,48 @@ export interface components {
             readonly session_id: string;
             /** Excluded */
             readonly excluded: boolean;
+            /**
+             * Projects
+             * @description Projects of yours this session is tied to; only ones you may read.
+             */
+            readonly projects?: readonly components["schemas"]["SourceLinkOut"][];
+        };
+        /** SourceLinkOut */
+        readonly SourceLinkOut: {
+            /**
+             * Project
+             * @description The project's handle in the session's workspace.
+             */
+            readonly project: string;
+            /** Name */
+            readonly name: string;
+            /**
+             * Tier
+             * @description core | adjacent | candidate | rejected.
+             */
+            readonly tier: string;
+            /**
+             * How
+             * @description dispatched | signals | judged | declared.
+             */
+            readonly how: string;
+        };
+        /** PersonLinkIn */
+        readonly PersonLinkIn: {
+            /**
+             * Tier
+             * @description `core`: it belongs to the project. `rejected`: it does not, and stays rejected.
+             * @enum {string}
+             */
+            readonly tier: "core" | "rejected";
+        };
+        /** AgentLinkIn */
+        readonly AgentLinkIn: {
+            /**
+             * Tier
+             * @enum {string}
+             */
+            readonly tier: "core" | "adjacent";
         };
         /** HcpSearchIn */
         readonly HcpSearchIn: {
@@ -76440,6 +76532,146 @@ export interface operations {
             readonly cookie?: never;
         };
         readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LearningSourceOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly declare_my_session_project: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["PersonLinkIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LearningSourceOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly undeclare_my_session_project: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LearningSourceOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly declare_session_project: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentLinkIn"];
+            };
+        };
         readonly responses: {
             /** @description OK */
             readonly 200: {
