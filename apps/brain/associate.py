@@ -195,11 +195,11 @@ def declare(source: BrainSource, project: AgentProject, *, tier: str, by=None, b
 
 
 def undeclare(source: BrainSource, project: AgentProject, *, by) -> bool:
-    """A person withdraws their own declaration; the automatic layers resume on the next look."""
+    """A person withdraws their own declaration; the automatic layers look again straight away."""
     n, _ = SourceLink.objects.filter(source=source, subject_type=SourceLink.PROJECT_SUBJECT,
                                      subject=str(project.pk), how=SourceLink.DECLARED, by=by).delete()
     if n:
-        schedule(source.ref, delay=dt.timedelta(0))
+        associate(source)  # at once: the row held the place of whatever the layers had found
     return bool(n)
 
 
