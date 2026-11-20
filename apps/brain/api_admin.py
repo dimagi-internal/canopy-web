@@ -11,7 +11,9 @@ from apps.agents.services.projects import may_read_project
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError, refusals
 from apps.api.route_gates import gate
+from apps.harness import acting_person
 from apps.workspaces import permissions as perms
+from apps.workspaces import services as wsvc
 from apps.workspaces.gates import membership_or_404
 from apps.workspaces.gates import require as require_role
 
@@ -83,7 +85,8 @@ def register_capability(request: HttpRequest, payload: CapabilityIn) -> dict:
               summary="Change a learner (canopy admin)")
 @gate("superuser", setting=True)
 def patch_capability(request: HttpRequest, slug: str, payload: CapabilityPatch) -> dict:
-    """Narrow its audience, change its purposes, enable or disable it. Its class never changes."""
+    """Narrow its audience, change its purposes, enable or disable it. Its class never changes. Enabling one that
+    nobody active is accountable for (a seeded learner) makes you its accountable admin: its runs act for you."""
     _superuser(request)
     cap = BrainCapability.objects.filter(slug=slug).first()
     if cap is None:
@@ -92,13 +95,21 @@ def patch_capability(request: HttpRequest, slug: str, payload: CapabilityPatch) 
     if "operator" in changes:
         changes["operator"] = _operator(changes["operator"] or "")
     try:
-        cap = registry.update(cap, **changes)
+        cap = registry.update(cap, by=request.user, **changes)
     except registry.RefusedError as e:
         raise ProblemError(422, "Invalid request", type_=TYPE_VALIDATION, detail=str(e)) from e
     return _cap_out(cap)
 
 
 # ---- who manages whom -----------------------------------------------------------------------------
+# PERSON-ONLY, like `/api/me/learning/`: who manages whom decides who reads a person's learning outputs, so
+# only a person as themselves sets, ends or lists it (`acting_person.refusal`), and none is an MCP tool
+# (`apps/mcp/api_tools.py` EXCLUDED).
+
+def _person_only(request: HttpRequest) -> None:
+    if acting_person.refusal(request) is not None:
+        raise ProblemError(403, "Only a person, as themselves, may do this", type_=TYPE_FORBIDDEN)
+
 
 def _line_out(line) -> dict:
     name = lambda u: u.get_full_name() or u.email or u.username  # noqa: E731
@@ -106,12 +117,13 @@ def _line_out(line) -> dict:
             "manager": name(line.manager), "since": line.created_at}
 
 
-@router.get("/brain/workspaces/{slug}/reporting/", response={200: list[ReportingLineOut], **refusals(404)},
+@router.get("/brain/workspaces/{slug}/reporting/", response={200: list[ReportingLineOut], **refusals(403, 404)},
             summary="Who manages whom in this workspace")
 @gate("member")
 def list_reporting(request: HttpRequest, slug: str) -> list[dict]:
     """A workspace's owners see every line; anyone else sees the lines they are in, as the person or as
     the manager: so everyone knows who sees their learning outputs."""
+    _person_only(request)
     m = membership_or_404(request.user, slug)
     lines = reporting.live(m.workspace)
     if not perms.role_allows(m.role, perms.OWN):
@@ -124,13 +136,14 @@ def list_reporting(request: HttpRequest, slug: str) -> list[dict]:
 @gate("own", setting=True)
 def set_reporting(request: HttpRequest, slug: str, payload: ReportingLineIn) -> dict:
     """Owner-only, by hand. The manager then reads the person's `individual` learning outputs (never their
-    transcripts). Both must be members. Replaces the person's earlier manager."""
+    transcripts). Both must be members; anyone else, with an account or without, is the same "no such member"."""
+    _person_only(request)
     m = require_role(request.user, slug, perms.OWN)
     users = get_user_model().objects
     person, manager = (users.filter(email__iexact=payload.person.strip()).first(),
                        users.filter(email__iexact=payload.manager.strip()).first())
-    if person is None or manager is None:
-        raise ProblemError(404, "No such person", type_=TYPE_NOT_FOUND)
+    if any(u is None or not wsvc.is_member(u, m.workspace.slug) for u in (person, manager)):
+        raise ProblemError(404, "No such member", type_=TYPE_NOT_FOUND)
     try:
         line = reporting.set_manager(m.workspace, person=person, manager=manager, by=request.user)
     except reporting.RefusedError as e:
@@ -142,6 +155,7 @@ def set_reporting(request: HttpRequest, slug: str, payload: ReportingLineIn) -> 
                summary="End someone's manager line (workspace owner)")
 @gate("own", setting=True)
 def end_reporting(request: HttpRequest, slug: str, person_id: int):
+    _person_only(request)
     m = require_role(request.user, slug, perms.OWN)
     person = get_user_model().objects.filter(pk=person_id).first()
     if person is None or not reporting.end(m.workspace, person=person, by=request.user):
@@ -187,8 +201,9 @@ def list_project_sessions(request: HttpRequest, slug: str, handle: str, tiers: s
 @gate("authenticated")  # visible_to: its class's audience, never wider
 def list_outputs(request: HttpRequest, subject_type: str = "", subject: str = "", limit: int = 100) -> list[dict]:
     """The learning outputs you may read: about you, about people you coach or manage (outputs, never
-    transcripts), about projects you may read, and canopy's system findings if you administer. Newest first."""
-    qs = outputs.visible_to(request.user).select_related("capability").order_by("-created_at", "-pk")
+    transcripts; the manager's only as yourself, never through an agent or a turn), about projects you may read, and
+    canopy's system findings if you administer. Never a withdrawn or stale one. Newest first."""
+    qs = outputs.visible_to(request.user, as_person=acting_person.is_person(request)).select_related("capability").order_by("-created_at", "-pk")
     if subject_type:
         qs = qs.filter(subject_type=subject_type)
     if subject:

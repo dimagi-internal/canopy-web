@@ -78,3 +78,11 @@ def reports_of(manager, workspace_slugs=None):
     if workspace_slugs is not None:
         qs = qs.filter(workspace_id__in=list(workspace_slugs))
     return set(qs.values_list("person_id", flat=True))
+
+
+def lines_of(manager, workspace_slugs=None) -> list[tuple[str, int]]:
+    """`(workspace, person id)` for each live line `manager` manages: a line opens its own workspace only."""
+    qs = ReportingLine.objects.filter(manager=manager, ended_at__isnull=True)
+    if workspace_slugs is not None:
+        qs = qs.filter(workspace_id__in=list(workspace_slugs))
+    return list(qs.values_list("workspace_id", "person_id"))

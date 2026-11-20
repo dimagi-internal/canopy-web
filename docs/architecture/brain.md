@@ -135,7 +135,10 @@ confers no read by itself; only a `core` link opens the project leg.
 
 A `BrainCapability` is registered by a canopy admin (`POST /api/brain/capabilities/`, superuser only): one purpose
 class, the purposes it declares, the source kinds and output kinds it works with, an `operator` agent and the plugin
-`entry` a run starts with. It starts dark (`enabled` false). Its audience is its class's (`registry.CLASS_AUDIENCE`)
+`entry` a run starts with. It starts dark (`enabled` false). Its runs act for an accountable admin
+(`registry.accountable`: who registered it, while active); a canopy admin who enables or changes a feature nobody active
+answers for (a seeded learner, or one whose registrant left) becomes its accountable admin, and enabling one with nobody
+is refused. Its audience is its class's (`registry.CLASS_AUDIENCE`)
 and may only narrow: a wider one is refused, because that is a new class each person must agree to. The built-in
 `project-readers` (migration `0005`) is the purpose a project's readers read a session under.
 
@@ -143,9 +146,13 @@ and may only narrow: a wider one is refused, because that is a new class each pe
 
 Outputs (`BrainOutput`) are read by their class's audience (`outputs.visible_to`, `GET /api/brain/outputs/`):
 `individual` by the person, their coaches (the same rule as reading their sessions) and their manager; `memory` by
-the person; `project` by the project's readers; `system` by canopy admins and the workspace's owners. A withdrawn
-output is seen by no one. `ReportingLine` (`apps/brain/reporting.py`, set by a workspace owner by hand, each change an
-event) is the manager relationship; it opens a manager's reading of their reports' `individual` outputs and nothing else.
+the person; `project` by the project's readers; `system` by canopy admins and the workspace's owners. Only `active`
+outputs are seen: a withdrawn or stale one is seen by no one. Outputs are derived, so they stay readable while
+`BRAIN_READS_ENABLED` is off; nothing new is made then. `ReportingLine` (`apps/brain/reporting.py`, set by a workspace
+owner by hand, each change an event) is the manager relationship; it opens a manager's reading of their reports'
+`individual` outputs made in the workspace the line is in, and nothing else, and only to the manager as a person
+(`harness.acting_person`: never an agent, a turn's token or an act-as token). The reporting routes are person-only
+too and are not MCP tools; setting a line names "no such member" alike for an unknown address and a non-member.
 
 ## Reading as a project's reader (`apps/brain/readers.py`)
 
@@ -174,16 +181,21 @@ That stamp puts every turn in it in the confined `brain` profile (`published_pro
 `who_is_asking`, `brain_read` and `brain_emit`; REST refuses the token outright. Only that token reaches the two routes,
 and only while the turn runs and the gate is on.
 
-- **`brain_read`** serves the run's next eligible sources once each, in order past its cursor: stored user and
-  assistant text only, harness noise dropped, secrets scrubbed, and for a feature that learns about a person only that
-  person's own lines (other people's words in the same session are left out). The directives of the people in a source
-  travel with it. Every source served is recorded (`BrainRunRead`, a `brain.read` event).
+- **`brain_read`** serves the run's next eligible sources once each, in order, leaving out what a clean run of the
+  same feature already read for the same subject: stored user and assistant text only, harness noise dropped, secrets
+  scrubbed, and for a feature that learns about a person only that person's own lines and the assistant's replies to
+  them (other people's words in the same session, and the replies to them, are left out; a line with no recorded author
+  is the subject's only when nobody else is in the session). One call serves at most `reading.MAX_CHARS` and never splits
+  a source. The directives of the people in a source travel with it, and the sources removed since the feature learned
+  from them are named once (`revoked`, from `RevocationNotice`). Every source served is recorded (`BrainRunRead`, a
+  `brain.read` event).
 - **`brain_emit`** writes one output of a declared kind, about the run's own subject, citing sources. Every cited
   source must be one this run read and must still be eligible now, or nothing is written. The lineage
-  (`OutputLineage`: the source and the people whose words were in it) is written from the reads. Words are scrubbed;
-  the same output twice is one.
+  (`OutputLineage`: the source and the people whose words were in it) is written from the reads. Words are scrubbed,
+  object keys as well as values; the same output twice is one. Emits spend a budget of their own per run turn
+  (`mcp.rate_limit`, `BRAIN_RUN_WRITE_LIMIT`), not the accountable admin's.
 - The run's conversation holds the words it read, in the operator's own turn record, readable by the operator's admins as
-  any of its work is: the same exposure coaching has today.
+  any of its work is, until a source it read is removed: then the cascade deletes the conversation's content.
 
 ## Removal and the cascade (`apps/brain/cascade.py`)
 
@@ -198,18 +210,28 @@ content deletion, `signals._cascade_content_deletion`). It is idempotent.
   (`cascade.removed_reason`). Removing X withdraws what was learned about X; what was learned about Y from
   Y's own words stays.
 - An output derived only from removed sources is **withdrawn**: body and title emptied, lineage kept as ids,
-  seen by no one. One derived from several is **stale** and gets a `RederiveRequest` for the scheduler to take.
-  The links' evidence is deleted and the learner gets a `RevocationNotice`.
+  seen by no one. One derived from several is **stale**: emptied and hidden the same way (its words cannot be told
+  apart by source), with a `RederiveRequest`; the feature's next run for that subject reads the remaining sources again
+  and a clean end closes the request. The learner gets a `RevocationNotice`, served by its next `brain_read`.
+- The evidence of every link of a source removed from shared (project) use is deleted, whether or not an output cites it.
+- The conversation of every run that read a removed source is deleted (`content_deletion.delete_content`: messages,
+  turn events and transcripts), since `brain_read` results and `brain_emit` inputs cannot be cut out source by source;
+  a run still working is deleted by a later sweep.
+- A personal-memory entry derived from a removed session (HCP `derivedFrom`, `EntryRelationship` with
+  `source_kind` "session") is deleted through HCP's own path (`apps/brain/hcp_store.py`, `hcp.delete_entry` as canopy):
+  never served to an agent again, its embedding cleared, still shown to its person marked deleted. Removal here is the
+  entry's own person's: their exclusion, their dropping `memory` after having agreed to it, or the words gone or sealed.
 - **A tombstone, not a toggle.** `consent.include` restores eligibility only; a withdrawn output stays
   withdrawn, a replay cannot cite a removed source (`cascade.emit_allowed`), and a runner re-ship of deleted
   words is refused as before (`transcript_ingest.refuses_ship`).
-- Another store (an HCP entry) registers with `cascade.register_store` and is asked to withdraw or mark stale;
-  nothing in this app touches the memory store itself.
+- Another store that writes `OutputLineage` registers with `cascade.register_store` and is asked to withdraw or mark
+  stale. The sweep skips withdrawn outputs.
 
 ## Disclosure (`apps/brain/disclosure.py`)
 
 Each read the brain allows leaves a `brain.read` event (`readers.record_read`). `disclosure.compact` (tick
-`brain.disclosure`, hourly, and on each read of the summary) folds them into `DisclosureDay`: per person whose
+`brain.disclosure`, hourly, and on each read of the summary, then over only the events of that person's sessions) folds
+them into `DisclosureDay`: per person whose
 words were in the sources, per learner and day, how many reads and how many of their sessions. Never the
 reader's own reads, never a word; recomputable from the raw events (`disclosure.raw_rows`).
 `GET /api/me/learning/disclosure/` and `/api/me/learning/removed/` are the person's own and off MCP.
@@ -219,10 +241,11 @@ The Settings page `/settings/learning` shows them beside the class switches.
 
 A project feature (`purpose_class` project) with an operator, an enabled flag and a `schedule` (`hourly`, `daily`,
 `weekly`) is run by the `brain.schedule` tick for each ACTIVE workspace project of the operator's workspace tree (never a
-personal one), only when a run is due and there is something new: eligible sources past the feature's `BrainCursor` for
-that project. The run reads past that cursor (`BrainRun.floor`); a clean end of its turn (`signals`, `runs.finish`) moves
-the cursor past what it read, a failed one moves nothing and the next interval tries again. One run per feature and project
-at a time.
+personal one), only when a run is due (`BrainCursor.last_run_at`) and there is something new: an eligible source no clean
+run of the feature read for that project (`reading.learned`), so a session linked, agreed to or backfilled late is still
+read. A clean end of the run's turn (`signals`, `runs.finish`) makes what it read count as learned; a failed one counts
+nothing and the next interval reads it again. One open run per feature and project (`brain_one_open_run`, so two workers
+cannot both start one); a run open past `BRAIN_RUN_TIMEOUT_SECONDS` (six hours by default) is abandoned as failed.
 
 The **judge** (layer 3 of the associations; the registered `project-link-judge`) is such a run with the purpose `judge`:
 it is served only the sessions weakly tied to the project (a `candidate` link made by signals, never one a person or a
@@ -250,7 +273,6 @@ server module; moving them to runs of a registered learner is work in the canopy
 
 ## Not built yet
 
-A per-person scheduler for `individual` and `memory` features, the capability leg's other readers (coach and manager
-reading of transcripts stays on the existing coaching leg), and the HCP entry store's cascade hook (it follows the HCP v2
-`derivedFrom` work). No capability reads a transcript through the brain in production: `BRAIN_READS_ENABLED` is the rollout
+A per-person scheduler for `individual` and `memory` features, and the capability leg's other readers (coach and manager
+reading of transcripts stays on the existing coaching leg). No capability reads a transcript through the brain in production: `BRAIN_READS_ENABLED` is the rollout
 gate and stays off until the owner turns it on.

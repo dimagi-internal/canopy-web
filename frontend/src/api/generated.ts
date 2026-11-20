@@ -19411,7 +19411,8 @@ export interface paths {
         readonly head?: never;
         /**
          * Change a learner (canopy admin)
-         * @description Narrow its audience, change its purposes, enable or disable it. Its class never changes.
+         * @description Narrow its audience, change its purposes, enable or disable it. Its class never changes. Enabling one that
+         *     nobody active is accountable for (a seeded learner) makes you its accountable admin: its runs act for you.
          */
         readonly patch: operations["patch_capability"];
         readonly trace?: never;
@@ -19432,7 +19433,7 @@ export interface paths {
         /**
          * Set who manages someone (workspace owner)
          * @description Owner-only, by hand. The manager then reads the person's `individual` learning outputs (never their
-         *     transcripts). Both must be members. Replaces the person's earlier manager.
+         *     transcripts). Both must be members; anyone else, with an account or without, is the same "no such member".
          */
         readonly put: operations["set_reporting"];
         readonly post?: never;
@@ -19492,7 +19493,8 @@ export interface paths {
         /**
          * What learning produced, for you
          * @description The learning outputs you may read: about you, about people you coach or manage (outputs, never
-         *     transcripts), about projects you may read, and canopy's system findings if you administer. Newest first.
+         *     transcripts; the manager's only as yourself, never through an agent or a turn), about projects you may read, and
+         *     canopy's system findings if you administer. Never a withdrawn or stale one. Newest first.
          */
         readonly get: operations["list_outputs"];
         readonly put?: never;
@@ -51047,6 +51049,11 @@ export interface components {
             readonly project?: {
                 readonly [key: string]: unknown;
             } | null;
+            /**
+             * Revoked
+             * @description Sources removed since this learner learned from them: what came from them is withdrawn; do not rely on or rebuild it. Told once.
+             */
+            readonly revoked?: readonly number[];
         };
         /** BrainReadSource */
         readonly BrainReadSource: {
@@ -77462,6 +77469,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["ReportingLineOut"][];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
             /** @description Not Found */

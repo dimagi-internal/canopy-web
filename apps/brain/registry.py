@@ -3,7 +3,11 @@
 A learning feature's audience is derived from its class and may only NARROW it: a wider audience
 than the class allows is refused, because that is the change that needs each person to agree again,
 which is a new class (`consent.CLASS_COPY`), not a setting. A feature with `enabled` false is
-registered but reads nothing (`eligibility.eligible`)."""
+registered but reads nothing (`eligibility.eligible`).
+
+A run of a feature is canopy's own turn, accountable to a person (`runs.start`): the canopy admin who
+registered it, or the one who enabled it when nobody had (a seeded learner). An enabled feature always has
+one, active; enabling one that would not is refused."""
 from __future__ import annotations
 
 from django.db import transaction
@@ -29,6 +33,12 @@ SCHEDULES = {"": None, "hourly": 3600, "daily": 86400, "weekly": 7 * 86400}
 
 class RefusedError(ValueError):
     """The registration asked for is not one a canopy admin may make (a 422 at the route)."""
+
+
+def accountable(cap: BrainCapability):
+    """The person a run of `cap` acts for (its caller token's user), or None: who registered it, while active."""
+    user = cap.registered_by if cap.registered_by_id else None
+    return user if user is not None and user.is_active else None
 
 
 def _words(name: str, value, *, limit: int = 20) -> list[str]:
@@ -68,6 +78,8 @@ def register(*, slug: str, name: str, purpose_class: str, purposes, description:
         raise RefusedError(f"{slug} is already registered")
     _entry(entry)
     _schedule(schedule)
+    if enabled and not getattr(registered_by, "is_active", False):
+        raise RefusedError("an enabled feature runs accountable to an active canopy admin; name one")
     kinds = _words("source_kinds", list(source_kinds))
     if set(kinds) - {k for k, _ in BrainSource.KIND_CHOICES}:
         raise RefusedError("source_kinds names a kind of source canopy does not hold")
@@ -80,9 +92,11 @@ def register(*, slug: str, name: str, purpose_class: str, purposes, description:
 
 
 @transaction.atomic
-def update(cap: BrainCapability, **changes) -> BrainCapability:
+def update(cap: BrainCapability, *, by=None, **changes) -> BrainCapability:
     """Change a registration. The class never changes (that is a different feature); the audience may
-    only narrow what its class allows."""
+    only narrow what its class allows. `by` is the canopy admin making the change: a feature left enabled
+    with nobody active accountable for it (seeded, or its registrant gone) becomes theirs; with no `by`
+    it is refused."""
     if "purpose_class" in changes and changes["purpose_class"] != cap.purpose_class:
         raise RefusedError("a feature's class cannot change; register another")
     if "audience" in changes:
@@ -101,6 +115,10 @@ def update(cap: BrainCapability, **changes) -> BrainCapability:
     changes.pop("purpose_class", None)
     if changes:
         raise RefusedError(f"cannot change {', '.join(sorted(changes))}")
+    if cap.enabled and accountable(cap) is None:
+        if not getattr(by, "is_active", False):
+            raise RefusedError("an enabled feature runs accountable to an active canopy admin; nobody is")
+        cap.registered_by = by
     cap.save()
     return cap
 

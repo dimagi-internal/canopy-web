@@ -12,7 +12,7 @@ from mcp.server.auth.middleware.auth_context import AuthenticatedUser, auth_cont
 
 from apps.agents.models import Agent, AgentProject, AgentTask
 from apps.brain import associate, consent, emit, reading, registry, runs, schedule, sources
-from apps.brain.models import BrainCapability, BrainCursor, BrainRun, LearningConsent, SourceLink
+from apps.brain.models import BrainCapability, BrainRun, LearningConsent, SourceLink
 from apps.canopy_sessions.models import Message, Session
 from apps.harness import claim_payload
 from apps.harness.models import Runner, Turn
@@ -49,9 +49,7 @@ def w(settings):
                                        last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
     out["project"] = AgentProject.objects.create(agent=op, ext_id="P1", name="Supply", handle="supply",
                                                  status=AgentProject.ACTIVE, outcome="Tenders run end to end")
-    registry.update(out["proj"], operator=op, output_kinds=["idea"], enabled=True, schedule="daily")
-    BrainCapability.objects.filter(pk=out["proj"].pk).update(registered_by=root)
-    out["proj"].refresh_from_db()
+    registry.update(out["proj"], operator=op, output_kinds=["idea"], enabled=True, schedule="daily", by=root)
     for u in (out["alice"], out["bob"]):
         LearningConsent.objects.create(user=u, classes=["project"])
     return out
@@ -72,6 +70,10 @@ def _end(run, status=Turn.DONE):
 
 # ---- the schedule --------------------------------------------------------------------------------
 
+def _titles(run):
+    return [x["title"] for x in reading.read_next(run, limit=5)["sources"]]
+
+
 def test_a_run_starts_per_active_project_only_when_there_is_something_new(w):
     assert schedule.run_due() == []                                       # nothing linked yet
     s = _chat(w, w["alice"], "tenders", "build the tender view")
@@ -82,13 +84,27 @@ def test_a_run_starts_per_active_project_only_when_there_is_something_new(w):
     reading.read_next(run, limit=5)
     _end(run)
     assert run.state == BrainRun.DONE
-    assert BrainCursor.objects.get().last_source == sources.for_session(s).pk
     assert schedule.run_due(now=timezone.now() + dt.timedelta(days=2)) == []          # due, but nothing new
     s2 = _chat(w, w["alice"], "more tenders", "add a filter")
     _link(w, s2)
     assert schedule.run_due() == []                                       # new, but not due yet (daily)
     [again] = schedule.run_due(now=timezone.now() + dt.timedelta(days=2))
-    assert again.floor == sources.for_session(s).pk                        # reads only what is past the cursor
+    assert _titles(again) == ["more tenders"]                              # only what no clean run read
+
+
+def test_a_session_linked_or_agreed_to_late_is_still_read(w):
+    early = _chat(w, w["alice"], "early", "x")
+    late = _chat(w, w["carol"], "late", "y")                            # carol has not agreed yet: not eligible
+    _link(w, early)
+    _link(w, late)
+    newest = _chat(w, w["alice"], "newest", "z")
+    _link(w, newest)
+    [run] = schedule.run_due()
+    assert _titles(run) == ["early", "newest"]
+    _end(run)
+    LearningConsent.objects.create(user=w["carol"], classes=["project"])  # late consent, an OLDER source id
+    [again] = schedule.run_due(now=timezone.now() + dt.timedelta(days=2))
+    assert _titles(again) == ["late"]                                     # a max-id cursor would have skipped it
 
 
 def test_a_run_reads_past_its_floor_only(w):
@@ -100,15 +116,59 @@ def test_a_run_reads_past_its_floor_only(w):
     assert [s["title"] for s in page["sources"]] == ["new"]
 
 
-def test_a_failed_run_moves_nothing_and_is_tried_again(w):
+def test_a_failed_run_counts_nothing_and_is_tried_again(w):
     s = _chat(w, w["alice"], "tenders", "build the tender view")
     _link(w, s)
     [run] = schedule.run_due()
     reading.read_next(run, limit=5)
     _end(run, Turn.FAILED)
-    assert run.state == BrainRun.FAILED and BrainCursor.objects.get().last_source == 0
+    assert run.state == BrainRun.FAILED
     [again] = schedule.run_due(now=timezone.now() + dt.timedelta(days=2))
-    assert again.floor == 0
+    assert _titles(again) == ["tenders"]
+
+
+def test_a_run_whose_turn_never_ends_is_abandoned_and_does_not_hold_the_project(w, settings):
+    settings.BRAIN_RUN_TIMEOUT_SECONDS = 3600
+    _link(w, _chat(w, w["alice"], "tenders", "build the tender view"))
+    [stuck] = schedule.run_due()
+    reading.read_next(stuck, limit=5)
+    assert schedule.run_due(now=timezone.now() + dt.timedelta(minutes=30)) == []      # open, not yet stale
+    [again] = schedule.run_due(now=timezone.now() + dt.timedelta(days=2))
+    stuck.refresh_from_db()
+    assert stuck.state == BrainRun.FAILED and _titles(again) == ["tenders"]
+    with pytest.raises(reading.NotReadingError):
+        reading.read_next(stuck)                                          # the abandoned run reads no more
+
+
+def test_two_workers_cannot_open_the_same_run(w):
+    _link(w, _chat(w, w["alice"], "tenders", "build the tender view"))
+    runs.start(w["proj"], subject=w["project"])
+    with pytest.raises(runs.StartRefusedError, match="already open"):
+        runs.start(w["proj"], subject=w["project"])
+    assert BrainRun.objects.filter(state=BrainRun.OPEN).count() == 1
+
+
+def test_a_stale_output_s_remaining_sources_are_read_again_and_its_request_closed(w):
+    from apps.brain import cascade
+    from apps.brain.models import RederiveRequest
+
+    a, b = _chat(w, w["alice"], "one", "we keep re-keying"), _chat(w, w["alice"], "two", "again the re-keying")
+    _link(w, a)
+    _link(w, b)
+    [run] = schedule.run_due()
+    ids = [x["source"] for x in reading.read_next(run, limit=5)["sources"]]
+    both = emit.emit(run, kind="idea", title="Stop re-keying", body={"why": "y"}, source_ids=ids)
+    _end(run)
+    consent.exclude(w["alice"], sources.for_session(a))
+    cascade.sweep()
+    ask = RederiveRequest.objects.get(output=both, done_at__isnull=True)
+    [again] = schedule.run_due(now=timezone.now() + dt.timedelta(days=2))
+    page = reading.read_next(again, limit=5)
+    assert [x["title"] for x in page["sources"]] == ["two"] and page["revoked"] == [ids[0]]
+    assert reading.read_next(again, after=page["next_after"])["revoked"] == []           # told once
+    _end(again)
+    ask.refresh_from_db()
+    assert ask.done_at is not None
 
 
 @pytest.mark.parametrize("change", ["paused", "personal", "no_operator", "disabled", "no_schedule", "gate_off"])
@@ -174,8 +234,7 @@ def _call(name, args=None):
 
 def _judge(w):
     judge = registry.ensure_learners()["project-link-judge"]
-    registry.update(judge, operator=w["operator"], enabled=True)
-    BrainCapability.objects.filter(pk=judge.pk).update(registered_by=w["root"])
+    registry.update(judge, operator=w["operator"], enabled=True, by=w["root"])
     run = runs.start(BrainCapability.objects.get(pk=judge.pk), subject=w["project"])
     turn = Turn.objects.get(chat_session=run.session)
     Turn.objects.filter(pk=turn.pk).update(status=Turn.RUNNING, claimed_by=w["box"])
@@ -328,7 +387,7 @@ def test_an_idea_withdraws_with_its_only_source_and_goes_stale_with_one_of_sever
     only.refresh_from_db()
     both.refresh_from_db()
     assert only.state == BrainOutput.WITHDRAWN and only.body == {} and only.title == ""
-    assert both.state == BrainOutput.STALE and both.body == {"why": "y"}          # kept, marked, re-derivation queued
+    assert both.state == BrainOutput.STALE and both.body == {}                     # words gone, re-derivation queued
     from apps.brain.models import RederiveRequest
 
     assert RederiveRequest.objects.filter(output=both, done_at__isnull=True).exists()

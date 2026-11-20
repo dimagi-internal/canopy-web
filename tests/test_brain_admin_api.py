@@ -77,6 +77,39 @@ def test_an_audience_may_only_narrow_and_the_class_never_changes(w):
         registry.update(BrainCapability.objects.get(slug="pace"), purpose_class="system")
 
 
+def test_enabling_a_seeded_learner_makes_the_admin_accountable_for_its_runs(w):
+    seeded = registry.ensure_learners()["coaching"]
+    assert seeded.registered_by_id is None and not seeded.enabled
+    with pytest.raises(registry.RefusedError, match="accountable"):
+        registry.update(seeded, enabled=True)                                # nobody to answer for its runs
+    r = send(client(w["root"]), "patch", "/api/brain/capabilities/coaching/", {"enabled": True})
+    assert r.status_code == 200 and r.json()["enabled"] is True
+    seeded.refresh_from_db()
+    assert seeded.registered_by_id == w["root"].pk and registry.accountable(seeded) == w["root"]
+
+
+def test_a_feature_whose_admin_is_gone_is_not_run_until_another_enables_it(w, settings):
+    from apps.brain import runs
+
+    settings.BRAIN_READS_ENABLED = True
+    other = user("root2")
+    other.is_superuser = True
+    other.save()
+    op = Agent.objects.create(slug="trellis", name="Trellis", owner=w["owner"], workspace=w["ws"],
+                              user=user("trellis_login"))
+    cap = registry.register(slug="pace", name="Pace", purpose_class="individual", purposes=["coach"],
+                            operator=op, enabled=True, registered_by=w["root"])
+    w["root"].is_active = False
+    w["root"].save()
+    with pytest.raises(runs.StartRefusedError, match="accountable"):
+        runs.start(cap, subject=w["alice"])
+    assert send(client(other), "patch", "/api/brain/capabilities/pace/", {"schedule": ""}).status_code == 200
+    cap.refresh_from_db()
+    assert registry.accountable(cap) == other
+    with pytest.raises(registry.RefusedError):
+        registry.register(slug="dark", name="D", purpose_class="system", purposes=["x"], enabled=True)
+
+
 # ---- reporting lines -----------------------------------------------------------------------------
 
 def test_an_owner_sets_who_manages_whom_and_each_change_is_an_event(w):
@@ -102,6 +135,28 @@ def test_an_owner_sets_who_manages_whom_and_each_change_is_an_event(w):
 def test_a_bad_line_is_refused(w, body):
     r = send(client(w["owner"]), "put", "/api/brain/workspaces/acme/reporting/", body)
     assert r.status_code in (404, 422) and not ReportingLine.objects.exists()
+
+
+def test_no_account_and_not_a_member_answer_the_same(w):
+    user("outsider")                                                         # has an account, not in acme
+    url = "/api/brain/workspaces/acme/reporting/"
+    a = send(client(w["owner"]), "put", url, {"person": "alice@dimagi.com", "manager": "outsider@dimagi.com"})
+    b = send(client(w["owner"]), "put", url, {"person": "alice@dimagi.com", "manager": "nobody@dimagi.com"})
+    assert (a.status_code, a.json()) == (b.status_code, b.json()) and a.status_code == 404
+
+
+def test_reporting_is_a_person_s_own_act_never_an_agent_s(w):
+    agent = Agent.objects.create(slug="helper", name="Helper", owner=w["owner"], workspace=w["ws"],
+                                 user=user("helper_login"))
+    member(agent.user, w["ws"], role="owner")
+    url = "/api/brain/workspaces/acme/reporting/"
+    body = {"person": "bob@dimagi.com", "manager": "alice@dimagi.com"}
+    assert send(client(agent.user), "put", url, body).status_code == 403
+    assert client(agent.user).get(url).status_code == 403
+    assert not ReportingLine.objects.exists()
+    assert send(client(w["owner"]), "put", url, body).status_code == 200
+    r = client(w["owner"]).delete(f"{url}{w['bob'].pk}/", HTTP_X_CANOPY_TURN_ID="some-turn")
+    assert r.status_code == 403 and ReportingLine.objects.filter(ended_at__isnull=True).exists()
 
 
 def test_a_manager_must_be_a_member(w):
@@ -138,7 +193,32 @@ def test_an_individual_output_goes_to_the_person_their_coach_and_their_manager_o
     BrainOutput.objects.filter(pk=o.pk).update(state="withdrawn")
     assert o.pk not in _ids(w["alice"])
     BrainOutput.objects.filter(pk=o.pk).update(state="stale")
-    assert o.pk in _ids(w["alice"])                                          # kept, marked
+    assert o.pk not in _ids(w["alice"])                                      # a source was removed: hidden too
+
+
+def test_a_manager_reads_only_the_outputs_of_the_workspace_their_line_is_in(w):
+    from apps.workspaces.models import Workspace
+
+    other = Workspace.objects.create(slug="beta", display_name="Beta", created_by=w["owner"])
+    for u in (w["alice"], w["bob"]):
+        member(u, other)
+    here = _out(w, w["coach"], "person", w["alice"].pk)
+    there = BrainOutput.objects.create(capability=w["coach"], kind="note", workspace=other, subject_type="person",
+                                       subject=str(w["alice"].pk), title="t", body={"x": 1})
+    reporting.set_manager(w["ws"], person=w["alice"], manager=w["bob"], by=w["owner"])
+    assert here.pk in _ids(w["bob"]) and there.pk not in _ids(w["bob"])     # the line is in acme only
+
+
+def test_the_manager_leg_is_the_person_s_own_never_a_token_acting_for_them(w):
+    from apps.brain import outputs
+
+    o = _out(w, w["coach"], "person", w["alice"].pk)
+    reporting.set_manager(w["ws"], person=w["alice"], manager=w["bob"], by=w["owner"])
+    assert o in outputs.visible_to(w["bob"], as_person=True)
+    assert o not in outputs.visible_to(w["bob"])                              # not asserted to be the person: closed
+    assert o.pk in _ids(w["bob"])
+    r = client(w["bob"]).get("/api/brain/outputs/", HTTP_X_CANOPY_TURN_ID="some-turn")   # a turn acting for bob
+    assert r.status_code == 200 and o.pk not in {x["id"] for x in r.json()}
 
 
 def test_a_coach_sees_only_those_who_opted_in(w):
@@ -178,8 +258,9 @@ def test_the_new_routes_are_mcp_tools_but_each_is_secured_in_the_route(w):
     schema = api.get_openapi_schema()
     tools = {op["operationId"] for path, item in schema["paths"].items() if path.startswith("/api/brain/")
              for m, op in item.items() if isinstance(op, dict) and not excluded_reason(path, m, op)}
-    assert {"list_capabilities", "register_capability", "patch_capability", "list_reporting", "set_reporting",
-            "end_reporting", "list_outputs", "declare_session_project"} <= tools
+    assert {"list_capabilities", "register_capability", "patch_capability", "list_outputs",
+            "declare_session_project"} <= tools
+    assert not {"list_reporting", "set_reporting", "end_reporting"} & tools        # who manages whom: person-only
 
 
 @pytest.mark.needs_migrations
