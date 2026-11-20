@@ -118,7 +118,7 @@ class LearningConsent(models.Model):
 
 class SourceExclusion(models.Model):
     """One person taking one source out of learning. Its own row, so removing it later
-    restores nothing the cascade already withdrew (P5)."""
+    restores nothing the cascade already withdrew (`cascade.py`)."""
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
     source = models.ForeignKey(BrainSource, on_delete=models.CASCADE, related_name="exclusions")
@@ -129,7 +129,7 @@ class SourceExclusion(models.Model):
 
 
 class BrainCapability(models.Model):
-    """Something that learns: registered by a canopy admin (P4's routes), in one purpose
+    """Something that learns: registered by a canopy admin (`registry.py`), in one purpose
     class, declaring the purposes it reads for. A capability may only NARROW its class's
     audience, never widen it."""
 
@@ -182,7 +182,7 @@ class ProjectSignature(models.Model):
 
 class SourceLink(models.Model):
     """A source's tie to a subject. Metadata only: a link confers no read by itself, and only a `core`
-    link ever opens the project read leg (P4). One row per (source, subject); the strongest layer
+    link ever opens the project read leg (`readers.py`). One row per (source, subject); the strongest layer
     wins (`associate.RANK`), and a person's own rejection sticks."""
 
     PERSON, PROJECT_SUBJECT = "person", "project"
@@ -324,7 +324,7 @@ class BrainRunRead(models.Model):
 
 class RederiveRequest(models.Model):
     """An output derived from several sources lost one: it is marked `stale` and asks to be derived again
-    from what is left. The scheduler that runs learning (a later phase) consumes these (`done_at`)."""
+    from what is left. The scheduler that runs learning (`schedule.py`) consumes these (`done_at`)."""
 
     output = models.ForeignKey(BrainOutput, on_delete=models.CASCADE, related_name="rederive_requests")
     reason = models.CharField(max_length=200, blank=True, default="")

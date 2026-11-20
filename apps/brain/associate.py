@@ -7,7 +7,7 @@
    (`canopy_sessions.activity`: repos, edited paths, PRs, MCP tool calls, branches). `classify` is
    the classifier of `project_history` in the canopy repo, ported: strong signals make `core` (a
    lone owned PR makes `adjacent`), weak ones make a `candidate`.
-3. **Judged**: a model's ruling on candidates (a later phase; `put` already takes it).
+3. **Judged**: a model's ruling on candidates, made by a judge run (`schedule.py`, `emit._emit_link`).
 4. **Declared**: an agent at close-out or a person. Overrides all; a PERSON's rejection sticks.
 
 Everything here reads stored metadata, never a message. A sealed source (sensitive, a contact's,

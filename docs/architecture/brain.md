@@ -21,7 +21,7 @@ session, never copied.
   (empty = all of theirs), `include_new`, `standing_rules`, `directives`. **`SourceExclusion`**: one
   person taking one source out, its own row.
 - **`BrainCapability`**: something that learns, in one purpose class, declaring the purposes it reads
-  for. Registered by a canopy admin (the routes are a later phase); only the model exists.
+  for. Registered by a canopy admin (`registry.py`, `/api/brain/capabilities/`).
 
 Sources are made lazily (`sources.for_session`) and warmed by `manage.py brain_backfill`.
 
@@ -50,7 +50,7 @@ names matches. A rule the code cannot read denies (`rule_denies`).
 
 `/api/me/learning/` reads, sets and ends a person's consent; `/api/me/learning/sessions/{id}/` takes
 one of their sessions out and back. Each route asks `harness.acting_person.refusal`: an agent's login, a
-turn's token, a runner and a request naming a turn are a 403, and none of the six is an MCP tool
+turn's token, a runner and a request naming a turn are a 403, and none of them is an MCP tool
 (`apps/mcp/api_tools.py` `EXCLUDED`). Nobody opts anyone in; there is no admin route.
 
 Every change is on the person's own audit (`learning.consented|class_added|class_removed|revoked|
@@ -71,9 +71,9 @@ carried every live opt-in over; the old table stays until a later release drops 
 `SourceLink` ties a source to a subject (a project today), one row per pair, in four layers where the
 strongest wins (`associate.rank`): **dispatched** (a turn raised from a task of the project ran in the
 session: certain), **signals** (the project's `ProjectSignature` matched against the session's recorded
-`activity`; `associate.classify` is canopy's `project_history.classify`, ported), **judged** (a later
-phase) and **declared** (an agent at close-out, or a person). A link is metadata and confers no read
-by itself; only a `core` link will open the project leg.
+`activity`; `associate.classify` is canopy's `project_history.classify`, ported), **judged** (a judge
+run's ruling, below) and **declared** (an agent at close-out, or a person). A link is metadata and
+confers no read by itself; only a `core` link opens the project leg.
 
 - **Signals, not words.** Layer 2 reads `Session.activity` (repos, edited paths, PRs, MCP tool calls,
   branches) and the title; it never reads a message. Strong signals (owns a project PR, edits project

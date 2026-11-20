@@ -1,4 +1,4 @@
-"""The brain's project leg (P4): who reads a project's sessions, how (read-only, scrubbed, recorded), and
+"""The brain's project leg: who reads a project's sessions, how (read-only, scrubbed, recorded), and
 the SQL form of `eligible` (`eligible_sources`) held to the per-source one over a whole world."""
 from __future__ import annotations
 

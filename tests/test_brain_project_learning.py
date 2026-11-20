@@ -1,4 +1,4 @@
-"""Project learning (P7): runs started on a schedule per active project and only for what is new, and the judge
+"""Project learning: runs started on a schedule per active project and only for what is new, and the judge
 that rules on weakly tied sessions (layer 3 of `associate`)."""
 from __future__ import annotations
 
