@@ -215,10 +215,11 @@ describe('External accounts', () => {
 })
 
 describe('Security — about the agent', () => {
-  it('shows the canopy login and a closed test vault key', async () => {
+  it('shows the canopy login, a closed test vault key and closed test page permissions', async () => {
     inRouter(<AgentSecurityPanel agent={AGENT} canEdit />)
     expect(await screen.findByTestId('agent-canopy-login')).toBeTruthy()
     expect(screen.getByTestId('vault-section-agent-test-key').getAttribute('aria-expanded')).toBe('false')
+    expect(screen.getByTestId('vault-section-agent-test-page').getAttribute('aria-expanded')).toBe('false')
   })
 
   it('lists read alerts', async () => {

@@ -269,6 +269,24 @@ export async function setTestVaultKey(slug: string, enabled: boolean): Promise<T
   return need<TestVaultKeyOut>(res, 'setTestVaultKey')
 }
 
+// ---- an agent login's TEST page permissions (apps/agents/credentials/login_test_page.py) -------
+
+export type TestPagePermissionOut = Schemas['TestPagePermissionOut']
+
+export async function getTestPagePermission(slug: string): Promise<TestPagePermissionOut> {
+  const res = await apiV2.GET('/api/agents/{slug}/test-page-permission', { params: { path: { slug } } })
+  return need<TestPagePermissionOut>(res, 'getTestPagePermission')
+}
+
+/** Turning it on needs a passkey step-up, which `apiV2` prompts for; off never does. */
+export async function setTestPagePermission(slug: string, enabled: boolean): Promise<TestPagePermissionOut> {
+  const res = await apiV2.PUT('/api/agents/{slug}/test-page-permission', {
+    params: { path: { slug } },
+    body: { enabled },
+  })
+  return need<TestPagePermissionOut>(res, 'setTestPagePermission')
+}
+
 export interface VaultClientReport {
   stage: string
   method: 'passkey' | 'passphrase' | 'recovery' | 'none'

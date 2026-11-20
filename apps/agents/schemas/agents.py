@@ -266,6 +266,23 @@ class TestVaultKeyOut(StrictModel):
     conversations: int = 0
 
 
+class TestPagePermissionIn(StrictModel):
+    """Turn an agent login's TEST page permissions on or off. Its own endpoint, never on
+    the agent-repo upsert: an agent must not be able to let its own login skip a passkey."""
+
+    enabled: bool
+
+
+class TestPagePermissionOut(StrictModel):
+    """Whether the agent's own login may confirm its own act-as-you permission on a host
+    site's page without a passkey. `live_grants` counts the login's live (confirmed)
+    page permissions, which turning the switch off stops."""
+
+    enabled: bool
+    login_email: str = ""
+    live_grants: int = 0
+
+
 class SlackEnabledOut(StrictModel):
     """The switch's new state, and what happened to the agent's `/<slug>` command.
 

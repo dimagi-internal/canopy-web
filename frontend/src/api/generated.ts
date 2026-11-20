@@ -2484,6 +2484,55 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/me/host-grants/waiting": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The pages whose act-as-you permission is waiting for me to confirm it
+         * @description Your unexpired act-as-you permissions that no one has confirmed yet, one per page,
+         *     newest first: what a page's panel is waiting on. `requested` says an agent's turn
+         *     already needs it. An agent's own login uses this to find the id it confirms with
+         *     `confirm-as-agent`.
+         */
+        readonly get: operations["list_my_waiting_host_grants"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/me/host-grants/{grant_id}/confirm-as-agent": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * As an agent's own login, confirm my own page's act-as-you permission without a passkey (test page permissions)
+         * @description FOR TESTING. Only an agent's own canopy login, with its own token or browser
+         *     session (never a site's panel token), while an admin of the agent has turned on its
+         *     test page permissions (`PUT /api/agents/{slug}/test-page-permission`), confirms its
+         *     OWN waiting permission on a host site's page — for its own agent's page or one for
+         *     any agent — without a passkey. From then, for the usual 30 minutes, the agent may act
+         *     as its own login on that page. A person confirms with their passkey and is refused
+         *     here; no one confirms anyone else's permission.
+         */
+        readonly post: operations["confirm_my_host_grant_as_agent"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/me/delegated-credentials/": {
         readonly parameters: {
             readonly query?: never;
@@ -6033,6 +6082,39 @@ export interface paths {
          *     conversation-key copy wrapped to it.
          */
         readonly put: operations["set_test_vault_key"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/test-page-permission": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Whether the agent's own login may confirm its own page permission without a passkey
+         * @description The switch, and how many live act-as-you permissions on host sites' pages the
+         *     agent's own login holds. Owner or admin only.
+         */
+        readonly get: operations["get_test_page_permission"];
+        /**
+         * Turn the agent login's test page permissions on or off
+         * @description `{enabled}`. FOR TESTING: while on, the agent's own canopy login may confirm its
+         *     OWN act-as-you permission on a host site's page without a passkey
+         *     (`POST /api/me/host-grants/{id}/confirm-as-agent`, with the login's own token or
+         *     browser session, never the page's panel token), so a headless test can run the
+         *     page-agent flow as the agent itself. It never confirms a person's permission, and
+         *     the login still registers no passkey and steps up nowhere. Turning it on needs an
+         *     owner or admin of the agent at a browser with a fresh passkey step-up; 409
+         *     `no_agent_login` when the agent has no login of its own. Turning it off stops every
+         *     unexpired page permission the login holds.
+         */
+        readonly put: operations["set_test_page_permission"];
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -24982,6 +25064,14 @@ export interface components {
             readonly window_seconds?: number | null;
         };
         /**
+         * AgentConfirmIn
+         * @description Optionally a SHORTER window than the usual 30 minutes (`host_grants.window_for`).
+         */
+        readonly AgentConfirmIn: {
+            /** Window Seconds */
+            readonly window_seconds?: number | null;
+        };
+        /**
          * MyDelegatedCredentialOut
          * @description One credential from your own account, delegated to an agent. Never the value.
          */
@@ -31013,6 +31103,35 @@ export interface components {
          *     agent-repo upsert: an agent must not be able to give its own login a key.
          */
         readonly TestVaultKeyIn: {
+            /** Enabled */
+            readonly enabled: boolean;
+        };
+        /**
+         * TestPagePermissionOut
+         * @description Whether the agent's own login may confirm its own act-as-you permission on a host
+         *     site's page without a passkey. `live_grants` counts the login's live (confirmed)
+         *     page permissions, which turning the switch off stops.
+         */
+        readonly TestPagePermissionOut: {
+            /** Enabled */
+            readonly enabled: boolean;
+            /**
+             * Login Email
+             * @default
+             */
+            readonly login_email: string;
+            /**
+             * Live Grants
+             * @default 0
+             */
+            readonly live_grants: number;
+        };
+        /**
+         * TestPagePermissionIn
+         * @description Turn an agent login's TEST page permissions on or off. Its own endpoint, never on
+         *     the agent-repo upsert: an agent must not be able to let its own login skip a passkey.
+         */
+        readonly TestPagePermissionIn: {
             /** Enabled */
             readonly enabled: boolean;
         };
@@ -56263,6 +56382,52 @@ export interface operations {
             };
         };
     };
+    readonly list_my_waiting_host_grants: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["HostGrantOut"][];
+                };
+            };
+        };
+    };
+    readonly confirm_my_host_grant_as_agent: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly grant_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentConfirmIn"] | null;
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HostGrantOut"];
+                };
+            };
+        };
+    };
     readonly list_my_delegated_credentials: {
         readonly parameters: {
             readonly query?: never;
@@ -61433,6 +61598,54 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["TestVaultKeyOut"];
+                };
+            };
+        };
+    };
+    readonly get_test_page_permission: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TestPagePermissionOut"];
+                };
+            };
+        };
+    };
+    readonly set_test_page_permission: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["TestPagePermissionIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TestPagePermissionOut"];
                 };
             };
         };

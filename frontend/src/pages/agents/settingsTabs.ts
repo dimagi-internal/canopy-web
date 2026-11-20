@@ -36,6 +36,7 @@ const ANCHORS: Record<string, SettingsTab> = {
   'cred-device-keys': 'security',
   'cred-pat-rotation': 'security',
   'cred-test-vault-key': 'security',
+  'cred-test-page-permission': 'security',
   'cred-alerts': 'security',
   'cred-vault-members': 'security',
   'secrets-home': 'security',
@@ -43,6 +44,7 @@ const ANCHORS: Record<string, SettingsTab> = {
   'vault-storage': 'security',
   'read-alerts': 'security',
   'agent-test-key': 'security',
+  'agent-test-page': 'security',
 }
 
 export function isSettingsTab(s: string | undefined): s is SettingsTab {

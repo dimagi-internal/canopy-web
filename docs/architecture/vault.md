@@ -34,6 +34,7 @@ An agent's own login may hold a personal vault key so a headless harness signed 
 - **What it receives:** only copies of the keys of sensitive conversations the login is itself in, and only while the switch is on (`conversation_keys._keyset`, `conversation_keys.add_wrap`).
 - **What it never receives:** a copy of any vault's key or a value sealed to it, or an endorsement, whatever eligibility says (`vault_engine.parse_wraps` / `parse_values`, `zk_endorse.add`). A login that is not a person never registers a passkey or steps up (`passkeys.stepup.require_a_person`), so it approves no device key or invitation.
 - **Off deletes it:** turning the switch off deletes the key and every conversation-key copy wrapped to it (`login_test_key.disable`).
+- **Its sibling switch:** test page permissions (`Agent.test_page_permission`, `apps/agents/credentials/login_test_page.py`) let the same login confirm its own act-as-you permission on a host site's page without a passkey; a separate flag with the same gates → [access-confinement-and-act-as.md](access-confinement-and-act-as.md) § Acting as the person on a host site.
 
 ## Whose account an entry is
 
