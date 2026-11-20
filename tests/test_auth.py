@@ -4,7 +4,7 @@ from unittest.mock import Mock
 import pytest
 from allauth.core.exceptions import ImmediateHttpResponse
 from django.contrib.auth import get_user_model
-from django.test import Client, override_settings
+from django.test import Client, RequestFactory, override_settings
 
 from apps.common.auth_adapter import CustomSocialAccountAdapter
 
@@ -140,14 +140,20 @@ def test_auth_can_be_disabled(db):
 # ──────────────────────────────────────────────────────────────────────
 
 
-def _make_social_login(email: str) -> Mock:
+def _make_social_login(email: str, *, verified: bool = True) -> Mock:
     sociallogin = Mock()
     sociallogin.account = Mock()
     sociallogin.account.extra_data = {"email": email}
-    # Real allauth SocialLogin always populates `.email_addresses` (possibly
-    # empty) by the time `pre_social_login` runs; default to none-verified so
-    # a bare double never accidentally exercises the invite-admission branch.
-    sociallogin.email_addresses = []
+    # Real allauth SocialLogin always populates `.email_addresses` by the time
+    # `pre_social_login` runs. Google marks a Workspace address verified, and the
+    # allowlist now trusts an address only when it is, so the default double is
+    # a verified login. (An outside address still needs a live invite or real
+    # membership to be admitted, which these doubles never have.)
+    address = Mock()
+    address.email = email.strip().lower()
+    address.verified = verified
+    sociallogin.email_addresses = [address]
+    sociallogin.state = {}
     return sociallogin
 
 
@@ -268,7 +274,10 @@ def test_adapter_does_not_connect_unverified_provider_email(db):
     adapter = CustomSocialAccountAdapter()
     sociallogin = _make_jit_social_login("jit@dimagi.com", verified=False)
 
-    adapter.pre_social_login(Mock(), sociallogin)
+    # An unverified allowlisted address is not trusted at all now — refused
+    # before any connect is considered.
+    with pytest.raises(ImmediateHttpResponse):
+        adapter.pre_social_login(RequestFactory().get("/accounts/google/login/callback/"), sociallogin)
 
     sociallogin.connect.assert_not_called()
     assert User.objects.get(pk=jit_user.pk).email == "jit@dimagi.com"
@@ -686,3 +695,37 @@ def test_auth_error_pages_are_script_name_aware():
             assert 'href="/accounts/google/login/"' not in html, template
     finally:
         set_script_prefix(original)
+
+
+@override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com")
+def test_adapter_refuses_unverified_allowlisted_email(rf, db):
+    """The allowlist trusts an address only when Google says this account owns it."""
+    adapter = CustomSocialAccountAdapter()
+    sociallogin = _make_social_login("alice@dimagi.com", verified=False)
+    with pytest.raises(ImmediateHttpResponse) as exc:
+        adapter.pre_social_login(rf.get("/accounts/google/login/callback/"), sociallogin)
+    assert exc.value.response.status_code == 403
+
+
+@override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com")
+def test_social_signup_form_cannot_choose_an_unverified_email(rf, db):
+    """allauth's clash-signup form lets the visitor type an email. A guest admitted
+    as guest@external.com must not be able to save newhire@dimagi.com — an unused
+    allowlisted address the real owner's first sign-in would later link onto."""
+    adapter = CustomSocialAccountAdapter()
+    sociallogin = _make_social_login("guest@external.com")
+    form = Mock()
+    form.cleaned_data = {"email": "newhire@dimagi.com"}
+    with pytest.raises(ImmediateHttpResponse) as exc:
+        adapter.save_user(rf.get("/accounts/3rdparty/signup/"), sociallogin, form=form)
+    assert exc.value.response.status_code == 403
+    assert not get_user_model().objects.filter(email__iexact="newhire@dimagi.com").exists()
+
+
+@override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com")
+def test_social_auto_signup_needs_a_verified_email(rf, db):
+    adapter = CustomSocialAccountAdapter()
+    sociallogin = _make_social_login("alice@dimagi.com", verified=False)
+    sociallogin.user = get_user_model()(username="alice", email="alice@dimagi.com")
+    with pytest.raises(ImmediateHttpResponse):
+        adapter.save_user(rf.get("/accounts/google/login/callback/"), sociallogin)

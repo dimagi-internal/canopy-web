@@ -115,18 +115,13 @@ class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
                 and email_admitted_outside_domain(email)
             )
             if not admitted_outside_domain:
-                allowed = ", ".join(allowed_email_domains())
-                response = render(
-                    request,
-                    "auth/domain_rejected.html",
-                    {
-                        "email": email,
-                        "allowed_domain": allowed,
-                        "next": sociallogin.state.get("next") or "",
-                    },
-                    status=403,
-                )
-                raise ImmediateHttpResponse(response)
+                self._refuse(request, sociallogin, email)
+
+        elif email not in self._verified_emails(sociallogin):
+            # The allowlist vouches for an address only when the PROVIDER says
+            # it belongs to this account; a Google account can carry an
+            # unverified address at any domain.
+            self._refuse(request, sociallogin, email)
 
         if admitted_outside_domain:
             # Never run the JIT-identity merge on this branch: it connects
@@ -141,6 +136,41 @@ class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
             return
 
         self._connect_jit_identity(request, sociallogin, email)
+
+    def save_user(self, request, sociallogin, form=None):
+        """The account a social sign-up creates carries a PROVIDER-verified email.
+
+        When the Google address already belongs to a `User`, allauth does not
+        auto-sign-up: it shows its own signup form, whose email field the
+        visitor fills in. Saved as typed, that let anyone who got past
+        `pre_social_login` once (an invited guest) create an account at any
+        unused allowlisted address — and the real owner's first Google sign-in
+        later links onto it (`_connect_jit_identity`). Whatever path reaches
+        here, the address saved must be one Google vouched for on this login.
+        """
+        if form is not None and hasattr(form, "cleaned_data"):
+            chosen = form.cleaned_data.get("email") or ""
+        else:
+            chosen = getattr(sociallogin.user, "email", "") or ""
+        chosen = chosen.strip().lower()
+        if not chosen or chosen not in self._verified_emails(sociallogin):
+            logger.warning("social signup refused: email is not provider-verified")
+            self._refuse(request, sociallogin, chosen)
+        return super().save_user(request, sociallogin, form=form)
+
+    @staticmethod
+    def _refuse(request, sociallogin, email):
+        response = render(
+            request,
+            "auth/domain_rejected.html",
+            {
+                "email": email,
+                "allowed_domain": ", ".join(allowed_email_domains()),
+                "next": (sociallogin.state or {}).get("next") or "",
+            },
+            status=403,
+        )
+        raise ImmediateHttpResponse(response)
 
     @staticmethod
     def _verified_emails(sociallogin) -> set[str]:
