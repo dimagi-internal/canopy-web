@@ -26,7 +26,9 @@ from dataclasses import dataclass, field, replace
 from urllib.parse import urlencode
 
 import requests
+from allauth.account.models import EmailAddress
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AnonymousUser
 from django.core import signing
 from django.db import transaction
@@ -41,6 +43,7 @@ from apps.events import services as events_services
 from apps.events.models import Event
 from apps.harness import clis, sensitivity
 from apps.harness import initiator as who
+from apps.harness.ledger import append_events
 from apps.harness.models import Turn
 from apps.workspaces import links
 from apps.workspaces import services as wsvc
@@ -530,9 +533,6 @@ def identity_reason(installation: SlackInstallation, slack_user_id: str, info: d
 
 def _email_miss(email: str) -> tuple[str, str, int | None]:
     """(code, detail, near-match user id) for a profile email no account verifiably holds."""
-    from allauth.account.models import EmailAddress
-    from django.contrib.auth import get_user_model
-
     holders = EmailAddress.objects.filter(email__iexact=email, verified=True).values_list("user_id", flat=True)
     if len(set(holders)) > 1:
         return AMBIGUOUS, f"{email} is a verified email on several canopy accounts.", None
@@ -1284,8 +1284,6 @@ def _log_identity(turn, principal: Principal) -> None:
     """Put `principal.identity` in the turn's history (`read_turn_events`). Never raises."""
     if turn is None or principal.identity is None:
         return
-    from apps.harness.ledger import append_events
-
     try:
         append_events(turn, [{"kind": IDENTITY_EVENT, "payload": principal.identity}])
     except Exception:  # noqa: BLE001 — a log line is not worth failing someone's message
