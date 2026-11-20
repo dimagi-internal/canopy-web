@@ -69,6 +69,8 @@ _HOST = "an embedding host's or a contact's surface — a different principal"
 _ANON = "anonymous public read; nothing to do as a signed-in person"
 _BRAIN = ("a person's own agreement to canopy learning: an agent or an MCP client with their token "
           "must never be able to give or withdraw it (apps/brain)")
+_BRAIN_PAGE = ("the person's own view of canopy learning on the /brain page, refused to anyone but them "
+               "(apps/brain/api_state.py)")
 _REPORTING = ("who manages whom decides who reads a person's learning outputs: a workspace owner's own act, "
               "never an agent's or an MCP client's (apps/brain)")
 _BYTES = "returns raw bytes, which a tool result cannot carry"
@@ -127,6 +129,8 @@ EXCLUDED: dict[str, str] = {
     "declare_my_session_project": _BRAIN, "undeclare_my_session_project": _BRAIN,
     "brain_preview": ("a person's own dry run of canopy learning over the sessions they read: theirs, as "
                       "themselves or on a read-only step-up, never an MCP client's (apps/brain/api_preview.py)"),
+    "brain_preview_summary": "the brain preview summed up for the /brain page: the person's own, never an MCP client's",
+    "brain_state": _BRAIN_PAGE, "brain_state_links": _BRAIN_PAGE, "brain_state_runs": _BRAIN_PAGE,
     "list_reporting": _REPORTING, "set_reporting": _REPORTING, "end_reporting": _REPORTING,
     "contact_token": _HOST,
     "public_stats": _ANON,

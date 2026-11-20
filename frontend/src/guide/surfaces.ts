@@ -127,6 +127,13 @@ export const SURFACES: SurfaceDescriptor[] = [
     use: 'When you want to check whether a triggered turn actually ran, across your workspaces.',
   },
   {
+    path: '/brain',
+    home: '/settings',
+    flat: 'personal/global: the person\'s own view of canopy learning, across the workspaces they are in',
+    title: 'Canopy Brain',
+    use: 'When you want to know what canopy learning holds today, or what it would do over your recent sessions.',
+  },
+  {
     path: '/settings',
     flat: 'personal/global: your own account, the same in every workspace',
     title: 'Settings',

@@ -100,6 +100,9 @@ export function LearningPanel() {
           Each class is your own yes. Nobody can turn one on for you, and turning one off takes effect at once,
           including for what was already derived from your sessions.
         </p>
+        <p className="text-xs text-muted-foreground">
+          <Link className="underline" to="/brain">See what canopy learning holds now, and what it would do</Link>
+        </p>
         {on.has('individual') && managerSeesYou && (
           <div role="note" className="flex items-center justify-between gap-3 rounded-md border border-border p-3 text-xs">
             <span className="text-foreground">

@@ -300,10 +300,31 @@ whether each class could read it now and if everyone in it agreed (`explain`, wi
 the links the automatic layers would make (`associate.propose`, with any stored link that would keep its place), and the
 session as a learner reads it (`transcript_read.read`, scrubbed). It stores nothing: no source is made, no read
 recorded, no event; `tests/test_brain_preview.py` captures the call's queries and finds no write of its own and no
-on-commit callback. It answers with `BRAIN_READS_ENABLED` off. Person-only: a browser session, a PAT minted by hand, or
+on-commit callback. It answers with `BRAIN_READS_ENABLED` off. `session` narrows a page to one session of the window. Person-only: a browser session, a PAT minted by hand, or
 an act-as-you token under a READ grant (a step-up; `act_as.REST_READS` is the one REST read beside the tools such a
 token reaches); never an agent's login, a turn's or caller token, a runner, an OAuth client or a site's token, and not an
 MCP tool.
+
+## The `/brain` page (`frontend/src/pages/BrainPage.tsx`, `apps/brain/state.py`, `apps/brain/api_state.py`)
+
+One person's view of the brain, linked from Settings → Learning and the health dashboard's views. Its routes refuse
+whom the preview refuses (`api_preview.the_person`), an act-as-you token included (only the preview is in
+`act_as.REST_READS`), none is an MCP tool, and they write nothing (`tests/test_brain_page.py` captures every query).
+The page holds no copy of a verdict, count or grouping: the server computes them.
+
+- **Now** (`GET /api/brain/state`, `/state/links`, `/state/runs`, and `/api/brain/outputs/`): whether reads are on,
+  consent as counts per workspace and class (never a name), sources open, withdrawn and sealed by why, stored links by
+  project and tier, the learners with whom each answers to (`registry.accountable`), runs, outputs (`outputs.visible_to`)
+  and removal work. Workspace-wide counts (sources, removals, the cascade) only where the viewer holds `logs.read`, the
+  health dashboard's gate; elsewhere the same counts over their own sources and removals (`state._scoped`). A session
+  is named (id, scrubbed title) only if the viewer reads it through legs 1 to 6, never the project leg: a link to one
+  they do not read is not listed, and a run's read of it is a count (`state.run_page`). A run is listed when it is about
+  a project the viewer may read or about them; a canopy admin sees every run.
+- **Preview** (`GET /api/brain/preview/summary`, `preview.summarise`): the preview's rows without a line of any
+  transcript, with `you` (the `individual` verdict about the viewer), what the page adds up to, its links by project and
+  tier, and the window's total. A transcript is fetched only when its row is opened, by naming the `session` on
+  `GET /api/brain/preview`. Recommendations stay on the person's machine (`/canopy:brain-preview`): canopy-web makes no
+  model calls and stores none.
 
 ## Every reader is placed
 
