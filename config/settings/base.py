@@ -119,6 +119,7 @@ INSTALLED_APPS = [
     "apps.beta_requests",
     "apps.realtime",
     "apps.canopy_sessions",
+    "apps.brain",
     "apps.events",
     "apps.inbound",
     "apps.slack",
@@ -988,3 +989,8 @@ LOGGING = {
     },
 }
 
+
+# --- Canopy Brain (apps/brain) -----------------------------------------------------------------
+# No transcript is served to any learning reader until the read paths and the removal cascade are
+# merged and the owner turns this on (docs/architecture/brain.md). Consent collection does not wait.
+BRAIN_READS_ENABLED = env.bool("BRAIN_READS_ENABLED", default=False)
