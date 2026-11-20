@@ -53,6 +53,26 @@ one of their sessions out and back. Each route asks `harness.acting_person.refus
 turn's token, a runner and a request naming a turn are a 403, and none of them is an MCP tool
 (`apps/mcp/api_tools.py` `EXCLUDED`). Nobody opts anyone in; there is no admin route.
 
+`PUT /api/me/learning/` takes the whole set of `classes`; every other field (`workspaces`, `include_new`,
+`standing_rules`, `directives`) changes only when sent, so a class toggle never moves the scope or resets
+`known_workspaces` (what makes a workspace joined later "new"). Sent workspaces the person has since left
+drop out; one they were never in is a 422, and so is a list left empty by that (empty would mean all).
+A change that narrows the consent (a class dropped, fewer workspaces, `include_new` turned off, a standing
+rule added) runs the removal cascade over the person's sources (`consent._narrows`).
+
+Each class's `summary` and `seen_by` (`consent.CLASS_COPY`) say plainly who sees what: `individual` lets
+the person's coaches read their full transcripts and their manager see only what was learned; `memory`
+only the agents they grant; `project` anyone with access to the project, reading the session scrubbed,
+and only when everyone in it agreed; `system` canopy's learning systems.
+
+The person's controls: Settings → Learning (`/settings/learning`, `LearningPanel`) holds the class
+switches, who manages them (only their own reporting lines), what was read, and the sessions they took
+out, each linked to its page with "Let learning use this again". On a session's page, the ⋯ menu's
+"Learning…" (`SessionLearning.tsx`) shows only to a person in the session (the route answers anyone else
+404 or 403): it removes the session from learning or lets it back in, and lists the projects it is tied
+to with "Not this project" (`rejected`), "Belongs here" (`core`), "Take back my call" for a declared
+link, and a pick to tie it to another project of its workspace.
+
 Every change is on the person's own audit (`learning.consented|class_added|class_removed|revoked|
 source_withdrawn|source_restored` in `PersonAuditEvent`) and, ids only, in the event log of each
 workspace they are in (source `brain.consent`).
@@ -149,8 +169,8 @@ and only while the turn runs and the gate is on.
 
 What a learner produced is written with its sources (`OutputLineage`), so a removal finds it. `cascade.sweep`
 runs on the tick `brain.cascade` (every 15 minutes) and also right after the act that removed something
-(`cascade.after_commit`, from `consent.exclude`, `consent.revoke`, a dropped class and a session's content
-deletion, `signals._cascade_content_deletion`). It is idempotent.
+(`cascade.after_commit`, from `consent.exclude`, `consent.revoke`, a consent that narrows and a session's
+content deletion, `signals._cascade_content_deletion`). It is idempotent.
 
 - A source is **removed** for an output when its words are gone (deleted, `withdrawn`, its session gone;
   such a source becomes `withdrawn` for good), or when the person the output is about, or for a shared

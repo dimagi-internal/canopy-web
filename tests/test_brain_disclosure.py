@@ -92,4 +92,5 @@ def test_the_removed_sessions_list(w):
     consent.exclude(w["bob"], w["source"])
     rows = client(w["bob"]).get("/api/me/learning/removed/").json()
     assert [r["session_id"] for r in rows] == [str(w["session"].pk)]
+    assert rows[0]["workspace"] == w["session"].workspace_id                   # for a link back to its page
     assert client(w["alice"]).get("/api/me/learning/removed/").json() == []
