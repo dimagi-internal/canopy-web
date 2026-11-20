@@ -56,7 +56,7 @@ def _the_person(request: HttpRequest):
             summary="What learning would do over your sessions (stores nothing)")
 @gate("session-acl")  # reads only sessions you already read, through legs 1 to 6; writes nothing
 def brain_preview(request: HttpRequest, since: dt.datetime | None = None, until: dt.datetime | None = None,
-                  view: Literal["full", "conversation", "typed", "opening"] = "full", after: str = "",
+                  view: Literal["full", "conversation", "userinput", "opening"] = "full", after: str = "",
                   limit: int = 10) -> dict:
     """For each session you can read that was created or active between `since` and `until` (the last day by
     default, a week at most): who is in it, whether each class of learning could read it now and if everyone in it

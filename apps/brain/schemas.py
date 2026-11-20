@@ -81,7 +81,7 @@ class CapabilityOut(StrictModel):
     entry: str = Field("", description="The plugin command a run starts with.")
     schedule: str
     enabled: bool
-    scope: str = Field("full", description="How much of a session it reads: full, conversation, typed or opening.")
+    scope: str = Field("full", description="How much of a session it reads: full, conversation, userinput or opening.")
 
 
 class CapabilityIn(StrictModel):
@@ -99,7 +99,7 @@ class CapabilityIn(StrictModel):
     entry: str = Field("", description="One plugin command, `/<plugin>:<skill> [args]`.")
     schedule: str = ""
     enabled: bool = False
-    scope: Literal["full", "conversation", "typed", "opening"] = "full"
+    scope: Literal["full", "conversation", "userinput", "opening"] = "full"
 
 
 class CapabilityPatch(StrictModel):
@@ -115,8 +115,8 @@ class CapabilityPatch(StrictModel):
     entry: str | None = None
     schedule: str | None = None
     enabled: bool | None = None
-    scope: Literal["full", "conversation", "typed", "opening"] | None = Field(
-        None, description="May only narrow: full, conversation, typed, opening.")
+    scope: Literal["full", "conversation", "userinput", "opening"] | None = Field(
+        None, description="May only narrow: full, conversation, userinput, opening.")
 
 
 class ReportingLineOut(StrictModel):

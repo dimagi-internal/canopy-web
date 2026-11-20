@@ -85,7 +85,7 @@ def test_a_person_previews_the_sessions_they_read_and_nothing_else(w):
 
 
 def test_a_narrower_view_and_the_window(w):
-    body = _get(_browser(w["alice"]), view="typed").json()
+    body = _get(_browser(w["alice"]), view="userinput").json()
     assert [m["text"] for m in body["sessions"][0]["transcript"]["messages"]][1:] == ["bob's words"]
     old = timezone.now() - dt.timedelta(days=3)
     Session.objects.filter(pk=w["shared"].pk).update(created_at=old)

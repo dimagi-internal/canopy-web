@@ -265,11 +265,11 @@ def _read_window(request: HttpRequest, session, rows) -> list:
 @router.get("/{session_id}", response=SessionDetailOut, summary="Get a session + transcript tail")
 @gate("session-acl")
 def get_session(request: HttpRequest, session_id: uuid.UUID, full: bool = False,
-                view: Literal["full", "conversation", "typed", "opening"] | None = None):
+                view: Literal["full", "conversation", "userinput", "opening"] | None = None):
     """A session and the tail of its transcript.
 
     `view` names a whole-session read instead of the tail: `full` every row,
-    `conversation` user and assistant text, `typed` what people typed, `opening`
+    `conversation` user and assistant text, `userinput` what people typed, `opening`
     their first few lines, short. Omitted, the tail as before.
 
     `session_id` is the session's id. When no session you can read has that id,
