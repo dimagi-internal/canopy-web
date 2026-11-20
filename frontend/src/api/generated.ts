@@ -19575,6 +19575,96 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/hcp/v2/rules": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * HCP v2 governance: my standing rules
+         * @description Your standing rules (HCP v2 6.3): what you set once for every grant, now and later.
+         */
+        readonly get: operations["hcp_v2_listRules"];
+        readonly put?: never;
+        /**
+         * HCP v2 governance: set a standing rule
+         * @description Set a deny rule (HCP v2 6.3): enforced on every grant, existing and future, from now. A grant
+         *     it covers entirely is revoked and its client notified. The person only, over HTTP only.
+         */
+        readonly post: operations["hcp_v2_setRule"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/hcp/v2/rules/{rule_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * HCP v2 governance: remove a standing rule
+         * @description Remove a standing rule you set. The only way to override one (6.3).
+         */
+        readonly delete: operations["hcp_v2_removeRule"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/hcp/v2/directives": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * HCP v2 governance: my directives
+         * @description Your directives (HCP v2 6.4): what clients may do with what they received.
+         */
+        readonly get: operations["hcp_v2_listDirectives"];
+        readonly put?: never;
+        /**
+         * HCP v2 governance: set a directive
+         * @description Set a directive (HCP v2 6.4). Every client it applies to receives its text with each result,
+         *     so keep a directive about sensitive context to its categories. Directives only narrow.
+         */
+        readonly post: operations["hcp_v2_setDirective"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/hcp/v2/directives/{directive_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * HCP v2 governance: remove a directive
+         * @description Remove a directive you set (HCP v2 6.4).
+         */
+        readonly delete: operations["hcp_v2_removeDirective"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/hcp-admin/clients": {
         readonly parameters: {
             readonly query?: never;
@@ -23990,6 +24080,11 @@ export interface components {
              * @description What a grant is for, each in words (HCP v2 6.1.5.2), shown before you grant.
              */
             readonly purposes?: readonly components["schemas"]["PurposeOut"][];
+            /**
+             * Excluded Categories
+             * @description Categories a standing rule of yours keeps from a grant to this agent (HCP v2 6.3), shown before you grant.
+             */
+            readonly excluded_categories?: readonly string[];
             /**
              * Purposes By Feature
              * @description Which purpose codes each feature (record, use) serves.
@@ -49414,6 +49509,11 @@ export interface components {
              */
             readonly purposes?: readonly components["schemas"]["PurposeOut"][];
             /**
+             * Excluded Categories
+             * @description Categories a standing rule of yours keeps from a grant to this agent (HCP v2 6.3), shown before you grant.
+             */
+            readonly excluded_categories?: readonly string[];
+            /**
              * Purposes By Feature
              * @description Which purpose codes each feature (record, use) serves.
              */
@@ -50531,6 +50631,46 @@ export interface components {
              */
             readonly expectedVersion?: number | null;
         };
+        /** RuleIn */
+        readonly RuleIn: {
+            /**
+             * Operators
+             * @description Client operators it denies: a DNS domain (that host and its subdomains) or one operator identifier.
+             */
+            readonly operators?: readonly string[] | null;
+            /**
+             * Requires
+             * @description Client claims: it denies only clients that do not make every one. Required when `operators` is absent.
+             */
+            readonly requires?: readonly string[] | null;
+            /**
+             * Categories
+             * @description Categories it applies to; absent = every one.
+             */
+            readonly categories?: readonly string[] | null;
+        };
+        /** DirectiveIn */
+        readonly DirectiveIn: {
+            /**
+             * Action
+             * @description share, sign, transact, or an absolute URI.
+             */
+            readonly action: string;
+            /**
+             * Effect
+             * @description deny, ask-first or permit.
+             */
+            readonly effect: string;
+            /**
+             * Text
+             * @description The directive in your own words: every client it applies to is shown it.
+             */
+            readonly text: string;
+            /** Categories */
+            readonly categories?: readonly string[] | null;
+            /** Operators */
+            readonly operators?: readonly string[] | null;
+        };
         /** HcpClientOut */
         readonly HcpClientOut: {
             /** Client Id */
@@ -50553,6 +50693,16 @@ export interface components {
              * @description The purposes (HCP v2 6.1.5.2) it may read for; empty = those of the scopes it is granted.
              */
             readonly purposes?: readonly string[];
+            /**
+             * Operator Id
+             * @description The operator's identifier (a DNS domain or identifier) that a person's standing rules name; empty = the host of its first redirect URI.
+             */
+            readonly operator_id?: string;
+            /**
+             * Claims
+             * @description Conformance claims it declared (HCP v2 18.1).
+             */
+            readonly claims?: readonly string[];
             /** First Party */
             readonly first_party: boolean;
             /**
@@ -50592,6 +50742,16 @@ export interface components {
              * @description The purposes (HCP v2 6.1.5.2) it may read for; empty = those of the scopes it is granted.
              */
             readonly purposes?: readonly string[];
+            /**
+             * Operator Id
+             * @description The operator's identifier (a DNS domain or identifier) that a person's standing rules name; empty = the host of its first redirect URI.
+             */
+            readonly operator_id?: string;
+            /**
+             * Claims
+             * @description Conformance claims it declared (HCP v2 18.1).
+             */
+            readonly claims?: readonly string[];
             /** First Party */
             readonly first_party: boolean;
             /**
@@ -50640,6 +50800,10 @@ export interface components {
              * @description Purpose codes it may read for (the registry in discovery `canopy.purposes`); empty = those of the scopes.
              */
             readonly purposes?: readonly string[];
+            /** Operator Id */
+            readonly operator_id?: string;
+            /** Claims */
+            readonly claims?: readonly string[];
             /**
              * First Party
              * @default false
@@ -50665,6 +50829,10 @@ export interface components {
             readonly allowed_scopes?: readonly string[] | null;
             /** Purposes */
             readonly purposes?: readonly string[] | null;
+            /** Operator Id */
+            readonly operator_id?: string | null;
+            /** Claims */
+            readonly claims?: readonly string[] | null;
             /** First Party */
             readonly first_party?: boolean | null;
             /** Webhook Url */
@@ -76232,6 +76400,126 @@ export interface operations {
                 readonly "application/json": components["schemas"]["ConfirmationIn"];
             };
         };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly hcp_v2_listRules: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly hcp_v2_setRule: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RuleIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly hcp_v2_removeRule: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly rule_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly hcp_v2_listDirectives: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly hcp_v2_setDirective: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["DirectiveIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly hcp_v2_removeDirective: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly directive_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
         readonly responses: {
             /** @description OK */
             readonly 200: {

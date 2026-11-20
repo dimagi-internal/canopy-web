@@ -339,6 +339,9 @@ def session_memory_payload(person: Person, session) -> dict:
             "categories": list(hcp.HELD_CATEGORIES),
             # HCP v2 6.1.5.2: what a grant is for, in words, shown before the act.
             "purposes": hcp.purposes.describe(hcp.purposes.FOR_ACTION.values()),
+            # v2 6.3 / 6.1.6: categories a standing rule of yours keeps from this agent's grant.
+            "excluded_categories": hcp.rules.exclusions(person, hcp.rules.PROVIDER_OPERATOR, set(),
+                                                        hcp.HELD_CATEGORIES)[1],
             "purposes_by_feature": {f: [hcp.purposes.FOR_ACTION[hcp._ACTION_OF[f]]] for f in hcp.FEATURES},
             # 4.1.5.1: what a grant here would reach (derived, never chosen in the prompt),
             # and the organisation it serves, for the prompt's words.

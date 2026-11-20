@@ -142,6 +142,7 @@ def _principal(request: HttpRequest, turn_id: str | None, need: str = hcp.ANY) -
         grant = hcp._expire_if_due(tok.grant)
         if grant.status != PersonGrant.ACTIVE:
             raise hcp.HcpError("invalid-token", f"the grant is {grant.status}")
+        hcp.enforce_rules(grant)                                        # v2 6.3: on every request
         hcp.require(grant.person, need, None)
         return Principal(person=grant.person, actor=hcp_oauth.client_actor(tok.client),
                          grant=grant, workspace_slug=None, client=tok.client)
@@ -191,6 +192,7 @@ def _principal(request: HttpRequest, turn_id: str | None, need: str = hcp.ANY) -
     grant = hcp.grant_for(person, agent=serving, session=hcp.session_of(turn), action=action)
     if grant is None:
         raise hcp.denied(hcp.NOT_GRANTED)
+    hcp.enforce_rules(grant)                                            # v2 6.3: on every request
     return Principal(person=person, actor=hcp.agent_actor(serving), grant=grant,
                      workspace_slug=serving.workspace_id, turn=turn)
 
@@ -394,11 +396,14 @@ def hcp_search_preferences(request: HttpRequest, payload: HcpSearchIn, turn: str
         categories=payload.categories, purpose=payload.purpose, max_entries=payload.maxEntries,
         grant=p.grant, actor=p.actor, turn=p.turn,
         project_id=project.pk if project is not None else None, purpose_code=payload.purposeCode)
-    return _ok({"entries": [_render(f, p, payload.responseDetail) for f in hits],
-                "retrievalId": f"urn:uuid:{retrieval}",
-                "minimization": hcp.minimization(p.actor),
-                "categoriesSearched": searched or payload.categories,
-                "timestamp": timezone.now().isoformat()})
+    out = {"entries": [_render(f, p, payload.responseDetail) for f in hits],
+           "retrievalId": f"urn:uuid:{retrieval}",
+           "minimization": hcp.minimization(p.actor),
+           "categoriesSearched": searched or payload.categories,
+           "timestamp": timezone.now().isoformat()}
+    if not p.actor.is_person:
+        out["directives"] = hcp.rules.delivered(p.grant, hits)         # v2 6.4: with every result
+    return _ok(out)
 
 
 @router.post("/v1/preferences/add", operation_id="hcp_addPreference",
@@ -500,8 +505,11 @@ def hcp_get_preference(request: HttpRequest, entry_id: str, purpose: str = "",
             raise hcp.denied()
     hcp.read_one(fact, actor=p.actor, grant=p.grant, purpose=purpose, turn=p.turn,
                  purpose_code=purposeCode)
-    return _ok({"entry": _render(fact, p), "retrievalId": f"urn:uuid:{uuid.uuid4()}",
-                "minimization": hcp.minimization(p.actor), "timestamp": timezone.now().isoformat()})
+    out = {"entry": _render(fact, p), "retrievalId": f"urn:uuid:{uuid.uuid4()}",
+           "minimization": hcp.minimization(p.actor), "timestamp": timezone.now().isoformat()}
+    if not p.actor.is_person:
+        out["directives"] = hcp.rules.delivered(p.grant, [fact])
+    return _ok(out)
 
 
 @router.put("/v1/preferences/{entry_id}", operation_id="hcp_updatePreference",

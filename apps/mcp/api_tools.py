@@ -96,6 +96,9 @@ EXCLUDED: dict[str, str] = {
     "hcp_listGrants": "grant management is the person's, not an MCP tool (HCP Appendix B)",
     "hcp_revokeGrant": "grant management is the person's, not an MCP tool (HCP Appendix B)",
     "hcp_export": "the person's own export — not accessible to agents (HCP 3.3.5)",
+    **{op: "HCP v2 governance is the person's, over HTTP only (HCP v2 1.6)" for op in (
+        "hcp_v2_listRules", "hcp_v2_setRule", "hcp_v2_removeRule", "hcp_v2_listDirectives",
+        "hcp_v2_setDirective", "hcp_v2_removeDirective")},
     "hcp_v2_confirmEntry": "HCP v2 governance is the person's, over HTTP only (HCP v2 1.6)",
     "hcp_v2_restrictPurposes": "HCP v2 governance is the person's, over HTTP only (HCP v2 1.6)",
     "hcp_listClients": "the HCP service's client registry — superusers, by hand, never an agent",

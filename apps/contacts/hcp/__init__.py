@@ -28,7 +28,7 @@ the turn envelope apply the same one.
 # (`from apps.contacts import hcp`; `hcp.search(...)`).
 from __future__ import annotations
 
-from . import confirmations, purposes, relationships  # noqa: F401  (hcp.purposes: the registry and checks)
+from . import confirmations, purposes, relationships, rules  # noqa: F401  (hcp.purposes: the registry and checks)
 from .conformance import (
     CONFORMANCE_LEVEL,
     KNOWN_GAPS,
@@ -163,8 +163,10 @@ from .grants import (
     reach_of,
     reached,
     restrictions_for,
+    enforce_rules,
     revoke_grant,
     root_of,
+    set_standing_rule,
     source_label,
     tree_slugs,
     tree_source,
@@ -330,6 +332,8 @@ __all__ = [
     'reached',
     'restrictions_for',
     'revoke_grant',
+    'enforce_rules',
+    'set_standing_rule',
     'root_of',
     'SESSION_GRANT_CAP',
     'source_label',

@@ -92,7 +92,10 @@ def authorize(request: HttpRequest) -> HttpResponse:
         except hcp_oauth.BadClientOrRedirect as e:
             return _error(request, str(e))
         persistent = request.POST.get("keep") == "yes"
-        grant = hcp_oauth.issue_grant(pending, person=person, user=request.user, persistent=persistent)
+        try:
+            grant = hcp_oauth.issue_grant(pending, person=person, user=request.user, persistent=persistent)
+        except hcp.HcpError as e:
+            return _error(request, e.detail or "That access cannot be given.", status=403)
         code = hcp_oauth.issue_code(pending, grant)
         req = hcp_oauth.AuthorizeRequest(client=grant.hcp_client, redirect_uri=pending["redirect_uri"],
                                          scopes=pending["scopes"], state=pending["state"],
@@ -107,10 +110,16 @@ def authorize(request: HttpRequest) -> HttpResponse:
     except hcp_oauth.AuthorizeError as e:
         return _Redirect(e.url)
 
+    kept_scopes, excluded = hcp_oauth.scopes_after_rules(person, req.client, req.scopes)
+    if not kept_scopes:
+        return _error(request, "A standing rule of yours denies this app every category it asked for, "
+                               "so it cannot be given access. Remove the rule first if you want that.",
+                      status=403)
     if request.method == "GET":
         expiry_labels = {"1h": "1 hour", "4h": "4 hours", "24h": "24 hours"}
         return render(request, "contacts/hcp_consent.html", {
-            "client": req.client, "rows": hcp_oauth.describe_scopes(req.scopes),
+            "client": req.client, "rows": hcp_oauth.describe_scopes(kept_scopes),
+            "excluded": excluded,
             "purposes": hcp.purposes.describe(hcp_oauth.client_purposes(req.client, req.scopes)),
             "workspaces": hcp_oauth.workspace_sources(person),
             "expiries": [(k, expiry_labels[k]) for k in hcp_oauth.TEMPORARY_CHOICES],

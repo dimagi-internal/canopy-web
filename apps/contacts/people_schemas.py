@@ -184,6 +184,8 @@ class SessionMemoryOut(StrictModel):
                                   description="The categories a grant covers (shown before you grant).")
     purposes: list[PurposeOut] = Field(default_factory=list, description="What a grant is for, each in words "
                                                                           "(HCP v2 6.1.5.2), shown before you grant.")
+    excluded_categories: list[str] = Field(default_factory=list, description="Categories a standing rule of "
+                                           "yours keeps from a grant to this agent (HCP v2 6.3), shown before you grant.")
     purposes_by_feature: dict[str, list[str]] = Field(default_factory=dict, description="Which purpose codes each "
                                                       "feature (record, use) serves.")
     reach: str = Field(default="", description="What a grant here would reach, in words — by "

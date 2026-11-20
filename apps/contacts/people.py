@@ -479,7 +479,7 @@ def envelope_block(turn, *, agent, workspace_slug: str | None, reader_user=None)
             slugs = sorted(hcp.reach_of(read_grant),
                            key=lambda s: (s != workspace_slug, s is None, s or ""))
             facts, _, _ = hcp.search(person, workspace_slugs=slugs, query=turn.prompt or "",
-                                     categories=hcp.categories_for(read_grant, "read"),
+                                     categories=hcp.rules.permitted(read_grant, hcp.categories_for(read_grant, "read")),
                                      purpose=ENVELOPE_PURPOSE, max_entries=ENVELOPE_FACTS,
                                      grant=read_grant, actor=hcp.agent_actor(agent), turn=turn,
                                      project_id=project.pk if project is not None else None)
@@ -511,14 +511,17 @@ def envelope_block(turn, *, agent, workspace_slug: str | None, reader_user=None)
                    "restrictions": list(grant.restrictions or []),
                    "reach": hcp.reach_label(hcp.grant_sources(grant))}
                   if grant is not None else None),
+        # v2 6.4: what the person said agents may do with what they were told; the envelope is
+        # a disclosure, so it carries them (never the agent's to ignore, never a permission).
+        "directives": hcp.rules.delivered(read_grant, facts) if read_grant is not None else [],
         "recall": ({"tool": "hcp_searchPreferences", "turn": str(turn.pk),
-                    "categories": hcp.categories_for(read_grant, "read"),
+                    "categories": hcp.rules.permitted(read_grant, hcp.categories_for(read_grant, "read")),
                     "hint": "Only the entries relevant to the message are above. To recall "
                             "more about this person, call hcp_searchPreferences with a query, "
                             "the categories, a purpose and turn=<this turn id>."}
                    if can_read else None),
         "record": ({"tool": "hcp_addPreference", "turn": str(turn.pk),
-                    "categories": hcp.categories_for(write_grant, "write")}
+                    "categories": hcp.rules.permitted(write_grant, hcp.categories_for(write_grant, "write"))}
                    if can_write else None),
         # v1.1, additive: the projects (of this workspace's agents) they take
         # part in, most recently active first, at most 5. Not archived ones.

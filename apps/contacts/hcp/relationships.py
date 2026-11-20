@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 
 from ..models import EntryRelationship, Person, PersonFact
+from . import rules
 from .core import Actor, denied, entry_urn, malformed, parse_entry_id, scope
 
 PROVIDER = "canopy"
@@ -86,9 +87,9 @@ def assert_derived_from(fact: PersonFact, specs: list[dict], *, actor: Actor, gr
                 by=actor.id, target_entry_id=target.entry_id)
 
 def _reads(grant, category: str) -> bool:
-    """Does the grant read this category (the scope check `grants.allows` makes; this module cannot
-    import `grants`, which imports it)?"""
-    return grant is not None and scope(category, "read") in (grant.scopes or [])
+    """Does the grant read this category, no standing rule denying it (the check `grants.allows` makes)?"""
+    return (grant is not None and scope(category, "read") in (grant.scopes or [])
+            and not rules.denial_for(grant).removes(category))
 
 
 def render(fact: PersonFact) -> list[dict]:

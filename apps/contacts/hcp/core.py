@@ -147,6 +147,11 @@ def default_scopes() -> list[str]:
     return [scope(c, a) for c in HELD_CATEGORIES for a in ACTIONS]
 
 
+def categories_of(fact: PersonFact) -> list[str]:
+    """The entry's categories (v2 4.5): the one canopy filters on, then any the person added."""
+    return [fact.category, *[c for c in (fact.extra_categories or []) if c != fact.category]]
+
+
 def entry_urn(entry_id) -> str:
     return f"urn:uuid:{entry_id}"
 

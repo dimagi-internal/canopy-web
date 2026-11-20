@@ -119,3 +119,89 @@ def hcp_v2_confirm_entry(request: HttpRequest, entry_id: str, payload: Confirmat
     fact = _entry(p, entry_id, payload.expectedVersion)
     fact = hcp.confirmations.confirm(fact, payload.disposition, actor=p.actor)
     return _ok(v2.to_v2_entry(fact))
+
+
+# --- governance: standing rules (6.3, 9.4.14) and directives (6.4, 9.4.15) ----------------
+
+
+class RuleIn(_Body):
+    operators: list[str] | None = Field(default=None, description="Client operators it denies: a DNS domain "
+                                        "(that host and its subdomains) or one operator identifier.")
+    requires: list[str] | None = Field(default=None, description="Client claims: it denies only clients that "
+                                       "do not make every one. Required when `operators` is absent.")
+    categories: list[str] | None = Field(default=None, description="Categories it applies to; absent = every one.")
+
+
+class DirectiveIn(_Body):
+    action: str = Field(description="share, sign, transact, or an absolute URI.")
+    effect: str = Field(description="deny, ask-first or permit.")
+    text: str = Field(description="The directive in your own words: every client it applies to is shown it.")
+    categories: list[str] | None = None
+    operators: list[str] | None = None
+
+
+@router.get("/rules", operation_id="hcp_v2_listRules", summary="HCP v2 governance: my standing rules")
+@v2_route
+@gate("self")
+def hcp_v2_list_rules(request: HttpRequest):
+    """Your standing rules (HCP v2 6.3): what you set once for every grant, now and later."""
+    p = hcp_api._person_principal(request)
+    return _ok({"rules": [hcp.rules.rule_dict(r) for r in p.person.standing_rules.all()]})
+
+
+@router.post("/rules", operation_id="hcp_v2_setRule", summary="HCP v2 governance: set a standing rule")
+@v2_route
+@gate("self", setting=True)  # the person only
+def hcp_v2_set_rule(request: HttpRequest, payload: RuleIn):
+    """Set a deny rule (HCP v2 6.3): enforced on every grant, existing and future, from now. A grant
+    it covers entirely is revoked and its client notified. The person only, over HTTP only."""
+    p = hcp_api._person_principal(request)
+    rule = hcp.set_standing_rule(p.person, operators=payload.operators, requires=payload.requires,
+                              categories=payload.categories, actor=p.actor)
+    return _ok(hcp.rules.rule_dict(rule), status=201)
+
+
+@router.delete("/rules/{rule_id}", operation_id="hcp_v2_removeRule", summary="HCP v2 governance: remove a standing rule")
+@v2_route
+@gate("self", setting=True)  # the person only
+def hcp_v2_remove_rule(request: HttpRequest, rule_id: str):
+    """Remove a standing rule you set. The only way to override one (6.3)."""
+    p = hcp_api._person_principal(request)
+    hcp.rules.remove_rule(p.person, hcp.parse_entry_id(rule_id), actor=p.actor)
+    resp = HttpResponse(status=204)
+    resp["HCP-Version"] = v2.HCP_VERSION_V2
+    return resp
+
+
+@router.get("/directives", operation_id="hcp_v2_listDirectives", summary="HCP v2 governance: my directives")
+@v2_route
+@gate("self")
+def hcp_v2_list_directives(request: HttpRequest):
+    """Your directives (HCP v2 6.4): what clients may do with what they received."""
+    p = hcp_api._person_principal(request)
+    return _ok({"directives": [hcp.rules.directive_dict(d) for d in p.person.directives.all()]})
+
+
+@router.post("/directives", operation_id="hcp_v2_setDirective", summary="HCP v2 governance: set a directive")
+@v2_route
+@gate("self", setting=True)  # the person only
+def hcp_v2_set_directive(request: HttpRequest, payload: DirectiveIn):
+    """Set a directive (HCP v2 6.4). Every client it applies to receives its text with each result,
+    so keep a directive about sensitive context to its categories. Directives only narrow."""
+    p = hcp_api._person_principal(request)
+    d = hcp.rules.set_directive(p.person, action=payload.action, effect=payload.effect, text=payload.text,
+                                categories=payload.categories, operators=payload.operators, actor=p.actor)
+    return _ok(hcp.rules.directive_dict(d), status=201)
+
+
+@router.delete("/directives/{directive_id}", operation_id="hcp_v2_removeDirective",
+               summary="HCP v2 governance: remove a directive")
+@v2_route
+@gate("self", setting=True)  # the person only
+def hcp_v2_remove_directive(request: HttpRequest, directive_id: str):
+    """Remove a directive you set (HCP v2 6.4)."""
+    p = hcp_api._person_principal(request)
+    hcp.rules.remove_directive(p.person, hcp.parse_entry_id(directive_id), actor=p.actor)
+    resp = HttpResponse(status=204)
+    resp["HCP-Version"] = v2.HCP_VERSION_V2
+    return resp
