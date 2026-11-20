@@ -54,7 +54,9 @@ Stat, Badge, Form, Input, TextArea, Select, Button, FieldInputs, FieldValues, Sl
 of), app.act(action, {record, input, params}), app.bulk(action, {records, input, params}) for an
 action the template marks bulk, app.link(link, record) → {url} for a record's private link,
 app.go(page, params). When the manifest declares `tasks`: app.tasks.query({status, category,
-due_after, due_before, template, recurring, q, limit}) reads the ONE bound project's tasks, and
+due_after, due_before, template, recurring, q, limit}) reads the ONE bound project's tasks (each row:
+key, title, notes, status, category, due, priority, labels, assignee, recurrence, template, last_done,
+done_by {name, at} or null, comments [{body, by, at}] the last 3 oldest first, url), and
 app.tasks.act(name, {key, input}) runs a declared task action as the viewer (app.tasks.declared lists
 them); never in a draft's test copy (tasks are live work). A slot fill is `function Fill({ record, app, ...slotProps })`. Never <form>.
 

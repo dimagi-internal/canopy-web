@@ -9,6 +9,8 @@ from __future__ import annotations
 import copy
 
 import pytest
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 
 from apps.agents import services as agent_services
 from apps.agents.models import Agent, AgentProject, AgentTask, AgentTaskAction, Label, TaskEvent
@@ -325,6 +327,70 @@ def test_an_agent_acting_for_a_verified_asker_is_recorded_as_both(chores):
     with pytest.raises(services.Refused):
         app_tasks.act_task(inst, viewer, "add", None, {"title": "x"}, on_behalf_by_agent=bailey)
     assert Turn.objects.count() == 0
+
+
+# --- who did it, and what was said -------------------------------------------------------------
+
+
+def _row(client, key):
+    return next(x for x in _tasks(client).json() if x["key"] == key)
+
+
+def test_a_done_row_says_who_finished_it_and_when(chores):
+    viewer, key = chores["viewer"], chores["t"]["dishes"].key
+    viewer.first_name, viewer.last_name = "Addy", "Smith"
+    viewer.save()
+    c = _client(viewer)
+    assert _row(c, key)["done_by"] is None
+    _do(c, "check", key)
+    done_by = _row(c, key)["done_by"]
+    ev = TaskEvent.objects.get(task__key=key, kind=TaskEvent.FIELD, field="status", new=AgentTask.DONE)
+    assert done_by == {"name": "Addy Smith", "at": ev.created_at.isoformat()}
+    # Reopened, it is no longer done by anyone; an agent acting for a person names the person.
+    _do(c, "uncheck", key)
+    assert _row(c, key)["done_by"] is None
+    editor = chores["editor"]
+    app_tasks.act_task(chores["inst"], editor, "check", key, {}, on_behalf_by_agent=chores["bailey"])
+    assert _row(c, key)["done_by"]["name"] == "editor@dimagi.com"
+
+
+def test_a_row_carries_its_last_three_comments_oldest_first(chores):
+    inst, key, bailey = chores["inst"], chores["t"]["trash"].key, chores["bailey"]
+    c = _client(chores["viewer"])
+    assert _row(c, key)["comments"] == []
+    for body in ("one", "two", "three"):
+        _do(c, "note", key, body=body)
+    app_tasks.act_task(inst, chores["editor"], "note", key, {"body": "four"}, on_behalf_by_agent=bailey)
+    # The agent commenting as itself, not for anyone, is named by its display name.
+    agent_services.act(AgentTask.objects.get(key=key), action="comment", comment="five", by="bailey",
+                       actor_workspace_ids=set(), by_agent=bailey)
+    comments = _row(c, key)["comments"]
+    assert [(x["body"], x["by"]) for x in comments] == [
+        ("three", "viewer@dimagi.com"), ("four", "editor@dimagi.com"), ("five", "Bailey")]
+    assert all(x["at"] for x in comments)
+    assert _row(c, chores["t"]["dishes"].key)["comments"] == []
+
+
+def test_an_act_response_defaults_the_row_activity(chores):
+    out = _do(_client(chores["viewer"]), "note", chores["t"]["dishes"].key, body="hi").json()
+    assert out["done_by"] is None and out["comments"] == []
+
+
+def test_row_activity_costs_the_same_queries_however_many_rows(chores):
+    def count(n):
+        tasks = agent_services.create_tasks(None, [{"title": f"t{n}-{i}", "project": chores["project"].address,
+                                                   "status": "todo"} for i in range(n)],
+                                            workspace="dimagi", by_user=chores["admin"])
+        for t in tasks:
+            app_tasks.act_task(chores["inst"], chores["viewer"], "note", t.key, {"body": "x"})
+            app_tasks.act_task(chores["inst"], chores["viewer"], "check", t.key, {})
+        rows = list(AgentTask.objects.filter(project=chores["project"]))
+        with CaptureQueriesContext(connection) as ctx:
+            out = app_tasks.annotate_activity(rows)
+            assert all(t._done_by and t._comments for t in out if t.status == AgentTask.DONE)
+        return len(ctx.captured_queries)
+
+    assert count(2) == count(5) == 2
 
 
 # --- drafts -------------------------------------------------------------------------------------

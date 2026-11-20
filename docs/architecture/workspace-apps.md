@@ -67,7 +67,10 @@ allowlist (`TASK_FIELDS`: title, notes, due, priority, labels; a create also rec
   the asker.
 
 Pages call `app.tasks.query(filters)` and `app.tasks.act(name, {key, input})`; `app.tasks.declared`
-says what exists (the data model's `_tasks`).
+says what exists (the data model's `_tasks`). A row is `tasks.task_out`; a query's rows also carry
+`done_by` (who last moved a done task to done, a person named over the agent acting for them) and
+`comments` (the newest `ROW_COMMENTS`, oldest first), read for the whole page in two queries
+(`tasks.annotate_activity`). An action's response leaves them null / empty.
 
 ## The overlay (`overlay.py`)
 
