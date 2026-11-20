@@ -376,3 +376,33 @@ def test_a_send_not_yet_judged_is_never_automatic():
     unsaved = Message(role=Message.USER, plaintext="hi", content={"text": "hi"})
     unsaved.pk = "transient:abc"
     assert not is_automatic(unsaved)
+
+
+_MODEL_ROW = ("<command-name>/model</command-name>\n            <command-message>model</command-message>\n"
+              "            <command-args>opus</command-args>")
+
+
+def test_the_runners_model_switch_is_not_a_persons_words():
+    """The ACP adapter re-applies the claim's model at every resumed turn, which
+    Claude Code records as a `/model` row with empty provenance flags. It is not
+    something the person typed, before it is judged or after (a row stored as
+    typed before this rule is still drawn as automatic)."""
+    from apps.canopy_sessions import transcript_read
+
+    user, ws, c = _ctx()
+    s = _web(ws, user, "model-switch", at=T0)
+    switch = Message.objects.create(session=s, turn_index=0, role=Message.USER,
+                                    plaintext=_MODEL_ROW, content={"record": {}})
+    Message.objects.create(session=s, turn_index=1, role=Message.USER, plaintext="yes ship it",
+                           content={"record": {"turn_origin": "human", "prompt_source": "sdk"}})
+    transcript_read.mark_typed(s, [0, 1])
+    switch.refresh_from_db()
+    assert switch.typed is False
+    body = c.get(f"/api/canopy-sessions/{s.id}/human-inputs").json()
+    assert [m["plaintext"] for m in body["messages"]] == ["yes ship it"]
+
+    Message.objects.filter(pk=switch.pk).update(typed=True)
+    switch.refresh_from_db()
+    assert transcript_read.is_automatic(switch) is True
+    # A /model the person ran with other words after it is not just a switch.
+    assert transcript_read.is_model_switch(_MODEL_ROW + " and also fix the list") is False

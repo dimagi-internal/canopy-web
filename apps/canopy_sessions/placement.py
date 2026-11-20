@@ -551,8 +551,9 @@ def fork_session(*, session: Session, turn_index: int, user) -> Session:
         fork.ordinal_scheme = session.ordinal_scheme
         # The cut is of the source's own store, so the fork runs on its CLI.
         fork.cli = session.cli
+        fork.cli_model = session.cli_model
         fork.save(update_fields=["parent_session", "parent_claude_session", "relation", "ordinal_scheme",
-                                 "cli"])
+                                 "cli", "cli_model"])
         Message.objects.bulk_create([
             Message(session=fork, turn_index=m.turn_index - offset, role=m.role, content=m.content,
                     plaintext=m.plaintext, author=m.author, source_turn_id=m.source_turn_id,

@@ -101,3 +101,13 @@ def test_claude_model_is_reported_not_set_by_hand(client):
     resp = client.patch(f"/api/harness/runners/{runner.id}", data={"capabilities": {"claude_model": "x"}},
                         content_type="application/json")
     assert resp.status_code == 422
+
+
+def test_the_conversations_held_model_wins(settings):
+    # What the claim sends every turn (`claim_payload.conversation_model`).
+    settings.DEFAULT_CLI_MODELS = {"claude-code": "opus[1m]"}
+    _user, session, runner = _ctx()
+    session.cli_model = "claude-sonnet-5-5"
+    session.save(update_fields=["cli_model"])
+    RunnerBinding.objects.create(session=session, runner=runner, thread_key="tk")
+    assert session_row.session_out(session)["runner_model"] == "claude-sonnet-5-5"

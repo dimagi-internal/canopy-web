@@ -8,6 +8,7 @@ import copy as _copy
 import datetime as _dt
 import json
 import logging
+import re
 from dataclasses import dataclass
 
 from canopy_transcript import BLOCK_STRIDE, contract
@@ -248,6 +249,21 @@ def _harness_shaped(text: str) -> bool:
             or head in {transcript_ingest._squash(e) for e in _NOT_TYPED_EXACT})
 
 
+#: A `/model` slash-command row and nothing else. On a runner the ACP adapter writes
+#: one at the start of every resumed turn, re-applying the model the claim sent
+#: (claude-agent-acp's `session-model.js` calls `setModel`, which Claude Code records
+#: as `/model`), and hides it from its own replay (`REPLAY_HIDDEN_COMMANDS`). No
+#: person typed it, and on a person's own machine it changes nothing they said.
+_MODEL_SWITCH = re.compile(
+    r"\s*<command-name>/model</command-name>\s*<command-message>[^<]*</command-message>"
+    r"\s*(<command-args>[^<]*</command-args>\s*)?")
+
+
+def is_model_switch(text: str | None) -> bool:
+    """Is this row only a `/model` command (`_MODEL_SWITCH`)?"""
+    return bool(text) and _MODEL_SWITCH.fullmatch(text) is not None
+
+
 def is_human_input(message, program: set[str], injected: InjectedPrompts | None = None) -> bool:
     """Is this row something a person typed?
 
@@ -266,7 +282,7 @@ def is_human_input(message, program: set[str], injected: InjectedPrompts | None 
     if getattr(message, "role", None) != Message.USER:
         return False
     text = message.plaintext or ""
-    if is_system_noise(text):
+    if is_system_noise(text) or is_model_switch(text):
         return False
     flags = record_flags(message)
     if flags is not None:
@@ -290,7 +306,8 @@ def is_automatic(message) -> bool:
         return False
     if message.pk is None or str(message.pk).startswith("transient:"):
         return False
-    return not message.typed
+    # A `/model` row stored as typed before `is_human_input` knew it is folded too.
+    return not message.typed or is_model_switch(message.plaintext)
 
 
 def mark_typed(session: Session, turn_indices) -> int:
