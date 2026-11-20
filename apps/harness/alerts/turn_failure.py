@@ -41,8 +41,13 @@ Offered only to people who may read and resolve investigations there
 note is turn content. There is no single-failure page, so "open" goes to the
 agent's Turns tab (or the workspace activity log) where the failed turns are.
 
-The title names the runners and the first sentence of the sample note, never an
-investigation id or fingerprint.
+The title names the agents and runners and the first sentence of the sample note,
+never an investigation id or fingerprint. An abort on the agent's own credentials
+(`turn_abort.abort_note`, "… failed on the agent's credentials: <error>") is said
+as what it is — whose login, for which service, and the error — not as a raw
+`mcp__plugin_…` tool id (investigation 38: "turns keep failing on cloud-ec2-live:
+… could not do its work in mcp__plugin_chrome-sales_salesforce__sf_query" named a
+runner that was not at fault and neither agent whose login was missing).
 """
 from __future__ import annotations
 
@@ -84,16 +89,42 @@ def _first_sentence(note: str) -> str:
     return first or "no details recorded"
 
 
+#: `turn_abort.abort_note` for a tool that failed on the agent's own login.
+_CREDENTIAL_ABORT = re.compile(
+    r"could not do its work in (?P<tool>\S+?)\. \S+ failed on the agent's credentials: (?P<error>.+)$")
+#: An MCP tool id: `mcp__plugin_<plugin>_<server>__<tool>` or `mcp__<server>__<tool>`.
+_MCP_TOOL = re.compile(r"^mcp__(?:plugin_[^_]+_)?(?P<server>[^_].*?)__(?P<tool>.+)$")
+
+
+def _service(tool: str) -> str:
+    """`mcp__plugin_chrome-sales_salesforce__sf_query` → `salesforce`; a non-MCP
+    tool (Bash) is named as itself."""
+    m = _MCP_TOOL.match(tool or "")
+    return m.group("server") if m else (tool or "a tool")
+
+
+def _what_failed(inv) -> str:
+    text = _SPACE.sub(" ", inv.sample_note or "").strip()
+    m = _CREDENTIAL_ABORT.search(text)
+    if m is None:
+        return _first_sentence(text)
+    whose = "their" if len(inv.agents or []) > 1 else "its" if inv.agents else "the agent's"
+    said = _first_sentence(m.group("error"))
+    return f"{whose} {_service(m.group('tool'))} login was refused ({said})"
+
+
 def title_for(inv) -> str:
     runners = ", ".join(inv.runners or []) or "the fleet"
+    agents = ", ".join(inv.agents or [])
+    where = f"for {agents} on {runners}" if agents else f"on {runners}"
     # One failure is not a pattern: saying "keep failing" sends the reader looking
     # for an outage.
     subject = "turns keep failing" if (inv.occurrences or 0) > 1 else "a turn failed"
     lead = {
-        FailureInvestigation.PENDING_DEPLOY: f"Fix pending deploy on {runners}",
-        FailureInvestigation.ESCALATED: f"Needs you — {subject} on {runners}",
-    }.get(inv.status, f"{subject[0].upper()}{subject[1:]} on {runners}")
-    return f"{lead}: {_first_sentence(inv.sample_note)}"
+        FailureInvestigation.PENDING_DEPLOY: f"Fix pending deploy {where}",
+        FailureInvestigation.ESCALATED: f"Needs you — {subject} {where}",
+    }.get(inv.status, f"{subject[0].upper()}{subject[1:]} {where}")
+    return f"{lead}: {_what_failed(inv)}"
 
 
 def investigation_path(inv) -> str:
@@ -105,7 +136,7 @@ def investigation_path(inv) -> str:
     Turns tab in its own workspace, because the investigation's workspace's
     activity log lists none of that agent's turns."""
     ws = inv.workspace_id
-    slug = (inv.agents or [None])[0]
+    slug = (inv.agents or [None])[-1]  # the latest failure's agent (most recent last)
     if slug:
         tree = {ws} | wsvc.descendant_slugs({ws})
         agent_ws = (Agent.objects.filter(slug=slug, workspace_id__in=tree)
@@ -192,4 +223,4 @@ def perform(alert, user, action_id) -> None:
         raise ValueError(f"this investigation is already "
                          f"{inv.get_status_display().lower()}; nothing was changed")
     # The framework closes the alert itself (reason=action) once this returns.
-    auto_debug.resolve(inv, note="Resolved from the alert", by=user, close_alert=False)
+    auto_debug.resolve_from_alert(inv, by=user, close_alert=False)

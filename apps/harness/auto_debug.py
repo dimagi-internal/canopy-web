@@ -111,6 +111,12 @@ NOTE_MAX_CHARS = 6000
 #: trigger, not by riding along in another's.
 REPEAT_WINDOW = dt.timedelta(minutes=30)
 ASK_MAX = 300
+#: What a person's "Mark resolved" on the alert records when nothing was fixed. It
+#: carries the open hand-off ask after it (`resolve_from_alert`), so a recurrence can
+#: say what is still needed instead of quoting a button label back at them.
+ALERT_RESOLVED = "Marked resolved from the alert; nothing was fixed."
+#: The note that button wrote before ALERT_RESOLVED existed (rows still carry it).
+_LEGACY_ALERT_RESOLVED = "Resolved from the alert"
 
 # Notes that record a HUMAN's decision, not a fault. A person pressed stop, or a
 # message collided with text they had typed into the session and they chose (or
@@ -296,7 +302,7 @@ def _on_turn_failed(turn: Turn) -> None:
     elif inv.status in (FailureInvestigation.RESOLVED, FailureInvestigation.PENDING_DEPLOY):
         # It came back after a fix: never another debug turn (see the docstring).
         wants_turn = False
-        _recurred_after_fix(inv, failing_runner, debugger)
+        _recurred_after_fix(inv, failing_runner, debugger, agent_slug)
     elif inv.status == FailureInvestigation.HELD:
         # Still wants the turn the cap denied it; this new failure is a chance.
         wants_turn = True
@@ -315,7 +321,7 @@ def _on_turn_failed(turn: Turn) -> None:
         sync_alert(inv)
 
 
-def _recurred_after_fix(inv, runner, debugger) -> None:
+def _recurred_after_fix(inv, runner, debugger, agent_slug: str = "") -> None:
     """A resolved (or fix-pending) failure happened again on `runner`. Decide by
     whether that runner runs the recorded fix. Never starts a turn."""
     inv.recurred_after_resolve = True
@@ -333,9 +339,31 @@ def _recurred_after_fix(inv, runner, debugger) -> None:
         ask = (f"It came back on {name} after the fix {sha}; canopy cannot tell whether "
                f"that runner runs it.")
     else:
-        resolution = _SPACE.sub(" ", inv.resolution_note or "").strip()
-        ask = f"It came back after it was resolved: {resolution or 'no note'}"
+        ask = _came_back_ask(inv, agent_slug, name)
     _with_person(inv, debugger.owner if debugger is not None else None, ask)
+
+
+def _came_back_ask(inv, agent_slug: str, runner_name: str) -> str:
+    """The ask for a failure that recurred after a resolve that named no fix.
+
+    Say WHO it came back on, and what it still needs. A resolve from the alert's
+    button fixed nothing by definition, so its note is not a cause: carry the
+    hand-off ask it recorded (`resolve_from_alert`), never the button's label
+    (investigation 38: "It came back after it was resolved: Resolved from the
+    alert" told the reader nothing, while the debugger's ask, "Budgy has no
+    Salesforce access: attach the vault or tell the requester", was lost)."""
+    where = f"on {agent_slug} ({runner_name})" if agent_slug else f"on {runner_name}"
+    resolution = _SPACE.sub(" ", inv.resolution_note or "").strip()
+    for button in (ALERT_RESOLVED, _LEGACY_ALERT_RESOLVED):
+        if resolution.startswith(button):
+            still = resolution[len(button):].lstrip(" .;:").rstrip()
+            if still.lower().startswith("it needed:"):
+                still = still[len("it needed:"):].strip()
+            if still:
+                return f"It came back {where} after it was marked resolved with nothing fixed. Still needed: {still}"
+            return (f"It came back {where} after it was marked resolved with nothing fixed, "
+                    f"and no cause was recorded. Fix the cause, or say why it is expected.")
+    return f"It came back {where} after it was resolved: {resolution or 'no note'}"
 
 
 def _with_person(inv, person, ask: str) -> None:
@@ -351,8 +379,10 @@ def _add_occurrence(inv, turn, note, agent_slug, runner, now) -> None:
     inv.sample_note = note
     inv.turn_ids = (list(inv.turn_ids or []) + [str(turn.pk)])[-RECENT_TURNS:]
     for field, value in (("agents", agent_slug), ("runners", runner)):
-        seen = list(getattr(inv, field) or [])
-        if value and value not in seen:
+        # Most recent LAST: a repeat moves to the end, so `[-1]` is the agent (and
+        # runner) the latest failure was on — the one the alert links to.
+        seen = [v for v in (getattr(inv, field) or []) if v != value]
+        if value:
             setattr(inv, field, (seen + [value])[-RECENT_NAMES:])
 
 
@@ -887,6 +917,18 @@ def resolve(inv: FailureInvestigation, *, note: str, by=None, fix_commit: str = 
     sync_alert(inv, by=by, payload=_resolution_payload(inv, deploy=deploy, merged=merged),
                close=close_alert)
     return inv
+
+
+def resolve_from_alert(inv: FailureInvestigation, *, by=None,
+                       close_alert: bool = True) -> FailureInvestigation:
+    """A person's "Mark resolved" on the alert. It names no fix, so keep what the
+    hand-off said was needed on the resolution note: if it comes back, the next ask
+    repeats it (`_came_back_ask`) instead of losing it."""
+    ask = _SPACE.sub(" ", inv.ask or "").strip()
+    if "Still needed: " in ask:  # a recurrence's ask: keep only what it carried, never nest
+        ask = ask.split("Still needed: ", 1)[1]
+    note = f"{ALERT_RESOLVED} It needed: {ask}" if ask else ALERT_RESOLVED
+    return resolve(inv, note=note, by=by, close_alert=close_alert)
 
 
 def hand_off(inv: FailureInvestigation, *, ask: str, to=None, by=None) -> FailureInvestigation:

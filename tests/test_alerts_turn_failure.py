@@ -71,8 +71,8 @@ def test_the_agent_stages_are_alerts_the_debugger_holds(fleet, ada, status):
     (r,) = src.reconcile(timezone.now())
     assert r.subject_key == f"investigation:{inv.pk}"
     assert r.workspace == "dimagi"
-    lead = "Fix pending deploy on" if status == "pending_deploy" else "Turns keep failing on"
-    assert r.title == (f"{lead} cloud-ec2-2, ghost-box: "
+    lead = "Fix pending deploy" if status == "pending_deploy" else "Turns keep failing"
+    assert r.title == (f"{lead} for ace on cloud-ec2-2, ghost-box: "
                        "Couldn't confirm your message was delivered to the session.")
     assert r.scopes == ("workspace:dimagi", f"runner:{runner.pk}", "agent:ace")  # unknown runner skipped
     assert r.url == "/w/dimagi/agents/ace/turns"
@@ -85,15 +85,15 @@ def test_escalated_is_the_persons_with_the_ask(fleet, ada):
     _inv(fleet, handler=fleet["jj"], ask="Sign Claude back in on cloud-ec2-2.")
     (r,) = src.reconcile(timezone.now())
     assert (r.handler_agent, r.handler_user) == (None, fleet["jj"].pk)
-    assert r.title.startswith("Needs you — turns keep failing on cloud-ec2-2")
+    assert r.title.startswith("Needs you — turns keep failing for ace on cloud-ec2-2")
     assert r.body.startswith("Sign Claude back in on cloud-ec2-2.") and r.ask == r.body.split("\n")[0]
 
 
 @pytest.mark.parametrize("occurrences, escalated, lead", [
-    (1, True, "Needs you — a turn failed on cloud-ec2-2"),
-    (2, True, "Needs you — turns keep failing on cloud-ec2-2"),
-    (1, False, "A turn failed on cloud-ec2-2"),
-    (5, False, "Turns keep failing on cloud-ec2-2"),
+    (1, True, "Needs you — a turn failed for ace on cloud-ec2-2"),
+    (2, True, "Needs you — turns keep failing for ace on cloud-ec2-2"),
+    (1, False, "A turn failed for ace on cloud-ec2-2"),
+    (5, False, "Turns keep failing for ace on cloud-ec2-2"),
 ])
 def test_the_title_says_keep_failing_only_when_it_has_recurred(fleet, ada, occurrences, escalated, lead):
     """Investigation 26: one test turn read as "turns keep failing", and its owner went looking for an outage."""
@@ -154,6 +154,47 @@ def test_url_does_not_open_an_agent_outside_the_tree(fleet):
     assert r.url == "/w/dimagi/activity?status=failed&agent=stray"
 
 
+SF_ABORT = ("Aborted by canopy: the turn could not do its work in mcp__plugin_chrome-sales_salesforce__sf_query. "
+            "mcp__plugin_chrome-sales_salesforce__sf_query failed on the agent's credentials: Error: Not authenticated")
+
+
+def test_a_credential_abort_names_whose_login_and_the_service_and_links_the_latest_agent(fleet, ada):
+    """Investigation 38: the alert said "turns keep failing on cloud-ec2-live: … could
+    not do its work in mcp__plugin_chrome-sales_salesforce__sf_query." It named a
+    runner that was not at fault, neither agent, and linked the FIRST agent's turns
+    when the failure that mailed him was the second agent's."""
+    Agent.objects.create(slug="budgy", name="Budgy", workspace=fleet["ws"], owner=fleet["jj"])
+    _inv(fleet, handler=fleet["jj"], ask="Look.", agents=["budgy", "ace"],
+         runners=["cloud-ec2-live"], occurrences=2)
+    inv = FailureInvestigation.objects.get()
+    inv.sample_note = SF_ABORT
+    inv.save()
+    (r,) = src.reconcile(timezone.now())
+    assert r.title == ("Needs you — turns keep failing for budgy, ace on cloud-ec2-live: "
+                       "their salesforce login was refused (Error: Not authenticated)")
+    assert r.url == "/w/dimagi/agents/ace/turns"
+
+
+def test_a_credential_abort_in_a_non_mcp_tool_names_the_tool(fleet, ada):
+    inv = _inv(fleet, status=FailureInvestigation.OPEN, occurrences=1)
+    inv.sample_note = ("Aborted by canopy: the turn could not do its work in Bash. Bash failed on the "
+                       "agent's credentials: gog: token expired")
+    inv.save()
+    (r,) = src.reconcile(timezone.now())
+    assert r.title == "A turn failed for ace on cloud-ec2-2, ghost-box: its Bash login was refused (gog: token expired)"
+
+
+def test_mark_resolved_keeps_the_open_ask_on_the_resolution(fleet):
+    """Resolving from the button fixes nothing, so what the hand-off said was needed
+    must survive it — a recurrence repeats it (auto_debug._came_back_ask)."""
+    inv = _inv(fleet, handler=fleet["jj"], ask="Attach the Salesforce vault to budgy, or tell the requester.")
+    alerts.tick(timezone.now())
+    alerts.act(Alert.objects.get(kind=src.KIND), fleet["jj"], "mark_resolved")
+    inv.refresh_from_db()
+    assert inv.resolution_note == ("Marked resolved from the alert; nothing was fixed. "
+                                   "It needed: Attach the Salesforce vault to budgy, or tell the requester.")
+
+
 def test_mark_resolved_resolves_investigation_and_alert(fleet):
     inv = _inv(fleet)
     alerts.tick(timezone.now())
@@ -164,7 +205,7 @@ def test_mark_resolved_resolves_investigation_and_alert(fleet):
     inv.refresh_from_db()
     assert inv.status == FailureInvestigation.RESOLVED
     assert inv.resolved_by == fleet["jj"]
-    assert inv.resolution_note == "Resolved from the alert"
+    assert inv.resolution_note == "Marked resolved from the alert; nothing was fixed."
     alert.refresh_from_db()
     assert alert.status == Alert.RESOLVED and alert.resolved_reason == Alert.REASON_ACTION
 
