@@ -19587,6 +19587,47 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/me/learning/disclosure/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What was read of your words, by day
+         * @description Per day and learner, how many times what you said was read and how many of your sessions that covered.
+         *     Counts only, never a word, and never your own reads. Only you see this.
+         */
+        readonly get: operations["get_my_disclosure"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/me/learning/removed/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Sessions you took out of learning
+         * @description The sessions you removed from canopy learning, newest first. Only you see this.
+         */
+        readonly get: operations["list_my_removed_sessions"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/hcp/.well-known/hcp-configuration": {
         readonly parameters: {
             readonly query?: never;
@@ -51333,6 +51374,39 @@ export interface components {
              */
             readonly tier: "core" | "adjacent";
         };
+        /** DisclosureDayOut */
+        readonly DisclosureDayOut: {
+            /**
+             * Day
+             * Format: date
+             */
+            readonly day: string;
+            /**
+             * Learner
+             * @description Which learner read.
+             */
+            readonly learner: string;
+            /** Reads */
+            readonly reads: number;
+            /**
+             * Sources
+             * @description How many of your sessions those reads covered.
+             */
+            readonly sources: number;
+        };
+        /** RemovedSessionOut */
+        readonly RemovedSessionOut: {
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            readonly session_id: string;
+            /**
+             * Title
+             * @default
+             */
+            readonly title: string;
+        };
         /** HcpSearchIn */
         readonly HcpSearchIn: {
             /**
@@ -77808,6 +77882,46 @@ export interface operations {
                 };
                 content: {
                     readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly get_my_disclosure: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["DisclosureDayOut"][];
+                };
+            };
+        };
+    };
+    readonly list_my_removed_sessions: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["RemovedSessionOut"][];
                 };
             };
         };

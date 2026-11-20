@@ -13,9 +13,25 @@ class BrainConfig(AppConfig):
 
         # Links are made off-request: the fold only marks a source due (`associate.schedule`).
         ticks.register("brain.associate", _associate, 60)
+        # A removal reaches what was derived from it within one sweep (`cascade.sweep`), and the read record
+        # is compacted into each person's disclosure summary (`disclosure.compact`).
+        ticks.register("brain.cascade", _cascade, 15 * 60)
+        ticks.register("brain.disclosure", _disclosure, 60 * 60)
 
 
 def _associate() -> None:
     from . import associate  # noqa: PLC0415 — models: the app registry is not ready at module load
 
     associate.run_due()
+
+
+def _cascade() -> None:
+    from . import cascade  # noqa: PLC0415 — models: the app registry is not ready at module load
+
+    cascade.sweep()
+
+
+def _disclosure() -> None:
+    from . import disclosure  # noqa: PLC0415 — models: the app registry is not ready at module load
+
+    disclosure.compact()

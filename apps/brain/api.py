@@ -22,9 +22,9 @@ from apps.contacts import people
 from apps.harness import acting_person
 from apps.workspaces import services as wsvc
 
-from . import associate, consent, participants, sources
+from . import associate, consent, disclosure, participants, sources
 from .models import CLASSES, SourceExclusion, SourceLink
-from .schemas import AgentLinkIn, LearningIn, LearningOut, LearningSourceOut, PersonLinkIn
+from .schemas import AgentLinkIn, DisclosureDayOut, RemovedSessionOut, LearningIn, LearningOut, LearningSourceOut, PersonLinkIn
 
 router = Router(auth=session_auth, tags=["brain"])
 
@@ -214,3 +214,22 @@ def declare_session_project(request: HttpRequest, session_id: uuid.UUID, handle:
     return {"session_id": session.pk, "excluded": False,
             "projects": [{"project": project.handle, "name": project.name, "tier": link.tier, "how": link.how}
                          for link in source.links.filter(subject=str(project.pk))]}
+
+
+@router.get("/me/learning/disclosure/", response=list[DisclosureDayOut],
+            summary="What was read of your words, by day")
+@gate("self")
+def get_my_disclosure(request: HttpRequest) -> list[dict]:
+    """Per day and learner, how many times what you said was read and how many of your sessions that covered.
+    Counts only, never a word, and never your own reads. Only you see this."""
+    return disclosure.summary(_the_person(request))
+
+
+@router.get("/me/learning/removed/", response=list[RemovedSessionOut], summary="Sessions you took out of learning")
+@gate("self")
+def list_my_removed_sessions(request: HttpRequest) -> list[dict]:
+    """The sessions you removed from canopy learning, newest first. Only you see this."""
+    user = _the_person(request)
+    rows = (SourceExclusion.objects.filter(user=user, source__session__isnull=False)
+            .select_related("source__session").order_by("-created_at")[:200])
+    return [{"session_id": r.source.session_id, "title": r.source.session.title or ""} for r in rows]
