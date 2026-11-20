@@ -1,7 +1,8 @@
-"""Purposes: what a read of a person's memory is *for* (HCP v2 6.1.5.2, 4.2.6, 7.1).
+"""Purposes: the reason an agent gives for reading what canopy remembers about a person
+(HCP v2 6.1.5.2, 4.2.6, 7.1).
 
-A purpose is a code (an absolute URI) with a description the person can read. v2 registers
-none, so these are canopy's own. Three places carry them:
+Each purpose is a URI plus a sentence the person can understand. The draft defines no shared
+list, so canopy keeps its own. They are recorded in three places:
 
 * **a grant** — `PersonGrant.purposes`, shown to the person before the act that makes the
   grant (6.1.6); a read naming a purpose the grant does not carry is refused;
@@ -91,7 +92,8 @@ def read_purpose(grant, requested: str | None) -> str:
 
 
 def entry_serves(fact: PersonFact, code: str) -> bool:
-    """4.2.6: an entry may be disclosed for a purpose only where each list present includes it."""
+    """Can this entry be handed out for `code` (4.2.6)? Its writer's list and the person's narrowing
+    each limit it when set; the code has to be on every list that is set."""
     for limit in (fact.permitted_purposes, fact.restricted_purposes):
         if limit is not None and code not in limit:
             return False

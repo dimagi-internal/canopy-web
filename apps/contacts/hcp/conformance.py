@@ -67,7 +67,8 @@ def discovery(base_url: str) -> dict:
             "tier2": "not supported",
             # HCP v2 (2.0-draft-3): same URL with `HCP-Version: 2.0` returns the v2 document.
             "v2": {"discovery": "GET this URL with the header HCP-Version: 2.0",
-                   "entries_endpoint": f"{base_url}/v2/entries", "status": "no v2 conformance claimed"},
+                   "entries_endpoint": f"{base_url}/v2/entries", "status": "no v2 conformance claimed",
+                   "oauth_clients": V2_OAUTH_CLIENTS},
             # HCP v2 6.1.5.2: the purposes a grant may carry, each in words.
             "purposes": purposes.describe(purposes.PURPOSES),
             # HCP v2 15.2: how this instance finds conflicts between entries.
@@ -76,6 +77,11 @@ def discovery(base_url: str) -> dict:
         },
     }
 
+
+#: An HCP service access token (`hcpat_`, an OAuth client of the HCP service) is confined to
+#: `/api/hcp/v1/` by the bearer middleware, so v2 is not offered to OAuth clients.
+V2_OAUTH_CLIENTS = ("not served: an OAuth client's access token opens /api/hcp/v1/ only; "
+                    "use the v1 endpoints in the v1 discovery document")
 
 #: What canopy states it supports of v2 (draft 3). `conformsTo` is deliberately empty: canopy models v2
 #: and serves its HTTP binding, but has not audited itself against every v2 requirement (18), so it
@@ -117,8 +123,13 @@ def discovery_v2(base_url: str) -> dict:
         "canopy": {
             "status": "draft: canopy models HCP v2 (2.0-draft-3) and serves this HTTP binding; it claims no v2 "
                       "conformance identifier yet (`conformsTo` is empty)",
+            # Who this binding serves, said plainly: an OAuth client's token opens v1 only.
+            "context_clients": "canopy's own agents, each under the grant the person gave it, for the person who "
+                               "started the turn it names",
+            "management_clients": "the person themself: their browser session or a personal access token",
+            "oauth_clients": V2_OAUTH_CLIENTS,
             "purposes": purposes.describe(purposes.PURPOSES),
-            "not_built": ["MCP binding for v2", "VC evidence", "delegation", "onward sharing", "import",
+            "not_built": ["MCP binding for v2", "v2 for OAuth clients of the HCP service", "VC evidence", "delegation", "onward sharing", "import",
                           "end-to-end encrypted storage", "category registry beyond the work categories",
                           f"registered categories not held: {sorted(set(REGISTERED_CATEGORIES) - set(HELD_CATEGORIES))}"],
         },

@@ -1,9 +1,9 @@
 """Disclosures to clients (HCP v2 7.4), use-until (7.6) and the disclosure summary (8.6).
 
-What a context client receives is a *disclosure*, never the stored entry: content, the assertion,
-only the categories its grant covers, a standing summary, a grant-scoped `ref` (never derivable
-into the entry's id, different under every other grant), and `useUntil`: the time after which the
-client may no longer use the copy without fetching it again. canopy cannot see what a client does
+An agent is handed a *disclosure*, not the row canopy stores: the words, how they were asserted,
+just the categories its grant covers, whether the person stands behind them, a `ref` that only
+means something under this one grant (it cannot be turned back into the entry's id), and
+`useUntil`, after which the agent has to ask again rather than keep relying on its copy. canopy cannot see what a client does
 with a copy (3.11, invariant 14); use-until and revocation bound the harm and the audit log records
 what was disclosed, which is what the summary is computed from.
 """
@@ -56,13 +56,11 @@ def has_notification_endpoint(grant: PersonGrant | None) -> bool:
 
 
 def use_until(fact: PersonFact, *, now: dt.datetime | None = None, notified: bool = True) -> dt.datetime:
-    """When a copy disclosed now stops being usable (7.6).
-
-    1. an explicit time (the entry's `validUntil`) applies first, even if earlier than the floor;
-    2. else a heuristic: 10% of the time since the current version was recorded;
-    3. a heuristic time is never less than 1 hour; no time is more than 30 days, or 24 hours when
-       the entry's highest category sensitivity is High;
-    4. a client with no notification endpoint gets at most 1 hour."""
+    """When a copy disclosed now stops being usable (7.6), in canopy's terms: the entry's own expiry
+    if it has one (even a very near one); otherwise a tenth of how long the current version has
+    existed, but at least `FLOOR`. Either way it is capped at `CEILING` (`CEILING_HIGH` for an entry
+    in a high-sensitivity category), and at `NO_NOTIFICATION_CAP` for a client canopy has no way to
+    tell of a revocation."""
     now = now or timezone.now()
     if fact.expires_at is not None:
         at = fact.expires_at
@@ -171,7 +169,7 @@ def summary(person, *, client: str | None = None, category: str | None = None,
             continue
         row = by_client.setdefault(who["id"], {
             "client": who, "grants": {}, "categories": set(), "purposes": set(), "entries": set(),
-            "retrievals": set(), "firstAt": e.timestamp, "lastAt": e.timestamp, "useUntil": [], "_grants": []})
+            "retrievals": set(), "firstAt": e.timestamp, "lastAt": e.timestamp, "useUntil": {}})
         row["grants"][grant.grant_id] = grant
         if e.category:
             row["categories"].add(e.category)
@@ -182,17 +180,30 @@ def summary(person, *, client: str | None = None, category: str | None = None,
         row["retrievals"].add((e.data or {}).get("retrievalId") or e.pk)
         row["firstAt"], row["lastAt"] = min(row["firstAt"], e.timestamp), max(row["lastAt"], e.timestamp)
         if (e.data or {}).get("useUntil"):
-            row["useUntil"].append(dt.datetime.fromisoformat(e.data["useUntil"]))
+            row["useUntil"].setdefault(grant.grant_id, []).append(dt.datetime.fromisoformat(e.data["useUntil"]))
     out = []
     for row in by_client.values():
         grant_list = list(row["grants"].values())
         deliveries = list(HcpRevocationDelivery.objects.filter(grant__in=grant_list).order_by("-pk"))
-        notification, usable = "none", max(row["useUntil"], default=None)
+        notification = "none"
         if deliveries:
             last = deliveries[0]
             notification = ("delivered" if last.delivered_at else "abandoned" if last.abandoned_at else "none")
-            if last.delivered_at:
-                usable = last.delivered_at                      # a delivered notice ends every copy (6.2.2)
+        # Per grant: a delivered revocation notice ends the copies made under THAT grant (6.2.2), and
+        # no other grant's; the client's copies stay usable until the latest of its grants' ends.
+        delivered = {}
+        for d in deliveries:
+            if d.delivered_at and d.grant_id not in delivered:
+                delivered[d.grant_id] = d.delivered_at
+        ends = []
+        for g in grant_list:
+            copies = row["useUntil"].get(g.grant_id, [])
+            end = max(copies, default=None)
+            if g.pk in delivered and end is not None:
+                end = min(end, delivered[g.pk])
+            if end is not None:
+                ends.append(end)
+        usable = max(ends, default=None)
         item = {
             "client": row["client"],
             "grants": [{"grantId": entry_urn(g.grant_id), "status": g.status} for g in grant_list],

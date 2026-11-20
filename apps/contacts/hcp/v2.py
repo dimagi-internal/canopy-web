@@ -62,8 +62,8 @@ def to_v2_entry(fact: PersonFact) -> dict:
 
 
 def assurance_of(fact: PersonFact) -> str:
-    """3.6: how the asserter's identity was established, as the provider recorded it at write
-    (`PersonFact.assurance`): the person's own write is `authenticated`, anyone else's `unverified`."""
+    """How sure canopy is of who asserted the entry (3.6), fixed when it was written
+    (`PersonFact.assurance`): `authenticated` only for the person's own write, else `unverified`."""
     return fact.assurance
 
 

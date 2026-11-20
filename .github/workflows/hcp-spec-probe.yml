@@ -6,7 +6,8 @@ name: HCP spec probe (weekly)
 # https://hcp.me and from the spec repository loyalagents/hcp-spec (public today, so the
 # workflow's own token is enough; if it goes private again, add an HCP_SPEC_TOKEN secret, a
 # fine-grained token with read access to that repo's contents; a token that cannot read it
-# makes the repo check say "no-access", quietly) and always exits 0: a site that is down or has changed shape must
+# makes the repo check say "no-access", which opens or comments on an issue, since a probe that
+# cannot read the repo would otherwise miss every new draft) and always exits 0: a site that is down or has changed shape must
 # never fail anyone's work, so this is its own workflow, not part of ci.yml or the
 # contract nightly. The only write is one issue per kind of news (fixed title prefix
 # "HCP spec:"), commented on instead of duplicated.

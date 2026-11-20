@@ -361,3 +361,177 @@ def test_v1_reads_still_carry_use_until_as_metadata_and_the_v1_wire_is_unchanged
     entry = r["entries"][0]
     assert entry["record"]["metadata"]["canopy:useUntil"] and entry["claim"]["subject"]["preference"]
     assert r["hcp_version"] == "1.0" and r["directives"] == []
+
+
+# --- a revision keeps what the entry carried; standing is the person's alone -------------------------
+
+
+def _v2_entry(w, **assertion):
+    r = _j(_as(w["ada"].user), "post", f"/api/hcp/v2/entries?turn={w['turn'].pk}",
+           _entry_body(w, basis={"drawnFrom": ["conversation"]}, **assertion))
+    assert r.status_code == 201, r.content
+    return PersonFact.objects.get(statement="Prefers short replies.", superseded_at__isnull=True)
+
+
+def test_a_revision_keeps_the_entrys_other_categories_and_basis_on_every_path(w):
+    fact = _v2_entry(w)
+    assert fact.extra_categories == ["work_context"]
+    # A v1 revision by an agent (hcp_updatePreference) ...
+    r = _as(w["ada"].user).put(f"/api/hcp/v1/preferences/urn:uuid:{fact.entry_id}?turn={w['turn'].pk}",
+                               data=json.dumps({"updatedPreference": "Prefers brief replies.", "reason": "r"}),
+                               content_type="application/json")
+    assert r.status_code == 200, r.content
+    new = hcp.current(fact.entry_id)
+    assert (new.version, new.extra_categories, new.basis_detail) == (2, ["work_context"], {"drawnFrom": ["conversation"]})
+    # ... and the people route's supersede keep both, so a rule denying work_context still withholds it.
+    r = _j(_as(w["ada"].user), "post", f"/api/people/{w['person'].pk}/facts/",
+           {"workspace": "connect", "kind": "preference", "statement": "Prefers very brief replies.",
+            "basis": "inferred", "confidence": "low", "supersedes_id": new.pk, "category": "general_preferences",
+            "source_turn_id": str(w["turn"].pk)})
+    assert r.status_code == 201, r.content
+    newest = hcp.current(fact.entry_id)
+    assert newest.extra_categories == ["work_context"] and newest.basis_detail == {"drawnFrom": ["conversation"]}
+    assert disclosure.sensitivity_of(hcp.core.categories_of(newest)) == "medium"
+
+
+def test_superseding_through_the_people_route_keeps_the_purposes(w):
+    f = _fact(w, permitted_purposes=[purposes.ASSISTANCE, purposes.COACHING])
+    hcp.restrict_purposes(f, [purposes.ASSISTANCE], actor=hcp.user_actor(w["lili"]))
+    r = _j(_as(w["ada"].user), "post", f"/api/people/{w['person'].pk}/facts/",
+           {"workspace": "connect", "kind": "role", "statement": "Leads KC metrics.", "supersedes_id": f.pk,
+            "source_turn_id": str(w["turn"].pk)})
+    assert r.status_code == 201, r.content
+    new = hcp.current(f.entry_id)
+    assert new.version == 2
+    assert new.permitted_purposes == [purposes.ASSISTANCE, purposes.COACHING]
+    assert new.restricted_purposes == [purposes.ASSISTANCE]
+
+
+def test_only_the_persons_own_write_is_authenticated(w):
+    jj = User.objects.get(username="jj")            # a workspace owner, not the subject
+    r = _j(_as(jj), "post", f"/api/people/{w['person'].pk}/facts/",
+           {"workspace": "connect", "kind": "role", "statement": "Runs the KC pilot."})
+    assert r.status_code == 201, r.content
+    assert PersonFact.objects.get(statement="Runs the KC pilot.").assurance == "unverified"
+    r = _j(_as(w["lili"]), "post", f"/api/people/{w['person'].pk}/facts/",
+           {"workspace": "connect", "kind": "role", "statement": "Owns the KC dashboard."})
+    assert r.status_code == 201, r.content
+    assert PersonFact.objects.get(statement="Owns the KC dashboard.").assurance == "authenticated"
+
+
+# --- governance is the person's browser session or hand-minted PAT -----------------------------------
+
+
+def _oauth_client_token(user):
+    from apps.oauth_server.models import OAuthClient, OAuthGrant
+    from apps.tokens.models import PersonalToken
+
+    client = OAuthClient.objects.create(client_id="mcp-1", client_name="Some MCP client", redirect_uris=[])
+    grant = OAuthGrant.objects.create(client=client, user=user)
+    raw, _ = PersonalToken.create_for_user(user=user, label="oauth", ttl=dt.timedelta(hours=1), oauth_grant=grant)
+    return raw
+
+
+def test_an_oauth_sign_in_cannot_govern_even_as_the_person(w):
+    from tests.token_helpers import bearer_client, pat_client
+
+    f = _fact(w)
+    entry = f"/api/hcp/v2/entries/urn:uuid:{f.entry_id}"
+    for c, allowed in ((bearer_client(_oauth_client_token(w["lili"])), False), (pat_client(w["lili"]), True)):
+        want = 200 if allowed else 403
+        assert c.get("/api/hcp/v1/audit").status_code == want
+        assert c.get("/api/hcp/v1/export").status_code == want
+        assert c.get("/api/hcp/v2/export").status_code == want
+        assert _j(c, "post", "/api/hcp/v2/rules", {"operators": ["x.example"]}).status_code == (201 if allowed else 403)
+        assert _j(c, "post", f"{entry}/confirmation", {"disposition": "confirmed"}).status_code == want
+    from apps.contacts.models import StandingRule
+
+    assert StandingRule.objects.count() == 1                          # the PAT's, and only it
+
+
+# --- what discovery says about OAuth clients ---------------------------------------------------------
+
+
+def test_v2_discovery_does_not_offer_v2_to_oauth_clients(w):
+    doc = Client().get("/api/hcp/.well-known/hcp-configuration", HTTP_HCP_VERSION="2.0").json()
+    assert "/api/hcp/v1/" in doc["canopy"]["oauth_clients"] and "not served" in doc["canopy"]["oauth_clients"]
+    assert "v2 for OAuth clients of the HCP service" in doc["canopy"]["not_built"]
+    v1doc = Client().get("/api/hcp/.well-known/hcp-configuration").json()
+    assert "/api/hcp/v1/" in v1doc["canopy"]["v2"]["oauth_clients"]
+
+
+# --- the disclosure summary, per grant ---------------------------------------------------------------
+
+
+def test_a_revocation_notice_ends_only_its_own_grants_copies_in_the_summary(w):
+    from apps.contacts.models import HcpRevocationDelivery
+
+    client = HcpClient.objects.create(client_id="c", name="C", operator="O", redirect_uris=["https://c.o.example/cb"],
+                                      webhook_url="https://c.o.example/hook")
+    old, live = (PersonGrant.objects.create(person=w["person"], hcp_client=client, client_key=k, client_name="C",
+                                            scopes=["hcp:work_context:read"], grant_type="persistent")
+                 for k in ("c1", "c2"))
+    f = _fact(w)
+    now = timezone.now()
+    for grant, days in ((old, 3), (live, 2)):
+        PersonAuditEvent.objects.create(
+            person=w["person"], event_type="preference.read", actor_id="client:c", actor_type="agent",
+            entry_id=f.entry_id, category="work_context", purpose_code=purposes.ASSISTANCE, grant_id=grant.grant_id,
+            data={"retrievalId": f"urn:uuid:{days}", "useUntil": (now + dt.timedelta(days=days)).isoformat()})
+    HcpRevocationDelivery.objects.create(grant=old, client=client, payload={}, next_attempt_at=now, delivered_at=now)
+    s = [c for c in _as(w["lili"]).get("/api/hcp/v2/disclosures").json()["clients"] if c["client"]["id"] == "c"][0]
+    # The revoked grant's copies ended at the notice; the live grant's are usable for two more days.
+    assert s["usableUntil"] == (now + dt.timedelta(days=2)).isoformat()
+
+
+def test_an_empty_search_names_no_category_and_records_what_was_searched(w):
+    _q(w, query="nothing like anything held", categories=["work_context", "general_preferences"])
+    e = PersonAuditEvent.objects.get(person=w["person"], event_type="preference.read")
+    assert e.entry_id is None and e.category == ""
+    assert e.data["categoriesSearched"] == ["work_context", "general_preferences"]
+    assert v2.event_v2(e)["categories"] == []
+
+
+# --- a relationship that changes what others are served takes write on its target --------------------
+
+
+def test_contradicting_or_superseding_an_entry_takes_write_on_its_category(w):
+    target = _fact(w, "Prefers long replies.", category="work_context", dimension="length")
+    g = w["grant"]
+    g.scopes = ["hcp:work_context:read", "hcp:general_preferences:read", "hcp:general_preferences:write"]
+    g.save(update_fields=["scopes"])
+    c, t = _as(w["ada"].user), f"turn={w['turn'].pk}"
+    ref = _q(w, query="long replies", categories=["work_context"]).json()["entries"][0]["ref"]
+    for kind in ("contradicts", "supersedes"):
+        body = _entry_body(w, value=f"Prefers short replies ({kind}).")
+        body["classification"]["categories"] = ["general_preferences"]
+        body["record"]["relationships"] = [{"type": kind, "target": ref}]
+        r = _j(c, "post", f"/api/hcp/v2/entries?{t}", body)
+        assert r.status_code == 403, r.content
+    target.refresh_from_db()
+    assert target.status == "active"
+    assert not PersonFact.objects.filter(statement__startswith="Prefers short replies (").exists()
+    # derivedFrom only needs read.
+    body = _entry_body(w, value="Prefers short replies (derived).")
+    body["classification"]["categories"] = ["general_preferences"]
+    body["record"]["relationships"] = [{"type": "derivedFrom", "target": ref}]
+    assert _j(c, "post", f"/api/hcp/v2/entries?{t}", body).status_code == 201
+
+
+def test_resolving_a_ref_computes_the_grants_reach_once_not_per_entry(w, monkeypatch):
+    from apps.contacts.hcp import grants as grants_mod
+
+    for n in range(6):
+        _fact(w, f"Leads KC workstream {n}.")
+    ref = _q(w).json()["entries"][0]["ref"]
+    calls = []
+    real = grants_mod.reach_of
+
+    def counted(grant):
+        calls.append(grant.pk)
+        return real(grant)
+    monkeypatch.setattr(grants_mod, "reach_of", counted)
+    monkeypatch.setattr(hcp, "reach_of", counted)
+    r = _as(w["ada"].user).get(f"/api/hcp/v2/entries/{ref}?turn={w['turn'].pk}&purpose={purposes.ASSISTANCE}")
+    assert r.status_code == 200, r.content
+    assert len(calls) <= 2                     # the principal's checks, then once for the lookup

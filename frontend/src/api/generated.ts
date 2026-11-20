@@ -20094,7 +20094,7 @@ export interface paths {
         /**
          * HCP v2: grants
          * @description The person (a management client): every grant, `status` = active | revoked | expired | all.
-         *     A client: only the grant it acts under (5.2.6); a grant is never disclosed to another client.
+         *     An agent: only the grant it acts under (5.2.6); a grant is never disclosed to another client.
          */
         readonly get: operations["hcp_v2_listGrants"];
         readonly put?: never;
@@ -20117,8 +20117,8 @@ export interface paths {
         readonly post?: never;
         /**
          * HCP v2: revoke or relinquish a grant
-         * @description The person revokes any grant of theirs (6.2.1); a client may give up the grant it acts under
-         *     (5.2.7) and no other. Never rate limited. Every request after it fails, whatever token it carries.
+         * @description The person revokes any grant of theirs (6.2.1); an agent may give up the grant it acts under
+         *     for the turn it names (5.2.7) and no other. Never rate limited. Every request after it fails.
          */
         readonly delete: operations["hcp_v2_revokeGrant"];
         readonly options?: never;
@@ -51673,7 +51673,7 @@ export interface components {
         readonly HcpV2QueryIn: {
             /**
              * Query
-             * @description Natural language description of the context or task.
+             * @description What you are working on, in a sentence; entries are ranked against it.
              */
             readonly query: string;
             /**
@@ -51683,12 +51683,12 @@ export interface components {
             readonly categories?: readonly string[] | null;
             /**
              * Purpose
-             * @description A purpose code the grant approved for those categories.
+             * @description The purpose code you are reading for; your grant has to carry it.
              */
             readonly purpose: string;
             /**
              * Purposedescription
-             * @description Plain language statement of the task; recorded in the audit log.
+             * @description What you are doing for the person, in words they can read; kept with the read on their log.
              */
             readonly purposeDescription?: string | null;
             /**
