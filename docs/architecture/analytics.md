@@ -98,6 +98,9 @@ that surface's rule.
   `tests/test_brain_graph.py`), only where it would change a stored tie (`associate.outranks`), over the
   drawn unsealed sessions, marked `proposed`; person-only by the preview's rule (`api_preview._the_person`)
   and writes nothing (the test captures every query).
+- **One place reads the brain's rows**: `graph.brain_reads` (participants, ties, reporting lines, outputs and their
+  lineage), given a `source` (`graph.LIVE`, the tables, is the only one). Nothing else in the module reads a brain table
+  (`test_every_brain_read_goes_through_the_one_sourced_function`).
 - **Bounded.** A window of at most `graph.MAX_DAYS`, `MAX_SESSIONS` / `MAX_PROJECTS` / `MAX_OUTPUTS`, with
   `notes` naming what a cap left out; one query per kind of thing whatever the number of sessions
   (`test_the_cost_does_not_grow_with_the_sessions`).
