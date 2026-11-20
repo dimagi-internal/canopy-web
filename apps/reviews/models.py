@@ -104,12 +104,16 @@ class ReviewRequest(models.Model):
         return f"ReviewRequest({self.run_id!r}, gate={self.gate!r}, status={self.status})"
 
     @classmethod
-    def next_version(cls, narrative_slug: str) -> int:
-        """Next monotonic narrative version for a narrative_slug (1-based)."""
+    def next_version(cls, narrative_slug: str, workspace: str | None = None) -> int:
+        """Next monotonic narrative version for a narrative_slug (1-based), counted
+        within `workspace` when one is named."""
         if not narrative_slug:
             return 1
+        qs = cls.objects.filter(narrative_slug=narrative_slug)
+        if workspace:
+            qs = qs.filter(workspace_id=workspace)
         latest = (
-            cls.objects.filter(narrative_slug=narrative_slug)
+            qs
             .order_by("-version")
             .values_list("version", flat=True)
             .first()

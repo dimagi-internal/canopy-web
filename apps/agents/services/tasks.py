@@ -8,6 +8,7 @@ from django.db.models import F, Q
 from apps.contacts import people
 from apps.contacts.models import Person
 from apps.harness.models import Turn
+from apps.workspaces import permissions as perms
 
 from .. import work
 from ..models import MAX_TASK_DEPTH, Agent, AgentProject, AgentTask, AgentTaskHumanWhy
@@ -329,6 +330,9 @@ def create_tasks(agent: Agent | None, payloads: list[dict], *, workspace: str = 
             # inherits it, so `{"parent": "T66"}` alone files it correctly.
             if not ref:
                 found = get_task(agent, parent_ref) if agent is not None else work.task_by_key(parent_ref)
+                if (found is not None and agent is None and found.workspace_id != workspace
+                        and not _may_work_in(by_user, found.workspace_id)):
+                    found = None  # another workspace's task, as unknown as one that is not there
                 if found is not None and found.project_id and not may_use_project(found.project, user=by_user, agent=agent):
                     found = None  # resolve_parent refuses it, as a parent it cannot find
                 project = found.project if found is not None else None
@@ -406,7 +410,17 @@ def _project_ref(agent: Agent | None, ref: str, workspace: str, *, user=None):
     else:
         ws, _, handle = ref.rpartition("/")
         project = get_workspace_project(ws or workspace, handle)
+        # An address can name ANOTHER workspace's project, and the task follows
+        # its project there (`_task_workspace`, `work.rehome`). The caller's gate
+        # was asked of `workspace` only, so the other one is asked here: a
+        # project the person cannot do task work in is as unknown as a missing one.
+        if project is not None and project.workspace_id != workspace and not _may_work_in(user, project.workspace_id):
+            return None
     return project if project is None or may_use_project(project, user=user, agent=agent) else None
+
+
+def _may_work_in(user, workspace: str) -> bool:
+    return bool(getattr(user, "is_authenticated", False)) and perms.can(user, workspace, perms.AGENT_WORK)
 
 
 class DuplicateTaskError(Exception):

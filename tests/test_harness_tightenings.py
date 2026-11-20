@@ -198,6 +198,25 @@ def test_record_session_binds_its_own_agents_chat(world):
     assert RunnerBinding.objects.get(session=chat).runner_id == box.id
 
 
+def test_a_box_that_may_not_hold_the_agent_cannot_take_or_read_its_chat_binding(world):
+    """An editor (no admin of echo) pairs a box and names echo's chat thread: the
+    box must not become that chat's binding (its rows would then be accepted
+    from it), nor read the thread's summary."""
+    owner, editor, ws, agent = world
+    theirs = _runner(owner, ws, name="owners-box")
+    chat = Session.objects.create(workspace=ws, agent=agent, created_by=owner,
+                                  origin=Session.ORIGIN_WEB, title="echo chat")
+    assert _post(_as(owner), f"/api/harness/runners/{theirs.id}/record-session",
+                 {"agent_slug": "echo", "thread_key": str(chat.id), "session_key": "echo-1"}).status_code == 200
+
+    box = _runner(editor, ws, name="editors-box")
+    for route in ("record-session", "resolve-session"):
+        r = _post(_as(editor), f"/api/harness/runners/{box.id}/{route}",
+                  {"agent_slug": "echo", "thread_key": str(chat.id), "session_key": "evil"})
+        assert r.status_code == 404, (route, r.content)
+    assert RunnerBinding.objects.get(session=chat).runner_id == theirs.id
+
+
 # --- 4. a new chat's runner_id -----------------------------------------------------
 
 
