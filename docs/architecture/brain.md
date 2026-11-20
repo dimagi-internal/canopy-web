@@ -175,6 +175,17 @@ reader's own reads, never a word; recomputable from the raw events (`disclosure.
 `GET /api/me/learning/disclosure/` and `/api/me/learning/removed/` are the person's own and off MCP.
 The Settings page `/settings/learning` shows them beside the class switches.
 
+## Every reader is placed
+
+The learners canopy has today and will have are registered, dark, by migration `0007` (coaching, personal memory, the project
+link judge, project learning, system learning): none has an operator or is enabled, so registering them changes nothing, and
+coaching keeps reading through its own leg until it moves. `tests/test_message_readers_are_registered.py` lists every server
+module that reads a session's transcript rows and why it may (the chat itself, ingest, plumbing, a person sharing their own
+session, a notification); a new reader fails it until it is placed, and a learning read belongs in `brain.reading`, which is
+the one module marked as such. The agent-side readers (`ada:session-review`, `canopy-run-review`, `canopy:agent-review`, the
+stall classifier, `canopy analyze/improve`, the contributor pages and check-in runs) read through the API, not through a
+server module; moving them to runs of a registered learner is work in the canopy plugin and the agents' repos.
+
 ## Not built yet
 
 The scheduler that starts runs per active project and the model judge (layer 3), the capability leg's other readers
