@@ -55,8 +55,9 @@ code does not make obvious:
   (`_app_by_line`). So a person whose only line is `use:<key>` for an app entry gets it on every channel and never
   read mode; a `read` holder gets the app entry inside that app's own conversations and read mode elsewhere. A stamp
   selects, never grants ([host-sites.md](host-sites.md) § App entries).
-* **The two narrowing rules only narrow.** A review chat gets `session_review`, `confined`, loses `auto` and pinning,
-  owner included. Sensitive data confines a `full` base to the sensitive profile (`basis: sensitive:<name>`), keeping
+* **The narrowing rules only narrow.** A review chat gets `session_review`, `confined`, loses `auto` and pinning,
+  owner included. A brain run's conversation (`metadata.brain_run`) gets `brain`, the same way
+  (`turn_context._brain_rule`). Sensitive data confines a `full` base to the sensitive profile (`basis: sensitive:<name>`), keeping
   role, mode and pin rights; a turn in a sensitive conversation that ends anywhere but its sensitive profile is
   `refused`, a review chat included. A `read` holder in a non-sensitive conversation on a sensitive site keeps what
   the base gave them.
@@ -153,6 +154,8 @@ which role.
   in that profile; anything else is refused (`sensitive_not_open`). A runner in sensitive-data mode refuses any
   unconfined envelope (`runner/ec2/cloud_runner.py`, `sensitive_data_unconfined`). Saving the switch is audited like any
   setting change (`settings-audit.md`).
+* **A brain run's chat** runs in `brain` for any turn in it (`turn_context._brain_rule`): no login, GitHub, mail, vault,
+  Bash or Write, no canopy tool but `who_is_asking`, `brain_read` and `brain_emit` → [brain.md](brain.md) § A run.
 * **A one-session review's chat** runs in `session_review` for everyone not refused, owner included
   (`turn_context._review_rule`): no login, no Bash, no tool but `read_asked_session` → [access-sessions-and-people.md](access-sessions-and-people.md)
   § Asking a coach to review one session.

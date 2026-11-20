@@ -86,6 +86,8 @@ class SessionContext:
     #: The session a review chat is about, when this is one. `is_review` is the rule's question.
     is_review: bool = False
     review_of: object | None = None
+    #: A brain run's conversation (`brain.BrainRun`): the rule confines it to the brain profile.
+    is_brain: bool = False
     # What the read-when-asked facts below are read from. Not facts themselves.
     _session: object = field(default=None, compare=False, repr=False)
     _turn: object = field(default=None, compare=False, repr=False)
@@ -163,6 +165,7 @@ def build(session, turn=None, *, agent=None) -> SessionContext:
         sensitive=sensitivity.any_sensitive(session),
         is_review=session_access.is_review_conversation(session),
         review_of=_reviewed_session(session),
+        is_brain=session_access.is_brain_conversation(session),
         _session=session, _agent=agent)
 
 
@@ -178,6 +181,7 @@ def _of_turn(session, turn, agent) -> SessionContext:
         app=app_entries.session_app(getattr(turn, "chat_session", None)),
         sensitive=sensitivity.is_sensitive(turn), is_review=is_review,
         review_of=_reviewed_session(session) if is_review else None,
+        is_brain=profiles_mod.is_brain_turn(turn),
         _session=session, _turn=turn, _agent=agent)
 
 

@@ -1,0 +1,66 @@
+"""What a brain run writes (`brain_emit`): an output that carries the lineage of what it actually read.
+
+An output is about the run's own subject (never one it names), of a kind its feature declares, and cites the
+sources it came from. Every cited source must be one THIS run read (`BrainRunRead`) and must still be eligible
+now: a source cited but never read, or one whose people withdrew since, is refused whole. The lineage
+(`OutputLineage`) is written from the reads, so a later removal can find every output a source fed. The words
+are scrubbed like every learning read. Emitting the same thing twice is one output."""
+from __future__ import annotations
+
+import hashlib
+import json
+
+from django.db import transaction
+
+from apps.common import redact
+
+from . import readers
+from .eligibility import eligible
+from .models import BrainOutput, BrainRun, BrainRunRead, BrainSource, OutputLineage
+
+MAX_BODY_CHARS, MAX_SOURCES = 20_000, 50
+
+
+class EmitRefusedError(ValueError):
+    """The output asked for may not be written (a 422 at the route), with the reason in words."""
+
+
+def emit(run: BrainRun, *, kind: str, title: str, body: dict, source_ids, turn_id: str = "") -> BrainOutput:
+    cap = run.capability
+    if not readers.enabled() or not cap.enabled or run.state != BrainRun.OPEN:
+        raise EmitRefusedError("this run may not emit")
+    if kind not in (cap.output_kinds or []):
+        raise EmitRefusedError(f"{cap.slug} emits {', '.join(cap.output_kinds) or 'nothing'}, not {kind!r}")
+    if not isinstance(body, dict) or len(json.dumps(body, default=str)) > MAX_BODY_CHARS:
+        raise EmitRefusedError(f"body must be an object of at most {MAX_BODY_CHARS} characters")
+    ids = sorted({int(i) for i in source_ids})
+    if not ids or len(ids) > MAX_SOURCES:
+        raise EmitRefusedError(f"cite between 1 and {MAX_SOURCES} sources")
+    read = set(BrainRunRead.objects.filter(run=run, source_id__in=ids).values_list("source_id", flat=True))
+    if set(ids) - read:
+        raise EmitRefusedError(f"cites a source this run did not read: {sorted(set(ids) - read)}")
+    sources = list(BrainSource.objects.filter(pk__in=ids).select_related("session"))
+    subject = int(run.subject) if cap.subject_type == "person" else None
+    for s in sources:
+        if not eligible(s, cap, run.purpose, subject):
+            raise EmitRefusedError(f"source {s.pk} is no longer open to this feature")
+    workspaces = {s.workspace_id for s in sources}
+    if len(workspaces) != 1:
+        raise EmitRefusedError("an output cites sources of one workspace; emit one per workspace")
+    scrubbed, _n = redact._redact_value(body)
+    clean_title = redact.redact_text(title or "")[0][:300]
+    fingerprint = hashlib.sha256(json.dumps([kind, clean_title, scrubbed, ids], sort_keys=True,
+                                            default=str).encode()).hexdigest()
+    with transaction.atomic():
+        existing = BrainOutput.objects.filter(run=run, fingerprint=fingerprint).first()
+        if existing is not None:
+            return existing
+        out = BrainOutput.objects.create(
+            capability=cap, kind=kind, workspace_id=workspaces.pop(), subject_type=run.subject_type,
+            subject=run.subject, title=clean_title, body=scrubbed, turn_id=turn_id, run=run,
+            fingerprint=fingerprint)
+        for s in sources:
+            people = sorted(s.participants.filter(user__isnull=False).values_list("user_id", flat=True))
+            OutputLineage.objects.create(output_kind="brain.output", output_id=str(out.pk), source=s,
+                                         participant_scope=people)
+    return out

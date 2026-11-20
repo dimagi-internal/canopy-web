@@ -101,10 +101,10 @@ by itself; only a `core` link will open the project leg.
 ## What learns (`apps/brain/registry.py`)
 
 A `BrainCapability` is registered by a canopy admin (`POST /api/brain/capabilities/`, superuser only): one purpose
-class, the purposes it declares, the source kinds and output kinds it works with. It starts dark (`enabled` false). Its
-audience is its class's (`registry.CLASS_AUDIENCE`) and may only narrow: a wider one is refused, because that is a new
-class each person must agree to. The built-in `project-readers` (migration `0005`) is the purpose a project's readers
-read a session under. The API's prose calls these learners.
+class, the purposes it declares, the source kinds and output kinds it works with, an `operator` agent and the plugin
+`entry` a run starts with. It starts dark (`enabled` false). Its audience is its class's (`registry.CLASS_AUDIENCE`)
+and may only narrow: a wider one is refused, because that is a new class each person must agree to. The built-in
+`project-readers` (migration `0005`) is the purpose a project's readers read a session under.
 
 ## Who sees what it produced (`apps/brain/outputs.py`)
 
@@ -125,8 +125,29 @@ session by a reader coalesce). The leg and the record are inert until `BRAIN_REA
 workspaces, standing rules, who is a member where) is judged in Python over the people who consented, once, so nothing is
 cached; `tests/test_brain_project_leg.py` holds the two equal over a world.
 
+## A run (`apps/brain/runs.py`, `reading.py`, `emit.py`, `api_run.py`)
+
+The server starts a run of a feature (`runs.start`): a conversation of the operator agent stamped `metadata.brain_run`,
+with no creator and no participant, and a first turn queued as canopy's own, accountable to whoever registered the feature.
+That stamp puts every turn in it in the confined `brain` profile (`published_profiles.BRAIN`,
+`turn_context._brain_rule`): no login, GitHub, mail, vault, Bash or Write, and a caller token that lists only
+`who_is_asking`, `brain_read` and `brain_emit`; REST refuses the token outright. Only that token reaches the two routes,
+and only while the turn runs and the gate is on.
+
+- **`brain_read`** serves the run's next eligible sources once each, in order past its cursor: stored user and
+  assistant text only, harness noise dropped, secrets scrubbed, and for a feature that learns about a person only that
+  person's own lines (other people's words in the same session are left out). The directives of the people in a source
+  travel with it. Every source served is recorded (`BrainRunRead`, a `brain.read` event).
+- **`brain_emit`** writes one output of a declared kind, about the run's own subject, citing sources. Every cited
+  source must be one this run read and must still be eligible now, or nothing is written. The lineage
+  (`OutputLineage`: the source and the people whose words were in it) is written from the reads. Words are scrubbed;
+  the same output twice is one.
+- The run's conversation holds the words it read, in the operator's own turn record, readable by the operator's admins as
+  any of its work is: the same exposure coaching has today.
+
 ## Not built yet
 
-Confined learning runs with their read and emit tools, the removal cascade over outputs, the model judge (layer 3) and
-the scheduler that starts runs per active project. No capability reads a transcript through the brain in production:
-`BRAIN_READS_ENABLED` is the rollout gate and stays off until the read paths and the cascade are merged.
+The managers' and coaches' use of `brain.read` for the disclosure summary, the removal cascade over outputs, the
+model judge (layer 3) and the scheduler that starts runs per active project. No capability reads a transcript through
+the brain in production: `BRAIN_READS_ENABLED` is the rollout gate and stays off until the read paths and the cascade
+are merged.
