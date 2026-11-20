@@ -229,7 +229,10 @@ def _is_storyboard_link(request) -> bool:
 # page can take the pairing secret out of the QR link's `#pair=` fragment (which a
 # redirect to Google would drop) before the app sends a signed-out phone to sign in.
 # The shell reads nothing; every /api/listen/ route needs a session.
-_PUBLIC_PAGES = frozenset({"/about", "/get-started", "/listen"})
+# /ext/panel/ is the browser extension's side panel (apps/embedding/extension.py): it is
+# framed, and a framed bounce to Google is refused, so a signed-out panel must render its
+# own "Sign in to Canopy" button. The shell carries no data; every read needs a session.
+_PUBLIC_PAGES = frozenset({"/about", "/get-started", "/listen", "/ext/panel/", "/ext/panel"})
 
 
 def _is_public_page(path: str) -> bool:

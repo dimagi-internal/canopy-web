@@ -38,6 +38,10 @@ links). Record-level access is `scope.py`. An optional top-level `connections` d
 pages call Salesforce through canopy-web; public pages never do. A shared agent connection
 is approved per app on the agent's Accounts tab ([`vault-connections.md`](vault-connections.md) § Calls from screens).
 
+An optional top-level `browser` declaration says which member pages the browser extension's
+side panel shows beside which tabs, and what each may ask of the tab's adapter
+([`browser-extension.md`](browser-extension.md)).
+
 Do not let a workspace declare what acts beyond the caller: overlay `add_action` refuses
 `then` and link actions (`overlay.py`, `add_action` branch); only a template declares them.
 

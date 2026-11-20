@@ -21,6 +21,8 @@ import { ReviewPage } from './pages/ReviewPage'
 import { InviteAcceptPage } from './pages/InviteAcceptPage'
 import { PairRunnerPage } from './pages/PairRunnerPage'
 import { ListenPage } from './pages/ListenPage'
+import { ExtPanelPage } from './ext/ExtPanelPage'
+import { ExtSignedInPage } from './ext/ExtSignedInPage'
 import { VoiceNotePage } from './pages/VoiceNotePage'
 import { HostSitesPage } from './pages/HostSitesPage'
 import { WorkspaceSecretsPage } from './pages/WorkspaceSecretsPage'
@@ -602,6 +604,12 @@ export const routeTable: RouteObject[] = [
   // A voice note to an agent (the account menu's Voice assistant, from the app of that name):
   // the paired laptop reads it, then it opens a chat. Same phone screen as /listen.
   { path: '/listen/voice', element: <VoiceNotePage /> },
+  // The browser extension's side panel (src/ext/): framed by the extension, chrome-less, and
+  // reachable signed out so it can offer its own sign-in (a framed Google sign-in is refused).
+  // The server serves it framable only by the allowed extension origins (apps/embedding/extension.py).
+  { path: '/ext/panel', element: <ExtPanelPage /> },
+  // Where the panel's sign-in tab lands; signed in like any page, never framed.
+  { path: '/ext/signed-in', element: <ExtSignedInPage /> },
   // Public, chrome-less route — mounted OUTSIDE AppLayout so anonymous
   // visitors aren't bounced to login by the app shell's authed calls. Carries
   // its own light-themed `errorElement` (see `ShareRouteErrorBoundary`) so

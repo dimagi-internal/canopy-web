@@ -3,10 +3,12 @@ Base Django settings for canopy-web.
 
 Common settings shared across all environments.
 """
+import re
 import sys
 from pathlib import Path
 
 import environ
+from django.core.exceptions import ImproperlyConfigured
 
 from config.static_cache import add_cache_headers
 
@@ -711,6 +713,16 @@ MCP_APPS_SANDBOX_URL = env("MCP_APPS_SANDBOX_URL", default="/mcp-apps/sandbox/")
 MCP_APPS_HOST_ORIGINS = env.list("MCP_APPS_HOST_ORIGINS", default=[])
 # Refresh a site's UI tool index in the background when a visitor arrives.
 MCP_APPS_BACKGROUND_REFRESH = True
+
+# The Dimagi Canopy browser extension (docs/architecture/browser-extension.md): the
+# extension ids whose side panel may frame `/ext/panel/` (as `chrome-extension://<id>`,
+# apps/embedding/extension.py). The default is the unpacked dev build, whose id its
+# manifest's public key pins; the Web Store listing's id is added here once it exists.
+# A Chrome id is 32 letters a-p; anything else fails at boot, not on a framed page.
+BROWSER_EXTENSION_IDS = env.list("BROWSER_EXTENSION_IDS", default=["lkbpnpoflndilnhefmhjpmdibdcopcfo"])
+_bad_extension_ids = [i for i in BROWSER_EXTENSION_IDS if not re.fullmatch(r"[a-p]{32}", i)]
+if _bad_extension_ids:
+    raise ImproperlyConfigured(f"BROWSER_EXTENSION_IDS: not a Chrome extension id: {_bad_extension_ids}")
 
 # The `provider` of every A2A Agent Card this deployment serves (apps/agents/agent_card.py).
 CANOPY_A2A_PROVIDER_ORGANIZATION = env("CANOPY_A2A_PROVIDER_ORGANIZATION", default="Dimagi")

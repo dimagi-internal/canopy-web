@@ -14,7 +14,11 @@ follows:
   `'unsafe-eval'` so the runtime can run the view's compiled code; images only
   `data:`/`blob:`. The code reaches data only by asking the canopy page, which
   answers from the catalog (`catalog.py`) as the viewer.
-* **Framed only by canopy.** `frame-ancestors` is canopy's own origins.
+* **Framed only by canopy.** `frame-ancestors` is canopy's own origins, plus the
+  allowed browser-extension origins (`apps/embedding/extension.py`): the extension's
+  side panel frames canopy's `/ext/panel/`, which frames this, and `frame-ancestors`
+  is checked against every ancestor. Messages are still accepted only from canopy's
+  own origins (`window.CANOPY_DV.origins`), and an extension origin is never one.
 * **The document carries no data.** The view's code and its data arrive later,
   over `postMessage`, from the page that framed it. The one inline script is the
   server-known list of origins the runtime may accept messages from, under a
@@ -28,6 +32,7 @@ import secrets
 from django.http import HttpRequest, HttpResponse
 from django.urls import get_script_prefix
 
+from apps.embedding.extension import extension_origins
 from apps.embedding.views_embed import entry_assets
 from apps.mcp_apps_host.views_mcp_apps import host_origins
 
@@ -54,8 +59,9 @@ _SHELL = """<!doctype html>
 """
 
 
-def csp(origins: list[str], nonce: str) -> str:
+def csp(origins: list[str], nonce: str, ancestors: list[str] | None = None) -> str:
     own = " ".join(origins)
+    framers = " ".join(dict.fromkeys([*origins, *(ancestors or [])]))
     return "; ".join([
         "sandbox allow-scripts",
         "default-src 'none'",
@@ -70,7 +76,7 @@ def csp(origins: list[str], nonce: str) -> str:
         "worker-src 'none'",
         "form-action 'none'",
         "base-uri 'none'",
-        f"frame-ancestors {own}",
+        f"frame-ancestors {framers}",
     ])
 
 
@@ -96,7 +102,7 @@ def frame_page(request: HttpRequest) -> HttpResponse:
             script=f'<script type="module" src="{prefix}/{js}"></script>',
         )
     response = HttpResponse(body, content_type="text/html; charset=utf-8")
-    response["Content-Security-Policy"] = csp(origins, nonce)
+    response["Content-Security-Policy"] = csp(origins, nonce, extension_origins())
     response["X-Content-Type-Options"] = "nosniff"
     response["Referrer-Policy"] = "no-referrer"
     response["Cache-Control"] = "no-store"

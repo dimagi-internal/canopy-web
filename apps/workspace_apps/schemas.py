@@ -303,3 +303,18 @@ class GuideOut(Schema):
     contract: str
     manifest: dict[str, Any]
     draft: int | None = None
+
+
+class BrowserAppOut(Schema):
+    """One app page the browser extension's panel may show for a tab (`browser.py`)."""
+    workspace: str
+    workspace_name: str
+    app_key: str
+    app_name: str
+    page_slug: str
+    page_title: str
+    adapter: str
+    capabilities: list[str]
+    events: list[str]
+    #: The page's match patterns: the panel checks the tab against them again before every call.
+    matches: list[str]

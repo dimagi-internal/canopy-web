@@ -20,7 +20,7 @@ import { apiUrl } from '@/api/base'
 import { actOnDynamicViewTask, getDynamicViewGuide, type DynamicViewSource } from '@/api/dynamicViews'
 import { ViewAgentTasks, type DeclaredTask } from './agentTasks'
 import { connectionClient } from '@/api/connectionCalls'
-import { ConnectionCalls, pageClickedFrame, refusalMembers, type DeclaredConnection } from './connectionCalls'
+import { ConnectionCalls, NEEDS_CLICK, pageClickedFrame, refusalMembers, type DeclaredConnection } from './connectionCalls'
 import { checkConnect, connectOutcome, disconnectLent, lendStartPath, type LendRequest } from './connections'
 import { checkAsk, endGoogleAccess, GoogleAccessDialog, type GoogleAccessAsk, type GoogleAccessRequest } from './googleAccess'
 import { connectReturnTo, resolveNavigation, resolveRead, type CatalogModel, type ReadContext } from './bridge'
@@ -33,6 +33,7 @@ import {
   type AgentTaskStatus,
   type AppContext,
   type AppOp,
+  type BrowserInfo,
   type FrameMessage,
   type HostMessage,
   type ReadRequest,
@@ -65,6 +66,20 @@ function message(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
 }
 
+/**
+ * The browser extension's panel (src/ext/ExtPanelPage.tsx): the tab beside it, as one app
+ * page may reach it. Every call is judged by the panel's gate (src/ext/extensionBridge.ts),
+ * never by what the frame says; without it `canopy.browser` is null in the frame.
+ */
+export interface BrowserHost {
+  info: BrowserInfo
+  context(): { tab: { url: string; title: string } } | null
+  request(capability: unknown, args: unknown): Promise<unknown>
+  open(url: unknown): void
+  /** Admitted adapter events, and `context` when the tab changes; returns an unsubscribe. */
+  subscribe(listener: (event: string, data: unknown) => void): () => void
+}
+
 interface Props {
   view: FrameView
   scope: ViewScope
@@ -91,6 +106,8 @@ interface Props {
     /** The app's declared connections, if known here; the server decides when not. */
     connections?: readonly DeclaredConnection[]
   }
+  /** Drawn in the browser extension's panel: what `canopy.browser` reaches. */
+  browser?: BrowserHost
 }
 
 async function readAs(url: string): Promise<unknown> {
@@ -128,7 +145,7 @@ function theme(): 'light' | 'dark' {
   return document.documentElement.classList.contains('dark') ? 'dark' : 'light'
 }
 
-export function DynamicViewFrame({ view, scope, onError, app, pagePanel = false }: Props) {
+export function DynamicViewFrame({ view, scope, onError, app, pagePanel = false, browser }: Props) {
   const frame = useRef<HTMLIFrameElement>(null)
   const loads = useRef(0)
   const [height, setHeight] = useState(240)
@@ -208,9 +225,17 @@ export function DynamicViewFrame({ view, scope, onError, app, pagePanel = false 
 
   const draw = useCallback(async () => {
     const data = await load()
-    post({ channel: CHANNEL, type: 'render', code: view.code, data, scope, theme: theme(), app: app?.context })
+    post({ channel: CHANNEL, type: 'render', code: view.code, data, scope, theme: theme(), app: app?.context, browser: browser?.info })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [post, load, view.code, ctxKey, scope.view.version, app?.context])
+  }, [post, load, view.code, ctxKey, scope.view.version, app?.context, browser])
+
+  // The tab's declared events (and changes of tab) reach the frame while it is drawn.
+  useEffect(() => {
+    if (!browser) return
+    return browser.subscribe((event, data) => {
+      if (!gone) post({ channel: CHANNEL, type: 'browser-event', event, data })
+    })
+  }, [browser, post, gone])
 
   useEffect(() => {
     async function onMessage(ev: MessageEvent) {
@@ -241,6 +266,35 @@ export function DynamicViewFrame({ view, scope, onError, app, pagePanel = false 
         case 'go':
           if (app && typeof msg.page === 'string') app.go(msg.page, msg.params ?? {})
           return
+        case 'browser': {
+          const id = msg.id
+          const req = (msg.request ?? {}) as { op?: unknown; capability?: unknown; args?: unknown; url?: unknown }
+          const fail = (error: string, code = 'bad_request') =>
+            post({ channel: CHANNEL, type: 'read-result', id, ok: false, error, code })
+          if (!browser) return fail('canopy.browser exists only in the browser extension\'s panel')
+          if (req.op === 'context') {
+            post({ channel: CHANNEL, type: 'read-result', id, ok: true, data: browser.context() })
+            return
+          }
+          if (req.op === 'open') {
+            // Read the click NOW, before any await: a page may open a tab only from a click on it.
+            if (!pageClickedFrame(frame.current)) return fail(NEEDS_CLICK)
+            try {
+              browser.open(req.url)
+              post({ channel: CHANNEL, type: 'read-result', id, ok: true, data: null })
+            } catch (e) {
+              fail(message(e), (e as { code?: string }).code)
+            }
+            return
+          }
+          if (req.op === 'request') {
+            browser.request(req.capability, req.args)
+              .then((data) => post({ channel: CHANNEL, type: 'read-result', id, ok: true, data }))
+              .catch((e) => fail(message(e), (e as { code?: string }).code ?? 'adapter_error'))
+            return
+          }
+          return fail('unknown canopy.browser call')
+        }
         case 'read': {
           if (app && !app.canopyReads) {
             post({ channel: CHANNEL, type: 'read-result', id: msg.id, ok: false, error: 'a public page reads only its own app' })
@@ -398,7 +452,7 @@ export function DynamicViewFrame({ view, scope, onError, app, pagePanel = false 
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draw, load, post, navigate, gone, ctxKey, view.sources, app])
+  }, [draw, load, post, navigate, gone, ctxKey, view.sources, app, browser])
 
   // A changed view (an edit, a restored version) redraws in the same frame.
   useEffect(() => {

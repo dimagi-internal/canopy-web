@@ -49,6 +49,9 @@ is never named here: it is the value of a text setting (``project_setting``) a
 workspace admin binds. TEMPLATE-ONLY, like ``then``: no overlay op may carry it
 (`overlay.compose`), and rebinding its setting is a risky change (`overlay.is_risky`).
 
+``browser`` says which member pages the browser extension's side panel shows, on
+which tab URLs, and what each may ask of the tab's adapter (`browser.py`).
+
 A template's manifest is the base; a workspace's changes are an overlay on it
 (`overlay.py`), and what runs is the two composed — validated here again, so a
 composition that breaks a rule is refused like a hand-written one.
@@ -63,7 +66,7 @@ from apps.dynamic_views import catalog as dv_catalog
 from apps.dynamic_views import services as dv_services
 from apps.workspaces import permissions as perms
 
-from . import scope
+from . import browser, scope
 
 IDENT = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
 SLUG = re.compile(r"^[a-z][a-z0-9-]{0,38}[a-z0-9]$|^[a-z]$")
@@ -1058,4 +1061,7 @@ def validate(raw) -> dict:
     }
     if tasks is not None:  # only when declared, so an app without it keeps its exact shape
         out["tasks"] = tasks
+    browser_entries = browser.validate(raw.get("browser"), pages)
+    if browser_entries is not None:  # likewise: only when declared
+        out["browser"] = browser_entries
     return out

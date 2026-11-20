@@ -12,6 +12,8 @@ the surfaces where a mistake exposes data or hands out power:
 * acting — an action's role;
 * email — who an email goes to;
 * Salesforce — the calls an app's pages may make, and as whom (`connections`);
+* the browser — which tabs the extension's panel shows a page on, and what it may
+  read there (`browser`);
 * retention — what is anonymized or deleted, and when;
 * tasks — which project's tasks the app's pages act on, who may, and how (`tasks`,
   and the default of the setting that names the project).
@@ -112,6 +114,9 @@ def changes(old: dict, new: dict) -> list[str]:
     # Salesforce calls the app's pages may make: any change either way is for an admin to see.
     if (old.get("connections") or []) != (new.get("connections") or []):
         out.append(_connection_change(old.get("connections") or [], new.get("connections") or []))
+    # The browser extension: which tabs a page is offered on, and what it may read or hear there.
+    if (old.get("browser") or []) != (new.get("browser") or []):
+        out.append("changes which browser tabs the app's pages open beside, or what they may read from them")
     # Retention.
     if (old.get("retention") or []) != (new.get("retention") or []):
         out.append("changes what candidate data is anonymized or deleted, and when")
