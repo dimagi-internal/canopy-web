@@ -454,9 +454,8 @@ def test_the_debugger_hands_off_then_closes_it_once_the_person_fixed_it(
     assert assigned.last().payload["ask"] == "Sign Claude back in on cloud-ec2-2."
     assert _notified(inv) == [[ada.owner_id]]
 
-    # Once the person says they made the fix, the debugger closes it itself
-    # (Jonathan 2026-11-20: "I need you to be able to clean up the system and
-    # self prune"), and its note keeps what the hand-off asked for.
+    # Once the person says they made the fix, the debugger closes it itself,
+    # and its note keeps what the hand-off asked for.
     r = c.post(f"{base}/resolve", data={"note": "Checked: Claude is signed in on cloud-ec2-2."},
                content_type="application/json")
     assert r.status_code == 200, r.content

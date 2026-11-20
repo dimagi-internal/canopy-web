@@ -888,10 +888,9 @@ def resolve(inv: FailureInvestigation, *, note: str, by=None, fix_commit: str = 
     `pending_deploy` until the fix is live (`close_live_fixes`).
 
     A row with a person (`escalated`) may be closed by the debugger too, once it
-    has checked that the person's fix is in place (Jonathan 2026-11-20: "I need you
-    to be able to clean up the system and self prune" — an alert only a person can
-    close is one more click left on him). Handing off is still `hand_off`, never a
-    resolve. So a repeat still says what was needed, the debugger's note on such a
+    has checked that the person's fix is in place: the system cleans up after
+    itself rather than leaving the person a click. Handing off is `hand_off`,
+    never a resolve. So a repeat still says what was needed, the debugger's note on such a
     row carries the hand-off's ask (`It needed: …`), which `_came_back_ask` repeats."""
     if inv.status == FailureInvestigation.ESCALATED and _is_debugger(by):
         ask = _SPACE.sub(" ", inv.ask or "").strip()
