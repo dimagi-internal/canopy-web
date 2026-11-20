@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
+from typing import Literal
 
 from pydantic import ConfigDict, Field
 
@@ -38,6 +39,27 @@ class LearningIn(StrictModel):
     directives: list[str] | None = Field(None, description="Words every reader is shown. Omit to keep.")
 
 
+class SourceLinkOut(StrictModel):
+    project: str = Field(description="The project's handle in the session's workspace.")
+    name: str
+    tier: str = Field(description="core | adjacent | candidate | rejected.")
+    how: str = Field(description="dispatched | signals | judged | declared.")
+
+
 class LearningSourceOut(StrictModel):
     session_id: uuid.UUID
     excluded: bool
+    projects: list[SourceLinkOut] = Field(
+        default_factory=list, description="Projects of yours this session is tied to; only ones you may read.")
+
+
+class PersonLinkIn(StrictModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tier: Literal["core", "rejected"] = Field(description="`core`: it belongs to the project. `rejected`: it does not, and stays rejected.")
+
+
+class AgentLinkIn(StrictModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tier: Literal["core", "adjacent"]

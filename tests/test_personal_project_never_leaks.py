@@ -213,6 +213,12 @@ def test_django_admin_shows_staff_no_more_than_the_api(world):
 #: A new entry is a claim that what it reads goes no further than the people who may
 #: read the row; if that is not so, filter it instead.
 QUERY_ALLOWLIST = {
+    # The brain: a link is metadata that confers no read; what a person or agent is shown is decided by the row.
+    ("apps/brain/api.py", "_project_of"): "a project of the session's own workspace the person is in; may_read_project on the row decides",
+    ("apps/brain/api.py", "_source_out"): "lists only the projects may_read_project says this person may read",
+    ("apps/brain/api.py", "declare_session_project"): "an agent's own login in its running turn; a personal project needs may_read_project",
+    ("apps/brain/associate.py", "_candidate_projects"): "workspace-visible projects only: a layer never links a personal project, and it reads no project content",
+    ("apps/brain/management/commands/brain_validate_links.py", "handle"): "an operator's command, run by hand, naming the project it measures",
     # Gates and writers: the row found is checked by the caller, or the caller already holds it.
     ("apps/agents/services/projects.py", "get_project"): "resolves a name; project_or_404 and _project_ref gate the result",
     ("apps/agents/services/projects.py", "get_workspace_project"): "resolves an address; project_ws_or_404 and _project_ref gate the result",

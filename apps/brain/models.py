@@ -43,6 +43,11 @@ class BrainSource(models.Model):
     workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE, related_name="+")
     state = models.CharField(max_length=12, choices=STATE_CHOICES, default=OPEN)
     sealed_reason = models.CharField(max_length=16, blank=True, default="")
+    #: When the associator should look at this source next (`associate.run_due`): set by an
+    #: activity fold, so a burst of folds is one look; null once looked at.
+    associate_due_at = models.DateTimeField(null=True, blank=True)
+    #: When it was last looked at; null means never, which is also due.
+    associated_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -142,3 +147,63 @@ class BrainCapability(models.Model):
     schedule = models.CharField(max_length=64, blank=True, default="")
     enabled = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+class ProjectSignature(models.Model):
+    """What a project looks like in a session's recorded activity: the parameters `associate.evaluate`
+    tests. Seeded from the sessions certainly on the project (`associate.seed_signature`), then only
+    ever added to. Metadata about code and tool names, never words."""
+
+    project = models.OneToOneField("agents.AgentProject", on_delete=models.CASCADE, related_name="brain_signature")
+    repo = models.CharField(max_length=100, blank=True, default="")
+    remote = models.CharField(max_length=200, blank=True, default="")
+    #: Repo-relative directories (`connect_labs/supply_chain`), matched on whole path segments.
+    paths = models.JSONField(default=list, blank=True)
+    exclude_paths = models.JSONField(default=list, blank=True)
+    #: Matched against a tool's name after `mcp__<server>__` (`supply_chain_`).
+    mcp_prefixes = models.JSONField(default=list, blank=True)
+    #: fnmatch patterns over a session's branches: a WEAK signal.
+    branch_patterns = models.JSONField(default=list, blank=True)
+    #: Lower-case words in a session's title, branches and working folders: a WEAK signal.
+    name_terms = models.JSONField(default=list, blank=True)
+    #: The project's own PRs, `{"<owner/name>#<number>": {"cross_cutting": false}}`. A cross-cutting one is weak.
+    prs = models.JSONField(default=dict, blank=True)
+    mcp_min = models.PositiveSmallIntegerField(default=3)
+    seeded_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class SourceLink(models.Model):
+    """A source's tie to a subject. Metadata only: a link confers no read by itself, and only a `core`
+    link ever opens the project read leg (P4). One row per (source, subject); the strongest layer
+    wins (`associate.RANK`), and a person's own rejection sticks."""
+
+    PERSON, PROJECT_SUBJECT = "person", "project"
+    DISPATCHED, SIGNALS, JUDGED, DECLARED = "dispatched", "signals", "judged", "declared"
+    HOW_CHOICES = [(DISPATCHED, "Dispatched from a task"), (SIGNALS, "Signals in its activity"),
+                   (JUDGED, "A model's call"), (DECLARED, "Declared")]
+    CORE, ADJACENT, CANDIDATE, REJECTED = "core", "adjacent", "candidate", "rejected"
+    TIER_CHOICES = [(CORE, "Core"), (ADJACENT, "Adjacent"), (CANDIDATE, "Candidate"), (REJECTED, "Rejected")]
+
+    source = models.ForeignKey(BrainSource, on_delete=models.CASCADE, related_name="links")
+    subject_type = models.CharField(max_length=16, default=PROJECT_SUBJECT)
+    #: The subject's id as text (an `AgentProject` pk for a project), so later subject types fit.
+    subject = models.CharField(max_length=64)
+    how = models.CharField(max_length=12, choices=HOW_CHOICES)
+    tier = models.CharField(max_length=12, choices=TIER_CHOICES)
+    confidence = models.FloatField(null=True, blank=True)
+    #: Short reasons ("owns 1 project PR(s)", "task 41"): ids and counts, never a quote.
+    evidence = models.JSONField(default=list, blank=True)
+    #: The model that judged it, for `how == judged`.
+    model = models.CharField(max_length=64, blank=True, default="")
+    by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+                           related_name="+")
+    by_agent = models.ForeignKey("agents.Agent", null=True, blank=True, on_delete=models.SET_NULL,
+                                 related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["source", "subject_type", "subject"],
+                                               name="brain_link_one_per_subject")]
+        indexes = [models.Index(fields=["subject_type", "subject", "tier"], name="brain_link_by_subject")]
