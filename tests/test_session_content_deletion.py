@@ -758,6 +758,7 @@ IDS_ONLY = {  # ids, switches and timestamps; nothing anyone said
     "slack.SlackAudienceMember", "slack.SlackTranscriptPost", "slack.SlackRelayPost",
     "capabilities.CapabilityLease",
     "brain.BrainSource",  # points at a session; every seal is read live from the session, never copied
+    "brain.BrainRun",     # the conversation of a learning run: a pointer; the words are the operator's turn record
 }
 OWN_RECORD = {  # a thing someone made and has its own delete; it only says which session it came from
     "walkthroughs.Walkthrough", "reviews.ReviewRequest", "storyboards.Storyboard",  # published artifacts

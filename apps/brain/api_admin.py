@@ -32,7 +32,8 @@ def _cap_out(c: BrainCapability) -> dict:
     return {"slug": c.slug, "name": c.name, "description": c.description, "purpose_class": c.purpose_class,
             "subject_type": c.subject_type, "purposes": c.purposes, "source_kinds": c.source_kinds,
             "output_kinds": c.output_kinds, "audience": c.audience,
-            "operator": c.operator.slug if c.operator_id else "", "schedule": c.schedule, "enabled": c.enabled}
+            "operator": c.operator.slug if c.operator_id else "", "entry": c.entry, "schedule": c.schedule,
+            "enabled": c.enabled}
 
 
 def _superuser(request: HttpRequest) -> None:
@@ -66,7 +67,8 @@ def register_capability(request: HttpRequest, payload: CapabilityIn) -> dict:
     only what people agreed to."""
     _superuser(request)
     try:
-        cap = registry.register(**{**payload.model_dump(), "operator": _operator(payload.operator)})
+        cap = registry.register(**{**payload.model_dump(), "operator": _operator(payload.operator),
+                                   "registered_by": request.user})
     except registry.RefusedError as e:
         raise ProblemError(422, "Invalid request", type_=TYPE_VALIDATION, detail=str(e)) from e
     return _cap_out(cap)

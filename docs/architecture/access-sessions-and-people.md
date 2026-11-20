@@ -33,6 +33,7 @@ their own people (`tenancy-sensitive-conversations.md` § Sensitive conversation
 | **An agent's own work** (an alarm, a scheduled turn) | the agent's admins (`Agent.is_admin`) | the agent's admins |
 | **Work an agent starts for you** (a dispatched session) | you + the parent conversation's people (`services._inherit_participants`) | the same |
 | **Coaching** | + the coaches of the person (`CoachingOptIn` + `CoachingRole`: an agent's login in a running turn, or a person designated for the workspace and below, as themselves), read-only, in a turn asked by them or by the agent's admin, or dispatched for that one person, never a sensitive one, never one whose words its person deleted | no — it reads what is already uploaded |
+| **A project's sessions** (the brain's leg 7, off until `BRAIN_READS_ENABLED`) | + whoever may read the project a session is `core`-tied to, read-only, secrets scrubbed, never a pull, when everyone in it agreed to project learning (`brain.readers.project_q`) → [brain.md](brain.md) | no |
 | **One session, asked from its page** | + the coach the person asked (`SessionReviewAsk`), as the person, with a token pinned to that session, only inside the chat the ask opened, never a sensitive one, never one whose words its person deleted | no — it reads what is already uploaded |
 
 **Every session says who can see it.** `GET /api/canopy-sessions/{id}` carries `audience`

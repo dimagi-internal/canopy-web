@@ -90,6 +90,7 @@ from apps.harness.models import Runner, Turn
 
 from . import channel_bindings, staleness
 from .models import (
+    BRAIN_RUN_METADATA_KEY,
     REVIEW_METADATA_KEY,
     CoachingOptIn,
     CoachingRole,
@@ -121,6 +122,12 @@ def is_review_conversation(session) -> bool:
     """A chat opened by asking an agent to review one session. Everything in it runs in the
     `published_profiles.SESSION_REVIEW` profile, because what it read stays in its context."""
     return session is not None and REVIEW_METADATA_KEY in (session.metadata or {})
+
+
+def is_brain_conversation(session) -> bool:
+    """A chat that is one run of a brain learning feature. Everything in it runs in the
+    `published_profiles.BRAIN` profile: it reads sources through `brain_read` and nothing else."""
+    return session is not None and BRAIN_RUN_METADATA_KEY in (session.metadata or {})
 
 
 def live_review_ask(conversation_id, *, user_id):
@@ -157,6 +164,8 @@ def turn_reach(turn) -> Reach | None:
     conversation = turn_conversation(turn)
     own = Q(pk=conversation.pk) if conversation is not None else Q(pk__in=[])
     turn_id = str(turn.pk)
+    if is_brain_conversation(conversation):
+        return Reach(own, turn_id=turn_id)         # its own conversation; what it reads comes through the brain
     if is_review_conversation(conversation):
         ask = live_review_ask(conversation.pk, user_id=turn.initiator_user_id)
         return Reach(own | Q(pk=ask.session_id) if ask is not None else own, turn_id=turn_id)
