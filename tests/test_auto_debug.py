@@ -320,6 +320,52 @@ def test_a_failure_that_comes_back_after_resolve_goes_to_a_person_with_no_turn(
     assert _debug_turns().count() == 1 and _notified(inv) == [[ada.owner_id]]
 
 
+def test_a_recurrence_after_a_button_resolve_says_who_and_what_is_still_needed(
+        ada, ws, runner, django_capture_on_commit_callbacks):
+    """Investigation 38: the debugger handed budgy's Salesforce failure off with a
+    clear ask; a person pressed Mark resolved; it came back on ACE, and the email
+    said only "It came back after it was resolved: Resolved from the alert"."""
+    budgy, ace = _agent(ws, "budgy"), _agent(ws, "ace")
+    ask = "Budgy has no Salesforce access: attach the Salesforce vault to budgy, or tell the requester."
+    with django_capture_on_commit_callbacks(execute=True):
+        _fail(budgy, runner, "boom")
+        inv = FailureInvestigation.objects.get()
+        auto_debug.hand_off(inv, ask=ask)
+        auto_debug.resolve_from_alert(inv)
+        _finish_debug_turns()
+        _fail(ace, runner, "boom")
+    inv.refresh_from_db()
+    assert inv.status == FailureInvestigation.ESCALATED
+    assert inv.ask == (f"It came back on ace (haldimagi-mbp-cdp) after it was marked resolved with "
+                       f"nothing fixed. Still needed: {ask}")
+    assert inv.agents == ["budgy", "ace"]
+
+    # Resolved from the button again and back again: the ask is carried, never nested.
+    with django_capture_on_commit_callbacks(execute=True):
+        auto_debug.resolve_from_alert(inv)
+        _fail(budgy, runner, "boom")
+    inv.refresh_from_db()
+    assert inv.ask == (f"It came back on budgy (haldimagi-mbp-cdp) after it was marked resolved with "
+                       f"nothing fixed. Still needed: {ask}")
+    assert inv.agents == ["ace", "budgy"]  # most recent last
+
+
+@pytest.mark.parametrize("note", ["Resolved from the alert", "Marked resolved from the alert; nothing was fixed."])
+def test_a_recurrence_after_a_button_resolve_with_no_ask_says_no_cause_was_recorded(
+        ada, ws, runner, note, django_capture_on_commit_callbacks):
+    ace = _agent(ws, "ace")
+    with django_capture_on_commit_callbacks(execute=True):
+        _fail(ace, runner, "boom")
+        inv = FailureInvestigation.objects.get()
+        auto_debug.resolve(inv, note=note)
+        _finish_debug_turns()
+        _fail(ace, runner, "boom")
+    inv.refresh_from_db()
+    assert inv.ask.startswith("It came back on ace (haldimagi-mbp-cdp) after it was marked resolved with nothing "
+                              "fixed, and no cause was recorded.")
+    assert "Resolved from the alert" not in inv.ask
+
+
 def _code(runner, sha, committed):
     Runner.objects.filter(pk=runner.pk).update(code_sha=sha, code_committed_at=int(committed.timestamp()))
     runner.refresh_from_db()
@@ -341,7 +387,7 @@ def test_a_recurrence_on_a_runner_without_the_fix_only_counts(ada, ws, runner, d
     assert inv.status == FailureInvestigation.PENDING_DEPLOY
     alert = _alert(inv)
     assert alert.status == Alert.OPEN and alert.handler_agent_id == ada.pk   # quiet, still the agent's
-    assert alert.title.startswith("Fix pending deploy on haldimagi-mbp-cdp")
+    assert alert.title.startswith("Fix pending deploy for ace on haldimagi-mbp-cdp")
 
     _finish_debug_turns()
     with django_capture_on_commit_callbacks(execute=True):
