@@ -34,6 +34,7 @@ from django.db.models.functions import Cast
 from django.utils import timezone
 
 from . import participants
+from .eligibility import covers, rule_denies
 from .models import (
     ABOUT_A_PERSON,
     PROJECT,
@@ -69,9 +70,13 @@ def stores() -> dict:
     return dict(_STORES)
 
 
-def removed_reason(source: BrainSource | None, output_class: str, subject_user_id, scope) -> str:
+def removed_reason(source: BrainSource | None, output_class: str, subject_user_id, scope, *,
+                   capability: str = "", purpose: str = "") -> str:
     """Why `source` is gone for an output of this class, or "". `scope` is the people whose words were in it
-    when the output was made."""
+    when the output was made. Besides a removal or a dropped class, a person NARROWING their consent removes it:
+    its workspace no longer covered (`eligibility.covers`) or a standing rule now denying the use
+    (`eligibility.rule_denies`, matched on `capability` and `purpose` when the caller knows them; a rule naming a
+    learner or purpose the caller does not know is not taken to match)."""
     if source is None or source.state == BrainSource.WITHDRAWN:
         return "withdrawn"
     if participants.sealed_reason(source.session):
@@ -89,7 +94,22 @@ def removed_reason(source: BrainSource | None, output_class: str, subject_user_i
         c = agreed.get(uid)
         if c is None or output_class not in (c.classes or []):
             return "consent_ended"
+    for uid in people:
+        c = agreed[uid]
+        if not covers(c, source.workspace_id):
+            return "outside_workspaces"
+        if any(rule_denies(r, capability=capability, purpose=purpose, cls=output_class, workspace=source.workspace_id)
+               for r in (c.standing_rules or []) if _readable_rule(r, capability, purpose)):
+            return "standing_rule"
     return ""
+
+
+def _readable_rule(rule, capability: str, purpose: str) -> bool:
+    """A rule naming a learner or purpose is judged only when the caller knows it. An unreadable rule (not a
+    dict) is passed on, and `rule_denies` denies it."""
+    if not isinstance(rule, dict):
+        return True
+    return not ((rule.get("capability") and not capability) or (rule.get("purpose") and not purpose))
 
 
 def _scrub_links(source: BrainSource) -> None:
@@ -164,7 +184,7 @@ def sweep(source_ids=None) -> dict:
     for row in lineage.select_related("source__session"):
         by_output[row.output_id].append(row)
     outputs = {str(o.pk): o for o in BrainOutput.objects.filter(pk__in=[int(i) for i in by_output])
-               .exclude(state=BrainOutput.WITHDRAWN).select_related("capability")}
+               .exclude(state=BrainOutput.WITHDRAWN).select_related("capability", "run")}
     seen: dict = {}
     for oid, rows in by_output.items():
         out = outputs.get(oid)
@@ -173,9 +193,12 @@ def sweep(source_ids=None) -> dict:
         subject = int(out.subject) if out.subject_type == "person" and out.subject.isdecimal() else None
         gone = []
         for r in rows:
-            key = (r.source_id, out.capability.purpose_class, subject, tuple(r.participant_scope or []))
+            key = (r.source_id, out.capability_id, out.run.purpose if out.run_id else "", subject,
+                   tuple(r.participant_scope or []))
             if key not in seen:
-                seen[key] = removed_reason(r.source, out.capability.purpose_class, subject, r.participant_scope or [])
+                seen[key] = removed_reason(r.source, out.capability.purpose_class, subject, r.participant_scope or [],
+                                           capability=out.capability.slug,
+                                           purpose=out.run.purpose if out.run_id else "")
             if seen[key]:
                 gone.append((r.source, seen[key]))
         if gone:
@@ -208,9 +231,10 @@ def scrub_runs(source_ids=None) -> int:
             continue
         cls = run.capability.purpose_class
         subject = int(run.subject) if cls in ABOUT_A_PERSON and run.subject.isdecimal() else None
-        key = (r.source_id, cls, subject)
+        key = (r.source_id, run.capability_id, run.purpose, subject)
         if key not in seen:
-            seen[key] = removed_reason(r.source, cls, subject, _people(r.source))
+            seen[key] = removed_reason(r.source, cls, subject, _people(r.source), capability=run.capability.slug,
+                                       purpose=run.purpose)
         if seen[key]:
             doomed[run.pk] = run
     n = 0

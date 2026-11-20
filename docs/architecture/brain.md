@@ -206,8 +206,11 @@ content deletion, `signals._cascade_content_deletion`). It is idempotent.
 
 - A source is **removed** for an output when its words are gone (deleted, `withdrawn`, its session gone;
   such a source becomes `withdrawn` for good), or when the person the output is about, or for a shared
-  output ANY person in the source (`participant_scope`), excluded it or stopped agreeing to the class
-  (`cascade.removed_reason`). Removing X withdraws what was learned about X; what was learned about Y from
+  output ANY person in the source (`participant_scope`), excluded it, stopped agreeing to the class, or narrowed
+  their consent so it no longer allows the use: the source's workspace no longer covered (`eligibility.covers`)
+  or a standing rule now denying it (`eligibility.rule_denies`, on the output's learner and its run's purpose; a
+  rule naming a learner or purpose the sweep cannot tell is not taken to match) (`cascade.removed_reason`).
+  Removing X withdraws what was learned about X; what was learned about Y from
   Y's own words stays.
 - An output derived only from removed sources is **withdrawn**: body and title emptied, lineage kept as ids,
   seen by no one. One derived from several is **stale**: emptied and hidden the same way (its words cannot be told

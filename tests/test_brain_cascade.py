@@ -256,3 +256,55 @@ def test_the_tick_is_registered():
 
     assert {"brain.cascade", "brain.disclosure"} <= set(ticks.jobs())
     assert SessionParticipant  # imported for the fixtures
+
+
+# ---- narrowing consent (fewer workspaces, a standing rule) reaches what was derived --------------------
+
+def _second_workspace(w):
+    from apps.workspaces.models import Workspace, WorkspaceMembership
+
+    beta = Workspace.objects.create(slug="beta", display_name="Beta", created_by=w["owner"])
+    for u in (w["alice"], w["bob"]):
+        WorkspaceMembership.objects.create(user=u, workspace=beta, role=WorkspaceMembership.EDITOR)
+    return beta
+
+
+def test_narrowing_workspaces_withdraws_what_was_learned_about_that_person_only(w, django_capture_on_commit_callbacks):
+    _second_workspace(w)
+    about_alice = emit(w, "coach", "person", w["alice"].pk, [w["source"]])
+    about_bob = emit(w, "coach", "person", w["bob"].pk, [w["source"]])
+    shared = emit(w, "proj", "project", 1, [w["source"]])
+    with django_capture_on_commit_callbacks(execute=True):                      # the act runs the sweep itself
+        consent.set_consent(w["alice"], classes=["individual", "project", "memory"], workspaces=["beta"])
+    assert reload(about_alice).state == "withdrawn" and reload(about_alice).body == {}
+    assert reload(about_bob).state == "active"                                   # bob's own learning stays
+    assert reload(shared).state == "withdrawn"                                   # a shared use relied on alice too
+
+
+def test_a_standing_rule_withdraws_the_uses_it_now_denies(w):
+    coach = emit(w, "coach", "person", w["alice"].pk, [w["source"]])
+    mem = emit(w, "mem", "person", w["alice"].pk, [w["source"]])
+    bobs = emit(w, "mem", "person", w["bob"].pk, [w["source"]])
+    consent.set_consent(w["alice"], classes=["individual", "project", "memory"],
+                        standing_rules=[{"class": "memory", "workspace": "acme"}])
+    cascade.sweep()
+    assert reload(mem).state == "withdrawn" and reload(coach).state == "active" and reload(bobs).state == "active"
+    consent.set_consent(w["alice"], classes=["individual", "project", "memory"],
+                        standing_rules=[{"capability": "coach"}])
+    cascade.sweep()
+    assert reload(coach).state == "withdrawn"
+
+
+def test_a_rule_naming_a_purpose_matches_only_an_output_whose_run_had_it(w):
+    from apps.brain.models import BrainRun
+
+    run = BrainRun.objects.create(capability=w["coach"], subject_type="person", subject=str(w["alice"].pk),
+                                  purpose="coach", state=BrainRun.DONE)
+    o = emit(w, "coach", "person", w["alice"].pk, [w["source"]])
+    BrainOutput.objects.filter(pk=o.pk).update(run=run)
+    consent.set_consent(w["alice"], classes=["individual", "project", "memory"], standing_rules=[{"purpose": "review"}])
+    cascade.sweep()
+    assert reload(o).state == "active"                                           # a different purpose
+    consent.set_consent(w["alice"], classes=["individual", "project", "memory"], standing_rules=[{"purpose": "coach"}])
+    cascade.sweep()
+    assert reload(o).state == "withdrawn"
