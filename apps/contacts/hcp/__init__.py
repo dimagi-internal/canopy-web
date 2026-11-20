@@ -28,7 +28,7 @@ the turn envelope apply the same one.
 # (`from apps.contacts import hcp`; `hcp.search(...)`).
 from __future__ import annotations
 
-from . import purposes  # noqa: F401  (hcp.purposes: the registry and checks)
+from . import confirmations, purposes, relationships  # noqa: F401  (hcp.purposes: the registry and checks)
 from .conformance import (
     CONFORMANCE_LEVEL,
     KNOWN_GAPS,
@@ -101,6 +101,7 @@ from .core import (
     valid_category,
 )
 from .entries import (
+    CONFLICT_DETECTION,
     _candidates,
     _check_confidence,
     _iso,
@@ -112,7 +113,7 @@ from .entries import (
     delete_entry,
     detect_conflicts,
     provenance_source,
-    release_conflicts_against,
+    reevaluate,
     servable,
     site_of,
     subject_id,
@@ -282,7 +283,8 @@ __all__ = [
     'delete_entry',
     'detect_conflicts',
     'provenance_source',
-    'release_conflicts_against',
+    'reevaluate',
+    'CONFLICT_DETECTION',
     'servable',
     'site_of',
     'subject_id',

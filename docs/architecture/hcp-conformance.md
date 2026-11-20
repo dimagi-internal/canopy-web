@@ -55,6 +55,11 @@ grows a row per piece, with the same evidence rule as above.
 | v2 concept | Status | Evidence |
 |---|---|---|
 | Purposes on every grant and every read (6.1.5.2), per-entry limits (4.2.6, 7.1) | built | `hcp.read_purpose`, `hcp.restrict_purposes`; `tests/test_hcp_purposes.py`: `test_a_search_naming_a_purpose_the_grant_does_not_carry_is_refused`, `test_an_entry_limited_to_other_purposes_is_not_served_for_this_one` |
+| Relationships: `derivedFrom` (an entry, or a source by a loose `(kind, ref)` pair), `supersedes`, `contradicts` (symmetric), `duplicates`; the provider records who and when (4.2.3) | built (`derivedFrom` writable over v1 `hcp_addPreference`; the rest by the provider and, in the v2 context plane, by clients) | `EntryRelationship`; `tests/test_hcp_v2_conflicts.py`: `test_derived_from_names_an_entry_or_a_source_and_the_provider_records_who`, `test_a_client_may_not_name_an_entry_its_grant_cannot_read_and_is_not_told_whether_it_exists` |
+| Confirmation records replace `userVerified` (3.8); standing (4.7.1); assurance (3.6, 3.7) | built; v1 `userVerified` is derived | `EntryConfirmation`, `hcp.confirmations.confirm`, `PersonFact.assurance`; `test_a_confirmation_belongs_to_one_version_and_a_revision_starts_with_none`, `test_an_agents_claim_that_the_person_said_it_has_no_standing_until_they_confirm_it` |
+| Conflicts by relationship, consequences by standing (4.7, 4.7.2, 4.7.3) | built | `hcp.detect_conflicts`, `hcp.reevaluate`; `test_a_persons_own_declaration_has_standing_and_holds_only_the_inference`, `test_rejecting_withdraws_it_and_releases_what_it_held`, `test_accepting_a_held_entry_deprecates_the_authoritative_one_but_never_an_attestation`, `test_two_inferences_by_the_same_asserter_set_the_earlier_aside_and_different_asserters_are_both_held` |
+| Memory Manager detection method declared (15.2) | **partial**: `hcp.CONFLICT_DETECTION` is `structural` (same category and dimension, different words, one side model-inferred). It is a hint-driven method, so it goes beyond "a dimension alone must not conflict" only by requiring different content; semantic judgment would need a model call, which canopy-web does not make. Re-evaluated on every revision (15.3) | `test_sharing_a_dimension_alone_is_not_a_conflict`, `test_a_revision_that_no_longer_conflicts_removes_the_relationship_and_releases_the_entry` |
+| Confirm or reject is governance (1.6, 9.4.9) | built | `test_the_confirmation_route_is_the_persons_and_refuses_an_agent_login` |
 | Restrict purposes is governance: the person, HTTP only (1.6, 9.4.10) | built | `test_the_governance_route_is_the_persons_and_refuses_an_agent_login` |
 
 ## Data model
@@ -70,9 +75,9 @@ grows a row per piece, with the same evidence rule as above.
 | Category change only by the person, audited | pass | `hcp.update_entry` refuses non-person; audit detail names both categories |
 | Complete provenance as stored | pass | `provenance_source`, `captured_by` on every row; redaction is response-only. Extension: `record.provenance.site` (`provenance_site`) — the host site and page an agent was reached through when it recorded the entry; never affects scope, redacted with the 4.4.4 fields (`test_an_entry_recorded_through_a_site_carries_the_site`) |
 | Version history; `version` / `previousVersion` | pass | `record_fact(supersedes=…)`; `test_an_update_is_a_new_version…` |
-| Conflict detection both write orders, same category + dimension | pass | `hcp.detect_conflicts` |
+| Conflict detection both write orders, same category + dimension | pass | `hcp.detect_conflicts`; what is held is decided by standing, not declaration type alone (v2 section below) |
 | Conflicted entries withheld from agents, visible to the person | pass | `hcp.servable`; `/people/me` and export include them |
-| Conflict resolution transitions logged `conflict.resolved` | pass | `update_entry`, `delete_entry`, `release_conflicts_against` |
+| Conflict resolution transitions logged `conflict.resolved` | pass | `update_entry`, `delete_entry`, `hcp.confirmations.confirm` |
 
 ## Actions
 

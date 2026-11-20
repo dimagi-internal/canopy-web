@@ -4,6 +4,7 @@ from __future__ import annotations
 from ..models import PersonFact
 from . import purposes
 from .core import HCP_VERSION, HELD_CATEGORIES, PROBLEM_BASE
+from .entries import CONFLICT_DETECTION
 from .relevance import minimization_method
 
 # --- discovery (Appendix C) ------------------------------------------------------
@@ -65,6 +66,8 @@ def discovery(base_url: str) -> dict:
             "tier2": "not supported",
             # HCP v2 6.1.5.2: the purposes a grant may carry, each in words.
             "purposes": purposes.describe(purposes.PURPOSES),
+            # HCP v2 15.2: how this instance finds conflicts between entries.
+            "conflict_detection": CONFLICT_DETECTION,
             "custom_categories": f"{PersonFact.CUSTOM_PREFIX}<name>",
         },
     }

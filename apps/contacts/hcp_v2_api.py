@@ -96,3 +96,26 @@ def hcp_v2_restrict_purposes(request: HttpRequest, entry_id: str, payload: Purpo
     fact = _entry(p, entry_id, payload.expectedVersion)
     fact = hcp.restrict_purposes(fact, payload.permittedPurposes, actor=p.actor)
     return _ok(v2.to_v2_entry(fact))
+
+
+# --- governance: confirm or reject (3.8, 9.4.9) ---------------------------------------
+
+
+class ConfirmationIn(_Body):
+    disposition: str = Field(description="confirmed or rejected.")
+    expectedVersion: int | None = Field(default=None, description="The version you are looking at.")
+
+
+@router.post("/entries/{entry_id}/confirmation", operation_id="hcp_v2_confirmEntry",
+             summary="HCP v2 governance: confirm or reject an entry")
+@v2_route
+@gate("self", setting=True)  # the person only: a Management Client acting for the Authorizing Principal
+def hcp_v2_confirm_entry(request: HttpRequest, entry_id: str, payload: ConfirmationIn):
+    """Confirm or reject the current version of one of your entries (HCP v2 3.8): the person only,
+    over HTTP only. A confirmation appends a record to that version and gives it standing in a
+    conflict; it changes neither the entry's declaration type nor who asserted it. A rejection
+    withdraws the entry and returns anything it held to active (4.7.3)."""
+    p = hcp_api._person_principal(request)
+    fact = _entry(p, entry_id, payload.expectedVersion)
+    fact = hcp.confirmations.confirm(fact, payload.disposition, actor=p.actor)
+    return _ok(v2.to_v2_entry(fact))

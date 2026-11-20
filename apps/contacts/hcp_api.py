@@ -277,6 +277,7 @@ class HcpAddIn(_Body):
     sourceContext: str = Field(description="Conversation or document id this was derived from (e.g. turn:<id>).")
     model: str | None = Field(default=None, description="The model id that produced a model-inferred entry, e.g. claude-opus-5-5")
     permittedPurposes: list[str] | None = Field(default=None, description="Optional (v2): purpose codes this entry may be used for. Omitted means no limit.")
+    derivedFrom: list[dict] | None = Field(default=None, description="Optional (v2): what this was inferred from — each {entryId} of another entry, or {source: {kind, ref}} such as a session. Recorded as a derivedFrom relationship.")
 
 
 class HcpEntryIn(_Body):
@@ -430,7 +431,7 @@ def hcp_add_preference(request: HttpRequest, payload: HcpAddIn, turn: str | None
             # turn on that project finds it first.
             project=hcp.project_of(p.turn, ws) if ws is not None else None,
             captured_by_override="" if captured == p.actor.id else captured,
-            permitted_purposes=payload.permittedPurposes)
+            permitted_purposes=payload.permittedPurposes, derived_from=payload.derivedFrom, grant=p.grant)
         return _ok({"entry": _render(fact, p)}, status=201)
     return _idempotent(request, body, run)
 

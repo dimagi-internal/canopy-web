@@ -633,7 +633,20 @@ over HTTP, and are never MCP tools (each is listed in `apps/mcp/api_tools.py`).
 |---|---|---|
 | The entry form (4.2) | `hcp.v2.to_v2_entry` renders a `PersonFact` as content / assertion / classification / evidence / record | v1's grouped envelope (`hcp.to_entry`) is unchanged |
 | Purposes (4.2.6, 6.1.5.2, 7.1) | `hcp.purposes`; `PersonGrant.purposes`, `PersonFact.permitted_purposes` (the writer's) and `PersonFact.restricted_purposes` (the person's, `hcp.restrict_purposes`) | v1 `purpose` stays free text for the audit; the read runs under the grant's own default code (`hcp.read_purpose`); `purposeCode` / `permittedPurposes` are optional additions |
+| Relationships (4.2.3) | `EntryRelationship`, `hcp.relationships`; `derivedFrom` may name another entry or a source `(kind, ref)` (a session), so a memory learned from a session can say so | `hcp_addPreference` takes an optional `derivedFrom` |
+| Confirmation and standing (3.8, 4.7.1) | `EntryConfirmation`, `hcp.confirmations`; `POST /api/hcp/v2/entries/{id}/confirmation` (person, HTTP only) | v1 `userVerified` = the person wrote it or confirmed this version |
+| Conflicts (4.7, 15) | `hcp.detect_conflicts`, `hcp.reevaluate` write `contradicts` relationships; `hcp.CONFLICT_DETECTION` | the v1 rule "an inference against a declaration is held" now reads standing |
 | Assurance (3.6, 3.7) | `PersonFact.assurance`: `authenticated` only for the person's own write, never taken from a request | not exposed in v1 |
+
+**Standing, and a rule v1 had the other way round.** v1 held an inference whenever it met a
+declared entry. v2 holds the entry that lacks standing: a declared entry the person wrote
+themself (`authenticated`) or confirmed has it; an agent's "the person said it" is `unverified`
+and has none, so against an inference *both* are held until the person confirms or rejects one. An
+attestation is never held and never set aside by the person's acceptance of another entry. The
+person editing a held entry is their own statement (3.8): it has standing and sets aside the
+authoritative entry it contradicted. This is an owner's call recorded here: strict v2 standing was
+chosen over v1's "every declared entry wins" (`PersonFact.assurance`); flipping it is one rule in
+`hcp.confirmations.is_authoritative`.
 
 **Purposes.** A grant carries at least one (a grant that predates them reads as those of its
 scopes, so none was migrated); the consent screen and the session prompt show each in words before

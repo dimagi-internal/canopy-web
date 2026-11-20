@@ -10,6 +10,7 @@ spec, which `scripts/hcp_spec_probe.py` watches. Nothing here copies spec text: 
 from __future__ import annotations
 
 from ..models import PersonFact
+from . import confirmations, relationships
 from .core import entry_urn
 from .entries import _iso, captured_by, provenance_source, subject_id
 
@@ -45,12 +46,12 @@ def to_v2_entry(fact: PersonFact) -> dict:
         "source": _SOURCE_V2.get(source, source),
         "recordedByProvider": "https://canopy.dimagi.com",
         "recordedAt": _iso(fact.created_at),
-        "confirmations": [],
+        "confirmations": confirmations.render(fact),
     }
     if fact.provenance_site:
         provenance["site"] = dict(fact.provenance_site)             # canopy's extension, never scope
     record = {"status": fact.status, "version": fact.version, "provenance": provenance,
-              "relationships": []}
+              "relationships": relationships.render(fact)}
     return {
         "@context": CONTEXT_V2, "schema": ENTRY_SCHEMA, "id": entry_urn(fact.entry_id),
         "type": ["ContextEntry"],

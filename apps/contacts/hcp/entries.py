@@ -8,7 +8,8 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from ..models import Person, PersonAuditEvent, PersonFact
+from ..models import EntryRelationship, Person, PersonAuditEvent, PersonFact
+from . import confirmations, relationships
 from .consent import session_of
 from .core import (
     BASIS_OF,
@@ -100,7 +101,7 @@ def to_entry(fact: PersonFact, *, redact: bool) -> dict:
     `provenance.site` is canopy's extension (the site an agent was reached
     through); it never affects scope, and is redacted with the 4.4.4 fields."""
     provenance = {"source": provenance_source(fact), "capturedAt": _iso(fact.created_at),
-                  "capturedBy": captured_by(fact), "userVerified": bool(fact.user_verified)}
+                  "capturedBy": captured_by(fact), "userVerified": confirmations.user_verified(fact)}
     if fact.provenance_site:
         provenance["site"] = dict(fact.provenance_site)
     if redact:
@@ -158,74 +159,125 @@ def _iso(value) -> str | None:
     return value.isoformat() if value else None
 
 
-# --- conflicts (2.6) ------------------------------------------------------------
+# --- conflicts (v2 4.7, Memory Manager 15) ----------------------------------------------
+#
+# Two entries conflict when a `contradicts` relationship links them. The method that finds one is
+# declared in discovery as `conflict_detection` (`CONFLICT_DETECTION`): structural, because canopy-web
+# makes no model calls of its own. It compares an active model-inferred entry with the person's other
+# active entries of the same person, workspace and category that name the SAME non-empty normalized
+# dimension (a hint, 15.2) and say something different. What the conflict changes is decided by
+# standing (4.7.1, `confirmations.is_authoritative`), never by the declaration type alone.
+
+CONFLICT_DETECTION = "structural"
+
+
+def _same_words(a: str, b: str) -> bool:
+    return " ".join(a.lower().split()).rstrip(".") == " ".join(b.lower().split()).rstrip(".")
 
 
 def _candidates(fact: PersonFact):
-    """Current versions this entry could conflict with: same person, workspace
-    and category, the SAME non-empty normalized dimension (the mandatory case),
-    the other declaration type of the inferred/declared pair. An entry with no
-    dimension is never conflicted automatically (2.6.1); issuer-attested ones
-    are out of scope at v1."""
+    """Current, live, active entries this one could conflict with. An entry with no dimension is
+    never conflicted automatically (15.2); a pair needs a model-inferred side (15.2: those are the
+    pairs whose conflicts change status), and an entry that only repeats another is not a conflict."""
     if not fact.dimension:
-        return PersonFact.objects.none()
-    other = {PersonFact.INFERRED: PersonFact.DECLARED,
-             PersonFact.DECLARED: PersonFact.INFERRED}.get(fact.basis)
-    if other is None:
-        return PersonFact.objects.none()
-    return (PersonFact.objects.filter(person_id=fact.person_id, workspace_id=fact.workspace_id,
-                                      category=fact.category, dimension=fact.dimension,
-                                      basis=other, superseded_at__isnull=True,
-                                      retracted_at__isnull=True)
-            .exclude(entry_id=fact.entry_id))
+        return []
+    qs = (PersonFact.objects.filter(person_id=fact.person_id, workspace_id=fact.workspace_id,
+                                    category=fact.category, dimension=fact.dimension,
+                                    status=PersonFact.ACTIVE, superseded_at__isnull=True,
+                                    retracted_at__isnull=True)
+          .exclude(entry_id=fact.entry_id))
+    if fact.basis != PersonFact.INFERRED:
+        qs = qs.filter(basis=PersonFact.INFERRED)
+    return [o for o in qs if not _same_words(o.statement, fact.statement)]
+
+
+def _authority(x: PersonFact, other: PersonFact) -> bool:
+    """Is `x` authoritative against `other` (4.7.1), an attestation counting so against an inference (4.4)?"""
+    if x.basis == PersonFact.ATTESTED and other.basis == PersonFact.INFERRED:
+        return True
+    return confirmations.is_authoritative(x)
+
+
+def _held(fact: PersonFact, *, actor: Actor, authoritative: PersonFact | None, other: PersonFact) -> None:
+    PersonFact.objects.filter(pk=fact.pk).update(status=PersonFact.CONFLICTED)
+    fact.status = PersonFact.CONFLICTED
+    audit(fact.person, "conflict.detected", actor=actor, entry=fact,
+          related_entry_id=(authoritative or other).entry_id,
+          detail=f"dimension {fact.dimension!r}: the entry is held until the person resolves it")
+
+
+def _conflict(fact: PersonFact, other: PersonFact, *, actor: Actor) -> list[PersonFact]:
+    """Record that two entries contradict and apply 4.7.2. Returns the entries newly held."""
+    relationships.record_contradiction(fact, other)
+    held = []
+    if (fact.basis == other.basis == PersonFact.INFERRED and fact.captured_by == other.captured_by
+            and not confirmations.is_authoritative(fact) and not confirmations.is_authoritative(other)):
+        # The same asserter corrected itself: the earlier inference is set aside, not quarantined (4.7).
+        older = min((fact, other), key=lambda f: (f.created_at, f.pk))
+        newer = other if older is fact else fact
+        PersonFact.objects.filter(pk=older.pk).update(status=PersonFact.DEPRECATED, embedding=None,
+                                                      embedding_model="")
+        older.status = PersonFact.DEPRECATED
+        audit(fact.person, "conflict.detected", actor=actor, entry=older, related_entry_id=newer.entry_id,
+              detail=f"dimension {fact.dimension!r}: the same asserter inferred it again")
+        audit(fact.person, "conflict.resolved", actor=actor, entry=older, related_entry_id=newer.entry_id,
+              detail="transition=asserter-superseded")
+        return held
+    fa, oa = _authority(fact, other), _authority(other, fact)
+    if fa and oa:
+        audit(fact.person, "conflict.detected", actor=actor, entry=fact, related_entry_id=other.entry_id,
+              detail=f"dimension {fact.dimension!r}: both have standing; surfaced, no status changed")
+    elif fa:
+        _held(other, actor=actor, authoritative=fact, other=fact)
+        held.append(other)
+    elif oa:
+        _held(fact, actor=actor, authoritative=other, other=other)
+        held.append(fact)
+    else:
+        for x, y in ((fact, other), (other, fact)):
+            _held(x, actor=actor, authoritative=None, other=y)
+            held.append(x)
+    return held
 
 
 def detect_conflicts(fact: PersonFact, *, actor: Actor) -> list[PersonFact]:
-    """Evaluate on every write, symmetrically (2.6.1). The INFERRED side is
-    quarantined; the declared side stays authoritative. Returns the entries
-    newly marked conflicted."""
+    """Evaluate on every write, symmetrically (15.2). Returns the entries newly held."""
+    if fact.status != PersonFact.ACTIVE:
+        return []
     marked = []
-    if fact.basis == PersonFact.INFERRED and fact.status == PersonFact.ACTIVE:
-        declared = _candidates(fact).filter(status=PersonFact.ACTIVE).first()
-        if declared is not None:
-            PersonFact.objects.filter(pk=fact.pk).update(status=PersonFact.CONFLICTED)
-            fact.status = PersonFact.CONFLICTED
-            marked.append(fact)
-            audit(fact.person, "conflict.detected", actor=actor, entry=fact,
-                  related_entry_id=declared.entry_id,
-                  detail=f"dimension {fact.dimension!r}: inferred entry quarantined")
-    elif fact.basis == PersonFact.DECLARED and fact.status == PersonFact.ACTIVE:
-        for inferred in _candidates(fact).filter(status=PersonFact.ACTIVE):
-            PersonFact.objects.filter(pk=inferred.pk).update(status=PersonFact.CONFLICTED)
-            inferred.status = PersonFact.CONFLICTED
-            marked.append(inferred)
-            audit(fact.person, "conflict.detected", actor=actor, entry=inferred,
-                  related_entry_id=fact.entry_id,
-                  detail=f"dimension {fact.dimension!r}: inferred entry quarantined")
+    for other in _candidates(fact):
+        if fact.status != PersonFact.ACTIVE:
+            break                                   # an earlier pair already held this one
+        marked += _conflict(fact, other, actor=actor)
     return marked
 
 
-def release_conflicts_against(declared: PersonFact, *, previous_dimension: str,
-                              actor: Actor) -> None:
-    """2.6.3 "superseding both": after the authoritative entry is revised,
-    quarantined inferences it no longer conflicts with return to active."""
-    if not previous_dimension or previous_dimension == declared.dimension:
-        return
-    stale = PersonFact.objects.filter(
-        person_id=declared.person_id, workspace_id=declared.workspace_id,
-        category=declared.category, dimension=previous_dimension, basis=PersonFact.INFERRED,
-        status=PersonFact.CONFLICTED, superseded_at__isnull=True, retracted_at__isnull=True)
-    for inferred in stale:
-        still = (PersonFact.objects.filter(
-            person_id=declared.person_id, workspace_id=declared.workspace_id,
-            category=inferred.category, dimension=inferred.dimension, basis=PersonFact.DECLARED,
-            status=PersonFact.ACTIVE, superseded_at__isnull=True, retracted_at__isnull=True)
-            .exists())
-        if still:
+def reevaluate(fact: PersonFact, *, actor: Actor) -> None:
+    """15.3: a revision may end a conflict the provider found. Each `contradicts` the provider
+    asserted on this entry is kept only while the method still finds it; one that no longer holds is
+    removed and any entry it held returns to active, with `conflict.resolved`."""
+    rows = EntryRelationship.objects.filter(
+        person_id=fact.person_id, entry_id=fact.entry_id, type=EntryRelationship.CONTRADICTS,
+        asserted_by_role=EntryRelationship.HCP_PROVIDER, target_entry_id__isnull=False)
+    for r in list(rows):
+        other = current(r.target_entry_id)
+        if other is None or other.retracted_at is not None:
+            relationships.remove_provider_contradiction(fact.entry_id, r.target_entry_id, fact.person)
             continue
-        PersonFact.objects.filter(pk=inferred.pk).update(status=PersonFact.ACTIVE)
-        audit(declared.person, "conflict.resolved", actor=actor, entry=inferred,
-              related_entry_id=declared.entry_id, detail="superseded: no longer conflicts")
+        same = (other.workspace_id == fact.workspace_id and other.category == fact.category
+                and other.dimension and other.dimension == fact.dimension
+                and not _same_words(other.statement, fact.statement)
+                and PersonFact.INFERRED in (fact.basis, other.basis))
+        if same:
+            continue
+        relationships.remove_provider_contradiction(fact.entry_id, other.entry_id, fact.person)
+        for held in (fact, other):
+            if held.status == PersonFact.CONFLICTED and not confirmations.still_in_conflict(held):
+                PersonFact.objects.filter(pk=held.pk).update(status=PersonFact.ACTIVE)
+                held.status = PersonFact.ACTIVE
+                audit(fact.person, "conflict.resolved", actor=actor, entry=held,
+                      related_entry_id=(other if held is fact else fact).entry_id,
+                      detail="transition=superseded: the revision no longer conflicts")
 
 
 # --- writes ----------------------------------------------------------------------
@@ -238,7 +290,7 @@ def add_entry(*, person: Person, workspace, category: str, statement: str,
               source_turn=None, by_user=None, project=None, instance_ref: str = "",
               expires_at=None, relationship: str = "", metadata: dict | None = None,
               user_verified: bool = False, captured_by_override: str = "",
-              permitted_purposes=None) -> PersonFact:
+              permitted_purposes=None, derived_from=None, grant=None) -> PersonFact:
     """addPreference (3.2.2 / 3.3.2): a new entry at version 1, audited, and
     conflict-checked."""
     from .. import people
@@ -252,6 +304,7 @@ def add_entry(*, person: Person, workspace, category: str, statement: str,
         raise malformed("declarationType is user-declared, model-inferred or issuer-attested")
     confidence = _check_confidence(basis, confidence)
     permitted_purposes = check_permitted(permitted_purposes)
+    derived_specs = relationships.parse_specs(derived_from)
     kind = kind or CATEGORY_KIND.get(category, PersonFact.PREFERENCE)
     try:
         fact = people.record_fact(
@@ -267,6 +320,7 @@ def add_entry(*, person: Person, workspace, category: str, statement: str,
         raise denied(str(exc)) from None
     except people.FactError as exc:
         raise malformed(str(exc)) from None
+    relationships.assert_derived_from(fact, derived_specs, actor=actor, grant=grant)
     return fact
 
 
@@ -331,19 +385,20 @@ def update_entry(fact: PersonFact, *, statement: str, reason: str, actor: Actor,
         raise denied(str(exc)) from None
     except people.FactError as exc:
         raise malformed(str(exc)) from None
+    if was_conflicted and not actor.is_person and new.status == PersonFact.ACTIVE:
+        audit(new.person, "conflict.resolved", actor=actor, entry=new,
+              detail="transition=superseded: the revision no longer conflicts")
     if was_conflicted and actor.is_person:
-        # Accepting the inference: the previously authoritative entry is deprecated.
-        for declared in (PersonFact.objects.filter(
-                person_id=new.person_id, workspace_id=new.workspace_id, category=fact.category,
-                dimension=fact.dimension, basis=PersonFact.DECLARED, status=PersonFact.ACTIVE,
-                superseded_at__isnull=True, retracted_at__isnull=True)
-                .exclude(entry_id=new.entry_id)):
-            PersonFact.objects.filter(pk=declared.pk).update(status=PersonFact.DEPRECATED)
-            audit(new.person, "conflict.resolved", actor=actor, entry=new,
-                  related_entry_id=declared.entry_id,
-                  detail="accepted: the inference is now declared; the prior entry is deprecated")
-    elif new.basis == PersonFact.DECLARED:
-        release_conflicts_against(new, previous_dimension=fact.dimension, actor=actor)
+        # The person edited a held entry: that version is their own statement (3.8), so it has
+        # standing, and the authoritative entry it contradicted is set aside (4.7.3), unless it is an
+        # attestation, which never is.
+        for other in confirmations._live_partners(new):
+            if other.status == PersonFact.ACTIVE and other.basis != PersonFact.ATTESTED \
+                    and confirmations.is_authoritative(other):
+                PersonFact.objects.filter(pk=other.pk).update(status=PersonFact.DEPRECATED)
+                audit(new.person, "conflict.resolved", actor=actor, entry=new,
+                      related_entry_id=other.entry_id,
+                      detail="transition=accepted: the person's own statement outranks the one it contradicted")
     return new
 
 
@@ -359,7 +414,11 @@ def delete_entry(fact: PersonFact, *, actor: Actor, reason: str, hard: bool = Fa
         raise denied("only the person may hard-delete")
     person, entry_id, category = fact.person, fact.entry_id, fact.category
     was_conflicted = fact.status == PersonFact.CONFLICTED
+    partners = list(confirmations._live_partners(fact))
     if hard:
+        # Nothing of the entry stays, including what points at it (a relationship, a confirmation).
+        EntryRelationship.objects.filter(person=person).filter(
+            Q(entry_id=entry_id) | Q(target_entry_id=entry_id)).delete()
         PersonFact.objects.filter(entry_id=entry_id).delete()
         audit(person, "preference.hardDeleted", actor=actor, entry_id=entry_id, category=category,
               workspace_slug=fact.workspace_id, detail=reason)
@@ -369,4 +428,6 @@ def delete_entry(fact: PersonFact, *, actor: Actor, reason: str, hard: bool = Fa
         people.retract(fact, by=by_user, actor=actor, reason=reason)
     if was_conflicted:
         audit(person, "conflict.resolved", actor=actor, entry_id=entry_id, category=category,
-              workspace_slug=fact.workspace_id, detail="rejected: the inference was deleted")
+              workspace_slug=fact.workspace_id, detail="transition=rejected: the entry was deleted")
+    # What it held returns to active when nothing else it contradicted remains (4.7.3).
+    confirmations.release(partners, actor=actor, because=fact)
