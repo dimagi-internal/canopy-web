@@ -17,7 +17,7 @@ from apps.canopy_sessions.models import Session, SessionParticipant
 from apps.harness import runner_requirements as rr
 from apps.harness.models import Turn
 from apps.workspaces.models import Workspace
-from tests.fixtures.brain_world import brain_world, member, user
+from tests.fixtures.brain_world import agree, brain_world, member, user
 
 pytestmark = pytest.mark.django_db
 
@@ -35,6 +35,8 @@ def w():
              "dimagi-internal/connect-labs#11": {"cross_cutting": False},
              "dimagi-internal/connect-labs#12": {"cross_cutting": True}})
     out["lead"] = lead
+    for u in (out["alice"], out["bob"]):   # the automatic layers look only at sessions everyone in agreed to
+        agree(u, "project")
     return out
 
 
@@ -429,3 +431,58 @@ def test_an_agent_declares_nothing_about_a_sealed_session_or_a_project_it_cannot
     r = Client().put(f"/api/brain/sessions/{s.pk}/projects/supply/", data=json.dumps({"tier": "core"}),
                      content_type="application/json", **auth)
     assert r.status_code == 404 and not SourceLink.objects.exists()
+
+
+# ---- review fixes: personal projects, consent before the automatic layers, a robust pass ---------
+
+def test_an_agent_never_links_a_personal_project_even_one_it_may_read(w):
+    s = session(w)
+    bot, turn, tok = _running_turn(w, s)
+    AgentProject.objects.create(agent=bot, ext_id="P8", name="Mine", handle="mine",
+                                visibility=AgentProject.PERSONAL, owner_user=w["owner"])
+    r = Client().put(f"/api/brain/sessions/{s.pk}/projects/mine/", data=json.dumps({"tier": "core"}),
+                     content_type="application/json", HTTP_AUTHORIZATION=f"Bearer {tok}")
+    assert r.status_code == 404 and not SourceLink.objects.exists()
+
+
+def test_a_person_never_links_a_personal_project_even_their_own(w):
+    s = session(w)
+    AgentProject.objects.create(agent=w["lead"], ext_id="P7", name="Mine", handle="mine",
+                                visibility=AgentProject.PERSONAL, owner_user=w["alice"])
+    assert put(client(w["alice"]), url(s, "mine"), {"tier": "core"}).status_code == 404
+    assert not SourceLink.objects.exists()
+
+
+def test_the_automatic_layers_skip_a_session_not_everyone_in_agreed_to(w):
+    from apps.brain import consent
+
+    consent.revoke(w["alice"])
+    s = look(session(w, activity={"paths": {"connect-labs:connect_labs/brand_new/x": 3, **EDIT["paths"]}}))
+    assert link_of(s, w["supply"]) is None                              # signals: not looked at
+    task = AgentTask.objects.create(agent=w["lead"], title="t", project=w["supply"])
+    Turn.objects.create(agent=w["lead"], origin=Turn.ORIGIN_EMAIL, prompt="x", idempotency_key=uuid.uuid4().hex,
+                        canopy_session=s, raised_from_task=task)
+    look(s)
+    assert link_of(s, w["supply"]) is None                              # dispatched: not looked at either
+    associate.declare(sources.for_session(s), w["supply"], tier="core", by=w["alice"])
+    assert link_of(s, w["supply"]).how == "declared"                    # a person's own call still stands
+    assert "connect_labs/brand_new/x" not in associate.seed_signature(w["supply"], min_sessions=1).paths
+    agree(w["alice"], "project")
+    assert "connect_labs/brand_new/x" in associate.seed_signature(w["supply"], min_sessions=1).paths
+
+
+def test_one_session_failing_does_not_stop_the_pass(w, monkeypatch):
+    first, second = session(w), session(w)
+    BrainSource.objects.filter(session__in=[first, second]).delete()
+    real = sources.for_session
+    calls = []
+
+    def flaky(s):
+        calls.append(s.pk)
+        if len(calls) == 1:
+            raise RuntimeError("a race")
+        return real(s)
+
+    monkeypatch.setattr(sources, "for_session", flaky)
+    out = associate.run_due()
+    assert len(calls) >= 2 and out["made"] == len(calls) - 1

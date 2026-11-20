@@ -14,9 +14,12 @@ session, never copied.
 - **`BrainSource`**: `kind` (`session` now), `workspace`, `state` (`open`/`withdrawn`),
   `sealed_reason` (what the last refresh saw; `eligibility` never trusts it).
 - **`SourceParticipant`**: every person whose words are in the source, from rows canopy already has
-  (`participants.people_of`): the creator, `SessionParticipant` rows, the owner of the box a
-  runner-discovered session ran on. Agents are never participants. A contact is, and makes the source
-  ineligible for every shared use.
+  (`participants.people_of`): the creator, `SessionParticipant` rows, everyone who wrote a line
+  (`Message.author`) or started a turn in it (`Turn.initiator_user`/`initiator_contact`), including
+  people since taken out of it, and the owner of the box a runner-discovered session ran on. Agents are
+  never participants. A contact is, and makes the source ineligible for every shared use. The rows
+  follow the session (`sources.refresh`): on a `SessionParticipant` added or removed, a line or turn by
+  someone not yet in it (`signals.py`, after the commit), and on every look by the associator.
 - **`LearningConsent`**: one live row per person (`learning_consent_one_live`): `classes`, `workspaces`
   (empty = all of theirs), `include_new`, `standing_rules`, `directives`. **`SourceExclusion`**: one
   person taking one source out, its own row.
@@ -30,8 +33,10 @@ Sources are made lazily (`sources.for_session`) and warmed by `manage.py brain_b
 `individual` and `memory` learn ABOUT a person from their own words: only that person's consent
 counts. `project` and `system` are SHARED: every human participant must permit the class and none may
 have excluded the source (most restrictive wins; transcripts are not split by speaker). One
-participant's exclusion takes the source out of every shared use; what was learned about the others
-from their own words stays (`consent.exclude`).
+participant's exclusion takes the source out of every shared use for good, whether or not they are
+later taken out of the session; it stays theirs to see and undo (`/api/me/learning/sessions/{id}/`,
+`/api/me/learning/removed/`). What was learned about the others from their own words stays
+(`consent.exclude`).
 
 ## `eligible` (`apps/brain/eligibility.py::eligible`)
 
@@ -41,7 +46,10 @@ sealed (sensitive, a contact's conversation, words deleted: read live from the s
 test being `access._not_sensitive_q`'s, held equal by `tests/test_brain_sources.py`), the capability is
 registered, enabled and declares the purpose, the right people consented to the class, none excluded the
 source, no standing rule denies it, the source's workspace is within each person's consent and each is a
-member of it (a guest is not). `tests/test_brain_eligibility.py` is the truth table.
+member of it (a guest is not). Who is in the source is read from the stored rows AND live from the
+session (`participants.people_of`), so someone who joined since the last refresh is asked too;
+`eligible_sources` reads the session's `SessionParticipant` rows and turn initiators live in SQL the
+same way (`tests/test_brain_participants_live.py`). `tests/test_brain_eligibility.py` is the truth table.
 
 A standing rule is deny-only: `{capability?, purpose?, class?, workspace?}`, denying when every key it
 names matches. A rule the code cannot read denies (`rule_denies`).
@@ -106,7 +114,10 @@ confers no read by itself; only a `core` link opens the project leg.
   every agent; only that same person undoes it (`undeclare`), and a different participant's attempt is a
   409. An agent's declaration outranks the automatic layers but never a person's.
 - **Never across a workspace, never a personal project.** Automatic layers link only workspace-visible
-  projects of the source's own workspace.
+  projects of the source's own workspace, and neither a person nor an agent can declare a personal one.
+- **Only sessions everyone in agreed to `project`.** The dispatched and signals layers and the
+  signature seed skip a source unless every human in it agreed to `project` for its workspace, none
+  excluded it and no contact is in it (`eligibility.everyone_agreed`). A declaration still stands.
 - **Off-request and debounced.** An activity fold (a `Session` save naming `activity`) only marks its
   source due (`associate.schedule`, five minutes, so a burst is one look); the tick `brain.associate`
   (`associate.run_due`) makes sources for sessions that have none and looks at what is due. A sealed

@@ -11,7 +11,9 @@
 4. **Declared**: an agent at close-out or a person. Overrides all; a PERSON's rejection sticks.
 
 Everything here reads stored metadata, never a message. A sealed source (sensitive, a contact's,
-deleted words) is not looked at. A link is metadata and confers no read by itself.
+deleted words) is not looked at, and neither is one not everyone in agreed to `project`
+(`eligibility.everyone_agreed`): layers 1 and 2 and the signature seed skip it; a declaration
+stands. A link is metadata and confers no read by itself.
 
 `run_due` is the one worker: the off-request tick (`apps/common/ticks.py`) calls it, and an
 activity fold only marks the source due (`schedule`), debounced, so a burst of folds is one look."""
@@ -31,7 +33,8 @@ from apps.canopy_sessions.models import Session
 from apps.harness.models import Turn
 
 from . import participants, sources
-from .models import BrainSource, ProjectSignature, SourceLink
+from .eligibility import everyone_agreed
+from .models import PROJECT, BrainSource, ProjectSignature, SourceLink
 
 logger = logging.getLogger(__name__)
 
@@ -242,10 +245,14 @@ def link_signals(source: BrainSource, session) -> int:
 
 
 def associate(source: BrainSource) -> bool:
-    """Look at one source: layer 1, then layer 2. False when it is sealed or has no session."""
+    """Look at one source: refresh who is in it, then layer 1, then layer 2. False when it is sealed, has
+    no session, or not everyone in it agreed to `project`: the automatic layers never judge a session
+    unless everyone in it agreed (a person's own declaration still works)."""
     session = source.session
     now = timezone.now()
-    if session is None or participants.sealed_reason(session):
+    if session is not None:
+        sources.refresh(source, session)
+    if session is None or participants.sealed_reason(session) or not everyone_agreed(source, PROJECT):
         BrainSource.objects.filter(pk=source.pk).update(associate_due_at=None, associated_at=now)
         return False
     link_dispatched(source, session)
@@ -267,8 +274,11 @@ def run_due(limit: int = BATCH) -> dict:
     or now due. Safe to run from any number of workers; a second look is a no-op."""
     made = 0
     for session in Session.objects.filter(brain_sources__isnull=True).order_by("-updated_at")[:limit]:
-        sources.for_session(session)
-        made += 1
+        try:
+            sources.for_session(session)
+            made += 1
+        except Exception:  # noqa: BLE001 — one bad session (a race on its source) must not stop the pass
+            logger.exception("could not make a source for session %s", session.pk)
     now = timezone.now()
     due = list(BrainSource.objects.filter(kind=BrainSource.SESSION, state=BrainSource.OPEN)
                .filter(Q(associated_at__isnull=True) | Q(associate_due_at__lte=now))
@@ -304,7 +314,9 @@ def seed_signature(project: AgentProject, *, min_sessions: int = 2) -> ProjectSi
     certain = (SourceLink.objects.filter(subject_type=SourceLink.PROJECT_SUBJECT, subject=str(project.pk),
                                          tier=SourceLink.CORE, how__in=[SourceLink.DISPATCHED, SourceLink.DECLARED])
                .values_list("source__session_id", flat=True))
-    sessions = list(Session.objects.filter(pk__in=list(certain)))
+    # Only sessions everyone in agreed to `project`: a signature is an automatic layer too.
+    sessions = [s for s in Session.objects.filter(pk__in=list(certain))
+                if (src := sources.existing(s)) is not None and everyone_agreed(src, PROJECT)]
     sig, _ = ProjectSignature.objects.get_or_create(project=project)
     need = max(min_sessions, -(-len(sessions) * 2 // 5))  # a directory or tool in two of five at least
     repos, remotes, dirs, prefixes = Counter(), Counter(), Counter(), Counter()

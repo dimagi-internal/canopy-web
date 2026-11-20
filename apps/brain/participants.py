@@ -1,10 +1,15 @@
 """Who is in a source, and why a source is sealed: both read from what canopy already knows.
 
-Participants are filled ONLY from existing rows (the session's creator, its
-`SessionParticipant` rows, the owner of the box a runner-discovered session ran on).
+Participants are filled ONLY from existing rows: the session's creator, its `SessionParticipant`
+rows, everyone who wrote a line in it (`Message.author`) or started a turn in it
+(`Turn.initiator_user` / `initiator_contact`), including people since taken out of it (as
+`canopy_sessions.access.others_in_it` counts them), and the owner of the box a runner-discovered
+session ran on.
 Agents are never participants: an agent's own login is not a person who agreed to anything.
 A contact is one, and makes a source ineligible for every shared use."""
 from __future__ import annotations
+
+from django.db.models import Q
 
 from apps.agents.models import Agent
 from apps.harness import runner_requirements as rr
@@ -36,6 +41,8 @@ def people_of(session) -> list[tuple[str, int | None, int | None]]:
         found[("u", session.created_by_id)] = SourceParticipant.CREATOR
     for uid in SessionParticipant.objects.filter(session=session).values_list("user_id", flat=True):
         found.setdefault(("u", uid), SourceParticipant.PARTICIPANT)
+    for kind, pk in spoke_in(session):           # their words stay in it after they are taken out
+        found.setdefault((kind, pk), SourceParticipant.PARTICIPANT)
     if session.contact_id is not None:
         found[("c", session.contact_id)] = SourceParticipant.PARTICIPANT
     if session.created_by_id is None and session.agent_id is None:
@@ -47,3 +54,30 @@ def people_of(session) -> list[tuple[str, int | None, int | None]]:
                        .values_list("user_id", flat=True))
     return [(how, key[1] if key[0] == "u" else None, key[1] if key[0] == "c" else None)
             for key, how in found.items() if not (key[0] == "u" and key[1] in agent_logins)]
+
+
+def spoke_in(session) -> set[tuple[str, int]]:
+    """`("u", user_id)` / `("c", contact_id)` for everyone who wrote a line in `session` or started a
+    turn in it, whether or not they are still in it."""
+    from apps.harness import sensitivity  # noqa: PLC0415 — as the other lazy imports here
+    from apps.harness.models import Turn  # noqa: PLC0415 — as the other lazy imports here
+
+    out: set[tuple[str, int]] = set()
+    for author in (session.messages.filter(author__isnull=False).values_list("author", flat=True).distinct()):
+        if not isinstance(author, dict):
+            continue
+        for key, kind in (("user_id", "u"), ("contact_id", "c")):
+            try:
+                pk = int(author.get(key)) if author.get(key) is not None else None
+            except (TypeError, ValueError):
+                pk = None
+            if pk is not None:
+                out.add((kind, pk))
+    for uid, cid in (Turn.objects.filter(sensitivity.turns_of_q(session.pk))
+                     .filter(Q(initiator_user__isnull=False) | Q(initiator_contact__isnull=False))
+                     .values_list("initiator_user_id", "initiator_contact_id").distinct()):
+        if uid is not None:
+            out.add(("u", uid))
+        if cid is not None:
+            out.add(("c", cid))
+    return out

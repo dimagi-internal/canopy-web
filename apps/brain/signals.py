@@ -1,16 +1,21 @@
 """An activity fold marks its source due for association (`associate.schedule`), after the commit.
 
 Observed on the `Session` save itself, so no ingest path has to remember: `activity.store` saves
-`update_fields=["activity", "activity_keys"]` and that is the fold."""
+`update_fields=["activity", "activity_keys"]` and that is the fold.
+
+Who is in a source follows the session (`sources.refresh_session`), after the commit: a
+`SessionParticipant` added or taken out, and a line or a turn by someone not yet in the source.
+Cheap: a line or turn by someone already in it costs one lookup. A line stored in bulk sends no
+signal; `eligibility` reads the session live as well, and the associator refreshes on its next look."""
 from __future__ import annotations
 
 from django.db import transaction
-from django.db.models.signals import post_save
+from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 
 from apps.harness.signals import session_content_deleted, turn_status_changed
 
-from . import associate, cascade, runs
+from . import associate, cascade, runs, sources
 from .models import BrainRun, BrainSource
 
 
@@ -20,6 +25,45 @@ def _schedule_after_fold(sender, instance, created, update_fields=None, **kwargs
         return
     session_id = instance.pk
     transaction.on_commit(lambda: associate.schedule(session_id))
+
+
+#: The `Turn` fields that say who started it and in which conversation.
+_WHO_AND_WHERE = frozenset({"initiator_user", "initiator_contact", "chat_session", "canopy_session"})
+
+
+def _refresh_after_commit(session_id) -> None:
+    if session_id is not None:
+        transaction.on_commit(lambda: sources.refresh_session(session_id))
+
+
+@receiver(post_save, sender="canopy_sessions.SessionParticipant", dispatch_uid="brain_participant_added")
+@receiver(post_delete, sender="canopy_sessions.SessionParticipant", dispatch_uid="brain_participant_removed")
+def _participants_follow_the_session(sender, instance, **kwargs):
+    _refresh_after_commit(instance.session_id)
+
+
+@receiver(post_save, sender="canopy_sessions.Message", dispatch_uid="brain_a_new_voice_in_a_session")
+def _a_line_by_someone_new(sender, instance, created, **kwargs):
+    author = instance.author if isinstance(instance.author, dict) else None
+    if not created or not author:
+        return
+    uid, cid = author.get("user_id"), author.get("contact_id")
+    if uid is None and cid is None:
+        return
+    if not sources.is_participant(instance.session_id, user_id=uid, contact_id=None if uid is not None else cid):
+        _refresh_after_commit(instance.session_id)
+
+
+@receiver(post_save, sender="harness.Turn", dispatch_uid="brain_a_turn_by_someone_new")
+def _a_turn_by_someone_new(sender, instance, created, update_fields=None, **kwargs):
+    if not created and update_fields is not None and not _WHO_AND_WHERE & set(update_fields):
+        return      # a status change: who started it and where did not move
+    uid, cid = instance.initiator_user_id, instance.initiator_contact_id
+    if uid is None and cid is None:
+        return
+    for session_id in {instance.chat_session_id, instance.canopy_session_id} - {None}:
+        if not sources.is_participant(session_id, user_id=uid, contact_id=None if uid is not None else cid):
+            _refresh_after_commit(session_id)
 
 
 @receiver(session_content_deleted, dispatch_uid="brain_content_deleted_cascades")
