@@ -228,3 +228,25 @@ def test_the_window_and_the_caps(w, monkeypatch):
 def _writes(ctx) -> list[str]:
     return [q["sql"] for q in ctx.captured_queries
             if q["sql"].lstrip().split(" ", 1)[0].upper() in ("INSERT", "UPDATE", "DELETE")]
+
+
+def test_every_brain_read_goes_through_the_one_sourced_function(w):
+    """The brain's rows are read in `graph.brain_reads` alone, so a snapshot source is one change there."""
+    import ast
+    import inspect
+
+    brain_tables = {"SourceLink", "SourceParticipant", "ReportingLine", "OutputLineage", "BrainOutput"}
+    tree = ast.parse(inspect.getsource(graph))
+    outside = []
+    for fn in (n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name != "brain_reads"):
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and (
+                    (node.value.id in brain_tables and node.attr == "objects")
+                    or (node.value.id == "outputs" and node.attr == "visible_to")):
+                outside.append(f"{fn.name}: {node.value.id}.{node.attr}")
+    assert outside == []
+    with pytest.raises(ValueError):
+        graph.brain_reads(w["alice"], ["acme"], sessions=[], unsealed=[], as_person=True, manager_leg=False,
+                          source="preview:1")
+    live = graph.build(w["alice"], ["acme"], as_person=True, source=graph.LIVE)
+    assert live["edges"] == graph.build(w["alice"], ["acme"], as_person=True)["edges"]

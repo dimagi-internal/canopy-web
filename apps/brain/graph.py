@@ -25,6 +25,7 @@ left out."""
 from __future__ import annotations
 
 import datetime as dt
+from dataclasses import dataclass
 
 from django.contrib.auth import get_user_model
 from django.db.models import Count, Max, Q
@@ -78,11 +79,59 @@ def tree(viewer, root: Workspace) -> list[str]:
     return [ws.slug for ws, _ in wsvc.subtree(root, lambda s: s in mine)]
 
 
+#: Where the brain's own rows are read from. Only `live` (the tables) today; `brain_reads` is the one place that
+#: reads them, so a snapshot source is one change there.
+LIVE = "live"
+
+
+@dataclass(frozen=True)
+class BrainReads:
+    """Every brain-table row one graph draws, read by `brain_reads`."""
+
+    participants: list   # (session id, user id): `SourceParticipant`, people since taken out too
+    links: list          # `SourceLink` rows on unsealed sessions, as dicts, tiers the viewer may see
+    lines: list          # live `ReportingLine` rows the viewer is shown, as dicts; empty unless `as_person`
+    outputs: list        # `BrainOutput` rows `outputs.visible_to` lets the viewer read, newest first, capped
+    more_outputs: bool   # the cap left some out
+    lineage: list        # (output id, session id): `OutputLineage` to unsealed sessions
+
+
+def brain_reads(viewer, slugs, *, sessions, unsealed, as_person: bool, manager_leg: bool,
+                source: str = LIVE) -> BrainReads:
+    """The brain's rows for one graph, from `source`. Each read keeps the rule of the surface that shows it
+    (`build`'s docstring); the proposed layer is not here, it is the pure compute (`associate.propose_many`)."""
+    if source != LIVE:
+        raise ValueError(f"unknown brain source {source!r}")
+    participants = list(SourceParticipant.objects.filter(source__session_id__in=list(sessions), user__isnull=False)
+                        .values_list("source__session_id", "user_id"))
+    links = [x for x in SourceLink.objects.filter(source__session_id__in=unsealed,
+                                                  subject_type=SourceLink.PROJECT_SUBJECT)
+             .values("source__session_id", "subject", "tier", "how", "confidence", "evidence", "by_id", "updated_at")
+             if x["tier"] in SHOWN_TIERS or (x["tier"] == SourceLink.REJECTED and x["by_id"] == viewer.pk)]
+    lines = []
+    if as_person:
+        owned = perms.slugs_with(viewer, perms.OWN)
+        lines = list(ReportingLine.objects.filter(workspace_id__in=slugs, ended_at__isnull=True)
+                     .filter(Q(workspace_id__in=owned) | Q(person=viewer) | Q(manager=viewer))
+                     .values("person_id", "manager_id", "workspace_id", "created_at"))
+    outs = list(outputs.visible_to(viewer, as_person=manager_leg).filter(workspace_id__in=slugs)
+                .order_by("-created_at", "-pk").values("pk", "title", "kind", "workspace_id", "subject_type",
+                                                       "subject", "created_at")[:MAX_OUTPUTS + 1])
+    more = len(outs) > MAX_OUTPUTS
+    outs = outs[:MAX_OUTPUTS]
+    lineage = list(OutputLineage.objects.filter(output_kind="brain.output",
+                                                output_id__in=[str(o["pk"]) for o in outs],
+                                                source__session_id__in=unsealed)
+                   .values_list("output_id", "source__session_id"))
+    return BrainReads(participants, links, lines, outs, more, lineage)
+
+
 def build(viewer, slugs, *, days: int = 30, proposed: bool = False, as_person: bool = False,
-          manager_leg: bool = False, now=None) -> dict:
+          manager_leg: bool = False, now=None, source: str = LIVE) -> dict:
     """The graph over `slugs` (the caller resolved them to workspaces the viewer is in) for the last `days`.
     `as_person`: the request is the viewer themselves, off MCP, so reporting lines may be drawn.
-    `manager_leg`: `api_admin.manager_leg_open`, passed to `outputs.visible_to`."""
+    `manager_leg`: `api_admin.manager_leg_open`, passed to `outputs.visible_to`. `source`: where the brain's
+    rows are read from (`brain_reads`)."""
     days = max(1, min(int(days), MAX_DAYS))
     now = now or timezone.now()
     since = now - dt.timedelta(days=days)
@@ -147,8 +196,9 @@ def build(viewer, slugs, *, days: int = 30, proposed: bool = False, as_person: b
     for sid, uid, at in SessionParticipant.objects.filter(session_id__in=ids).values_list(
             "session_id", "user_id", "created_at"):
         people.setdefault(uid, []).append((sid, PARTICIPATES, 1, at))
-    for sid, uid in SourceParticipant.objects.filter(source__session_id__in=sessions, user__isnull=False).values_list(
-            "source__session_id", "user_id"):
+    brain = brain_reads(viewer, slugs, sessions=ids, unsealed=unsealed, as_person=as_person,
+                        manager_leg=manager_leg, source=source)
+    for sid, uid in brain.participants:
         people.setdefault(uid, []).append((sid, PARTICIPATES, 0, None))   # since taken out, or a line they wrote
 
     turns = (Turn.objects.filter(Q(chat_session_id__in=ids) | Q(canopy_session_id__in=ids))
@@ -210,12 +260,7 @@ def build(viewer, slugs, *, days: int = 30, proposed: bool = False, as_person: b
             edge(pid, f"session:{sid}", kind, weight=weight, at=at)
 
     # ---- projects and tasks ------------------------------------------------------------------------------------
-    links = list(SourceLink.objects.filter(source__session_id__in=unsealed,
-                                           subject_type=SourceLink.PROJECT_SUBJECT)
-                 .values("source__session_id", "subject", "tier", "how", "confidence", "evidence", "by_id",
-                         "updated_at"))
-    links = [x for x in links if x["tier"] in SHOWN_TIERS or (x["tier"] == SourceLink.REJECTED
-                                                              and x["by_id"] == viewer.pk)]
+    links = brain.links
     would = associate.propose_many([s for s in rows if s.pk not in sealed]) if proposed else {}
     task_rows = {t["pk"]: t for t in AgentTask.objects.filter(
         task_read_q(viewer), pk__in={tid for tid, _ in dispatched}, workspace_id__in=mine)
@@ -261,11 +306,7 @@ def build(viewer, slugs, *, days: int = 30, proposed: bool = False, as_person: b
 
     # ---- reporting lines: to the person as themselves, as the reporting route shows them -------------------------
     if as_person:
-        owned = perms.slugs_with(viewer, perms.OWN)
-        lines = (ReportingLine.objects.filter(workspace_id__in=slugs, ended_at__isnull=True)
-                 .filter(Q(workspace_id__in=owned) | Q(person=viewer) | Q(manager=viewer))
-                 .values("person_id", "manager_id", "workspace_id", "created_at"))
-        lines = list(lines)
+        lines = brain.lines
         _people_nodes(node, users, {x["person_id"] for x in lines} | {x["manager_id"] for x in lines})
         for x in lines:
             edge(f"person:{x['person_id']}", f"person:{x['manager_id']}", REPORTS_TO, at=x["created_at"],
@@ -302,15 +343,9 @@ def build(viewer, slugs, *, days: int = 30, proposed: bool = False, as_person: b
             edge(viewer_coach_id, f"person:{uid}", COACHES)
 
     # ---- learning outputs, as `outputs.visible_to` lets the viewer read them -----------------------------------
-    outs = list(outputs.visible_to(viewer, as_person=manager_leg).filter(workspace_id__in=slugs)
-                .order_by("-created_at", "-pk").values("pk", "title", "kind", "workspace_id", "subject_type",
-                                                       "subject", "created_at")[:MAX_OUTPUTS + 1])
-    if len(outs) > MAX_OUTPUTS:
-        outs = outs[:MAX_OUTPUTS]
+    outs, lineage = brain.outputs, brain.lineage
+    if brain.more_outputs:
         notes.append(f"Only the {MAX_OUTPUTS} newest learning outputs are drawn.")
-    lineage = OutputLineage.objects.filter(output_kind="brain.output", output_id__in=[str(o["pk"]) for o in outs],
-                                           source__session_id__in=unsealed).values_list(
-        "output_id", "source__session_id")
     for o in outs:
         node(f"output:{o['pk']}", OUTPUT, o["title"] or o["kind"], workspace=o["workspace_id"], ref=str(o["pk"]),
              at=o["created_at"], status=o["kind"])
