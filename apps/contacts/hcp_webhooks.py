@@ -21,6 +21,7 @@ import json
 import logging
 import uuid
 
+import requests
 from django.core.cache import cache
 from django.db import transaction
 from django.utils import timezone
@@ -69,11 +70,19 @@ def webhook_secret(client: HcpClient) -> str:
 
 
 def _post(url: str, body: bytes, headers: dict) -> int:
-    import urllib.request
+    """POST to the client's registered URL through canopy's outbound guard: https,
+    no private address (checked at send, since a name can be re-pointed after it
+    was registered) and NO redirects — a 30x is the delivery's answer, never a
+    second request to wherever it points (an internal address, a metadata
+    endpoint)."""
+    from apps.host_grants import outbound
 
-    req = urllib.request.Request(url, data=body, method="POST", headers=headers)
-    with urllib.request.urlopen(req, timeout=WEBHOOK_TIMEOUT_S) as resp:  # noqa: S310 — admin-registered https URL
-        return resp.status
+    try:
+        outbound.check_url(url, what="webhook URL")
+    except outbound.OutboundError as exc:
+        raise OSError(str(exc)) from exc
+    resp = requests.post(url, data=body, headers=headers, timeout=WEBHOOK_TIMEOUT_S, allow_redirects=False)
+    return resp.status_code
 
 
 def attempt(d: HcpRevocationDelivery, *, now: dt.datetime | None = None, post=None) -> None:

@@ -29,7 +29,8 @@ from __future__ import annotations
 
 from django.db.models import Q
 
-from .models import Message
+from . import access
+from .models import Message, Session
 from .transcript_noise import SYSTEM_NOISE_PREFIXES
 
 # Unscoped access, spelled out. A sentinel rather than `None`, because `None` is
@@ -71,9 +72,7 @@ def noise_queryset(*, workspace_slugs, session_id=None, user=None):
     if user is not None:
         # A caller's "your sessions" means the sessions THEY can read
         # (`access`), not every conversation in their workspaces.
-        from .access import readable_sessions
-
-        qs = qs.filter(session__in=readable_sessions(user).values("pk"))
+        qs = qs.filter(session__in=access.readable_sessions(user).values("pk"))
     return _scoped(qs, workspace_slugs)
 
 
@@ -115,6 +114,12 @@ def purge_noise(*, workspace_slugs, session_id=None, sample: int = 5, apply: boo
     describing an empty table afterwards.
     """
     qs = noise_queryset(workspace_slugs=workspace_slugs, session_id=session_id, user=user)
+    if user is not None:
+        # Reading a session is not leave to delete from it: a purge covers only
+        # the sessions the caller may WRITE (`access.can_write`), dry run included,
+        # so the report is exactly what an apply would take.
+        writable = [s.pk for s in Session.objects.filter(pk__in=qs.values("session_id")) if access.can_write(user, s)]
+        qs = qs.filter(session_id__in=writable)
     report = _report(qs, sample)
     if not apply:
         return {**report, "applied": False, "deleted": 0}

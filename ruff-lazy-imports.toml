@@ -57,7 +57,6 @@
 "apps/canopy_sessions/control.py" = ["PLC0415"]  # 6
 "apps/canopy_sessions/feed.py" = ["PLC0415"]  # 4
 "apps/canopy_sessions/filing.py" = ["PLC0415"]  # 3
-"apps/canopy_sessions/maintenance.py" = ["PLC0415"]  # 1
 "apps/canopy_sessions/management/commands/sweep_orphaned_attachments.py" = ["PLC0415"]  # 2
 "apps/canopy_sessions/placement.py" = ["PLC0415"]  # 9
 "apps/canopy_sessions/queued_feed.py" = ["PLC0415"]  # 2
