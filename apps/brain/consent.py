@@ -86,7 +86,7 @@ def validate_rules(rules) -> list[dict]:
     for r in rules:
         if (not isinstance(r, dict) or not r or set(r) - {"capability", "purpose", "class", "workspace"}
                 or not all(isinstance(v, str) and v for v in r.values())):
-            raise RefusedError("a standing rule names capability, purpose, class and/or workspace, each a word")
+            raise RefusedError("a standing rule names the learner, purpose, class and/or workspace it denies, each a word")
         if r.get("class") and r["class"] not in CLASSES:
             raise RefusedError(f"unknown class {r['class']!r}")
         out.append(dict(r))
