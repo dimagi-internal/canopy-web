@@ -293,6 +293,7 @@ def _auth_smoke(request: HttpRequest) -> dict:
 from apps.agent_runs.api import router as agent_runs_router  # noqa: E402
 from apps.agent_runs.documents import router as agent_run_docs_router  # noqa: E402
 from apps.agents.api_a2a import router as a2a_router  # noqa: E402
+from apps.brain.api import router as brain_router  # noqa: E402
 from apps.agents.api import router as agents_router  # noqa: E402
 from apps.agents.api import turns_router as agent_turns_router  # noqa: E402
 from apps.agents.api_board import router as agent_board_router  # noqa: E402
@@ -594,5 +595,6 @@ api.add_router("/canopy-sessions", app_views_router)
 api.add_router("/session-secrets", session_secrets_router)
 api.add_router("/contacts", contacts_router)
 api.add_router("/people", people_router)  # fleet brain v1
+api.add_router("", brain_router)  # /api/me/learning/: a person's consent to canopy learning
 api.add_router("/hcp", hcp_router)  # Human Context Protocol v1 over the people brain
 api.add_router("/hcp-admin", hcp_clients_router)  # the HCP service's client registry (superusers)

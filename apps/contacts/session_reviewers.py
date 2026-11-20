@@ -29,6 +29,8 @@ from apps.canopy_sessions.models import CoachingOptIn, CoachingRole
 from apps.harness.signals import session_content_deleted
 from apps.workspaces import access_requests
 
+from apps.brain import consent as brain_consent
+
 from . import hcp
 from .models import Person
 from .services import person_for
@@ -70,6 +72,7 @@ def opt_in(person: Person, *, user) -> CoachingOptIn:
         _sharing_changed(user, granted=True)
         hcp.audit(person, "sessionReviewer.granted", actor=hcp.user_actor(user),
                   purpose="opt in to coaching: canopy's coaches may review your sessions, read-only")
+        brain_consent.mirror_coaching(user, on=True)
     return row
 
 
@@ -81,6 +84,7 @@ def opt_out(person: Person, *, user) -> bool:
             _sharing_changed(user, granted=False)
             hcp.audit(person, "sessionReviewer.revoked", actor=hcp.user_actor(user),
                       purpose="opt out of coaching: no coach may review your sessions")
+            brain_consent.mirror_coaching(user, on=False)
     return bool(n)
 
 

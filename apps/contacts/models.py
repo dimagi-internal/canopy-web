@@ -831,6 +831,9 @@ class PersonAuditEvent(models.Model):
         # available / unavailable (`Person.hcp_*_available`); `agentX.defaultOn|
         # defaultOff` = its default for sessions (`hcp_*_default`); `sessionX.on|off|
         # inherit` = one session's override (`SessionAgentMemory`).
+        # A person's agreement to canopy learning (`apps/brain/consent.py`).
+        "learning.consented", "learning.class_added", "learning.class_removed", "learning.revoked",
+        "learning.source_withdrawn", "learning.source_restored",
         "agentRecord.enabled", "agentRecord.disabled", "agentUse.enabled", "agentUse.disabled",
         "agentRecord.defaultOn", "agentRecord.defaultOff",
         "agentUse.defaultOn", "agentUse.defaultOff",
