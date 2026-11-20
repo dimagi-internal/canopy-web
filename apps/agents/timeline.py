@@ -17,14 +17,14 @@ from .services import task_read_q
 
 
 def recent_events(
-    *, limit: int, before: dt.datetime | None, user, workspace_slugs=None
+    *, limit: int, before: dt.datetime | None, user, workspace_slugs: set[str]
 ) -> list:
 
     events: list[ActivityEvent] = []
 
     def _scope(qs):
         # Agent sub-objects inherit tenancy via their agent's workspace.
-        return qs if workspace_slugs is None else qs.filter(agent__workspace_id__in=workspace_slugs)
+        return qs.filter(agent__workspace_id__in=workspace_slugs)
 
     syncs = _scope(AgentSync.objects.select_related("agent")).order_by("-period_end")
     for s in cursor_page(syncs, "period_end", before=before, limit=limit):
@@ -42,8 +42,7 @@ def recent_events(
         )
 
     tasks = AgentTask.objects.filter(task_read_q(user)).select_related("agent")
-    if workspace_slugs is not None:  # a task's tenant is its own workspace, not its agent's
-        tasks = tasks.filter(workspace_id__in=workspace_slugs)
+    tasks = tasks.filter(workspace_id__in=workspace_slugs)  # a task's tenant is its own workspace, not its agent's
     tasks = tasks.order_by("-created_at")
     for t in cursor_page(tasks, "created_at", before=before, limit=limit):
         events.append(

@@ -80,7 +80,7 @@ def test_each_cut_gets_its_own_slot_in_narration_order():
     c1 = _cut(u, v, "register", ["c1-a", "c1-b"], at=_t(2))
     c2 = _cut(u, v, "decide", ["c2-a"], at=_t(3))
 
-    narrative = aggregate.build_narrative(SLUG)
+    narrative = aggregate.build_narrative(SLUG, workspace_slugs=aggregate.EVERY_WORKSPACE)
     cuts = narrative["current_version"]["cuts"]
     assert [c["cut_id"] for c in cuts] == ["register", "decide", "deliver"]
     assert cuts[0]["scene_ids"] == ["c1-a", "c1-b"]
@@ -99,7 +99,7 @@ def test_reuploading_a_cut_replaces_only_that_cut():
     _cut(u, v, "decide", ["c2-a"], at=_t(2))
     newer = _cut(u, v, "register", ["c1-a"], at=_t(3), title="Register (re-cut)")
 
-    cuts = aggregate.build_narrative(SLUG)["current_version"]["cuts"]
+    cuts = aggregate.build_narrative(SLUG, workspace_slugs=aggregate.EVERY_WORKSPACE)["current_version"]["cuts"]
     assert [c["cut_id"] for c in cuts] == ["register", "decide"]
     assert cuts[0]["walkthrough_id"] == newer.id
     assert cuts[0]["title"] == "Register (re-cut)"
@@ -111,7 +111,7 @@ def test_a_cut_uploaded_as_hero_is_the_hero():
     _cut(u, v, "register", ["c1-a"], at=_t(1))
     chosen = _cut(u, v, "decide", ["c2-a"], at=_t(2), role="hero_video")
 
-    cv = aggregate.build_narrative(SLUG)["current_version"]
+    cv = aggregate.build_narrative(SLUG, workspace_slugs=aggregate.EVERY_WORKSPACE)["current_version"]
     assert cv["video_url"] == f"/w/{chosen.workspace_id}/walkthrough/{chosen.id}/content"
 
 
@@ -123,7 +123,7 @@ def test_an_explainer_video_stays_the_hero_and_is_not_a_cut():
     Walkthrough.objects.filter(pk=hero.pk).update(created_at=_t(0))
     _cut(u, v, "register", ["c1-a"], at=_t(5))
 
-    cv = aggregate.build_narrative(SLUG)["current_version"]
+    cv = aggregate.build_narrative(SLUG, workspace_slugs=aggregate.EVERY_WORKSPACE)["current_version"]
     # A later cut upload must not displace the narrative's own video.
     assert cv["video_url"] == f"/w/{hero.workspace_id}/walkthrough/{hero.id}/content"
     assert [c["cut_id"] for c in cv["cuts"]] == ["register"]
@@ -133,7 +133,7 @@ def test_an_explainer_narrative_has_no_cuts():
     u = make_user()
     v = _version(u)
     make_walkthrough(u, kind="video", narrative_slug=SLUG, narrative_review_id=v.id)
-    cv = aggregate.build_narrative(SLUG)["current_version"]
+    cv = aggregate.build_narrative(SLUG, workspace_slugs=aggregate.EVERY_WORKSPACE)["current_version"]
     assert cv["cuts"] == []
     assert cv["video_url"]
 

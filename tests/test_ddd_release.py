@@ -60,7 +60,7 @@ def _rev(owner, **kw):
 def test_cascade_mints_share_tokens_on_public(db, owner):
     w = _hero(owner, visibility="private")
     assert not w.share_token
-    aggregate.set_narrative_visibility("demo", "link")
+    aggregate.set_narrative_visibility("demo", "link", workspace_slugs=aggregate.EVERY_WORKSPACE)
     w.refresh_from_db()
     assert w.visibility == "link"
     assert w.share_token, "flip-to-public must mint a share token"
@@ -68,10 +68,10 @@ def test_cascade_mints_share_tokens_on_public(db, owner):
 
 def test_cascade_to_private_leaves_token(db, owner):
     w = _hero(owner, visibility="private")
-    aggregate.set_narrative_visibility("demo", "link")
+    aggregate.set_narrative_visibility("demo", "link", workspace_slugs=aggregate.EVERY_WORKSPACE)
     w.refresh_from_db()
     tok = w.share_token
-    aggregate.set_narrative_visibility("demo", "private")
+    aggregate.set_narrative_visibility("demo", "private", workspace_slugs=aggregate.EVERY_WORKSPACE)
     w.refresh_from_db()
     assert w.visibility == "private"
     assert w.share_token == tok, "flip-to-private keeps the token (revive later)"
@@ -91,7 +91,7 @@ def test_release_anonymous_without_token_404s(db, owner):
 def test_release_anonymous_with_valid_token(db, owner):
     _hero(owner, visibility="private")
     _rev(owner)
-    aggregate.set_narrative_visibility("demo", "link")
+    aggregate.set_narrative_visibility("demo", "link", workspace_slugs=aggregate.EVERY_WORKSPACE)
     token = Walkthrough.objects.get(run_id=RUN_ID).share_token
 
     resp = Client().get(f"/api/ddd/release/{RUN_ID}/?t={token}")
@@ -114,7 +114,7 @@ def test_release_anonymous_with_valid_token(db, owner):
 @override_settings(REQUIRE_AUTH=True)
 def test_release_anonymous_wrong_token_404s(db, owner):
     _hero(owner, visibility="private")
-    aggregate.set_narrative_visibility("demo", "link")
+    aggregate.set_narrative_visibility("demo", "link", workspace_slugs=aggregate.EVERY_WORKSPACE)
     resp = Client().get(f"/api/ddd/release/{RUN_ID}/?t=not-the-token")
     assert resp.status_code == 404
 
@@ -174,7 +174,7 @@ def test_release_page_lives_under_its_workspace(db, owner):
     workspace — the flat `/ddd-release/…` is a 404."""
     _hero(owner, visibility="private")
     _rev(owner)
-    aggregate.set_narrative_visibility("demo", "link")
+    aggregate.set_narrative_visibility("demo", "link", workspace_slugs=aggregate.EVERY_WORKSPACE)
     token = Walkthrough.objects.get(run_id=RUN_ID).share_token
 
     body = Client().get(f"/api/ddd/release/{RUN_ID}/?t={token}&ws=dimagi").json()
@@ -221,7 +221,7 @@ def test_release_ignores_rows_from_other_workspaces_on_the_same_run_id(db, owner
     the run's primary artifact nor lends its links to the page."""
     _hero(owner, visibility="private")
     _rev(owner)
-    aggregate.set_narrative_visibility("demo", "link")
+    aggregate.set_narrative_visibility("demo", "link", workspace_slugs=aggregate.EVERY_WORKSPACE)
     token = Walkthrough.objects.get(run_id=RUN_ID, workspace_id="dimagi").share_token
     _hero(
         attacker, workspace=Workspace.objects.get(slug="mallory"), title="Imposter",

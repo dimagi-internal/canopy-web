@@ -15,7 +15,7 @@ from apps.workspaces.links import scoped_path_or_none
 from .models import Session, ShareToken
 
 
-def recent_events(*, limit: int, before: dt.datetime | None, user) -> list:
+def recent_events(*, limit: int, before: dt.datetime | None, user, workspace_slugs: set[str]) -> list:
     from apps.timeline.types import ActivityEvent, actor_name, cursor_page
 
     # Prefetch active share tokens (newest first) so the link-out href doesn't
@@ -25,8 +25,10 @@ def recent_events(*, limit: int, before: dt.datetime | None, user) -> list:
         queryset=ShareToken.objects.filter(revoked_at__isnull=True).order_by("-created_at"),
         to_attr="active_tokens",
     )
+    # Held to the caller's tenants: a link-visible row's href carries its share token.
     qs = (
-        Session.objects.select_related("owner")
+        Session.objects.filter(workspace_id__in=workspace_slugs)
+        .select_related("owner")
         .prefetch_related(active_tokens)
         .order_by("-created_at")
     )

@@ -59,7 +59,7 @@ def _drop_source(src: NarrativeSource) -> None:
     drop(src)
 
 
-def delete_run(run_id: str, workspace_slugs: set[str] | None = None) -> dict | None:
+def delete_run(run_id: str, workspace_slugs: set[str] | None) -> dict | None:
     """Delete a single run: every Walkthrough + ReviewRequest sharing ``run_id``.
 
     Scoped to ``workspace_slugs`` so a member of workspace A can't delete
@@ -78,7 +78,7 @@ def delete_run(run_id: str, workspace_slugs: set[str] | None = None) -> dict | N
 
 
 def delete_version(
-    slug: str, version: int, workspace_slugs: set[str] | None = None
+    slug: str, version: int, workspace_slugs: set[str] | None
 ) -> dict | None:
     """Delete one narrative version and the runs nested under it.
 
@@ -124,7 +124,7 @@ def delete_version(
 
 
 def delete_narrative(
-    slug: str, workspace_slugs: set[str] | None = None
+    slug: str, workspace_slugs: set[str] | None
 ) -> dict | None:
     """Delete an entire narrative: every row (all versions + all runs) for ``slug``."""
     wts = [

@@ -1,6 +1,6 @@
 """Registry + merge for the team activity timeline.
 
-Each entry points at a ``recent_events(*, limit, before, user)`` callable living
+Each entry points at a ``recent_events(*, limit, before, user, workspace_slugs)`` callable living
 in a subsystem's own ``timeline.py``. The aggregator calls the enabled sources,
 merges their events, sorts newest-first, and slices to ``limit``. A source that
 raises is logged and skipped — one broken subsystem never blanks the whole feed.
@@ -12,7 +12,6 @@ cursor is given), so worst-case work is ``len(sources) * limit`` rows.
 from __future__ import annotations
 
 import datetime as dt
-import inspect
 import logging
 from collections.abc import Callable
 from importlib import import_module
@@ -47,18 +46,14 @@ def _resolve(module_path: str, attr: str) -> Callable[..., list[ActivityEvent]]:
 
 
 def _call_source(fn, *, limit, before, user, workspace_slugs) -> list[ActivityEvent]:
-    """Invoke a source, passing ``workspace_slugs`` only if it opts in.
+    """Invoke a source with the caller's tenant scope.
 
-    Workspace scoping is a *seam*, not a signature change: a source that lives in
-    a product app scopes its own querysets by adding a ``workspace_slugs`` kwarg,
-    and the aggregator (framework) offers it here without ever importing that
-    app's models — so the framework→product boundary holds. Sources that don't
-    accept the kwarg are called exactly as before (models with no workspace FK, or
-    not-yet-scoped sources, stay unscoped)."""
-    kwargs = {"limit": limit, "before": before, "user": user}
-    if "workspace_slugs" in inspect.signature(fn).parameters:
-        kwargs["workspace_slugs"] = workspace_slugs
-    return fn(**kwargs) or []
+    Every source takes ``workspace_slugs`` and filters every query by it: the
+    aggregator (framework) offers the scope without importing the source's models,
+    so the framework→product boundary holds. A source that leaves it out is a
+    feed of every tenant's rows, so it is called with the scope anyway and the
+    TypeError drops it (logged) rather than reading unscoped."""
+    return fn(limit=limit, before=before, user=user, workspace_slugs=workspace_slugs) or []
 
 
 def gather(
@@ -67,7 +62,7 @@ def gather(
     limit: int,
     before: tuple[dt.datetime, str] | None,
     user,
-    workspace_slugs: set[str] | None = None,
+    workspace_slugs: set[str],
 ) -> list[ActivityEvent]:
     """Merged, newest-first events across the enabled sources, capped at ``limit``.
 
@@ -77,8 +72,8 @@ def gather(
     keeps "show more" from silently skipping events that share a timestamp (e.g.
     two day-aligned shareouts both stamped 23:59:59).
 
-    ``workspace_slugs`` scopes the feed to the caller's tenants. It's offered to
-    each source that opts in (see :func:`_call_source`); ``None`` means unscoped.
+    ``workspace_slugs`` scopes the feed to the caller's tenants; every source
+    filters by it (see :func:`_call_source`).
     """
     before_at = before[0] if before else None
     entries = [e for e in _REGISTRY if subsystem is None or e[0] == subsystem]

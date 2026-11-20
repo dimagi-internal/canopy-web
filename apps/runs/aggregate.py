@@ -39,8 +39,15 @@ from apps.workspaces import links as wslinks
 # ---------------------------------------------------------------------------
 
 
+#: The scope a caller passes to mean every workspace (a management command, a test).
+#: No helper here defaults to it: a run id and a narrative slug are free text any
+#: uploader picks, so a read that forgets its scope groups another tenant's rows.
+EVERY_WORKSPACE = None
+
+
 def _scope(qs, workspace_slugs: set[str] | None):
-    """Narrow a Walkthrough/ReviewRequest queryset to ``workspace_slugs``.
+    """Narrow a Walkthrough/ReviewRequest queryset to ``workspace_slugs``
+    (``EVERY_WORKSPACE`` leaves it whole).
 
     A member of workspace A must never read (or, via the delete helpers, mutate)
     workspace B's rows — even a pinned single-id lookup is filtered so cross-tenant
@@ -95,7 +102,7 @@ def _is_narrative_version(r: ReviewRequest) -> bool:
 
 
 def _narrative_versions_for(
-    narrative_slug: str, workspace_slugs: set[str] | None = None
+    narrative_slug: str, workspace_slugs: set[str] | None
 ) -> list[ReviewRequest]:
     """Narrative-version reviews for a narrative_slug, oldest version first."""
     out = [
@@ -108,7 +115,7 @@ def _narrative_versions_for(
 
 
 def has_narrative_version(
-    narrative_slug: str, workspace_slugs: set[str] | None = None
+    narrative_slug: str, workspace_slugs: set[str] | None
 ) -> bool:
     """True iff ``narrative_slug`` has at least one story-bearing narrative version.
 
@@ -282,7 +289,7 @@ def _scene_count(r: ReviewRequest | None) -> int:
 # ---------------------------------------------------------------------------
 
 
-def build_run(run_id: str, workspace_slugs: set[str] | None = None) -> dict | None:
+def build_run(run_id: str, workspace_slugs: set[str] | None) -> dict | None:
     """Aggregate one run_id into a package dict, or ``None`` if nothing matches."""
     wts = list(
         _scope(Walkthrough.objects.filter(run_id=run_id), workspace_slugs)
@@ -753,7 +760,7 @@ def _max(a: datetime | None, b: datetime | None) -> datetime | None:
 def _aggregate(
     project: str | None,
     owner_id: int | None,
-    workspace_slugs: set[str] | None = None,
+    workspace_slugs: set[str] | None,
 ) -> dict[str, dict]:
     """Build the per-narrative aggregate map from both tables. Filters are
     applied at the narrative level afterwards by the callers."""
@@ -846,7 +853,8 @@ def _aggregate(
 def list_narratives(
     project: str | None = None,
     owner_id: int | None = None,
-    workspace_slugs: set[str] | None = None,
+    *,
+    workspace_slugs: set[str] | None,
     session: str | None = None,
     agent_project: str | None = None,
 ) -> list[dict]:
@@ -907,7 +915,7 @@ def _agg_visibility(visibilities: set[str]) -> str:
 
 
 def build_narrative(
-    slug: str, workspace_slugs: set[str] | None = None
+    slug: str, workspace_slugs: set[str] | None
 ) -> dict | None:
     """Narrative landing: version-grouped — each narrative version with its runs
     nested beneath it (newest version first)."""
@@ -1060,7 +1068,7 @@ def build_narrative(
 
 
 def set_narrative_visibility(
-    slug: str, visibility: str, workspace_slugs: set[str] | None = None
+    slug: str, visibility: str, workspace_slugs: set[str] | None
 ) -> tuple[int, int]:
     """Set visibility on every walkthrough + review grouped under ``slug``.
 
