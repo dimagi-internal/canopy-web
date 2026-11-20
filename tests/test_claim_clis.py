@@ -86,7 +86,7 @@ def test_legacy_box_claims_as_before():
     claimed = claim.claim_next_turn(runner)
     assert claimed == turn
     assert claimed.cli == "claude-code"
-    assert claim_payload(claimed)["cli_model"] == "opus"
+    assert claim_payload(claimed)["cli_model"] == "opus[1m]"
 
 
 def test_confined_turn_runs_only_where_its_cli_confines():

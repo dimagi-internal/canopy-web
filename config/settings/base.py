@@ -994,7 +994,8 @@ LOGGING = {
 # Per CLI, for a turn whose agent names none in `Agent.cli_models` (and every project turn,
 # which has no agent): without it a runner's CLI starts on its account's own default, which is
 # not the model people get on their own machines (apps/harness/claim_payload.py::start_model).
-DEFAULT_CLI_MODELS = env.dict("DEFAULT_CLI_MODELS", default={"claude-code": "opus"})
+# `[1m]` is what selects Claude Code's 1M-token window; the bare `opus` alias does not.
+DEFAULT_CLI_MODELS = env.dict("DEFAULT_CLI_MODELS", default={"claude-code": "opus[1m]"})
 
 
 # --- Canopy Brain (apps/brain) -----------------------------------------------------------------
