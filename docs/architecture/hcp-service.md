@@ -619,6 +619,28 @@ form is under "Seeing and tuning search"). Each has its usage in the module docs
 | `hcp_explain --person <email> "<question>" [--floor --weight --boost --project --limit]` | Scores every one of a person's entries against a question and says why each did or did not come back. Read-only, but the read lands in the person's own audit. | Tuning search. |
 | `hcp_backfill_searches [--dry-run]` | Rebuilds a `PersonSearch` for each search that ran before searches were recorded, from the audit (`preference.read` rows sharing a `retrievalId`). Idempotent; the rebuilt rows are unscored. | Once, if old searches should show on `/people/me` → What happened. |
 
+## HCP v2 (draft 3): canopy's model, v1 as the wire
+
+canopy's model is HCP v2's (spec `2.0-draft-3`, `loyalagents/hcp-spec`, invited-partner-review
+material: sections are cited here and in code, spec text is never copied). The v1 wire above stays
+exactly what every caller uses (`hcp_addPreference` and the other MCP tools, `/api/hcp/v1/`, the
+caller-context envelope, the agent closeout write): it is an adapter over the same `PersonFact`
+rows, and a v1 call that names no v2 thing is served the v2 default. `/api/hcp/v2/`
+(`hcp_v2_api.py`) is the v2 binding, HTTP only: v2 governance operations (1.6) are the person's,
+over HTTP, and are never MCP tools (each is listed in `apps/mcp/api_tools.py`).
+
+| v2 concept | Where | What the v1 adapter does |
+|---|---|---|
+| The entry form (4.2) | `hcp.v2.to_v2_entry` renders a `PersonFact` as content / assertion / classification / evidence / record | v1's grouped envelope (`hcp.to_entry`) is unchanged |
+| Purposes (4.2.6, 6.1.5.2, 7.1) | `hcp.purposes`; `PersonGrant.purposes`, `PersonFact.permitted_purposes` (the writer's) and `PersonFact.restricted_purposes` (the person's, `hcp.restrict_purposes`) | v1 `purpose` stays free text for the audit; the read runs under the grant's own default code (`hcp.read_purpose`); `purposeCode` / `permittedPurposes` are optional additions |
+| Assurance (3.6, 3.7) | `PersonFact.assurance`: `authenticated` only for the person's own write, never taken from a request | not exposed in v1 |
+
+**Purposes.** A grant carries at least one (a grant that predates them reads as those of its
+scopes, so none was migrated); the consent screen and the session prompt show each in words before
+the act; a read naming one the grant lacks is 403, and an entry limited to other purposes by its
+writer or by the person is not served for this one (`PersonAuditEvent.purpose_code` records the
+code, `purpose` the words). Only the person narrows an entry's purposes, and only down.
+
 ## What keeps this page true
 
 - `tests/test_hcp_docs_evidence.py` resolves every symbol, test, path, route, audit

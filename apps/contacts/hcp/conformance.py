@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from ..models import PersonFact
+from . import purposes
 from .core import HCP_VERSION, HELD_CATEGORIES, PROBLEM_BASE
 from .relevance import minimization_method
 
@@ -62,6 +63,8 @@ def discovery(base_url: str) -> dict:
                       "agent' (persistent), nothing preselected; bounded by the person's "
                       "settings; revocable; never presumed",
             "tier2": "not supported",
+            # HCP v2 6.1.5.2: the purposes a grant may carry, each in words.
+            "purposes": purposes.describe(purposes.PURPOSES),
             "custom_categories": f"{PersonFact.CUSTOM_PREFIX}<name>",
         },
     }

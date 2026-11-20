@@ -25,6 +25,7 @@ from .core import (
     normalize_dimension,
     valid_category,
 )
+from .purposes import check_permitted
 from .sensitive import SensitiveRefused
 
 # --- entries -------------------------------------------------------------------
@@ -236,7 +237,8 @@ def add_entry(*, person: Person, workspace, category: str, statement: str,
               dimension: str | None = None, kind: str | None = None, source: str = "",
               source_turn=None, by_user=None, project=None, instance_ref: str = "",
               expires_at=None, relationship: str = "", metadata: dict | None = None,
-              user_verified: bool = False, captured_by_override: str = "") -> PersonFact:
+              user_verified: bool = False, captured_by_override: str = "",
+              permitted_purposes=None) -> PersonFact:
     """addPreference (3.2.2 / 3.3.2): a new entry at version 1, audited, and
     conflict-checked."""
     from .. import people
@@ -249,6 +251,7 @@ def add_entry(*, person: Person, workspace, category: str, statement: str,
     if basis is None:
         raise malformed("declarationType is user-declared, model-inferred or issuer-attested")
     confidence = _check_confidence(basis, confidence)
+    permitted_purposes = check_permitted(permitted_purposes)
     kind = kind or CATEGORY_KIND.get(category, PersonFact.PREFERENCE)
     try:
         fact = people.record_fact(
@@ -258,7 +261,8 @@ def add_entry(*, person: Person, workspace, category: str, statement: str,
             instance_ref=instance_ref, category=category, dimension=dimension,
             confidence=confidence, provenance_source=source, expires_at=expires_at,
             relationship=relationship, metadata=metadata, user_verified=user_verified,
-            captured_by=captured_by_override or actor.id, actor=actor)
+            captured_by=captured_by_override or actor.id, actor=actor,
+            permitted_purposes=permitted_purposes)
     except SensitiveRefused as exc:
         raise denied(str(exc)) from None
     except people.FactError as exc:
@@ -319,7 +323,10 @@ def update_entry(fact: PersonFact, *, statement: str, reason: str, actor: Actor,
             reason=reason, actor=actor, status=PersonFact.ACTIVE, audit_event="preference.updated",
             audit_detail=(f"category {fact.category} -> {new_category}; " if new_category != fact.category
                           else "") + (reason or ""),
-            check_conflicts=not (was_conflicted and actor.is_person))
+            check_conflicts=not (was_conflicted and actor.is_person),
+            # What its writer permitted belongs to the version and a v1 revision does not
+            # change it; the person's narrowing is classification and survives a revision (4.2.1).
+            permitted_purposes=fact.permitted_purposes, restricted_purposes=fact.restricted_purposes)
     except SensitiveRefused as exc:
         raise denied(str(exc)) from None
     except people.FactError as exc:

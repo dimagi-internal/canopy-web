@@ -28,6 +28,7 @@ the turn envelope apply the same one.
 # (`from apps.contacts import hcp`; `hcp.search(...)`).
 from __future__ import annotations
 
+from . import purposes  # noqa: F401  (hcp.purposes: the registry and checks)
 from .conformance import (
     CONFORMANCE_LEVEL,
     KNOWN_GAPS,
@@ -168,6 +169,12 @@ from .grants import (
     tree_source,
     within_grant,
     workspace_source,
+)
+from .purposes import (
+    check_permitted,
+    entry_serves,
+    read_purpose,
+    restrict_purposes,
 )
 from .relevance import (
     _STOP,
@@ -345,6 +352,10 @@ __all__ = [
     'Score',
     'score_rows',
     'search',
+    'check_permitted',
+    'entry_serves',
+    'read_purpose',
+    'restrict_purposes',
     'CONFORMANCE_LEVEL',
     'discovery',
     'KNOWN_GAPS',

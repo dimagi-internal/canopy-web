@@ -204,7 +204,8 @@ def record_fact(*, person: Person, workspace, kind: str, statement: str,
                 provenance_site: dict | None = None,
                 captured_by: str = "", reason: str = "", actor=None,
                 status: str = PersonFact.ACTIVE, audit_event: str | None = None,
-                audit_detail: str = "", check_conflicts: bool = True) -> PersonFact:
+                audit_detail: str = "", check_conflicts: bool = True,
+                permitted_purposes=None, restricted_purposes=None) -> PersonFact:
     """Append a fact — one VERSION of an HCP entry.
 
     Without `supersedes` it starts a new entry (version 1). With it, the new row
@@ -284,6 +285,10 @@ def record_fact(*, person: Person, workspace, kind: str, statement: str,
         relationship=(relationship or "")[:80], metadata=dict(metadata or {}),
         user_verified=bool(user_verified), captured_by=(captured_by or actor.id)[:200],
         reason=(reason or "")[:300],
+        permitted_purposes=permitted_purposes, restricted_purposes=restricted_purposes,
+        # 3.6: authenticated only when the person made the write themself; an agent's
+        # claim that the person said it is not (3.7). Never taken from a request.
+        assurance=PersonFact.AUTHENTICATED if actor.is_person else PersonFact.UNVERIFIED,
     )
     event = audit_event or ("preference.updated" if supersedes is not None else "preference.created")
     hcp.audit(person, event, actor=actor, entry=fact, turn=source_turn,

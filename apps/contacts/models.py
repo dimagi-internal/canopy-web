@@ -607,6 +607,25 @@ class PersonFact(models.Model):
     embedding = models.BinaryField(null=True, blank=True, editable=False)
     #: The model that made `embedding`; a vector from any other model counts as none.
     embedding_model = models.CharField(max_length=120, blank=True, default="")
+    #: HCP v2 4.2.6 — the purposes the entry's writer permits it to be used for
+    #: (`assertion.permittedPurposes`; NULL = no limit), and the person's own narrowing
+    #: of them (`classification.permittedPurposes`, `hcp.restrict_purposes`; NULL = none).
+    #: A read is served an entry only where each list present includes its purpose.
+    permitted_purposes = models.JSONField(null=True, blank=True, default=None)
+    restricted_purposes = models.JSONField(null=True, blank=True, default=None)
+    #: v2 3.6 — how the asserter's identity was established: `authenticated` for the person's
+    #: own write (a login, or a contact in canopy's frame), `unverified` for anyone else's,
+    #: including an agent's claim that the person said it (3.7). Set by the provider at write,
+    #: never taken from a request, and never raised afterwards (invariant 15): a person's
+    #: confirmation is a separate record, not an assurance.
+    UNVERIFIED, AUTHENTICATED = "unverified", "authenticated"
+    assurance = models.CharField(max_length=16, default=UNVERIFIED)
+    #: v2 4.2.5 `assertion.basis`: `{drawnFrom, task, setting, rationale}`, all optional. Never
+    #: names a party, a client, a conversation or a document (provenance does that).
+    basis_detail = models.JSONField(default=dict, blank=True)
+    #: v2 4.5: categories beyond `category` (each widens which grants reach the entry), set by
+    #: the person alone (`hcp.set_categories`); `category` stays the one canopy filters on first.
+    extra_categories = models.JSONField(default=list, blank=True)
 
     class Meta:
         db_table = "contact_person_facts"
@@ -799,6 +818,9 @@ class PersonGrant(models.Model):
     expires_at = models.DateTimeField(null=True, blank=True)
     status = models.CharField(max_length=10, default=ACTIVE)
     revoked_at = models.DateTimeField(null=True, blank=True)
+    #: HCP v2 6.1.5.2 — the purpose codes the person approved (`hcp.purposes`). Empty on a
+    #: grant made before purposes existed: it reads as the purposes of its scopes.
+    purposes = models.JSONField(default=list, blank=True)
 
     class Meta:
         db_table = "contact_person_grants"
@@ -852,6 +874,8 @@ class PersonAuditEvent(models.Model):
         # The person deleted the stored words of one of their sessions: the session's
         # id in `detail`, nothing else about it (`session_reviewers`).
         "session.contentDeleted",
+        # HCP v2 (hcp-service.md, "HCP v2"): the person narrowed an entry's purposes.
+        "context.restricted",
     )
     USER, AGENT, SYSTEM = "user", "agent", "system"
 
@@ -865,6 +889,9 @@ class PersonAuditEvent(models.Model):
     related_entry_id = models.UUIDField(null=True, blank=True)
     category = models.CharField(max_length=80, blank=True, default="")
     purpose = models.CharField(max_length=500, blank=True, default="")
+    #: v2: the purpose CODE a read was made under (`hcp.purposes`); `purpose` stays the
+    #: stated task in words (v2 `purposeDescription`).
+    purpose_code = models.CharField(max_length=200, blank=True, default="")
     grant_id = models.UUIDField(null=True, blank=True)
     workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.SET_NULL,
                                   null=True, blank=True, related_name="person_audit_events")
@@ -1039,6 +1066,9 @@ class HcpClient(models.Model):
     redirect_uris = models.JSONField(default=list)
     #: The most it may ever ask for: `hcp:{category}:{read|write}` scopes.
     allowed_scopes = models.JSONField(default=list)
+    #: The purposes (`hcp.purposes` codes) it may read for; shown on the consent screen and
+    #: carried by every grant to it. Empty = the purposes of the scopes it is granted.
+    purposes = models.JSONField(default=list, blank=True)
     #: Operated by Dimagi (canopy's own tooling) rather than a third party. Only
     #: shown to the person; it grants nothing extra.
     first_party = models.BooleanField(default=False)

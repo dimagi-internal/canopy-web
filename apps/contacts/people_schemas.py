@@ -166,6 +166,11 @@ class SessionAgentOut(StrictModel):
     name: str
 
 
+class PurposeOut(StrictModel):
+    code: str
+    description: str
+
+
 class SessionMemoryOut(StrictModel):
     """Your agent memory as it applies in one session, and what you have granted
     the session's agent. A feature that is on here but not granted is what the
@@ -177,6 +182,10 @@ class SessionMemoryOut(StrictModel):
     agent: SessionAgentOut | None = Field(default=None, description="The agent a grant here goes to.")
     categories: list[str] = Field(default_factory=list,
                                   description="The categories a grant covers (shown before you grant).")
+    purposes: list[PurposeOut] = Field(default_factory=list, description="What a grant is for, each in words "
+                                                                          "(HCP v2 6.1.5.2), shown before you grant.")
+    purposes_by_feature: dict[str, list[str]] = Field(default_factory=dict, description="Which purpose codes each "
+                                                      "feature (record, use) serves.")
     reach: str = Field(default="", description="What a grant here would reach, in words — by "
                                                "default the agent's organisation, all divisions "
                                                "(HCP 4.1.5.1). Derived, never chosen here.")

@@ -18,6 +18,10 @@
       {% endfor %}
       </tbody>
     </table>
+    <p><strong>What it may use it for:</strong></p>
+    <ul class="notes">
+      {% for pu in purposes %}<li>{{ pu.description }}</li>{% endfor %}
+    </ul>
     <ul class="notes">
       {% for n in settings_notes %}<li>{{ n }}</li>{% endfor %}
     </ul>

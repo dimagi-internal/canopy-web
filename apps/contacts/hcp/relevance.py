@@ -23,6 +23,7 @@ from .core import (
 )
 from .entries import servable
 from .grants import categories_for, within_grant
+from .purposes import entry_serves, read_purpose
 
 # --- search (3.1, 4.4) -----------------------------------------------------------
 
@@ -170,7 +171,8 @@ def rank(candidates: list[PersonFact], query: str, *, limit: int,
 
 def search(person: Person, *, workspace_slugs, query: str, categories: list[str],
            purpose: str, max_entries: int, grant: PersonGrant | None, actor: Actor,
-           turn=None, project_id: int | None = None) -> tuple[list[PersonFact], list[str], str]:
+           turn=None, project_id: int | None = None,
+           purpose_code: str | None = None) -> tuple[list[PersonFact], list[str], str]:
     """searchPreferences. Returns (entries, categoriesSearched, retrievalId).
 
     `workspace_slugs`: every workspace to look in (None = entries in no
@@ -180,7 +182,9 @@ def search(person: Person, *, workspace_slugs, query: str, categories: list[str]
     4.4.2 — at most min(maxEntries, 20), never padded. 4.4.3 — ordered by
     relevance (`rank`), method declared by `minimization_method`.
     Every call appends `preference.read` (one per returned entry, or one for
-    an empty result), with the stated purpose.
+    an empty result), with the stated purpose. v2 6.1.5.2 / 7.1: an agent reads under a
+    purpose CODE its grant carries (`purpose_code`; a v1 caller names none and gets the
+    grant's default), and is served only entries whose own purposes include it.
     """
     slugs = list(workspace_slugs)
     if not (purpose or "").strip():
@@ -198,13 +202,15 @@ def search(person: Person, *, workspace_slugs, query: str, categories: list[str]
     outside = [c for c in wanted if c not in readable]
     if outside:
         raise denied(f"not authorized for {outside}")
+    code = "" if actor.is_person else read_purpose(grant, purpose_code)
     named = [s for s in slugs if s is not None]
     where = Q(workspace_id__in=named)
     if None in slugs:
         where |= Q(workspace__isnull=True)
     qs = servable(PersonFact.objects.filter(where, person=person, category__in=wanted)
                   ).select_related("project", "person", "workspace") if slugs else PersonFact.objects.none()
-    candidates = [f for f in qs if actor.is_person or within_grant(f, grant, "read")]
+    candidates = [f for f in qs if actor.is_person
+                  or (within_grant(f, grant, "read") and entry_serves(f, code))]
     returned, scores_all, stats = explain(candidates, query, limit=limit, project_id=project_id)
     hits = [sc.fact for sc in returned]
     workspace_slug = slugs[0] if slugs else None
@@ -216,13 +222,14 @@ def search(person: Person, *, workspace_slugs, query: str, categories: list[str]
     if hits:
         for sc in returned:
             audit(person, "preference.read", actor=actor, entry=sc.fact, purpose=purpose, grant=grant,
-                  turn=turn, detail=f"{detail}; why={sc.because}; query={asked}")
+                  turn=turn, detail=f"{detail}; why={sc.because}; query={asked}", purpose_code=code)
     else:
         best = stats["best_meaning"]
         why = (f"nothing matched (closest meaning {best:.2f}, cutoff {stats['floor']:.2f})"
                if best is not None else "nothing matched")
         audit(person, "preference.read", actor=actor, category=",".join(wanted)[:80], purpose=purpose,
-              grant=grant, workspace_slug=workspace_slug, turn=turn, detail=f"{detail}; why={why}; query={asked}")
+              grant=grant, workspace_slug=workspace_slug, turn=turn, detail=f"{detail}; why={why}; query={asked}",
+              purpose_code=code)
     from django.conf import settings
 
     from .. import embeddings
@@ -249,9 +256,13 @@ def minimization(actor: Actor) -> dict:
 
 
 def read_one(fact: PersonFact, *, actor: Actor, grant: PersonGrant | None, purpose: str,
-             turn=None) -> None:
-    """GET /v1/preferences/{id} (3.3.6): authorized and audited like a search."""
+             turn=None, purpose_code: str | None = None) -> None:
+    """GET /v1/preferences/{id} (3.3.6): authorized and audited like a search, and held to the
+    same purposes: an entry limited to other purposes is a missing one (3.3.6)."""
     if not (purpose or "").strip():
         raise malformed("purpose is required")
+    code = "" if actor.is_person else read_purpose(grant, purpose_code)
+    if not actor.is_person and not entry_serves(fact, code):
+        raise denied()
     audit(fact.person, "preference.read", actor=actor, entry=fact, purpose=purpose, grant=grant,
-          turn=turn, detail=f"single entry, version {fact.version}")
+          turn=turn, detail=f"single entry, version {fact.version}", purpose_code=code)
