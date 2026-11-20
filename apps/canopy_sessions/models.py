@@ -95,6 +95,12 @@ class Session(models.Model):
     # The agent CLI this conversation runs on (`harness.clis`), set by its first
     # claim and never changed: its history lives in that CLI's own store.
     cli = models.CharField(max_length=32, blank=True, default="", db_default="")
+    # The model this conversation's CLI starts on (`opus[1m]`), held from its first
+    # claim (`claim_payload.conversation_model`): a later change to its agent's
+    # `cli_models` or the server's DEFAULT_CLI_MODELS reaches new conversations
+    # only, never one mid-history (a new model re-reads the whole history uncached,
+    # and a smaller window cannot hold it). Cleared when the conversation moves CLI.
+    cli_model = models.CharField(max_length=64, blank=True, default="", db_default="")
     # Which transcript-ordinal scheme this session's Message rows were written
     # under. 0 = the original "turn_index == raw .jsonl record ordinal"; 1 = the
     # composite `record * BLOCK_STRIDE + block` that made a multi-block record's

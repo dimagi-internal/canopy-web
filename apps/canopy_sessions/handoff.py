@@ -269,8 +269,9 @@ def settle(h: SessionHandoff) -> SessionHandoff:
         if h.to_cli:
             # Held to the new CLI from here: its history starts with this turn.
             h.from_cli = session.cli
-            Session.objects.filter(pk=session.pk).update(cli=h.to_cli, cli_session_id="")
-            session.cli = h.to_cli
+            # The model held for the old CLI does not carry: the next claim picks one.
+            Session.objects.filter(pk=session.pk).update(cli=h.to_cli, cli_session_id="", cli_model="")
+            session.cli, session.cli_model = h.to_cli, ""
         source_name = h.source_runner.name if h.source_runner else "an unknown runner"
         prompt = build_prompt(h, source_name=source_name, target_name=target.name, resumed=resume)
         origin_ref = {"thread_key": binding.thread_key or str(session.id),

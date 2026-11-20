@@ -104,13 +104,16 @@ def is_brain_only(session, viewer) -> bool:
 
 
 def _session_model(session, runner) -> str:
-    """The model a bound conversation runs on, "" when unbound. A model its agent
-    names wins (every claim sends it); else what the box reports, since a session a
+    """The model a bound conversation runs on, "" when unbound. The one it holds
+    from its first claim wins (`Session.cli_model`, what every later claim sends);
+    else a model its agent names; else what the box reports, since a session a
     person started on their own machine runs the box's setting; else the server
     default every claim sends (`claim_payload.start_model`). A cloud box reports
     none: it only runs claimed turns."""
     if runner is None:
         return ""
+    if session.cli_model:
+        return session.cli_model
     cli = session.cli or "claude-code"
     agent = session.agent if session.agent_id else None
     named = (agent.cli_models or {}).get(cli) if agent else None
