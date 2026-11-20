@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from django.contrib.auth.models import User
 
-from apps.brain import consent, sources
+from apps.brain import consent, registry, sources
 from apps.brain.models import BrainCapability
 from apps.canopy_sessions.models import Session, SessionParticipant
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -20,10 +20,11 @@ def member(u, ws, role=WorkspaceMembership.EDITOR):
 def capability(slug, cls, purposes=("learn",), enabled=True, **kw):
     return BrainCapability.objects.create(slug=slug, name=slug, purpose_class=cls, purposes=list(purposes),
                                           enabled=enabled, subject_type="project" if cls == "project" else "person",
-                                          **kw)
+                                          source_kinds=["session"], **kw)
 
 
 def brain_world():
+    registry.ensure_builtin()          # what migration 0005 seeds; a database built without migrations has no row
     owner = user("jj")
     ws = Workspace.objects.create(slug="acme", display_name="Acme", created_by=owner)
     member(owner, ws, WorkspaceMembership.OWNER)

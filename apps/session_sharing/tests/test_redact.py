@@ -85,3 +85,17 @@ def test_redact_turn_walks_nested_content():
     assert n == 1
     assert "sk-abcd" not in str(new_content)
     assert plaintext == "plain text"
+
+
+def test_canopy_and_cloud_credentials_in_agent_work_are_scrubbed():
+    for text, marker in [
+        ("cact_" + "A1b2C3d4E5f6G7h8I9j0K1l2", "canopy-token"),
+        ("sealed zks1:AbCdEfGhIjKlMnOpQrStUv==", "sealed-secret"),
+        ("token ya29.A0ARrdaM-AbCdEfGhIjKlMnOpQrSt", "google-token"),
+        ("postgres://canopy:hunter2pass@db.internal/canopy", "url-credential"),
+        ("Authorization: Basic dXNlcjpwYXNzd29yZDEyMw==", "basic-auth"),
+    ]:
+        out, n = redact.redact_text(text)
+        assert marker in out and n >= 1, (text, out)
+    out, _ = redact.redact_text("see https://canopy.dimagi.com/w/x/projects/y and a:b")
+    assert "redacted" not in out                                       # a plain URL is left alone

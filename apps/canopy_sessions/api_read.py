@@ -538,6 +538,7 @@ def list_human_inputs(
         session = _session_by_key_or_404(request, session_id)
     rows, next_cursor, source = transcript_read.human_inputs(
         session, after=after, limit=clamp_limit(limit))
+    rows = transcript_read.brain_redacted(session, rows, user=request.user)
     return {
         "messages": [MessageOut.from_orm(m) for m in rows],
         "next_cursor": next_cursor,
