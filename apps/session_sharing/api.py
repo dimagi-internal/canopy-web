@@ -306,16 +306,6 @@ def upload_session(
 # ---------------------------------------------------------------------------
 
 
-def _teammate_ids(request, slugs: set[str]) -> set[int]:
-    """Everyone who shares one of `slugs` with the caller, themselves included."""
-    from apps.workspaces import services as wsvc
-
-    ids: set[int] = {request.user.pk}
-    for slug in slugs:
-        ids |= set(wsvc.member_user_ids(slug))
-    return ids
-
-
 def _teammates_link_shares(request) -> models.Q:
     """Link-visible rows a teammate made IN one of the caller's workspaces, under
     the read rule (`wsvc.request_workspace_slugs`: a pinned list uses the pin and
@@ -325,7 +315,10 @@ def _teammates_link_shares(request) -> models.Q:
     from apps.workspaces import services as wsvc
 
     slugs = wsvc.request_workspace_slugs(request)
-    return models.Q(owner_id__in=_teammate_ids(request, slugs), workspace_id__in=slugs)
+    teammates: set[int] = {request.user.pk}
+    for slug in slugs:
+        teammates |= set(wsvc.member_user_ids(slug))
+    return models.Q(owner_id__in=teammates, workspace_id__in=slugs)
 
 
 @router.get("/", response=list[SessionListItemOut], summary="List shared sessions")
