@@ -460,8 +460,6 @@ def resolve_principal(installation: SlackInstallation, slack_user_id: str,
         return None, Outcome(BLOCKED, "You can't reach agents from this Slack.", workspace_id=workspace_id)
     why = identity_reason(installation, slack_user_id, info, user=user, assurance=assurance,
                           workspace_id=workspace_id)
-    logger.info("slack %s:%s answered as contact %s in %s: %s", installation.team_id, slack_user_id,
-                contact.pk, workspace_id, why["reason"])
     return Principal(contact=contact, identity=why), None
 
 
