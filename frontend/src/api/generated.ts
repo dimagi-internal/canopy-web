@@ -19347,7 +19347,7 @@ export interface paths {
         readonly post?: never;
         /**
          * Stop all canopy learning from your sessions
-         * @description At once: every capability's next read of your sessions is "not found". Only you can do this.
+         * @description At once: every learner's next read of your sessions is "not found". Only you can do this.
          */
         readonly delete: operations["revoke_my_learning"];
         readonly options?: never;
@@ -19366,7 +19366,7 @@ export interface paths {
         readonly get: operations["get_my_session_learning"];
         /**
          * Take one of your sessions out of canopy learning
-         * @description Your act: no capability may learn from this session again, and what was derived from it is
+         * @description Your act: nothing may learn from this session again, and what was derived from it is
          *     withdrawn. If others were in it, it also leaves every shared use; what was learned about them
          *     from their own words stays. Only you can do this.
          */
@@ -50491,7 +50491,7 @@ export interface components {
             readonly include_new: boolean;
             /**
              * Standing Rules
-             * @description Deny-only rules, each naming capability, purpose, class and/or workspace. Omit to keep.
+             * @description Deny-only rules, each naming the learner, purpose, class and/or workspace it denies. Omit to keep.
              */
             readonly standing_rules?: readonly {
                 readonly [key: string]: string;
