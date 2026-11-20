@@ -2507,3 +2507,59 @@ def test_branch_seed_keeps_the_first_ask_and_the_end_when_long(hal, ws):
     assert seed.startswith("## You\n\nTHE ORIGINAL ASK") and "step 59" in seed
     assert omitted > 0 and "left out to fit" in seed and len(seed) < 2300
     assert "SECRET OUTPUT" not in seed                               # tool output never seeds
+
+
+# --- why a Slack sender was a contact (services.identity_reason) -------------
+
+
+def _identity(turn) -> dict:
+    from apps.harness.caller_context import build
+    from apps.harness.models import TurnEvent
+
+    ref = turn.origin_ref["slack_identity"]
+    assert build(turn)["slack_identity"] == ref
+    logged = TurnEvent.objects.filter(turn=turn, kind=services.IDENTITY_EVENT)
+    assert [e.payload for e in logged] == [ref]
+    return ref
+
+
+def test_a_guest_contact_says_it_was_a_guest(slack, installation, hal, alice):
+    slack.users[ALICE]["is_restricted"] = True
+    mention("hal hello")
+    why = _identity(Turn.objects.get())
+    assert why["reason"] == services.GUEST and why["is_guest"] is True
+    assert why["profile_email"] == "alice@dimagi.com"
+    assert "guest" in why["detail"]
+
+
+def test_an_unverified_account_email_names_the_near_miss(slack, installation, hal, ws):
+    claimant = a_user("alice@dimagi.com")
+    wsvc.ensure_member(ws, claimant, WorkspaceMembership.EDITOR)
+    mention("hal hello")
+    why = _identity(Turn.objects.get())
+    assert why["reason"] == services.NO_VERIFIED_ACCOUNT
+    assert why["account_email_unverified"] == claimant.pk
+
+
+def test_another_slack_team_is_named(slack, installation, hal, alice):
+    slack.users[ALICE]["team_id"] = "T_PARTNER"
+    mention("hal hello")
+    why = _identity(Turn.objects.get())
+    assert (why["reason"], why["slack_team"]) == (services.OTHER_TEAM, "T_PARTNER")
+
+
+def test_a_linked_user_outside_the_workspace_is_named(slack, installation, hal):
+    outsider = a_user("outsider@dimagi.com")
+    SlackUserLink.objects.create(installation=installation, slack_user_id=ALICE, user=outsider)
+    mention("hal do it")
+    why = _identity(Turn.objects.get())
+    assert (why["reason"], why["account"]) == (services.LINKED_NOT_MEMBER, outsider.pk)
+
+
+def test_a_member_carries_no_identity_note(slack, installation, hal, alice):
+    from apps.harness.caller_context import build
+
+    mention("hal hello")
+    turn = Turn.objects.get()
+    assert "slack_identity" not in (turn.origin_ref or {})
+    assert build(turn)["slack_identity"] is None
