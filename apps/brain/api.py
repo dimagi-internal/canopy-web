@@ -75,7 +75,7 @@ def set_my_learning(request: HttpRequest, payload: LearningIn) -> dict:
                summary="Stop all canopy learning from your sessions")
 @gate("self", setting=True)  # who may learn from your sessions
 def revoke_my_learning(request: HttpRequest) -> dict:
-    """At once: every capability's next read of your sessions is "not found". Only you can do this."""
+    """At once: every learner's next read of your sessions is "not found". Only you can do this."""
     user = _the_person(request)
     if not consent.revoke(user):
         raise ProblemError(404, "You have not agreed to canopy learning", type_=TYPE_NOT_FOUND)
@@ -106,7 +106,7 @@ def _source_out(user, session) -> dict:
             summary="Take one of your sessions out of canopy learning")
 @gate("self", setting=True)  # who may learn from this session
 def exclude_my_session(request: HttpRequest, session_id: uuid.UUID) -> dict:
-    """Your act: no capability may learn from this session again, and what was derived from it is
+    """Your act: nothing may learn from this session again, and what was derived from it is
     withdrawn. If others were in it, it also leaves every shared use; what was learned about them
     from their own words stays. Only you can do this."""
     user = _the_person(request)

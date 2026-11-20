@@ -35,7 +35,7 @@ class LearningIn(StrictModel):
     workspaces: list[str] = Field(default_factory=list, description="Empty means every workspace you are in.")
     include_new: bool = True
     standing_rules: list[dict[str, str]] | None = Field(
-        None, description="Deny-only rules, each naming capability, purpose, class and/or workspace. Omit to keep.")
+        None, description="Deny-only rules, each naming the learner, purpose, class and/or workspace it denies. Omit to keep.")
     directives: list[str] | None = Field(None, description="Words every reader is shown. Omit to keep.")
 
 
