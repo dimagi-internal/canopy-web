@@ -46,7 +46,7 @@ def prompt(cap: BrainCapability, run: BrainRun) -> str:
 
 
 @transaction.atomic
-def start(cap: BrainCapability, *, subject=None, purpose: str = "") -> BrainRun:
+def start(cap: BrainCapability, *, subject=None, purpose: str = "", floor: int = 0) -> BrainRun:
     if not readers.enabled():
         raise StartRefusedError("canopy's learning reads are not switched on")
     if not cap.enabled or cap.operator_id is None:
@@ -55,7 +55,8 @@ def start(cap: BrainCapability, *, subject=None, purpose: str = "") -> BrainRun:
     if purpose not in (cap.purposes or []):
         raise StartRefusedError(f"{cap.slug} does not declare the purpose {purpose!r}")
     subject_type, subject_id = _subject(cap, subject)
-    run = BrainRun.objects.create(capability=cap, subject_type=subject_type, subject=subject_id, purpose=purpose)
+    run = BrainRun.objects.create(capability=cap, subject_type=subject_type, subject=subject_id, purpose=purpose,
+                                  floor=max(0, floor))
     session = session_services.create_session(
         workspace=cap.operator.workspace, agent=cap.operator, title=f"{cap.name}: learning run {run.pk}",
         metadata={BRAIN_RUN_METADATA_KEY: str(run.pk)})
@@ -65,3 +66,24 @@ def start(cap: BrainCapability, *, subject=None, purpose: str = "") -> BrainRun:
         session=session, origin=Turn.ORIGIN_API, prompt=prompt(cap, run), idempotency_key=f"brain-run:{run.pk}",
         origin_ref={"brain_run": str(run.pk)}, initiator=who.system(via="brain-run", accountable=cap.registered_by))
     return run
+
+
+def finish(run: BrainRun, *, ok: bool) -> None:
+    """The run's turn ended. A clean end moves the feature's cursor past everything the run read (so the next
+    run reads only what is new); a failed one leaves it where it was, and the scheduler tries again."""
+    from django.utils import timezone  # noqa: PLC0415 — as the other lazy imports here
+
+    from .models import BrainCursor, BrainRunRead  # noqa: PLC0415
+
+    if run.state != BrainRun.OPEN:
+        return
+    with transaction.atomic():
+        BrainRun.objects.filter(pk=run.pk, state=BrainRun.OPEN).update(
+            state=BrainRun.DONE if ok else BrainRun.FAILED, finished_at=timezone.now())
+        if ok and run.subject_type != "person":
+            last = max(BrainRunRead.objects.filter(run=run).values_list("source_id", flat=True), default=run.floor)
+            cursor, _ = BrainCursor.objects.get_or_create(
+                capability=run.capability, subject_type=run.subject_type, subject=run.subject)
+            if last > cursor.last_source:
+                cursor.last_source = last
+                cursor.save(update_fields=["last_source"])

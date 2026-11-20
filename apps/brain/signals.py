@@ -8,7 +8,10 @@ from django.db import transaction
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
-from . import associate
+from apps.harness.signals import turn_status_changed
+
+from . import associate, runs
+from .models import BrainRun
 
 
 @receiver(post_save, sender="canopy_sessions.Session", dispatch_uid="brain_activity_fold_schedules_association")
@@ -17,3 +20,16 @@ def _schedule_after_fold(sender, instance, created, update_fields=None, **kwargs
         return
     session_id = instance.pk
     transaction.on_commit(lambda: associate.schedule(session_id))
+
+
+@receiver(turn_status_changed, dispatch_uid="brain_run_ends_with_its_turn")
+def _run_ends_with_its_turn(sender, turn, **kwargs):
+    """A turn in a brain run's conversation reached an end: the run is over, and a clean end moves the
+    feature's cursor (`runs.finish`)."""
+    from apps.harness.models import Turn  # noqa: PLC0415 — receivers load at ready()
+
+    if turn.status not in Turn.TERMINAL or not turn.chat_session_id:
+        return
+    run = BrainRun.objects.filter(session_id=turn.chat_session_id, state=BrainRun.OPEN).select_related("capability").first()
+    if run is not None:
+        runs.finish(run, ok=turn.status == Turn.DONE)

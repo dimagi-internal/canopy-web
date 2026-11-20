@@ -334,12 +334,15 @@ def seed_signature(project: AgentProject, *, min_sessions: int = 2) -> ProjectSi
     return sig
 
 
-def compare(project: AgentProject, truth, *, tiers=(SourceLink.CORE,)) -> dict:
-    """Precision and recall of the project's stored links against a hand-checked set of session ids:
-    how a signature is validated before it is trusted."""
+def compare(project: AgentProject, truth, *, tiers=(SourceLink.CORE,), how: str = "") -> dict:
+    """Precision and recall of the project's stored links (those made `how`, when named) against a hand-checked
+    set of session ids: how a signature, or a judge, is validated before it is trusted."""
     truth = {str(t) for t in truth}
-    chosen = set(SourceLink.objects.filter(subject_type=SourceLink.PROJECT_SUBJECT, subject=str(project.pk),
-                                           tier__in=list(tiers)).values_list("source__ref", flat=True))
+    links = SourceLink.objects.filter(subject_type=SourceLink.PROJECT_SUBJECT, subject=str(project.pk),
+                                      tier__in=list(tiers))
+    if how:
+        links = links.filter(how=how)
+    chosen = set(links.values_list("source__ref", flat=True))
     hits = chosen & truth
     return {"selected": len(chosen), "truth": len(truth), "hits": len(hits),
             "precision": round(len(hits) / len(chosen), 3) if chosen else None,

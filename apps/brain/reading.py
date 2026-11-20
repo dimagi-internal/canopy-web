@@ -20,6 +20,10 @@ from .models import ABOUT_A_PERSON, BrainRun, BrainRunRead, BrainSource, Learnin
 
 #: Sources one `brain_read` serves at most, messages per source, characters per message and per call.
 MAX_SOURCES, MAX_MESSAGES, MAX_MESSAGE_CHARS, MAX_CHARS = 5, 400, 6000, 150_000
+#: The purpose of a run that decides which project sessions belong to (layer 3 of `associate`): it is served
+#: the title and the person's opening lines only, and the project's outcome and open tasks beside them.
+JUDGE = "judge"
+JUDGE_LINES, JUDGE_LINE_CHARS = 6, 600
 
 
 class NotReadingError(RuntimeError):
@@ -31,10 +35,15 @@ def candidates(run: BrainRun, after: int = 0):
     cap = run.capability
     subject = int(run.subject) if cap.purpose_class in ABOUT_A_PERSON else None
     qs = eligible_sources(cap, run.purpose, subject)
-    if run.subject_type == "project":
+    if run.subject_type == "project" and run.purpose == JUDGE:
+        # What the judge rules on: sessions only weakly tied to the project, never one already judged or
+        # declared (a link above `signals` is settled).
+        qs = qs.filter(links__subject_type=SourceLink.PROJECT_SUBJECT, links__subject=run.subject,
+                       links__tier=SourceLink.CANDIDATE, links__how=SourceLink.SIGNALS)
+    elif run.subject_type == "project":
         qs = qs.filter(links__subject_type=SourceLink.PROJECT_SUBJECT, links__subject=run.subject,
                        links__tier=SourceLink.CORE)
-    return qs.filter(pk__gt=after).order_by("pk")
+    return qs.filter(pk__gt=max(after, run.floor)).order_by("pk")
 
 
 def _is_subjects(message, subject_id: int, creator_id) -> bool:
@@ -46,7 +55,38 @@ def _is_subjects(message, subject_id: int, creator_id) -> bool:
     return creator_id == subject_id
 
 
+def _judge_messages(session) -> tuple[list[dict], bool]:
+    """The first lines a person typed, short: enough to say what a session was about, not what it said."""
+    rows = (Message.objects.filter(session=session, role=Message.USER).order_by("turn_index")
+            .values_list("turn_index", "plaintext"))
+    out = []
+    for index, text in rows.iterator(chunk_size=50):
+        text = (text or "").strip()
+        if not text or is_system_noise(text):
+            continue
+        out.append({"index": index, "role": Message.USER, "text": redact.redact_text(text)[0][:JUDGE_LINE_CHARS]})
+        if len(out) >= JUDGE_LINES:
+            break
+    return out, False
+
+
+def _project_context(run: BrainRun) -> dict:
+    """The project a judge rules for: what done looks like and what is still open. Its own words, not a session's."""
+    from apps.agents.models import AgentProject, AgentTask  # noqa: PLC0415 — as the other lazy imports here
+
+    project = AgentProject.objects.filter(pk=run.subject).first()
+    if project is None:
+        return {}
+    open_tasks = list(project.tasks.filter(status__in=AgentTask.LIVE_STATUSES)
+                      .order_by("-updated_at").values_list("title", flat=True)[:15])
+    return {"handle": project.handle, "name": project.name,
+            "outcome": redact.redact_text(project.outcome or "")[0][:1500],
+            "open_tasks": [redact.redact_text(t or "")[0][:200] for t in open_tasks]}
+
+
 def _messages(run: BrainRun, source: BrainSource, session) -> tuple[list[dict], bool]:
+    if run.purpose == JUDGE:
+        return _judge_messages(session)
     about_person = run.capability.purpose_class in ABOUT_A_PERSON
     subject_id = int(run.subject) if about_person else None
     out, chars, truncated = [], 0, False
@@ -96,6 +136,9 @@ def read_next(run: BrainRun, *, after: int = 0, limit: int = MAX_SOURCES, turn_i
                            "started_at": source.session.created_at, "messages": messages, "truncated": truncated,
                            "directives": _directives(source, run.capability.purpose_class)})
     last = page[-1].pk if page else after
-    return {"run": run.pk, "learner": run.capability.slug, "purpose": run.purpose,
-            "subject_type": run.subject_type, "subject": run.subject, "sources": served,
-            "next_after": last, "done": not candidates(run, last).exists()}
+    out = {"run": run.pk, "learner": run.capability.slug, "purpose": run.purpose,
+           "subject_type": run.subject_type, "subject": run.subject, "sources": served,
+           "next_after": last, "done": not candidates(run, last).exists()}
+    if run.purpose == JUDGE and run.subject_type == "project":
+        out["project"] = _project_context(run)
+    return out
