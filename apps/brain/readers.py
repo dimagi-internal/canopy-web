@@ -29,7 +29,7 @@ from .models import BrainSource, SourceLink
 
 logger = logging.getLogger(__name__)
 
-#: The feature a project's readers read under (`migrations/0004_outputs_runs_and_the_built_in_learner.py`).
+#: The feature a project's readers read under (`migrations/0005_builtin_learner.py`).
 PROJECT_READERS = "project-readers"
 READ = "read"
 READ_EVENT = "brain.read"

@@ -104,7 +104,7 @@ A `BrainCapability` is registered by a canopy admin (`POST /api/brain/capabiliti
 class, the purposes it declares, the source kinds and output kinds it works with, an `operator` agent and the plugin
 `entry` a run starts with. It starts dark (`enabled` false). Its audience is its class's (`registry.CLASS_AUDIENCE`)
 and may only narrow: a wider one is refused, because that is a new class each person must agree to. The built-in
-`project-readers` (migration `0004`) is the purpose a project's readers read a session under.
+`project-readers` (migration `0005`) is the purpose a project's readers read a session under.
 
 ## Who sees what it produced (`apps/brain/outputs.py`)
 

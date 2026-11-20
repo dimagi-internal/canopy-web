@@ -94,7 +94,7 @@ def update(cap: BrainCapability, **changes) -> BrainCapability:
 
 
 #: The one learner canopy itself needs: what a project's readers read a session under (`readers.project_q`).
-#: Migration `0004_outputs_runs_and_the_built_in_learner` seeds the same row; `ensure_builtin` is for a database built without
+#: Migration `0005_builtin_learner` seeds the same row; `ensure_builtin` is for a database built without
 #: migrations (tests) and `tests/test_brain_admin_api.py` holds the two equal.
 PROJECT_READERS = {
     "slug": "project-readers", "name": "Project readers",
