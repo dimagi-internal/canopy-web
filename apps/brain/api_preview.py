@@ -53,6 +53,10 @@ def the_person(request: HttpRequest):
     return user
 
 
+#: The name `api_graph` (the network graph) imports it by.
+_the_person = the_person
+
+
 def _window(since, until, after: str, session: str = ""):
     until = until or timezone.now()
     since = since or until - dt.timedelta(days=1)
