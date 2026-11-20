@@ -248,6 +248,10 @@ export function SessionMemoryPanel({ memory }: { memory: SessionMemoryControl })
           )
         })}
       </ul>
+      <p className="mt-1 text-muted-foreground">
+        What an agent reads may be used for at most {state.longest_copy_hours ?? 1} hour
+        {(state.longest_copy_hours ?? 1) === 1 ? '' : 's'}, and stops at once if you revoke.
+      </p>
       {(state.excluded_categories ?? []).length > 0 && (
         <p className="mt-1 text-muted-foreground">
           Left out by your standing rules: {(state.excluded_categories ?? []).join(', ')}

@@ -6,9 +6,10 @@ import uuid
 from dataclasses import dataclass
 
 from django.db.models import Q
+from django.utils import timezone
 
 from ..models import Person, PersonFact, PersonGrant
-from . import rules
+from . import disclosure, rules
 from .core import (
     HELD_CATEGORIES,
     HYBRID_METHOD,
@@ -220,22 +221,29 @@ def search(person: Person, *, workspace_slugs, query: str, categories: list[str]
     # `readWhy` parses this; `query=` stays last, since a question may hold ';').
     asked = " ".join((query or "").split())[:200]
     detail = f"retrievalId=urn:uuid:{retrieval}; returned={len(hits)}"
+    now = timezone.now()
+    data = {"retrievalId": f"urn:uuid:{retrieval}", "maxEntries": limit, "categoriesSearched": wanted}
     if not actor.is_person:
         # 8.2: the log records which directives the result carried (6.4).
         carried = [d["directiveId"] for d in rules.delivered(grant, hits)]
         if carried:
             detail += f"; directives={','.join(carried)}"
+            data["directives"] = carried
     if hits:
         for sc in returned:
             audit(person, "preference.read", actor=actor, entry=sc.fact, purpose=purpose, grant=grant,
-                  turn=turn, detail=f"{detail}; why={sc.because}; query={asked}", purpose_code=code)
+                  turn=turn, detail=f"{detail}; why={sc.because}; query={asked}", purpose_code=code,
+                  data={**data, "version": sc.fact.version,
+                        **({"useUntil": disclosure.use_until(
+                            sc.fact, now=now, notified=disclosure.has_notification_endpoint(grant)).isoformat()}
+                           if not actor.is_person else {})})
     else:
         best = stats["best_meaning"]
         why = (f"nothing matched (closest meaning {best:.2f}, cutoff {stats['floor']:.2f})"
                if best is not None else "nothing matched")
         audit(person, "preference.read", actor=actor, category=",".join(wanted)[:80], purpose=purpose,
               grant=grant, workspace_slug=workspace_slug, turn=turn, detail=f"{detail}; why={why}; query={asked}",
-              purpose_code=code)
+              purpose_code=code, data=data)
     from django.conf import settings
 
     from .. import embeddings
@@ -270,5 +278,12 @@ def read_one(fact: PersonFact, *, actor: Actor, grant: PersonGrant | None, purpo
     code = "" if actor.is_person else read_purpose(grant, purpose_code)
     if not actor.is_person and not entry_serves(fact, code):
         raise denied()
+    data = {"version": fact.version}
+    if not actor.is_person:
+        data["useUntil"] = disclosure.use_until(
+            fact, notified=disclosure.has_notification_endpoint(grant)).isoformat()
+        carried = [d["directiveId"] for d in rules.delivered(grant, [fact])]
+        if carried:
+            data["directives"] = carried
     audit(fact.person, "preference.read", actor=actor, entry=fact, purpose=purpose, grant=grant,
-          turn=turn, detail=f"single entry, version {fact.version}", purpose_code=code)
+          turn=turn, detail=f"single entry, version {fact.version}", purpose_code=code, data=data)

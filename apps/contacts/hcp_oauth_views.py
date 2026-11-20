@@ -120,6 +120,10 @@ def authorize(request: HttpRequest) -> HttpResponse:
         return render(request, "contacts/hcp_consent.html", {
             "client": req.client, "rows": hcp_oauth.describe_scopes(kept_scopes),
             "excluded": excluded,
+            # 6.1.6 / 7.6: the longest a copy it receives may be used, told before the act.
+            "copy_hours": int(hcp.disclosure.longest_copy(
+                [":".join(sc.split(":")[1:-1]) for sc in kept_scopes],
+                notified=bool(req.client.webhook_url)).total_seconds() // 3600),
             "purposes": hcp.purposes.describe(hcp_oauth.client_purposes(req.client, req.scopes)),
             "workspaces": hcp_oauth.workspace_sources(person),
             "expiries": [(k, expiry_labels[k]) for k in hcp_oauth.TEMPORARY_CHOICES],
@@ -185,5 +189,9 @@ def mcp_manifest(request: HttpRequest) -> HttpResponse:
 def root_discovery(request: HttpRequest) -> HttpResponse:
     """Appendix C at the origin's /.well-known/hcp-configuration — the same document
     as `<issuer>/.well-known/hcp-configuration`."""
+    if (request.headers.get("HCP-Version") or "").strip() == "2.0":
+        resp = JsonResponse(hcp.discovery_v2(issuer(request)), content_type="application/ld+json")
+        resp["HCP-Version"] = "2.0"
+        return resp
     body = {**hcp.discovery(issuer(request)), "hcp_version": hcp.HCP_VERSION}
     return JsonResponse(body, content_type="application/ld+json")

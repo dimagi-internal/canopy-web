@@ -342,6 +342,9 @@ def session_memory_payload(person: Person, session) -> dict:
             # v2 6.3 / 6.1.6: categories a standing rule of yours keeps from this agent's grant.
             "excluded_categories": hcp.rules.exclusions(person, hcp.rules.PROVIDER_OPERATOR, set(),
                                                         hcp.HELD_CATEGORIES)[1],
+            # v2 7.6: canopy's own agents have no way to be told of a revocation, so a copy lasts an hour.
+            "longest_copy_hours": int(hcp.disclosure.longest_copy(hcp.HELD_CATEGORIES, notified=False)
+                                      .total_seconds() // 3600),
             "purposes_by_feature": {f: [hcp.purposes.FOR_ACTION[hcp._ACTION_OF[f]]] for f in hcp.FEATURES},
             # 4.1.5.1: what a grant here would reach (derived, never chosen in the prompt),
             # and the organisation it serves, for the prompt's words.

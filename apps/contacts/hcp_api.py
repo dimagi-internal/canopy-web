@@ -97,7 +97,7 @@ def hcp_route(view):
     def wrapper(request: HttpRequest, *args, **kwargs):
         try:
             asked = (request.headers.get("HCP-Version") or "").strip()
-            if asked and asked != hcp.HCP_VERSION:
+            if asked and asked != hcp.HCP_VERSION and not (asked == "2.0" and request.path.endswith("hcp-configuration")):
                 raise hcp.HcpError("unsupported-version", f"this instance serves {hcp.HCP_VERSION}")
             return view(request, *args, **kwargs)
         except hcp.HcpError as err:
@@ -355,7 +355,12 @@ def _by_user(request: HttpRequest):
 def _render(fact: PersonFact, p: Principal, detail: str = "full") -> dict:
     if detail == "minimal":
         return hcp.to_minimal(fact)
-    return hcp.to_entry(fact, redact=not p.actor.is_person)
+    entry = hcp.to_entry(fact, redact=not p.actor.is_person)
+    if not p.actor.is_person:
+        # v2 7.6, additive: when this copy stops being usable without fetching it again.
+        entry["record"]["metadata"]["canopy:useUntil"] = hcp.disclosure.use_until(
+            fact, notified=hcp.disclosure.has_notification_endpoint(p.grant)).isoformat()
+    return entry
 
 
 # --- discovery -------------------------------------------------------------------
@@ -363,6 +368,7 @@ def _render(fact: PersonFact, p: Principal, detail: str = "full") -> dict:
 
 @router.get("/.well-known/hcp-configuration", auth=None, operation_id="hcp_configuration",
             summary="HCP discovery document")
+@hcp_route
 # `self` = the person's own instance; `hcp-grant` = an agent, for the person
 # who started its turn, under that client's grant. A missing entry is 403.
 # the discovery document; names no person
@@ -370,6 +376,11 @@ def _render(fact: PersonFact, p: Principal, detail: str = "full") -> dict:
 def hcp_configuration(request: HttpRequest):
     """Appendix C: what this HCP instance supports."""
     base = request.build_absolute_uri("/api/hcp").rstrip("/")
+    if (request.headers.get("HCP-Version") or "").strip() == "2.0":
+        # v2 3.3 / 9.3: a client that asks for the version we also serve gets that version's document.
+        resp = JsonResponse(hcp.discovery_v2(base), content_type=LD_JSON)
+        resp["HCP-Version"] = "2.0"
+        return resp
     return _ok(hcp.discovery(base))
 
 

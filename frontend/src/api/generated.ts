@@ -19772,6 +19772,205 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/hcp/v2/entries/query": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * HCP v2: recall what is relevant about the person you are serving
+         * @description Query (HCP v2 5.2.1). A client receives disclosures: the content, the assertion, the categories
+         *     its grant covers, `standing`, a grant-scoped `ref` and `useUntil` (7.4, 7.6), with the directives that
+         *     apply. Never paginated, at most 20, never padded; every read is on the person's audit log.
+         */
+        readonly post: operations["hcp_v2_queryContext"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/hcp/v2/entries/{entry_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * HCP v2: one entry
+         * @description Get entry (HCP v2 5.2.2): by `ref` for a client, by id for the person. 403 for a missing entry too.
+         */
+        readonly get: operations["hcp_v2_getEntry"];
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * HCP v2: withdraw an entry
+         * @description Withdraw (HCP v2 5.2.5): the entry is hidden from clients at once and still held and visible to
+         *     you. `hardDelete=true` removes it entirely and is the person's alone, over HTTP only (5.4.2).
+         */
+        readonly delete: operations["hcp_v2_withdrawEntry"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/hcp/v2/entries": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * HCP v2: remember something about the person
+         * @description Create (HCP v2 5.2.3): about the person who started `turn`, in categories your grant may write.
+         *     `model-inferred` needs a `confidence`. A client's `person-declared` is recorded `unverified` (3.7):
+         *     only the person's own write is `authenticated`. `issuer-attested` is only ever from the issuer, which
+         *     canopy has no way to authenticate, so it is refused. Relationships: `derivedFrom` (an entry or a
+         *     source), `duplicates`, `supersedes`, `contradicts`.
+         */
+        readonly post: operations["hcp_v2_createEntry"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/hcp/v2/entries/{entry_id}/revisions": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * HCP v2: revise an entry
+         * @description Revise (HCP v2 5.2.4): a new version of the same entry, replacing its content whole; a stale
+         *     `expectedVersion` is a `version-conflict` and changes nothing. A client may not revise what the person
+         *     rejected (3.8); the new version starts with no confirmations.
+         */
+        readonly post: operations["hcp_v2_reviseEntry"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/hcp/v2/grants": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * HCP v2: grants
+         * @description The person (a management client): every grant, `status` = active | revoked | expired | all.
+         *     A client: only the grant it acts under (5.2.6); a grant is never disclosed to another client.
+         */
+        readonly get: operations["hcp_v2_listGrants"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/hcp/v2/grants/{grant_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * HCP v2: revoke or relinquish a grant
+         * @description The person revokes any grant of theirs (6.2.1); a client may give up the grant it acts under
+         *     (5.2.7) and no other. Never rate limited. Every request after it fails, whatever token it carries.
+         */
+        readonly delete: operations["hcp_v2_revokeGrant"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/hcp/v2/audit": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * HCP v2 governance: my audit log
+         * @description Every read and change of your entries in HCP v2's event shape (8.2), newest first, with an opaque
+         *     cursor (9.5). Yours only; no agent can read it.
+         */
+        readonly get: operations["hcp_v2_listAudit"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/hcp/v2/export": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * HCP v2 governance: export everything held about me
+         * @description Every entry (current versions, withdrawn ones included unless `exclude=deleted`), your standing rules
+         *     and directives, and, with `include=audit`, the log (5.4.1). The person only.
+         */
+        readonly get: operations["hcp_v2_export"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/hcp/v2/disclosures": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * HCP v2 governance: what each client received
+         * @description The disclosure summary (HCP v2 8.6): per client, which grants, categories, purposes, how many
+         *     distinct entries and retrievals, over what period, until when the copies stay usable, and whether a
+         *     revocation reached it. Computed from your audit log; it cannot show what a client did with a copy.
+         */
+        readonly get: operations["hcp_v2_disclosures"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/hcp-admin/clients": {
         readonly parameters: {
             readonly query?: never;
@@ -24192,6 +24391,12 @@ export interface components {
              * @description Categories a standing rule of yours keeps from a grant to this agent (HCP v2 6.3), shown before you grant.
              */
             readonly excluded_categories?: readonly string[];
+            /**
+             * Longest Copy Hours
+             * @description The longest what an agent reads may be used before it must be read again (HCP v2 7.6); it stops at once if you revoke.
+             * @default 1
+             */
+            readonly longest_copy_hours: number;
             /**
              * Purposes By Feature
              * @description Which purpose codes each feature (record, use) serves.
@@ -49621,6 +49826,12 @@ export interface components {
              */
             readonly excluded_categories?: readonly string[];
             /**
+             * Longest Copy Hours
+             * @description The longest what an agent reads may be used before it must be read again (HCP v2 7.6); it stops at once if you revoke.
+             * @default 1
+             */
+            readonly longest_copy_hours: number;
+            /**
              * Purposes By Feature
              * @description Which purpose codes each feature (record, use) serves.
              */
@@ -50841,8 +51052,8 @@ export interface components {
              */
             readonly model?: string | null;
         };
-        /** PurposesIn */
-        readonly PurposesIn: {
+        /** HcpV2PurposesIn */
+        readonly HcpV2PurposesIn: {
             /**
              * Permittedpurposes
              * @description The purpose codes the entry may be used for, narrower than its writer permitted; null removes your narrowing (never the writer's).
@@ -50854,8 +51065,8 @@ export interface components {
              */
             readonly expectedVersion?: number | null;
         };
-        /** ConfirmationIn */
-        readonly ConfirmationIn: {
+        /** HcpV2ConfirmationIn */
+        readonly HcpV2ConfirmationIn: {
             /**
              * Disposition
              * @description confirmed or rejected.
@@ -50867,8 +51078,8 @@ export interface components {
              */
             readonly expectedVersion?: number | null;
         };
-        /** RuleIn */
-        readonly RuleIn: {
+        /** HcpV2RuleIn */
+        readonly HcpV2RuleIn: {
             /**
              * Operators
              * @description Client operators it denies: a DNS domain (that host and its subdomains) or one operator identifier.
@@ -50885,8 +51096,8 @@ export interface components {
              */
             readonly categories?: readonly string[] | null;
         };
-        /** DirectiveIn */
-        readonly DirectiveIn: {
+        /** HcpV2DirectiveIn */
+        readonly HcpV2DirectiveIn: {
             /**
              * Action
              * @description share, sign, transact, or an absolute URI.
@@ -50906,6 +51117,133 @@ export interface components {
             readonly categories?: readonly string[] | null;
             /** Operators */
             readonly operators?: readonly string[] | null;
+        };
+        /** HcpV2QueryIn */
+        readonly HcpV2QueryIn: {
+            /**
+             * Query
+             * @description Natural language description of the context or task.
+             */
+            readonly query: string;
+            /**
+             * Categories
+             * @description Categories to query; omitted = every one the grant can read for the purpose named.
+             */
+            readonly categories?: readonly string[] | null;
+            /**
+             * Purpose
+             * @description A purpose code the grant approved for those categories.
+             */
+            readonly purpose: string;
+            /**
+             * Purposedescription
+             * @description Plain language statement of the task; recorded in the audit log.
+             */
+            readonly purposeDescription?: string | null;
+            /**
+             * Maxentries
+             * @description At most this many (ceiling 20).
+             * @default 5
+             */
+            readonly maxEntries: number;
+        };
+        /** HcpV2AssertionIn */
+        readonly HcpV2AssertionIn: {
+            /** Declarationtype */
+            readonly declarationType: string;
+            /** Confidence */
+            readonly confidence?: string | null;
+            /** Validuntil */
+            readonly validUntil?: string | null;
+            /** Basis */
+            readonly basis?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /** Permittedpurposes */
+            readonly permittedPurposes?: readonly string[] | null;
+        };
+        /** HcpV2ClassificationIn */
+        readonly HcpV2ClassificationIn: {
+            /** Categories */
+            readonly categories: readonly string[];
+            /** Dimension */
+            readonly dimension?: string | null;
+        };
+        /** HcpV2ContentIn */
+        readonly HcpV2ContentIn: {
+            /** Profile */
+            readonly profile: string;
+            /** Value */
+            readonly value: string;
+            /** Language */
+            readonly language?: string | null;
+        };
+        /** HcpV2EntryIn */
+        readonly HcpV2EntryIn: {
+            /**
+             * Schema
+             * @description The entry structure version (4.2).
+             */
+            readonly schema: string;
+            readonly subject: components["schemas"]["HcpV2SubjectIn"];
+            readonly content: components["schemas"]["HcpV2ContentIn"];
+            readonly classification: components["schemas"]["HcpV2ClassificationIn"];
+            readonly assertion: components["schemas"]["HcpV2AssertionIn"];
+            /** Evidence */
+            readonly evidence?: readonly {
+                readonly [key: string]: unknown;
+            }[] | null;
+            readonly record: components["schemas"]["HcpV2RecordIn"];
+        };
+        /** HcpV2ProvenanceIn */
+        readonly HcpV2ProvenanceIn: {
+            /** Assertedby */
+            readonly assertedBy?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /** Assertedat */
+            readonly assertedAt?: string | null;
+            /** Source */
+            readonly source: string;
+        };
+        /** HcpV2RecordIn */
+        readonly HcpV2RecordIn: {
+            readonly provenance: components["schemas"]["HcpV2ProvenanceIn"];
+            /** Relationships */
+            readonly relationships?: readonly components["schemas"]["HcpV2RelationshipIn"][] | null;
+        };
+        /** HcpV2RelationshipIn */
+        readonly HcpV2RelationshipIn: {
+            /** Type */
+            readonly type: string;
+            /**
+             * Target
+             * @description The target entry's `ref` (a client) or id (the person), or `urn:canopy:source:<kind>:<ref>` for a source a derivedFrom was drawn from.
+             */
+            readonly target: string;
+        };
+        /** HcpV2SubjectIn */
+        readonly HcpV2SubjectIn: {
+            /** Id */
+            readonly id: string;
+            /** Relationship */
+            readonly relationship?: string | null;
+        };
+        /** HcpV2RevisionIn */
+        readonly HcpV2RevisionIn: {
+            /** Expectedversion */
+            readonly expectedVersion: number;
+            readonly content: components["schemas"]["HcpV2ContentIn"];
+            /**
+             * Reason
+             * @description Why. Recorded in the audit log.
+             */
+            readonly reason: string;
+            /**
+             * Model
+             * @description The model id behind a model-inferred revision.
+             */
+            readonly model?: string | null;
         };
         /** HcpClientOut */
         readonly HcpClientOut: {
@@ -76969,7 +77307,7 @@ export interface operations {
         };
         readonly requestBody: {
             readonly content: {
-                readonly "application/json": components["schemas"]["PurposesIn"];
+                readonly "application/json": components["schemas"]["HcpV2PurposesIn"];
             };
         };
         readonly responses: {
@@ -76993,7 +77331,7 @@ export interface operations {
         };
         readonly requestBody: {
             readonly content: {
-                readonly "application/json": components["schemas"]["ConfirmationIn"];
+                readonly "application/json": components["schemas"]["HcpV2ConfirmationIn"];
             };
         };
         readonly responses: {
@@ -77033,7 +77371,7 @@ export interface operations {
         };
         readonly requestBody: {
             readonly content: {
-                readonly "application/json": components["schemas"]["RuleIn"];
+                readonly "application/json": components["schemas"]["HcpV2RuleIn"];
             };
         };
         readonly responses: {
@@ -77093,7 +77431,7 @@ export interface operations {
         };
         readonly requestBody: {
             readonly content: {
-                readonly "application/json": components["schemas"]["DirectiveIn"];
+                readonly "application/json": components["schemas"]["HcpV2DirectiveIn"];
             };
         };
         readonly responses: {
@@ -77113,6 +77451,238 @@ export interface operations {
             readonly path: {
                 readonly directive_id: string;
             };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly hcp_v2_queryContext: {
+        readonly parameters: {
+            readonly query?: {
+                readonly turn?: string | null;
+                readonly workspace?: string | null;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["HcpV2QueryIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly hcp_v2_getEntry: {
+        readonly parameters: {
+            readonly query?: {
+                readonly purpose?: string;
+                readonly purposeDescription?: string;
+                readonly turn?: string | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly entry_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly hcp_v2_withdrawEntry: {
+        readonly parameters: {
+            readonly query?: {
+                readonly reason?: string;
+                readonly hardDelete?: boolean;
+                readonly turn?: string | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly entry_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly hcp_v2_createEntry: {
+        readonly parameters: {
+            readonly query?: {
+                readonly turn?: string | null;
+                readonly workspace?: string | null;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["HcpV2EntryIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly hcp_v2_reviseEntry: {
+        readonly parameters: {
+            readonly query?: {
+                readonly turn?: string | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly entry_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["HcpV2RevisionIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly hcp_v2_listGrants: {
+        readonly parameters: {
+            readonly query?: {
+                readonly status?: string;
+                readonly turn?: string | null;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly hcp_v2_revokeGrant: {
+        readonly parameters: {
+            readonly query?: {
+                readonly turn?: string | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly grant_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly hcp_v2_listAudit: {
+        readonly parameters: {
+            readonly query?: {
+                readonly cursor?: string | null;
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly hcp_v2_export: {
+        readonly parameters: {
+            readonly query?: {
+                readonly include?: string;
+                readonly exclude?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly hcp_v2_disclosures: {
+        readonly parameters: {
+            readonly query?: {
+                readonly client?: string | null;
+                readonly category?: string | null;
+                readonly since?: string | null;
+                readonly until?: string | null;
+            };
+            readonly header?: never;
+            readonly path?: never;
             readonly cookie?: never;
         };
         readonly requestBody?: never;

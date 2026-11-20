@@ -28,11 +28,14 @@ the turn envelope apply the same one.
 # (`from apps.contacts import hcp`; `hcp.search(...)`).
 from __future__ import annotations
 
-from . import confirmations, purposes, relationships, rules  # noqa: F401  (hcp.purposes: the registry and checks)
+from . import confirmations, disclosure, purposes, relationships, rules  # noqa: F401  (hcp.purposes: the registry and checks)
+from ..models import PersonAuditEvent, PersonFact, PersonGrant  # noqa: F401  (hcp.PersonFact … for the v2 routes)
 from .conformance import (
     CONFORMANCE_LEVEL,
     KNOWN_GAPS,
     discovery,
+    discovery_v2,
+    V2_CONFORMS_TO,
 )
 from .consent import (
     _DETAILS,
@@ -113,6 +116,7 @@ from .entries import (
     delete_entry,
     detect_conflicts,
     provenance_source,
+    assert_relationship,
     reevaluate,
     servable,
     site_of,
@@ -286,6 +290,7 @@ __all__ = [
     'detect_conflicts',
     'provenance_source',
     'reevaluate',
+    'assert_relationship',
     'CONFLICT_DETECTION',
     'servable',
     'site_of',
@@ -364,5 +369,7 @@ __all__ = [
     'restrict_purposes',
     'CONFORMANCE_LEVEL',
     'discovery',
+    'discovery_v2',
+    'V2_CONFORMS_TO',
     'KNOWN_GAPS',
 ]

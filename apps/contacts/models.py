@@ -1020,6 +1020,10 @@ class PersonAuditEvent(models.Model):
     #: v2: the purpose CODE a read was made under (`hcp.purposes`); `purpose` stays the
     #: stated task in words (v2 `purposeDescription`).
     purpose_code = models.CharField(max_length=200, blank=True, default="")
+    #: v2 8.2 `data`: members fixed by event type, so the log can be filtered and summarised
+    #: (`hcp.disclosure.summary`). A client's read carries `retrievalId`, `version`, `useUntil`
+    #: and, per result, `directives`. Ids and times only, never what an entry says.
+    data = models.JSONField(default=dict, blank=True)
     grant_id = models.UUIDField(null=True, blank=True)
     workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.SET_NULL,
                                   null=True, blank=True, related_name="person_audit_events")
@@ -1197,6 +1201,9 @@ class HcpClient(models.Model):
     #: HCP v2 3.2.8 — the client operator's identifier, what a standing rule or directive names:
     #: a DNS domain or an identifier. Empty = the host of its first redirect URI.
     operator_id = models.CharField(max_length=200, blank=True, default="")
+    #: HCP v2 6.2.5 — the record the law requires it to keep, `{record, obligation, period}`; shown
+    #: before a grant is approved and in the disclosure summary. Empty = none declared.
+    legal_retention = models.JSONField(default=dict, blank=True)
     #: HCP v2 18.1 — the conformance claims it declared (the directives claim is what a rule's
     #: `requires` asks for). Set by a canopy admin from what the operator attests, never by the client.
     claims = models.JSONField(default=list, blank=True)

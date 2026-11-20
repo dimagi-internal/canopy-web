@@ -186,6 +186,8 @@ class SessionMemoryOut(StrictModel):
                                                                           "(HCP v2 6.1.5.2), shown before you grant.")
     excluded_categories: list[str] = Field(default_factory=list, description="Categories a standing rule of "
                                            "yours keeps from a grant to this agent (HCP v2 6.3), shown before you grant.")
+    longest_copy_hours: int = Field(default=1, description="The longest what an agent reads may be used before it "
+                                    "must be read again (HCP v2 7.6); it stops at once if you revoke.")
     purposes_by_feature: dict[str, list[str]] = Field(default_factory=dict, description="Which purpose codes each "
                                                       "feature (record, use) serves.")
     reach: str = Field(default="", description="What a grant here would reach, in words — by "

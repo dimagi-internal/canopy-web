@@ -65,3 +65,37 @@ def assurance_of(fact: PersonFact) -> str:
     """3.6: how the asserter's identity was established, as the provider recorded it at write
     (`PersonFact.assurance`): the person's own write is `authenticated`, anyone else's `unverified`."""
     return fact.assurance
+
+
+# --- the audit log in v2's shape (8.2) ---------------------------------------------------------
+
+#: canopy's event names (v1's, kept for every existing reader) → v2's (8.1).
+EVENT_V2 = {"preference.created": "context.created", "preference.read": "context.read",
+            "preference.updated": "context.revised", "preference.deleted": "context.withdrawn",
+            "preference.hardDeleted": "context.hardDeleted", "preference.exported": "context.exported"}
+_ROLE_V2 = {"user": "management-client", "agent": "context-client", "system": "hcp-provider"}
+
+
+def event_v2(e) -> dict:
+    """One audit event as 8.2 shapes it. canopy's own event types (the agent-memory switches, the
+    collections) are kept under their own names; `data` carries what is recorded in detail."""
+    data = dict(e.data or {})
+    if e.detail and not data:
+        data["detail"] = e.detail
+    out = {
+        "eventId": entry_urn(e.event_id), "eventType": EVENT_V2.get(e.event_type, e.event_type),
+        "timestamp": e.timestamp.isoformat(),
+        "participants": {"initiator": {"role": _ROLE_V2[e.actor_type], "id": e.actor_id},
+                         "provider": {"id": "https://canopy.dimagi.com"}},
+        "entryId": entry_urn(e.entry_id) if e.entry_id else None,
+        "relatedEntryId": entry_urn(e.related_entry_id) if e.related_entry_id else None,
+        "categories": [e.category] if e.category else [],
+        "purpose": e.purpose_code or None, "purposeDescription": e.purpose or None,
+        "grantId": entry_urn(e.grant_id) if e.grant_id else None, "data": data,
+    }
+    if (e.data or {}).get("retrievalId"):
+        out["participants"]["retrievalId"] = e.data["retrievalId"]
+    if e.event_type == "preference.read" and e.entry_id and (e.data or {}).get("useUntil"):
+        out["disclosed"] = [{"entryId": entry_urn(e.entry_id), "version": e.data.get("version"),
+                             "useUntil": e.data["useUntil"]}]
+    return out
