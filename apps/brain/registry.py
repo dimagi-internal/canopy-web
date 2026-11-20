@@ -2,7 +2,8 @@
 
 A learning feature's audience is derived from its class and may only NARROW it: a wider audience
 than the class allows is refused, because that is the change that needs each person to agree again,
-which is a new class (`consent.CLASS_COPY`), not a setting. A feature with `enabled` false is
+which is a new class (`consent.CLASS_COPY`), not a setting. Its `scope` (how much of a session it reads, a
+view of `transcript_read.read`) starts at the whole session and may likewise only narrow; each change is an event. A feature with `enabled` false is
 registered but reads nothing (`eligibility.eligible`).
 
 A run of a feature is canopy's own turn, accountable to a person (`runs.start`): the canopy admin who
@@ -10,8 +11,12 @@ registered it, or the one who enabled it when nobody had (a seeded learner). An 
 one, active; enabling one that would not is refused."""
 from __future__ import annotations
 
+import logging
+
 from django.db import transaction
 
+from apps.canopy_sessions import transcript_read
+from apps.events import services as events
 from apps.harness import invocations
 
 from .models import INDIVIDUAL, MEMORY, PROJECT, SYSTEM, BrainCapability, BrainSource
@@ -26,6 +31,8 @@ CLASS_AUDIENCE = {
 #: What each class learns ABOUT.
 CLASS_SUBJECT = {INDIVIDUAL: "person", MEMORY: "person", PROJECT: "project", SYSTEM: "system"}
 
+
+logger = logging.getLogger(__name__)
 
 #: How often a scheduled feature runs, per subject (`schedule.py`). Empty means by hand only.
 SCHEDULES = {"": None, "hourly": 3600, "daily": 86400, "weekly": 7 * 86400}
@@ -69,11 +76,32 @@ def _schedule(schedule: str) -> None:
         raise RefusedError(f"schedule must be one of {', '.join(repr(s) for s in SCHEDULES)}")
 
 
+def _scope(scope: str) -> str:
+    if scope not in transcript_read.VIEWS:
+        raise RefusedError(f"scope must be one of {', '.join(transcript_read.VIEWS)}")
+    return scope
+
+
+def _record_scope(cap: BrainCapability, was: str, by) -> None:
+    """A learner's scope changed: an event, ids and view names only, on its operator's workspace."""
+    workspace = cap.operator.workspace if cap.operator_id else None
+    if workspace is None:
+        return
+    try:
+        events.record([{"source": "brain.capability", "kind": "capability.scope_changed",
+                        "payload": {"capability": cap.slug, "from": was, "to": cap.scope,
+                                    "by_id": getattr(by, "pk", None)}}], workspace=workspace)
+    except Exception:  # noqa: BLE001 — a record is never worth a failed change
+        logger.exception("could not record the scope change of %s", cap.slug)
+
+
 def register(*, slug: str, name: str, purpose_class: str, purposes, description: str = "",
              source_kinds=(BrainSource.SESSION,), output_kinds=(), audience=None, operator=None,
-             schedule: str = "", enabled: bool = False, entry: str = "", registered_by=None) -> BrainCapability:
+             schedule: str = "", enabled: bool = False, entry: str = "", registered_by=None,
+             scope: str = transcript_read.FULL) -> BrainCapability:
     if purpose_class not in CLASS_AUDIENCE:
         raise RefusedError(f"purpose_class must be one of {', '.join(CLASS_AUDIENCE)}")
+    _scope(scope)
     if BrainCapability.objects.filter(slug=slug).exists():
         raise RefusedError(f"{slug} is already registered")
     _entry(entry)
@@ -88,7 +116,7 @@ def register(*, slug: str, name: str, purpose_class: str, purposes, description:
         subject_type=CLASS_SUBJECT[purpose_class], purposes=_words("purposes", list(purposes)),
         source_kinds=kinds, output_kinds=_words("output_kinds", list(output_kinds)),
         audience=_audience(purpose_class, audience), operator=operator, schedule=schedule[:64],
-        entry=entry.strip(), registered_by=registered_by, enabled=bool(enabled))
+        entry=entry.strip(), registered_by=registered_by, enabled=bool(enabled), scope=scope)
 
 
 @transaction.atomic
@@ -101,6 +129,12 @@ def update(cap: BrainCapability, *, by=None, **changes) -> BrainCapability:
         raise RefusedError("a feature's class cannot change; register another")
     if "audience" in changes:
         cap.audience = _audience(cap.purpose_class, changes.pop("audience"))
+    was = cap.scope
+    if "scope" in changes:
+        scope = _scope(changes.pop("scope"))
+        if transcript_read.narrower(scope, was) != scope:
+            raise RefusedError(f"a learner's scope may only narrow: {was} to {scope} would widen it")
+        cap.scope = scope
     for key in ("purposes", "source_kinds", "output_kinds"):
         if key in changes:
             setattr(cap, key, _words(key, changes.pop(key)))
@@ -120,6 +154,8 @@ def update(cap: BrainCapability, *, by=None, **changes) -> BrainCapability:
             raise RefusedError("an enabled feature runs accountable to an active canopy admin; nobody is")
         cap.registered_by = by
     cap.save()
+    if cap.scope != was:
+        _record_scope(cap, was, by)
     return cap
 
 

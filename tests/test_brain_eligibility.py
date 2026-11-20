@@ -225,3 +225,45 @@ def test_an_exclusion_row_is_all_it_takes(w):
     agree(w["alice"], "individual")
     SourceExclusion.objects.create(user=w["alice"], source=w["source"])
     assert not ok(w, "coach", "coach", w["alice"])
+
+
+# ---- `explain`: the same judgement, for a class and with every missing consent assumed --------------
+
+def test_explain_is_eligible_and_for_a_class_is_everyone_agreed(w):
+    from apps.brain.eligibility import everyone_agreed, explain
+
+    agree(w["alice"], "project")
+    assert explain(w["source"], w["proj"], "learn") == ok(w, "proj", "learn")
+    assert explain(w["source"], cls="project").reason == f"no_consent:{w['bob'].pk}"
+    assert not everyone_agreed(w["source"], "project")
+    agree(w["bob"], "project")
+    assert explain(w["source"], cls="project").ok and everyone_agreed(w["source"], "project")
+
+
+def test_assuming_consent_keeps_every_other_fence(w):
+    from apps.brain.eligibility import explain
+    from apps.canopy_sessions.models import Session
+
+    def assumed(**kw):
+        return explain(w["source"], cls="project", assume_consent=True, **kw)
+
+    assert assumed().ok                                              # nobody agreed: assumed
+    consent.set_consent(w["bob"], classes=["system"])                # a class missing from a live consent: assumed
+    assert assumed().ok
+    consent.revoke(w["bob"])                                         # ended: their act, not a gap
+    assert assumed().reason == f"no_consent:{w['bob'].pk}"
+    consent.set_consent(w["bob"], classes=["project"], standing_rules=[{"class": "project"}])
+    assert assumed().reason == f"standing_rule:{w['bob'].pk}"
+    consent.set_consent(w["bob"], classes=["project"], standing_rules=[])
+    WorkspaceMembership.objects.filter(user=w["bob"]).delete()
+    assert assumed().reason == f"not_a_member:{w['bob'].pk}"
+    member(w["bob"], w["ws"])
+    SourceExclusion.objects.create(user=w["bob"], source=w["source"])
+    assert assumed().reason == f"excluded:{w['bob'].pk}"
+    # A session no source was made for is judged from the session itself.
+    fresh = Session.objects.create(workspace=w["ws"], created_by=w["carol"], origin=Session.ORIGIN_WEB)
+    assert explain(session=fresh, cls="project", assume_consent=True).ok
+    assert not BrainSource.objects.filter(ref=str(fresh.pk)).exists()
+    Session.objects.filter(pk=fresh.pk).update(metadata={rr.METADATA_KEY: ["phi"]})
+    fresh.refresh_from_db()
+    assert explain(session=fresh, cls="project", assume_consent=True).reason == "sealed:sensitive"

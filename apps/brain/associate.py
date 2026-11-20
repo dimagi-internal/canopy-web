@@ -23,6 +23,7 @@ import datetime as dt
 import fnmatch
 import logging
 from collections import Counter
+from dataclasses import dataclass
 
 from django.db import transaction
 from django.db.models import Q
@@ -160,10 +161,20 @@ def rank(link: SourceLink) -> int:
     return {SourceLink.DISPATCHED: 2, SourceLink.JUDGED: 1, SourceLink.SIGNALS: 0}[link.how]
 
 
+def outranks(row: SourceLink | None, new: SourceLink) -> bool:
+    """Does the stored link `row` hold its place against `new`: it outranks it, or is a declaration of equal
+    rank by someone else (a person's rejection stays until that same person undoes it)."""
+    if row is None:
+        return False
+    same_hand = (new.how == SourceLink.DECLARED and row.how == SourceLink.DECLARED
+                 and row.by_id == getattr(new, "by_id", None))
+    return not same_hand and (rank(row) > rank(new) or (rank(row) == rank(new) and new.how == SourceLink.DECLARED))
+
+
 def put(source: BrainSource, project: AgentProject, *, how: str, tier: str, evidence=(), confidence=None,
         model: str = "", by=None, by_agent=None) -> SourceLink:
     """Make or update the link, unless the one there outranks it, or is a person's rejection and this
-    is not that same person undoing it. Returns the row as it stands."""
+    is not that same person undoing it (`outranks`). Returns the row as it stands."""
     new = SourceLink(source=source, subject_type=SourceLink.PROJECT_SUBJECT, subject=str(project.pk), how=how,
                      tier=tier, evidence=list(evidence), confidence=confidence, model=model, by=by,
                      by_agent=by_agent)
@@ -173,9 +184,7 @@ def put(source: BrainSource, project: AgentProject, *, how: str, tier: str, evid
         if row is None:
             new.save()
             return new
-        same_hand = (how == SourceLink.DECLARED and row.how == SourceLink.DECLARED
-                     and row.by_id == getattr(by, "pk", None))
-        if not same_hand and (rank(row) > rank(new) or (rank(row) == rank(new) and how == SourceLink.DECLARED)):
+        if outranks(row, new):
             return row
         for field in ("how", "tier", "evidence", "confidence", "model", "by", "by_agent"):
             setattr(row, field, getattr(new, field))
@@ -208,39 +217,71 @@ def undeclare(source: BrainSource, project: AgentProject, *, by) -> bool:
 
 # ---- the layers ----------------------------------------------------------------------------------
 
-def _candidate_projects(source: BrainSource):
+@dataclass(frozen=True)
+class Proposal:
+    """A link an automatic layer would make: computed, not stored. `tier` "" is a signals link that no
+    longer holds (the writer deletes a signals link there, never a stronger one)."""
+
+    project: AgentProject
+    how: str
+    tier: str
+    evidence: tuple = ()
+
+
+def _candidate_projects(workspace_id):
     """Workspace projects of the source's own workspace: a link never crosses a workspace, so a
     project's readers can never be handed a session of another tenant."""
-    return AgentProject.objects.filter(workspace_id=source.workspace_id, visibility=AgentProject.WORKSPACE)
+    return AgentProject.objects.filter(workspace_id=workspace_id, visibility=AgentProject.WORKSPACE)
 
 
-def link_dispatched(source: BrainSource, session) -> int:
-    """Layer 1."""
+def propose_dispatched(session, workspace_id) -> list[Proposal]:
+    """Layer 1, computed: one `core` link per project a turn raised from one of its tasks ran in `session`."""
     turns = (Turn.objects.filter(Q(canopy_session=session) | Q(chat_session=session), raised_from_task__isnull=False)
              .select_related("raised_from_task__project"))
-    made = set()
+    out, made = [], set()
     for turn in turns:
         task = turn.raised_from_task
         project = task.project if task is not None else None
-        if project is None or project.is_personal or project.workspace_id != source.workspace_id or project.pk in made:
+        if project is None or project.is_personal or project.workspace_id != workspace_id or project.pk in made:
             continue
         made.add(project.pk)
-        put(source, project, how=SourceLink.DISPATCHED, tier=SourceLink.CORE, evidence=[f"task:{task.pk}"])
+        out.append(Proposal(project, SourceLink.DISPATCHED, SourceLink.CORE, (f"task:{task.pk}",)))
+    return out
+
+
+def propose_signals(session, workspace_id) -> list[Proposal]:
+    """Layer 2, computed: every project of the workspace that has a signature, judged on `session`'s activity."""
+    out = []
+    for sig in ProjectSignature.objects.filter(project__in=_candidate_projects(workspace_id)).select_related("project"):
+        tier, evidence = evaluate(session, sig)
+        out.append(Proposal(sig.project, SourceLink.SIGNALS, tier, tuple(evidence)))
+    return out
+
+
+def propose(session, workspace_id) -> list[Proposal]:
+    """What layers 1 and 2 would make for `session` (a `tier` of "" proposes nothing), stored nowhere: what
+    `associate` writes and a preview shows. It asks no consent: the writer asks that first."""
+    return propose_dispatched(session, workspace_id) + propose_signals(session, workspace_id)
+
+
+def link_dispatched(source: BrainSource, session) -> int:
+    """Layer 1: write what `propose_dispatched` computes."""
+    made = propose_dispatched(session, source.workspace_id)
+    for p in made:
+        put(source, p.project, how=p.how, tier=p.tier, evidence=p.evidence)
     return len(made)
 
 
 def link_signals(source: BrainSource, session) -> int:
-    """Layer 2: every project of the workspace that has a signature."""
+    """Layer 2: write what `propose_signals` computes."""
     n = 0
-    for sig in (ProjectSignature.objects.filter(project__in=_candidate_projects(source))
-                .select_related("project")):
-        tier, evidence = evaluate(session, sig)
-        if tier:
-            row = put(source, sig.project, how=SourceLink.SIGNALS, tier=tier, evidence=evidence)
+    for p in propose_signals(session, source.workspace_id):
+        if p.tier:
+            row = put(source, p.project, how=p.how, tier=p.tier, evidence=p.evidence)
             n += row.how == SourceLink.SIGNALS
         else:  # what it looked like it was no longer holds: a signals link only, never a stronger one
             SourceLink.objects.filter(source=source, subject_type=SourceLink.PROJECT_SUBJECT,
-                                      subject=str(sig.project_id), how=SourceLink.SIGNALS).delete()
+                                      subject=str(p.project.pk), how=SourceLink.SIGNALS).delete()
     return n
 
 

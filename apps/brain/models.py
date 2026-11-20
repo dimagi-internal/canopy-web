@@ -155,6 +155,9 @@ class BrainCapability(models.Model):
     registered_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
                                       related_name="+")
     enabled = models.BooleanField(default=False)
+    #: How much of a session its runs read: a view of the core read (`transcript_read.VIEWS`), the whole
+    #: session (`full`) unless narrowed. May only narrow (`registry.update`), and each change is an event.
+    scope = models.CharField(max_length=16, default="full", db_default="full")
     created_at = models.DateTimeField(auto_now_add=True)
 
 

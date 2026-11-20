@@ -32,7 +32,9 @@ Sources are made lazily (`sources.for_session`) and warmed by `manage.py brain_b
 
 `individual` and `memory` learn ABOUT a person from their own words: only that person's consent
 counts. `project` and `system` are SHARED: every human participant must permit the class and none may
-have excluded the source (most restrictive wins; transcripts are not split by speaker). One
+have excluded the source (most restrictive wins). A session is wholly visible for learning if it is visible at all:
+everyone in it saw it at the time and knew they were talking to canopy's AI, so consent decides WHICH sessions a
+learner reads and never cuts lines out of one. One
 participant's exclusion takes the source out of every shared use for good, whether or not they are
 later taken out of the session; it stays theirs to see and undo (`/api/me/learning/sessions/{id}/`,
 `/api/me/learning/removed/`). What was learned about the others from their own words stays
@@ -52,6 +54,12 @@ member of it (a guest is not). Who is in the source is read from the stored rows
 session (`participants.people_of`), so someone who joined since the last refresh is asked too;
 `eligible_sources` reads the session's `SessionParticipant` rows and turn initiators live in SQL the
 same way (`tests/test_brain_participants_live.py`). `tests/test_brain_eligibility.py` is the truth table.
+
+`eligible` is `eligibility.explain`, which says why. Without a capability, `explain` asks the same question of a
+purpose class (what `everyone_agreed` asks, and what a preview shows), and over a session no source was made for yet.
+Its `assume_consent` takes every MISSING consent as given (no consent row, or the class not among its classes) and
+keeps every other fence: sealed, withdrawn, anyone's exclusion, a contact, a non-member, a consent the person ended, a
+workspace they left out, a standing rule.
 
 A standing rule is deny-only: `{capability?, purpose?, class?, workspace?}`, denying when every key it
 names matches. A rule the code cannot read denies (`rule_denies`).
@@ -123,6 +131,9 @@ confers no read by itself; only a `core` link opens the project leg.
 - **Only sessions everyone in agreed to `project`.** The dispatched and signals layers and the
   signature seed skip a source unless every human in it agreed to `project` for its workspace, none
   excluded it and no contact is in it (`eligibility.everyone_agreed`). A declaration still stands.
+- **Computed, then written.** `associate.propose` (`propose_dispatched`, `propose_signals`) computes what layers 1 and
+  2 would make, reading only; `link_dispatched` and `link_signals` write what it returns, through `put`, whose
+  `outranks` decides whether a stored link keeps its place. A preview calls the same compute.
 - **Off-request and debounced.** An activity fold (a `Session` save naming `activity`) only marks its
   source due (`associate.schedule`, five minutes, so a burst is one look); the tick `brain.associate`
   (`associate.run_due`) makes sources for sessions that have none and looks at what is due. A sealed
@@ -142,7 +153,10 @@ class, the purposes it declares, the source kinds and output kinds it works with
 (`registry.accountable`: who registered it, while active); a canopy admin who enables or changes a feature nobody active
 answers for (a seeded learner, or one whose registrant left) becomes its accountable admin, and enabling one with nobody
 is refused. Its audience is its class's (`registry.CLASS_AUDIENCE`)
-and may only narrow: a wider one is refused, because that is a new class each person must agree to. The built-in
+and may only narrow: a wider one is refused, because that is a new class each person must agree to. Its `scope` is how
+much of a session its runs read, a view of the core read (`transcript_read.VIEWS`): the whole session (`full`) unless
+narrowed, and it too may only narrow; each change is an event (`brain.capability`, `capability.scope_changed`) on its
+operator's workspace. The built-in
 `project-readers` (migration `0005`) is the purpose a project's readers read a session under.
 
 ## Who sees what it produced (`apps/brain/outputs.py`)
@@ -188,11 +202,10 @@ That stamp puts every turn in it in the confined `brain` profile (`published_pro
 and only while the turn runs and the gate is on.
 
 - **`brain_read`** serves the run's next eligible sources once each, in order, leaving out what a clean run of the
-  same feature already read for the same subject: stored user and assistant text only, harness noise dropped, secrets
-  scrubbed, and for a feature that learns about a person only that person's own lines and the assistant's replies to
-  them (other people's words in the same session, and the replies to them, are left out; a line with no recorded author
-  is the subject's only when nobody else is in the session). One call serves at most `reading.MAX_CHARS` and never splits
-  a source. The directives of the people in a source travel with it, and the sources removed since the feature learned
+  same feature already read for the same subject, each through the core read (`transcript_read.read`) in the feature's
+  scope (`reading.view_of`; a judge never wider than `opening`), secrets scrubbed, never cut by speaker. One call serves
+  at most `reading.MAX_CHARS` and never splits a source that fits in a call; a source larger than a call pages across
+  calls (`next_index`, passed back as `index`), never splitting a row. The directives of the people in a source travel with it, and the sources removed since the feature learned
   from them are named once (`revoked`, from `RevocationNotice`). Every source served is recorded (`BrainRunRead`, a
   `brain.read` event).
 - **`brain_emit`** writes one output of a declared kind, about the run's own subject, citing sources. Every cited
@@ -268,7 +281,7 @@ cannot both start one); a run open past `BRAIN_RUN_TIMEOUT_SECONDS` (six hours b
 
 The **judge** (layer 3 of the associations; the registered `project-link-judge`) is such a run with the purpose `judge`:
 it is served only the sessions weakly tied to the project (a `candidate` link made by signals, never one a person or a
-dispatch settled), each as the title and the person's first few lines, short, beside the project's outcome and open tasks.
+dispatch settled), each as the title and the core read's `opening` view (the first few lines people typed, short), beside the project's outcome and open tasks.
 Its one output kind, `link`, is a ruling on exactly one source it read: a tier, a confidence from 0 to 1 and the model
 that judged, written as a `judged` `SourceLink`, which never overrides a person's call or a dispatch. Only sessions whose
 people agreed to project learning can be judged, since reading them is a project read. canopy makes no model calls: the
@@ -279,14 +292,27 @@ hand-checked list; the plumbing is tested with a rule standing in for the model.
 (by the same rule as every session read): ids, titles and how each tie was made, never a word of a transcript. It is what a
 project history reads instead of re-deriving the selection.
 
+## Preview (`apps/brain/preview.py`, `api_preview.py`)
+
+`GET /api/brain/preview` is a person's dry run: for each session they read through legs 1 to 6 (never leg 7), created
+or active in a window (a day by default, a week at most), never a learning run's conversation, it says who is in it,
+whether each class could read it now and if everyone in it agreed (`explain`, with the reason; `individual` per person),
+the links the automatic layers would make (`associate.propose`, with any stored link that would keep its place), and the
+session as a learner reads it (`transcript_read.read`, scrubbed). It stores nothing: no source is made, no read
+recorded, no event; `tests/test_brain_preview.py` captures the call's queries and finds no write of its own and no
+on-commit callback. It answers with `BRAIN_READS_ENABLED` off. Person-only: a browser session, a PAT minted by hand, or
+an act-as-you token under a READ grant (a step-up; `act_as.REST_READS` is the one REST read beside the tools such a
+token reaches); never an agent's login, a turn's or caller token, a runner, an OAuth client or a site's token, and not an
+MCP tool.
+
 ## Every reader is placed
 
 The learners canopy has today and will have are registered, dark, by migration `0007` (coaching, personal memory, the project
 link judge, project learning, system learning): none has an operator or is enabled, so registering them changes nothing, and
 coaching keeps reading through its own leg until it moves. `tests/test_message_readers_are_registered.py` lists every server
 module that reads a session's transcript rows and why it may (the chat itself, ingest, plumbing, a person sharing their own
-session, a notification); a new reader fails it until it is placed, and a learning read belongs in `brain.reading`, which is
-the one module marked as such. The agent-side readers (`ada:session-review`, `canopy-run-review`, `canopy:agent-review`, the
+session, a notification, the preview); a new reader fails it until it is placed (calling the core read
+`transcript_read.read` counts), and a learning read belongs in `brain.reading`, which is the one module marked as such. The agent-side readers (`ada:session-review`, `canopy-run-review`, `canopy:agent-review`, the
 stall classifier, `canopy analyze/improve`, the contributor pages and check-in runs) read through the API, not through a
 server module; moving them to runs of a registered learner is work in the canopy plugin and the agents' repos.
 

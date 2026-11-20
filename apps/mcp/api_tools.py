@@ -125,6 +125,8 @@ EXCLUDED: dict[str, str] = {
     "exclude_my_session": _BRAIN, "include_my_session": _BRAIN, "get_my_session_learning": _BRAIN,
     "get_my_disclosure": _BRAIN, "list_my_removed_sessions": _BRAIN,
     "declare_my_session_project": _BRAIN, "undeclare_my_session_project": _BRAIN,
+    "brain_preview": ("a person's own dry run of canopy learning over the sessions they read: theirs, as "
+                      "themselves or on a read-only step-up, never an MCP client's (apps/brain/api_preview.py)"),
     "list_reporting": _REPORTING, "set_reporting": _REPORTING, "end_reporting": _REPORTING,
     "contact_token": _HOST,
     "public_stats": _ANON,

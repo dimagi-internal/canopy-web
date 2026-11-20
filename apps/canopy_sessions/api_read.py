@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import datetime as dt
 import uuid
+from typing import Literal
 
 from django.db.models import Q
 from django.http import Http404, HttpRequest
@@ -263,8 +264,13 @@ def _read_window(request: HttpRequest, session, rows) -> list:
 
 @router.get("/{session_id}", response=SessionDetailOut, summary="Get a session + transcript tail")
 @gate("session-acl")
-def get_session(request: HttpRequest, session_id: uuid.UUID, full: bool = False):
+def get_session(request: HttpRequest, session_id: uuid.UUID, full: bool = False,
+                view: Literal["full", "conversation", "typed", "opening"] | None = None):
     """A session and the tail of its transcript.
+
+    `view` names a whole-session read instead of the tail: `full` every row,
+    `conversation` user and assistant text, `typed` what people typed, `opening`
+    their first few lines, short. Omitted, the tail as before.
 
     `session_id` is the session's id. When no session you can read has that id,
     it is tried as the runner's `session_key` instead (a cloud session's key is
@@ -284,7 +290,11 @@ def get_session(request: HttpRequest, session_id: uuid.UUID, full: bool = False)
     if data["you_are_in_it"] is False:
         asked = join_requests.latest_of(session, request.user)
         data["your_join_request"] = asked.status if asked is not None else ""
-    rows, has_more, oldest = transcript_read.visible_transcript(session, full=full)
+    if view is None:
+        rows, has_more, oldest = transcript_read.visible_transcript(session, full=full)
+    else:
+        rows = transcript_read.view_messages(session, view)
+        has_more, oldest = False, (rows[0].turn_index if rows else None)
     rows = _read_window(request, session, rows)
     data["messages"] = [MessageOut.from_orm(m) for m in rows]
     data["has_more_before"] = has_more

@@ -41,7 +41,7 @@ def _cap_out(c: BrainCapability) -> dict:
             "subject_type": c.subject_type, "purposes": c.purposes, "source_kinds": c.source_kinds,
             "output_kinds": c.output_kinds, "audience": c.audience,
             "operator": c.operator.slug if c.operator_id else "", "entry": c.entry, "schedule": c.schedule,
-            "enabled": c.enabled}
+            "enabled": c.enabled, "scope": c.scope}
 
 
 def _superuser(request: HttpRequest) -> None:
@@ -86,7 +86,7 @@ def register_capability(request: HttpRequest, payload: CapabilityIn) -> dict:
               summary="Change a learner (canopy admin)")
 @gate("superuser", setting=True)
 def patch_capability(request: HttpRequest, slug: str, payload: CapabilityPatch) -> dict:
-    """Narrow its audience, change its purposes, enable or disable it. Its class never changes. Enabling one that
+    """Narrow its audience or its scope, change its purposes, enable or disable it. Its class never changes. Enabling one that
     nobody active is accountable for (a seeded learner) makes you its accountable admin: its runs act for you."""
     _superuser(request)
     cap = BrainCapability.objects.filter(slug=slug).first()
