@@ -3,10 +3,17 @@
 The SERVER starts a run, never a turn: it makes the conversation (stamped `metadata.brain_run`, which is what
 puts every turn in it into the `published_profiles.BRAIN` profile) and queues the operator's first turn as
 canopy's own (`initiator.system`), accountable to the canopy admin who registered the feature. Nothing a
-turn says starts one, and a run is never a person's chat: no participant, no creator."""
+turn says starts one, and a run is never a person's chat: no participant, no creator.
+
+A feature with nobody active accountable for it is not started (its turn's token would stand for no one). One open
+run per feature and subject (`brain_one_open_run`); a run left open past `BRAIN_RUN_TIMEOUT_SECONDS` is abandoned
+(`abandon_stale`), so a run whose turn never ended does not hold its project for ever."""
 from __future__ import annotations
 
-from django.db import transaction
+import datetime as dt
+
+from django.conf import settings
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from apps.agents.models import AgentProject
@@ -16,8 +23,21 @@ from apps.harness import initiator as who
 from apps.harness import services as harness
 from apps.harness.models import Turn
 
-from . import readers
-from .models import ABOUT_A_PERSON, PROJECT, BrainCapability, BrainCursor, BrainRun, BrainRunRead
+from . import readers, registry
+from .eligibility import eligible
+from .models import (
+    ABOUT_A_PERSON,
+    PROJECT,
+    BrainCapability,
+    BrainRun,
+    BrainRunRead,
+    BrainSource,
+    OutputLineage,
+    RederiveRequest,
+)
+
+#: How long a run may stay open before the scheduler gives up on it.
+DEFAULT_TIMEOUT_SECONDS = 6 * 3600
 
 
 class StartRefusedError(ValueError):
@@ -55,9 +75,16 @@ def start(cap: BrainCapability, *, subject=None, purpose: str = "", floor: int =
     purpose = purpose or (cap.purposes or [""])[0]
     if purpose not in (cap.purposes or []):
         raise StartRefusedError(f"{cap.slug} does not declare the purpose {purpose!r}")
+    accountable = registry.accountable(cap)
+    if accountable is None:
+        raise StartRefusedError(f"nobody active is accountable for {cap.slug}; a canopy admin enables it again")
     subject_type, subject_id = _subject(cap, subject)
-    run = BrainRun.objects.create(capability=cap, subject_type=subject_type, subject=subject_id, purpose=purpose,
-                                  floor=max(0, floor))
+    try:
+        with transaction.atomic():
+            run = BrainRun.objects.create(capability=cap, subject_type=subject_type, subject=subject_id,
+                                          purpose=purpose, floor=max(0, floor))
+    except IntegrityError as e:
+        raise StartRefusedError(f"a run of {cap.slug} for this subject is already open") from e
     session = session_services.create_session(
         workspace=cap.operator.workspace, agent=cap.operator, title=f"{cap.name}: learning run {run.pk}",
         metadata={BRAIN_RUN_METADATA_KEY: str(run.pk)})
@@ -65,22 +92,47 @@ def start(cap: BrainCapability, *, subject=None, purpose: str = "", floor: int =
     run.session = session
     harness.enqueue_turn(
         session=session, origin=Turn.ORIGIN_API, prompt=prompt(cap, run), idempotency_key=f"brain-run:{run.pk}",
-        origin_ref={"brain_run": str(run.pk)}, initiator=who.system(via="brain-run", accountable=cap.registered_by))
+        origin_ref={"brain_run": str(run.pk)}, initiator=who.system(via="brain-run", accountable=accountable))
     return run
 
 
 def finish(run: BrainRun, *, ok: bool) -> None:
-    """The run's turn ended. A clean end moves the feature's cursor past everything the run read (so the next
-    run reads only what is new); a failed one leaves it where it was, and the scheduler tries again."""
+    """The run's turn ended. A clean end makes what it read count as learned for its feature and subject
+    (`reading.candidates` leaves those sources out of later runs) and closes the re-derivations it covered; a
+    failed one counts nothing, and the next run reads the same sources again."""
     if run.state != BrainRun.OPEN:
         return
     with transaction.atomic():
-        BrainRun.objects.filter(pk=run.pk, state=BrainRun.OPEN).update(
+        moved = BrainRun.objects.filter(pk=run.pk, state=BrainRun.OPEN).update(
             state=BrainRun.DONE if ok else BrainRun.FAILED, finished_at=timezone.now())
-        if ok and run.subject_type != "person":
-            last = max(BrainRunRead.objects.filter(run=run).values_list("source_id", flat=True), default=run.floor)
-            cursor, _ = BrainCursor.objects.get_or_create(
-                capability=run.capability, subject_type=run.subject_type, subject=run.subject)
-            if last > cursor.last_source:
-                cursor.last_source = last
-                cursor.save(update_fields=["last_source"])
+        if moved and ok:
+            _close_rederivations(run)
+
+
+def _close_rederivations(run: BrainRun) -> None:
+    """A re-derivation is done once a clean run of its feature for its subject read every source of the output
+    that is still open to that feature."""
+    read = set(BrainRunRead.objects.filter(run=run).values_list("source_id", flat=True))
+    if not read:
+        return
+    cap = run.capability
+    subject = int(run.subject) if cap.purpose_class in ABOUT_A_PERSON and run.subject.isdecimal() else None
+    asks = RederiveRequest.objects.filter(done_at__isnull=True, output__capability=cap,
+                                          output__subject_type=run.subject_type, output__subject=run.subject)
+    for ask in asks:
+        ids = OutputLineage.objects.filter(output_kind="brain.output", output_id=str(ask.output_id)).values_list(
+            "source_id", flat=True)
+        left = [s for s in BrainSource.objects.filter(pk__in=list(ids)).select_related("session")
+                if eligible(s, cap, run.purpose, subject)]
+        if all(s.pk in read for s in left):
+            RederiveRequest.objects.filter(pk=ask.pk, done_at__isnull=True).update(done_at=timezone.now())
+
+
+def abandon_stale(now=None) -> int:
+    """Close as failed every run open longer than the timeout: its turn never reported an end. What it read
+    counts for nothing, so the next run reads it again; its turn, if it ever runs on, may no longer read or emit."""
+    now = now or timezone.now()
+    timeout = int(getattr(settings, "BRAIN_RUN_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS))
+    return BrainRun.objects.filter(state=BrainRun.OPEN, created_at__lt=now - dt.timedelta(seconds=timeout)).update(
+        state=BrainRun.FAILED, finished_at=now)
+

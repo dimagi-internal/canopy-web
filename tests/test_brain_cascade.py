@@ -68,7 +68,8 @@ def test_a_mixed_output_is_marked_and_asks_to_be_derived_again(w):
     o = emit(w, "coach", "person", w["alice"].pk, [w["source"], other])
     consent.exclude(w["alice"], w["source"])
     assert cascade.sweep()["stale"] == 1
-    assert reload(o).state == "stale" and o.body == {"words": "x"}
+    assert reload(o).state == "stale" and (o.body, o.title) == ({}, "")         # its words go, its ids stay
+    assert OutputLineage.objects.filter(output_id=str(o.pk)).count() == 2
     assert RederiveRequest.objects.filter(output=o, done_at__isnull=True).count() == 1
     cascade.sweep()                                                   # idempotent
     assert RederiveRequest.objects.filter(output=o).count() == 1 and reload(o).state == "stale"
@@ -130,6 +131,103 @@ def test_a_withdrawn_output_is_seen_by_no_one(w):
     consent.exclude(w["alice"], w["source"])
     cascade.sweep()
     assert o not in outputs.visible_to(w["alice"])
+
+
+def test_a_stale_output_is_seen_by_no_one(w):
+    from apps.brain import outputs
+
+    other = sources.for_session(Session.objects.create(workspace=w["ws"], created_by=w["alice"],
+                                                       origin=Session.ORIGIN_WEB))
+    o = emit(w, "coach", "person", w["alice"].pk, [w["source"], other])
+    assert o in outputs.visible_to(w["alice"])
+    consent.exclude(w["alice"], w["source"])
+    cascade.sweep()
+    assert reload(o).state == "stale" and o not in outputs.visible_to(w["alice"])
+
+
+def test_link_evidence_goes_with_a_removal_even_when_no_output_cites_it(w):
+    SourceLink.objects.create(source=w["source"], subject="1", how="judged", tier="core", evidence=["alice: x"])
+    cascade.sweep()
+    assert SourceLink.objects.get().evidence == ["alice: x"]                     # nothing removed yet
+    consent.exclude(w["bob"], w["source"])                                       # one participant takes it out
+    cascade.sweep([w["source"].pk])
+    assert SourceLink.objects.get().evidence == []
+
+
+def test_the_conversation_of_a_run_that_read_a_removed_source_is_deleted(w):
+    from apps.brain.models import BrainRun, BrainRunRead
+    from apps.canopy_sessions.models import Message
+
+    talk = Session.objects.create(workspace=w["ws"], origin=Session.ORIGIN_WEB, metadata={"brain_run": "1"})
+    Message.objects.create(session=talk, role=Message.ASSISTANT, turn_index=0, plaintext="alice said: the secret plan")
+    run = BrainRun.objects.create(capability=w["mem"], subject_type="person", subject=str(w["alice"].pk),
+                                  purpose="remember", session=talk, state=BrainRun.DONE)
+    BrainRunRead.objects.create(run=run, source=w["source"])
+    cascade.sweep()
+    assert Message.objects.filter(session=talk).exists()                           # nothing removed: kept
+    consent.exclude(w["alice"], w["source"])
+    assert cascade.sweep([w["source"].pk])["runs"] == 1
+    talk.refresh_from_db()
+    assert talk.content_deleted_at is not None and not Message.objects.filter(session=talk).exists()
+
+
+def test_bob_s_removal_does_not_touch_a_run_about_alice(w):
+    from apps.brain.models import BrainRun, BrainRunRead
+    from apps.canopy_sessions.models import Message
+
+    talk = Session.objects.create(workspace=w["ws"], origin=Session.ORIGIN_WEB, metadata={"brain_run": "1"})
+    Message.objects.create(session=talk, role=Message.ASSISTANT, turn_index=0, plaintext="alice's own words")
+    run = BrainRun.objects.create(capability=w["mem"], subject_type="person", subject=str(w["alice"].pk),
+                                  purpose="remember", session=talk, state=BrainRun.DONE)
+    BrainRunRead.objects.create(run=run, source=w["source"])
+    consent.exclude(w["bob"], w["source"])
+    assert cascade.sweep()["runs"] == 0 and Message.objects.filter(session=talk).exists()
+
+
+def _memory_entry(w, who, session, statement="prefers short replies"):
+    from apps.contacts import hcp
+    from apps.contacts.models import EntryRelationship, PersonFact
+    from apps.contacts.services import person_for
+
+    person = person_for(user=who)
+    fact = PersonFact.objects.create(person=person, workspace=w["ws"], kind="preference", statement=statement,
+                                     embedding=b"\x00\x01", embedding_model="m")
+    EntryRelationship.objects.create(person=person, entry_id=fact.entry_id, type="derivedFrom",
+                                     source_kind="session", source_ref=str(session.pk),
+                                     asserted_by_role="context-client", asserted_by_id="agent:x")
+    assert hcp.current(fact.entry_id) is not None
+    return fact
+
+
+def test_a_memory_entry_learned_from_a_removed_session_is_deleted_with_its_embedding(w):
+    fact = _memory_entry(w, w["alice"], w["session"])
+    bobs = _memory_entry(w, w["bob"], w["session"], "likes tables")
+    cascade.sweep()
+    fact.refresh_from_db()
+    assert fact.retracted_at is None and fact.embedding is not None              # nothing removed yet
+    consent.exclude(w["alice"], w["source"])
+    assert cascade.sweep([w["source"].pk])["memory_entries"] == 1
+    fact.refresh_from_db()
+    bobs.refresh_from_db()
+    assert fact.retracted_at is not None and fact.status == "deleted"
+    assert fact.embedding is None and fact.embedding_model == ""
+    assert bobs.retracted_at is None                                             # bob's, from his own words, stays
+
+
+def test_a_memory_entry_goes_when_its_person_drops_memory_or_its_words_are_deleted(w):
+    first = _memory_entry(w, w["alice"], w["session"])
+    consent.set_consent(w["alice"], classes=["individual"])                      # dropped memory
+    cascade.sweep()
+    first.refresh_from_db()
+    assert first.retracted_at is not None
+    carols = _memory_entry(w, w["carol"], w["session"])                          # carol never answered: kept
+    cascade.sweep()
+    carols.refresh_from_db()
+    assert carols.retracted_at is None
+    Session.objects.filter(pk=w["session"].pk).update(content_deleted_at=timezone.now())
+    cascade.sweep()
+    carols.refresh_from_db()
+    assert carols.retracted_at is not None                                       # its words are gone
 
 
 def test_another_store_is_asked_to_withdraw_or_mark(w):

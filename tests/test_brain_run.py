@@ -267,6 +267,7 @@ def test_a_withdrawn_consent_or_exclusion_takes_the_source_out_of_the_next_read(
         page = _call("brain_read", {"limit": 5})
     served = {BrainRunRead.objects.get(run=run, source_id=x["source"]).source.ref for x in page["sources"]}
     assert served == {str(w["shared"].pk)}                               # not the one she took out
+    runs.finish(run, ok=False)                                           # one open run per subject at a time
     run2, _t2, raw2 = _start(w)
     consent.revoke(w["alice"])
     with as_token(raw2):
@@ -279,10 +280,7 @@ def test_a_project_run_reads_only_the_projects_core_linked_sessions_of_people_wh
     for s in (w["mine"], w["shared"], w["other_session"]):
         associate.put(sources.for_session(s), project, how="signals", tier="core")
     associate.put(sources.for_session(w["shared"]), project, how="signals", tier="candidate")      # weaker: not served
-    registry.update(w["proj"], operator=w["operator"], output_kinds=["idea"], enabled=True)
-    w["proj"].refresh_from_db()
-    w["proj"].registered_by = w["root"]
-    w["proj"].save()
+    registry.update(w["proj"], operator=w["operator"], output_kinds=["idea"], enabled=True, by=w["root"])
     run, _turn, raw = _start(w, cap="proj", subject=project)
     with as_token(raw):
         page = _call("brain_read", {"limit": 5})
@@ -365,3 +363,92 @@ def test_the_two_functions_are_what_the_routes_call(w):
     assert o.state == "active"
     with pytest.raises(emit.EmitRefusedError):
         emit.emit(run, kind="note", title="t", body={"a": 1}, source_ids=[10_000_000])
+
+
+# ---- review fixes: what a person-learner is served, budgets, emitted shapes --------------------------
+
+def test_about_a_person_the_replies_to_someone_else_and_lines_of_no_known_author_are_left_out(w):
+    s = Session.objects.create(workspace=w["ws"], created_by=w["alice"], origin=Session.ORIGIN_WEB, title="three")
+    SessionParticipant.objects.create(session=s, user=w["bob"])
+    rows = [(Message.USER, "alice asks a thing", {"user_id": w["alice"].pk}),
+            (Message.ASSISTANT, "reply to alice", None),
+            (Message.USER, "bob's question about his divorce", {"user_id": w["bob"].pk}),
+            (Message.ASSISTANT, "reply quoting bob's divorce", None),
+            (Message.USER, "a line with no author", None),
+            (Message.ASSISTANT, "reply to nobody known", None)]
+    for i, (role, text, author) in enumerate(rows):
+        Message.objects.create(session=s, role=role, turn_index=i, plaintext=text, author=author)
+    solo = Session.objects.create(workspace=w["ws"], created_by=w["alice"], origin=Session.ORIGIN_WEB, title="solo")
+    Message.objects.create(session=solo, role=Message.USER, turn_index=0, plaintext="typed in the cli")
+    Message.objects.create(session=solo, role=Message.ASSISTANT, turn_index=1, plaintext="cli reply")
+    for x in (s, solo):
+        sources.for_session(x)
+    run, _turn, _raw = _start(w)
+    texts = {src["title"]: [m["text"] for m in src["messages"]] for src in reading.read_next(run, limit=5)["sources"]}
+    assert texts["three"] == ["alice asks a thing", "reply to alice"]
+    assert texts["solo"] == ["typed in the cli", "cli reply"]          # nobody else is in it: the line is hers
+
+
+def test_one_read_serves_at_most_the_call_budget_and_never_splits_a_source(w, monkeypatch):
+    alone = [Session.objects.create(workspace=w["ws"], created_by=w["carol"], origin=Session.ORIGIN_WEB,
+                                    title=f"s{i}") for i in range(3)]
+    for s in alone:
+        Message.objects.create(session=s, role=Message.USER, turn_index=0, plaintext="y" * 40,
+                               author={"user_id": w["carol"].pk})
+        sources.for_session(s)
+    LearningConsent.objects.create(user=w["carol"], classes=["individual"])
+    run = runs.start(w["pace"], subject=w["carol"])
+    monkeypatch.setattr(reading, "MAX_CHARS", 100)
+    first = reading.read_next(run, limit=5)
+    assert [s["title"] for s in first["sources"]] == ["about carol", "s0"]   # 27 + 40 chars; s1 would pass 100
+    assert sum(len(m["text"]) for s in first["sources"] for m in s["messages"]) <= 100 and first["done"] is False
+    rest = reading.read_next(run, after=first["next_after"], limit=5)
+    assert len(first["sources"]) + len(rest["sources"]) == 4 and BrainRunRead.objects.filter(run=run).count() == 4
+
+
+def test_an_emitted_key_is_scrubbed_like_a_value(w):
+    run, _turn, _raw = _start(w)
+    ids = [s["source"] for s in reading.read_next(run, limit=5)["sources"]]
+    o = emit.emit(run, kind="note", title="t", body={SECRET: "x", "nested": [{SECRET: 1}]}, source_ids=ids)
+    assert SECRET not in json.dumps(o.body)
+
+
+def test_a_link_with_a_body_that_is_not_an_object_is_refused_not_a_crash(w):
+    lead = Agent.objects.create(slug="eva", name="Eva", owner=w["owner"], workspace=w["ws"])
+    project = AgentProject.objects.create(agent=lead, ext_id="P1", name="Supply", handle="supply")
+    associate.put(sources.for_session(w["mine"]), project, how="signals", tier="candidate")
+    judge = registry.ensure_learners()["project-link-judge"]
+    registry.update(judge, operator=w["operator"], enabled=True, by=w["root"])
+    run = runs.start(judge, subject=project)
+    ids = [s["source"] for s in reading.read_next(run, limit=5)["sources"]]
+    for body in (["core"], "core", {"tier": "core", "confidence": 0.9, "model": "m", "evidence": "a string"}):
+        with pytest.raises(emit.EmitRefusedError):
+            emit.emit(run, kind="link", title="", body=body, source_ids=ids[:1])
+
+
+def test_a_run_s_emits_spend_their_own_budget_not_their_admin_s(w, settings):
+    from apps.mcp.rate_limit import RateLimitError, check_write_limit
+
+    settings.MCP_WRITE_LIMIT = 2
+    run, _turn, raw = _start(w)
+    ids = [s["source"] for s in _read_all(raw)["sources"]]
+    with as_token(raw):
+        for i in range(4):
+            _call("brain_emit", {"kind": "note", "sources": ids, "body": {"n": i}})
+    assert BrainOutput.objects.count() == 4
+    check_write_limit(w["root"].pk)                                     # the admin's own budget is untouched
+    check_write_limit(w["root"].pk)
+    with pytest.raises(RateLimitError):
+        check_write_limit(w["root"].pk)
+
+
+def test_seeded_learners_can_run_once_an_admin_enables_them(w):
+    coaching = registry.ensure_learners()["coaching"]
+    with pytest.raises(registry.RefusedError):
+        registry.update(coaching, operator=w["operator"], enabled=True)
+    registry.update(coaching, operator=w["operator"], enabled=True, by=w["root"])
+    w["coaching"] = coaching
+    run, turn, raw = _start(w, cap="coaching")
+    assert turn.initiator_user_id == w["root"].pk
+    with as_token(raw):
+        assert _call("brain_read", {"limit": 1})["run"] == run.pk          # its token stands for someone

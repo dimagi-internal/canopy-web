@@ -169,6 +169,8 @@ class BrainReadOut(StrictModel):
     next_after: int = Field(description="Pass this as `after` to read on.")
     done: bool = Field(description="Nothing is left past `next_after`.")
     project: dict | None = Field(None, description="For a project judge: its outcome and open tasks.")
+    revoked: list[int] = Field(default_factory=list, description="Sources removed since this learner learned from "
+                               "them: what came from them is withdrawn; do not rely on or rebuild it. Told once.")
 
 
 class BrainEmitIn(StrictModel):

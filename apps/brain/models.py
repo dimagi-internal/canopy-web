@@ -300,7 +300,8 @@ class BrainRun(models.Model):
     subject = models.CharField(max_length=64, blank=True, default="")
     #: The one purpose this run reads for (one of its feature's declared purposes).
     purpose = models.CharField(max_length=40)
-    #: Sources at or before this pk were learned from in an earlier run (`BrainCursor`): a run reads past it.
+    #: A lower bound a caller may set by hand: the run reads only sources past this pk. The scheduler passes 0 and
+    #: relies on what earlier clean runs read (`reading.candidates`), so a source that becomes eligible late is read.
     floor = models.BigIntegerField(default=0)
     #: Its conversation (`canopy_sessions.Session`, `metadata.brain_run`).
     session = models.ForeignKey("canopy_sessions.Session", null=True, blank=True, on_delete=models.SET_NULL,
@@ -308,6 +309,11 @@ class BrainRun(models.Model):
     state = models.CharField(max_length=8, choices=STATE_CHOICES, default=OPEN)
     created_at = models.DateTimeField(auto_now_add=True)
     finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        #: One open run per feature and subject: two workers starting the same run race on this, not on a read.
+        constraints = [models.UniqueConstraint(fields=["capability", "subject_type", "subject"],
+                                               condition=models.Q(state="open"), name="brain_one_open_run")]
 
 
 class BrainRunRead(models.Model):
@@ -323,8 +329,9 @@ class BrainRunRead(models.Model):
 
 
 class RederiveRequest(models.Model):
-    """An output derived from several sources lost one: it is marked `stale` and asks to be derived again
-    from what is left. The scheduler that runs learning (`schedule.py`) consumes these (`done_at`)."""
+    """An output derived from several sources lost one: it is marked `stale` (hidden, words emptied) and asks to
+    be derived again from what is left. The next run of its feature for its subject reads those sources again
+    (`reading.candidates`), and a clean end of that run closes the request (`runs.finish`, `done_at`)."""
 
     output = models.ForeignKey(BrainOutput, on_delete=models.CASCADE, related_name="rederive_requests")
     reason = models.CharField(max_length=200, blank=True, default="")
@@ -338,8 +345,8 @@ class RederiveRequest(models.Model):
 
 class RevocationNotice(models.Model):
     """What a learner that holds something derived from `source` is told when it goes: the source is
-    removed, so what came from it is to be dropped. One per (learner, source); `delivered_at` is set when
-    the learner's store has acted (`cascade.register_store`)."""
+    removed, so what came from it is to be dropped. One per (learner, source); served to the learner's next
+    run with its first `brain_read` (`reading.read_next`, `revoked`), which sets `delivered_at`."""
 
     capability_slug = models.CharField(max_length=64)
     source = models.ForeignKey(BrainSource, on_delete=models.CASCADE, related_name="revocations")
@@ -367,9 +374,9 @@ class DisclosureDay(models.Model):
 
 
 class BrainCursor(models.Model):
-    """Where a feature has got to for one subject (one project): the last source a finished run learned
-    from, and when a run last started, so the scheduler (`schedule.py`) starts the next one only when there
-    is something new and it is due."""
+    """When a feature last started a run for one subject (one project), so the scheduler (`schedule.py`)
+    starts the next one only when it is due. What is new is not a position: it is every eligible source no
+    clean run of the feature read for that subject (`reading.candidates`). `last_source` is no longer read."""
 
     capability = models.ForeignKey(BrainCapability, on_delete=models.CASCADE, related_name="cursors")
     subject_type = models.CharField(max_length=16)

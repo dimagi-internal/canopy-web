@@ -9,18 +9,39 @@ The day of a row is the day of its last read: coalescing keeps one count per (le
 from __future__ import annotations
 
 from collections import defaultdict
+from functools import reduce
+from operator import or_
 
 from django.db import transaction
+from django.db.models import Q
 
 from apps.events.models import Event
 
-from .models import DisclosureDay, SourceParticipant
+from .models import BrainSource, DisclosureDay, SourceParticipant
 from .readers import EVENT_SOURCE
+
+#: Sessions per `key` filter clause when narrowing to some people's events.
+_CHUNK = 200
+
+
+def _events(person_ids):
+    """The `brain.read` rows to fold: all of them, or (for some people) only those of sessions they are in. A
+    row's `key` ends with `:<session id>` (`readers.record_read`), so the narrowing is one query per chunk."""
+    qs = Event.objects.filter(source=EVENT_SOURCE)
+    if person_ids is None:
+        return list(qs.values("payload", "count", "last_seen_at"))
+    refs = sorted(set(BrainSource.objects.filter(participants__user_id__in=list(person_ids),
+                                                 kind=BrainSource.SESSION).values_list("ref", flat=True)))
+    out = []
+    for i in range(0, len(refs), _CHUNK):
+        q = reduce(or_, (Q(key__endswith=f":{r}") for r in refs[i:i + _CHUNK]))
+        out += list(qs.filter(q).values("payload", "count", "last_seen_at"))
+    return out
 
 
 def raw_rows(person_ids=None) -> dict:
     """{(person_id, learner, day): (reads, {source ids})} straight from the `brain.read` events."""
-    events = list(Event.objects.filter(source=EVENT_SOURCE).values("payload", "count", "last_seen_at"))
+    events = _events(person_ids)
     wanted = {s for e in events for s in (e["payload"] or {}).get("sources", [])}
     people = defaultdict(set)
     for sid, uid in SourceParticipant.objects.filter(source_id__in=wanted, user__isnull=False).values_list(

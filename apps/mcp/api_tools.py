@@ -50,7 +50,7 @@ from fastmcp.utilities.openapi.director import RequestDirector
 from mcp.types import ToolAnnotations
 
 from .audit import write_audit
-from .rate_limit import RateLimitError, check_write_limit
+from .rate_limit import BRAIN_RUN_BUCKET, RateLimitError, check_write_limit
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +69,8 @@ _HOST = "an embedding host's or a contact's surface — a different principal"
 _ANON = "anonymous public read; nothing to do as a signed-in person"
 _BRAIN = ("a person's own agreement to canopy learning: an agent or an MCP client with their token "
           "must never be able to give or withdraw it (apps/brain)")
+_REPORTING = ("who manages whom decides who reads a person's learning outputs: a workspace owner's own act, "
+              "never an agent's or an MCP client's (apps/brain)")
 _BYTES = "returns raw bytes, which a tool result cannot carry"
 
 #: Path prefixes whose every route belongs to another principal.
@@ -123,6 +125,7 @@ EXCLUDED: dict[str, str] = {
     "exclude_my_session": _BRAIN, "include_my_session": _BRAIN, "get_my_session_learning": _BRAIN,
     "get_my_disclosure": _BRAIN, "list_my_removed_sessions": _BRAIN,
     "declare_my_session_project": _BRAIN, "undeclare_my_session_project": _BRAIN,
+    "list_reporting": _REPORTING, "set_reporting": _REPORTING, "end_reporting": _REPORTING,
     "contact_token": _HOST,
     "public_stats": _ANON,
     "submit_beta_request": _ANON,
@@ -520,6 +523,19 @@ def _principal() -> dict:
     return {"user_id": int(user_id), "auth_method": method, "credential": credential}
 
 
+#: Tools whose writes are a machine run's own, budgeted per run turn rather than against the person it answers to.
+BRAIN_RUN_TOOLS = frozenset({"brain_emit"})
+
+
+def _write_bucket(tool: str, principal: dict) -> str:
+    """Which write budget a call spends: a brain run's emits spend that run turn's own (`rate_limit.BRAIN_RUN`),
+    never the canopy admin the run is accountable to; everything else the user's."""
+    turn_id = (principal.get("credential") or {}).get("turn_id")
+    if tool in BRAIN_RUN_TOOLS and turn_id:
+        return f"{BRAIN_RUN_BUCKET}{turn_id}"
+    return ""
+
+
 def acting(principal: dict) -> dict:
     """The audit row's "<agent> as <person>" fields for a call (empty for anything but
     an act-as-you token)."""
@@ -568,7 +584,8 @@ class CanopyAPITool(OpenAPITool):
             summary = f"[{workspace}] {summary}"
         if method != "GET":
             try:
-                await sync_to_async(check_write_limit, thread_sensitive=True)(principal["user_id"])
+                await sync_to_async(check_write_limit, thread_sensitive=True)(
+                    principal["user_id"], bucket=_write_bucket(self.name, principal))
             except RateLimitError as exc:
                 await write_audit(user_id=principal["user_id"], tool=self.name, workspace=workspace,
                                   args_summary=summary, ok=False, error=str(exc), **acting(principal))

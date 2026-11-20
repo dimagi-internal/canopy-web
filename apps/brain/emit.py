@@ -4,7 +4,7 @@ An output is about the run's own subject (never one it names), of a kind its fea
 sources it came from. Every cited source must be one THIS run read (`BrainRunRead`) and must still be eligible
 now: a source cited but never read, or one whose people withdrew since, is refused whole. The lineage
 (`OutputLineage`) is written from the reads, so a later removal can find every output a source fed. The words
-are scrubbed like every learning read. Emitting the same thing twice is one output."""
+are scrubbed like every learning read, keys as well as values. Emitting the same thing twice is one output."""
 from __future__ import annotations
 
 import hashlib
@@ -55,7 +55,7 @@ def emit(run: BrainRun, *, kind: str, title: str, body: dict, source_ids, turn_i
     workspaces = {s.workspace_id for s in sources}
     if len(workspaces) != 1:
         raise EmitRefusedError("an output cites sources of one workspace; emit one per workspace")
-    scrubbed, _n = redact._redact_value(body)
+    scrubbed = _scrub(body)
     clean_title = redact.redact_text(title or "")[0][:300]
     fingerprint = hashlib.sha256(json.dumps([kind, clean_title, scrubbed, ids], sort_keys=True,
                                             default=str).encode()).hexdigest()
@@ -80,6 +80,8 @@ def _emit_link(run: BrainRun, *, body: dict, source_ids):
     what outranks a judgment (a person's call, a dispatch): `associate.put` decides."""
     if run.subject_type != "project":
         raise EmitRefusedError("a link is a ruling about one project")
+    if not isinstance(body, dict):
+        raise EmitRefusedError("a link's body is an object: {tier, confidence, model, evidence}")
     ids = sorted({int(i) for i in source_ids})
     if len(ids) != 1:
         raise EmitRefusedError("a link rules on exactly one source")
@@ -98,6 +100,18 @@ def _emit_link(run: BrainRun, *, body: dict, source_ids):
     project = AgentProject.objects.filter(pk=run.subject, workspace_id=source.workspace_id).first()
     if project is None or project.is_personal:
         raise EmitRefusedError("a link rules on a workspace project of the source's own workspace")
-    evidence = [redact.redact_text(str(e))[0][:200] for e in (body.get("evidence") or [])[:5]]
+    evidence = body.get("evidence") or []
+    if not isinstance(evidence, list):
+        raise EmitRefusedError("evidence is a list of short strings")
+    evidence = [redact.redact_text(str(e))[0][:200] for e in evidence[:5]]
     return associate.put(source, project, how=SourceLink.JUDGED, tier=tier, evidence=evidence,
                          confidence=float(confidence), model=model)
+
+
+def _scrub(value):
+    """`common.redact` over a JSON value, its object KEYS too: a secret written as a key is still a secret."""
+    if isinstance(value, dict):
+        return {redact.redact_text(str(k))[0]: _scrub(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_scrub(v) for v in value]
+    return redact._redact_value(value)[0]

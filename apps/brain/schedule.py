@@ -1,10 +1,12 @@
 """Starting runs on a schedule: one per active project per feature, only when there is something new.
 
 For each enabled feature that names a `schedule`, an operator and a project class, and each active workspace
-project in the operator's workspace tree, `due` asks: has a run started in the last interval, is one open, and are
-there eligible sources past the feature's cursor for that project? Only then does `run_due` start one, reading past
-the cursor (`BrainRun.floor`), so a project is never re-read from the start. A judge (`reading.JUDGE`) has no cursor:
-what it has ruled on leaves its candidates. A failed run moves nothing and is tried again at the next interval."""
+project in the operator's workspace tree, `due` asks: has a run started in the last interval, is one open, and is
+there an eligible source no clean run of the feature read for that project (`reading.candidates`)? Only then does
+`run_due` start one. What is new is per source, not a position, so a session linked, agreed to or backfilled late
+is still read; a failed run counts nothing and its sources are read at the next interval, as are the remaining
+sources of an output a removal left stale (`RederiveRequest`). A run open past the timeout is abandoned first
+(`runs.abandon_stale`), and two workers starting the same run race on the one-open-run constraint."""
 from __future__ import annotations
 
 import logging
@@ -29,7 +31,8 @@ def projects_of(cap: BrainCapability):
 
 
 def due(cap: BrainCapability, project: AgentProject, now=None) -> int | None:
-    """The floor a run for this project should read past, or None when none is due."""
+    """The floor a run for this project starts from (always 0: `reading.candidates` leaves out what was learned),
+    or None when none is due."""
     now = now or timezone.now()
     interval = SCHEDULES.get(cap.schedule)
     if not interval:
@@ -40,17 +43,17 @@ def due(cap: BrainCapability, project: AgentProject, now=None) -> int | None:
     cursor = BrainCursor.objects.filter(capability=cap, subject_type="project", subject=str(project.pk)).first()
     if cursor is not None and cursor.last_run_at is not None and (now - cursor.last_run_at).total_seconds() < interval:
         return None
-    purpose = (cap.purposes or [""])[0]
-    probe = BrainRun(capability=cap, subject_type="project", subject=str(project.pk), purpose=purpose,
-                     floor=0 if purpose == reading.JUDGE else (cursor.last_source if cursor else 0))
-    return probe.floor if reading.candidates(probe).exists() else None
+    probe = BrainRun(capability=cap, subject_type="project", subject=str(project.pk),
+                     purpose=(cap.purposes or [""])[0], floor=0)
+    return 0 if reading.candidates(probe).exists() else None
 
 
 def run_due(now=None) -> list[BrainRun]:
     """Start every run that is due. Safe from any number of workers: `runs.start` is one transaction and a
-    project with an open run is skipped."""
+    second open run for the same project is refused by the database."""
     if not readers.enabled():
         return []
+    runs.abandon_stale(now)
     started = []
     caps = (BrainCapability.objects.filter(enabled=True, purpose_class=PROJECT, operator__isnull=False)
             .exclude(schedule="").select_related("operator"))
