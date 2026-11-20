@@ -51129,7 +51129,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["WalkthroughDetailOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -52454,7 +52454,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["MailResolveOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -53287,7 +53287,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["StoryboardOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -53346,7 +53346,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["StoryboardOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -53429,7 +53429,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -53462,7 +53462,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["RoundOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -55595,7 +55595,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["DynamicViewOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -57269,7 +57269,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["LocalAppSubmissionOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -57385,7 +57385,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["MeetingOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -57845,7 +57845,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["SessionUploadOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -57922,7 +57922,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ArcCreateOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -58603,7 +58603,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -58688,7 +58688,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentScaffoldOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -58791,7 +58791,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentCanopyTokenOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -59136,7 +59136,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentDetailOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -59171,7 +59171,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentDetailOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -59324,7 +59324,7 @@ export interface operations {
                     readonly "application/json": readonly components["schemas"]["AgentRunnerOut"][];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -59502,7 +59502,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -59560,7 +59560,7 @@ export interface operations {
                     readonly "application/json": readonly components["schemas"]["AgentActorRouteOut"][];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -59638,7 +59638,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AccessLineOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -59769,7 +59769,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ReadModeSettingOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -59849,7 +59849,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentHostSitesOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -59930,7 +59930,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentAppEntriesOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -60396,7 +60396,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -60432,7 +60432,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -60596,7 +60596,7 @@ export interface operations {
                     readonly "application/json": readonly components["schemas"]["AgentTaskOut"][];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -61012,7 +61012,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ZkStateOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -61173,7 +61173,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["VaultMembersOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -61231,7 +61231,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["VaultMembersOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -61506,7 +61506,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentGitHubOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -61878,7 +61878,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["RunSummary"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -62190,7 +62190,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["GoogleMintOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -62343,7 +62343,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ScheduleOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -62378,7 +62378,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["SchedulePreviewOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -62435,7 +62435,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ScheduleOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -62517,7 +62517,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["TriggerOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -62574,7 +62574,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["TriggerOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -62678,7 +62678,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["CoachingFactOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -62762,7 +62762,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -63005,7 +63005,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentCapabilitiesOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -63249,7 +63249,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["CapabilityLeaseOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -63283,7 +63283,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["CapabilitySpendOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -63489,7 +63489,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentTaskCallOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -63873,7 +63873,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentTaskOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -64079,7 +64079,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentProjectOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -64492,7 +64492,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentTaskOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -64827,7 +64827,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["TaskSettingsOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -67739,7 +67739,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["PrivateRunnerOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -71037,7 +71037,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["TurnOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -72221,7 +72221,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["EngagementViewOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -72381,7 +72381,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ThreadOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -72480,7 +72480,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -72631,7 +72631,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ApprovalCardOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -72734,7 +72734,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["SlackShareOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -72767,7 +72767,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["SlackDetachOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -72800,7 +72800,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["SlackNewThreadOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -72833,7 +72833,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["SlackOfflineOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -72866,7 +72866,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ReportBackOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -72916,7 +72916,7 @@ export interface operations {
                     readonly "application/json": readonly components["schemas"]["SessionOut"][];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -72949,7 +72949,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["SessionOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -73912,7 +73912,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["SessionSearchPageOut"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -75997,7 +75997,7 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Unprocessable Content */
+            /** @description Unprocessable Entity */
             readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
