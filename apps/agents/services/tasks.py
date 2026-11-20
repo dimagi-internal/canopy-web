@@ -330,9 +330,15 @@ def create_tasks(agent: Agent | None, payloads: list[dict], *, workspace: str = 
             # inherits it, so `{"parent": "T66"}` alone files it correctly.
             if not ref:
                 found = get_task(agent, parent_ref) if agent is not None else work.task_by_key(parent_ref)
-                if (found is not None and agent is None and found.workspace_id != workspace
+                # A key names a task in ANY workspace (`work.task_by_key`), through an
+                # agent's route as much as a person's, and the subtask follows its
+                # parent there. Only the home workspace's gate was asked, so the
+                # parent's is asked here: one the caller cannot do task work in is as
+                # unknown as one that is not there.
+                home = workspace or (agent.workspace_id if agent is not None else "")
+                if (found is not None and found.workspace_id != home
                         and not _may_work_in(by_user, found.workspace_id)):
-                    found = None  # another workspace's task, as unknown as one that is not there
+                    found = None
                 if found is not None and found.project_id and not may_use_project(found.project, user=by_user, agent=agent):
                     found = None  # resolve_parent refuses it, as a parent it cannot find
                 project = found.project if found is not None else None

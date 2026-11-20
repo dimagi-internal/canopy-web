@@ -207,11 +207,11 @@ def test_package_phase_comes_from_the_run_document(ws, hal, sophie):
         agent=hal, project=sophie, kind="ddd", ext_id="s-2026-10-04-001", status="running",
         summary={"phase": "judged", "iteration": 3},
     )
-    pkg = aggregate.build_run(run.ext_id)
+    pkg = aggregate.build_run(run.ext_id, workspace_slugs=aggregate.EVERY_WORKSPACE)
     assert pkg["phase"] == "judged · iteration 3"
     assert pkg["record"]["project_name"] == "Sophie RUTF procurement"
     AgentRun.objects.filter(pk=run.pk).update(status="converged_clean")
-    assert aggregate.build_run(run.ext_id)["phase"] == "converged_clean"
+    assert aggregate.build_run(run.ext_id, workspace_slugs=aggregate.EVERY_WORKSPACE)["phase"] == "converged_clean"
     assert aggregate.build_run(run.ext_id, workspace_slugs={"elsewhere"}) is None
 
 
