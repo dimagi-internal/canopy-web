@@ -180,3 +180,15 @@ def test_the_new_routes_are_mcp_tools_but_each_is_secured_in_the_route(w):
              for m, op in item.items() if isinstance(op, dict) and not excluded_reason(path, m, op)}
     assert {"list_capabilities", "register_capability", "patch_capability", "list_reporting", "set_reporting",
             "end_reporting", "list_outputs", "declare_session_project"} <= tools
+
+
+def test_what_learns_is_registered_dark_and_each_audience_is_the_class_s(w):
+    from apps.brain.registry import CLASS_AUDIENCE
+
+    rows = {c.slug: c for c in BrainCapability.objects.filter(slug__in=[
+        "coaching", "agent-memory", "project-link-judge", "project-learning", "system-learning", "project-readers"])}
+    assert set(rows) == {"coaching", "agent-memory", "project-link-judge", "project-learning", "system-learning",
+                         "project-readers"}
+    for slug, c in rows.items():
+        assert tuple(c.audience) == CLASS_AUDIENCE[c.purpose_class], slug
+        assert c.enabled is (slug == "project-readers") and (c.operator_id is None), slug     # only the built-in reads
