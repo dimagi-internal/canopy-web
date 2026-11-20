@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 
 from apps.common import redact
-from apps.harness import clis, provenance, sensitivity
+from apps.harness import claim_payload, clis, provenance, sensitivity
 from apps.harness import runner_requirements as rr
 from apps.harness.models import Runner
 
@@ -103,6 +103,21 @@ def is_brain_only(session, viewer) -> bool:
     return viewer is not None and access.read_through_brain_only(viewer, session)
 
 
+def _session_model(session, runner) -> str:
+    """The model a bound conversation runs on, "" when unbound. A model its agent
+    names wins (every claim sends it); else what the box reports, since a session a
+    person started on their own machine runs the box's setting; else the server
+    default every claim sends (`claim_payload.start_model`). A cloud box reports
+    none: it only runs claimed turns."""
+    if runner is None:
+        return ""
+    cli = session.cli or "claude-code"
+    agent = session.agent if session.agent_id else None
+    named = (agent.cli_models or {}).get(cli) if agent else None
+    reported = (runner.capabilities or {}).get("claude_model")
+    return str(named or reported or claim_payload.start_model(None, cli))[:64]
+
+
 def session_out(session: Session, *, reply: bool = False, viewer=None) -> dict:
     binding = getattr(session, "runner_binding", None)  # reverse 1:1 -> None when absent
     waiting_on_you = serializers.pending_menu(session) is not None
@@ -184,10 +199,9 @@ def session_out(session: Session, *, reply: bool = False, viewer=None) -> dict:
         "runner_online": _runner_online(runner),
         "runner_status": _runner_status(runner),
         "runner_signed_out": _runner_signed_out(runner, session),
-        # The model its runner's sessions start on (`opus[1m]`), as the box
-        # reports it: how the chat's context meter sizes the window, since the
-        # transcript never records the `[1m]`. "" when unbound or unreported.
-        "runner_model": str((runner.capabilities or {}).get("claude_model") or "") if runner else "",
+        # The model this conversation runs on (`opus[1m]`): how the chat's context
+        # meter sizes the window, since the transcript never records the `[1m]`.
+        "runner_model": _session_model(session, runner),
         "session_key": binding.session_key if binding else "",
         # The agent CLI this conversation runs on (`harness.clis`); "" until its first claim.
         "cli": session.cli,
