@@ -12,7 +12,7 @@ from django.test.utils import CaptureQueriesContext
 
 from apps.agents.models import Agent, AgentProject, AgentTask
 from apps.brain import associate, graph, sources
-from apps.brain.models import BrainOutput, OutputLineage, ProjectSignature, ReportingLine, SourceLink
+from apps.brain.models import BrainCapability, BrainOutput, OutputLineage, ProjectSignature, ReportingLine, SourceLink
 from apps.canopy_sessions import access, coaching
 from apps.canopy_sessions.models import CoachingOptIn, Session, SessionParticipant
 from apps.contacts.models import Contact
@@ -74,8 +74,6 @@ def w(settings):
 
 
 def _cap():
-    from apps.brain.models import BrainCapability
-
     return BrainCapability.objects.get(slug="coach")
 
 
@@ -102,7 +100,7 @@ def test_a_non_member_gets_nothing(w):
 def test_a_person_in_the_session_sees_it_its_people_agent_task_and_project(w):
     body = _get(client(w["alice"]))
     s, p = f"session:{w['session'].pk}", f"project:{w['project'].pk}"
-    assert {s, p, f"task:ACM-1", "agent:eva", f"person:{w['alice'].pk}", f"person:{w['bob'].pk}"} <= _ids(body)
+    assert {s, p, "task:ACM-1", "agent:eva", f"person:{w['alice'].pk}", f"person:{w['bob'].pk}"} <= _ids(body)
     assert (f"person:{w['alice'].pk}", s) in _edges(body, "started")
     assert (f"person:{w['bob'].pk}", s) in _edges(body, "participates")
     assert ("agent:eva", s) in _edges(body, "ran")
