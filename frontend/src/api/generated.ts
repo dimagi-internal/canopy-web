@@ -50696,9 +50696,8 @@ export interface components {
             /**
              * Operator Id
              * @description The operator's identifier (a DNS domain or identifier) that a person's standing rules name; empty = the host of its first redirect URI.
-             * @default
              */
-            readonly operator_id: string;
+            readonly operator_id?: string;
             /**
              * Claims
              * @description Conformance claims it declared (HCP v2 18.1).
@@ -50746,9 +50745,8 @@ export interface components {
             /**
              * Operator Id
              * @description The operator's identifier (a DNS domain or identifier) that a person's standing rules name; empty = the host of its first redirect URI.
-             * @default
              */
-            readonly operator_id: string;
+            readonly operator_id?: string;
             /**
              * Claims
              * @description Conformance claims it declared (HCP v2 18.1).
@@ -50802,11 +50800,8 @@ export interface components {
              * @description Purpose codes it may read for (the registry in discovery `canopy.purposes`); empty = those of the scopes.
              */
             readonly purposes?: readonly string[];
-            /**
-             * Operator Id
-             * @default
-             */
-            readonly operator_id: string;
+            /** Operator Id */
+            readonly operator_id?: string;
             /** Claims */
             readonly claims?: readonly string[];
             /**

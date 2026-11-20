@@ -33,7 +33,7 @@ class HcpClientOut(StrictModel):
     allowed_scopes: list[str]
     purposes: list[str] = Field(default_factory=list, description="The purposes (HCP v2 6.1.5.2) it may read for; "
                                                                   "empty = those of the scopes it is granted.")
-    operator_id: str = Field(default="", description="The operator's identifier (a DNS domain or identifier) "
+    operator_id: str = Field(default_factory=str, description="The operator's identifier (a DNS domain or identifier) "
                                                      "that a person's standing rules name; empty = the host of its "
                                                      "first redirect URI.")
     claims: list[str] = Field(default_factory=list, description="Conformance claims it declared (HCP v2 18.1).")
@@ -58,7 +58,7 @@ class HcpClientIn(StrictModel):
     allowed_scopes: list[str] = Field(min_length=1, description="hcp:{category}:{read|write}, each named.")
     purposes: list[str] = Field(default_factory=list, description="Purpose codes it may read for (the registry in "
                                                                   "discovery `canopy.purposes`); empty = those of the scopes.")
-    operator_id: str = Field(default="", max_length=200)
+    operator_id: str = Field(default_factory=str, max_length=200)
     claims: list[str] = Field(default_factory=list)
     first_party: bool = False
     webhook_url: str = ""
