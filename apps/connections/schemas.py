@@ -502,8 +502,9 @@ class AppSurfaceIn(StrictModel):
 
 class ConnectionCallIn(StrictModel):
     method: str = Field(description="`GET`, `POST`, `PATCH` or `DELETE`.")
-    path: str = Field(description="Relative to Salesforce's API root, for example `query` or `sobjects/Lead/00Q…`. "
-                                  "Plain names and slashes only.")
+    path: str = Field(description="Relative to Salesforce's API root, for example `query`, `query/<nextRecordsUrl "
+                                  "locator>` or `sobjects/Lead/00Q…`; `composite/batch` and `composite/sobjects` hold "
+                                  "several calls, each checked as if made alone. Plain names and slashes only.")
     query: dict[str, str | list[str]] | None = Field(default=None, description="The query string, as names and text.")
     body: Any = Field(default=None, description="The JSON body to send, on a `POST` or `PATCH`.")
     surface: Annotated[ViewSurfaceIn | AppSurfaceIn, Field(discriminator="kind")] = Field(
@@ -579,3 +580,6 @@ class ConnectionCallOut(StrictModel):
     status: int = Field(description="The provider's own status, also when it refused the call.")
     body: Any = Field(default=None, description="The provider's JSON answer. Null when it sent none, or not JSON.")
     text: str | None = Field(default=None, description="The start of an answer that was not JSON. Absent otherwise.")
+    limits: str | None = Field(default=None, description="Salesforce's `Sforce-Limit-Info` header as it came "
+                                                         "(`api-usage=18/15000`): the org's API use. Absent when "
+                                                         "it sent none.")

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/api/problem'
-import { CallQueue, ConnectionCalls, MAX_IN_FLIGHT, NEEDS_CLICK, pageClickedFrame, QUEUE_WAIT_MS, type CallContext, type ConnectionClient } from './connectionCalls'
+import { CallQueue, compositeWrites, ConnectionCalls, MAX_IN_FLIGHT, NEEDS_CLICK, pageClickedFrame, QUEUE_WAIT_MS, type CallContext, type ConnectionClient } from './connectionCalls'
 
 const DECLARED = [{
   provider: 'salesforce', as: 'viewer',
@@ -190,6 +190,47 @@ describe('ConnectionCalls', () => {
     await calls.handle({ provider: 'salesforce', method: 'POST', path: 'analytics/reports/00O1' })
     expect(client.request).toHaveBeenCalled()
     await expect(calls.handle(WRITE)).rejects.toThrow('This needs a click.')
+  })
+})
+
+describe('bulk calls', () => {
+  it("a query's next page is covered by the query and needs no click", async () => {
+    const { calls, client } = setup({ active: false })
+    await calls.handle({ provider: 'salesforce', method: 'GET', path: 'query/01gD0000002HU6KIAW-2000' })
+    expect(client.request).toHaveBeenCalled()
+    expect(client.openOperation).not.toHaveBeenCalled()
+    await expect(calls.handle({ provider: 'salesforce', method: 'GET', path: 'query/x/y' })).rejects.toThrow("didn't declare")
+  })
+
+  it('a batch of reads goes with no click, and the server checks each call in it', async () => {
+    const { calls, client } = setup({ active: false })
+    const body = { batchRequests: [{ method: 'GET', url: '/services/data/v65.0/query?q=x' }] }
+    await calls.handle({ provider: 'salesforce', method: 'POST', path: 'composite/batch', body })
+    expect(client.openOperation).not.toHaveBeenCalled()
+    expect((client.request as ReturnType<typeof vi.fn>).mock.calls[0][1]).toMatchObject({ path: 'composite/batch', body })
+  })
+
+  it('a collection write needs a click and spends a write per record', async () => {
+    const { calls, client, state } = setup({ active: false })
+    const body = { records: Array.from({ length: 200 }, () => ({ attributes: { type: 'Task' } })) }
+    const write = { provider: 'salesforce', method: 'POST', path: 'composite/sobjects', body }
+    await expect(calls.handle(write)).rejects.toThrow(NEEDS_CLICK)
+    state.active = true
+    await calls.handle(write)
+    state.active = false
+    await calls.handle(write)
+    // 400 spent: a third of 200 would pass the 500 a lease holds, so it needs a new click.
+    await expect(calls.handle(write)).rejects.toThrow(NEEDS_CLICK)
+    expect(client.openOperation).toHaveBeenCalledTimes(1)
+    expect(client.request).toHaveBeenCalledTimes(2)
+  })
+
+  it('counts writes the way the server does', () => {
+    expect(compositeWrites('GET', 'query', null, null)).toBeNull()
+    expect(compositeWrites('GET', 'composite/sobjects/Lead', null, { ids: 'a,b' })).toBe(0)
+    expect(compositeWrites('POST', 'composite/batch', { batchRequests: [{ method: 'get' }, { method: 'PATCH' }, { method: 'DELETE' }] }, null)).toBe(2)
+    expect(compositeWrites('DELETE', 'composite/sobjects', null, { ids: 'a,b,c' })).toBe(3)
+    expect(compositeWrites('PATCH', 'composite/sobjects', { records: [{}, {}] }, null)).toBe(2)
   })
 })
 

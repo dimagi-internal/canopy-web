@@ -10,6 +10,10 @@ A screen that calls Salesforce or Google Drive through canopy-web says so up fro
       "reads":  [{"method": "GET",  "path": "files"}, {"method": "GET", "path": "files/*/listLabels"}],
       "writes": [{"method": "POST", "path": "files/*/modifyLabels"}]}]
 
+A composite call (`composite/batch`, `composite/sobjects`) is never declared: each call inside
+it must fit a line, exactly as if it were made alone (`calls.expand`). A query's next page
+(`query/<locator>`) is covered by the screen's `GET query` line.
+
 `path` is a pattern in the canonical, decoded form `calls.match` returns: literal
 segments, and `*` standing for exactly one segment. A write names its object
 exactly (`sobjects/Lead/*`, never `sobjects/*/*`) and a flow or Apex write names
@@ -199,6 +203,11 @@ def _check_line(entry_provider: str, line: dict) -> dict:
     if found.path != probe:
         raise ValueError(f"{shown}: that is not a path this screen may call: write it plainly, not encoded")
     rule = found.rule
+    if calls.is_composite(found):
+        raise ValueError(f"{shown}: declare the calls a composite call holds, not the composite call: "
+                         "each one inside it is checked against those")
+    if rule.declared_as is not None:
+        raise ValueError(f"{shown}: that is covered by {rule.method} {rule.declared_as}: declare that instead")
     if kind == "read" and rule.kind != "read":
         raise ValueError(f"{shown}: that is a write, not a read: declare it under writes")
     if kind == "write" and rule.kind != "write":
@@ -304,7 +313,8 @@ def allows(declared: list[dict], provider: str, as_: str, agent_slug: str | None
                   and e.get("as") == as_ and e.get("agent") == wanted_agent), None)
     if entry is None:
         return False
-    segments = match_result.path.split("/")
+    # A query's next page is covered by the query: what the screen declared is the `GET query`.
+    segments = (rule.declared_as or match_result.path).split("/")
     for line in entry.get("writes" if rule.kind == "write" else "reads") or []:
         if line.get("method") != rule.method:
             continue

@@ -17,8 +17,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Literal
-from urllib.parse import quote, unquote, urlencode
+from typing import Any, Literal
+from urllib.parse import parse_qsl, quote, unquote, urlencode
 
 from .providers.salesforce import _instance_url
 
@@ -47,6 +47,9 @@ class Rule:
     pattern: str
     kind: Kind
     name: str
+    #: The declared path that covers this rule, when it is not its own: a query's next page is
+    #: covered by the screen's `GET query` (`declarations.allows`), and can't be declared alone.
+    declared_as: str | None = None
 
 
 # A segment is ordinary name characters only. Everything that could change the
@@ -57,27 +60,32 @@ _SEGMENT = re.compile(r"[A-Za-z0-9_\-]+")
 _SF_ID = re.compile(r"[A-Za-z0-9]{15}(?:[A-Za-z0-9]{3})?")
 _SF_TYPE = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
 _SF_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_\-]*")
+# A query's next page: the query's id, a dash and the row it starts at (`01gD0000002HU6KIAW-2000`).
+_SF_LOCATOR = re.compile(r"[A-Za-z0-9]{15}(?:[A-Za-z0-9]{3})?-[0-9]{1,9}")
 # A Drive file, folder or shared drive id (shared drives are 19 characters, files up to 44). The
 # lower bound also keeps Drive's own words under `files/` (`generateIds`, `trash`) from fitting.
 _DRIVE_ID = re.compile(r"[A-Za-z0-9_\-]{19,64}")
 
 # Placeholders in a pattern, per provider: a segment that must fit this expression.
 _PLACEHOLDERS = {
-    "salesforce": {"{type}": _SF_TYPE, "{id}": _SF_ID, "{name}": _SF_NAME},
+    "salesforce": {"{type}": _SF_TYPE, "{id}": _SF_ID, "{name}": _SF_NAME, "{locator}": _SF_LOCATOR},
     "google": {"{id}": _DRIVE_ID},
 }
 # `...` as the last segment: zero or more further ordinary segments.
 _REST = "..."
 
 
-def _rules(*rows: tuple[str, str, Kind, str]) -> tuple[Rule, ...]:
+def _rules(*rows: tuple) -> tuple[Rule, ...]:
     return tuple(Rule(*row) for row in rows)
 
 
-# Salesforce, exactly the list in the projects spec §3. Composite is out. A POST
-# to analytics/reports can save a report as well as run one, so it is a write.
+# Salesforce, the list in the projects spec §3, plus a query's next page and the two composite
+# calls (`expand`). A POST to analytics/reports can save a report as well as run one, so it is a
+# write. A composite rule's kind is only where it starts: what it is, a read or how many writes,
+# is the calls inside it (`Composite.writes`), and it is never declared itself.
 SALESFORCE_RULES = _rules(
     ("GET", "query", "read", "query"),
+    ("GET", "query/{locator}", "read", "query", "query"),
     ("GET", "search", "read", "search"),
     ("GET", "sobjects/{type}/describe", "read", "describe"),
     ("GET", "sobjects/{type}", "read", "sobject"),
@@ -98,6 +106,11 @@ SALESFORCE_RULES = _rules(
     ("GET", "chatter/users/me", "read", "me"),
     ("GET", "limits", "read", "limits"),
     ("GET", "ui-api/...", "read", "ui-api"),
+    ("POST", "composite/batch", "write", "composite"),
+    ("GET", "composite/sobjects/{type}", "read", "composite"),
+    ("POST", "composite/sobjects", "write", "composite"),
+    ("PATCH", "composite/sobjects", "write", "composite"),
+    ("DELETE", "composite/sobjects", "write", "composite"),
 )
 
 # Google: Drive v3 file metadata and labels, nothing else (no content, no sharing, no Gmail or
@@ -260,3 +273,201 @@ def build_url(provider: str, instance_url: str, path: str, query: object, *, met
     if params:
         url += "?" + urlencode(params, doseq=True)
     return url
+
+
+# ---- composite calls: many calls in one request -----------------------------------------------
+#
+# `composite/batch` (up to 25 calls) and `composite/sobjects` (sObject Collections, up to 200
+# records) are taken apart here into the calls they hold, each matched exactly as if it were made
+# alone, and put back together from what was matched: what is checked is what is sent. The caller
+# (`call_service`) checks each part against the screen's declaration and spends one write of the
+# lease on each write part, so a composite call can do nothing its parts could not do one by one.
+
+MAX_BATCH_REQUESTS = 25
+MAX_COLLECTION_RECORDS = 200
+MAX_SUB_URL_CHARS = 4096
+_BATCH_KEYS = frozenset({"batchRequests", "haltOnError"})
+_SUBREQUEST_KEYS = frozenset({"method", "url", "richInput"})
+_COLLECTION_KEYS = frozenset({"allOrNone", "records"})
+# A subrequest's url is this API version, written either way Salesforce documents it.
+_SUB_URL_PREFIXES = (f"/services/data/{SF_API_VERSION}/", f"{SF_API_VERSION}/")
+
+# The first three characters of a record id say what it is. These are the same in every org, so a
+# collection's update or delete (whose ids alone say what is changed) can be checked against the
+# declaration. An id whose prefix isn't here (a custom object's) is refused in a collection; it can
+# still be changed alone, where Salesforce reads the object from the path.
+KEY_PREFIXES = {
+    "001": "Account", "002": "Note", "003": "Contact", "006": "Opportunity", "00K": "OpportunityContactRole",
+    "00P": "Attachment", "00Q": "Lead", "00T": "Task", "00U": "Event", "00k": "OpportunityLineItem",
+    "00v": "CampaignMember", "02Z": "AccountContactRole", "500": "Case", "701": "Campaign",
+    # Guarded, so refused wherever they appear (`GUARDED_OBJECTS`).
+    "005": "User", "00D": "Organization", "00E": "UserRole", "00G": "Group", "00e": "Profile",
+    "011": "GroupMember", "01p": "ApexClass", "01q": "ApexTrigger", "066": "ApexPage", "099": "ApexComponent",
+    "0PS": "PermissionSet", "0Pa": "PermissionSetAssignment",
+}
+
+
+@dataclass(frozen=True)
+class Composite:
+    """A composite call taken apart. `parts` are the calls inside it, each as `match` answers for it
+    alone (a collection's records as `sobjects/<type>[/<id>]`); `query` and `body` are exactly what is
+    sent, rebuilt from what was matched."""
+    kind: Literal["batch", "collection"]
+    parts: tuple[Match, ...]
+    query: dict
+    body: Any
+
+    @property
+    def writes(self) -> int:
+        """How many writes it is: one for each write inside it."""
+        return sum(1 for p in self.parts if p.rule.kind == "write")
+
+
+def is_composite(found: Match) -> bool:
+    return found.rule.name == "composite"
+
+
+def expand(provider: str, found: Match, query: dict, body: Any) -> Composite:
+    """The calls inside a composite call `found` (which passed `match`), or NotAllowed with a sentence
+    naming which one. Nothing nests: a composite call inside one is refused, as is `_HttpMethod`
+    anywhere (`check_query`) and a guarded object's write (`match`)."""
+    if provider != "salesforce" or not is_composite(found):
+        raise NotAllowed("That is not a composite call.")
+    if found.path == "composite/batch":
+        return _batch(query, body)
+    return _collection(found, query, body)
+
+
+def _batch(query: dict, body: Any) -> Composite:
+    if query:
+        raise NotAllowed("A composite batch takes no query.")
+    if not isinstance(body, dict) or not set(body) <= _BATCH_KEYS or "batchRequests" not in body:
+        raise NotAllowed("A composite batch is {batchRequests: [...], haltOnError?: true or false}.")
+    requests_ = body["batchRequests"]
+    if not isinstance(requests_, list) or not 1 <= len(requests_) <= MAX_BATCH_REQUESTS:
+        raise NotAllowed(f"A composite batch holds 1 to {MAX_BATCH_REQUESTS} calls.")
+    halt = body.get("haltOnError", False)
+    if not isinstance(halt, bool):
+        raise NotAllowed("haltOnError must be true or false.")
+    parts: list[Match] = []
+    sent: list[dict] = []
+    for i, sub in enumerate(requests_):
+        where = f"Call {i + 1} in the batch"
+        if not isinstance(sub, dict) or not {"method", "url"} <= set(sub) or not set(sub) <= _SUBREQUEST_KEYS:
+            raise NotAllowed(f"{where} must be {{method, url}}, with a richInput for a body and nothing else.")
+        path, sub_query = _sub_url(sub["url"], where)
+        try:
+            part = match("salesforce", sub["method"], path)
+            sub_query = check_query(sub_query)
+        except NotAllowed as exc:
+            raise NotAllowed(f"{where}: {exc}") from None
+        if is_composite(part):
+            raise NotAllowed(f"{where}: a composite call can't hold another.")
+        if part.rule.name == "apexrest":
+            raise NotAllowed(f"{where}: Apex REST can't be called in a batch; call it alone.")
+        if "richInput" in sub and part.rule.method in ("GET", "DELETE"):
+            raise NotAllowed(f"{where}: a {part.rule.method} call can't carry a body.")
+        quoted = "/".join(quote(s, safe="") for s in part.path.split("/"))
+        item = {"method": part.rule.method,
+                "url": f"{SF_API_VERSION}/{quoted}" + ("?" + urlencode(sub_query, doseq=True) if sub_query else "")}
+        if "richInput" in sub:
+            item["richInput"] = sub["richInput"]
+        parts.append(part)
+        sent.append(item)
+    out: dict = {"batchRequests": sent}
+    if "haltOnError" in body:
+        out["haltOnError"] = halt
+    return Composite("batch", tuple(parts), {}, out)
+
+
+def _sub_url(url: object, where: str) -> tuple[str, dict]:
+    """A subrequest's `url` as `(path relative to the API root, its query)`, or NotAllowed. Only this
+    API version on this connection: never another host, version or part of the API."""
+    if (not isinstance(url, str) or not url.isascii() or len(url) > MAX_SUB_URL_CHARS
+            or any(c in url for c in "#\\") or any(ord(c) <= 32 or ord(c) == 127 for c in url)):
+        raise NotAllowed(f"{where}: its url is not one a screen may call.")
+    prefix = next((p for p in _SUB_URL_PREFIXES if url.startswith(p)), None)
+    if prefix is None:
+        raise NotAllowed(f"{where}: its url must start {_SUB_URL_PREFIXES[0]}, this connection's own API.")
+    path, _, raw_query = url[len(prefix):].partition("?")
+    query: dict[str, str | list[str]] = {}
+    try:
+        pairs = parse_qsl(raw_query, keep_blank_values=True, strict_parsing=True, errors="strict") if raw_query else []
+    except (ValueError, UnicodeDecodeError):
+        raise NotAllowed(f"{where}: its query can't be read.") from None
+    for key, value in pairs:
+        have = query.get(key)
+        query[key] = value if have is None else [*(have if isinstance(have, list) else [have]), value]
+    return path, query
+
+
+def _collection(found: Match, query: dict, body: Any) -> Composite:
+    method = found.rule.method
+    if method == "GET":
+        type_ = found.path.split("/")[2]
+        if set(query) - {"ids", "fields"} or not {"ids", "fields"} <= set(query) or not isinstance(
+                query["fields"], str):
+            raise NotAllowed("Reading a collection takes ids and fields, and nothing else.")
+        parts = tuple(_record_match("GET", type_, rid, None) for rid in _ids(query["ids"]))
+        return Composite("collection", parts, dict(query), None)
+    if method == "DELETE":
+        if set(query) - {"ids", "allOrNone"} or "ids" not in query:
+            raise NotAllowed("Deleting a collection takes ids, and allOrNone if you like, and nothing else.")
+        if query.get("allOrNone", "false") not in ("true", "false"):
+            raise NotAllowed("allOrNone must be true or false.")
+        parts = []
+        for i, rid in enumerate(_ids(query["ids"])):
+            type_ = KEY_PREFIXES.get(rid[:3])
+            if type_ is None:
+                raise NotAllowed(f"Record {i + 1}: canopy can't tell what kind of record {rid} is, so it can't "
+                                 "check this screen may delete it. Delete it alone.")
+            parts.append(_record_match("DELETE", type_, rid, i))
+        return Composite("collection", tuple(parts), dict(query), None)
+    if query:
+        raise NotAllowed("Creating or changing a collection takes no query.")
+    if not isinstance(body, dict) or not set(body) <= _COLLECTION_KEYS or "records" not in body:
+        raise NotAllowed("A collection is {records: [...], allOrNone?: true or false}.")
+    records = body["records"]
+    if not isinstance(records, list) or not 1 <= len(records) <= MAX_COLLECTION_RECORDS:
+        raise NotAllowed(f"A collection holds 1 to {MAX_COLLECTION_RECORDS} records.")
+    if not isinstance(body.get("allOrNone", False), bool):
+        raise NotAllowed("allOrNone must be true or false.")
+    parts = []
+    for i, record in enumerate(records):
+        where = f"Record {i + 1}"
+        attributes = record.get("attributes") if isinstance(record, dict) else None
+        if not isinstance(attributes, dict) or set(attributes) != {"type"} or not isinstance(attributes["type"], str):
+            raise NotAllowed(f"{where} must name its object as attributes: {{type: ...}}, and nothing else there.")
+        type_ = attributes["type"]
+        rid = None
+        if method == "PATCH":
+            ids = [record[k] for k in ("Id", "id") if k in record]
+            if len(ids) != 1 or not isinstance(ids[0], str) or not _SF_ID.fullmatch(ids[0]):
+                raise NotAllowed(f"{where} must carry the Id of the record it changes.")
+            rid = ids[0]
+            known = KEY_PREFIXES.get(rid[:3])
+            if known is None or known.lower() != type_.lower():
+                raise NotAllowed(f"{where}: {rid} isn't a record canopy can tell is a {type_[:40]}, so it can't "
+                                 "check this screen may change it. Change it alone.")
+        parts.append(_record_match(method, type_, rid, i))
+    return Composite("collection", tuple(parts), {}, body)
+
+
+def _ids(raw: object) -> list[str]:
+    if not isinstance(raw, str):
+        raise NotAllowed("ids is one comma-separated list of record ids.")
+    ids = raw.split(",")
+    if not 1 <= len(ids) <= MAX_COLLECTION_RECORDS or not all(_SF_ID.fullmatch(i) for i in ids):
+        raise NotAllowed(f"ids is 1 to {MAX_COLLECTION_RECORDS} record ids, separated by commas.")
+    return ids
+
+
+def _record_match(method: str, type_: str, rid: str | None, index: int | None) -> Match:
+    """One record of a collection, as the call that would read, make, change or delete it alone."""
+    path = f"sobjects/{type_}" + (f"/{rid}" if rid else "")
+    try:
+        if not _SF_TYPE.fullmatch(type_):
+            raise NotAllowed("That is not an object's name.")
+        return match("salesforce", method, path)
+    except NotAllowed as exc:
+        raise NotAllowed(f"Record {index + 1}: {exc}" if index is not None else str(exc)) from None

@@ -32,6 +32,9 @@ from tests.fixtures.connections import FakeSF, _resp, _stored, _token_body, seal
 
 pytestmark = pytest.mark.django_db
 
+#: What `Answer` sends as `Sforce-Limit-Info`, which comes back to the page as `limits`.
+LIMITS = "api-usage=1/15000"
+
 J = "application/json"
 URL = "/api/connections/salesforce/request"
 CODE = "function View({ canopy }) { return <div/>; }"
@@ -111,7 +114,7 @@ def test_viewer_read_returns_status_and_body(w):
     with FakeSF(), Salesforce(Answer(body={"totalSize": 7})) as sf:
         r = post(w)
     assert r.status_code == 200, r.content
-    assert r.json() == {"status": 200, "body": {"totalSize": 7}}
+    assert r.json() == {"status": 200, "body": {"totalSize": 7}, "limits": LIMITS}
     call = sf.calls[0]
     assert call["method"] == "GET"
     assert call["url"] == f"{INSTANCE}/services/data/v65.0/query?q=SELECT+Id+FROM+Lead"
@@ -131,7 +134,7 @@ def test_salesforce_error_status_passes_through(w):
     with FakeSF(), Salesforce(Answer(status=400, body=refused)):
         r = post(w)
     assert r.status_code == 200
-    assert r.json() == {"status": 400, "body": refused}
+    assert r.json() == {"status": 400, "body": refused, "limits": LIMITS}
 
 
 def test_non_json_answer_is_null_body_and_first_1000_chars(w):
@@ -145,7 +148,7 @@ def test_non_json_answer_is_null_body_and_first_1000_chars(w):
 def test_an_empty_answer_is_null_body_with_no_text(w):
     with FakeSF(), Salesforce(Answer(status=204, raw=b"")):
         r = lead_write(w)
-    assert r.json() == {"status": 204, "body": None}
+    assert r.json() == {"status": 204, "body": None, "limits": LIMITS}
 
 
 # ---- who may call --------------------------------------------------------------------------
@@ -432,7 +435,8 @@ def test_a_switched_off_app_is_404_even_to_its_manager(w):
 # ---- limits ---------------------------------------------------------------------------------
 
 def test_no_count_of_calls_over_time(w):
-    """How many calls a person makes is the provider's to limit; canopy passes its 429 back."""
+    """How many calls a person makes is the provider's to limit (`test_connection_calls_composite`:
+    Salesforce's 429 is `provider_rate_limited`)."""
     assert not hasattr(call_service, "CALLS_PER_MINUTE")
     with mock.patch.object(server_tokens, "access", return_value=server_tokens.Access(ACCESS, INSTANCE, "d")), \
             Salesforce():
@@ -489,7 +493,7 @@ def test_401_forces_one_refresh_and_retry(w):
     with FakeSF(token=tokens) as fake, Salesforce(Answer(status=401, body=[{"errorCode": "INVALID_SESSION_ID"}]),
                                                   Answer(body={"totalSize": 2})) as sf:
         r = post(w)
-    assert r.status_code == 200 and r.json() == {"status": 200, "body": {"totalSize": 2}}
+    assert r.status_code == 200 and r.json() == {"status": 200, "body": {"totalSize": 2}, "limits": LIMITS}
     assert len(fake.token_calls()) == 2
     assert [sf.bearer(0), sf.bearer(1)] == [f"Bearer {ACCESS}", "Bearer 00D!access_2"]
     # And the next call uses the new token without another refresh.
@@ -665,7 +669,7 @@ def test_a_token_another_request_refreshed_is_not_expired(w):
 
     with FakeSF(token=tokens) as fake, Salesforce(another_request_refreshes, Answer(body={"ok": True})) as sf:
         r = post(w)
-    assert r.json() == {"status": 200, "body": {"ok": True}}
+    assert r.json() == {"status": 200, "body": {"ok": True}, "limits": LIMITS}
     assert sf.bearer(1) == "Bearer 00D!access_2"
     assert len(fake.token_calls()) == 2, "no refresh of its own"
     w.conn.refresh_from_db()
