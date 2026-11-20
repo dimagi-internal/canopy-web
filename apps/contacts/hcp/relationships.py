@@ -70,8 +70,6 @@ def parse_specs(specs) -> list[dict]:
 def assert_derived_from(fact: PersonFact, specs: list[dict], *, actor: Actor, grant=None) -> None:
     """Record `derivedFrom` for a write. A client may name only an entry in a category its grant
     reads, and an unreadable or missing one fails the same way, disclosing nothing (4.2.3)."""
-    from .grants import allows
-
     for s in specs:
         if "source" in s:
             kind, ref = s["source"]
@@ -82,14 +80,18 @@ def assert_derived_from(fact: PersonFact, specs: list[dict], *, actor: Actor, gr
                                            superseded_at__isnull=True).first()
         if target is None or target.entry_id == fact.entry_id:
             raise denied()
-        if not actor.is_person and not allows(grant, target.category, "read"):
+        if not actor.is_person and not _reads(grant, target.category):
             raise denied()
         _record(fact.person, fact.entry_id, EntryRelationship.DERIVED_FROM, role=role_of(actor),
                 by=actor.id, target_entry_id=target.entry_id)
 
-def render(fact: PersonFact) -> list[dict]:
-    from .core import entry_urn
+def _reads(grant, category: str) -> bool:
+    """Does the grant read this category (the scope check `grants.allows` makes; this module cannot
+    import `grants`, which imports it)?"""
+    return grant is not None and scope(category, "read") in (grant.scopes or [])
 
+
+def render(fact: PersonFact) -> list[dict]:
     out = []
     for r in EntryRelationship.objects.filter(person_id=fact.person_id, entry_id=fact.entry_id):
         target = entry_urn(r.target_entry_id) if r.target_entry_id else f"{SOURCE_URN}{r.source_kind}:{r.source_ref}"
