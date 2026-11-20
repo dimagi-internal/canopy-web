@@ -11,23 +11,25 @@ import {
 } from '@/api/learning'
 import { errorText } from '@/api/problem'
 import { listProjects, type Project } from '@/api/work'
+import { BrainSourceBanner, useBrainSource } from '@/brain/source'
 
 /** This session's place in canopy learning, for a person who is in it — `null` for anyone else.
  *  The route answers 404 to someone not in the session and 403 to anything that is not a person
  *  (an agent's login, a turn, a runner, a site's widget), so the item simply never shows for them. */
 export function useSessionLearning(sessionId: string | undefined) {
   const [state, setState] = useState<SessionLearning | null>(null)
+  const { source } = useBrainSource()           // `?preview=<id>`: the ties one of your previews would make
   useEffect(() => {
     let live = true
     setState(null)
     if (!sessionId) return
-    getMySessionLearning(sessionId)
+    getMySessionLearning(sessionId, source)
       .then((s) => live && setState(s))
       .catch(() => live && setState(null))
     return () => {
       live = false
     }
-  }, [sessionId])
+  }, [sessionId, source])
   return [state, setState] as const
 }
 
@@ -61,7 +63,10 @@ export function SessionLearningPanel({
   state: SessionLearning
   onChange: (next: SessionLearning) => void
 }) {
+  const { preview } = useBrainSource()
+  // A preview is a view, not the session's learning: nothing here changes while one is on.
   const [busy, setBusy] = useState(false)
+  const locked = busy || preview !== null
   const [error, setError] = useState('')
   const [projects, setProjects] = useState<Project[] | null>(null)
   const [adding, setAdding] = useState('')
@@ -95,6 +100,7 @@ export function SessionLearningPanel({
 
   return (
     <div className="space-y-3 text-[12px]">
+      <BrainSourceBanner window={state.source?.window} />
       <section className="space-y-1.5">
         <p className="font-medium text-foreground" data-testid="session-learning-status">
           {state.excluded ? 'Removed from learning' : 'Learning may use this session'}
@@ -106,7 +112,7 @@ export function SessionLearningPanel({
         </p>
         {state.excluded ? (
           <>
-            <button type="button" className={BUTTON} disabled={busy}
+            <button type="button" className={BUTTON} disabled={locked}
                     onClick={() => void act(() => restoreMySession(sessionId))}>
               Let learning use this again
             </button>
@@ -116,7 +122,7 @@ export function SessionLearningPanel({
           </>
         ) : (
           <>
-            <button type="button" className={`${BUTTON} text-destructive`} disabled={busy}
+            <button type="button" className={`${BUTTON} text-destructive`} disabled={locked}
                     onClick={() => void act(() => removeMySession(sessionId))}>
               Remove from learning
             </button>
@@ -150,19 +156,19 @@ export function SessionLearningPanel({
                 </span>
                 <span className="flex gap-1.5">
                   {p.tier !== 'rejected' && (
-                    <button type="button" className={BUTTON} disabled={busy}
+                    <button type="button" className={BUTTON} disabled={locked}
                             onClick={() => void act(() => declareMySessionProject(sessionId, p.project, 'rejected'))}>
                       Not this project
                     </button>
                   )}
                   {p.tier !== 'core' && (
-                    <button type="button" className={BUTTON} disabled={busy}
+                    <button type="button" className={BUTTON} disabled={locked}
                             onClick={() => void act(() => declareMySessionProject(sessionId, p.project, 'core'))}>
                       Belongs here
                     </button>
                   )}
                   {p.how === 'declared' && (
-                    <button type="button" className={BUTTON} disabled={busy}
+                    <button type="button" className={BUTTON} disabled={locked}
                             onClick={() => void act(() => undeclareMySessionProject(sessionId, p.project))}>
                       Take back my call
                     </button>
@@ -185,7 +191,7 @@ export function SessionLearningPanel({
                 <option key={p.handle} value={p.handle}>{p.name}</option>
               ))}
             </select>
-            <button type="button" className={BUTTON} disabled={busy || !adding}
+            <button type="button" className={BUTTON} disabled={locked || !adding}
                     onClick={() => void act(async () => {
                       const next = await declareMySessionProject(sessionId, adding, 'core')
                       setAdding('')

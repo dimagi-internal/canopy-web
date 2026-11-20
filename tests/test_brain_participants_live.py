@@ -18,6 +18,8 @@ from apps.contacts.models import Contact
 from apps.harness.models import Turn
 from tests.fixtures.brain_world import agree, brain_world
 
+LIVE = {"kind": "live", "id": None, "window": None, "created_at": None}
+
 pytestmark = [pytest.mark.django_db, pytest.mark.guard]
 
 
@@ -132,7 +134,8 @@ def test_the_excluder_still_sees_and_undoes_it_after_removal(w):
     SessionParticipant.objects.filter(session=w["session"], user=w["bob"]).delete()
     sources.refresh(w["source"])
     r = bob.get(url)
-    assert r.status_code == 200 and r.json() == {"session_id": str(w["session"].pk), "excluded": True, "projects": []}
+    assert r.status_code == 200 and r.json() == {"session_id": str(w["session"].pk), "excluded": True, "projects": [],
+                                          "source": LIVE}
     assert [x["session_id"] for x in bob.get("/api/me/learning/removed/").json()] == [str(w["session"].pk)]
     assert bob.delete(url).json()["excluded"] is False
     assert bob.get(url).status_code == 404                  # no longer in it, nothing of his in it, nothing excluded

@@ -392,3 +392,34 @@ class BrainCursor(models.Model):
     class Meta:
         constraints = [models.UniqueConstraint(fields=["capability", "subject_type", "subject"],
                                                name="brain_cursor_one")]
+
+
+class BrainPreviewSnapshot(models.Model):
+    """What the brain WOULD do over its owner's sessions in a window, computed once by the live code
+    (`snapshots.create`: `preview.describe`, `eligibility.explain`, `associate.propose`) and kept for a week, so the
+    same screens can show it (`view.py`, `?preview=<id>`). Only its owner, as a person, reads it.
+
+    A FENCE, not a source of truth: no learner, eligibility check or cascade decision reads it
+    (`tests/test_brain_previews.py`). It holds session ids, titles (scrubbed), names, verdicts and links, never a
+    transcript; the recommendations made on the owner's machine (`outputs`) are scrubbed like `brain_emit`'s. A
+    removed session leaves it at the next cascade sweep (`snapshots.sweep`, registered with `cascade.register_store`),
+    and every read drops one already removed (`snapshots.removed_sessions`)."""
+
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
+    since = models.DateTimeField()
+    until = models.DateTimeField()
+    view = models.CharField(max_length=16, default="full")
+    #: `{"sessions": [...], "state": {...}}`: what `snapshots.create` computed.
+    payload = models.JSONField(default=dict, blank=True)
+    #: The session ids in `payload`, for the cascade: what a removal is matched against.
+    session_ids = models.JSONField(default=list, blank=True)
+    #: Would-be `system` outputs, the recommendations `/canopy:brain-preview --publish` made on the owner's machine.
+    outputs = models.JSONField(default=list, blank=True)
+    #: The window held more sessions than one snapshot keeps (`snapshots.MAX_SESSIONS`).
+    truncated = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+
+    class Meta:
+        indexes = [models.Index(fields=["owner", "-created_at"], name="brain_preview_by_owner"),
+                   models.Index(fields=["expires_at"], name="brain_preview_by_expiry")]

@@ -120,7 +120,7 @@ def preview(user, slugs, *, since: dt.datetime, until: dt.datetime, view: str = 
 
 
 
-def _counts(rows: list[dict]) -> dict:
+def counts(rows: list[dict]) -> dict:
     """What one page of the summary adds up to: sessions each class could read now and if everyone agreed (your own
     `individual` only), sealed ones by why, and the links canopy would store (not kept out by a stored one)."""
     out = {"sessions": len(rows), "links": 0, "sealed": {}}
@@ -138,7 +138,7 @@ def _counts(rows: list[dict]) -> dict:
     return out
 
 
-def _would_link(rows: list[dict]) -> list[dict]:
+def would_link(rows: list[dict]) -> list[dict]:
     """The links of a page, grouped by project and tier, each with its sessions and evidence."""
     groups: dict[tuple, dict] = {}
     for row in rows:
@@ -166,5 +166,5 @@ def summarise(user, slugs, *, since: dt.datetime, until: dt.datetime, after: str
     for row in described:
         row["you"] = row["would_read"][INDIVIDUAL].get(str(user.pk))
     return {"window": {"since": since, "until": until}, "total": total,"sessions": described,
-            "counts": _counts(described), "would_link": _would_link(described),
+            "counts": counts(described), "would_link": would_link(described),
             "next_after": str(page[-1].pk) if page else after, "done": not more}

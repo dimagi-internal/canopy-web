@@ -18,11 +18,9 @@ from apps.workspaces import services as wsvc
 from apps.workspaces.gates import membership_or_404
 from apps.workspaces.gates import require as require_role
 
-from apps.canopy_sessions import access
-from apps.common import redact
 
-from . import outputs, registry, reporting
-from .models import BrainCapability, SourceLink
+from . import registry, reporting, view
+from .models import BrainCapability
 from .schemas import (
     BrainOutputOut,
     CapabilityIn,
@@ -167,33 +165,23 @@ def end_reporting(request: HttpRequest, slug: str, person_id: int):
 # ---- the sessions a project is tied to --------------------------------------------------------------
 
 @router.get("/brain/workspaces/{slug}/projects/{handle}/sessions/",
-            response={200: list[ProjectSessionOut], **refusals(404)},
+            response={200: list[ProjectSessionOut], **refusals(403, 404, 422)},
             summary="The sessions tied to a project that you may read")
 @gate("member")
 def list_project_sessions(request: HttpRequest, slug: str, handle: str, tiers: str = "core,adjacent",
-                          limit: int = 200) -> list[dict]:
+                          limit: int = 200, source: str = "live") -> list[dict]:
     """Which sessions a project's history is made of: the ones tied to it (`tiers`: core, adjacent, candidate,
     comma separated) that YOU may read, by the same rule as every session read: your own, and a teammate's through
     the project leg once everyone in it agreed. Ids, titles and how each tie was made, never a word of a transcript.
-    A project you may not read is not found."""
+    A project you may not read is not found. `source=preview:<id>`: the ties one of your previews would make."""
+    from .api_previews import source_of  # noqa: PLC0415 — api_previews imports api_preview, which this app loads late
+
     m = membership_or_404(request.user, slug)
     project = AgentProject.objects.filter(workspace=m.workspace, handle=handle.lower()).first()
     if project is None or not may_read_project(request.user, project):
         raise ProblemError(404, "No such project", type_=TYPE_NOT_FOUND)
     wanted = [t for t in tiers.split(",") if t in ("core", "adjacent", "candidate")] or ["core", "adjacent"]
-    links = (SourceLink.objects.filter(subject_type=SourceLink.PROJECT_SUBJECT, subject=str(project.pk),
-                                       tier__in=wanted, source__session__isnull=False)
-             .select_related("source__session").order_by("-source__session__created_at"))
-    readable = access.readable_ids(request.user, [lnk.source.session_id for lnk in links[:2000]], brain=True)
-    out = []
-    for link in links[:2000]:
-        s = link.source.session
-        if s.pk in readable:
-            out.append({"session_id": s.pk, "title": redact.redact_text(s.title or "")[0], "workspace": s.workspace_id,
-                        "tier": link.tier, "how": link.how, "confidence": link.confidence, "started_at": s.created_at})
-        if len(out) >= max(1, min(limit, 500)):
-            break
-    return out
+    return view.project_sessions(request.user, project, source_of(request, source), tiers=wanted, limit=limit)
 
 
 # ---- what was produced ----------------------------------------------------------------------------
@@ -213,18 +201,17 @@ def manager_leg_open(request: HttpRequest) -> bool:
             and not kinds.speaks_for_a_turn(request) and acting_person.is_person(request))
 
 
-@router.get("/brain/outputs/", response=list[BrainOutputOut], summary="What learning produced, for you")
+@router.get("/brain/outputs/", response={200: list[BrainOutputOut], **refusals(403, 404, 422)},
+            summary="What learning produced, for you")
 @gate("authenticated")  # visible_to: its class's audience, never wider
-def list_outputs(request: HttpRequest, subject_type: str = "", subject: str = "", limit: int = 100) -> list[dict]:
+def list_outputs(request: HttpRequest, subject_type: str = "", subject: str = "", limit: int = 100,
+                 source: str = "live") -> list[dict]:
     """The learning outputs you may read: about you, about people you coach or manage (outputs, never
     transcripts; the manager's only as yourself, never through an agent or a turn), about projects you may read, and
-    canopy's system findings if you administer. Never a withdrawn or stale one. Newest first."""
-    qs = (outputs.visible_to(request.user, as_person=manager_leg_open(request)).select_related("capability")
-          .order_by("-created_at", "-pk"))
-    if subject_type:
-        qs = qs.filter(subject_type=subject_type)
-    if subject:
-        qs = qs.filter(subject=subject)
-    return [{"id": o.pk, "learner": o.capability.slug, "kind": o.kind, "workspace": o.workspace_id,
-             "subject_type": o.subject_type, "subject": o.subject, "title": o.title, "body": o.body,
-             "state": o.state, "created_at": o.created_at} for o in qs[:max(1, min(limit, 500))]]
+    canopy's system findings if you administer. Never a withdrawn or stale one. Newest first.
+    `source=preview:<id>`: the recommendations published to one of your previews, as would-be outputs."""
+    from .api_previews import source_of  # noqa: PLC0415 — as above
+
+    src = source_of(request, source)
+    return view.outputs(request.user, src, as_person=manager_leg_open(request), subject_type=subject_type,
+                        subject=subject, limit=limit)

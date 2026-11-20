@@ -68,15 +68,19 @@ WITHDRAW, STALE = "withdraw", "stale"
 #: `output_kind` -> `fn(output_id, mode, reason)`. Registered by the app that owns the store (an HCP entry:
 #: the memory store registers itself beside the person's memory page; nothing here touches it).
 _STORES: dict = {}
+#: `kind` -> `fn(source_ids)`: a store keyed by session, with no `OutputLineage` (a preview snapshot, which may name
+#: sessions no source was made for). Each sweep calls it once, narrowed like the sweep; it judges its own sessions.
+_SESSION_STORES: dict = {}
 
 
-def register_store(kind: str, fn) -> None:
-    """Ask `fn(output_id, mode, reason)` to withdraw (`WITHDRAW`) or mark (`STALE`) what `kind` holds."""
-    _STORES[kind] = fn
+def register_store(kind: str, fn, *, by_session: bool = False) -> None:
+    """Ask `fn(output_id, mode, reason)` to withdraw (`WITHDRAW`) or mark (`STALE`) what `kind` holds. With
+    `by_session`, `fn(source_ids)` is called once per sweep instead (`source_ids` None: look at everything)."""
+    (_SESSION_STORES if by_session else _STORES)[kind] = fn
 
 
 def stores() -> dict:
-    return dict(_STORES)
+    return {**_STORES, **_SESSION_STORES}
 
 
 def removed_reason(source: BrainSource | None, output_class: str, subject_user_id, scope, *,
@@ -254,6 +258,11 @@ def sweep(source_ids=None) -> dict:
     done["runs"] = scrub_runs(source_ids, memo)
     for kind, fn in _STORES.items():
         _sweep_store(kind, fn, source_ids)
+    for kind, fn in _SESSION_STORES.items():
+        try:
+            done[kind] = fn(source_ids)
+        except Exception:  # noqa: BLE001 — one store must not stop the sweep
+            logger.exception("could not sweep %s", kind)
     from . import hcp_store  # noqa: PLC0415 — contacts imports this app; the store loads late
 
     done["memory_entries"] = hcp_store.sweep(source_ids, memo)

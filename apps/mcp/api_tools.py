@@ -129,7 +129,8 @@ EXCLUDED: dict[str, str] = {
     "declare_my_session_project": _BRAIN, "undeclare_my_session_project": _BRAIN,
     "brain_preview": ("a person's own dry run of canopy learning over the sessions they read: theirs, as "
                       "themselves or on a read-only step-up, never an MCP client's (apps/brain/api_preview.py)"),
-    "brain_preview_summary": "the brain preview summed up for the /brain page: the person's own, never an MCP client's",
+    "brain_would_read": _BRAIN_PAGE, "create_brain_preview": _BRAIN_PAGE, "list_brain_previews": _BRAIN_PAGE,
+    "delete_brain_preview": _BRAIN_PAGE, "put_brain_preview_outputs": _BRAIN_PAGE,
     "brain_state": _BRAIN_PAGE, "brain_state_links": _BRAIN_PAGE, "brain_state_runs": _BRAIN_PAGE,
     "list_reporting": _REPORTING, "set_reporting": _REPORTING, "end_reporting": _REPORTING,
     "contact_token": _HOST,
