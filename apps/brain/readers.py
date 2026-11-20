@@ -1,0 +1,98 @@
+"""How the brain lets people read sessions, and records that it did.
+
+**The project leg.** A session tied to a project by a `core` `SourceLink`, whose source passes
+`eligible_sources` for the built-in `project-readers` feature (every human in it agreed to the
+`project` class, none excluded it, nothing sealed), is readable, read-only, by anyone who may read
+that project (`agents.services.projects.project_read_q`). `canopy_sessions.access` asks `project_q`
+and `audience` asks `project_reader_ids`; both are inert until `settings.BRAIN_READS_ENABLED`.
+Stored rows only, never `may_pull`, redacted on the way out (`canopy_sessions.transcript_read.readable_window`).
+
+**The record.** Every read the brain allows leaves one `brain.read` row in the event log of the
+session's workspace (`record_read`): the feature, the purpose, the source ids, the turn. Reads of one
+session by one reader coalesce into one row with a count; ids only, never a word."""
+from __future__ import annotations
+
+import logging
+
+from django.conf import settings
+from django.db.models import CharField, Q
+from django.db.models.functions import Cast
+
+from apps.agents.models import AgentProject
+from apps.agents.services.projects import project_read_q
+from apps.events import services as events
+from apps.workspaces import services as wsvc
+from apps.workspaces.models import Workspace
+
+from .eligibility import eligible_sources
+from .models import BrainSource, SourceLink
+
+logger = logging.getLogger(__name__)
+
+#: The feature a project's readers read under (`migrations/0005_builtin_capabilities.py`).
+PROJECT_READERS = "project-readers"
+READ = "read"
+READ_EVENT = "brain.read"
+EVENT_SOURCE = "brain.read"
+
+
+def enabled() -> bool:
+    return bool(getattr(settings, "BRAIN_READS_ENABLED", False))
+
+
+def _core_links():
+    return SourceLink.objects.filter(subject_type=SourceLink.PROJECT_SUBJECT, tier=SourceLink.CORE)
+
+
+def project_q(user) -> Q:
+    """The sessions `user` reads through the project leg, as a `Q` on `Session`. Empty while the rollout
+    gate is off, for anyone signed out, and for a user who reads no project."""
+    if not enabled() or not getattr(user, "is_authenticated", False):
+        return Q(pk__in=[])
+    readable = (AgentProject.objects.filter(project_read_q(user)).annotate(key=Cast("pk", CharField()))
+                .values("key"))
+    eligible = eligible_sources(PROJECT_READERS, READ).values("session_id")
+    return Q(pk__in=_core_links().filter(subject__in=readable, source__session_id__in=eligible)
+             .values("source__session_id"))
+
+
+def project_reader_ids(session) -> set[int]:
+    """Everyone the project leg lets read `session`: the readers of each project it is `core`-tied to,
+    when its source is eligible. A workspace project's readers are the workspace's members; a personal
+    one's are its lead and its agents' logins. For `audience`, which holds this equal to the ACL."""
+    if not enabled():
+        return set()
+    source = BrainSource.objects.filter(kind=BrainSource.SESSION, ref=str(session.pk)).first()
+    if source is None or not eligible_sources(PROJECT_READERS, READ).filter(pk=source.pk).exists():
+        return set()
+    members = wsvc.member_user_ids(session.workspace_id)
+    out: set[int] = set()
+    for link in _core_links().filter(source=source):
+        project = AgentProject.objects.filter(pk=link.subject).select_related("agent").first()
+        if project is None:
+            continue
+        if not project.is_personal:
+            out |= members
+            continue
+        ids = {project.owner_user_id}
+        if project.agent_id and project.agent.user_id:
+            ids.add(project.agent.user_id)
+        ids |= set(project.member_agents.filter(user__isnull=False).values_list("user_id", flat=True))
+        out |= {i for i in ids if i} & members
+    return out
+
+
+def record_read(*, reader, capability: str, purpose: str, session, sources=(), turn_id: str = "") -> None:
+    """One `brain.read` row in the session's workspace log. Never raises: a record is not worth a
+    failed read, and the read has already been allowed by the time this runs."""
+    try:
+        ids = sorted({s.pk if hasattr(s, "pk") else s for s in sources}) or sorted(
+            BrainSource.objects.filter(kind=BrainSource.SESSION, ref=str(session.pk)).values_list("pk", flat=True))
+        events.record([{
+            "source": EVENT_SOURCE, "kind": READ_EVENT,
+            "key": f"{capability}:{getattr(reader, 'pk', '')}:{session.pk}",
+            "payload": {"capability": capability, "purpose": purpose, "reader_id": getattr(reader, "pk", None),
+                        "sources": ids, "turn": turn_id}}],
+            workspace=Workspace(pk=session.workspace_id))
+    except Exception:  # noqa: BLE001
+        logger.exception("could not record a brain read")

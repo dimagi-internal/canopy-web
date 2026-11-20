@@ -207,3 +207,68 @@ class SourceLink(models.Model):
         constraints = [models.UniqueConstraint(fields=["source", "subject_type", "subject"],
                                                name="brain_link_one_per_subject")]
         indexes = [models.Index(fields=["subject_type", "subject", "tier"], name="brain_link_by_subject")]
+
+
+class ReportingLine(models.Model):
+    """`manager` is `person`'s manager in `workspace`, set by a workspace owner (`reporting.py`). The
+    one thing it opens is a manager reading their reports' `individual` OUTPUTS (never a transcript):
+    canopy had no manager relationship before this. Ending one sets `ended_at`; every change is an
+    event."""
+
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE, related_name="+")
+    person = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
+    manager = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
+    set_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+                               related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    ended_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["workspace", "person"], condition=models.Q(ended_at__isnull=True),
+                                    name="brain_one_live_manager"),
+            models.CheckConstraint(condition=~models.Q(person=models.F("manager")), name="brain_not_own_manager"),
+        ]
+
+
+class BrainOutput(models.Model):
+    """What a learning feature produced, through `brain_emit`: about one subject, for its audience. The
+    `body` is the output's own words; `OutputLineage` says which sources it came from, so a removal can
+    reach it."""
+
+    ACTIVE, WITHDRAWN, STALE = "active", "withdrawn", "stale"
+    STATE_CHOICES = [(ACTIVE, "Active"), (WITHDRAWN, "Withdrawn"), (STALE, "A source was removed")]
+
+    capability = models.ForeignKey(BrainCapability, on_delete=models.PROTECT, related_name="outputs")
+    kind = models.CharField(max_length=40)
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE, related_name="+")
+    #: Who or what it is about: `person` (a user id) or `project` (an `AgentProject` pk).
+    subject_type = models.CharField(max_length=16)
+    subject = models.CharField(max_length=64)
+    title = models.CharField(max_length=300, blank=True, default="")
+    body = models.JSONField(default=dict, blank=True)
+    state = models.CharField(max_length=12, choices=STATE_CHOICES, default=ACTIVE)
+    turn_id = models.CharField(max_length=40, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["subject_type", "subject", "state"], name="brain_output_by_subject")]
+
+
+class OutputLineage(models.Model):
+    """One output's one source: written by `brain_emit` from the turn's ACTUAL reads, so the cascade
+    knows what to withdraw. `output_kind` names the store (`brain.output` now; an existing store later
+    carries its own kind). `participant_scope` is the people whose words were in the source at the time:
+    the consents the output carries."""
+
+    output_kind = models.CharField(max_length=40, default="brain.output")
+    output_id = models.CharField(max_length=64)
+    source = models.ForeignKey(BrainSource, on_delete=models.CASCADE, related_name="lineage")
+    participant_scope = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["output_kind", "output_id", "source"],
+                                               name="brain_lineage_one")]
+        indexes = [models.Index(fields=["output_kind", "output_id"], name="brain_lineage_by_output")]

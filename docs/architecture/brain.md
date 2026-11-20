@@ -98,9 +98,35 @@ by itself; only a `core` link will open the project leg.
 - **Validating a signature.** `associate.compare` measures a project's stored links against a
   hand-checked list of session ids (precision and recall); `manage.py brain_validate_links` runs it.
 
+## What learns (`apps/brain/registry.py`)
+
+A `BrainCapability` is registered by a canopy admin (`POST /api/brain/capabilities/`, superuser only): one purpose
+class, the purposes it declares, the source kinds and output kinds it works with. It starts dark (`enabled` false). Its
+audience is its class's (`registry.CLASS_AUDIENCE`) and may only narrow: a wider one is refused, because that is a new
+class each person must agree to. The built-in `project-readers` (migration `0005`) is the purpose a project's readers
+read a session under. The API's prose calls these learners.
+
+## Who sees what it produced (`apps/brain/outputs.py`)
+
+Outputs (`BrainOutput`) are read by their class's audience (`outputs.visible_to`, `GET /api/brain/outputs/`):
+`individual` by the person, their coaches (the same rule as reading their sessions) and their manager; `memory` by
+the person; `project` by the project's readers; `system` by canopy admins and the workspace's owners. A withdrawn
+output is seen by no one. `ReportingLine` (`apps/brain/reporting.py`, set by a workspace owner by hand, each change an
+event) is the manager relationship; it opens a manager's reading of their reports' `individual` outputs and nothing else.
+
+## Reading as a project's reader (`apps/brain/readers.py`)
+
+A session `core`-tied to a project is readable, as a seventh leg of the session ACL (`access._brain_project_q`), by
+whoever may read that project, when `eligible_sources` passes it for `project-readers`: read-only (a viewer: never a
+write, share or pull), and the rows come out scrubbed (`common.redact`, via `transcript_read.readable_window`, the
+one read pipeline, and the session list's words). Each read leaves one `brain.read` event (ids only; reads of a
+session by a reader coalesce). The leg and the record are inert until `BRAIN_READS_ENABLED`.
+`eligible_sources` is `eligible` for a whole listing: the structure is SQL and what is not (a consent's classes and
+workspaces, standing rules, who is a member where) is judged in Python over the people who consented, once, so nothing is
+cached; `tests/test_brain_project_leg.py` holds the two equal over a world.
+
 ## Not built yet
 
-New read legs (project, capability, coach/manager), confined brain turns with their read and emit tools,
-lineage and the cascade on removal, the model judge, and the managers' reporting line. No capability
-reads a transcript through the brain: `BRAIN_READS_ENABLED` is the rollout gate and stays off until the
-read paths and the cascade are merged.
+Confined learning runs with their read and emit tools, the removal cascade over outputs, the model judge (layer 3) and
+the scheduler that starts runs per active project. No capability reads a transcript through the brain in production:
+`BRAIN_READS_ENABLED` is the rollout gate and stays off until the read paths and the cascade are merged.

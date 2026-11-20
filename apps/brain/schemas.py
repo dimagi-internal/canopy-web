@@ -63,3 +63,76 @@ class AgentLinkIn(StrictModel):
     model_config = ConfigDict(extra="forbid")
 
     tier: Literal["core", "adjacent"]
+
+
+class CapabilityOut(StrictModel):
+    slug: str
+    name: str
+    description: str
+    purpose_class: str
+    subject_type: str
+    purposes: list[str]
+    source_kinds: list[str]
+    output_kinds: list[str]
+    audience: list[str]
+    operator: str = Field("", description="The agent that runs it, by slug.")
+    schedule: str
+    enabled: bool
+
+
+class CapabilityIn(StrictModel):
+    model_config = ConfigDict(extra="forbid")
+
+    slug: str = Field(pattern=r"^[a-z][a-z0-9-]{1,63}$")
+    name: str
+    description: str = ""
+    purpose_class: str
+    purposes: list[str]
+    source_kinds: list[str] = Field(default_factory=lambda: ["session"])
+    output_kinds: list[str] = Field(default_factory=list)
+    audience: list[str] | None = Field(None, description="At most its class's audience; omitted means all of it.")
+    operator: str = Field("", description="An agent's slug, or empty.")
+    schedule: str = ""
+    enabled: bool = False
+
+
+class CapabilityPatch(StrictModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = None
+    description: str | None = None
+    purposes: list[str] | None = None
+    source_kinds: list[str] | None = None
+    output_kinds: list[str] | None = None
+    audience: list[str] | None = Field(None, description="May only narrow what the class allows.")
+    operator: str | None = None
+    schedule: str | None = None
+    enabled: bool | None = None
+
+
+class ReportingLineOut(StrictModel):
+    person_id: int
+    person: str
+    manager_id: int
+    manager: str
+    since: dt.datetime
+
+
+class ReportingLineIn(StrictModel):
+    model_config = ConfigDict(extra="forbid")
+
+    person: str = Field(description="The person's email; a member of the workspace.")
+    manager: str = Field(description="Their manager's email; a member of the workspace.")
+
+
+class BrainOutputOut(StrictModel):
+    id: int
+    learner: str = Field(description="The slug of the learning feature that produced it.")
+    kind: str
+    workspace: str
+    subject_type: str
+    subject: str
+    title: str
+    body: dict
+    state: str = Field(description="active | stale (a source it came from was removed).")
+    created_at: dt.datetime

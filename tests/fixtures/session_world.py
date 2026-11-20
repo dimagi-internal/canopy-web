@@ -78,6 +78,32 @@ def session_world():
     SessionParticipant.objects.create(session=shapes["own_web"], user=owner, role=SessionParticipant.OWNER)
     SessionParticipant.objects.create(session=shapes["shared_web"], user=viewer,
                                       role=SessionParticipant.VIEWER)
+    _brain_shapes(shapes, ws, owner, mate, agent)
     people = {"owner": owner, "mate": mate, "viewer": viewer, "outsider": outsider,
               "box_admin": box_admin, "hal_login": agent.user, "coach": trellis.user}
     return people, shapes, ws
+
+
+def _brain_shapes(shapes, ws, owner, mate, agent):
+    """The brain's project leg (inert unless `BRAIN_READS_ENABLED`): a chat tied to a workspace project
+    whose people both agreed to project learning, one where a participant did not, and one tied only by a
+    weak (candidate) link. Tests that judge every shape run with the gate on and off."""
+    from apps.agents.models import AgentProject
+    from apps.brain import associate, registry, sources
+    from apps.brain.models import LearningConsent
+
+    registry.ensure_builtin()          # what migration 0005 seeds; a database built without migrations has no row
+    project = AgentProject.objects.create(workspace=ws, handle="brain-p", name="Brain P", agent=agent)
+    for u in (owner, mate):   # directly: `consent.set_consent` would also move coaching's opt-in
+        LearningConsent.objects.create(user=u, classes=["project"])
+    agreed = Session.objects.create(workspace=ws, created_by=mate, origin=Session.ORIGIN_WEB, title="project chat")
+    SessionParticipant.objects.create(session=agreed, user=owner, role=SessionParticipant.EDITOR)
+    mixed = Session.objects.create(workspace=ws, created_by=mate, origin=Session.ORIGIN_WEB, title="not everyone agreed")
+    weak = Session.objects.create(workspace=ws, created_by=mate, origin=Session.ORIGIN_WEB, title="a candidate")
+    SessionParticipant.objects.create(session=mixed, user=agent.user, role=SessionParticipant.VIEWER)  # an agent: not a person
+    other = User.objects.create_user("undecided", "undecided@dimagi.com", "pw")
+    make_member(other, ws)
+    SessionParticipant.objects.create(session=mixed, user=other, role=SessionParticipant.EDITOR)
+    for s, tier in ((agreed, "core"), (mixed, "core"), (weak, "candidate")):
+        associate.put(sources.for_session(s), project, how="signals", tier=tier)
+    shapes.update({"brain_project": agreed, "brain_not_everyone_agreed": mixed, "brain_candidate_only": weak})
