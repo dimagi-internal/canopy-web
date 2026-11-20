@@ -990,6 +990,13 @@ LOGGING = {
 }
 
 
+# --- The model a turn starts on --------------------------------------------------------------
+# Per CLI, for a turn whose agent names none in `Agent.cli_models` (and every project turn,
+# which has no agent): without it a runner's CLI starts on its account's own default, which is
+# not the model people get on their own machines (apps/harness/claim_payload.py::start_model).
+DEFAULT_CLI_MODELS = env.dict("DEFAULT_CLI_MODELS", default={"claude-code": "opus"})
+
+
 # --- Canopy Brain (apps/brain) -----------------------------------------------------------------
 # No transcript is served to any learning reader until the read paths and the removal cascade are
 # merged and the owner turns this on (docs/architecture/brain.md). Consent collection does not wait.
