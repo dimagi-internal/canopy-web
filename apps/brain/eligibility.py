@@ -16,6 +16,7 @@ from django.db.models import Exists, OuterRef, Q
 
 from apps.harness import runner_requirements as rr
 from apps.workspaces import services as wsvc
+from apps.workspaces.models import Workspace
 
 from . import participants
 from .models import (
@@ -165,7 +166,7 @@ def eligible_sources(capability, purpose: str, subject=None):
             return none
     if not consents:
         return none
-    workspaces = set(qs.values_list("workspace_id", flat=True).distinct())
+    workspaces = set(Workspace.objects.values_list("slug", flat=True))      # a handful of rows: no scan of the sources
     users = list(LearningConsent.objects.filter(pk__in=[c.pk for c in consents]).values_list("user_id", flat=True))
     roles = wsvc.member_roles_of(_users(users))
     bad_in: dict[str, set[int]] = {}      # workspace -> people whose consent does not allow a source there

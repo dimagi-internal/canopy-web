@@ -46,7 +46,7 @@ def _socket_role(user, session):
         comm = WebsocketCommunicator(SessionConsumer.as_asgi(), f"/ws/canopy-sessions/{session.id}/")
         comm.scope["user"] = user
         comm.scope["url_route"] = {"kwargs": {"session_id": str(session.id)}}
-        connected, _ = await comm.connect()
+        connected, _ = await comm.connect(timeout=10)
         await comm.disconnect()
         return connected
     return async_to_sync(go)()
@@ -62,8 +62,8 @@ def _socket_pulls(user, session):
         comm.scope["user"] = user
         comm.scope["url_route"] = {"kwargs": {"session_id": str(session.id)}}
         before = await database_sync_to_async(attach.count)(session.id)
-        connected, _ = await comm.connect()
-        await comm.receive_json_from()   # the snapshot: sent once the attach decision is made
+        connected, _ = await comm.connect(timeout=10)
+        await comm.receive_json_from(timeout=10)   # the snapshot: sent once the attach decision is made
         during = await database_sync_to_async(attach.count)(session.id)
         await comm.disconnect()
         after = await database_sync_to_async(attach.count)(session.id)
