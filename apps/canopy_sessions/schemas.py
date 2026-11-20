@@ -499,9 +499,10 @@ class SessionOut(Schema):
     # (`Runner.signed_out`): it takes no turns, and `runner_online` alone reads
     # it as fine.
     runner_signed_out: bool = False
-    # The model the bound runner's sessions start on, as its settings name it
-    # (`opus[1m]`, from its heartbeat) — what the chat sizes the context window
-    # by. "" when unbound, or the box does not report it.
+    # The model the conversation runs on (`opus[1m]`): its agent's `cli_models`,
+    # else the bound box's reported setting, else the server's DEFAULT_CLI_MODELS
+    # (`session_row._session_model`) — what the chat sizes the context window by.
+    # "" when unbound.
     runner_model: str = ""
     session_key: str = ""
     #: The agent CLI this conversation runs on ("claude-code", "codex"), chosen by its
