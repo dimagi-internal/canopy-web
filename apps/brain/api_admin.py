@@ -12,6 +12,7 @@ from apps.api.auth import session_auth
 from apps.api.errors import TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError, refusals
 from apps.api.route_gates import gate
 from apps.harness import acting_person
+from apps.tokens import kinds
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.gates import membership_or_404
@@ -197,13 +198,29 @@ def list_project_sessions(request: HttpRequest, slug: str, handle: str, tiers: s
 
 # ---- what was produced ----------------------------------------------------------------------------
 
+#: The credentials the manager leg opens for: the manager's own browser session or a PAT they minted by hand,
+#: as HCP's governance acts (`contacts.hcp_api.GOVERNANCE_KINDS`). Never an OAuth sign-in (an AI client or
+#: connector acting for them), a host site's or MCP host grant's delegated token, an act-as or caller token.
+MANAGER_KINDS = frozenset({kinds.SESSION, kinds.PAT})
+
+
+def manager_leg_open(request: HttpRequest) -> bool:
+    """Is this request the manager themselves, so `outputs.visible_to` may open the manager leg? A person
+    (`acting_person.is_person`), on one of `MANAGER_KINDS`, and not an MCP tool call: managers see a report's
+    outputs as themselves, never through an AI client. Every other leg is unchanged."""
+    kind = kinds.of_request(request)
+    return (kind is not None and kind.name in MANAGER_KINDS and not getattr(request, "via_mcp", False)
+            and not kinds.speaks_for_a_turn(request) and acting_person.is_person(request))
+
+
 @router.get("/brain/outputs/", response=list[BrainOutputOut], summary="What learning produced, for you")
 @gate("authenticated")  # visible_to: its class's audience, never wider
 def list_outputs(request: HttpRequest, subject_type: str = "", subject: str = "", limit: int = 100) -> list[dict]:
     """The learning outputs you may read: about you, about people you coach or manage (outputs, never
     transcripts; the manager's only as yourself, never through an agent or a turn), about projects you may read, and
     canopy's system findings if you administer. Never a withdrawn or stale one. Newest first."""
-    qs = outputs.visible_to(request.user, as_person=acting_person.is_person(request)).select_related("capability").order_by("-created_at", "-pk")
+    qs = (outputs.visible_to(request.user, as_person=manager_leg_open(request)).select_related("capability")
+          .order_by("-created_at", "-pk"))
     if subject_type:
         qs = qs.filter(subject_type=subject_type)
     if subject:

@@ -294,3 +294,41 @@ def test_ensure_learners_registers_the_missing_ones_dark_and_leaves_the_rest_alo
     again = registry.ensure_learners()
     assert set(again) == {s["slug"] for s in registry.LEARNERS} and again["coaching"].enabled is False
     assert BrainCapability.objects.get(slug="system-learning").schedule == "daily"
+
+
+@pytest.mark.parametrize("cred, via_mcp, person", [
+    (None, False, True),                                        # the manager's browser session
+    ({"type": "pat", "id": 1}, False, True),                     # a PAT they minted by hand
+    (None, True, False),                                        # any MCP call
+    ({"type": "pat", "id": 1}, True, False),
+    ({"type": "oauth", "id": 2}, False, False),                  # an OAuth client signed in as them
+    ({"type": "delegated", "id": 3}, False, False),              # a host site's or MCP host grant's token
+    ({"type": "act_as", "id": 4}, False, False),
+    ({"type": "caller_token", "id": 5}, False, False),
+])
+def test_the_manager_leg_opens_only_for_the_manager_s_own_session_or_hand_minted_pat(w, cred, via_mcp, person):
+    from types import SimpleNamespace
+
+    from apps.brain import api_admin
+
+    req = SimpleNamespace(user=w["bob"], META={}, auth_credential=cred, via_mcp=via_mcp)
+    assert api_admin.manager_leg_open(req) is person
+
+
+def test_a_coach_sees_outputs_only_of_the_workspaces_they_coach(w):
+    from apps.workspaces.models import Workspace
+
+    coach = user("coach_person")
+    member(coach, w["ws"])
+    CoachingRole.objects.create(workspace=w["ws"], user=coach)
+    other = Workspace.objects.create(slug="beta", display_name="Beta", created_by=w["owner"])
+    for u in (w["alice"], coach):
+        member(u, other)                                         # both in beta too, but coaching is only in acme
+    from tests.fixtures.brain_world import agree
+
+    agree(w["alice"], "individual")
+    here = _out(w, w["coach"], "person", w["alice"].pk)
+    there = BrainOutput.objects.create(capability=w["coach"], kind="note", workspace=other, subject_type="person",
+                                       subject=str(w["alice"].pk), title="t", body={"x": 1})
+    assert here.pk in _ids(coach) and there.pk not in _ids(coach)
+    assert there.pk in _ids(w["alice"])

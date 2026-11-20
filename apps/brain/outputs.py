@@ -1,10 +1,12 @@
 """Who sees what a learning feature produced (`BrainOutput`): by its class's audience, never wider.
 
 * `individual`, about a person: that person, their coaches (the same rule as reading their sessions,
-  `access.review_grantors`: an agent coach only inside a running turn that answers to them), and their
+  `access.review_grantors`: an agent coach only inside a running turn that answers to them; only outputs made in
+  the workspaces the coach covers, `access.coach_scope`), and their
   manager: only the outputs made in the workspace where the reporting line is, and only to the manager as a
-  PERSON (`as_person`, from `harness.acting_person` at the route: never an agent, a turn's token or an
-  act-as token acting for them). Outputs, never a transcript.
+  PERSON (`as_person`, from `api_admin.manager_leg_open` at the route: their browser session or hand-minted
+  PAT, never an agent, a turn's token, an act-as token, an OAuth or MCP client or a site's delegated token
+  acting for them). Outputs, never a transcript.
 * `memory`, about a person: that person. (The agents serving them read their HCP entries under their
   own grant; this is not that path.)
 * `project`, about a project: whoever may read the project (`project_read_q`), within its workspace.
@@ -29,7 +31,7 @@ from .models import INDIVIDUAL, MEMORY, PROJECT, SYSTEM, BrainOutput
 
 def visible_to(user, *, as_person: bool = False):
     """The outputs `user` may read, as a queryset (workspace-scoped, as every read). `as_person` says the
-    request is the person themselves (`acting_person.is_person`); only then does the manager leg open."""
+    request is the person themselves (`api_admin.manager_leg_open`); only then does the manager leg open."""
     if not getattr(user, "is_authenticated", False):
         return BrainOutput.objects.none()
     from apps.canopy_sessions import access  # noqa: PLC0415 — canopy_sessions imports this app's readers
@@ -39,8 +41,9 @@ def visible_to(user, *, as_person: bool = False):
     about_me = Q(subject_type="person", subject=str(user.pk))
     q = Q(capability__purpose_class__in=[INDIVIDUAL, MEMORY]) & about_me
     coached = [str(i) for i in access.review_grantors(user).values_list("user_id", flat=True)]
-    if coached:
-        q |= Q(capability__purpose_class=INDIVIDUAL, subject_type="person", subject__in=coached)
+    if coached:   # only where the coaching applies: the workspaces the coach covers, as their transcript reads
+        q |= Q(capability__purpose_class=INDIVIDUAL, subject_type="person", subject__in=coached,
+               workspace_id__in=access.coach_scope(user))
     if as_person and not _is_agent_login(user):
         for ws, person in reporting.lines_of(user, mine):
             q |= Q(capability__purpose_class=INDIVIDUAL, subject_type="person", subject=str(person), workspace_id=ws)

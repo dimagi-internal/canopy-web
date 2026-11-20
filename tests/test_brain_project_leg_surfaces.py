@@ -259,3 +259,27 @@ def test_the_runners_coaching_upload_leaves_out_a_removed_session(w, coached):
     assert s.pk in coaching.full_upload_session_ids(box)
     consent.exclude(w["alice"], sources.for_session(s))
     assert s.pk not in coaching.full_upload_session_ids(box)
+
+
+@pytest.mark.parametrize("rule", [{"workspace": "acme"}, {"class": "individual"}, {"capability": "coaching"},
+                                  {"capability": "coaching", "purpose": "review"}])
+def test_a_coach_honours_the_persons_standing_rules(w, coached, rule):
+    from apps.canopy_sessions.models import RunnerBinding
+    from apps.harness.models import Runner
+
+    s = w["session"]
+    box = Runner.objects.create(name="laptop", owner=w["alice"], workspace=w["ws"])
+    found = Session.objects.create(workspace=w["ws"], origin=Session.ORIGIN_RUNNER)
+    RunnerBinding.objects.create(session=found, runner=box, session_key="k1")
+    assert access.can_read(coached, s) and found.pk in coaching.full_upload_session_ids(box)
+    assert audience._grantor(s) == w["alice"].pk
+    LearningConsent.objects.filter(user=w["alice"]).update(standing_rules=[rule])
+    assert not access.can_read(coached, s)
+    assert audience._grantor(s) is None                  # the coaching part of the audience (the project leg is its own)
+    assert found.pk not in coaching.full_upload_session_ids(box)
+
+
+def test_a_rule_about_something_else_leaves_coaching_alone(w, coached):
+    LearningConsent.objects.filter(user=w["alice"]).update(standing_rules=[{"capability": "project-learning"},
+                                                                          {"workspace": "elsewhere"}])
+    assert access.can_read(coached, w["session"]) and audience._grantor(w["session"]) == w["alice"].pk

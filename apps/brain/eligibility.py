@@ -22,7 +22,9 @@ from apps.workspaces.models import Workspace
 from . import participants
 from .models import (
     ABOUT_A_PERSON,
+    BRAIN_RUN_KEY,
     CLASSES,
+    INDIVIDUAL,
     SHARED,
     BrainCapability,
     BrainSource,
@@ -61,6 +63,23 @@ def covers(consent: LearningConsent, workspace: str) -> bool:
     if not consent.workspaces or workspace in consent.workspaces:
         return True
     return bool(consent.include_new) and workspace not in (consent.known_workspaces or [])
+
+
+#: Coaching's own learner (`registry.LEARNERS`) and the purposes it reads for.
+COACHING, COACHING_PURPOSES = "coaching", ("coach", "review")
+
+
+def coaching_allows(consent: LearningConsent | None, workspace: str) -> bool:
+    """May a coach read this person's sessions of `workspace` (the `individual` class, the `coaching` learner)?
+    No consent row leaves coaching to its own opt-in. Otherwise the consent must cover the workspace and no
+    standing rule may deny it for any of coaching's purposes: coaching serves both, so a rule naming either
+    closes it (fails closed). A rule naming another learner leaves it alone."""
+    if consent is None:
+        return True
+    if not covers(consent, workspace):
+        return False
+    return not any(rule_denies(r, capability=COACHING, purpose=p, cls=INDIVIDUAL, workspace=workspace)
+                   for r in (consent.standing_rules or []) for p in COACHING_PURPOSES)
 
 
 def _capability(capability) -> BrainCapability | None:
@@ -192,7 +211,8 @@ def eligible_sources(capability, purpose: str, subject=None):
     qs = (BrainSource.objects.filter(kind__in=cap.source_kinds or [], state=BrainSource.OPEN,
                                      session__isnull=False, session__contact__isnull=True,
                                      session__content_deleted_at__isnull=True)
-          .exclude(session__metadata__has_key=rr.METADATA_KEY))
+          .exclude(session__metadata__has_key=rr.METADATA_KEY)
+          .exclude(session__metadata__has_key=BRAIN_RUN_KEY))                # `participants.sealed_reason`
     consents = [c for c in LearningConsent.objects.filter(revoked_at__isnull=True)
                 if cap.purpose_class in (c.classes or [])]
     if cap.purpose_class in ABOUT_A_PERSON:

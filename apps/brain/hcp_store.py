@@ -2,12 +2,19 @@
 
 An entry says what it was learned from with an HCP v2 `derivedFrom` relationship naming a SOURCE
 (`EntryRelationship`, `source_kind` "session", `source_ref` the session id: keyed like `BrainSource.kind/ref`).
-Memory is about one person, so the session is removed for the entry when its words are gone (deleted, withdrawn,
-the session gone), it is sealed, or the entry's own person excluded it or stopped agreeing to `memory`
-(`cascade.removed_reason`, class `memory`, the entry's person as the subject). "Stopped" means they once agreed:
-an entry an agent wrote with them before they ever answered the `memory` question is not a learning output the
-class governs, so their silence does not delete it; their exclusion of the session does. An entry derived from several
-sessions goes when any of them does: one statement cannot be re-derived from part of what fed it.
+Memory is about one person, so the session is removed for the entry by `cascade.removed_reason` (class `memory`,
+the entry's person as the subject). The cascade acts on an entry only when:
+
+* the entry's person is a canopy USER who once agreed to `memory` (`cascade.ever_agreed`): then any removal counts
+  (the words gone, the session sealed, their exclusion, their consent ended or narrowed); or
+* whoever it is about, the session's words are gone (deleted, withdrawn, the session gone), or the person excluded
+  the session themselves.
+
+So an entry an agent wrote about a user before they ever answered the `memory` question is not a learning output
+the class governs: neither their silence nor a seal (a sensitive session, a contact's) deletes it. A CONTACT's
+entries (a person with no canopy account, e.g. a preference recorded through trusted contacts) are never touched
+by the brain cascade. An entry derived from several sessions goes when any of them does: one statement cannot be
+re-derived from part of what fed it.
 
 The entry is deleted through HCP's own path (`hcp.delete_entry`, as canopy, never the person): it is never served
 to an agent again and its embedding is cleared; the person still sees it on their memory page, marked deleted, and
@@ -18,7 +25,8 @@ import logging
 import uuid
 from collections import defaultdict
 
-from .models import MEMORY, BrainSource, LearningConsent
+from . import participants
+from .models import MEMORY, BrainSource
 
 logger = logging.getLogger(__name__)
 
@@ -43,16 +51,18 @@ def _source(ref: str):
     return sources.for_session(session) if session is not None else None
 
 
-def sweep(source_ids=None) -> int:
-    """Delete every live memory entry derived from a session now removed for its person. Returns entries deleted."""
+def sweep(source_ids=None, memo: dict | None = None) -> int:
+    """Delete every live memory entry derived from a session now removed for its person (see the module
+    docstring for whose and why). Returns entries deleted."""
     from apps.contacts import hcp  # noqa: PLC0415 — contacts imports this app
     from apps.contacts.models import EntryRelationship, PersonFact  # noqa: PLC0415 — as the other lazy imports here
 
-    from .cascade import removed_reason  # noqa: PLC0415 — cascade calls this module
+    from .cascade import ever_agreed, removed_reason  # noqa: PLC0415 — cascade calls this module
 
+    memo = {} if memo is None else memo
     live = PersonFact.objects.filter(superseded_at__isnull=True, retracted_at__isnull=True).values("entry_id")
     rels = EntryRelationship.objects.filter(type=EntryRelationship.DERIVED_FROM, source_kind=SESSION_KIND,
-                                            entry_id__in=live).select_related("person")
+                                            entry_id__in=live, person__user__isnull=False).select_related("person")
     if source_ids is not None:
         refs = list(BrainSource.objects.filter(pk__in=list(source_ids), kind=BrainSource.SESSION)
                     .values_list("ref", flat=True))
@@ -63,16 +73,10 @@ def sweep(source_ids=None) -> int:
     deleted = 0
     for entry_id, entry_rels in by_entry.items():
         subject = entry_rels[0].person.user_id
-        gone = False
-        for rel in entry_rels:
-            source = _source(rel.source_ref)
-            why = "withdrawn" if source is None else removed_reason(source, MEMORY, subject, [])
-            if why == "consent_ended" and not _once_agreed(subject):
-                why = ""
-            if why:
-                gone = True
-                break
-        if not gone:
+        if subject is None:
+            continue                                   # a contact's entry: never the brain cascade's to delete
+        agreed = ever_agreed(subject, MEMORY, memo)
+        if not any(_gone(_source(rel.source_ref), subject, agreed, removed_reason) for rel in entry_rels):
             continue
         fact = hcp.current(entry_id)
         if fact is None or fact.retracted_at is not None:
@@ -85,17 +89,12 @@ def sweep(source_ids=None) -> int:
     return deleted
 
 
-def _once_agreed(user_id) -> bool:
-    """Did this person ever agree to `memory` (now or before a class removal or a revoke)?"""
-    from apps.events.models import Event  # noqa: PLC0415 — as the other lazy imports here
-
-    from . import consent  # noqa: PLC0415 — as the other lazy imports here
-
-    if user_id is None:
-        return False
-    held = LearningConsent.objects.filter(user_id=user_id).values_list("classes", flat=True)
-    if any(MEMORY in (c or []) for c in held):
+def _gone(source, subject: int, agreed: bool, removed_reason) -> bool:
+    """Is this session removed for the entry? For someone who once agreed to `memory`, any removal; for anyone
+    else only their own exclusion or the words being gone."""
+    why = "withdrawn" if source is None else removed_reason(source, MEMORY, subject, [])
+    if not why or agreed:
+        return bool(why)
+    if why in ("withdrawn", "excluded"):
         return True
-    rows = Event.objects.filter(source=consent.SOURCE, kind__in=[consent.CONSENTED, consent.CLASS_ADDED, consent.CLASS_REMOVED],
-                                payload__user_id=user_id).values_list("payload", flat=True)
-    return any(MEMORY in (p.get("classes") or []) or p.get("class") == MEMORY for p in rows)
+    return why == "sealed" and participants.sealed_reason(source.session) == BrainSource.SEALED_DELETED

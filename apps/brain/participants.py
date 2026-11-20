@@ -14,13 +14,14 @@ from django.db.models import Q
 from apps.agents.models import Agent
 from apps.harness import runner_requirements as rr
 
-from .models import BrainSource, SourceParticipant
+from .models import BRAIN_RUN_KEY, BrainSource, SourceParticipant
 
 
 def sealed_reason(session) -> str:
     """Why this session is shut to every learning use, or "". Read live, never cached, and the
     sensitive test is `access._not_sensitive_q`'s: ANY runner requirement at all is sensitive
-    (a new flag fails closed). `tests/test_brain_sources.py` holds the two together."""
+    (a new flag fails closed). `tests/test_brain_sources.py` holds the two together. A brain run's own
+    conversation is sealed too: it is learning's output, never its input."""
     if session is None:
         return BrainSource.SEALED_DELETED
     if rr.METADATA_KEY in (session.metadata or {}):
@@ -29,6 +30,10 @@ def sealed_reason(session) -> str:
         return BrainSource.SEALED_CONTACT
     if session.content_deleted_at is not None:
         return BrainSource.SEALED_DELETED
+    if BRAIN_RUN_KEY in (session.metadata or {}):
+        # A learning run's conversation retells the sessions it read; its only "participant" is the admin its
+        # turn answers to. Learning from it would launder what those sessions allowed into another class.
+        return BrainSource.SEALED_BRAIN_RUN
     return ""
 
 
