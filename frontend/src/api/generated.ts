@@ -19579,9 +19579,96 @@ export interface paths {
          * @description For each session you can read that was created or active between `since` and `until` (the last day by
          *     default, a week at most): who is in it, whether each class of learning could read it now and if everyone in it
          *     agreed, with the reason, the project links canopy would make, and the session as a learner reads it, secrets
-         *     scrubbed. Nothing is stored or recorded. Pass `next_after` back as `after` for the next page.
+         *     scrubbed. Nothing is stored or recorded. Pass `next_after` back as `after` for the next page, or name one
+         *     `session` of the window.
          */
         readonly get: operations["brain_preview"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/brain/preview/summary": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What learning would do over your sessions, summed up (no transcripts; stores nothing)
+         * @description The preview without a line of any transcript: per session who is in it, whether each class could read it now
+         *     and if everyone agreed, and the links canopy would make; what the page adds up to; its links by project and
+         *     tier; and how many sessions the window holds. Ask the preview with `session` for one transcript.
+         */
+        readonly get: operations["brain_preview_summary"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/brain/state": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Canopy learning as it stands, for you (counts; stores nothing)
+         * @description Whether learners may read at all, how many people agreed to each class in your workspaces, the sources and
+         *     why some are sealed, the stored links of sessions you read by project and tier, the learners and who answers for
+         *     each, runs by state and the removal work still to do. Workspace-wide counts only where you hold `logs.read`;
+         *     elsewhere your own.
+         */
+        readonly get: operations["brain_state"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/brain/state/links": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Stored project links of sessions you read, newest first
+         * @description Each link with its session (title scrubbed) and how it was made. Pass `next_before` as `before` for more.
+         */
+        readonly get: operations["brain_state_links"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/brain/state/runs": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Learning runs about you or a project you read, newest first
+         * @description Each run's learner, purpose, subject and state, and what it read: the sessions you read by title, the rest a
+         *     count. A canopy admin sees every run. Pass `next_before` as `before` for more.
+         */
+        readonly get: operations["brain_state_runs"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -51699,6 +51786,392 @@ export interface components {
              */
             readonly until: string;
         };
+        /** BrainPreviewSummaryOut */
+        readonly BrainPreviewSummaryOut: {
+            readonly window: components["schemas"]["PreviewWindow"];
+            /**
+             * Total
+             * @description Sessions in the whole window.
+             */
+            readonly total: number;
+            /**
+             * Sessions
+             * @description This page, without a line of any transcript.
+             */
+            readonly sessions: readonly components["schemas"]["PreviewSummaryRow"][];
+            readonly counts: components["schemas"]["PreviewCounts"];
+            /**
+             * Would Link
+             * @description This page's links, by project and tier.
+             */
+            readonly would_link: readonly components["schemas"]["PreviewLinkGroup"][];
+            /**
+             * Next After
+             * @description Pass this as `after` for the next page.
+             */
+            readonly next_after: string;
+            /** Done */
+            readonly done: boolean;
+        };
+        /** PreviewClassCount */
+        readonly PreviewClassCount: {
+            /** Now */
+            readonly now: number;
+            /** If Everyone Agreed */
+            readonly if_everyone_agreed: number;
+        };
+        /** PreviewCounts */
+        readonly PreviewCounts: {
+            /**
+             * Sessions
+             * @description Sessions on this page.
+             */
+            readonly sessions: number;
+            /**
+             * Links
+             * @description Links canopy would store on this page (none a stored link keeps out).
+             */
+            readonly links: number;
+            /**
+             * Sealed
+             * @description Sessions shut to every use, by why.
+             */
+            readonly sealed: {
+                readonly [key: string]: number;
+            };
+            readonly project: components["schemas"]["PreviewClassCount"];
+            readonly system: components["schemas"]["PreviewClassCount"];
+            /** @description Your own sessions' `individual` verdicts. */
+            readonly individual: components["schemas"]["PreviewClassCount"];
+        };
+        /** PreviewLinkGroup */
+        readonly PreviewLinkGroup: {
+            /** Workspace */
+            readonly workspace: string;
+            /** Project */
+            readonly project: string;
+            /** Tier */
+            readonly tier: string;
+            /** Sessions */
+            readonly sessions: readonly components["schemas"]["PreviewLinkSession"][];
+        };
+        /** PreviewLinkSession */
+        readonly PreviewLinkSession: {
+            /** Id */
+            readonly id: string;
+            /** Title */
+            readonly title: string;
+            /** How */
+            readonly how: string;
+            /** Evidence */
+            readonly evidence: readonly string[];
+            /** Outranked By */
+            readonly outranked_by?: {
+                readonly [key: string]: unknown;
+            } | null;
+        };
+        /** PreviewSummaryRow */
+        readonly PreviewSummaryRow: {
+            /** Id */
+            readonly id: string;
+            /** Title */
+            readonly title: string;
+            /** Workspace */
+            readonly workspace: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Started At
+             * Format: date-time
+             */
+            readonly started_at: string;
+            /** Participants */
+            readonly participants: readonly components["schemas"]["PreviewParticipant"][];
+            /**
+             * Would Read
+             * @description Per class: `project` and `system` a verdict pair; `individual` one per person in it, by user id.
+             */
+            readonly would_read: {
+                readonly [key: string]: unknown;
+            };
+            /** Links */
+            readonly links: readonly components["schemas"]["PreviewLink"][];
+            /** @description The `individual` verdict about you, if you are in it. */
+            readonly you?: components["schemas"]["PreviewWouldRead"] | null;
+        };
+        /** PreviewVerdict */
+        readonly PreviewVerdict: {
+            /** Ok */
+            readonly ok: boolean;
+            /**
+             * Reason
+             * @description Why not, as `eligibility.explain` names it; empty when ok.
+             */
+            readonly reason: string;
+        };
+        /** PreviewWouldRead */
+        readonly PreviewWouldRead: {
+            readonly now: components["schemas"]["PreviewVerdict"];
+            /** @description Every missing consent taken as given; every other fence kept (sealed, removed, a contact, a non-member, a consent ended or narrowed). */
+            readonly if_everyone_agreed: components["schemas"]["PreviewVerdict"];
+        };
+        /** BrainCascadeCounts */
+        readonly BrainCascadeCounts: {
+            /** Workspace */
+            readonly workspace: string;
+            /**
+             * Scope
+             * @enum {string}
+             */
+            readonly scope: "workspace" | "yours";
+            /**
+             * Rederive Open
+             * @description Outputs waiting to be derived again after losing a source.
+             */
+            readonly rederive_open: number;
+            /**
+             * Revocations Undelivered
+             * @description Removals a learner has not been told of yet.
+             */
+            readonly revocations_undelivered: number;
+            /**
+             * Removed Recently
+             * @description Sessions taken out of learning in the last seven days.
+             */
+            readonly removed_recently: number;
+            /** Outputs Withdrawn Recently */
+            readonly outputs_withdrawn_recently: number;
+            /** Outputs Stale Recently */
+            readonly outputs_stale_recently: number;
+        };
+        /** BrainConsentState */
+        readonly BrainConsentState: {
+            /**
+             * Mine
+             * @description The classes you agreed to.
+             */
+            readonly mine: readonly string[];
+            /** Workspaces */
+            readonly workspaces: readonly components["schemas"]["BrainConsentWorkspace"][];
+        };
+        /** BrainConsentWorkspace */
+        readonly BrainConsentWorkspace: {
+            /** Workspace */
+            readonly workspace: string;
+            /** Name */
+            readonly name: string;
+            /** Members */
+            readonly members: number;
+            /**
+             * Agreed Any
+             * @description Members who agreed to at least one class for this workspace.
+             */
+            readonly agreed_any: number;
+            /**
+             * Agreed
+             * @description Per class, members who agreed to it for this workspace.
+             */
+            readonly agreed: {
+                readonly [key: string]: number;
+            };
+        };
+        /** BrainLearnerState */
+        readonly BrainLearnerState: {
+            /** Slug */
+            readonly slug: string;
+            /** Name */
+            readonly name: string;
+            /** Purpose Class */
+            readonly purpose_class: string;
+            /** Enabled */
+            readonly enabled: boolean;
+            /** Scope */
+            readonly scope: string;
+            /** Schedule */
+            readonly schedule: string;
+            /** Operator */
+            readonly operator: string;
+            /**
+             * Accountable
+             * @description The canopy admin its runs act for, or empty: nobody active.
+             */
+            readonly accountable: string;
+        };
+        /** BrainLinkGroup */
+        readonly BrainLinkGroup: {
+            /** Project */
+            readonly project: string;
+            /** Name */
+            readonly name: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Tier */
+            readonly tier: string;
+            /** Count */
+            readonly count: number;
+        };
+        /** BrainRunCounts */
+        readonly BrainRunCounts: {
+            /** Open */
+            readonly open: number;
+            /** Done */
+            readonly done: number;
+            /** Failed */
+            readonly failed: number;
+        };
+        /** BrainSourceCounts */
+        readonly BrainSourceCounts: {
+            /** Workspace */
+            readonly workspace: string;
+            /**
+             * Scope
+             * @description `workspace`: every source of it (you hold logs.read there). `yours`: only sources you are in.
+             * @enum {string}
+             */
+            readonly scope: "workspace" | "yours";
+            /** Open */
+            readonly open: number;
+            /** Withdrawn */
+            readonly withdrawn: number;
+            /**
+             * Sealed
+             * @description Sealed sources by why, as the last refresh saw them.
+             */
+            readonly sealed: {
+                readonly [key: string]: number;
+            };
+        };
+        /** BrainStateOut */
+        readonly BrainStateOut: {
+            /**
+             * Reads Enabled
+             * @description BRAIN_READS_ENABLED: whether any learner may read a session.
+             */
+            readonly reads_enabled: boolean;
+            /** Workspaces */
+            readonly workspaces: readonly string[];
+            /**
+             * Admin Workspaces
+             * @description Where you see workspace-wide counts.
+             */
+            readonly admin_workspaces: readonly string[];
+            /** Canopy Admin */
+            readonly canopy_admin: boolean;
+            readonly consent: components["schemas"]["BrainConsentState"];
+            /** Sources */
+            readonly sources: readonly components["schemas"]["BrainSourceCounts"][];
+            /**
+             * Links
+             * @description Stored links of sessions you read, by project and tier.
+             */
+            readonly links: readonly components["schemas"]["BrainLinkGroup"][];
+            /** Learners */
+            readonly learners: readonly components["schemas"]["BrainLearnerState"][];
+            readonly runs: components["schemas"]["BrainRunCounts"];
+            /** Cascade */
+            readonly cascade: readonly components["schemas"]["BrainCascadeCounts"][];
+        };
+        /** BrainLinkPageOut */
+        readonly BrainLinkPageOut: {
+            /** Links */
+            readonly links: readonly components["schemas"]["BrainStoredLink"][];
+            /**
+             * Next Before
+             * @description Pass this as `before` for the next page.
+             */
+            readonly next_before: number;
+            /** Done */
+            readonly done: boolean;
+        };
+        /** BrainStoredLink */
+        readonly BrainStoredLink: {
+            /** Id */
+            readonly id: number;
+            /** Project */
+            readonly project: string;
+            /** Name */
+            readonly name: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Tier */
+            readonly tier: string;
+            /** How */
+            readonly how: string;
+            /** Confidence */
+            readonly confidence?: number | null;
+            /** Evidence */
+            readonly evidence: readonly string[];
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            readonly session_id: string;
+            /** Title */
+            readonly title: string;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            readonly started_at: string;
+        };
+        /** BrainRunPageOut */
+        readonly BrainRunPageOut: {
+            /** Runs */
+            readonly runs: readonly components["schemas"]["BrainRunState"][];
+            /** Next Before */
+            readonly next_before: number;
+            /** Done */
+            readonly done: boolean;
+        };
+        /** BrainRunSession */
+        readonly BrainRunSession: {
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            readonly session_id: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Title */
+            readonly title: string;
+        };
+        /** BrainRunState */
+        readonly BrainRunState: {
+            /** Id */
+            readonly id: number;
+            /** Learner */
+            readonly learner: string;
+            /** Purpose */
+            readonly purpose: string;
+            /** Subject Type */
+            readonly subject_type: string;
+            /** Subject */
+            readonly subject: string;
+            /** State */
+            readonly state: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Finished At */
+            readonly finished_at?: string | null;
+            /**
+             * Reads
+             * @description Sources it read.
+             */
+            readonly reads: number;
+            /**
+             * Sessions
+             * @description The ones you read yourself.
+             */
+            readonly sessions: readonly components["schemas"]["BrainRunSession"][];
+            /**
+             * Hidden
+             * @description The ones you do not: a count only.
+             */
+            readonly hidden: number;
+        };
         /** LearningClassOut */
         readonly LearningClassOut: {
             /**
@@ -78106,6 +78579,7 @@ export interface operations {
                 readonly view?: "full" | "conversation" | "userinput" | "opening";
                 readonly after?: string;
                 readonly limit?: number;
+                readonly session?: string;
             };
             readonly header?: never;
             readonly path?: never;
@@ -78133,6 +78607,142 @@ export interface operations {
             };
             /** @description Unprocessable Entity */
             readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly brain_preview_summary: {
+        readonly parameters: {
+            readonly query?: {
+                readonly since?: string | null;
+                readonly until?: string | null;
+                readonly after?: string;
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BrainPreviewSummaryOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly brain_state: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BrainStateOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly brain_state_links: {
+        readonly parameters: {
+            readonly query?: {
+                readonly before?: number;
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BrainLinkPageOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly brain_state_runs: {
+        readonly parameters: {
+            readonly query?: {
+                readonly before?: number;
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BrainRunPageOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
                 };

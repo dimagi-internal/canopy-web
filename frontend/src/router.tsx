@@ -83,6 +83,7 @@ import NarrativeReviewPage from './pages/NarrativeReviewPage'
 import { PublicLayout } from './components/PublicLayout'
 import { AboutPage } from './pages/AboutPage'
 import SupervisorPage from '@/pages/SupervisorPage'
+import { BrainPage } from '@/pages/BrainPage'
 import ActivityPage from '@/pages/ActivityPage'
 import SchedulesPage from './pages/SchedulesPage'
 import { scopedPath } from './lib/scopedLinks'
@@ -338,6 +339,8 @@ export const routeTable: RouteObject[] = [
       { path: '/ide/:id', element: <LazySection><IdePage /></LazySection> },
       { path: '/schedules', element: <SchedulesPage /> },
       { path: '/activity', element: <ActivityPage /> },
+      // Canopy learning as it stands and what it would do: the person's own view, across their workspaces.
+      { path: '/brain', element: <BrainPage /> },
       { path: '/new-workspace', element: <FirstRunPage alwaysOfferForm /> },
       // Requests for access to Canopy itself (the public site's form) — they
       // name no workspace, so they live outside /w/:workspace.

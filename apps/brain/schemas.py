@@ -256,7 +256,7 @@ class PreviewTranscript(StrictModel):
     chars: int
 
 
-class PreviewSession(StrictModel):
+class PreviewSessionRow(StrictModel):
     id: str
     title: str
     workspace: dict
@@ -265,6 +265,9 @@ class PreviewSession(StrictModel):
     would_read: dict = Field(description="Per class: `project` and `system` a verdict pair; `individual` one per "
                              "person in it, by user id.")
     links: list[PreviewLink]
+
+
+class PreviewSession(PreviewSessionRow):
     transcript: PreviewTranscript
 
 
@@ -328,3 +331,164 @@ class WorkspaceGraphOut(StrictModel):
     totals: GraphTotalsOut
     notes: list[str] = Field(description="What a cap left out.")
     truncated: bool
+
+
+# ---- the /brain page: the preview summed up, and the brain as it stands -------------------------------------
+
+class PreviewClassCount(StrictModel):
+    now: int
+    if_everyone_agreed: int
+
+
+class PreviewCounts(StrictModel):
+    sessions: int = Field(description="Sessions on this page.")
+    links: int = Field(description="Links canopy would store on this page (none a stored link keeps out).")
+    sealed: dict[str, int] = Field(description="Sessions shut to every use, by why.")
+    project: PreviewClassCount
+    system: PreviewClassCount
+    individual: PreviewClassCount = Field(description="Your own sessions' `individual` verdicts.")
+
+
+class PreviewLinkSession(StrictModel):
+    id: str
+    title: str
+    how: str
+    evidence: list[str]
+    outranked_by: dict | None = None
+
+
+class PreviewLinkGroup(StrictModel):
+    workspace: str
+    project: str
+    tier: str
+    sessions: list[PreviewLinkSession]
+
+
+class PreviewSummaryRow(PreviewSessionRow):
+    you: PreviewWouldRead | None = Field(None, description="The `individual` verdict about you, if you are in it.")
+
+
+class BrainPreviewSummaryOut(StrictModel):
+    window: PreviewWindow
+    total: int = Field(description="Sessions in the whole window.")
+    sessions: list[PreviewSummaryRow] = Field(description="This page, without a line of any transcript.")
+    counts: PreviewCounts
+    would_link: list[PreviewLinkGroup] = Field(description="This page's links, by project and tier.")
+    next_after: str = Field(description="Pass this as `after` for the next page.")
+    done: bool
+
+
+class BrainConsentWorkspace(StrictModel):
+    workspace: str
+    name: str
+    members: int
+    agreed_any: int = Field(description="Members who agreed to at least one class for this workspace.")
+    agreed: dict[str, int] = Field(description="Per class, members who agreed to it for this workspace.")
+
+
+class BrainConsentState(StrictModel):
+    mine: list[str] = Field(description="The classes you agreed to.")
+    workspaces: list[BrainConsentWorkspace]
+
+
+class BrainSourceCounts(StrictModel):
+    workspace: str
+    scope: Literal["workspace", "yours"] = Field(description="`workspace`: every source of it (you hold logs.read "
+                                                 "there). `yours`: only sources you are in.")
+    open: int
+    withdrawn: int
+    sealed: dict[str, int] = Field(description="Sealed sources by why, as the last refresh saw them.")
+
+
+class BrainLinkGroup(StrictModel):
+    project: str
+    name: str
+    workspace: str
+    tier: str
+    count: int
+
+
+class BrainLearnerState(StrictModel):
+    slug: str
+    name: str
+    purpose_class: str
+    enabled: bool
+    scope: str
+    schedule: str
+    operator: str
+    accountable: str = Field(description="The canopy admin its runs act for, or empty: nobody active.")
+
+
+class BrainRunCounts(StrictModel):
+    open: int
+    done: int
+    failed: int
+
+
+class BrainCascadeCounts(StrictModel):
+    workspace: str
+    scope: Literal["workspace", "yours"]
+    rederive_open: int = Field(description="Outputs waiting to be derived again after losing a source.")
+    revocations_undelivered: int = Field(description="Removals a learner has not been told of yet.")
+    removed_recently: int = Field(description="Sessions taken out of learning in the last seven days.")
+    outputs_withdrawn_recently: int
+    outputs_stale_recently: int
+
+
+class BrainStateOut(StrictModel):
+    reads_enabled: bool = Field(description="BRAIN_READS_ENABLED: whether any learner may read a session.")
+    workspaces: list[str]
+    admin_workspaces: list[str] = Field(description="Where you see workspace-wide counts.")
+    canopy_admin: bool
+    consent: BrainConsentState
+    sources: list[BrainSourceCounts]
+    links: list[BrainLinkGroup] = Field(description="Stored links of sessions you read, by project and tier.")
+    learners: list[BrainLearnerState]
+    runs: BrainRunCounts
+    cascade: list[BrainCascadeCounts]
+
+
+class BrainStoredLink(StrictModel):
+    id: int
+    project: str
+    name: str
+    workspace: str
+    tier: str
+    how: str
+    confidence: float | None = None
+    evidence: list[str]
+    session_id: uuid.UUID
+    title: str
+    started_at: dt.datetime
+
+
+class BrainLinkPageOut(StrictModel):
+    links: list[BrainStoredLink]
+    next_before: int = Field(description="Pass this as `before` for the next page.")
+    done: bool
+
+
+class BrainRunSession(StrictModel):
+    session_id: uuid.UUID
+    workspace: str
+    title: str
+
+
+class BrainRunState(StrictModel):
+    id: int
+    learner: str
+    purpose: str
+    subject_type: str
+    subject: str
+    state: str
+    created_at: dt.datetime
+    finished_at: dt.datetime | None = None
+    reads: int = Field(description="Sources it read.")
+    sessions: list[BrainRunSession] = Field(description="The ones you read yourself.")
+    hidden: int = Field(description="The ones you do not: a count only.")
+
+
+class BrainRunPageOut(StrictModel):
+    runs: list[BrainRunState]
+    next_before: int
+    done: bool
