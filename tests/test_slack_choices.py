@@ -142,9 +142,9 @@ def test_the_agents_owner_can_answer_a_session_someone_else_started(slack, linke
 
     hal.owner = alice
     hal.save(update_fields=["owner"])
+    _bind(alice, hal_session)            # bound while hers: a viewer may not bind (`share.CANNOT_WRITE`)
     Session.objects.filter(pk=hal_session.pk).update(created_by=a_user("someone@example.com"))
     hal_session.refresh_from_db()
-    _bind(alice, hal_session)
     _press(slack.said("chat.postMessage")[0], 1)
     assert _prompts(hal_session) == ["book all"]
     assert slack.said("chat.update")

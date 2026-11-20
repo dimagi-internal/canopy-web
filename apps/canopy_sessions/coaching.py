@@ -23,7 +23,7 @@ from django.utils import timezone
 from apps.harness import runner_requirements as rr
 
 from . import lifecycle
-from .access import sessions_of_q
+from .access import removed_from_learning, sessions_of_q
 from .models import CoachingOptIn, CoachingRole, Session
 
 
@@ -38,14 +38,18 @@ def full_upload_session_ids(runner) -> set:
     """The ids of the sessions `runner` should ship in full for its owner's coach:
     the runner-discovered sessions it backs that are its owner's own work (not an
     agent's, not a contact's), never a sensitive one, never one whose words its person
-    deleted, and none at all from a sensitive-data box or a box whose owner has no live
-    grant. The project opt-in
+    deleted, never one taken out of learning or outside the workspaces its person's learning
+    consent covers (as the coaching leg, `access._coach_q`), and none at all from a sensitive-data
+    box or a box whose owner has no live grant. The project opt-in
     is applied where every stream is (`_is_canopys`), not here."""
+    from apps.brain.eligibility import covers  # noqa: PLC0415 — brain imports this app
+    from apps.brain.models import LearningConsent  # noqa: PLC0415 — brain imports this app
+
     if runner.owner_id is None or rr.is_sensitive_data_box(runner):
         return set()
     if not is_coached(runner.owner_id):
         return set()
-    return set(
+    rows = (
         Session.objects.filter(sessions_of_q([runner.owner_id]))
         .filter(Q(origin=Session.ORIGIN_RUNNER, created_by__isnull=True, agent__isnull=True,
                   contact__isnull=True, content_deleted_at__isnull=True,
@@ -53,8 +57,11 @@ def full_upload_session_ids(runner) -> set:
         # Any runner requirement at all reads as sensitive (fails closed), the
         # same test the review-grant leg of the session ACL applies.
         .exclude(metadata__has_key=rr.METADATA_KEY)
-        .values_list("id", flat=True)
+        .exclude(pk__in=removed_from_learning())
+        .values_list("id", "workspace_id")
     )
+    consent = LearningConsent.objects.filter(user_id=runner.owner_id, revoked_at__isnull=True).first()
+    return {pk for pk, ws in rows if consent is None or covers(consent, ws)}
 
 
 # ---- who coaches (a workspace owner's act) ----------------------------------------------------------

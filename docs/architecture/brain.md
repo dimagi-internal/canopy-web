@@ -60,7 +60,9 @@ workspace they are in (source `brain.consent`).
 ## Coaching is `individual`
 
 `CoachingOptIn` still drives the coaching session ACL (leg 5 of `access.py`) and the runner's full
-upload (`coaching.full_upload_session_ids`); its readers are unchanged. The two are kept the same in
+upload (`coaching.full_upload_session_ids`). Both honour removal: a session anyone in it took out of learning
+(`access.removed_from_learning`) is read by no coach and shipped for none, and a person whose consent names
+workspaces is coached only in those (`eligibility.covers`). The two are kept the same in
 both directions: coaching's own opt-in or out mirrors into the `individual` class
 (`consent.mirror_coaching`, called by `session_reviewers`), and setting or dropping `individual` through
 the learning routes writes the opt-in (`consent._sync_coaching`). Migration `0002_copy_coaching_opt_ins`
@@ -117,10 +119,17 @@ event) is the manager relationship; it opens a manager's reading of their report
 ## Reading as a project's reader (`apps/brain/readers.py`)
 
 A session `core`-tied to a project is readable, as a seventh leg of the session ACL (`access._brain_project_q`), by
-whoever may read that project, when `eligible_sources` passes it for `project-readers`: read-only (a viewer: never a
-write, share or pull), and the rows come out scrubbed (`common.redact`, via `transcript_read.readable_window`, the
-one read pipeline, and the session list's words). Each read leaves one `brain.read` event (ids only; reads of a
-session by a reader coalesce). The leg and the record are inert until `BRAIN_READS_ENABLED`.
+every PERSON who may read that project, when `eligible_sources` passes it for `project-readers`. Never an agent's login
+(an agent reads a project's sessions through a brain run) and never a request held to a turn's reach (a caller token).
+The leg is opt-in per surface (`access.visible_session_q(brain=True)`): only the session list and search, `GET /{id}`,
+its scroll-back and human inputs, and the brain's project listing carry it. Every other surface (turn prompts, ledgers
+and raw transcripts, threads, huddles, attachments, the chat socket, exports, Slack, people) reads legs 1 to 6, so a
+leg-7-only reader is refused there and a new surface fails closed; `tests/test_brain_project_leg_surfaces.py` lists the
+routes. On the surfaces that carry it the reader is a viewer (never a write, share, bind or pull) and the transcript
+comes out scrubbed (`common.redact`, via `transcript_read.brain_redacted`), with each read leaving one `brain.read`
+event (ids only; reads of a session by a reader coalesce). A list row is metadata, not a read: its title scrubbed,
+no opening or last reply (`session_row.BRAIN_ONLY_BLANKED`), and a text search never matches such a row. A page asks
+which rows are leg-7-only once (`access.brain_only_ids`). The leg and the record are inert until `BRAIN_READS_ENABLED`.
 `eligible_sources` is `eligible` for a whole listing: the structure is SQL and what is not (a consent's classes and
 workspaces, standing rules, who is a member where) is judged in Python over the people who consented, once, so nothing is
 cached; `tests/test_brain_project_leg.py` holds the two equal over a world.

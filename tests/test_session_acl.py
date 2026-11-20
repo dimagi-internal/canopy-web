@@ -84,9 +84,10 @@ def test_rest_the_socket_and_the_list_agree_for_every_shape_and_person(brain, se
             rows_before = SessionParticipant.objects.filter(session=s, user=user).count()
             rest = c.get(f"/api/canopy-sessions/{s.id}").status_code == 200
             sock = _socket_role(user, s)
-            expected = access.can_read(user, s)
+            # REST and the list carry the brain's project leg (they scrub); the socket never does.
+            expected = access.can_read(user, s, brain=True)
             assert rest is expected, f"REST disagrees on {who}/{label}"
-            assert sock is expected, f"socket disagrees on {who}/{label}"
+            assert sock is access.can_read(user, s), f"socket disagrees on {who}/{label}"
             assert (str(s.id) in listed) is expected, f"list disagrees on {who}/{label}"
             assert SessionParticipant.objects.filter(session=s, user=user).count() == rows_before, \
                 f"opening {label} as {who} wrote a participant row"

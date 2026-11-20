@@ -84,6 +84,25 @@ def mark_started_by_you(rows, viewer) -> list:
     return rows
 
 
+def mark_brain_only(rows, viewer) -> list:
+    """`rows`, each told whether `viewer` reads it only through the brain's project leg
+    (`access.brain_only_ids`) — two queries for the page, not two per row in `session_out`."""
+    rows = list(rows)
+    only = access.brain_only_ids(viewer, [s.pk for s in rows]) if viewer is not None else set()
+    for s in rows:
+        s._brain_only = s.pk in only
+    return rows
+
+
+def is_brain_only(session, viewer) -> bool:
+    """Whether `viewer` reads `session` only through the brain's project leg: the page's mark
+    (`mark_brain_only`) when there is one, else asked for this one row."""
+    marked = getattr(session, "_brain_only", None)
+    if marked is not None:
+        return marked
+    return viewer is not None and access.read_through_brain_only(viewer, session)
+
+
 def session_out(session: Session, *, reply: bool = False, viewer=None) -> dict:
     binding = getattr(session, "runner_binding", None)  # reverse 1:1 -> None when absent
     waiting_on_you = serializers.pending_menu(session) is not None
@@ -226,16 +245,22 @@ def session_out(session: Session, *, reply: bool = False, viewer=None) -> dict:
     return _brain_scrubbed(session, row, viewer)
 
 
-def _brain_scrubbed(session, row: dict, viewer) -> dict:
-    """A reader who has this session only through the brain's project leg gets the words it lists
-    (title, opening, last reply) with secrets scrubbed, as the transcript is (`transcript_read.readable_window`)."""
-    from . import access  # noqa: PLC0415 — access imports this module's neighbours at load
+#: What a row says of a session read only through the brain's project leg: its title, scrubbed, and
+#: none of its words. The row is metadata, so listing it is not a read; opening it is
+#: (`transcript_read.brain_redacted` scrubs the transcript and records the read).
+BRAIN_ONLY_BLANKED = ("opening", "last_reply")
 
-    if viewer is None or not access.read_through_brain_only(viewer, session):
+
+def _brain_scrubbed(session, row: dict, viewer) -> dict:
+    """A reader who has this session only through the brain's project leg gets its title with secrets
+    scrubbed and no opening or last reply (`BRAIN_ONLY_BLANKED`)."""
+    if not is_brain_only(session, viewer):
         return row
-    for key in ("title", "opening", "last_reply"):
-        if isinstance(row.get(key), str):
-            row[key] = redact.redact_text(row[key])[0]
+    if isinstance(row.get("title"), str):
+        row["title"] = redact.redact_text(row["title"])[0]
+    for key in BRAIN_ONLY_BLANKED:
+        if key in row:
+            row[key] = ""
     return row
 
 
