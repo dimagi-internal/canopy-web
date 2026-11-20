@@ -19325,6 +19325,63 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/me/learning/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Your agreement to canopy learning
+         * @description Which classes of learning you agreed to, what each means and who sees what it produces. Only
+         *     you see this.
+         */
+        readonly get: operations["get_my_learning"];
+        /**
+         * Agree to canopy learning, by class
+         * @description Your act: the classes you list are the ones canopy may learn from your sessions for, in the
+         *     workspaces you list (none: all of yours). Only you can do this; no admin, agent or token can.
+         */
+        readonly put: operations["set_my_learning"];
+        readonly post?: never;
+        /**
+         * Stop all canopy learning from your sessions
+         * @description At once: every learner's next read of your sessions is "not found". Only you can do this.
+         */
+        readonly delete: operations["revoke_my_learning"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/me/learning/sessions/{session_id}/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Whether one of your sessions is out of canopy learning */
+        readonly get: operations["get_my_session_learning"];
+        /**
+         * Take one of your sessions out of canopy learning
+         * @description Your act: nothing may learn from this session again, and what was derived from it is
+         *     withdrawn. If others were in it, it also leaves every shared use; what was learned about them
+         *     from their own words stays. Only you can do this.
+         */
+        readonly put: operations["exclude_my_session"];
+        readonly post?: never;
+        /**
+         * Allow one of your sessions in canopy learning again
+         * @description Undoes the exclusion. Only you can do this. It does not bring back what was withdrawn.
+         */
+        readonly delete: operations["include_my_session"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/hcp/.well-known/hcp-configuration": {
         readonly parameters: {
             readonly query?: never;
@@ -50468,6 +50525,93 @@ export interface components {
             /** Nextcursor */
             readonly nextCursor?: string | null;
         };
+        /** LearningClassOut */
+        readonly LearningClassOut: {
+            /**
+             * Name
+             * @description individual | memory | project | system.
+             */
+            readonly name: string;
+            /** Learns About */
+            readonly learns_about: string;
+            /**
+             * Summary
+             * @description What agreeing means, in the words the person is shown.
+             */
+            readonly summary: string;
+            /**
+             * Seen By
+             * @description Who sees what it produces.
+             */
+            readonly seen_by: string;
+            /** On */
+            readonly on: boolean;
+        };
+        /** LearningOut */
+        readonly LearningOut: {
+            /**
+             * On
+             * @description Whether you have agreed to any class.
+             */
+            readonly on: boolean;
+            /** Since */
+            readonly since?: string | null;
+            /** Classes */
+            readonly classes: readonly components["schemas"]["LearningClassOut"][];
+            /**
+             * Workspaces
+             * @description Workspaces the consent covers; empty means all of yours.
+             */
+            readonly workspaces: readonly string[];
+            /** Include New */
+            readonly include_new: boolean;
+            /** Standing Rules */
+            readonly standing_rules: readonly {
+                readonly [key: string]: string;
+            }[];
+            /** Directives */
+            readonly directives: readonly string[];
+        };
+        /** LearningIn */
+        readonly LearningIn: {
+            /**
+             * Classes
+             * @description Every class you agree to; at least one. Ending it all is DELETE.
+             */
+            readonly classes: readonly string[];
+            /**
+             * Workspaces
+             * @description Empty means every workspace you are in.
+             */
+            readonly workspaces?: readonly string[];
+            /**
+             * Include New
+             * @default true
+             */
+            readonly include_new: boolean;
+            /**
+             * Standing Rules
+             * @description Deny-only rules, each naming the learner, purpose, class and/or workspace it denies. Omit to keep.
+             */
+            readonly standing_rules?: readonly {
+                readonly [key: string]: string;
+            }[] | null;
+            /**
+             * Directives
+             * @description Words every reader is shown. Omit to keep.
+             */
+            readonly directives?: readonly string[] | null;
+        };
+        /** LearningSourceOut */
+        readonly LearningSourceOut: {
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            readonly session_id: string;
+            /** Excluded */
+            readonly excluded: boolean;
+        };
         /** HcpSearchIn */
         readonly HcpSearchIn: {
             /**
@@ -76102,6 +76246,226 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SearchHistoryOut"];
+                };
+            };
+        };
+    };
+    readonly get_my_learning: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LearningOut"];
+                };
+            };
+        };
+    };
+    readonly set_my_learning: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LearningIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LearningOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly revoke_my_learning: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LearningOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly get_my_session_learning: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LearningSourceOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly exclude_my_session: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LearningSourceOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly include_my_session: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LearningSourceOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };

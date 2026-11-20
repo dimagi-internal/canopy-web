@@ -115,6 +115,8 @@ Expiry refuses the next read and stops nothing, since a turn does not run for 7 
 back into that chat, which is the person's own. It can read the agent's own repo (`{cwd}/**`). That
 is what stays open, and no canopy check covers it.
 
+**The `individual` learning class is the same opt-in** (`docs/architecture/brain.md`): `LearningConsent` mirrors `CoachingOptIn` both ways, and this leg still reads `CoachingOptIn`.
+
 **Nothing a grant reads, reads this.** It enrols no one in the weekly pass, uploads no other session
 and appears on no roster: `is_coached`, `full_upload_session_ids`, `session_reviewers.live`,
 `coach_offer`, `granted_to` and `audience._coaches` read only `CoachingOptIn` and `CoachingRole`, which is why the

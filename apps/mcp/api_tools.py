@@ -67,6 +67,8 @@ _SEALED_FOR_A_MACHINE = "sealed credentials and an app secret for a machine, nev
 _BROWSER = "a browser tab's own plumbing (page state, live viewer, push subscription)"
 _HOST = "an embedding host's or a contact's surface — a different principal"
 _ANON = "anonymous public read; nothing to do as a signed-in person"
+_BRAIN = ("a person's own agreement to canopy learning: an agent or an MCP client with their token "
+          "must never be able to give or withdraw it (apps/brain)")
 _BYTES = "returns raw bytes, which a tool result cannot carry"
 
 #: Path prefixes whose every route belongs to another principal.
@@ -113,6 +115,8 @@ EXCLUDED: dict[str, str] = {
                              "never be able to turn it, and an MCP client with their token is one",
     "grant_my_session_agent": "the person's own grant to an agent (HCP 4.1.6) — an agent granting "
                               "itself access would be authorization inferred from its own request",
+    "get_my_learning": _BRAIN, "set_my_learning": _BRAIN, "revoke_my_learning": _BRAIN,
+    "exclude_my_session": _BRAIN, "include_my_session": _BRAIN, "get_my_session_learning": _BRAIN,
     "contact_token": _HOST,
     "public_stats": _ANON,
     "submit_beta_request": _ANON,
