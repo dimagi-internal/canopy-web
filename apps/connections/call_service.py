@@ -510,7 +510,7 @@ def _note_headers(provider: str, resp, sent: _Sent) -> None:
     sent.limits = limits if isinstance(limits, str) and _LIMIT_INFO.fullmatch(limits) else None
     wait = headers.get("Retry-After")
     sent.retry_after = (min(int(wait), MAX_RETRY_AFTER)
-                        if isinstance(wait, str) and wait.isascii() and wait.isdigit() else None)
+                        if isinstance(wait, str) and wait.isascii() and wait.isdecimal() else None)
 
 
 def _read(resp, deadline: float) -> tuple[bytes, bool, bool]:
