@@ -499,16 +499,26 @@ def build_release(run_id: str, request, ws: str = "") -> dict | None:
 
     Returns ``None`` (→ 404) when the run doesn't exist OR the caller is neither
     a workspace member nor holding a valid share token — never leaking existence.
-    NOT workspace-scoped at query time: the share token itself is the capability;
-    the primary artifact's ``readable_by`` gate is the authority.
+    The share token is the capability and the primary artifact's ``readable_by``
+    gate the authority; everything else on the page is read from the primary's
+    own workspace only.
 
     ``ws`` is the workspace the page's URL names
     (``/w/<ws>/ddd-release/<narrative>/<run>``): a run whose primary artifact
     lives elsewhere is not at that address (``None`` → 404).
     """
-    wts = list(Walkthrough.objects.filter(run_id=run_id).select_related("owner"))
-    revs = list(ReviewRequest.objects.filter(run_id=run_id))
-    if not wts and not revs:
+    # `run_id` and `narrative_slug` are free text an uploader chooses, so neither
+    # names one workspace: every read below is held to the workspace the page's
+    # URL names and then to the primary artifact's own, or an editor anywhere
+    # could stamp a victim's slug or run id on their own link-shared upload and
+    # read (or displace) the victim's private narrative through it.
+    wt_qs = Walkthrough.objects.filter(run_id=run_id)
+    rev_qs = ReviewRequest.objects.filter(run_id=run_id)
+    if ws:
+        wt_qs = wt_qs.filter(workspace_id=ws)
+        rev_qs = rev_qs.filter(workspace_id=ws)
+    wts = list(wt_qs.select_related("owner"))
+    if not wts and not list(rev_qs[:1]):
         return None
 
     # The primary artifact anchors both the access gate and the shareable token.
@@ -524,6 +534,9 @@ def build_release(run_id: str, request, ws: str = "") -> dict | None:
         return None
     if ws and ws != primary.workspace_id:
         return None
+    home = primary.workspace_id
+    wts = [w for w in wts if w.workspace_id == home]
+    revs = list(rev_qs.filter(workspace_id=home))
 
     is_member = _is_member(primary, request)
     is_public = bool(
@@ -550,11 +563,11 @@ def build_release(run_id: str, request, ws: str = "") -> dict | None:
     stamped = next((w.narrative_review_id for w in wts if w.narrative_review_id), None)
     narrative_review = None
     if stamped:
-        narrative_review = ReviewRequest.objects.filter(pk=stamped).first()
+        narrative_review = ReviewRequest.objects.filter(pk=stamped, workspace_id=home).first()
     if narrative_review is None:
         narrative_review = next((r for r in revs if _is_narrative_version(r)), None)
     if narrative_review is None:
-        versions = _narrative_versions_for(narrative_slug, None)
+        versions = _narrative_versions_for(narrative_slug, {home})
         narrative_review = versions[-1] if versions else None
     narrative_payload = _narrative_payload(narrative_review)
 
