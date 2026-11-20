@@ -17767,7 +17767,7 @@ export interface paths {
          * @description A session and the tail of its transcript.
          *
          *     `view` names a whole-session read instead of the tail: `full` every row,
-         *     `conversation` user and assistant text, `typed` what people typed, `opening`
+         *     `conversation` user and assistant text, `userinput` what people typed, `opening`
          *     their first few lines, short. Omitted, the tail as before.
          *
          *     `session_id` is the session's id. When no session you can read has that id,
@@ -51204,7 +51204,7 @@ export interface components {
             readonly enabled: boolean;
             /**
              * Scope
-             * @description How much of a session it reads: full, conversation, typed or opening.
+             * @description How much of a session it reads: full, conversation, userinput or opening.
              * @default full
              */
             readonly scope: string;
@@ -51260,7 +51260,7 @@ export interface components {
              * @default full
              * @enum {string}
              */
-            readonly scope: "full" | "conversation" | "typed" | "opening";
+            readonly scope: "full" | "conversation" | "userinput" | "opening";
         };
         /** CapabilityPatch */
         readonly CapabilityPatch: {
@@ -51289,9 +51289,9 @@ export interface components {
             readonly enabled?: boolean | null;
             /**
              * Scope
-             * @description May only narrow: full, conversation, typed, opening.
+             * @description May only narrow: full, conversation, userinput, opening.
              */
-            readonly scope?: ("full" | "conversation" | "typed" | "opening") | null;
+            readonly scope?: ("full" | "conversation" | "userinput" | "opening") | null;
         };
         /** ReportingLineOut */
         readonly ReportingLineOut: {
@@ -75395,7 +75395,7 @@ export interface operations {
         readonly parameters: {
             readonly query?: {
                 readonly full?: boolean;
-                readonly view?: ("full" | "conversation" | "typed" | "opening") | null;
+                readonly view?: ("full" | "conversation" | "userinput" | "opening") | null;
             };
             readonly header?: never;
             readonly path: {
@@ -77819,7 +77819,7 @@ export interface operations {
             readonly query?: {
                 readonly since?: string | null;
                 readonly until?: string | null;
-                readonly view?: "full" | "conversation" | "typed" | "opening";
+                readonly view?: "full" | "conversation" | "userinput" | "opening";
                 readonly after?: string;
                 readonly limit?: number;
             };

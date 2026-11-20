@@ -330,7 +330,7 @@ def human_inputs(session: Session, *, after: int | None = None, limit: int = SCR
                 if is_human_input(m, program)]
         return tail[-limit:], None, "tail"
     out: list = []
-    for m in view_rows(session, TYPED, after=after):      # the `typed` view of the core read
+    for m in view_rows(session, USERINPUT, after=after):      # the `userinput` view of the core read
         out.append(m)
         if len(out) == limit:
             break
@@ -509,11 +509,11 @@ def all_messages(session: Session):
 # `?view=`, the brain, a preview of the brain) names a view here instead of
 # hand-rolling its own walk. Widest first; each is a subset of the one before.
 
-FULL, CONVERSATION, TYPED, OPENING = "full", "conversation", "typed", "opening"
+FULL, CONVERSATION, USERINPUT, OPENING = "full", "conversation", "userinput", "opening"
 #: Every view, widest first: `full` every stored row, tool calls and results included;
-#: `conversation` user and assistant text with harness noise dropped; `typed` what
+#: `conversation` user and assistant text with harness noise dropped; `userinput` what
 #: people typed (`is_human_input`); `opening` the first few typed lines, short.
-VIEWS = (FULL, CONVERSATION, TYPED, OPENING)
+VIEWS = (FULL, CONVERSATION, USERINPUT, OPENING)
 #: How much of a session `opening` shows: enough to say what it was about.
 OPENING_LINES, OPENING_LINE_CHARS = 6, 600
 
@@ -544,7 +544,7 @@ def view_rows(session: Session, view: str, *, after: int | None = None):
     program, injected = program_prompts(session), InjectedPrompts(session)
     served = 0
     for m in rows.filter(role=Message.USER).iterator(chunk_size=200):
-        if (view == TYPED or (m.plaintext or "").strip()) and is_human_input(m, program, injected):
+        if (view == USERINPUT or (m.plaintext or "").strip()) and is_human_input(m, program, injected):
             yield m
             served += 1
             if view == OPENING and served >= OPENING_LINES:

@@ -48,10 +48,10 @@ def test_each_view_is_a_subset_of_the_one_before_it(s):
     assert full.messages[0]["author"] == {"user_id": s.alice.pk, "name": "Alice"}
     conv = tr.read(s, view=tr.CONVERSATION)
     assert [m["index"] for m in conv.messages] == [0, 4, 5]                  # harness noise and tool rows dropped
-    assert [m["index"] for m in tr.read(s, view=tr.TYPED).messages] == [0, 5]
+    assert [m["index"] for m in tr.read(s, view=tr.USERINPUT).messages] == [0, 5]
     opening = tr.read(s, view=tr.OPENING)
     assert [m["index"] for m in opening.messages] == [0, 5]
-    assert tr.narrower(tr.FULL, tr.TYPED) == tr.TYPED == tr.narrower(tr.TYPED, tr.CONVERSATION)
+    assert tr.narrower(tr.FULL, tr.USERINPUT) == tr.USERINPUT == tr.narrower(tr.USERINPUT, tr.CONVERSATION)
 
 
 def test_scrub_is_the_one_redaction_and_off_by_default(s):
@@ -76,6 +76,6 @@ def test_the_session_route_names_a_view_and_its_default_is_the_tail_as_before(s)
     c.force_login(s.alice)
     default = c.get(f"/api/canopy-sessions/{s.pk}").json()
     assert [m["turn_index"] for m in default["messages"]] == list(range(6))
-    typed = c.get(f"/api/canopy-sessions/{s.pk}", {"view": "typed"}).json()
+    typed = c.get(f"/api/canopy-sessions/{s.pk}", {"view": "userinput"}).json()
     assert [m["turn_index"] for m in typed["messages"]] == [0, 5]
     assert c.get(f"/api/canopy-sessions/{s.pk}", {"view": "nope"}).status_code == 422
