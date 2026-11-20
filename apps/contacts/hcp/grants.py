@@ -8,11 +8,12 @@ from django.db import transaction
 from django.utils import timezone
 
 from ..models import Person, PersonFact, PersonGrant
-from . import purposes
+from . import purposes, rules
 from .consent import FEATURES, ON, SENSITIVE_OFF, memory_state, require_rollout, set_session_memory
 from .core import (
     ACTIONS,
     HELD_CATEGORIES,
+    HcpError,
     SYSTEM,
     Actor,
     audit,
@@ -97,11 +98,12 @@ _ACTION_OF = {"record": "write", "use": "read"}
 _FEATURE_OF = {"write": "record", "read": "use"}
 
 
-def feature_scopes(features) -> list[str]:
+def feature_scopes(features, categories=None) -> list[str]:
     """The scopes a grant for these features carries: write (record) and/or read
-    (use) on every held category — custom categories never (4.1.1)."""
+    (use) on every held category — custom categories never (4.1.1) — or on `categories`
+    when a standing rule keeps a grant from reaching the rest (6.3)."""
     actions = {_ACTION_OF[f] for f in features}
-    return [scope(c, a) for c in HELD_CATEGORIES for a in ACTIONS if a in actions]
+    return [scope(c, a) for c in (categories or HELD_CATEGORIES) for a in ACTIONS if a in actions]
 
 
 def features_of(grant: PersonGrant | None) -> set[str]:
@@ -377,6 +379,10 @@ def _record_grant(person: Person, *, agent, features, sources, gtype: str, actor
         key, expires_at = _agent_key(agent), None
         current = _live(person, agent, key=key, grant_type=gtype)
         duration = PERSISTENT_FOR_AGENT
+    # 6.3: a grant never reaches a category a standing rule denies canopy's own agents.
+    kept, excluded = rules.exclusions(person, rules.PROVIDER_OPERATOR, set(), HELD_CATEGORIES)
+    if not kept:
+        raise denied("a standing rule of yours denies every category to canopy's agents; remove it first")
     have = features_of(current)
     held = grant_sources(current)
     if current is not None and set(features) <= have and reached(sources) <= reached(held):
@@ -393,8 +399,8 @@ def _record_grant(person: Person, *, agent, features, sources, gtype: str, actor
         person=person, workspace_id=agent.workspace_id, agent=agent,
         attributes={"session": str(session.pk)} if gtype == PersonGrant.TEMPORARY else {},
         client_key=key, client_name=client_name(agent, "", ""),
-        scopes=feature_scopes(want), purposes=purposes.for_scopes(feature_scopes(want)),
-        restrictions=restrictions_for(feature_scopes(want), reach),
+        scopes=feature_scopes(want, kept), purposes=purposes.for_scopes(feature_scopes(want)),
+        restrictions=restrictions_for(feature_scopes(want, kept), reach),
         grant_type=gtype, modality=SURFACES[surface], expires_at=expires_at,
         collection=collection or (current.collection if current is not None else None))
     audit(person, "grant.issued", actor=actor, grant=grant, workspace_slug=agent.workspace_id,
@@ -402,7 +408,8 @@ def _record_grant(person: Person, *, agent, features, sources, gtype: str, actor
                   f"modality={grant.modality} (the person's act){why}; "
                   f"expires={_iso(expires_at) or 'never'}; scopes={' '.join(grant.scopes)}; "
                   f"purposes={' '.join(grant.purposes)}; "
-                  f"restrictions={json.dumps(grant.restrictions)}; "
+                  + (f"excluded by your standing rules={' '.join(excluded)}; " if excluded else "")
+                  + f"restrictions={json.dumps(grant.restrictions)}; "
                   f"{_disclosure(agent, want, reach, duration, expires_at)}"))
     return grant
 
@@ -472,7 +479,10 @@ def categories_for(grant: PersonGrant, action: str) -> list[str]:
 
 
 def allows(grant: PersonGrant | None, category: str, action: str) -> bool:
-    return grant is not None and scope(category, action) in (grant.scopes or [])
+    """Does the grant carry this scope, and does no standing rule of the person's deny its client the
+    category (6.3, read as they stand, on every call)?"""
+    return (grant is not None and scope(category, action) in (grant.scopes or [])
+            and not rules.denial_for(grant).removes(category))
 
 
 def _restricted_entry_ids(grant: PersonGrant, category: str, action: str) -> set[str] | None:
@@ -497,7 +507,7 @@ def within_grant(fact: PersonFact, grant: PersonGrant | None, action: str) -> bo
         return False
     if fact.workspace_id not in reach_of(grant):
         return False
-    if not allows(grant, fact.category, action):
+    if not allows(grant, fact.category, action) or rules.withholds(grant, fact):
         return False
     ids = _restricted_entry_ids(grant, fact.category, action)
     return ids is None or str(fact.entry_id) in ids
@@ -552,3 +562,29 @@ def grant_dict(grant: PersonGrant) -> dict:
                    "client": ({"id": client.client_id, "name": client.name,
                                "operator": client.operator} if client is not None else None)},
     }
+
+
+def enforce_rules(grant: PersonGrant) -> PersonGrant:
+    """Every request (v2 6.3, 6.2.2): a standing rule that covers every category the grant reaches
+    revokes it and the request fails; one that covers some fails only the requests it covers
+    (`rules.permitted`, `allows`, `within_grant`)."""
+    if grant.status != PersonGrant.ACTIVE:
+        return grant
+    reach = set(categories_for(grant, "read")) | set(categories_for(grant, "write"))
+    if reach and not rules.permitted(grant, reach):
+        revoke_grant(grant, actor=SYSTEM)
+        raise denied("a standing rule of the person's denies this client")
+    return grant
+
+
+def set_standing_rule(person: Person, *, operators=None, requires=None, categories=None, actor: Actor):
+    """Set a rule, and revoke now every grant it covers entirely (its client notified, 6.2.2); the
+    person is told through the audit log (`rule.set`, then `grant.revoked` for each)."""
+    with transaction.atomic():
+        rule = rules.set_rule(person, operators=operators, requires=requires, categories=categories, actor=actor)
+        for grant in PersonGrant.objects.filter(person=person, status=PersonGrant.ACTIVE).select_related("hcp_client"):
+            try:
+                enforce_rules(grant)
+            except HcpError:
+                pass                 # that is the revocation
+    return rule

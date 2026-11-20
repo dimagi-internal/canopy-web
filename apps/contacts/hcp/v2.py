@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from ..models import PersonFact
 from . import confirmations, relationships
-from .core import entry_urn
+from .core import categories_of, entry_urn
 from .entries import _iso, captured_by, provenance_source, subject_id
 
 HCP_VERSION_V2 = "2.0"
@@ -59,11 +59,6 @@ def to_v2_entry(fact: PersonFact) -> dict:
         "content": {"profile": GENERAL_CONTEXT, "value": fact.statement, "language": None},
         "assertion": assertion, "classification": classification, "evidence": [], "record": record,
     }
-
-
-def categories_of(fact: PersonFact) -> list[str]:
-    """The entry's categories (4.5): the one canopy stores first, then any added by the person."""
-    return [fact.category, *[c for c in (fact.extra_categories or []) if c != fact.category]]
 
 
 def assurance_of(fact: PersonFact) -> str:

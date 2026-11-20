@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from django.db.models import Q
 
 from ..models import Person, PersonFact, PersonGrant
+from . import rules
 from .core import (
     HELD_CATEGORIES,
     HYBRID_METHOD,
@@ -198,7 +199,7 @@ def search(person: Person, *, workspace_slugs, query: str, categories: list[str]
     if actor.is_person:
         readable = set(HELD_CATEGORIES) | {c for c in wanted if valid_category(c)}
     else:
-        readable = set(categories_for(grant, "read")) if grant is not None else set()
+        readable = set(rules.permitted(grant, categories_for(grant, "read"))) if grant is not None else set()
     outside = [c for c in wanted if c not in readable]
     if outside:
         raise denied(f"not authorized for {outside}")
@@ -219,6 +220,11 @@ def search(person: Person, *, workspace_slugs, query: str, categories: list[str]
     # `readWhy` parses this; `query=` stays last, since a question may hold ';').
     asked = " ".join((query or "").split())[:200]
     detail = f"retrievalId=urn:uuid:{retrieval}; returned={len(hits)}"
+    if not actor.is_person:
+        # 8.2: the log records which directives the result carried (6.4).
+        carried = [d["directiveId"] for d in rules.delivered(grant, hits)]
+        if carried:
+            detail += f"; directives={','.join(carried)}"
     if hits:
         for sc in returned:
             audit(person, "preference.read", actor=actor, entry=sc.fact, purpose=purpose, grant=grant,

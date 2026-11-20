@@ -742,6 +742,61 @@ class EntryRelationship(models.Model):
         ]
 
 
+class StandingRule(models.Model):
+    """HCP v2 6.3 — a person's standing rule: it governs EVERY grant, present and future.
+
+    `deny` is the only effect: a rule never widens access. It denies the named client operators
+    (a DNS domain matches that host and its subdomains; anything else matches one identifier
+    exactly), or every operator when `requires` is set, the categories named (empty = every
+    category, held now or later). `requires` are client claims: it denies only clients that do not
+    make every one. Set and removed only by the person (a governance act, HTTP only); enforced when
+    a grant is issued and on every request (`hcp.rules`)."""
+
+    rule_id = models.UUIDField(default=uuid.uuid4, unique=True)
+    person = models.ForeignKey(Person, on_delete=models.CASCADE, related_name="standing_rules")
+    operators = models.JSONField(default=list, blank=True)
+    requires = models.JSONField(default=list, blank=True)
+    categories = models.JSONField(default=list, blank=True)
+    #: `context-subject`, or a delegation's id once delegations exist.
+    set_by = models.CharField(max_length=200, default="context-subject")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "contact_standing_rules"
+        ordering = ["created_at", "pk"]
+        constraints = [
+            # 6.3: "every operator" is allowed only with `requires`.
+            models.CheckConstraint(
+                condition=~models.Q(operators=[]) | ~models.Q(requires=[]),
+                name="standing_rule_names_operators_or_requires"),
+        ]
+
+
+class Directive(models.Model):
+    """HCP v2 6.4 — what a client may do with context it received or on the person's behalf, in
+    the person's words, delivered with every disclosure it applies to. Directives only narrow:
+    they never widen access. Set and removed only by the person (HTTP only)."""
+
+    SHARE, SIGN, TRANSACT = "share", "sign", "transact"
+    DENY, ASK_FIRST, PERMIT = "deny", "ask-first", "permit"
+
+    directive_id = models.UUIDField(default=uuid.uuid4, unique=True)
+    person = models.ForeignKey(Person, on_delete=models.CASCADE, related_name="directives")
+    action = models.CharField(max_length=300)
+    effect = models.CharField(max_length=10)
+    text = models.CharField(max_length=1000)
+    categories = models.JSONField(default=list, blank=True)
+    operators = models.JSONField(default=list, blank=True)
+    set_by = models.CharField(max_length=200, default="context-subject")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "contact_directives"
+        ordering = ["created_at", "pk"]
+        constraints = [models.CheckConstraint(condition=models.Q(effect__in=["deny", "ask-first", "permit"]),
+                                              name="directive_effect_known")]
+
+
 class PersonAccess(models.Model):
     """Append-only audit: who READ what canopy knows about a person, and how.
 
@@ -944,6 +999,8 @@ class PersonAuditEvent(models.Model):
         "context.restricted",
         # v2 3.8 / 4.7: the person confirmed or rejected a version; a provider's proposal for a conflict.
         "context.confirmed", "conflict.proposed",
+        # v2 6.3 / 6.4: a standing rule or a directive set or removed by the person.
+        "rule.set", "rule.removed", "directive.set", "directive.removed",
     )
     USER, AGENT, SYSTEM = "user", "agent", "system"
 
@@ -1134,6 +1191,12 @@ class HcpClient(models.Model):
     redirect_uris = models.JSONField(default=list)
     #: The most it may ever ask for: `hcp:{category}:{read|write}` scopes.
     allowed_scopes = models.JSONField(default=list)
+    #: HCP v2 3.2.8 — the client operator's identifier, what a standing rule or directive names:
+    #: a DNS domain or an identifier. Empty = the host of its first redirect URI.
+    operator_id = models.CharField(max_length=200, blank=True, default="")
+    #: HCP v2 18.1 — the conformance claims it declared (the directives claim is what a rule's
+    #: `requires` asks for). Set by a canopy admin from what the operator attests, never by the client.
+    claims = models.JSONField(default=list, blank=True)
     #: The purposes (`hcp.purposes` codes) it may read for; shown on the consent screen and
     #: carried by every grant to it. Empty = the purposes of the scopes it is granted.
     purposes = models.JSONField(default=list, blank=True)

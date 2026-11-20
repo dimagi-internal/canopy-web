@@ -33,6 +33,10 @@ class HcpClientOut(StrictModel):
     allowed_scopes: list[str]
     purposes: list[str] = Field(default_factory=list, description="The purposes (HCP v2 6.1.5.2) it may read for; "
                                                                   "empty = those of the scopes it is granted.")
+    operator_id: str = Field(default="", description="The operator's identifier (a DNS domain or identifier) "
+                                                     "that a person's standing rules name; empty = the host of its "
+                                                     "first redirect URI.")
+    claims: list[str] = Field(default_factory=list, description="Conformance claims it declared (HCP v2 18.1).")
     first_party: bool
     webhook_url: str = ""
     created_at: str
@@ -54,6 +58,8 @@ class HcpClientIn(StrictModel):
     allowed_scopes: list[str] = Field(min_length=1, description="hcp:{category}:{read|write}, each named.")
     purposes: list[str] = Field(default_factory=list, description="Purpose codes it may read for (the registry in "
                                                                   "discovery `canopy.purposes`); empty = those of the scopes.")
+    operator_id: str = Field(default="", max_length=200)
+    claims: list[str] = Field(default_factory=list)
     first_party: bool = False
     webhook_url: str = ""
 
@@ -65,6 +71,8 @@ class HcpClientPatch(StrictModel):
     redirect_uris: list[str] | None = None
     allowed_scopes: list[str] | None = None
     purposes: list[str] | None = None
+    operator_id: str | None = Field(default=None, max_length=200)
+    claims: list[str] | None = None
     first_party: bool | None = None
     webhook_url: str | None = None
     disabled: bool | None = Field(default=None, description="true stops every token it holds at once.")
@@ -84,7 +92,7 @@ def _out(c: HcpClient) -> dict:
     return {"client_id": c.client_id, "name": c.name, "operator": c.operator,
             "description": c.description, "redirect_uris": list(c.redirect_uris or []),
             "allowed_scopes": list(c.allowed_scopes or []), "purposes": list(c.purposes or []),
-            "first_party": c.first_party,
+            "operator_id": c.operator_id, "claims": list(c.claims or []), "first_party": c.first_party,
             "webhook_url": c.webhook_url, "created_at": c.created_at.isoformat(),
             "disabled_at": c.disabled_at.isoformat() if c.disabled_at else None,
             "active_grants": c.grants.filter(status="active").count()}
@@ -132,7 +140,7 @@ def hcp_register_client(request: HttpRequest, payload: HcpClientIn):
         client_id=hcp_oauth.new_client_id(), name=payload.name.strip(),
         operator=payload.operator.strip(), description=payload.description.strip(),
         redirect_uris=uris, allowed_scopes=scopes, purposes=_purposes(payload.purposes),
-        first_party=payload.first_party,
+        operator_id=payload.operator_id.strip().lower(), claims=list(payload.claims), first_party=payload.first_party,
         webhook_url=hook, webhook_secret_encrypted=encrypted, registered_by=request.user)
     return 201, {**_out(c), "webhook_secret": secret}
 
@@ -161,6 +169,10 @@ def hcp_update_client(request: HttpRequest, client_id: str, payload: HcpClientPa
     c.redirect_uris, c.allowed_scopes, c.webhook_url = uris, scopes, hook
     if payload.purposes is not None:
         c.purposes = _purposes(payload.purposes)
+    if payload.operator_id is not None:
+        c.operator_id = payload.operator_id.strip().lower()
+    if payload.claims is not None:
+        c.claims = list(payload.claims)
     secret = None
     if hook and (payload.rotate_webhook_secret or not c.webhook_secret_encrypted):
         secret, c.webhook_secret_encrypted = hcp_oauth.new_webhook_secret()

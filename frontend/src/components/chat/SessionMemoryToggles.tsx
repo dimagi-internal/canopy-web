@@ -248,6 +248,11 @@ export function SessionMemoryPanel({ memory }: { memory: SessionMemoryControl })
           )
         })}
       </ul>
+      {(state.excluded_categories ?? []).length > 0 && (
+        <p className="mt-1 text-muted-foreground">
+          Left out by your standing rules: {(state.excluded_categories ?? []).join(', ')}
+        </p>
+      )}
       {editable && keepable && (
         <button type="button" disabled={busy !== null} className={`mt-1.5 ${QUIET}`}
                 onClick={() => void memory.keep()}>
