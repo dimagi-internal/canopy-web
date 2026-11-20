@@ -19,10 +19,28 @@ agent's own SENSITIVE conversations, which are sealed to their people's vault ke
   that is not a person (`vault_engine`, `zk_endorse`), as do a passkey step-up and
   passkey registration (`passkeys.stepup.require_a_person`), so it can approve no
   device key and register no passkey.
-* **Turning it off** deletes the key and every conversation-key copy wrapped to it
-  (`disable`), so nothing lingers.
+* **The one other act it allows: confirming its own page permission.** An act-as-you
+  permission on a host site's page (`tokens.HostGrant`) is usable only once its person
+  confirmed it with their passkey, so a headless test signed in to a site AS the agent
+  could never get past the panel's "Confirm with passkey". While the test key is on, that
+  login may confirm its OWN waiting grant without a passkey
+  (`POST /api/me/host-grants/{id}/confirm-as-agent`, `may_confirm_own_host_grant`), with
+  its own canopy credential: a PAT or OAuth token, or its own browser session; never a
+  delegated (panel) token, which the host site holds, a caller, act-as, contact or runner
+  token, or a request carrying a host grant id. The grant must be the login's own (user =
+  the login, no contact), unexpired, still unconfirmed, and for the login's own agent or
+  for no agent in particular. It lasts the usual window, 30 minutes at most
+  (`host_grants.confirm`). It confirms no person's grant and acts as no person: the
+  permission is to act as the agent's own login on that page.
+* **It never** registers a passkey or steps up: the login has none, and both refuse it
+  (`passkeys.stepup.require_a_person`).
+* **Turning it off** deletes the key and every conversation-key copy wrapped to it, and
+  stops every unexpired host grant the login holds (`host_grants.revoke`), so nothing
+  lingers (`disable`). A login cannot confirm a grant any other way, so every confirmed
+  grant it holds came through the test key.
 
-Docs: `docs/architecture/vault.md` § An agent login's test vault key.
+Docs: `docs/architecture/vault.md` § An agent login's test vault key;
+`docs/architecture/access-confinement-and-act-as.md` § Acting as the person on a host site.
 """
 from __future__ import annotations
 
@@ -31,6 +49,7 @@ from django.db import transaction
 from apps.canopy_sessions.models import SessionKeyWrap
 from apps.common import ecdh_es
 from apps.passkeys.models import UserVaultKeyset
+from apps.tokens import kinds
 
 from ..models import Agent, AgentVaultEndorsement
 from . import zk
@@ -38,6 +57,11 @@ from .vault_members import not_a_person
 
 #: The flag is per agent; this is what a person is told when they meet it.
 LABEL = "agent test key"
+
+#: The credentials that are the login itself, for `may_confirm_own_host_grant`. Not a
+#: delegated token (the host site holds the panel's), a caller or act-as token (a turn
+#: speaking for a person), a contact's, or a runner's.
+OWN_CREDENTIALS = frozenset({kinds.SESSION, kinds.PAT, kinds.OAUTH})
 
 
 class NotAPerson(Exception):
@@ -129,9 +153,13 @@ def enable(agent: Agent) -> None:
 
 def disable(agent: Agent) -> int:
     """Turn it off: the login's vault key and every conversation-key copy wrapped to it
-    are deleted, so nothing it was given outlives the switch. Returns the copies
+    are deleted, and every unexpired host grant the login holds (confirmed or waiting)
+    is stopped, so nothing it was given outlives the switch. Returns the copies
     deleted. Also clears any member wrap or endorsement a key of this login could have
     reached, though none is ever written."""
+    from apps.host_grants import host_grants  # noqa: PLC0415 — host_grants imports agents
+    from apps.tokens.models import HostGrant  # noqa: PLC0415 — beside the host_grants import
+
     n = 0
     with transaction.atomic():
         agent.test_vault_key = False
@@ -141,4 +169,38 @@ def disable(agent: Agent) -> int:
             zk.forget_member_wraps(agent.user)
             AgentVaultEndorsement.objects.filter(endorser_id=agent.user_id).delete()
             UserVaultKeyset.objects.filter(user_id=agent.user_id).delete()
+            grants = host_grants.unexpired(HostGrant.objects.filter(user_id=agent.user_id))
+            for grant in grants.order_by("pk"):
+                host_grants.revoke(grant)
     return n
+
+
+def may_confirm_own_host_grant(request, grant) -> None:
+    """Raise `NotAPerson` unless `request` is an agent's own login, with its own
+    credential, whose agent's test vault key is on, confirming its own waiting grant."""
+    user = getattr(request, "user", None)
+    if user is None or not user.is_authenticated:
+        raise NotAPerson(401, "not_signed_in", "sign in as the agent's own canopy login")
+    if is_person(user):
+        raise NotAPerson(403, "a_person",
+                         "a person confirms an act-as-you permission with their passkey, not this route")
+    agent = agent_of_login(user)
+    if agent is None:
+        raise NotAPerson(403, "not_an_agent_login", "only an agent's own canopy login may use this route")
+    if not agent.test_vault_key:
+        raise NotAPerson(403, "test_key_off",
+                         f"{agent.slug}'s agent test key is off; an admin of the agent can turn it on "
+                         "(agent Settings → Security → Test vault key)")
+    kind = kinds.of_request(request)
+    if kind is None or kind.name not in OWN_CREDENTIALS or getattr(request, "host_grant_id", None):
+        raise NotAPerson(403, "not_own_credential",
+                         "confirm with the agent's own canopy login (its token or its own browser "
+                         "session), never a site's panel token")
+    if grant.user_id != user.pk or grant.contact_id is not None:
+        raise NotAPerson(404, "not_found", "no such permission")
+    if grant.agent_id is not None and grant.agent_id != agent.pk:
+        raise NotAPerson(403, "another_agents_page",
+                         "this page's permission is for another agent; only the login's own agent's "
+                         "page is confirmed this way")
+    if grant.confirmed_at is not None:
+        raise NotAPerson(409, "already_confirmed", "this permission is already confirmed")

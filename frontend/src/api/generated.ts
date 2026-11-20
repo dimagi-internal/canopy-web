@@ -2484,6 +2484,55 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/me/host-grants/waiting": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The pages whose act-as-you permission is waiting for me to confirm it
+         * @description Your unexpired act-as-you permissions that no one has confirmed yet, one per page,
+         *     newest first: what a page's panel is waiting on. `requested` says an agent's turn
+         *     already needs it. An agent's own login uses this to find the id it confirms with
+         *     `confirm-as-agent`.
+         */
+        readonly get: operations["list_my_waiting_host_grants"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/me/host-grants/{grant_id}/confirm-as-agent": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * As an agent's own login, confirm my own page's act-as-you permission without a passkey (agent test key)
+         * @description FOR TESTING. Only an agent's own canopy login, with its own token or browser
+         *     session (never a site's panel token), while an admin of the agent has turned on its
+         *     agent test key (`PUT /api/agents/{slug}/test-vault-key`), confirms its
+         *     OWN waiting permission on a host site's page — for its own agent's page or one for
+         *     any agent — without a passkey. From then, for the usual 30 minutes, the agent may act
+         *     as its own login on that page. A person confirms with their passkey and is refused
+         *     here; no one confirms anyone else's permission.
+         */
+        readonly post: operations["confirm_my_host_grant_as_agent"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/me/delegated-credentials/": {
         readonly parameters: {
             readonly query?: never;
@@ -25740,6 +25789,14 @@ export interface components {
             readonly credential: {
                 readonly [key: string]: unknown;
             };
+            /** Window Seconds */
+            readonly window_seconds?: number | null;
+        };
+        /**
+         * AgentConfirmIn
+         * @description Optionally a SHORTER window than the usual 30 minutes (`host_grants.window_for`).
+         */
+        readonly AgentConfirmIn: {
             /** Window Seconds */
             readonly window_seconds?: number | null;
         };
@@ -58160,6 +58217,52 @@ export interface operations {
         readonly requestBody: {
             readonly content: {
                 readonly "application/json": components["schemas"]["ConfirmIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HostGrantOut"];
+                };
+            };
+        };
+    };
+    readonly list_my_waiting_host_grants: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["HostGrantOut"][];
+                };
+            };
+        };
+    };
+    readonly confirm_my_host_grant_as_agent: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly grant_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentConfirmIn"];
             };
         };
         readonly responses: {
