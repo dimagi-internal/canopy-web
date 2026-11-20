@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY, type Simulation,
 } from 'd3-force'
@@ -11,20 +11,46 @@ import {
   buildGraph, categoryTokens, hrefOf, KIND_LABEL, KIND_TOKEN, profile, tokenOf, workspaceAnchors,
   type ColorBy, type Graph, type GraphLink, type GraphNode, type ThreadRow,
 } from './networkGraph'
+import { RelationsView } from './RelationsView'
 import { useTreeRead } from './useTreeRead'
 
-// WORKSPACE NETWORK: people, contacts and agents, each linked to the threads they
-// wrote in (a chat — where a bound Slack thread lives too — or an email thread),
-// and each thread to the agent that answered it. Is an agent a room people meet
-// in, or a private line? Read from the analytics fact log
-// (`GET /api/workspaces/{slug}/network`); a chat's title shows only to someone
-// who may open it.
+// WORKSPACE NETWORK, two views of who works with whom.
+// - Relations (3-D, the default, any member): people, agents, sessions, projects,
+//   tasks and learning outputs and every kind of tie between them, each one the
+//   viewer already sees elsewhere (`GET /api/workspaces/{slug}/graph`, RelationsView).
+// - Threads (2-D, admins): people, contacts and agents, each linked to the threads
+//   they wrote in (a chat — where a bound Slack thread lives too — or an email
+//   thread), and each thread to the agent that answered it. Is an agent a room people
+//   meet in, or a private line? Read from the analytics fact log
+//   (`GET /api/workspaces/{slug}/network`); a chat's title shows only to someone who
+//   may open it.
 
 const RANGES = [7, 30, 90] as const
 const HEIGHT = 620
+const VIEWS = [['relations', '3-D relations'], ['threads', '2-D threads']] as const
 
 export function WorkspaceNetworkPage(): JSX.Element {
   const { workspace: slug = '' } = useParams()
+  const [params, setParams] = useSearchParams()
+  const view = params.get('view') === 'threads' ? 'threads' : 'relations'
+  return (
+    <div>
+      <HealthViews title="Network" />
+      <div className="mb-3 inline-flex gap-0.5 rounded-lg border border-border bg-card p-0.5 text-[12px]" role="group" aria-label="View">
+        {VIEWS.map(([key, label]) => (
+          <button key={key} type="button" aria-pressed={view === key}
+                  onClick={() => setParams(key === 'relations' ? {} : { view: key }, { replace: true })}
+                  className={`min-h-8 rounded-md px-2.5 ${view === key ? 'bg-muted font-medium text-foreground' : 'text-muted-foreground'}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {view === 'relations' ? <RelationsView key={slug} slug={slug} /> : <ThreadsNetwork slug={slug} />}
+    </div>
+  )
+}
+
+function ThreadsNetwork({ slug }: { slug: string }): JSX.Element {
   const [days, setDays] = useState<number>(30)
   const [tree, setTree] = useState(true)
   const { data, error, forbidden } = useTreeRead(
@@ -32,7 +58,6 @@ export function WorkspaceNetworkPage(): JSX.Element {
 
   return (
     <div>
-      <HealthViews title="Network" />
       {!forbidden && <div className="mb-4 flex flex-wrap items-center gap-2 text-[12px]">
         <div className="inline-flex gap-0.5 rounded-lg border border-border bg-card p-0.5" role="group" aria-label="Range">
           {RANGES.map((n) => (
@@ -47,7 +72,7 @@ export function WorkspaceNetworkPage(): JSX.Element {
           Include workspaces below
         </label>
       </div>}
-      {forbidden ? <AdminOnly what="the workspace network" />
+      {forbidden ? <AdminOnly what="the threads view" />
         : error ? <p className="text-[13px] text-destructive">{error}</p>
           : !data ? <p className="text-[13px] text-muted-foreground">Loading…</p>
             : <Network data={data} />}
