@@ -13,6 +13,8 @@ here, once. The credentials are minted per claim and exist only in this answer.
 """
 from __future__ import annotations
 
+from django.conf import settings
+
 
 def issue_credentials(turn):
     """Mint what only the claiming runner may hold, onto the turn object:
@@ -54,8 +56,6 @@ def start_model(agent, cli: str | None) -> str:
     that box, which is whatever the box's account defaults to, not what a person
     gets on their own machine). A project's turn has no agent, so it always takes
     the server default."""
-    from django.conf import settings
-
     cli = cli or "claude-code"
     named = (agent.cli_models or {}).get(cli) if agent else None
     return str(named or (settings.DEFAULT_CLI_MODELS or {}).get(cli) or "")[:64]
