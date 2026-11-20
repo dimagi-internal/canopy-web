@@ -8,9 +8,21 @@
 const PATTERN = /^https:\/\/((?:\*\.)?[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*)(\/[^\s#]*)$/
 const MAX_URL = 2048
 
-function glob(path: string): RegExp {
-  const escaped = path.split('*').map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-  return new RegExp(`^${escaped.join('[\\s\\S]*')}$`)
+/** `*` matches any run of characters; everything else literally. No RegExp is built from a pattern. */
+function globMatch(pattern: string, text: string): boolean {
+  const parts = pattern.split('*')
+  if (parts.length === 1) return pattern === text
+  const first = parts[0]
+  const last = parts[parts.length - 1]
+  if (!text.startsWith(first) || text.length < first.length + last.length || !text.endsWith(last)) return false
+  let at = first.length
+  const end = text.length - last.length
+  for (const middle of parts.slice(1, -1)) {
+    const found = text.indexOf(middle, at)
+    if (found < 0 || found + middle.length > end) return false
+    at = found + middle.length
+  }
+  return true
 }
 
 export function matchesPattern(pattern: string, url: string): boolean {
@@ -28,7 +40,7 @@ export function matchesPattern(pattern: string, url: string): boolean {
   if (want.startsWith('*.')) {
     if (!(host === want.slice(2) || host.endsWith(want.slice(1)))) return false
   } else if (host !== want) return false
-  return glob(m[2]).test((u.pathname || '/') + u.search)
+  return globMatch(m[2], (u.pathname || '/') + u.search)
 }
 
 export function matchesAny(patterns: readonly string[], url: string | null | undefined): boolean {
