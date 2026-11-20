@@ -2,8 +2,9 @@
 
 **The project leg.** A session tied to a project by a `core` `SourceLink`, whose source passes
 `eligible_sources` for the built-in `project-readers` feature (every human in it agreed to the
-`project` class, none excluded it, nothing sealed), is readable, read-only, by anyone who may read
-that project (`agents.services.projects.project_read_q`). `canopy_sessions.access` asks `project_q`
+`project` class, none excluded it, nothing sealed), is readable, read-only, by every PERSON who may read
+that project (`agents.services.projects.project_read_q`). Never an agent's login: an agent reads a
+project's sessions through a brain run, in the confined `brain` profile, not through the session ACL. `canopy_sessions.access` asks `project_q`
 and `audience` asks `project_reader_ids`; both are inert until `settings.BRAIN_READS_ENABLED`.
 Stored rows only, never `may_pull`, redacted on the way out (`canopy_sessions.transcript_read.readable_window`).
 
@@ -18,7 +19,7 @@ from django.conf import settings
 from django.db.models import CharField, Q
 from django.db.models.functions import Cast
 
-from apps.agents.models import AgentProject
+from apps.agents.models import Agent, AgentProject
 from apps.agents.services.projects import project_read_q
 from apps.events import services as events
 from apps.workspaces import services as wsvc
@@ -44,10 +45,14 @@ def _core_links():
     return SourceLink.objects.filter(subject_type=SourceLink.PROJECT_SUBJECT, tier=SourceLink.CORE)
 
 
+def is_agent_login(user) -> bool:
+    return Agent.objects.filter(user_id=getattr(user, "pk", None)).exists()
+
+
 def project_q(user) -> Q:
     """The sessions `user` reads through the project leg, as a `Q` on `Session`. Empty while the rollout
-    gate is off, for anyone signed out, and for a user who reads no project."""
-    if not enabled() or not getattr(user, "is_authenticated", False):
+    gate is off, for anyone signed out, for an agent's login, and for a user who reads no project."""
+    if not enabled() or not getattr(user, "is_authenticated", False) or is_agent_login(user):
         return Q(pk__in=[])
     readable = (AgentProject.objects.filter(project_read_q(user)).annotate(key=Cast("pk", CharField()))
                 .values("key"))
@@ -59,7 +64,8 @@ def project_q(user) -> Q:
 def project_reader_ids(session) -> set[int]:
     """Everyone the project leg lets read `session`: the readers of each project it is `core`-tied to,
     when its source is eligible. A workspace project's readers are the workspace's members; a personal
-    one's are its lead and its agents' logins. For `audience`, which holds this equal to the ACL."""
+    one's is its lead. Never an agent's login (`project_q`). For `audience`, which holds this equal to
+    the ACL."""
     if not enabled():
         return set()
     source = BrainSource.objects.filter(kind=BrainSource.SESSION, ref=str(session.pk)).first()
@@ -74,12 +80,9 @@ def project_reader_ids(session) -> set[int]:
         if not project.is_personal:
             out |= members
             continue
-        ids = {project.owner_user_id}
-        if project.agent_id and project.agent.user_id:
-            ids.add(project.agent.user_id)
-        ids |= set(project.member_agents.filter(user__isnull=False).values_list("user_id", flat=True))
-        out |= {i for i in ids if i} & members
-    return out
+        if project.owner_user_id in members:
+            out.add(project.owner_user_id)
+    return out - set(Agent.objects.filter(user_id__in=out).values_list("user_id", flat=True))
 
 
 def record_read(*, reader, capability: str, purpose: str, session, sources=(), turn_id: str = "") -> None:

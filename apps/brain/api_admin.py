@@ -169,7 +169,7 @@ def list_project_sessions(request: HttpRequest, slug: str, handle: str, tiers: s
     links = (SourceLink.objects.filter(subject_type=SourceLink.PROJECT_SUBJECT, subject=str(project.pk),
                                        tier__in=wanted, source__session__isnull=False)
              .select_related("source__session").order_by("-source__session__created_at"))
-    readable = access.readable_ids(request.user, [lnk.source.session_id for lnk in links[:2000]])
+    readable = access.readable_ids(request.user, [lnk.source.session_id for lnk in links[:2000]], brain=True)
     out = []
     for link in links[:2000]:
         s = link.source.session

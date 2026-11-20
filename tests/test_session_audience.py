@@ -68,7 +68,7 @@ def test_the_audience_is_exactly_who_the_acl_lets_read(brain, settings):
     for label, s in shapes.items():
         readers = audience.readers(s)
         for who, user in people.items():
-            assert (user.pk in readers) is access.can_read(user, s), f"{who} on {label}"
+            assert (user.pk in readers) is access.can_read(user, s, brain=True), f"{who} on {label}"
         assert audience.summary(s, people["owner"])["count"] == len(readers), label
 
 
@@ -129,6 +129,6 @@ def test_the_audience_names_the_coaches_of_a_person_who_opted_in():
     readers = audience.readers(chat)
     assert people["viewer"].pk in readers and people["owner"].pk not in readers
     for who, user in people.items():
-        assert (user.pk in readers) is access.can_read(user, chat), who
+        assert (user.pk in readers) is access.can_read(user, chat, brain=True), who
     extras = audience.summary(chat, people["mate"])["extras"]
     assert any("Trellis" in e and "may review (coaching)" in e and "viewer" in e for e in extras), extras

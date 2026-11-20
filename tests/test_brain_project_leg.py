@@ -6,47 +6,26 @@ import itertools
 import json
 
 import pytest
-from django.test import Client
 from django.utils import timezone
 
-from apps.agents.models import Agent, AgentProject
+from apps.agents.models import AgentProject
 from apps.brain import associate, consent, sources
 from apps.brain.eligibility import eligible, eligible_sources
 from apps.brain.models import BrainCapability, BrainSource, LearningConsent, SourceParticipant
 from apps.canopy_sessions import access, audience
-from apps.canopy_sessions.models import Message, Session, SessionParticipant
+from apps.canopy_sessions.models import Session, SessionParticipant
 from apps.events.models import Event
 from apps.harness import runner_requirements as rr
 from apps.workspaces.models import WorkspaceMembership
-from tests.fixtures.brain_world import brain_world, capability, member, user
+from tests.fixtures.brain_project_leg import SECRET, client, project_leg_world
+from tests.fixtures.brain_world import capability, user
 
 pytestmark = pytest.mark.django_db
-
-SECRET = "ghp_" + "0123456789abcdefABCDEF" + "0123456789abcd"          # joined, so the secret scan sees no token
-
 
 @pytest.fixture()
 def w(settings):
     settings.BRAIN_READS_ENABLED = True
-    out = brain_world()
-    lead = Agent.objects.create(slug="eva", name="Eva", owner=out["owner"], workspace=out["ws"])
-    out["project"] = AgentProject.objects.create(agent=lead, ext_id="P1", name="Supply", handle="supply")
-    out["lead"] = lead
-    for u in (out["alice"], out["bob"]):
-        LearningConsent.objects.create(user=u, classes=["project"])
-    out["reader"] = user("reader")
-    member(out["reader"], out["ws"])
-    Message.objects.create(session=out["session"], turn_index=0, role="user", plaintext=f"use {SECRET} please",
-                           content={"text": f"use {SECRET} please"})
-    Session.objects.filter(pk=out["session"].pk).update(title=f"deploy with {SECRET}")
-    associate.put(out["source"], out["project"], how="dispatched", tier="core")
-    return out
-
-
-def client(u):
-    c = Client()
-    c.force_login(u)
-    return c
+    return project_leg_world()
 
 
 def body(c, s):
@@ -57,12 +36,14 @@ def body(c, s):
 
 def test_a_projects_reader_reads_a_session_everyone_in_it_agreed_to_and_the_gate_is_off_by_default(w, settings):
     s = w["session"]
-    assert access.can_read(w["reader"], s) is True
-    assert access.role_for(w["reader"], s) == "viewer"
+    assert access.can_read(w["reader"], s, brain=True) is True
+    assert access.can_read(w["reader"], s) is False                # never on a surface that does not scrub
+    assert access.role_for(w["reader"], s, brain=True) == "viewer"
+    assert access.role_for(w["reader"], s) is None
     assert not access.can_write(w["reader"], s) and not access.can_share(w["reader"], s)
     assert not access.may_pull(w["reader"], s) and not access.may_move(w["reader"], s)
     settings.BRAIN_READS_ENABLED = False
-    assert access.can_read(w["reader"], s) is False
+    assert access.can_read(w["reader"], s, brain=True) is False
     assert client(w["reader"]).get(f"/api/canopy-sessions/{s.pk}").status_code == 404
 
 
@@ -111,9 +92,9 @@ def test_a_read_through_the_leg_is_recorded_once_per_reader_and_session_with_ids
     (lambda w: WorkspaceMembership.objects.filter(user=w["bob"]).delete(), "a participant left the workspace"),
 ])
 def test_anything_that_makes_it_ineligible_closes_the_leg_at_the_next_read(w, change, why):
-    assert access.can_read(w["reader"], w["session"]) is True
+    assert access.can_read(w["reader"], w["session"], brain=True) is True
     change(w)
-    assert access.can_read(w["reader"], w["session"]) is False, why
+    assert access.can_read(w["reader"], w["session"], brain=True) is False, why
     assert client(w["reader"]).get(f"/api/canopy-sessions/{w['session'].pk}").status_code == 404, why
 
 
@@ -122,13 +103,13 @@ def test_only_a_core_link_to_a_project_the_reader_may_read_opens_it(w):
     associate.put(w["source"], w["project"], how="dispatched", tier="core")
     SourceLinkQ = type(w["source"].links.first())
     SourceLinkQ.objects.filter(source=w["source"]).update(tier="adjacent")
-    assert not access.can_read(w["reader"], s)
+    assert not access.can_read(w["reader"], s, brain=True)
     SourceLinkQ.objects.filter(source=w["source"]).update(tier="candidate")
-    assert not access.can_read(w["reader"], s)
+    assert not access.can_read(w["reader"], s, brain=True)
     SourceLinkQ.objects.filter(source=w["source"]).update(tier="core")
-    assert access.can_read(w["reader"], s)
+    assert access.can_read(w["reader"], s, brain=True)
     stranger = user("stranger")
-    assert not access.can_read(stranger, s)                        # not in the workspace: the tenant gate first
+    assert not access.can_read(stranger, s, brain=True)                        # not in the workspace: the tenant gate first
 
 
 def test_a_personal_project_is_read_only_by_its_own_readers(w):
@@ -137,16 +118,16 @@ def test_a_personal_project_is_read_only_by_its_own_readers(w):
     SourceLinkQ = type(w["source"].links.first())
     SourceLinkQ.objects.filter(source=w["source"]).delete()
     associate.put(w["source"], mine, how="declared", tier="core", by_agent=w["lead"])
-    assert access.can_read(w["carol"], w["session"]) is True       # its lead person
-    assert access.can_read(w["reader"], w["session"]) is False
-    assert access.can_read(w["owner"], w["session"]) is False      # not even a workspace owner
+    assert access.can_read(w["carol"], w["session"], brain=True) is True       # its lead person
+    assert access.can_read(w["reader"], w["session"], brain=True) is False
+    assert access.can_read(w["owner"], w["session"], brain=True) is False      # not even a workspace owner
 
 
 def test_the_audience_names_the_leg_and_equals_the_acl_for_everyone(w):
     s = w["session"]
     people = [w["owner"], w["alice"], w["bob"], w["carol"], w["reader"], user("stranger")]
     for p in people:
-        assert (p.pk in audience.readers(s)) is access.can_read(p, s), p.username
+        assert (p.pk in audience.readers(s)) is access.can_read(p, s, brain=True), p.username
     assert w["reader"].pk in audience.readers(s)
     assert any("project" in x for x in audience.summary(s, w["alice"])["extras"])
 

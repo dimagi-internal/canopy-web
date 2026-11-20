@@ -79,7 +79,13 @@ def _own_login(session) -> set[int]:
 def _grantor(session):
     """The person whose session this is, for coaching: its creator, or the owner of the box a
     discovered session (not an agent's) runs on. None for a contact's, a deleted one's, a sensitive
-    one, and a person who has not opted in to coaching."""
+    one, one someone in it took out of learning, one outside the workspaces the person's learning
+    consent covers, and a person who has not opted in to coaching (`access._coach_q`)."""
+    from apps.brain.eligibility import covers  # noqa: PLC0415 — brain imports this module's neighbours
+    from apps.brain.models import LearningConsent  # noqa: PLC0415 — brain imports this module's neighbours
+
+    from . import access  # noqa: PLC0415 — access imports this module's neighbours at load
+
     if session.contact_id or session.content_deleted_at or sensitivity.is_sensitive(session):
         return None
     person = session.created_by_id
@@ -87,6 +93,11 @@ def _grantor(session):
         b = _binding(session)
         person = b.runner.owner_id if (b is not None and b.runner_id) else None
     if person is None or not CoachingOptIn.objects.filter(user_id=person, revoked_at__isnull=True).exists():
+        return None
+    if access.is_removed_from_learning(session):
+        return None
+    consent = LearningConsent.objects.filter(user_id=person, revoked_at__isnull=True).first()
+    if consent is not None and consent.workspaces and not covers(consent, session.workspace_id):
         return None
     return person
 

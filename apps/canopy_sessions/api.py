@@ -66,20 +66,23 @@ def _site_scoped(request: HttpRequest, qs):
     return qs if offered is None else qs.filter(agent_id__in=offered)
 
 
-def readable_sessions(request: HttpRequest):
+def readable_sessions(request: HttpRequest, *, brain: bool = False):
     """The sessions a by-id request may name: `access.readable_sessions` over the
     caller's tenants, narrowed to the acting site's agents. Every route that
-    takes a session by id reads this — the Slack routes too (apps/slack/session_api.py)."""
-    return _site_scoped(request, access.readable_sessions(request.user,
-                                                          workspace_slugs=_visible_slugs(request)))
+    takes a session by id reads this — the Slack routes too (apps/slack/session_api.py).
+    `brain=True` adds the brain's project leg, only for a route that serves the words
+    scrubbed (`transcript_read.brain_redacted`) or none (`access.visible_session_q`)."""
+    return _site_scoped(request, access.readable_sessions(request.user, workspace_slugs=_visible_slugs(request),
+                                                          brain=brain))
 
 
-def _session_or_404(request: HttpRequest, session_id: uuid.UUID, *, write: bool = False) -> Session:
+def _session_or_404(request: HttpRequest, session_id: uuid.UUID, *, write: bool = False,
+                    brain: bool = False) -> Session:
     # One authority (`access`): the tenant, then who within it — the same rule
     # the list, the chat socket and attachments apply. `write=True` also needs
     # an owner/editor role; a viewer gets 403, since they can already see it.
     session = get_object_or_404(
-        readable_sessions(request)
+        readable_sessions(request, brain=brain and not write)
         .select_related("agent", "created_by", "runner_binding", "runner_binding__runner")
         .annotate(_last_msg_at=transcript_read.last_message_at()),
         pk=session_id,
@@ -123,7 +126,9 @@ def _filtered_sessions(
     rows = (
         # The same authority every other session surface reads — see
         # apps/canopy_sessions/access.py — narrowed to the acting site's agents.
-        _site_scoped(request, access.readable_sessions(request.user, workspace_slugs=slugs))
+        # The brain's project leg too: a row of one read only through it carries no words
+        # (`session_row._brain_scrubbed`).
+        _site_scoped(request, access.readable_sessions(request.user, workspace_slugs=slugs, brain=True))
         .select_related("agent", "created_by", "runner_binding", "runner_binding__runner")
     )
     # Embedder filters: an embedder (e.g. ace-web) narrows the shared
@@ -181,8 +186,11 @@ def _filtered_sessions(
         rows = rows.filter(metadata__slack_channel=slack_channel)
     # Free text over what a person reads off a card: the title, or the runner's
     # session_key (an emdash task name, or a cloud session's Claude UUID).
+    # Never over a session read only through the brain's project leg: its title is served
+    # scrubbed, and matching the unscrubbed one would answer what the scrub hid.
     if q:
-        rows = rows.filter(Q(title__icontains=q) | Q(runner_binding__session_key__icontains=q))
+        rows = rows.filter(Q(title__icontains=q) | Q(runner_binding__session_key__icontains=q)).filter(
+            pk__in=Session.objects.filter(access.visible_session_q(request.user)).values("pk"))
     # The repo a session ran in — or worked on. An agentless repo chat names it
     # in `project`, a runner session's binding carries the emdash project its
     # worktree lives under (`RunnerBinding.emdash_project`), and Session.activity
@@ -214,14 +222,13 @@ def _filtered_sessions(
     return rows
 
 
-def _session_by_key_or_404(request: HttpRequest, key: uuid.UUID) -> Session:
+def _session_by_key_or_404(request: HttpRequest, key: uuid.UUID, *, brain: bool = False) -> Session:
     """The fallback for a UUID that is not a session id: the runner's
     `session_key` (a cloud session's key is a Claude session UUID, and it is
     what the Open Sessions card shows). Read through the SAME authority as the
     id lookup, so it finds nothing the caller could not already open by id."""
     matches = list(
-        _site_scoped(request, access.readable_sessions(request.user,
-                                                       workspace_slugs=_visible_slugs(request)))
+        readable_sessions(request, brain=brain)
         .filter(runner_binding__session_key=str(key))
         .values_list("pk", flat=True)[:5]
     )
@@ -238,7 +245,7 @@ def _session_by_key_or_404(request: HttpRequest, key: uuid.UUID) -> Session:
             "this session_key names more than one session; open one by id: "
             + ", ".join(str(m) for m in matches),
         )
-    return _session_or_404(request, matches[0])
+    return _session_or_404(request, matches[0], brain=brain)
 
 
 def _in_it_or_403(request: HttpRequest, session) -> None:
