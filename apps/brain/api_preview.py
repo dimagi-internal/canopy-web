@@ -1,5 +1,5 @@
-"""`GET /api/brain/preview` (and `/summary`, the `/brain` page's): what the brain WOULD do over the sessions you can
-read, storing nothing.
+"""`GET /api/brain/preview` and `GET /api/brain/would-read` (the `/brain` page's, which also takes a preview snapshot as
+its `source`): what the brain WOULD do over the sessions you can read, storing nothing.
 
 PERSON-ONLY: your browser session, a PAT you minted by hand, or an act-as-you token you approved with your passkey
 for READ (a step-up: an agent reading as you, in front of you). Never an agent's login, a turn's or caller token, a
@@ -25,7 +25,7 @@ from apps.tokens import kinds
 from apps.workspaces import services as wsvc
 
 from . import preview as preview_mod
-from .schemas import BrainPreviewOut, BrainPreviewSummaryOut
+from .schemas import BrainPreviewOut, BrainWouldReadOut
 
 router = Router(auth=session_auth, tags=["brain"])
 
@@ -90,15 +90,20 @@ def brain_preview(request: HttpRequest, since: dt.datetime | None = None, until:
                                after=after, limit=limit, session=session)
 
 
-@router.get("/brain/preview/summary", response={200: BrainPreviewSummaryOut, **refusals(403, 422)},
-            summary="What learning would do over your sessions, summed up (no transcripts; stores nothing)")
+@router.get("/brain/would-read", response={200: BrainWouldReadOut, **refusals(403, 404, 422)},
+            summary="Whether each class of learning could read your sessions, and the links canopy would make")
 @gate("session-acl")  # reads only sessions you already read, through legs 1 to 6; writes nothing
-def brain_preview_summary(request: HttpRequest, since: dt.datetime | None = None, until: dt.datetime | None = None,
-                          after: str = "", limit: int = 10) -> dict:
-    """The preview without a line of any transcript: per session who is in it, whether each class could read it now
-    and if everyone agreed, and the links canopy would make; what the page adds up to; its links by project and
-    tier; and how many sessions the window holds. Ask the preview with `session` for one transcript."""
+def brain_would_read(request: HttpRequest, since: dt.datetime | None = None, until: dt.datetime | None = None,
+                     after: str = "", limit: int = 10, source: str = "live") -> dict:
+    """Per session you read: who is in it, whether each class could read it now and if everyone agreed, with the
+    reason, and the links canopy would make; what the page adds up to; its links by project and tier. Live: over
+    `since`..`until` (the last day by default, a week at most), computed now. `source=preview:<id>`: what that preview
+    computed over its own window. No line of a transcript (ask the preview with `session` for one)."""
+    from .api_previews import source_of  # noqa: PLC0415 — api_previews imports this module
+    from . import view  # noqa: PLC0415 — as above
+
     user = the_person(request)
+    src = source_of(request, source)
     since, until = _window(since, until, after)
-    return preview_mod.summarise(user, wsvc.request_member_slugs(request), since=since, until=until, after=after,
-                                 limit=limit)
+    return view.would_read(user, wsvc.request_member_slugs(request), src, since=since, until=until, after=after,
+                           limit=limit)

@@ -305,26 +305,61 @@ an act-as-you token under a READ grant (a step-up; `act_as.REST_READS` is the on
 token reaches); never an agent's login, a turn's or caller token, a runner, an OAuth client or a site's token, and not an
 MCP tool.
 
-## The `/brain` page (`frontend/src/pages/BrainPage.tsx`, `apps/brain/state.py`, `apps/brain/api_state.py`)
+## One data source for every brain screen (`apps/brain/view.py`)
 
-One person's view of the brain, linked from Settings → Learning and the health dashboard's views. Its routes refuse
-whom the preview refuses (`api_preview.the_person`), an act-as-you token included (only the preview is in
-`act_as.REST_READS`), none is an MCP tool, and they write nothing (`tests/test_brain_page.py` captures every query).
-The page holds no copy of a verdict, count or grouping: the server computes them.
+Every brain read a screen shows goes through `view.py`, from a source: `live` (the default) or `preview:<id>`, one of the
+person's preview snapshots. The same routes and response shapes either way, plus `source` (its kind, and for a preview its
+id, window and when it was computed): the /brain page's `GET /api/brain/state`, `/state/links`, `/state/runs` and
+`/would-read`, `GET /api/brain/outputs/`, a session's `GET /api/me/learning/sessions/{id}/` and a project's
+`GET /api/brain/workspaces/{slug}/projects/{handle}/sessions/`. `view.links(viewer, session_ids, source=…)` is the link
+read a graph takes. `live` is each surface's own read under its own rule, unchanged. A preview source is resolved by
+`view.resolve`: only its owner as a person, refused as the preview refuses (an agent's login, a turn's or caller token,
+an MCP call), else not found; and every read cuts it to the sessions the owner still reads through legs 1 to 6 that
+nobody removed (`snapshots.removed_sessions`) and to projects they may read, so a preview never shows more than its owner
+could see now. A preview holds no runs and no removal work. In the app the source is the URL's `?preview=<id>`
+(`frontend/src/brain/source.tsx`): every read passes it through, one banner says so with "Exit preview", links between
+brain screens keep it, and a session's Learning… menu shows the ties the preview would make with its controls off.
 
-- **Now** (`GET /api/brain/state`, `/state/links`, `/state/runs`, and `/api/brain/outputs/`): whether reads are on,
-  consent as counts per workspace and class (never a name), sources open, withdrawn and sealed by why, stored links by
-  project and tier, the learners with whom each answers to (`registry.accountable`), runs, outputs (`outputs.visible_to`)
-  and removal work. Workspace-wide counts (sources, removals, the cascade) only where the viewer holds `logs.read`, the
-  health dashboard's gate; elsewhere the same counts over their own sources and removals (`state._scoped`). A session
-  is named (id, scrubbed title) only if the viewer reads it through legs 1 to 6, never the project leg: a link to one
-  they do not read is not listed, and a run's read of it is a count (`state.run_page`). A run is listed when it is about
-  a project the viewer may read or about them; a canopy admin sees every run.
-- **Preview** (`GET /api/brain/preview/summary`, `preview.summarise`): the preview's rows without a line of any
-  transcript, with `you` (the `individual` verdict about the viewer), what the page adds up to, its links by project and
-  tier, and the window's total. A transcript is fetched only when its row is opened, by naming the `session` on
-  `GET /api/brain/preview`. Recommendations stay on the person's machine (`/canopy:brain-preview`): canopy-web makes no
-  model calls and stores none.
+## Preview snapshots (`apps/brain/snapshots.py`, `api_previews.py`)
+
+`POST /api/brain/previews/` (`since`, `until`, `view`; a day by default, a week at most) computes, over the owner's
+sessions of the window (legs 1 to 6, at most `MAX_SESSIONS`), exactly what the live code would: `preview.describe` over
+`eligibility.explain` and `associate.propose`, the effective links (a proposal unless a stored link keeps its place, and
+every stored link no proposal touches) and the /brain state's consent and learners. It writes that one
+`BrainPreviewSnapshot` row and nothing of the brain (no source, link, output, run or read; `tests/test_brain_previews.py`
+captures the call). A session already removed is left out. Kept `TTL` (a week), then deleted by the `brain.previews`
+tick; `GET` lists the owner's, `DELETE /{id}/` drops one.
+
+`PUT /api/brain/previews/{id}/outputs/` replaces its recommendations: would-be `system` outputs made on the owner's
+machine by `/canopy:brain-preview --publish <id>` (`kind`, `title`, `body`, the `sessions` cited, an optional
+`learner`). Every cited session must be in the snapshot and one the owner reads now (else 422); words are scrubbed as
+`brain_emit` scrubs, object keys too. They show where outputs show, from the preview source, marked as the preview's.
+
+Every route is person-only (`api_preview.the_person`), off MCP and outside act-as. A removal reaches every snapshot: the
+snapshot store is registered with `cascade.register_store(..., by_session=True)`, so each sweep drops a session that is
+gone, sealed, withdrawn or that anyone took out of learning, with its links and every recommendation citing it. A
+snapshot is a FENCE, never an input: no learner, `eligible`, association or cascade judgement reads one
+(`tests/test_brain_previews.py::test_nothing_that_decides_reads_a_snapshot`).
+
+## The `/brain` page (`frontend/src/pages/BrainPage.tsx`, `apps/brain/state.py`)
+
+One person's view of the brain, linked from Settings → Learning and the health dashboard's views. A switcher picks the
+source (live, or one of their previews), "Run a preview" makes one over a chosen window, and the same tabs show either.
+Its routes refuse whom the preview refuses, an act-as-you token included (only the preview is in `act_as.REST_READS`),
+none is an MCP tool, and they write nothing (`tests/test_brain_page.py`). The page holds no copy of a verdict, count or
+grouping.
+
+- **Now** (live): whether reads are on, consent as counts per workspace and class (never a name), sources open,
+  withdrawn and sealed by why, project links by project and tier, the learners with whom each answers to
+  (`registry.accountable`), runs, outputs (`outputs.visible_to`) and removal work. Workspace-wide counts (sources,
+  removals, the cascade) only where the viewer holds `logs.read`, the health dashboard's gate; elsewhere over their own
+  sources and removals (`state._scoped`). A session is named (id, scrubbed title) only if the viewer reads it through legs
+  1 to 6, never the project leg; a run's read of one they do not is a count (`state.run_page`). A run is listed when it
+  is about a project the viewer may read or about them; a canopy admin sees every run.
+- **Sessions** (`GET /api/brain/would-read`, `preview.summarise` live): per session whether each class could read it now
+  and if everyone agreed, with `you` (the `individual` verdict about the viewer), the links canopy would make by project
+  and tier, and what the page adds up to; no line of a transcript, which is fetched only when its row is opened, by
+  naming the `session` on `GET /api/brain/preview`.
 
 ## Every reader is placed
 

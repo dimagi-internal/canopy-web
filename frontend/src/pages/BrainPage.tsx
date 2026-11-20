@@ -1,45 +1,64 @@
 import { Fragment, useCallback, useEffect, useState, type JSX, type ReactNode } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
-import { CopyButton, StatusBadge, Tabs, TabsList, TabsTrigger } from 'canopy-ui/ui'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Button, CopyButton, StatusBadge, Tabs, TabsList, TabsTrigger } from 'canopy-ui/ui'
 
 import {
+  createBrainPreview,
+  deleteBrainPreview,
   getBrainLinks,
   getBrainRuns,
   getBrainState,
-  getPreviewSummary,
   getPreviewTranscript,
+  getWouldRead,
   listBrainOutputs,
+  listBrainPreviews,
   type BrainOutput,
+  type BrainPreview,
   type BrainRun,
+  type BrainSource,
   type BrainState,
   type BrainStoredLink,
-  type PreviewRow,
-  type PreviewSummary,
   type PreviewTranscript,
+  type WouldRead,
+  type WouldReadRow,
 } from '@/api/brain'
+import { BrainSourceBanner, useBrainSource } from '@/brain/source'
 import { Td, Th, Tr } from '@/components/DataTable'
 import { relativeAge } from '@/lib/relativeAge'
 import { scopedPath } from '@/lib/scopedLinks'
 
-// THE BRAIN: canopy learning as it stands (Now) and what it would do over your sessions (Preview). It renders; it
-// never decides. Every verdict, count and grouping is the server's (`apps/brain/state.py`, `preview.summarise`), so
-// this page and the canopy CLI's report cannot disagree. Person-only: the routes refuse an agent, a turn's token and
-// an MCP client, and answer only with sessions and projects you already read.
+// THE BRAIN: canopy learning as it stands, from a SOURCE: live, or one of your preview snapshots (what the brain would
+// do, `?preview=<id>`). The screens are the same either way; only the banner says which. It renders; it never decides:
+// every verdict, count and grouping is the server's (`apps/brain/view.py`). Person-only for a preview: its routes
+// refuse an agent, a turn's token and an MCP client, and answer only with sessions and projects you still read.
 
 const CLASSES = ['individual', 'memory', 'project', 'system'] as const
 
-/** Where one session's page is. */
-const sessionHref = (workspace: string, id: string) => scopedPath(workspace, `/sessions/${id}`)
+/** A session's page, in the same source. */
+function useSessionHref() {
+  const { withSource } = useBrainSource()
+  return (workspace: string, id: string) => withSource(scopedPath(workspace, `/sessions/${id}`))
+}
 
 export function BrainPage(): JSX.Element {
   const [search, setSearch] = useSearchParams()
-  const tab = search.get('tab') === 'preview' ? 'preview' : 'now'
+  const tab = search.get('tab') === 'sessions' ? 'sessions' : 'now'
+  const { source, preview } = useBrainSource()
   const [state, setState] = useState<BrainState | null>(null)
   const [error, setError] = useState('')
 
   useEffect(() => {
-    getBrainState().then(setState, (e: unknown) => setError(e instanceof Error ? e.message : 'Could not load'))
-  }, [])
+    setState(null)
+    setError('')
+    getBrainState(source).then(setState, (e: unknown) => setError(e instanceof Error ? e.message : 'Could not load'))
+  }, [source])
+
+  const pick = (next: string) => {
+    const params = new URLSearchParams(search)
+    if (next === 'sessions') params.set('tab', 'sessions')
+    else params.delete('tab')
+    setSearch(params)
+  }
 
   const home = state?.workspaces[0]
   return (
@@ -56,22 +75,122 @@ export function BrainPage(): JSX.Element {
           {home && <Link className="underline" to={scopedPath(home, '/network')}>Who works with whom</Link>}
         </nav>
       </header>
-      <Tabs value={tab} onValueChange={(next) => setSearch(next === 'preview' ? { tab: 'preview' } : {})}>
+      <SourceControls />
+      <BrainSourceBanner window={state?.source?.window} />
+      <Tabs value={tab} onValueChange={pick}>
         <TabsList>
           <TabsTrigger value="now">Now</TabsTrigger>
-          <TabsTrigger value="preview">Preview</TabsTrigger>
+          <TabsTrigger value="sessions">Sessions</TabsTrigger>
         </TabsList>
       </Tabs>
-      {tab === 'preview' ? (
-        <PreviewTab />
-      ) : error ? (
+      {error ? (
         <p className="text-[13px] text-destructive">{error}</p>
       ) : !state ? (
         <p className="text-[13px] text-muted-foreground">Loading…</p>
+      ) : tab === 'sessions' ? (
+        <SessionsTab key={source} source={source} />
       ) : (
-        <NowTab state={state} />
+        <NowTab key={source} state={state} source={source} preview={preview} />
       )}
     </div>
+  )
+}
+
+// ---- the source: live or one of your previews --------------------------------------------------------------
+
+const WINDOWS = [
+  { hours: 24, label: 'Last 24 hours' },
+  { hours: 72, label: 'Last 3 days' },
+  { hours: 168, label: 'Last 7 days' },
+]
+
+const SELECT = 'rounded-md border border-input bg-background px-2 py-1 text-foreground'
+
+function previewLabel(p: BrainPreview): string {
+  const made = relativeAge(p.created_at, undefined, { seconds: false })
+  const hours = Math.round((Date.parse(p.window.until) - Date.parse(p.window.since)) / 3600_000)
+  return `#${p.id} · ${hours >= 48 ? `${Math.round(hours / 24)} days` : `${hours}h`} · ${p.sessions} sessions · ${made}`
+}
+
+/** The switcher (live or one of your previews), "Run a preview" and deleting one. */
+function SourceControls(): JSX.Element {
+  const { preview } = useBrainSource()
+  const [search, setSearch] = useSearchParams()
+  const navigate = useNavigate()
+  const [previews, setPreviews] = useState<BrainPreview[] | null>(null)
+  const [hours, setHours] = useState(24)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const load = useCallback(() => {
+    listBrainPreviews().then(setPreviews, () => setPreviews([]))
+  }, [])
+  useEffect(load, [load])
+
+  const choose = (id: string) => {
+    const params = new URLSearchParams(search)
+    if (id) params.set('preview', id)
+    else params.delete('preview')
+    setSearch(params)
+  }
+
+  const run = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      const made = await createBrainPreview(hours)
+      load()
+      choose(String(made.id))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not run a preview')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const remove = async () => {
+    if (!preview) return
+    setBusy(true)
+    try {
+      await deleteBrainPreview(Number(preview))
+      load()
+      navigate('/brain')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not delete')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section aria-label="Data source" className="flex flex-wrap items-center gap-3 text-[13px]">
+      <label className="flex items-center gap-2 text-muted-foreground">
+        Showing
+        <select aria-label="Source" className={SELECT} value={preview ?? ''} onChange={(e) => choose(e.target.value)}>
+          <option value="">Live</option>
+          {(previews ?? []).map((p) => (
+            <option key={p.id} value={String(p.id)}>Preview {previewLabel(p)}</option>
+          ))}
+          {preview && previews && !previews.some((p) => String(p.id) === preview) && (
+            <option value={preview}>Preview #{preview}</option>
+          )}
+        </select>
+      </label>
+      {preview && (
+        <button type="button" className="text-xs underline" disabled={busy} onClick={() => void remove()}>
+          Delete this preview
+        </button>
+      )}
+      <span className="flex items-center gap-2">
+        <select aria-label="Preview window" className={SELECT} value={hours} onChange={(e) => setHours(Number(e.target.value))}>
+          {WINDOWS.map((w) => (
+            <option key={w.hours} value={w.hours}>{w.label}</option>
+          ))}
+        </select>
+        <Button size="sm" disabled={busy} onClick={() => void run()}>{busy ? 'Running…' : 'Run a preview'}</Button>
+      </span>
+      {error && <span className="text-destructive">{error}</span>}
+    </section>
   )
 }
 
@@ -105,7 +224,7 @@ function counts(map: Record<string, number>): string {
 
 // ---- Now ---------------------------------------------------------------------------------------------
 
-function NowTab({ state }: { state: BrainState }): JSX.Element {
+function NowTab({ state, source, preview }: { state: BrainState; source: BrainSource; preview: string | null }): JSX.Element {
   return (
     <div className="space-y-4">
       <Section title="Rollout">
@@ -183,7 +302,7 @@ function NowTab({ state }: { state: BrainState }): JSX.Element {
         )}
       </Section>
 
-      <StoredLinks state={state} />
+      <StoredLinks state={state} source={source} />
 
       <Section title="Learners" note="What is registered to learn, whether it is on, how much of a session it reads, and who answers for it.">
         <Table>
@@ -218,8 +337,8 @@ function NowTab({ state }: { state: BrainState }): JSX.Element {
         </Table>
       </Section>
 
-      <Runs state={state} />
-      <Outputs />
+      <Runs state={state} source={source} />
+      <Outputs source={source} preview={preview} />
 
       <Section
         title="Removals and cascade work"
@@ -286,12 +405,14 @@ function usePaged<T>(load: (before: number) => Promise<{ next_before: number; do
   return { rows, error, done, loadMore: () => void more(next) }
 }
 
-function StoredLinks({ state }: { state: BrainState }): JSX.Element {
-  const { rows, error, done, loadMore } = usePaged<BrainStoredLink>(getBrainLinks, 'links')
+function StoredLinks({ state, source }: { state: BrainState; source: BrainSource }): JSX.Element {
+  const load = useCallback((before: number) => getBrainLinks(source, before), [source])
+  const { rows, error, done, loadMore } = usePaged<BrainStoredLink>(load, 'links')
+  const sessionHref = useSessionHref()
   return (
-    <Section title="Stored links" note="Which project each session you can read is tied to, and how sure canopy is.">
+    <Section title="Project links" note="Which project each session you can read is tied to, and how sure canopy is.">
       {state.links.length === 0 ? (
-        <Empty>No stored links on sessions you read.</Empty>
+        <Empty>No project links on sessions you read.</Empty>
       ) : (
         <>
           <ul className="flex flex-wrap gap-2 text-xs">
@@ -340,8 +461,10 @@ function StoredLinks({ state }: { state: BrainState }): JSX.Element {
   )
 }
 
-function Runs({ state }: { state: BrainState }): JSX.Element {
-  const { rows, error, done, loadMore } = usePaged<BrainRun>(getBrainRuns, 'runs')
+function Runs({ state, source }: { state: BrainState; source: BrainSource }): JSX.Element {
+  const load = useCallback((before: number) => getBrainRuns(source, before), [source])
+  const { rows, error, done, loadMore } = usePaged<BrainRun>(load, 'runs')
+  const sessionHref = useSessionHref()
   const { open, done: finished, failed } = state.runs
   return (
     <Section
@@ -398,14 +521,26 @@ function Runs({ state }: { state: BrainState }): JSX.Element {
   )
 }
 
-function Outputs(): JSX.Element {
+const COMMAND = '/canopy:brain-preview --publish'
+
+function Outputs({ source, preview }: { source: BrainSource; preview: string | null }): JSX.Element {
   const [rows, setRows] = useState<BrainOutput[] | null>(null)
   const [error, setError] = useState('')
   useEffect(() => {
-    listBrainOutputs().then(setRows, (e: unknown) => setError(e instanceof Error ? e.message : 'Could not load'))
-  }, [])
+    listBrainOutputs(source).then(setRows, (e: unknown) => setError(e instanceof Error ? e.message : 'Could not load'))
+  }, [source])
+  const command = `${COMMAND} ${preview ?? '<preview id>'}`
   return (
-    <Section title="Outputs you may see" note="What learning produced, for the audience its class allows.">
+    <Section
+      title="Outputs you may see"
+      note={
+        <>
+          What learning produced, for the audience its class allows. Recommendations: run{' '}
+          <span className="font-mono">{command}</span> to add them{preview ? ' to this preview' : ' to a preview'}.{' '}
+          <CopyButton text={command} />
+        </>
+      }
+    >
       {error ? (
         <p className="text-xs text-destructive">{error}</p>
       ) : !rows ? (
@@ -425,7 +560,10 @@ function Outputs(): JSX.Element {
           <tbody>
             {rows.map((o) => (
               <Tr key={o.id} rule="bottom-last">
-                <Td>{o.title || o.kind}</Td>
+                <Td>
+                  {o.title || o.kind}
+                  {o.source?.kind === 'preview' && <StatusBadge tone="info" className="ml-2">preview</StatusBadge>}
+                </Td>
                 <Td tone="muted">{o.learner}</Td>
                 <Td hideBelow="sm" tone="muted">{o.subject_type} {o.subject}</Td>
                 <Td hideBelow="sm" tone="muted" nowrap>{relativeAge(o.created_at, undefined, { seconds: false })}</Td>
@@ -438,96 +576,47 @@ function Outputs(): JSX.Element {
   )
 }
 
-// ---- Preview -----------------------------------------------------------------------------------------
+// ---- Sessions: whether each class could read each session, and the links canopy would make ----------------
 
-const WINDOWS = [
-  { hours: 24, label: 'Last 24 hours' },
-  { hours: 72, label: 'Last 3 days' },
-  { hours: 168, label: 'Last 7 days' },
-]
-
-type Window = { since: string; until: string }
-
-function windowOf(hours: number): Window {
-  const until = new Date()
-  return { since: new Date(until.getTime() - hours * 3600_000).toISOString(), until: until.toISOString() }
-}
-
-function PreviewTab(): JSX.Element {
-  const [hours, setHours] = useState(24)
-  const [win, setWin] = useState<Window>(() => windowOf(24))
+function SessionsTab({ source }: { source: BrainSource }): JSX.Element {
   // The cursors of the pages before this one, so Previous goes back without the client counting anything.
   const [cursors, setCursors] = useState<string[]>([''])
-  const [data, setData] = useState<PreviewSummary | null>(null)
+  const [data, setData] = useState<WouldRead | null>(null)
   const [error, setError] = useState('')
   const after = cursors[cursors.length - 1]
 
   useEffect(() => {
     setData(null)
     setError('')
-    getPreviewSummary(win.since, win.until, after).then(setData, (e: unknown) =>
-      setError(e instanceof Error ? e.message : 'Could not load'),
-    )
-  }, [win, after])
-
-  const choose = (h: number) => {
-    setHours(h)
-    setWin(windowOf(h))
-    setCursors([''])
-  }
+    getWouldRead(source, after).then(setData, (e: unknown) => setError(e instanceof Error ? e.message : 'Could not load'))
+  }, [source, after])
 
   const first = (cursors.length - 1) * 10
+  if (error) return <p className="text-[13px] text-destructive">{error}</p>
+  if (!data) return <p className="text-[13px] text-muted-foreground">Loading…</p>
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3 text-[13px]">
-        <label className="flex items-center gap-2 text-muted-foreground">
-          Window
-          <select
-            aria-label="Window"
-            className="rounded-md border border-input bg-background px-2 py-1 text-foreground"
-            value={hours}
-            onChange={(e) => choose(Number(e.target.value))}
-          >
-            {WINDOWS.map((w) => (
-              <option key={w.hours} value={w.hours}>{w.label}</option>
-            ))}
-          </select>
-        </label>
-        <span className="text-muted-foreground">
-          Sessions you read, created or active in the window. Nothing is stored or recorded.
-        </span>
-      </div>
-
-      {error ? (
-        <p className="text-[13px] text-destructive">{error}</p>
-      ) : !data ? (
-        <p className="text-[13px] text-muted-foreground">Loading…</p>
-      ) : (
-        <>
-          <Summary data={data} first={first} />
-          <WouldLink data={data} />
-          <Section title="Sessions" note="Whether each class could read the session now, and if everyone in it agreed.">
-            {data.sessions.length === 0 ? (
-              <Empty>No sessions you read in this window.</Empty>
-            ) : (
-              <SessionTable data={data} win={win} />
-            )}
-            <div className="flex gap-3 text-xs">
-              {cursors.length > 1 && (
-                <button type="button" className="underline" onClick={() => setCursors((c) => c.slice(0, -1))}>
-                  Previous
-                </button>
-              )}
-              {!data.done && (
-                <button type="button" className="underline" onClick={() => setCursors((c) => [...c, data.next_after])}>
-                  Next
-                </button>
-              )}
-            </div>
-          </Section>
-        </>
-      )}
-      <Recommendations />
+      <Summary data={data} first={first} />
+      <WouldLink data={data} />
+      <Section title="Sessions" note="Whether each class could read the session now, and if everyone in it agreed.">
+        {data.sessions.length === 0 ? (
+          <Empty>No sessions you read in this window.</Empty>
+        ) : (
+          <SessionTable data={data} />
+        )}
+        <div className="flex gap-3 text-xs">
+          {cursors.length > 1 && (
+            <button type="button" className="underline" onClick={() => setCursors((c) => c.slice(0, -1))}>
+              Previous
+            </button>
+          )}
+          {!data.done && (
+            <button type="button" className="underline" onClick={() => setCursors((c) => [...c, data.next_after])}>
+              Next
+            </button>
+          )}
+        </div>
+      </Section>
     </div>
   )
 }
@@ -542,7 +631,7 @@ function Tile({ label, value, hint }: { label: string; value: ReactNode; hint?: 
   )
 }
 
-function Summary({ data, first }: { data: PreviewSummary; first: number }): JSX.Element {
+function Summary({ data, first }: { data: WouldRead; first: number }): JSX.Element {
   const c = data.counts
   const pair = (p: { now: number; if_everyone_agreed: number }) => `${p.now} / ${p.if_everyone_agreed}`
   const shown = c.sessions ? `${first + 1}–${first + c.sessions} of ${data.total}` : `0 of ${data.total}`
@@ -561,7 +650,8 @@ function Summary({ data, first }: { data: PreviewSummary; first: number }): JSX.
   )
 }
 
-function WouldLink({ data }: { data: PreviewSummary }): JSX.Element {
+function WouldLink({ data }: { data: WouldRead }): JSX.Element {
+  const sessionHref = useSessionHref()
   return (
     <Section title="Links it would store" note="By project and tier, with the evidence; a stored link that keeps its place is named.">
       {data.would_link.length === 0 ? (
@@ -607,13 +697,13 @@ type Verdict = { ok: boolean; reason: string }
 type VerdictPair = { now: Verdict; if_everyone_agreed: Verdict }
 
 /** A reason code with the person it names, by their name in this session. */
-function reasonText(reason: string, row: PreviewRow): string {
+function reasonText(reason: string, row: WouldReadRow): string {
   const [code, who] = reason.split(':')
   const person = row.participants.find((p) => String(p.user_id) === who)
   return `${code.replace(/_/g, ' ')}${who ? `: ${person?.name || who}` : ''}`
 }
 
-function VerdictCell({ v, row }: { v: Verdict | undefined; row: PreviewRow }): JSX.Element {
+function VerdictCell({ v, row }: { v: Verdict | undefined; row: WouldReadRow }): JSX.Element {
   if (!v) return <span className="text-muted-foreground">—</span>
   return v.ok ? (
     <StatusBadge tone="success">yes</StatusBadge>
@@ -625,16 +715,17 @@ function VerdictCell({ v, row }: { v: Verdict | undefined; row: PreviewRow }): J
   )
 }
 
-function SessionTable({ data, win }: { data: PreviewSummary; win: Window }): JSX.Element {
+function SessionTable({ data }: { data: WouldRead }): JSX.Element {
+  const sessionHref = useSessionHref()
   const [open, setOpen] = useState<string | null>(null)
   const [transcripts, setTranscripts] = useState<Record<string, PreviewTranscript | string>>({})
 
-  const toggle = async (row: PreviewRow) => {
+  const toggle = async (row: WouldReadRow) => {
     if (open === row.id) return setOpen(null)
     setOpen(row.id)
     if (transcripts[row.id]) return
     try {
-      const t = await getPreviewTranscript(win.since, win.until, row.id)
+      const t = await getPreviewTranscript(data.window.since, data.window.until, row.id)
       setTranscripts((m) => ({ ...m, [row.id]: t }))
     } catch (e) {
       setTranscripts((m) => ({ ...m, [row.id]: e instanceof Error ? e.message : 'Could not load' }))
@@ -718,26 +809,5 @@ function TranscriptView({ t }: { t: PreviewTranscript }): JSX.Element {
         </div>
       ))}
     </div>
-  )
-}
-
-const COMMAND = '/canopy:brain-preview'
-
-function Recommendations(): JSX.Element {
-  return (
-    <Section title="Recommendations">
-      <p className="text-[13px] text-foreground">
-        Recommendations (which sessions to link, which consents are missing, what a learner would take from them) are
-        made by <span className="font-mono">{COMMAND}</span> on your own machine, with your own agent. They are not on
-        canopy-web yet: this page shows only what canopy computes itself, and canopy makes no model calls.
-      </p>
-      <div className="flex flex-wrap items-center gap-2 text-xs">
-        <code className="rounded-md border border-border bg-background px-2 py-1 font-mono text-foreground">{COMMAND}</code>
-        <CopyButton text={COMMAND} />
-        <span className="text-muted-foreground">
-          in Claude Code, or <span className="font-mono">canopy brain report</span> for the local HTML report.
-        </span>
-      </div>
-    </Section>
   )
 }

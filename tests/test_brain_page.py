@@ -28,7 +28,7 @@ from tests.token_helpers import bearer_headers, pat_token
 pytestmark = pytest.mark.django_db
 
 STATE, LINKS, RUNS, SUMMARY = ("/api/brain/state", "/api/brain/state/links", "/api/brain/state/runs",
-                               "/api/brain/preview/summary")
+                               "/api/brain/would-read")
 ROUTES = (STATE, LINKS, RUNS, SUMMARY)
 
 
@@ -188,7 +188,7 @@ def test_only_the_person_as_themselves(w):
         assert client(w["alice"]).get(url, HTTP_X_CANOPY_TURN_ID="x").status_code == 403    # naming a turn
         # An act-as-you READ grant reaches the preview and nothing of the page beside it.
         assert act_as.route_refusal("GET", url, "read", is_tool=False) is not None
-    for name in ("brain_state", "brain_state_links", "brain_state_runs", "brain_preview_summary"):
+    for name in ("brain_state", "brain_state_links", "brain_state_runs", "brain_would_read"):
         assert name in api_tools.EXCLUDED                                                     # not an MCP tool
 
 

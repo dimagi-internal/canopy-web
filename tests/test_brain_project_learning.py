@@ -357,8 +357,9 @@ def test_the_project_s_sessions_are_listed_only_as_far_as_the_caller_may_read_th
     assert {r["session_id"] for r in _list(_client(w["carol"])).json()} == {str(theirs.pk), str(mine.pk)}
     settings.BRAIN_READS_ENABLED = False
     assert [r["session_id"] for r in _list(_client(w["carol"])).json()] == [str(theirs.pk)]
-    # nothing but ids, titles and the way the tie was made
-    assert set(got[0]) == {"session_id", "title", "workspace", "tier", "how", "confidence", "started_at"}
+    # nothing but ids, titles and the way the tie was made, and where it was read from
+    assert set(got[0]) == {"session_id", "title", "workspace", "tier", "how", "confidence", "started_at", "source"}
+    assert got[0]["source"]["kind"] == "live"
 
 
 def test_a_project_the_caller_may_not_read_is_not_found(w):

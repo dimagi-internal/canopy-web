@@ -215,7 +215,7 @@ def test_django_admin_shows_staff_no_more_than_the_api(world):
 QUERY_ALLOWLIST = {
     # The brain: a link is metadata that confers no read; what a person or agent is shown is decided by the row.
     ("apps/brain/api.py", "_project_of"): "a project of the session's own workspace the person is in; may_read_project on the row decides",
-    ("apps/brain/api.py", "_source_out"): "lists only the projects may_read_project says this person may read",
+    ("apps/brain/view.py", "session_learning"): "lists only the projects may_read_project says this person may read",
     ("apps/brain/api.py", "declare_session_project"): "an agent's own login in its running turn; a personal project needs may_read_project",
     ("apps/brain/runs.py", "_subject"): "the server names the project of a run and refuses a personal one",
     ("apps/brain/reading.py", "_project_context"): "a judge run is started by the server for a workspace project (runs._subject refuses a personal one); it reads the project's own outcome and open tasks",
