@@ -210,6 +210,11 @@ def _conflict(fact: PersonFact, other: PersonFact, *, actor: Actor) -> list[Pers
     """Record that two entries contradict and apply 4.7.2. Returns the entries newly held."""
     relationships.record_contradiction(fact, other)
     held = []
+    if PersonFact.INFERRED not in (fact.basis, other.basis):
+        # Any other pair (declared, attested): surfaced to the person, no status changes (4.7).
+        audit(fact.person, "conflict.detected", actor=actor, entry=fact, related_entry_id=other.entry_id,
+              detail="the entries contradict; neither is a model inference, so no status changed")
+        return held
     if (fact.basis == other.basis == PersonFact.INFERRED and fact.captured_by == other.captured_by
             and not confirmations.is_authoritative(fact) and not confirmations.is_authoritative(other)):
         # The same asserter corrected itself: the earlier inference is set aside, not quarantined (4.7).
@@ -238,6 +243,26 @@ def _conflict(fact: PersonFact, other: PersonFact, *, actor: Actor) -> list[Pers
             _held(x, actor=actor, authoritative=None, other=y)
             held.append(x)
     return held
+
+
+def assert_relationship(fact: PersonFact, type_: str, other: PersonFact, *, actor: Actor) -> None:
+    """A client's (or the person's) `duplicates` / `supersedes` / `contradicts` between two of the
+    person's entries (4.2.3). `contradicts` is symmetric and runs the consequences of 4.7.2;
+    `supersedes` deprecates the target where the person asserted it or the target's own asserter did."""
+    if other.entry_id == fact.entry_id:
+        raise malformed("an entry cannot relate to itself")
+    if type_ == EntryRelationship.CONTRADICTS:
+        _conflict(fact, other, actor=actor)
+        EntryRelationship.objects.filter(person=fact.person, type=type_, entry_id__in=[fact.entry_id, other.entry_id],
+                                         target_entry_id__in=[fact.entry_id, other.entry_id]).update(
+            asserted_by_role=relationships.role_of(actor), asserted_by_id=actor.id[:200])
+    elif type_ in (EntryRelationship.DUPLICATES, EntryRelationship.SUPERSEDES):
+        relationships._record(fact.person, fact.entry_id, type_, role=relationships.role_of(actor),
+                              by=actor.id, target_entry_id=other.entry_id)
+        if type_ == EntryRelationship.SUPERSEDES and (actor.is_person or captured_by(other) == actor.id):
+            PersonFact.objects.filter(pk=other.pk).update(status=PersonFact.DEPRECATED)
+    else:
+        raise malformed("a relationship is derivedFrom, supersedes, contradicts or duplicates")
 
 
 def detect_conflicts(fact: PersonFact, *, actor: Actor) -> list[PersonFact]:
@@ -352,6 +377,8 @@ def update_entry(fact: PersonFact, *, statement: str, reason: str, actor: Actor,
 
     if fact.retracted_at is not None or fact.superseded_at is not None:
         raise denied()
+    if not actor.is_person and confirmations.latest(fact) == "rejected":
+        raise denied()          # 3.8: a client may not revise what the person rejected
     new_category = (category or "").strip() or fact.category
     if new_category != fact.category:
         if not actor.is_person:

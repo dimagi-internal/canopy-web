@@ -96,7 +96,11 @@ EXCLUDED: dict[str, str] = {
     "hcp_listGrants": "grant management is the person's, not an MCP tool (HCP Appendix B)",
     "hcp_revokeGrant": "grant management is the person's, not an MCP tool (HCP Appendix B)",
     "hcp_export": "the person's own export — not accessible to agents (HCP 3.3.5)",
-    **{op: "HCP v2 governance is the person's, over HTTP only (HCP v2 1.6)" for op in (
+    **{op: "HCP v2 is the HTTP binding; MCP clients use the hcp_* tools, which are an adapter over the "
+                                                 "same model (governance is the person's, HTTP only: HCP v2 1.6)" for op in (
+        "hcp_v2_queryContext", "hcp_v2_getEntry", "hcp_v2_createEntry", "hcp_v2_reviseEntry",
+        "hcp_v2_withdrawEntry", "hcp_v2_listGrants", "hcp_v2_revokeGrant", "hcp_v2_listAudit", "hcp_v2_export",
+        "hcp_v2_disclosures",
         "hcp_v2_listRules", "hcp_v2_setRule", "hcp_v2_removeRule", "hcp_v2_listDirectives",
         "hcp_v2_setDirective", "hcp_v2_removeDirective")},
     "hcp_v2_confirmEntry": "HCP v2 governance is the person's, over HTTP only (HCP v2 1.6)",
