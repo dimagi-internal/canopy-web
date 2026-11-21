@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import Literal
 
 from django.http import HttpRequest
-from ninja import Router, Schema, Status
+from ninja import Field, Router, Schema, Status
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
@@ -113,6 +113,9 @@ class HostSiteOut(Schema):
     #: canopy trusts this site's signed `email_verified: true` as a contact's HCP
     #: identity. Only a canopy superuser sets it; changing the site's keys clears it.
     asserts_verified_email: bool = False
+    #: How many contact tokens the site may mint a minute; null = the deployment's
+    #: default. Only a canopy superuser sets it.
+    contact_token_issuer_limit: int | None = None
     created_at: str
     last_used_at: str | None
     revoked: bool
@@ -147,6 +150,10 @@ class UpdateIn(Schema):
     #: Superusers only (403 otherwise): trust this site's verified email as a
     #: contact's HCP identity. See `AppCredential.asserts_verified_email`.
     asserts_verified_email: bool | None = None
+    #: Superusers only (403 otherwise): how many contact tokens the site may mint a
+    #: minute, for a relay site that carries many people's conversations; 0 puts it
+    #: back to the deployment's default.
+    contact_token_issuer_limit: int | None = Field(None, ge=0, le=100_000)
 
 
 def _iso(value) -> str | None:
@@ -193,6 +200,7 @@ def _out(app: AppCredential) -> HostSiteOut:
         default_agent=next((link.agent.slug for link in app.allowed_agents.all() if link.is_default), ""),
         shows_on_canopy_pages=app.show_on_canopy_pages,
         asserts_verified_email=app.asserts_verified_email,
+        contact_token_issuer_limit=app.contact_token_issuer_limit,
         created_at=app.created_at.isoformat(),
         last_used_at=app.last_used_at.isoformat() if app.last_used_at else None,
         revoked=app.revoked_at is not None,
@@ -306,6 +314,9 @@ def update_host_site(request: HttpRequest, slug: str, app_id: int,
         # The email-keyed person a trusted site's contacts join is canopy-wide, so
         # trusting a site is canopy's decision, not this tenant's.
         raise HttpError(403, "only a canopy superuser decides which sites canopy trusts for email")
+    if payload.contact_token_issuer_limit is not None and not request.user.is_superuser:
+        # The budget bounds the contacts a leaked signing key can create, across canopy.
+        raise HttpError(403, "only a canopy superuser sets a site's contact token budget")
     keys_before = (app.jwks_url, list(app.public_keys or []))
     try:
         embed_apps.update(
@@ -332,13 +343,19 @@ def update_host_site(request: HttpRequest, slug: str, app_id: int,
     if trust is not None and trust != app.asserts_verified_email:
         type(app).objects.filter(pk=app.pk).update(asserts_verified_email=trust)
         app.asserts_verified_email = trust
+    if payload.contact_token_issuer_limit is not None:
+        budget = payload.contact_token_issuer_limit or None
+        if budget != app.contact_token_issuer_limit:
+            type(app).objects.filter(pk=app.pk).update(contact_token_issuer_limit=budget)
+            app.contact_token_issuer_limit = budget
     # What it is NOW, not what was asked for: a partial payload leaves the rest
     # untouched, and the trail has to say what the app can actually do.
     audit(event=EmbedAuditLog.UPDATE, request=request, app=app, actor=request.user,
           detail=f"origins={app.frame_origins()} "
                  f"agents={[l.agent.slug for l in app.allowed_agents.all()]} "
                  f"default_agent={embed_apps.default_agent_slug(app)!r} "
-                 f"trusted_email={app.asserts_verified_email}")
+                 f"trusted_email={app.asserts_verified_email} "
+                 f"token_budget={app.contact_token_issuer_limit}")
     return _out(app)
 
 

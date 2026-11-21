@@ -202,6 +202,8 @@ class BearerTokenAuthMiddleware:
             request.bound_agent_id = ctok.bound_agent_id
             # The host grant redeemed on this token's arrival: its page's grant.
             request.host_grant_id = ctok.host_grant_id
+            # The relay channel the site signed for this arrival, "" for a widget.
+            request.relay_channel = ctok.channel or ""
             request.auth_method = found.auth_method
             request.auth_credential = found.credential
             request._dont_enforce_csrf_checks = True

@@ -2,6 +2,20 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.32.0 — 2026-11-21
+
+**Relay channels: a host site carries a person's conversation server-to-server.**
+
+- `contract.CHANNEL_CLAIM` (`canopy_channel`, `^[a-z0-9_-]{1,32}$`), `contract.parse_channel_claim`
+  and `contract.RELAY_ORIGIN` (`site_message`). A visitor assertion carrying the claim is a relay
+  arrival: canopy records its turns as `relay:<site>:<channel>`, lets its sends name
+  `site_message`, and always serves it as a contact.
+- `sign_visitor_assertion(..., channel=, workspace=)` and `arrival_payload(..., channel=)`.
+- `canopy_sdk.host.relay.RelayClient(config)`: `token_for`, `open_session`, `send`, `turn`,
+  `messages`, over canopy's `/api/contact/` routes; `RelayError` carries canopy's refusal code
+  (`rate_limited` when a person sends past canopy's per-contact budget). Additive; nothing
+  existing changed.
+
 ## 0.31.0 — 2026-11-21
 
 **Host tools bound to one subject: an agent asks you about ONE of your own people.**

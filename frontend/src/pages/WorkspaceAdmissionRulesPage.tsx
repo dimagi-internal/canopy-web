@@ -23,7 +23,8 @@ import { Td, Th, Tr } from '@/components/DataTable'
 
 const EMPTY: AdmissionRuleIn = {
   agent: '', origin: '', principal: '', sender: '', access: '', capability: '', turn_mode: '', runner_kind: '',
-  reach: '', wait_hours: 24, action: 'reject', reason: '', notify_sender: false, notify_owner: true, enabled: true,
+  reach: '', wait_hours: 24, kind: '', max_turns: null, action: 'reject', reason: '', notify_sender: false,
+  notify_owner: true, enabled: true,
 }
 
 const select =
@@ -86,6 +87,8 @@ export function WorkspaceAdmissionRulesPage(): JSX.Element {
       runner_kind: rule.runner_kind as AdmissionRuleIn['runner_kind'],
       reach: rule.reach as AdmissionRuleIn['reach'],
       wait_hours: rule.wait_hours,
+      kind: rule.kind as AdmissionRuleIn['kind'],
+      max_turns: rule.max_turns ?? null,
       action: rule.action as AdmissionRuleIn['action'],
       reason: rule.reason,
       notify_sender: rule.notify_sender,
@@ -349,6 +352,29 @@ export function WorkspaceAdmissionRulesPage(): JSX.Element {
                   className="min-h-11 w-16 rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground sm:min-h-0"
                 />
                 h
+              </label>
+            )}
+            {/* A cap on what one agent spends: past `max_turns` turns in 24 hours, a matching turn is rejected. */}
+            <select aria-label="Counts" className={select} value={draft.kind}
+              onChange={(e) => {
+                const kind = e.target.value as AdmissionRuleIn['kind']
+                set({ kind, max_turns: kind ? (draft.max_turns ?? 100) : null })
+              }}>
+              <option value="">However many turns the agent ran</option>
+              {(c.kinds ?? []).filter((o) => o.value).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+            {draft.kind === 'agent_daily_turns' && (
+              <label className="flex items-center gap-1 text-[12px] text-muted-foreground">
+                past
+                <input
+                  aria-label="Turns in 24 hours"
+                  type="number"
+                  min={1}
+                  value={draft.max_turns ?? 1}
+                  onChange={(e) => set({ max_turns: Math.max(1, Number(e.target.value) || 1) })}
+                  className="min-h-11 w-20 rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground sm:min-h-0"
+                />
+                turns in 24 h
               </label>
             )}
           </div>

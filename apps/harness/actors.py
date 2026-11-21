@@ -37,7 +37,10 @@ _SENDER_ORIGINS = frozenset({Turn.ORIGIN_EMAIL})
 #: against a person's rule would route it by accident, so it resolves to "" and
 #: falls through to the source rule. (Extension point, if this is ever wanted:
 #: `AgentSchedule.created_by`.)
-_ACTORLESS_ORIGINS = frozenset({Turn.ORIGIN_CANOPY_SCHEDULER})
+#: A host site's relayed message (`site_message`) has a person behind it, but a CONTACT
+#: of the site, never an account with an address a rule could name.
+ACTORLESS_ORIGINS = frozenset({Turn.ORIGIN_CANOPY_SCHEDULER, Turn.ORIGIN_SITE_MESSAGE})
+_ACTORLESS_ORIGINS = ACTORLESS_ORIGINS
 
 
 def normalize_actor(value: str | None) -> str:

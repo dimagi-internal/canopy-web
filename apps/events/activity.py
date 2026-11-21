@@ -130,7 +130,7 @@ def emit(kind: str, *, workspace, actor=None, actor_kind: str = "", agent=None,
 #: Turn origin -> the surface it arrived through, in the words the dashboard shows.
 _ORIGIN_SURFACE = {
     "canopy_web_chat": "chat", "canopy_scheduler": "scheduler", "email": "email",
-    "slack": "slack", "ace_web": "ace-web", "api": "api",
+    "slack": "slack", "ace_web": "ace-web", "api": "api", "site_message": "site",
 }
 
 

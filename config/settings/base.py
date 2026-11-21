@@ -536,6 +536,12 @@ CANOPY_TRUSTED_PROXY_HOPS = env.int("CANOPY_TRUSTED_PROXY_HOPS", default=1)
 MCP_WRITE_LIMIT = env.int("MCP_WRITE_LIMIT", default=10)
 MCP_WRITE_WINDOW_SECONDS = env.int("MCP_WRITE_WINDOW_SECONDS", default=60)
 
+# --- Contacts' sends (apps/embedding/rate_limit.py::check_contact_send) ---
+# Per contact: every message a contact sends starts a turn on a runner, and a contact
+# has no budget of their own. Over either is a 429 `rate_limited`.
+CONTACT_SEND_PER_MINUTE = env.int("CONTACT_SEND_PER_MINUTE", default=6)
+CONTACT_SEND_PER_DAY = env.int("CONTACT_SEND_PER_DAY", default=200)
+
 # --- Web Push (VAPID) ---
 # The PUBLIC key is not a secret — it ships in the JS bundle; the browser needs
 # it to subscribe. The PRIVATE key signs every send and must never leave the

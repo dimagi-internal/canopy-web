@@ -333,7 +333,8 @@ def turn_summary(turn_id: str) -> dict:
 
 #: A turn's origin in an owner's words, not the enum.
 _ORIGIN_WORDS = {"canopy_web_chat": "Canopy chat", "slack": "Slack", "email": "email",
-                 "canopy_scheduler": "scheduled", "api": "API"}
+                 "canopy_scheduler": "scheduled", "api": "API",
+                 "site_message": "a host site's message"}
 
 
 def context_lines(context: dict) -> list[str]:

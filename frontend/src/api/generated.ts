@@ -31544,7 +31544,7 @@ export interface components {
              * Source
              * @enum {string}
              */
-            readonly source: "ace_web" | "email" | "canopy_scheduler" | "canopy_web_chat" | "slack" | "api";
+            readonly source: "ace_web" | "email" | "canopy_scheduler" | "canopy_web_chat" | "slack" | "api" | "site_message";
             /**
              * Actor
              * @default
@@ -31659,7 +31659,7 @@ export interface components {
              */
             readonly strict: boolean;
             /** Sources */
-            readonly sources?: readonly ("ace_web" | "email" | "canopy_scheduler" | "canopy_web_chat" | "slack" | "api")[] | null;
+            readonly sources?: readonly ("ace_web" | "email" | "canopy_scheduler" | "canopy_web_chat" | "slack" | "api" | "site_message")[] | null;
             /**
              * Turn Mode
              * @default
@@ -39882,7 +39882,7 @@ export interface components {
              * @default
              * @enum {string}
              */
-            readonly source: "" | "api" | "ace_web" | "canopy_web_chat" | "canopy_scheduler" | "email" | "slack" | "emdash";
+            readonly source: "" | "api" | "ace_web" | "canopy_web_chat" | "canopy_scheduler" | "email" | "slack" | "site_message" | "emdash";
             /**
              * Principal
              * @default
@@ -39926,6 +39926,11 @@ export interface components {
             readonly runner_kinds: readonly components["schemas"]["AdmissionChoice"][];
             /** Reaches */
             readonly reaches: readonly components["schemas"]["AdmissionChoice"][];
+            /**
+             * Kinds
+             * @default []
+             */
+            readonly kinds: readonly components["schemas"]["AdmissionChoice"][];
             /** Actions */
             readonly actions: readonly components["schemas"]["AdmissionChoice"][];
         };
@@ -39955,6 +39960,13 @@ export interface components {
             readonly reach: string;
             /** Wait Hours */
             readonly wait_hours: number;
+            /**
+             * Kind
+             * @default
+             */
+            readonly kind: string;
+            /** Max Turns */
+            readonly max_turns?: number | null;
             /** Action */
             readonly action: string;
             /** Reason */
@@ -40014,7 +40026,7 @@ export interface components {
              * @default
              * @enum {string}
              */
-            readonly origin: "" | "api" | "ace_web" | "canopy_web_chat" | "canopy_scheduler" | "email" | "slack";
+            readonly origin: "" | "api" | "ace_web" | "canopy_web_chat" | "canopy_scheduler" | "email" | "slack" | "site_message";
             /**
              * Principal
              * @default
@@ -40063,6 +40075,15 @@ export interface components {
              */
             readonly wait_hours: number;
             /**
+             * Kind
+             * @description What the rule counts. `agent_daily_turns`: it matches only once the agent has started `max_turns` turns in the last 24 hours. Reject only.
+             * @default
+             * @enum {string}
+             */
+            readonly kind: "" | "agent_daily_turns";
+            /** Max Turns */
+            readonly max_turns?: number | null;
+            /**
              * Action
              * @default reject
              * @enum {string}
@@ -40107,7 +40128,7 @@ export interface components {
             /** Agent */
             readonly agent?: string | null;
             /** Origin */
-            readonly origin?: ("" | "api" | "ace_web" | "canopy_web_chat" | "canopy_scheduler" | "email" | "slack") | null;
+            readonly origin?: ("" | "api" | "ace_web" | "canopy_web_chat" | "canopy_scheduler" | "email" | "slack" | "site_message") | null;
             /** Principal */
             readonly principal?: ("" | "member" | "contact" | "agent" | "system") | null;
             /** Sender */
@@ -40124,6 +40145,10 @@ export interface components {
             readonly reach?: ("" | "paused" | "offline") | null;
             /** Wait Hours */
             readonly wait_hours?: number | null;
+            /** Kind */
+            readonly kind?: ("" | "agent_daily_turns") | null;
+            /** Max Turns */
+            readonly max_turns?: number | null;
             /** Action */
             readonly action?: ("reject" | "allow" | "auto") | null;
             /** Reason */
@@ -40789,6 +40814,8 @@ export interface components {
              * @default false
              */
             readonly asserts_verified_email: boolean;
+            /** Contact Token Issuer Limit */
+            readonly contact_token_issuer_limit?: number | null;
             /** Created At */
             readonly created_at: string;
             /** Last Used At */
@@ -40892,6 +40919,8 @@ export interface components {
             readonly show_on_canopy_pages?: boolean | null;
             /** Asserts Verified Email */
             readonly asserts_verified_email?: boolean | null;
+            /** Contact Token Issuer Limit */
+            readonly contact_token_issuer_limit?: number | null;
         };
         /**
          * ConnectionCheckOut
@@ -62135,7 +62164,7 @@ export interface operations {
     readonly get_agent_route_preview: {
         readonly parameters: {
             readonly query?: {
-                readonly source?: "ace_web" | "email" | "canopy_scheduler" | "canopy_web_chat" | "slack" | "api";
+                readonly source?: "ace_web" | "email" | "canopy_scheduler" | "canopy_web_chat" | "slack" | "api" | "site_message";
                 readonly actor?: string;
             };
             readonly header?: never;
