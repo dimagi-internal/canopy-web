@@ -234,9 +234,12 @@ so one run is open per feature and workspace.
 the agent): its entry skill may do anything the agent's turns may (a task, a PR, a draft, a finding), and outbound
 follows the operator's turn mode and rails. What makes it a learning run:
 
-- **Its context is the learning system's** (`context.py`): the learner, the target, the accountable person, the run and
-  the sessions due (by source id and count, never a word), in its first prompt (`runs.prompt`) and in its caller
-  envelope as `brain_run` (`harness.caller_context`), read with `who_is_asking`.
+- **Its context is the learning system's** (`context.py`): the learner, the target, the accountable person, the run,
+  the sessions due (by source id and count, never a word) and its budget, in its first prompt (`runs.prompt`) and in
+  its caller envelope as `brain_run` (`harness.caller_context`), read with `who_is_asking`. It is one typed, versioned
+  document (`context.document`, `schemas.BrainRunContext`, `context.VERSION`: a field added is not a new version, a
+  field whose meaning changes is). The one a run was started with is kept on it (`BrainRun.context`) and shown on the
+  brain page with the run, less the ids of the sessions due (`state.context_shown`).
 - **It reads the sessions due only through `brain_read`.** Its login reads its own conversation and nothing it is due
   (`access.turn_reach`; the sessions are other people's), so every read is recorded and eligibility, consent and the
   cascade apply unchanged. `brain_read` and `brain_emit` answer only a turn in the run's own conversation while it runs,
@@ -258,7 +261,8 @@ follows the operator's turn mode and rails. What makes it a learning run:
   calls (`next_index`, passed back as `index`), never splitting a row. The directives of the people in a source travel with it, and the sources removed since the feature learned
   from them are named once (`revoked`, from `RevocationNotice`). Every source served is recorded (`BrainRunRead`, a
   `brain.read` event).
-- **`brain_emit`** writes one output of a declared kind, about the run's own subject, citing sources. Every cited
+- **`brain_emit`** writes one output of a declared kind, about the run's own subject, citing sources, and a `key`
+  naming what it is: a repeat folds into the open finding with that key (below). Every cited
   source must be one this run read and must still be eligible now, or nothing is written. The lineage
   (`OutputLineage`: the source and the people whose words were in it) is written from the reads: every source the run
   had read when it emitted, not only the cited ones (`emit.write_lineage`), since all of them were in its context, so
@@ -268,6 +272,20 @@ follows the operator's turn mode and rails. What makes it a learning run:
 - The run's conversation holds the words it read. It has no creator and no participant and is not runner-discovered, so
   no session leg reads it and nor do its turns' content routes (`turn_access` asks the session's ACL): nobody reads it
   in canopy-web, the operator's admins included. When a source it read is removed the cascade deletes its content.
+
+## A finding's lifecycle, and repeats (`apps/brain/findings.py`)
+
+An output's `state` is the cascade's (active, withdrawn, stale) and nobody sets it. Its `status` is the people's:
+`open` when made, then `accepted`, `dismissed` or `done` (`POST /api/w/<ws>/brain/outputs/{id}/status`, person-only, off
+MCP, each change an event in its workspace). Only someone who sees it AND acts for its audience sets it
+(`findings.may_set`): a `system` finding's workspace owners and admins (or an ancestor's) or a canopy admin, a `project`
+output's members who may read the project, an `individual` or `memory` output's own person.
+
+A run names what an output is with a `key`. An emit whose kind and key match an output of the same learner, subject and
+workspace that is still active and `open` or `accepted` is a repeat and folds into it (`findings.match`, `fold`): `seen`
+counts it, the newer words replace the old, and this run's reads join the lineage, so a removal of any session either
+run read still reaches it. A `dismissed` or `done` one takes no repeat: a new output is made. A repeat spends no output
+of the run's budget.
 
 ## Lineage over everything a run makes (`apps/brain/lineage.py`, `alerts_removal.py`)
 
@@ -373,6 +391,14 @@ occurrence of the schedule (`origin_ref.schedule_id`), so the schedule's history
 run timeout and it is `always_run`. There is no other scheduler: no learner field, interval or tick decides when a
 learner runs.
 
+**A target's budget** (`apps/brain/budget.py`, `BrainTarget.max_*`): sessions one run reads and outputs it writes, and
+runs, outputs and tokens a target spends in a UTC day, set by the same people on the brain page
+(`PATCH /api/w/<ws>/brain/targets/{id}/budget`, a setting) and shown there with today's use. A run stops cleanly at a
+cap: `brain_read` serves nothing more and answers `done` with `budget.stopped`, `brain_emit` refuses a new output with
+the reason, and a fire or Run now past a daily cap starts nothing (`budget.start_refusal`, in `targets.why_not`).
+Tokens are what the boxes reported for the runs' conversations (`events.SessionUsage`), so they are checked before a
+run starts, never during one; a run is one turn by construction (its first turn's end finishes it).
+
 **Run now** on the brain page (`POST /api/w/<ws>/brain/targets/{id}/runs`) is the target's schedule's own Run now
 (`targets.run_now`): one run now, answering to the schedule's creator, with who pressed it recorded. It is the target
 workspace's owners' and admins' (an ancestor's are too, `perms.BRAIN_MANAGE`) or a canopy admin's, as a person only (off
@@ -400,7 +426,9 @@ project history reads instead of re-deriving the selection.
 
 A workspace's view of the brain, among the health dashboard's views and linked from Settings → Learning (the flat
 `/brain` redirects to the active workspace's). Every read is pinned (`/api/w/<ws>/brain/…`) and covers `<ws>` and the
-workspaces below it the viewer is in (`wsvc.request_workspace_slugs`, the read rule every list follows). Its routes
+workspaces below it the viewer is in. That scope is ONE function the page, the outputs list and the graph share
+(`scope.of_request`, `scope.below`: the read rule every list follows, so an unpinned outputs list never mixes two
+organisations); what each shows inside it is still its own rule. Its routes
 (`GET /api/brain/state`, `/state/links`, `/state/runs`) are the person's own as themselves (`person.the_person`), none
 is an MCP tool, and they write nothing (`tests/test_brain_page.py` captures every query). The page holds no copy of a
 count. `tests/test_brain_workspace_scope.py` pins each role's slice.
@@ -414,6 +442,9 @@ count. `tests/test_brain_workspace_scope.py` pins each role's slice.
   (add, Run now, take away), and the two settings below.
 - **A member** sees their own: their classes, their own sources and removals, the links of sessions they read, runs
   about them, and the outputs `outputs.visible_to` already gives them.
+- **Why a session is not read** (`GET /api/w/<ws>/brain/why/{session_id}?learner=`, `api_manage.why_not_read`): for a
+  session in `<ws>` or below that the viewer is in or reads through legs 1 to 6, whether a learner may read it now and
+  why not, by `eligibility.explain` itself. A reason about a person says "you" or "someone in it", never who.
 - **Everyone** sees the learners and who answers for each (`registry.accountable`); which agent operates one, its
   entry and who answers for it only inside the operator's organisation (`registry.shown_to`), the same on
   `/api/brain/capabilities/`, so tenants never meet there. A session is named (id, scrubbed

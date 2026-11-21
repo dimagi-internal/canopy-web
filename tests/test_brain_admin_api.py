@@ -187,9 +187,11 @@ def _out(w, cap, subject_type, subject, **kw):
                                       subject=str(subject), title="t", body={"x": 1}, **kw)
 
 
-def _ids(u, **params):
+def _ids(u, ws=None, **params):
+    """The outputs `u` lists: unpinned (one organisation), or pinned to `ws` (one of several: a list never mixes)."""
     qs = "&".join(f"{k}={v}" for k, v in params.items())
-    return {o["id"] for o in client(u).get(f"/api/brain/outputs/?{qs}").json()}
+    base = f"/api/w/{ws}/brain/outputs/" if ws else "/api/brain/outputs/"
+    return {o["id"] for o in client(u).get(f"{base}?{qs}").json()}
 
 
 def test_an_individual_output_goes_to_the_person_their_coach_and_their_manager_only(w):
@@ -221,7 +223,8 @@ def test_a_manager_reads_only_the_outputs_of_the_workspace_their_line_is_in(w):
     there = BrainOutput.objects.create(capability=w["coach"], kind="note", workspace=other, subject_type="person",
                                        subject=str(w["alice"].pk), title="t", body={"x": 1})
     reporting.set_manager(w["ws"], person=w["alice"], manager=w["bob"], by=w["owner"])
-    assert here.pk in _ids(w["bob"]) and there.pk not in _ids(w["bob"])     # the line is in acme only
+    assert here.pk in _ids(w["bob"], "acme") and there.pk not in _ids(w["bob"], "beta")   # the line is in acme only
+    assert client(w["bob"]).get("/api/brain/outputs/").status_code == 422     # two organisations: name one
 
 
 def test_the_manager_leg_is_the_person_s_own_never_a_token_acting_for_them(w):
@@ -345,5 +348,5 @@ def test_a_coach_sees_outputs_only_of_the_workspaces_they_coach(w):
     here = _out(w, w["coach"], "person", w["alice"].pk)
     there = BrainOutput.objects.create(capability=w["coach"], kind="note", workspace=other, subject_type="person",
                                        subject=str(w["alice"].pk), title="t", body={"x": 1})
-    assert here.pk in _ids(coach) and there.pk not in _ids(coach)
-    assert there.pk in _ids(w["alice"])
+    assert here.pk in _ids(coach, "acme") and there.pk not in _ids(coach, "beta")
+    assert there.pk in _ids(w["alice"], "beta")

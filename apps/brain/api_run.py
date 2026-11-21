@@ -70,11 +70,13 @@ def brain_read(request: HttpRequest, after: int = 0, limit: int = 3, index: int 
 def brain_emit(request: HttpRequest, payload: BrainEmitIn) -> dict:
     """For a turn in a learning run: one output of a kind its feature declares, about the run's own subject,
     citing the sources it came from. Every cited source must be one this run read and must still be open to
-    it; otherwise nothing is written (422). The words are scrubbed. The same output twice is one."""
+    it; otherwise nothing is written (422). The words are scrubbed. The same output twice is one, and one whose
+    `key` matches an open finding of this learner and subject folds into it (`folded`). Past the run's budget of
+    outputs a new one is refused (422)."""
     run, turn = _run_of(request)
     try:
         out = emit_mod.emit(run, kind=payload.kind, title=payload.title, body=payload.body,
-                            source_ids=payload.sources, turn_id=str(turn.pk))
+                            source_ids=payload.sources, turn_id=str(turn.pk), key=payload.key)
     except emit_mod.EmitRefusedError as e:
         raise ProblemError(422, "Invalid request", type_=TYPE_VALIDATION, detail=str(e)) from e
-    return {"id": out.pk, "state": getattr(out, "state", "linked")}
+    return {"id": out.pk, "state": getattr(out, "state", "linked"), "folded": bool(getattr(out, "folded", False))}

@@ -18,6 +18,8 @@ workspace; each target's schedule is a normal canopy schedule on the operator, a
 schedule's own Run now."""
 from __future__ import annotations
 
+import uuid
+
 from django.http import HttpRequest
 from ninja import Router
 
@@ -25,17 +27,21 @@ from apps.agents.models import Agent
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError, refusals
 from apps.api.route_gates import gate
+from apps.canopy_sessions import access
+from apps.canopy_sessions.models import Session
 from apps.events import audit
 from apps.events.models import SettingChange
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
-from . import learning_reads, readers, registry, targets
+from . import budget, eligibility, learning_reads, participants, readers, registry, sources, targets
 from .api_state import the_person
 from .models import ABOUT_A_PERSON, BrainCapability, BrainRun, BrainTarget
 from .schemas import (
     BrainRunState,
+    BrainTargetBudgetIn,
+    BrainWhyOut,
     BrainTargetIn,
     BrainTargetOut,
     CapabilityOut,
@@ -224,7 +230,7 @@ def _visible_targets(ws: str):
 
 def target_out(t: BrainTarget, *, can_manage: bool, last=None) -> dict:
     s = t.schedule
-    return {"id": t.pk, "learner": t.capability.slug, "workspace": t.workspace_id,
+    return {"budget": budget.out(t), "id": t.pk, "learner": t.capability.slug, "workspace": t.workspace_id,
             "project": t.project.handle if t.project_id else "", "label": targets.label(t),
             "schedule_id": s.pk, "agent": s.agent.slug, "cron": s.cron, "timezone": s.timezone, "enabled": s.enabled,
             "created_by": getattr(t.created_by, "email", "") or "", "created_at": t.created_at,
@@ -329,3 +335,91 @@ def run_learning_target(request: HttpRequest, target_id: int) -> dict:
     return {"id": run.pk, "learner": t.capability.slug, "purpose": run.purpose, "subject_type": run.subject_type,
             "subject": subject, "scope": run.scope, "state": run.state, "created_at": run.created_at,
             "finished_at": None, "reads": 0, "sessions": [], "hidden": 0}
+
+
+@router.patch("/brain/targets/{target_id}/budget", response={200: BrainTargetOut, **refusals(403, 404, 422)},
+              summary="Change a target's budget (its owners and admins)")
+@gate("brain.manage", setting=True)  # an owner or admin of the target's workspace or above; a person only, off MCP
+def set_target_budget(request: HttpRequest, target_id: int, payload: BrainTargetBudgetIn) -> dict:
+    """How much one run of this target may read (sessions) and write (outputs), and how many runs, outputs and tokens
+    it may spend in a UTC day. A run stops cleanly at a cap: nothing more is read or written, and a fire past a daily
+    cap starts nothing and says why. Fields left out keep their value; `clear_tokens` removes the token cap."""
+    user = the_person(request)
+    t = _target_or_404(_pinned(request), target_id)
+    if not may_manage(user, t.workspace_id):
+        raise ProblemError(403, f"Only the owners and admins of {t.workspace_id} (or an ancestor's) change its budget",
+                           type_=TYPE_FORBIDDEN)
+    changes = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None and k in budget.FIELDS}
+    if payload.clear_tokens:
+        changes["max_tokens_per_day"] = None
+    before = budget.out(t)
+    targets.set_budget(t, **changes)
+    after = budget.out(t)
+    audit.note_change(scope=f"brain-target:{t.pk}/budget", before={k: before[k] for k in budget.FIELDS},
+                      after={k: after[k] for k in budget.FIELDS}, workspace=t.workspace,
+                      summary=f"{user.email} changed the budget of {t.capability.slug}'s target {targets.label(t)}")
+    return target_out(t, can_manage=True)
+
+
+# ---- why a session is not read ------------------------------------------------------------------------------
+
+#: What each reason of `eligibility.explain` means, in words; a reason naming a person says "you" or "someone in it".
+WHY = {
+    "no_source": "canopy has not looked at this session yet (it does within minutes of it changing)",
+    "withdrawn": "its words were deleted, or it was taken out of learning for good",
+    "sealed:sensitive": "it is a sensitive conversation: no learning ever reads it",
+    "sealed:contact": "it is a conversation with someone outside canopy: no learning reads it",
+    "sealed:words_deleted": "its words were deleted",
+    "sealed:brain_run": "it is a learning run's own conversation: learning never learns from itself",
+    "learning_reads_off": "learning reads are off in its workspace (its owners and admins turn them on here)",
+    "capability_not_enabled": "that learner is not enabled",
+    "purpose_not_declared": "that learner does not read for this purpose",
+    "source_kind_not_declared": "that learner does not read sessions",
+    "subject_not_a_participant": "you are not in it, and this learner learns about one person from their own words",
+    "contact_in_source": "someone outside canopy is in it, so no shared learning reads it",
+    "no_human_participant": "nobody is recorded as in it",
+    "excluded": "{who} took it out of learning",
+    "no_consent": "{who} has not agreed to canopy learning",
+    "class_not_consented": "{who} has not agreed to this kind of learning",
+    "outside_workspaces": "{who} agreed to learning only in other workspaces",
+    "standing_rule": "a rule {who} set refuses this learner",
+    "not_a_member": "{who} is not a member of its workspace",
+}
+
+
+def _said(reason: str, user) -> tuple[str, str]:
+    """`reason` for the person asking: their own id as `you`, anyone else's as `someone`, never a name."""
+    code, _, who = reason.partition(":")
+    if code in ("sealed",):
+        return reason, WHY.get(reason, reason)
+    if who:
+        mine = who == str(user.pk)
+        words = WHY.get(code, code).format(who="you" if mine else "someone in it")
+        return f"{code}:{'you' if mine else 'someone'}", words[0].upper() + words[1:]
+    words = WHY.get(code, code)
+    return code, words[0].upper() + words[1:]
+
+
+@router.get("/brain/why/{session_id}", response={200: BrainWhyOut, **refusals(403, 404, 422)},
+            summary="Why a learner may or may not read a session (yours, or one you read)")
+@gate("session-acl")  # a session you are in or read yourself; reasons never name anyone but you
+def why_not_read(request: HttpRequest, session_id: uuid.UUID, learner: str = readers.PROJECT_READERS) -> dict:
+    """Whether `learner` (default: a project's readers) may read this session now, and if not, why, by the same rule
+    every learning read asks (`eligibility.explain`). Only for a session in this workspace or below that you are in or
+    read yourself. A reason about a person says whether it is you or "someone in it", never who."""
+    user = the_person(request)
+    ws = _pinned(request)
+    session = Session.objects.filter(pk=session_id, workspace_id__in=_subtree(ws)).first()
+    in_it = session is not None and any(u == user.pk for _h, u, _c in participants.people_of(session))
+    if session is None or not (in_it or access.readable_ids(user, [session.pk])):
+        raise ProblemError(404, "No such session here", type_=TYPE_NOT_FOUND)
+    cap = BrainCapability.objects.filter(slug=learner).first()
+    if cap is None:
+        raise ProblemError(404, "No such learner", type_=TYPE_NOT_FOUND)
+    source = sources.existing(session)
+    subject = user.pk if cap.purpose_class in ABOUT_A_PERSON else None
+    verdict = (eligibility.explain(source, cap, (cap.purposes or [""])[0], subject) if source is not None
+               else eligibility.Eligibility(False, "no_source"))
+    reason, words = _said(verdict.reason, user) if not verdict.ok else ("", "")
+    return {"session_id": str(session.pk), "learner": cap.slug, "eligible": verdict.ok, "reason": reason,
+            "explanation": words}

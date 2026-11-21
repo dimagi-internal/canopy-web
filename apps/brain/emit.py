@@ -4,7 +4,9 @@ An output is about the run's own subject (never one it names), of a kind its fea
 sources it came from. Every cited source must be one THIS run read (`BrainRunRead`) and must still be eligible
 now: a source cited but never read, or one whose people withdrew since, is refused whole. The lineage
 (`OutputLineage`) is written from the reads, every source the run had read by then and not only the cited ones
-(`write_lineage`): all of it was in the run's context, so a later removal of any of them reaches the output. The words
+(`write_lineage`): all of it was in the run's context, so a later removal of any of them reaches the output.
+An output that names a `key` already held by an open finding of the same learner, subject and workspace is a repeat
+and folds into it (`findings`). A new output spends the run's budget (`budget.run_left`); at the cap it is refused. The words
 are scrubbed like every learning read, keys as well as values. Emitting the same thing twice is one output."""
 from __future__ import annotations
 
@@ -12,11 +14,12 @@ import hashlib
 import json
 
 from django.db import transaction
+from django.utils import timezone
 
 from apps.agents.models import AgentProject
 from apps.common import redact
 
-from . import associate, learning_reads
+from . import associate, budget, findings, learning_reads
 from .eligibility import eligible
 from .models import ABOUT_A_PERSON, BrainOutput, BrainRun, BrainRunRead, BrainSource, OutputLineage, SourceLink
 
@@ -32,7 +35,9 @@ LINK = "link"
 LINK_TIERS = ("core", "adjacent", "candidate", "rejected")
 
 
-def emit(run: BrainRun, *, kind: str, title: str, body: dict, source_ids, turn_id: str = ""):
+def emit(run: BrainRun, *, kind: str, title: str, body: dict, source_ids, turn_id: str = "", key: str = ""):
+    """Write one output, or fold a repeat into the open one it matches (`findings`). Returns the output; `folded` on
+    it says which happened."""
     cap = run.capability
     if learning_reads.run_refusal(cap, run.subject, run.scope) or not cap.enabled or run.state != BrainRun.OPEN:
         raise EmitRefusedError("this run may not emit")
@@ -62,17 +67,30 @@ def emit(run: BrainRun, *, kind: str, title: str, body: dict, source_ids, turn_i
         raise EmitRefusedError("an output cites sources of one workspace; emit one per workspace")
     scrubbed = _scrub(body)
     clean_title = redact.redact_text(title or "")[0][:300]
+    clean_key = redact.redact_text((key or "").strip())[0][:200]
+    workspace = workspaces.pop()
     fingerprint = hashlib.sha256(json.dumps([kind, clean_title, scrubbed, ids], sort_keys=True,
                                             default=str).encode()).hexdigest()
     with transaction.atomic():
         existing = BrainOutput.objects.filter(run=run, fingerprint=fingerprint).first()
         if existing is not None:
+            existing.folded = False
             return existing
+        repeat = findings.match(run, kind=kind, key=clean_key, workspace=workspace)
+        if repeat is not None:                   # a repeat costs no output of the budget
+            out = findings.fold(repeat, run, title=clean_title, body=scrubbed, cited=ids)
+            out.folded = True
+            return out
+        left = budget.run_left(run)["outputs"]
+        if left <= 0:
+            raise EmitRefusedError("this run's budget of outputs is spent (its target's per run or per day): "
+                                   "emit nothing more and end the run")
         out = BrainOutput.objects.create(
-            capability=cap, kind=kind, workspace_id=workspaces.pop(), subject_type=run.subject_type,
+            capability=cap, kind=kind, workspace_id=workspace, subject_type=run.subject_type,
             subject=run.subject, title=clean_title, body=scrubbed, turn_id=turn_id, run=run,
-            fingerprint=fingerprint)
+            fingerprint=fingerprint, key=clean_key, last_seen_at=timezone.now())
         write_lineage(run, out, cited=ids)
+    out.folded = False
     return out
 
 

@@ -13,12 +13,18 @@ import {
   removeTarget,
   runTargetNow,
   setLearningReads,
+  setOutputStatus,
+  setTargetBudget,
+  whyNotRead,
   type BrainFlag,
   type BrainOutput,
+  type BrainOutputStatus,
+  type BrainWhy,
   type BrainRun,
   type BrainState,
   type BrainStoredLink,
   type BrainTarget,
+  type BrainTargetBudgetIn,
   type LearningReads,
 } from '@/api/brain'
 import { Td, Th, Tr } from '@/components/DataTable'
@@ -244,6 +250,7 @@ function NowTab({ ws, state, runsKey, onStarted, onChanged }: {
 
       <Runs key={runsKey} ws={ws} state={state} />
       <Findings ws={ws} />
+      <WhyNotRead ws={ws} state={state} />
       <Flags ws={ws} flags={state.flags ?? []} onChanged={onChanged} />
 
       <Section
@@ -403,6 +410,7 @@ function Runs({ ws, state }: { ws: string; state: BrainState }): JSX.Element {
               <Tr key={r.id} rule="bottom-last" top>
                 <Td>
                   {r.learner} <span className="text-muted-foreground">{r.purpose}</span>
+                  {r.context && <RunContext context={r.context} />}
                 </Td>
                 <Td>{r.subject || r.subject_type}</Td>
                 <Td>
@@ -432,6 +440,35 @@ function Runs({ ws, state }: { ws: string; state: BrainState }): JSX.Element {
       )}
       {error && <p className="text-xs text-destructive">{error}</p>}
     </Section>
+  )
+}
+
+/** What a run was told when it started (its context document, `version` and all), without the ids of the
+ *  sessions due: the server leaves those out, since you may not read them. */
+function RunContext({ context }: { context: NonNullable<BrainRun['context']> }): JSX.Element {
+  const t = context.target
+  const rows: [string, string][] = [
+    ['version', String(context.version)],
+    ['class', context.purpose_class],
+    ['target', t ? (t.kind === 'project' ? `${t.workspace}/${t.project}` : t.workspace) : context.scope || 'none'],
+    ['accountable', context.accountable?.email ?? 'nobody'],
+    ['sessions due', String(context.sessions_due)],
+    ['budget', `${context.budget.max_sources_per_run} sessions, ${context.budget.max_outputs_per_run} outputs a run`],
+    ['entry', context.entry || '-'],
+    ['emits', (context.output_kinds ?? []).join(', ') || 'nothing'],
+  ]
+  return (
+    <details className="text-xs">
+      <summary className="cursor-pointer text-muted-foreground">context</summary>
+      <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-0.5">
+        {rows.map(([k, v]) => (
+          <Fragment key={k}>
+            <dt className="text-muted-foreground">{k}</dt>
+            <dd className="text-foreground">{v}</dd>
+          </Fragment>
+        ))}
+      </dl>
+    </details>
   )
 }
 
@@ -466,6 +503,9 @@ function Targets({ ws, state, reads, onStarted, onChanged }: {
     }
   }
   const targets: readonly BrainTarget[] = state.targets ?? []
+  // The target whose budget form is open, by id (0: none).
+  const [budgetFor, setBudgetFor] = useState(0)
+  const editing = targets.find((t) => t.id === budgetFor)
   return (
     <Section
       title="Targets"
@@ -482,6 +522,7 @@ function Targets({ ws, state, reads, onStarted, onChanged }: {
               <Th hideBelow="sm">Schedule</Th>
               <Th hideBelow="md">Agent</Th>
               <Th>Last run</Th>
+              <Th hideBelow="md">Budget</Th>
               <Th srOnly>Manage</Th>
             </Tr>
           </thead>
@@ -497,9 +538,14 @@ function Targets({ ws, state, reads, onStarted, onChanged }: {
                 <Td tone="muted">
                   {t.last_run ? `${t.last_run.state}, ${relativeAge(t.last_run.created_at, undefined, { seconds: false })}` : 'never'}
                 </Td>
+                <Td hideBelow="md" tone="muted">{t.budget && budgetLine(t.budget)}</Td>
                 <Td>
                   {t.can_manage && (
                     <span className="flex flex-wrap items-center gap-1.5">
+                      <Button size="sm" variant="ghost" disabled={busy}
+                              onClick={() => setBudgetFor(budgetFor === t.id ? 0 : t.id)}>
+                        Budget…
+                      </Button>
                       <Button size="sm" variant="outline" disabled={busy}
                               title={reads ? undefined : 'Learning reads are off here; the server will say so'}
                               onClick={() => void act(() => runTargetNow(ws, t.id), (r) => `Run ${r.id} started`, onStarted)}>
@@ -516,6 +562,13 @@ function Targets({ ws, state, reads, onStarted, onChanged }: {
             ))}
           </tbody>
         </Table>
+      )}
+      {editing?.budget && (
+        <BudgetForm key={editing.id} target={editing} busy={busy}
+                    onSave={(body) => void act(() => setTargetBudget(ws, editing.id, body), () => 'Budget saved', () => {
+                      setBudgetFor(0)
+                      onChanged()
+                    })} />
       )}
       {state.can_manage && aimable.length > 0 && (
         <form
@@ -541,6 +594,58 @@ function Targets({ ws, state, reads, onStarted, onChanged }: {
       )}
       {note && <p role="status" className="text-xs text-muted-foreground">{note}</p>}
     </Section>
+  )
+}
+
+type TargetBudget = NonNullable<BrainTarget['budget']>
+
+/** A target's budget and what it spent today (UTC), in one line. */
+function budgetLine(b: TargetBudget): string {
+  const tokens = b.max_tokens_per_day == null ? `${b.today.tokens} tokens` : `${b.today.tokens}/${b.max_tokens_per_day} tokens`
+  return `≤${b.max_sources_per_run} sessions, ≤${b.max_outputs_per_run} outputs a run · today ${b.today.runs}/${b.max_runs_per_day} runs, ` +
+    `${b.today.outputs}/${b.max_outputs_per_day} outputs, ${tokens}`
+}
+
+/** Change one target's budget. A run stops cleanly at a cap; a daily cap stops the next fire. */
+function BudgetForm({ target, busy, onSave }: {
+  target: BrainTarget; busy: boolean; onSave: (body: BrainTargetBudgetIn) => void
+}): JSX.Element {
+  const b = target.budget as TargetBudget
+  const [v, setV] = useState({
+    max_sources_per_run: String(b.max_sources_per_run), max_outputs_per_run: String(b.max_outputs_per_run),
+    max_runs_per_day: String(b.max_runs_per_day), max_outputs_per_day: String(b.max_outputs_per_day),
+    max_tokens_per_day: b.max_tokens_per_day == null ? '' : String(b.max_tokens_per_day),
+  })
+  const field = 'w-20 rounded-md border border-input bg-background px-1.5 py-0.5 text-xs text-foreground'
+  const labels: [keyof typeof v, string][] = [
+    ['max_sources_per_run', 'sessions a run'], ['max_outputs_per_run', 'outputs a run'],
+    ['max_runs_per_day', 'runs a day'], ['max_outputs_per_day', 'outputs a day'],
+    ['max_tokens_per_day', 'tokens a day (empty: no cap)'],
+  ]
+  return (
+    <form
+      aria-label={`Budget of ${target.label}`}
+      className="flex flex-wrap items-center gap-2 text-xs"
+      onSubmit={(e) => {
+        e.preventDefault()
+        const tokens = v.max_tokens_per_day.trim()
+        onSave({
+          max_sources_per_run: Number(v.max_sources_per_run), max_outputs_per_run: Number(v.max_outputs_per_run),
+          max_runs_per_day: Number(v.max_runs_per_day), max_outputs_per_day: Number(v.max_outputs_per_day),
+          ...(tokens ? { max_tokens_per_day: Number(tokens) } : {}), clear_tokens: !tokens,
+        })
+      }}
+    >
+      <span className="text-muted-foreground">Budget of {target.label}:</span>
+      {labels.map(([k, label]) => (
+        <label key={k} className="flex items-center gap-1">
+          <input aria-label={label} inputMode="numeric" value={v[k]} className={field}
+                 onChange={(e) => setV({ ...v, [k]: e.target.value })} />
+          <span className="text-muted-foreground">{label}</span>
+        </label>
+      ))}
+      <Button size="sm" variant="outline" type="submit" disabled={busy}>Save budget</Button>
+    </form>
   )
 }
 
@@ -741,21 +846,42 @@ function bodyFields(body: Record<string, unknown>): [string, string][] {
     .map(([k, v]) => [k.replace(/_/g, ' '), Array.isArray(v) ? v.map(String).join(', ') : String(v)])
 }
 
+const STATUS_TONE: Record<string, 'info' | 'success' | 'neutral'> = { open: 'info', accepted: 'info', done: 'success' }
+/** What each status can move to, as the buttons say it. */
+const NEXT: Record<string, [BrainOutputStatus, string][]> = {
+  open: [['accepted', 'Accept'], ['dismissed', 'Dismiss']],
+  accepted: [['done', 'Done'], ['open', 'Reopen']],
+  dismissed: [['open', 'Reopen']],
+  done: [['open', 'Reopen']],
+}
+
 function Findings({ ws }: { ws: string }): JSX.Element {
   const [rows, setRows] = useState<BrainOutput[] | null>(null)
   const [error, setError] = useState('')
+  const [busy, setBusy] = useState(0)
   useEffect(() => {
     listBrainOutputs(ws).then(setRows, (e: unknown) => setError(e instanceof Error ? e.message : 'Could not load'))
   }, [ws])
+  const move = async (id: number, status: BrainOutputStatus) => {
+    setBusy(id)
+    setError('')
+    try {
+      const got = await setOutputStatus(ws, id, status)
+      setRows((rs) => (rs ?? []).map((o) => (o.id === id ? got : o)))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not change it')
+    } finally {
+      setBusy(0)
+    }
+  }
   return (
     <Section
       title="Findings"
       note="What learning produced that you may see, for the audience its class allows. A finding acts on nothing by itself: deciding what to do with it is yours."
     >
-      {error ? (
-        <p className="text-xs text-destructive">{error}</p>
-      ) : !rows ? (
-        <Empty>Loading…</Empty>
+      {error && <p className="text-xs text-destructive">{error}</p>}
+      {!rows ? (
+        error ? null : <Empty>Loading…</Empty>
       ) : rows.length === 0 ? (
         <Empty>None yet.</Empty>
       ) : (
@@ -765,6 +891,12 @@ function Findings({ ws }: { ws: string }): JSX.Element {
               <div className="flex flex-wrap items-baseline gap-2">
                 <span className="font-medium text-foreground">{o.title || o.kind}</span>
                 <StatusBadge tone="neutral">{o.kind}</StatusBadge>
+                <StatusBadge tone={STATUS_TONE[o.status ?? 'open'] ?? 'neutral'}>{o.status ?? 'open'}</StatusBadge>
+                {(o.seen ?? 1) > 1 && <span className="text-xs text-muted-foreground">seen {o.seen} times</span>}
+                {o.may_set_status && (NEXT[o.status ?? 'open'] ?? []).map(([to, label]) => (
+                  <Button key={to} size="sm" variant="ghost" disabled={busy === o.id}
+                          onClick={() => void move(o.id, to)}>{label}</Button>
+                ))}
                 <span className="text-xs text-muted-foreground">
                   {o.learner} · {o.subject_type}{o.subject ? ` ${o.subject}` : ''} ·{' '}
                   {relativeAge(o.created_at, undefined, { seconds: false })}
@@ -795,6 +927,46 @@ function Findings({ ws }: { ws: string }): JSX.Element {
             </li>
           ))}
         </ul>
+      )}
+    </Section>
+  )
+}
+
+/** "Why can't this session be read?": for a session you are in or read yourself, whether a learner may read it and,
+ *  if not, why, by the same rule every learning read asks. A reason about a person says "you" or "someone in it". */
+function WhyNotRead({ ws, state }: { ws: string; state: BrainState }): JSX.Element {
+  const [session, setSession] = useState('')
+  const [learner, setLearner] = useState('project-readers')
+  const [got, setGot] = useState<BrainWhy | null>(null)
+  const [error, setError] = useState('')
+  const field = 'rounded-md border border-input bg-background px-1.5 py-0.5 text-xs text-foreground'
+  // A session's id, or the link to its page.
+  const id = (session.trim().match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i) ?? [''])[0]
+  return (
+    <Section title="Why is a session not read?"
+             note="For a session you are in or read yourself: whether a learner may read it, and why not. Nobody else is named.">
+      <form
+        aria-label="Why is a session not read"
+        className="flex flex-wrap items-center gap-2 text-xs"
+        onSubmit={(e) => {
+          e.preventDefault()
+          setError('')
+          setGot(null)
+          whyNotRead(ws, id, learner).then(setGot, (err: unknown) => setError(err instanceof Error ? err.message : 'Could not look that up'))
+        }}
+      >
+        <input aria-label="Session" placeholder="session id or link" value={session}
+               onChange={(e) => setSession(e.target.value)} className={`w-80 ${field}`} />
+        <select aria-label="Learner" value={learner} onChange={(e) => setLearner(e.target.value)} className={field}>
+          {state.learners.map((l) => <option key={l.slug} value={l.slug}>{l.slug}</option>)}
+        </select>
+        <Button size="sm" variant="outline" type="submit" disabled={!id}>Look up</Button>
+      </form>
+      {error && <p className="text-xs text-destructive">{error}</p>}
+      {got && (
+        <p role="status" className="text-xs">
+          {got.eligible ? `${got.learner} may read it.` : `${got.learner} may not read it: ${got.explanation}.`}
+        </p>
       )}
     </Section>
   )

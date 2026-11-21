@@ -13,9 +13,8 @@ from ninja import Router
 from apps.api.auth import session_auth
 from apps.api.errors import refusals
 from apps.api.route_gates import gate
-from apps.workspaces import services as wsvc
 
-from . import state
+from . import scope, state
 from .person import the_person  # noqa: F401 — the routes below and api_manage ask it
 from .schemas import BrainLinkPageOut, BrainRunPageOut, BrainStateOut
 
@@ -33,7 +32,7 @@ def brain_state(request: HttpRequest) -> dict:
     counts only where you hold `logs.read`; elsewhere your own. A consent count below 3 is null."""
     user = the_person(request)
     pin = getattr(request, "workspace_slug", None)
-    return state.summary(user, wsvc.request_workspace_slugs(request), pin or "")
+    return state.summary(user, scope.of_request(request), pin or "")
 
 
 @router.get("/brain/state/links", response={200: BrainLinkPageOut, **refusals(403, 422)},
@@ -42,7 +41,7 @@ def brain_state(request: HttpRequest) -> dict:
 def brain_state_links(request: HttpRequest, before: int = 0, limit: int = 50) -> dict:
     """Each link with its session (title scrubbed) and how it was made. Pass `next_before` as `before` for more."""
     user = the_person(request)
-    return state.link_page(user, wsvc.request_workspace_slugs(request), before=before, limit=limit)
+    return state.link_page(user, scope.of_request(request), before=before, limit=limit)
 
 
 @router.get("/brain/state/runs", response={200: BrainRunPageOut, **refusals(403, 422)},
@@ -52,4 +51,4 @@ def brain_state_runs(request: HttpRequest, before: int = 0, limit: int = 25) -> 
     """Each run's learner, purpose, subject and state, and what it read: the sessions you read by title, the rest a
     count. A canopy admin sees every run. Pass `next_before` as `before` for more."""
     user = the_person(request)
-    return state.run_page(user, wsvc.request_workspace_slugs(request), before=before, limit=limit)
+    return state.run_page(user, scope.of_request(request), before=before, limit=limit)

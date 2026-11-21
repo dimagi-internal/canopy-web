@@ -19,10 +19,11 @@ from apps.workspaces import services as wsvc
 from apps.workspaces.gates import membership_or_404
 from apps.workspaces.gates import require as require_role
 
-from . import cascade, outputs, person, registry, reporting, targets
-from .models import BrainCapability, OutputLineage, SourceLink
+from . import cascade, findings, outputs, person, registry, reporting, scope, targets
+from .models import BrainCapability, BrainOutput, OutputLineage, SourceLink
 from .schemas import (
     BrainOutputOut,
+    BrainOutputStatusIn,
     CapabilityIn,
     CapabilityOut,
     CapabilityPatch,
@@ -213,26 +214,60 @@ def manager_leg_open(request: HttpRequest) -> bool:
 
 @router.get("/brain/outputs/", response=list[BrainOutputOut], summary="What learning produced, for you")
 @gate("authenticated")  # visible_to: its class's audience, never wider
-def list_outputs(request: HttpRequest, subject_type: str = "", subject: str = "", limit: int = 100) -> list[dict]:
+def list_outputs(request: HttpRequest, subject_type: str = "", subject: str = "", status: str = "",
+                 limit: int = 100) -> list[dict]:
     """The learning outputs you may read: about you, about people you coach or manage (outputs, never
     transcripts; the manager's only as yourself, never through an agent or a turn), about projects you may read, and
     canopy's system findings where you own or administer the workspace a run was started for (or one above it),
-    as yourself only. Pinned to a
-    workspace (`/api/w/<ws>/…`), only that workspace's and the ones below it. Never a withdrawn or stale one. Newest
-    first."""
-    qs = (outputs.visible_to(request.user, as_person=manager_leg_open(request)).select_related("capability")
-          .filter(workspace_id__in=wsvc.request_member_slugs(request)).order_by("-created_at", "-pk"))
+    as yourself only. Pinned to a workspace (`/api/w/<ws>/…`), only that workspace's and the ones below it;
+    unpinned, your one organisation's (the read rule every list follows). Never a withdrawn or stale one. `status`
+    narrows to open, accepted, dismissed or done. Newest first."""
+    as_person = manager_leg_open(request)
+    qs = (outputs.visible_to(request.user, as_person=as_person).select_related("capability", "status_by")
+          .filter(workspace_id__in=scope.of_request(request)).order_by("-created_at", "-pk"))
     if subject_type:
         qs = qs.filter(subject_type=subject_type)
     if subject:
         qs = qs.filter(subject=subject)
-    rows = list(qs[:max(1, min(limit, 500))])
-    cited, named = _cited(request.user, rows)
+    if status:
+        qs = qs.filter(status=status)
+    return _outputs_out(request.user, list(qs[:max(1, min(limit, 500))]), as_person=as_person)
+
+
+def _outputs_out(user, rows, *, as_person: bool) -> list[dict]:
+    cited, named = _cited(user, rows)
+    memo: dict = {}
     return [{"id": o.pk, "learner": o.capability.slug, "kind": o.kind, "workspace": o.workspace_id,
              "subject_type": o.subject_type, "subject": o.subject, "title": o.title, "body": o.body,
-             "state": o.state, "created_at": o.created_at,
+             "state": o.state, "status": o.status, "status_at": o.status_at,
+             "status_by": getattr(o.status_by, "email", "") or "", "key": o.key, "seen": o.seen,
+             "last_seen_at": o.last_seen_at, "created_at": o.created_at,
+             "may_set_status": as_person and findings.acts_for(user, o, memo),
              "sessions": [named[s] for s in cited.get(str(o.pk), []) if s in named],
              "hidden_sessions": sum(1 for s in cited.get(str(o.pk), []) if s not in named)} for o in rows]
+
+
+@router.post("/brain/outputs/{output_id}/status", response={200: BrainOutputOut, **refusals(403, 404, 422)},
+             summary="Say where a finding stands: open, accepted, dismissed or done")
+@gate("brain.manage", "self", kind="action")  # its audience's actors (findings.may_set); a person only, off MCP
+def set_output_status(request: HttpRequest, output_id: int, payload: BrainOutputStatusIn) -> dict:
+    """Your call on something learning produced: `accepted` (someone takes it up), `dismissed` (not worth acting on),
+    `done` (acted on) or back to `open`. Yours only if you see it and act for its audience: a system finding's
+    workspace owners and admins (or an ancestor's), a project output's members who may read the project, an output
+    about you. A repeat later folds into it while it is open or accepted. Every change is in its workspace's log."""
+    user = person.the_person(request)
+    out = (BrainOutput.objects.select_related("capability", "status_by")
+           .filter(pk=output_id, state=BrainOutput.ACTIVE, workspace_id__in=wsvc.request_member_slugs(request))
+           .first())
+    if out is None or not outputs.visible_to(user, as_person=True).filter(pk=out.pk).exists():
+        raise ProblemError(404, "No such output", type_=TYPE_NOT_FOUND)
+    if not findings.may_set(user, out):
+        raise ProblemError(403, "Only the people who act for its audience set its status", type_=TYPE_FORBIDDEN)
+    try:
+        out = findings.set_status(out, payload.status, by=user)
+    except ValueError as e:
+        raise ProblemError(422, "Invalid request", type_=TYPE_VALIDATION, detail=str(e)) from e
+    return _outputs_out(user, [out], as_person=True)[0]
 
 
 def _cited(user, rows) -> tuple[dict, dict]:

@@ -220,8 +220,8 @@ def sweep(source_ids=None) -> dict:
     """One pass. `source_ids` narrows it to outputs citing those sources (the prompt run after an act); none
     looks at everything not yet withdrawn (the tick). Returns counts."""
     done = {"withdrawn": 0, "stale": 0, "unchanged": 0, "sources": withdraw_sources_whose_words_are_gone()}
-    live = (BrainOutput.objects.exclude(state=BrainOutput.WITHDRAWN).annotate(key=Cast("pk", CharField()))
-            .values("key"))
+    live = (BrainOutput.objects.exclude(state=BrainOutput.WITHDRAWN).annotate(pk_text=Cast("pk", CharField()))
+            .values("pk_text"))
     lineage = OutputLineage.objects.filter(output_kind=OUTPUT_KIND, output_id__in=live)
     if source_ids is not None:
         affected = set(lineage.filter(source_id__in=list(source_ids)).values_list("output_id", flat=True))
