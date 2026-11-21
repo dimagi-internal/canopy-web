@@ -53,7 +53,11 @@ def emit(run: BrainRun, *, kind: str, title: str, body: dict, source_ids, turn_i
         if not eligible(s, cap, run.purpose, subject):
             raise EmitRefusedError(f"source {s.pk} is no longer open to this feature")
     workspaces = {s.workspace_id for s in sources}
-    if len(workspaces) != 1:
+    if run.scope:
+        # A run started for a workspace reads only its subtree and what it learns is that workspace's: its owners
+        # and their ancestors' see it (`outputs.visible_to`).
+        workspaces = {run.scope}
+    elif len(workspaces) != 1:
         raise EmitRefusedError("an output cites sources of one workspace; emit one per workspace")
     scrubbed = _scrub(body)
     clean_title = redact.redact_text(title or "")[0][:300]

@@ -64,15 +64,14 @@ def test_a_member_sees_their_own_and_counts(w):
     body = client(w["alice"]).get(STATE).json()
     assert body["reads_enabled"] is True and body["workspaces"] == ["acme"]
     assert body["admin_workspaces"] == [] and body["canopy_admin"] is False
-    acme = body["consent"]["workspaces"][0]
-    assert acme["members"] == 5 and acme["agreed"]["project"] == 2 and acme["agreed"]["system"] == 0
-    assert body["consent"]["mine"] == ["project"]
+    assert body["consent"] == {"mine": ["project"], "workspaces": []}           # counts are the owners' and admins'
+
     # Sources: only the ones alice is in (she holds no logs.read), and nobody's name anywhere.
     assert body["sources"] == [{"workspace": "acme", "scope": "yours", "open": 1, "withdrawn": 0, "sealed": {}}]
     assert body["links"] == [{"project": "supply", "name": "Supply", "workspace": "acme", "tier": "core", "count": 1}]
     assert {x["slug"] for x in body["learners"]} >= {"proj", "project-readers"}
     assert next(x for x in body["learners"] if x["slug"] == "proj")["accountable"] == "jj@dimagi.com"
-    assert body["runs"] == {"open": 0, "done": 1, "failed": 0}
+    assert body["runs"] == {"open": 0, "done": 0, "failed": 0}                 # a project run is not a member's
     # Carol's removal is not alice's: her own scope counts none of it.
     assert all(c["removed_recently"] == 0 for c in body["cascade"])
     assert "carol" not in str(body)
@@ -81,6 +80,9 @@ def test_a_member_sees_their_own_and_counts(w):
 def test_an_admin_sees_the_workspace_whole(w):
     body = client(w["owner"]).get(STATE).json()
     assert body["admin_workspaces"] == ["acme"]
+    acme = body["consent"]["workspaces"][0]
+    assert acme["members"] == 5 and acme["agreed"]["project"] == 2 and acme["agreed"]["system"] == 0
+    assert body["runs"] == {"open": 0, "done": 1, "failed": 0}
     assert body["sources"][0]["scope"] == "workspace" and body["sources"][0]["open"] == 2
     cascade = body["cascade"][0]
     assert cascade["scope"] == "workspace" and cascade["removed_recently"] == 1 and cascade["rederive_open"] == 1
@@ -91,9 +93,11 @@ def test_links_and_runs_name_only_sessions_the_viewer_reads(w):
     assert [(x["project"], x["tier"], x["session_id"]) for x in links["links"]] == [
         ("supply", "core", str(w["session"].pk))]
     assert SECRET not in str(links) and links["done"] is True
-    runs = client(w["alice"]).get(RUNS).json()["runs"]
-    assert runs[0]["reads"] == 1 and runs[0]["hidden"] == 0 and runs[0]["subject"] == "supply"
-    assert runs[0]["sessions"][0]["session_id"] == str(w["session"].pk)
+    assert client(w["alice"]).get(RUNS).json()["runs"] == []                    # a project run: the owners'
+    runs = client(w["owner"]).get(RUNS).json()["runs"]
+    assert runs[0]["reads"] == 1 and runs[0]["subject"] == "supply"
+    assert len(runs[0]["sessions"]) + runs[0]["hidden"] == 1
+    assert all(s["session_id"] == str(w["session"].pk) for s in runs[0]["sessions"])
 
 
 def test_a_leg_7_only_reader_sees_no_row_of_the_session(w):
@@ -101,8 +105,7 @@ def test_a_leg_7_only_reader_sees_no_row_of_the_session(w):
     assert reader.get(f"/api/canopy-sessions/{w['session'].pk}").status_code == 200   # leg 7 is open to them
     assert reader.get(LINKS).json()["links"] == []
     assert reader.get(STATE).json()["links"] == []
-    runs = reader.get(RUNS).json()["runs"]
-    assert runs[0]["reads"] == 1 and runs[0]["sessions"] == [] and runs[0]["hidden"] == 1
+    assert reader.get(RUNS).json()["runs"] == []
 
 
 def test_a_non_member_sees_nothing_of_the_workspace(w):

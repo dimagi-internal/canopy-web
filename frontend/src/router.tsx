@@ -339,8 +339,8 @@ export const routeTable: RouteObject[] = [
       { path: '/ide/:id', element: <LazySection><IdePage /></LazySection> },
       { path: '/schedules', element: <SchedulesPage /> },
       { path: '/activity', element: <ActivityPage /> },
-      // Canopy learning as it stands, its runs and what they found: the person's own view, across their workspaces.
-      { path: '/brain', element: <BrainPage /> },
+      // The brain is a workspace's page now (/w/:workspace/brain); the old flat link lands on the active workspace's.
+      { path: '/brain', element: <TenantRedirect to="brain" /> },
       { path: '/new-workspace', element: <FirstRunPage alwaysOfferForm /> },
       // Requests for access to Canopy itself (the public site's form) — they
       // name no workspace, so they live outside /w/:workspace.
@@ -429,6 +429,8 @@ export const routeTable: RouteObject[] = [
       { path: '/w/:workspace/health', element: <WorkspaceHealthPage /> },
       { path: '/w/:workspace/analytics', element: <WorkspaceAnalyticsPage /> },
       { path: '/w/:workspace/network', element: <WorkspaceNetworkPage /> },
+      // Canopy learning for this workspace and the ones below it, as the viewer's role there allows.
+      { path: '/w/:workspace/brain', element: <BrainPage /> },
       { path: '/w/:workspace/shareouts', element: <ShareoutsPage /> },
       { path: '/w/:workspace/shareouts/:period', element: <ShareoutsPage /> },
       { path: '/w/:workspace/walkthroughs', element: <WalkthroughsPage /> },

@@ -19463,12 +19463,14 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /**
-         * Run a learner now (canopy admin)
-         * @description Starts one run of the learner now, as its schedule would: a `system` learner over every session eligible for
-         *     `system`, a `project` learner for the workspace project named by `project` (a handle in its operator's workspace
-         *     tree). A canopy admin as a person only, never through an agent or MCP. Refused, with the reason, when learning reads
-         *     are switched off, the learner is disabled or has no operator or entry, nobody active answers for it, or a run for
-         *     the subject is still open. What it reads and writes is then on `GET /api/brain/state/runs`.
+         * Run a learner now for a workspace (its owner, or a canopy admin)
+         * @description Starts one run of the learner now for the workspace the request is pinned to (`/api/w/<ws>/…`), reading only
+         *     eligible sessions of that workspace and the ones below it; what it finds is that workspace's, seen by its owners
+         *     and its ancestors'. A `system` learner runs once over that subtree; a `project` learner for the project named by
+         *     `project` (a handle of an active workspace project in that subtree). An owner of the workspace (an ancestor's owner
+         *     is one) or a canopy admin, as a person only, never through an agent or MCP; the run answers to them. Refused,
+         *     with the reason, when learning reads are switched off, the learner is disabled or has no operator or entry, or a
+         *     run of it for that subject and workspace is still open. Then on `GET /api/w/<ws>/brain/state/runs`.
          */
         readonly post: operations["run_brain_capability"];
         readonly delete?: never;
@@ -19554,7 +19556,9 @@ export interface paths {
          * What learning produced, for you
          * @description The learning outputs you may read: about you, about people you coach or manage (outputs, never
          *     transcripts; the manager's only as yourself, never through an agent or a turn), about projects you may read, and
-         *     canopy's system findings if you administer. Never a withdrawn or stale one. Newest first.
+         *     canopy's system findings where you own the workspace a run was started for (or one above it). Pinned to a
+         *     workspace (`/api/w/<ws>/…`), only that workspace's and the ones below it. Never a withdrawn or stale one. Newest
+         *     first.
          */
         readonly get: operations["list_outputs"];
         readonly put?: never;
@@ -51469,6 +51473,12 @@ export interface components {
             readonly subject_type: string;
             /** Subject */
             readonly subject: string;
+            /**
+             * Scope
+             * @description The workspace it was started for: it reads that workspace and the ones below.
+             * @default
+             */
+            readonly scope: string;
             /** State */
             readonly state: string;
             /**
@@ -51885,6 +51895,18 @@ export interface components {
              * @description BRAIN_READS_ENABLED: whether any learner may read a session.
              */
             readonly reads_enabled: boolean;
+            /**
+             * Workspace
+             * @description The workspace the read is pinned to; it covers the ones below it too.
+             * @default
+             */
+            readonly workspace: string;
+            /**
+             * Can Run
+             * @description Whether you may start a learner's run here: its owner, or a canopy admin.
+             * @default false
+             */
+            readonly can_run: boolean;
             /** Workspaces */
             readonly workspaces: readonly string[];
             /**
@@ -78439,6 +78461,15 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly brain_state_links: {
@@ -78471,6 +78502,15 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     readonly brain_state_runs: {
@@ -78496,6 +78536,15 @@ export interface operations {
             };
             /** @description Forbidden */
             readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
                 };

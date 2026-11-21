@@ -44,7 +44,7 @@ class StartRefusedError(ValueError):
     """This run cannot be started (a 422 at the route)."""
 
 
-def _subject(cap: BrainCapability, subject) -> tuple[str, str]:
+def _subject(cap: BrainCapability, subject, scope: str = "") -> tuple[str, str]:
     if cap.purpose_class in ABOUT_A_PERSON:
         pk = getattr(subject, "pk", subject)
         if pk is None:
@@ -55,17 +55,20 @@ def _subject(cap: BrainCapability, subject) -> tuple[str, str]:
         if project is None or project.is_personal:
             raise StartRefusedError("a project feature is run for one workspace project")
         return "project", str(project.pk)
-    return "system", ""
+    return "system", scope          # one system subject per workspace scope ("" for none)
 
 
-def subject_of(cap: BrainCapability, subject=None) -> tuple[str, str]:
-    """`(subject_type, subject)` a run of `cap` is about: a person's id, a workspace project's pk, or `system`."""
-    return _subject(cap, subject)
+def subject_of(cap: BrainCapability, subject=None, scope: str = "") -> tuple[str, str]:
+    """`(subject_type, subject)` a run of `cap` is about: a person's id, a workspace project's pk, or `system` and the
+    workspace it was started for."""
+    return _subject(cap, subject, scope)
 
 
-def refusal(cap: BrainCapability, subject=None, *, need_entry: bool = True) -> str:
-    """Why a run of `cap` for `subject` cannot start now, in words a canopy admin can act on, or "". `start` asks
-    the same; "Run now" also needs the plugin command the run starts with (`entry`)."""
+def refusal(cap: BrainCapability, subject=None, *, scope: str = "", need_entry: bool = True,
+            accountable=None) -> str:
+    """Why a run of `cap` for `subject` in `scope` cannot start now, in words its starter can act on, or "". `start`
+    asks the same; "Run now" also needs the plugin command the run starts with (`entry`) and names who answers for the
+    run (`accountable`, else the feature's own admin)."""
     if not readers.enabled():
         return "canopy's learning reads are switched off (BRAIN_READS_ENABLED)"
     if not cap.enabled:
@@ -74,10 +77,10 @@ def refusal(cap: BrainCapability, subject=None, *, need_entry: bool = True) -> s
         return f"{cap.slug} has no operator agent"
     if need_entry and not cap.entry:
         return f"{cap.slug} has no entry (the plugin command a run starts with)"
-    if registry.accountable(cap) is None:
+    if accountable is None and registry.accountable(cap) is None:
         return f"nobody active is accountable for {cap.slug}; a canopy admin enables it again"
     try:
-        subject_type, subject_id = _subject(cap, subject)
+        subject_type, subject_id = _subject(cap, subject, scope)
     except StartRefusedError as e:
         return str(e)
     open_run = BrainRun.objects.filter(capability=cap, subject_type=subject_type, subject=subject_id,
@@ -96,7 +99,10 @@ def prompt(cap: BrainCapability, run: BrainRun) -> str:
 
 
 @transaction.atomic
-def start(cap: BrainCapability, *, subject=None, purpose: str = "", floor: int = 0) -> BrainRun:
+def start(cap: BrainCapability, *, subject=None, purpose: str = "", floor: int = 0, scope: str = "",
+          accountable=None) -> BrainRun:
+    """Start one run of `cap` about `subject`, reading only `scope`'s subtree when given, answering to
+    `accountable` (the person who started it) or else the feature's own admin (`registry.accountable`)."""
     if not readers.enabled():
         raise StartRefusedError("canopy's learning reads are not switched on")
     if not cap.enabled or cap.operator_id is None:
@@ -104,14 +110,14 @@ def start(cap: BrainCapability, *, subject=None, purpose: str = "", floor: int =
     purpose = purpose or (cap.purposes or [""])[0]
     if purpose not in (cap.purposes or []):
         raise StartRefusedError(f"{cap.slug} does not declare the purpose {purpose!r}")
-    accountable = registry.accountable(cap)
+    accountable = accountable or registry.accountable(cap)
     if accountable is None:
         raise StartRefusedError(f"nobody active is accountable for {cap.slug}; a canopy admin enables it again")
-    subject_type, subject_id = _subject(cap, subject)
+    subject_type, subject_id = _subject(cap, subject, scope)
     try:
         with transaction.atomic():
             run = BrainRun.objects.create(capability=cap, subject_type=subject_type, subject=subject_id,
-                                          purpose=purpose, floor=max(0, floor))
+                                          purpose=purpose, floor=max(0, floor), scope=scope)
     except IntegrityError as e:
         raise StartRefusedError(f"a run of {cap.slug} for this subject is already open") from e
     session = session_services.create_session(

@@ -22,7 +22,7 @@ from apps.canopy_sessions import access
 from apps.canopy_sessions.models import Session
 from apps.common import redact
 
-from . import cascade, outputs, registry, reporting, runs, schedule
+from . import cascade, outputs, reading, registry, reporting, runs, schedule
 from .api_state import the_person
 from .models import PROJECT, SYSTEM, BrainCapability, OutputLineage, SourceLink
 from .schemas import (
@@ -107,16 +107,24 @@ def patch_capability(request: HttpRequest, slug: str, payload: CapabilityPatch) 
 
 
 @router.post("/brain/capabilities/{slug}/runs/", response={200: BrainRunState, **refusals(403, 404, 422)},
-             summary="Run a learner now (canopy admin)")
-@gate("superuser", kind="turn")  # starts one confined learning run, accountable to the learner's admin
+             summary="Run a learner now for a workspace (its owner, or a canopy admin)")
+@gate("own", kind="turn")  # a workspace owner for their own subtree, or a canopy admin anywhere; never an agent
 def run_brain_capability(request: HttpRequest, slug: str, payload: RunNowIn) -> dict:
-    """Starts one run of the learner now, as its schedule would: a `system` learner over every session eligible for
-    `system`, a `project` learner for the workspace project named by `project` (a handle in its operator's workspace
-    tree). A canopy admin as a person only, never through an agent or MCP. Refused, with the reason, when learning reads
-    are switched off, the learner is disabled or has no operator or entry, nobody active answers for it, or a run for
-    the subject is still open. What it reads and writes is then on `GET /api/brain/state/runs`."""
-    the_person(request)
-    _superuser(request)
+    """Starts one run of the learner now for the workspace the request is pinned to (`/api/w/<ws>/…`), reading only
+    eligible sessions of that workspace and the ones below it; what it finds is that workspace's, seen by its owners
+    and its ancestors'. A `system` learner runs once over that subtree; a `project` learner for the project named by
+    `project` (a handle of an active workspace project in that subtree). An owner of the workspace (an ancestor's owner
+    is one) or a canopy admin, as a person only, never through an agent or MCP; the run answers to them. Refused,
+    with the reason, when learning reads are switched off, the learner is disabled or has no operator or entry, or a
+    run of it for that subject and workspace is still open. Then on `GET /api/w/<ws>/brain/state/runs`."""
+    user = the_person(request)
+    ws = getattr(request, "workspace_slug", None)
+    if not ws:
+        raise ProblemError(422, "Invalid request", type_=TYPE_VALIDATION,
+                           detail="name the workspace to run it for: call it under /api/w/<workspace>/")
+    if not (getattr(user, "is_superuser", False) or perms.can(user, ws, perms.OWN)):
+        raise ProblemError(403, "Only this workspace's owner or a canopy admin may start a run here",
+                           type_=TYPE_FORBIDDEN)
     cap = BrainCapability.objects.filter(slug=slug).select_related("operator").first()
     if cap is None:
         raise ProblemError(404, "No such learner", type_=TYPE_NOT_FOUND)
@@ -124,22 +132,23 @@ def run_brain_capability(request: HttpRequest, slug: str, payload: RunNowIn) -> 
     if cap.purpose_class == PROJECT:
         if cap.operator_id is None:
             raise ProblemError(422, "Invalid request", type_=TYPE_VALIDATION, detail=f"{cap.slug} has no operator agent")
-        subject = schedule.projects_of(cap).filter(handle=payload.project.strip().lower()).first()
+        subject = (schedule.projects_of(cap).filter(workspace_id__in=reading.subtree(ws),
+                                                    handle=payload.project.strip().lower()).first())
         if subject is None:
             raise ProblemError(422, "Invalid request", type_=TYPE_VALIDATION,
-                               detail="name an active workspace project of the learner's operator workspace")
+                               detail=f"name an active workspace project of {ws} or a workspace below it")
     elif cap.purpose_class != SYSTEM:
         raise ProblemError(422, "Invalid request", type_=TYPE_VALIDATION,
                            detail=f"{cap.slug} learns about one person; its runs are not started here")
-    why = runs.refusal(cap, subject)
+    why = runs.refusal(cap, subject, scope=ws, accountable=user)
     if why:
         raise ProblemError(422, "Invalid request", type_=TYPE_VALIDATION, detail=why)
     try:
-        run = runs.start(cap, subject=subject)
+        run = runs.start(cap, subject=subject, scope=ws, accountable=user)
     except runs.StartRefusedError as e:
         raise ProblemError(422, "Invalid request", type_=TYPE_VALIDATION, detail=str(e)) from e
     return {"id": run.pk, "learner": cap.slug, "purpose": run.purpose, "subject_type": run.subject_type,
-            "subject": subject.handle if subject is not None else "system", "state": run.state,
+            "subject": subject.handle if subject is not None else "system", "scope": run.scope, "state": run.state,
             "created_at": run.created_at, "finished_at": None, "reads": 0, "sessions": [], "hidden": 0}
 
 
@@ -259,9 +268,11 @@ def manager_leg_open(request: HttpRequest) -> bool:
 def list_outputs(request: HttpRequest, subject_type: str = "", subject: str = "", limit: int = 100) -> list[dict]:
     """The learning outputs you may read: about you, about people you coach or manage (outputs, never
     transcripts; the manager's only as yourself, never through an agent or a turn), about projects you may read, and
-    canopy's system findings if you administer. Never a withdrawn or stale one. Newest first."""
+    canopy's system findings where you own the workspace a run was started for (or one above it). Pinned to a
+    workspace (`/api/w/<ws>/…`), only that workspace's and the ones below it. Never a withdrawn or stale one. Newest
+    first."""
     qs = (outputs.visible_to(request.user, as_person=manager_leg_open(request)).select_related("capability")
-          .order_by("-created_at", "-pk"))
+          .filter(workspace_id__in=wsvc.request_member_slugs(request)).order_by("-created_at", "-pk"))
     if subject_type:
         qs = qs.filter(subject_type=subject_type)
     if subject:

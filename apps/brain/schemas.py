@@ -342,6 +342,9 @@ class BrainCascadeCounts(StrictModel):
 
 class BrainStateOut(StrictModel):
     reads_enabled: bool = Field(description="BRAIN_READS_ENABLED: whether any learner may read a session.")
+    workspace: str = Field("", description="The workspace the read is pinned to; it covers the ones below it too.")
+    can_run: bool = Field(False, description="Whether you may start a learner's run here: its owner, or a canopy "
+                          "admin.")
     workspaces: list[str]
     admin_workspaces: list[str] = Field(description="Where you see workspace-wide counts.")
     canopy_admin: bool
@@ -385,6 +388,7 @@ class BrainRunState(StrictModel):
     purpose: str
     subject_type: str
     subject: str
+    scope: str = Field("", description="The workspace it was started for: it reads that workspace and the ones below.")
     state: str
     created_at: dt.datetime
     finished_at: dt.datetime | None = None

@@ -8,6 +8,7 @@ const VIEWS = [
   { to: 'health', label: 'Health' },
   { to: 'analytics', label: 'Analytics' },
   { to: 'network', label: 'Network' },
+  { to: 'brain', label: 'Learning' },
 ]
 
 export function HealthViews({ title }: { title: string }): JSX.Element {
@@ -34,9 +35,6 @@ export function HealthViews({ title }: { title: string }): JSX.Element {
             {v.label}
           </NavLink>
         ))}
-        <NavLink to="/brain" className="inline-flex min-h-9 items-center rounded-md px-3 text-[13px] text-muted-foreground hover:text-foreground-secondary">
-          Learning
-        </NavLink>
       </nav>
     </header>
   )

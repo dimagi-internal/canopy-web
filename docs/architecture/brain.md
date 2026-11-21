@@ -161,7 +161,10 @@ operator's workspace. The built-in
 Outputs (`BrainOutput`) are read by their class's audience (`outputs.visible_to`, `GET /api/brain/outputs/`):
 `individual` by the person, their coaches (the same rule as reading their sessions, and only outputs made in the
 workspaces they coach, `access.coach_scope`) and their manager; `memory` by
-the person; `project` by the project's readers; `system` by canopy admins and the workspace's owners. Only `active`
+the person; `project` by the project's readers; `system` by canopy admins and the owners of the output's workspace
+(inherited ownership counts, so an ancestor's owner sees a descendant's findings and a sub-workspace's or a sibling's
+owner never sees them; a run started for a workspace writes its findings as that workspace's, `emit`). Pinned to a
+workspace, the route answers only that workspace's outputs and the ones below it. Only `active`
 outputs are seen: a withdrawn or stale one is seen by no one. Outputs are derived, so they stay readable while
 `BRAIN_READS_ENABLED` is off; nothing new is made then. `ReportingLine` (`apps/brain/reporting.py`, set by a workspace
 owner by hand, each change an event) is the manager relationship; it opens a manager's reading of their reports'
@@ -192,7 +195,12 @@ cached; `tests/test_brain_project_leg.py` holds the two equal over a world.
 ## A run (`apps/brain/runs.py`, `reading.py`, `emit.py`, `api_run.py`)
 
 The server starts a run of a feature (`runs.start`): a conversation of the operator agent stamped `metadata.brain_run`,
-with no creator and no participant, and a first turn queued as canopy's own, accountable to whoever registered the feature.
+with no creator and no participant, and a first turn queued as canopy's own, accountable to whoever registered the feature
+(or, for Run now, to the person who started it). A run carries a workspace `scope` (`BrainRun.scope`): it reads only
+eligible sources of that workspace and the ones below it (`reading.candidates`, `reading.subtree`, the existing
+`descendant_slugs` walk), and what it emits is that workspace's (`emit`). Eligibility, consent and the cascade are
+unchanged: the scope only narrows what a run reads and who sees what it found. A `system` run's subject is its scope,
+so one run is open per feature and workspace.
 That stamp puts every turn in it in the confined `brain` profile (`published_profiles.BRAIN`,
 `turn_context._brain_rule`): no login, GitHub, mail, vault, Bash or Write, and a caller token that lists only
 `who_is_asking`, `brain_read` and `brain_emit`; REST refuses the token outright. Only that token reaches the two routes,
@@ -270,16 +278,18 @@ The Settings page `/settings/learning` shows them beside the class switches.
 
 A project or system feature with an operator, an enabled flag and a `schedule` (`hourly`, `daily`, `weekly`) is run by the
 `brain.schedule` tick for each of its subjects (`schedule.subjects_of`): a project feature for each ACTIVE workspace project
-of the operator's workspace tree (never a personal one), a system feature once, over every source eligible for `system`
-(subject `system`, `reading.candidates` with no project filter). It runs only when a run is due
+of the operator's workspace tree (never a personal one), scoped to that project's workspace; a system feature for each
+workspace of the operator's tree, each run reading that workspace's subtree. It runs only when a run is due
 (`BrainCursor.last_run_at`) and there is something new: an eligible source no clean run of the feature read for that
 subject (`reading.learned`), so a session linked, agreed to or backfilled late is still read.
 
-**Run now** (`POST /api/brain/capabilities/{slug}/runs/`, the /brain page's button) starts one run the same way
-(`runs.start`), for a canopy admin as a person only (`api_state.the_person`; off MCP): a system feature over its one
-subject, a project feature for the workspace project named by `project`. It is refused with the reason
-(`runs.refusal`) when learning reads are off, the feature is disabled or has no operator or no `entry`, nobody active is
-accountable for it, or a run for the subject is still open; a person-class feature is not started there. A system run's
+**Run now** (`POST /api/w/<ws>/brain/capabilities/{slug}/runs/`, the brain page's button) starts one run the same way
+(`runs.start`), scoped to `<ws>`, for that workspace's owner (an ancestor's owner is one) or a canopy admin, as a person
+only (`api_state.the_person`; off MCP), who then answers for the run; an owner of a sub-workspace cannot start one above
+it, and an unpinned call is a 422. A system feature runs over the subtree; a project feature for the workspace project
+named by `project`, of that subtree. It is refused with the reason (`runs.refusal`) when learning reads are off, the
+feature is disabled or has no operator or no `entry`, or a run of it for that subject and workspace is still open; a
+person-class feature is not started there. A system run's
 outputs are findings: they act on nothing by themselves. A clean end of the run's turn (`signals`, `runs.finish`) makes what it read count as learned; a failed one counts
 nothing and the next interval reads it again. One open run per feature and project (`brain_one_open_run`, so two workers
 cannot both start one); a run open past `BRAIN_RUN_TIMEOUT_SECONDS` (six hours by default) is abandoned as failed.
@@ -297,22 +307,27 @@ hand-checked list; the plumbing is tested with a rule standing in for the model.
 (by the same rule as every session read): ids, titles and how each tie was made, never a word of a transcript. It is what a
 project history reads instead of re-deriving the selection.
 
-## The `/brain` page (`frontend/src/pages/BrainPage.tsx`, `apps/brain/state.py`, `apps/brain/api_state.py`)
+## The brain page (`/w/<ws>/brain`; `frontend/src/pages/BrainPage.tsx`, `apps/brain/state.py`, `api_state.py`)
 
-One person's view of the brain as it stands, linked from Settings → Learning and the health dashboard's views. Its
-routes (`GET /api/brain/state`, `/state/links`, `/state/runs`) are the person's own as themselves
-(`api_state.the_person`), none is an MCP tool, and they write nothing (`tests/test_brain_page.py` captures every query).
-The page holds no copy of a count: the server computes them.
+A workspace's view of the brain, among the health dashboard's views and linked from Settings → Learning (the flat
+`/brain` redirects to the active workspace's). Every read is pinned (`/api/w/<ws>/brain/…`) and covers `<ws>` and the
+workspaces below it the viewer is in (`wsvc.request_workspace_slugs`, the read rule every list follows). Its routes
+(`GET /api/brain/state`, `/state/links`, `/state/runs`) are the person's own as themselves (`api_state.the_person`), none
+is an MCP tool, and they write nothing (`tests/test_brain_page.py` captures every query). The page holds no copy of a
+count. `tests/test_brain_workspace_scope.py` pins each role's slice.
 
-Whether reads are on; consent as counts per workspace and class (never a name); sources open, withdrawn and sealed by
-why; stored links by project and tier, each to its session; the learners with whom each answers to
-(`registry.accountable`) and, for a canopy admin, Run now; runs and what each read; findings (`GET /api/brain/outputs/`,
-`outputs.visible_to`) with their own fields and the sessions they cite; and removal work. Workspace-wide counts
-(sources, removals, the cascade) only where the viewer holds `logs.read`, the health dashboard's gate; elsewhere over
-their own sources and removals (`state._scoped`). A session is named (id, scrubbed title) only if the viewer reads it
-through legs 1 to 6, never the project leg: a link to one they do not read is not listed, and a run's read of it or an
-output's citation of it is a count (`state.run_page`, `api_admin._cited`). A run is listed when it is about a project the
-viewer may read or about them; a canopy admin sees every run, and the list reads again while one is open.
+- **Its owners and admins** (`logs.read`, the health dashboard's gate; an ancestor's owner or admin holds it below)
+  see the aggregate of the workspaces they hold it in: consent as counts per workspace and class (never a name),
+  sources open, withdrawn and sealed by why, link counts by project and tier on its readable projects, removal work
+  (`state._scoped`), and the runs started for those workspaces (`state._runs`). Its owners also see its `system`
+  findings and may Run now (`can_run`).
+- **A member** sees their own: their classes, their own sources and removals, the links of sessions they read, runs
+  about them, and the outputs `outputs.visible_to` already gives them.
+- **Everyone** sees the learners and who answers for each (`registry.accountable`). A session is named (id, scrubbed
+  title) only if the viewer reads it through legs 1 to 6, never the project leg; a run's read of one they do not, or
+  an output's citation of it, is a count (`state.run_page`, `api_admin._cited`). A sub-workspace's owner never sees a
+  sibling's or a parent's aggregate, runs or findings; a canopy admin also sees the unscoped runs. The runs list reads
+  again while one is open.
 
 ## Every reader is placed
 

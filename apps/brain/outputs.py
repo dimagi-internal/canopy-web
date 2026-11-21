@@ -10,7 +10,9 @@
 * `memory`, about a person: that person. (The agents serving them read their HCP entries under their
   own grant; this is not that path.)
 * `project`, about a project: whoever may read the project (`project_read_q`), within its workspace.
-* `system`: canopy's superusers and the owners of the output's workspace.
+* `system`: canopy's superusers and the owners of the output's workspace, which for a run started for a workspace is
+  that workspace (`emit`); an ancestor's owner owns it too (`perms.slugs_with` counts inherited ownership), a
+  sub-workspace's or a sibling's owner does not.
 
 A withdrawn output is seen by no one, and neither is a `stale` one (a source of it was removed: its words are
 emptied and it waits to be derived again from the rest). Outputs are derived, so they stay readable while

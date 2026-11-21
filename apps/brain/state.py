@@ -72,9 +72,11 @@ def _readable_sessions(user, slugs):
 
 # ---- the summary ------------------------------------------------------------------------------------
 
-def consent_counts(user, slugs) -> dict:
-    """Per workspace: how many members agreed to each class for it (`eligibility.covers`), and the viewer's own."""
-    workspaces = list(Workspace.objects.filter(slug__in=slugs).order_by("slug"))
+def consent_counts(user, slugs, admin: set[str]) -> dict:
+    """Per workspace the viewer holds `logs.read` in: how many members agreed to each class for it
+    (`eligibility.covers`); and the viewer's own classes. Counts only, never a name; nothing for a workspace the viewer
+    is only a member of."""
+    workspaces = list(Workspace.objects.filter(slug__in=admin).order_by("slug"))
     members = {ws.slug: wsvc.member_user_ids(ws) for ws in workspaces}
     everyone = set().union(*members.values()) if members else set()
     consents = list(LearningConsent.objects.filter(user_id__in=everyone, revoked_at__isnull=True))
@@ -123,8 +125,13 @@ def _projects(user, slugs, keys) -> dict[str, AgentProject]:
     return {str(p.pk): p for p in _readable_projects(user, slugs).filter(pk__in=ids)}
 
 
-def link_groups(user, slugs) -> list[dict]:
-    counts = list(_links(user, slugs).values_list("subject", "tier").annotate(n=Count("pk")).order_by())
+def link_groups(user, slugs, admin: set[str]) -> list[dict]:
+    """Stored links by project and tier: every link on a readable project of a workspace the viewer holds `logs.read`
+    in (counts: no session is named by them), and elsewhere the links of sessions the viewer reads."""
+    keys = (_readable_projects(user, admin).annotate(key=Cast("pk", CharField())).values("key"))
+    found = SourceLink.objects.filter(Q(pk__in=_links(user, slugs).values("pk"))
+                                      | Q(subject_type=SourceLink.PROJECT_SUBJECT, subject__in=keys))
+    counts = list(found.values_list("subject", "tier").annotate(n=Count("pk")).order_by())
     projects = _projects(user, slugs, {s for s, _t, _n in counts})
     rows = [{"project": p.handle, "name": p.name, "workspace": p.workspace_id, "tier": tier, "count": n}
             for subject, tier, n in counts if (p := projects.get(subject)) is not None]
@@ -138,16 +145,21 @@ def learners() -> list[dict]:
              "accountable": _name(registry.accountable(c))} for c in caps]
 
 
-def _runs(user, slugs):
+def _runs(user, slugs, admin: set[str]):
+    """The runs the viewer sees at this scope: those started for a workspace they hold `logs.read` in (a run started
+    for an ancestor is not theirs to see unless they hold it there too), project runs on its projects, and runs about
+    the viewer themselves. A canopy admin sees every run of the scope and the unscoped ones."""
+    where = set(admin) | (set(slugs) if getattr(user, "is_superuser", False) else set())
+    keys = _readable_projects(user, where).annotate(key=Cast("pk", CharField())).values("key")
+    q = (Q(scope__in=where) | Q(subject_type="project", subject__in=keys, scope="")
+         | Q(subject_type="person", subject=str(user.pk)))
     if getattr(user, "is_superuser", False):
-        return BrainRun.objects.all()
-    keys = _readable_projects(user, slugs).annotate(key=Cast("pk", CharField())).values("key")
-    return BrainRun.objects.filter(Q(subject_type="project", subject__in=keys)
-                                   | Q(subject_type="person", subject=str(user.pk)))
+        q |= Q(scope="", subject_type="system")
+    return BrainRun.objects.filter(q)
 
 
-def run_counts(user, slugs) -> dict:
-    got = dict(_runs(user, slugs).values_list("state").annotate(n=Count("pk")).order_by())
+def run_counts(user, slugs, admin: set[str]) -> dict:
+    got = dict(_runs(user, slugs, admin).values_list("state").annotate(n=Count("pk")).order_by())
     return {s: got.get(s, 0) for s in (BrainRun.OPEN, BrainRun.DONE, BrainRun.FAILED)}
 
 
@@ -189,8 +201,8 @@ def summary(user, slugs) -> dict:
     return {"reads_enabled": bool(getattr(settings, "BRAIN_READS_ENABLED", False)),
             "workspaces": sorted(slugs), "admin_workspaces": sorted(admin),
             "canopy_admin": bool(getattr(user, "is_superuser", False)),
-            "consent": consent_counts(user, slugs), "sources": source_counts(user, slugs, admin),
-            "links": link_groups(user, slugs), "learners": learners(), "runs": run_counts(user, slugs),
+            "consent": consent_counts(user, slugs, admin), "sources": source_counts(user, slugs, admin),
+            "links": link_groups(user, slugs, admin), "learners": learners(), "runs": run_counts(user, slugs, admin),
             "cascade": cascade_counts(user, slugs, admin)}
 
 
@@ -224,7 +236,7 @@ def run_page(user, slugs, *, before: int = 0, limit: int = 25) -> dict:
     """Runs, newest first, with what each read: the sessions the viewer reads by id and title, the rest a count."""
     limit = _limit(limit)
     slugs = set(slugs)
-    qs = _runs(user, slugs).select_related("capability").order_by("-pk")
+    qs = _runs(user, slugs, _admin_slugs(user, slugs)).select_related("capability").order_by("-pk")
     if before:
         qs = qs.filter(pk__lt=before)
     page = list(qs[:limit + 1])
@@ -242,9 +254,9 @@ def run_page(user, slugs, *, before: int = 0, limit: int = 25) -> dict:
         shown = [seen[s] for s in got if s in seen]
         p = projects.get(r.subject) if r.subject_type == "project" else None
         subject = (p.handle if p is not None else "a project") if r.subject_type == "project" else (
-            "you" if r.subject == str(user.pk) else r.subject_type)
+            "you" if r.subject_type == "person" and r.subject == str(user.pk) else r.subject_type)
         out.append({"id": r.pk, "learner": r.capability.slug, "purpose": r.purpose, "subject_type": r.subject_type,
-                    "subject": subject, "state": r.state, "created_at": r.created_at, "finished_at": r.finished_at,
+                    "subject": subject, "scope": r.scope, "state": r.state, "created_at": r.created_at, "finished_at": r.finished_at,
                     "reads": len(got), "sessions": [{"session_id": s.pk, "workspace": s.workspace_id,
                                                      "title": redact.redact_text(s.title or "")[0]} for s in shown],
                     "hidden": len(got) - len(shown)})
