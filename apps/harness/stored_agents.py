@@ -11,7 +11,8 @@ must not refuse such an agent for, is decided here, once:
 - a stored agent's turn gets no GitHub identity (`api_runners_credentials.turn_github_token`);
 - a laptop has no emdash project for a stored agent and needs none (`routing.cannot_serve`).
 
-Read defensively: the model fields belong to the agents app (`docs/architecture/stored-agents.md`)."""
+Read defensively: the model fields belong to the agents app. Rules: `docs/architecture/runners.md` § A stored agent
+on a runner."""
 from __future__ import annotations
 
 STORED = "stored"

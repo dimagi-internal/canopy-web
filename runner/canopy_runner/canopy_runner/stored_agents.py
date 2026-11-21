@@ -1,5 +1,5 @@
 """Stored agents on a laptop: an agent whose definition is kept in canopy-web, not in a
-GitHub repo (canopy-web docs/architecture/stored-agents.md).
+GitHub repo (canopy-web docs/architecture/runners.md § A stored agent on a runner).
 
 A laptop runs an agent in a checkout of its repo — an emdash project, or a desktop
 worktree. A stored agent has no repo; its checkout is `~/.canopy/agents/<slug>`, the same

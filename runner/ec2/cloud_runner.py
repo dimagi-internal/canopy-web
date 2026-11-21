@@ -8178,7 +8178,7 @@ def agents_unprepared() -> list[str] | None:
 
 # ── stored agents ────────────────────────────────────────────────────────────
 # A STORED agent's definition is a file tree kept in canopy-web, not a GitHub repo
-# (canopy-web docs/architecture/stored-agents.md). The claim says so
+# (canopy-web docs/architecture/runners.md § A stored agent on a runner). The claim says so
 # (`turn["definition"]["source"] == "stored"`), and `canopy agent prepare --runner`
 # materializes its live revision into AGENT_ROOT/<slug> as a git repo whose HEAD is
 # `refs/remotes/origin/main` and whose origin is `canopy://<workspace>/<slug>`. So
