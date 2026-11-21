@@ -31,8 +31,7 @@ def _hidden(item: AttentionRow, mark: Hidden | None, now: dt.datetime) -> bool:
 
 
 def attention(request, *, now: dt.datetime | None = None) -> dict[str, list[AttentionRow]]:
-    """`{"now": [...], "quiet": [...], "hidden": [...], "running": [...]}`, each
-    newest first. `running` is never quiet or hidden: it is what is moving.
+    """`{"now": [...], "quiet": [...], "hidden": [...]}`, each newest first.
 
     A user-level view: every organisation the caller is in, each gathered on
     its own (`wsvc.each_organisation`), so no source reads two in one query."""
@@ -40,11 +39,9 @@ def attention(request, *, now: dt.datetime | None = None) -> dict[str, list[Atte
     found = wsvc.each_organisation(request, lambda: gather(request, slugs=wsvc.request_workspace_slugs(request)))
     items = list({i.key: i for i in found}.values())
     marks = {g.key: g for g in Hidden.objects.filter(user=request.user, key__in=[i.key for i in items])}
-    out: dict[str, list[AttentionRow]] = {"now": [], "quiet": [], "hidden": [], "running": []}
+    out: dict[str, list[AttentionRow]] = {"now": [], "quiet": [], "hidden": []}
     for item in sorted(items, key=lambda i: i.last_activity_at, reverse=True):
-        if item.in_flight:
-            out["running"].append(item)
-        elif _hidden(item, marks.get(item.key), now):
+        if _hidden(item, marks.get(item.key), now):
             out["hidden"].append(item)
         elif now - item.last_activity_at > QUIET_AFTER:
             out["quiet"].append(item)

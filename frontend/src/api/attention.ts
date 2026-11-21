@@ -15,10 +15,9 @@ const normalize = (i: AttentionRowWire): AttentionRow => ({
   actions: Array.from(i.actions ?? []),
   target: { ...(i.target ?? {}) },
 })
-export type Attention = { now: AttentionRow[]; quiet: AttentionRow[]; hidden: AttentionRow[]; running: AttentionRow[] }
+export type Attention = { now: AttentionRow[]; quiet: AttentionRow[]; hidden: AttentionRow[] }
 /** What an item asks of you — branch on this, never on `reason` (display text). */
 export type AttentionState = AttentionRow['state']
-
 
 /** Everything waiting on you across every workspace you are in, newest first:
  *  one user-level read (`/api/me/attention/`) — the server reads each
@@ -31,7 +30,6 @@ export async function loadAttention(): Promise<Attention> {
     now: Array.from(body.now, normalize),
     quiet: Array.from(body.quiet, normalize),
     hidden: Array.from(body.hidden, normalize),
-    running: Array.from(body.running ?? [], normalize),
   }
 }
 

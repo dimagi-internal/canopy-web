@@ -4,7 +4,7 @@ from typing import Literal
 from ninja import Field, Schema
 
 # Mirrors `types.STATES`; `tests/test_attention.py` keeps the two equal.
-State = Literal["asking", "your_move", "parked", "stalled", "running", "running_auto"]
+State = Literal["asking", "your_move"]
 
 
 class AttentionRowOut(Schema):
@@ -37,8 +37,6 @@ class AttentionOut(Schema):
     quiet: list[AttentionRowOut]
     # Hidden by this person; each comes back when something new happens on it.
     hidden: list[AttentionRowOut]
-    # Not waiting on you: yours and in flight right now (a session being worked).
-    running: list[AttentionRowOut] = Field(default_factory=list)
 
 
 class HideIn(Schema):

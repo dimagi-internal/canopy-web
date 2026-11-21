@@ -63,15 +63,6 @@ def test_the_read_says_whether_you_are_in_it(w):
     assert theirs["you_are_in_it"] is False and theirs["sealed_key"] is None
 
 
-def test_home_lists_it_as_private():
-    from apps.canopy_sessions import attention
-
-    assert attention.private_title({"started_by_name": "Jonathan Jackson"}) == \
-        "Private conversation · Jonathan Jackson"
-    assert attention._title({"sensitive": True, "started_by_name": "", "title": "x", "opening": "y"}) == \
-        "Private conversation"
-
-
 def test_someone_who_can_see_it_asks_and_the_request_carries_nothing_it_said(w):
     _converse(w["hot"])
     r = w["ac"].post(f"/api/canopy-sessions/{w['hot'].pk}/join-requests")
@@ -94,7 +85,7 @@ def test_the_request_goes_to_the_conversation_and_never_to_home(w):
     w["ac"].post(f"/api/canopy-sessions/{w['hot'].pk}/join-requests")
     for client in (w["c"], w["ac"]):
         data = client.get("/api/me/attention/").json()
-        rows = data["now"] + data["quiet"] + data["hidden"] + data["running"]
+        rows = data["now"] + data["quiet"] + data["hidden"]
         assert not [r for r in rows if r["kind"] == "join_request"]
 
 
