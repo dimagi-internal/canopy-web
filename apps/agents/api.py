@@ -49,7 +49,7 @@ from apps.workspaces import services as wsvc
 from . import access, agent_login, profile_settings, command_sync, creation, mailbox, services
 from . import move as agent_move
 from .creation import repo_url
-from .credentials import delegations, licenses, login_test_key
+from .credentials import delegations, licenses, login_test_key, login_test_page
 from .gates import (
     agent_for_admin,
     agent_for_read,
@@ -93,6 +93,8 @@ from .schemas import (
     RepositoryIn,
     SlackEnabledIn,
     SlackEnabledOut,
+    TestPagePermissionIn,
+    TestPagePermissionOut,
     TestVaultKeyIn,
     TestVaultKeyOut,
     TurnModeIn,
@@ -1020,6 +1022,51 @@ def set_test_vault_key(request: HttpRequest, slug: str, payload: TestVaultKeyIn)
                       before={"enabled": before["enabled"], "has_key": before["has_key"]},
                       after={"enabled": after["enabled"], "has_key": after["has_key"]})
     return TestVaultKeyOut(**after)
+
+
+@router.get("/{slug}/test-page-permission", response=TestPagePermissionOut,
+            summary="Whether the agent's own login may confirm its own page permission without a passkey")
+@gate("agent-admin")
+def get_test_page_permission(request: HttpRequest, slug: str) -> TestPagePermissionOut:
+    """The switch, and how many live act-as-you permissions on host sites' pages the
+    agent's own login holds. Owner or admin only."""
+    agent = agent_for_admin(request, slug)
+    return TestPagePermissionOut(**login_test_page.state(agent))
+
+
+@router.put("/{slug}/test-page-permission", response=TestPagePermissionOut,
+            summary="Turn the agent login's test page permissions on or off")
+# on: browser session + passkey step-up (a token is refused); off: any caller who may turn it on
+@gate("agent-admin", setting=True, step_up=True)
+def set_test_page_permission(request: HttpRequest, slug: str,
+                             payload: TestPagePermissionIn) -> TestPagePermissionOut:
+    """`{enabled}`. FOR TESTING: while on, the agent's own canopy login may confirm its
+    OWN act-as-you permission on a host site's page without a passkey
+    (`POST /api/me/host-grants/{id}/confirm-as-agent`, with the login's own token or
+    browser session, never the page's panel token), so a headless test can run the
+    page-agent flow as the agent itself. It never confirms a person's permission, and
+    the login still registers no passkey and steps up nowhere. Turning it on needs an
+    owner or admin of the agent at a browser with a fresh passkey step-up; 409
+    `no_agent_login` when the agent has no login of its own. Turning it off stops every
+    unexpired page permission the login holds."""
+    agent = agent_for_admin(request, slug)
+    before = login_test_page.state(agent)
+    if payload.enabled:
+        # Letting a login skip a passkey is a person's act, at a browser.
+        stepup.require_recent_step_up(request)
+        try:
+            login_test_page.enable(agent)
+        except login_test_key.NotAPerson as exc:
+            raise ProblemError(exc.status, "Test page permissions", type_=TYPE_CONFLICT, detail=str(exc),
+                               members={"error": exc.code}) from exc
+    else:
+        # Taking it away never waits on a passkey.
+        login_test_page.disable(agent)
+    after = login_test_page.state(agent)
+    audit.note_change(scope=f"agent:{agent.slug}/test-page-permission",
+                      before={"enabled": before["enabled"], "live_grants": before["live_grants"]},
+                      after={"enabled": after["enabled"], "live_grants": after["live_grants"]})
+    return TestPagePermissionOut(**after)
 
 
 @router.get("/{slug}/runtime", response=AgentRuntimeOut,

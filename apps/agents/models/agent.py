@@ -191,6 +191,11 @@ class Agent(models.Model):
     # admin turns it on from a browser behind a passkey step-up. The key opens nothing
     # but conversation keys of conversations that login is in — never a vault.
     test_vault_key = models.BooleanField(default=False)
+    # The agent's own login may confirm its OWN act-as-you permission on a host site's
+    # page without a passkey, for TESTING, so a headless test can run the page-agent flow
+    # as the agent itself (apps/agents/credentials/login_test_page.py). Off by default; an
+    # agent admin turns it on from a browser behind a passkey step-up.
+    test_page_permission = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

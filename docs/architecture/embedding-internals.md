@@ -226,6 +226,12 @@ page within their own access. The lifecycle is the docstring of
   one for you) and `/api/embed/host-grant` (the panel's line, its prompt, and Stop). A
   Stop pressed on Settings can race one re-mint of an open tab, which then shows in
   both places to stop again.
+- **An agent's own login confirms without a passkey only under its test page
+  permissions** (`apps/agents/credentials/login_test_page.py`): its own token or browser
+  session on `/api/me/host-grants/{id}/confirm-as-agent`, never the panel's token, never a
+  person's grant; the same `host_grants.confirm` and View index refresh as a passkey
+  confirm. Rule and limits: [access-confinement-and-act-as.md](access-confinement-and-act-as.md)
+  § Acting as the person on a host site.
 - **A View's card button says it is the person's.** `host_gateway.view_call` carries
   `Canopy-View` on the View's own `tools/call` (when the listed tool's
   `_meta.ui.resourceUri` is that View), as a View's `resources/read` does. An agent's

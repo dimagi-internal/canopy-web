@@ -1,9 +1,10 @@
 import { VaultSection } from '@/components/vault/VaultSection'
 import { AgentCanopyLogin } from '@/pages/agents/AgentCanopyLogin'
+import { AgentTestPagePermissionSection } from '@/pages/agents/AgentTestPagePermissionSection'
 import { AgentTestVaultKeySection } from '@/pages/agents/AgentTestVaultKeySection'
 
 // What is about the AGENT, not its vault: how it signs in to canopy (its login, and how
-// that renews), and — closed, for testing — the test vault key. The vault (secrets, who
+// that renews), and — closed, for testing — the test vault key and test page permissions. The vault (secrets, who
 // can open them, storage and key) is `AgentSecretsPanel`, drawn by the shared `VaultView`.
 
 export function AgentSecurityPanel({
@@ -26,6 +27,13 @@ export function AgentSecurityPanel({
         <VaultSection id="agent-test-key" title="Test vault key" anchors={['cred-test-vault-key']}
           summary="for testing only">
           <AgentTestVaultKeySection slug={agent.slug} canEdit={canEdit} />
+          {!canEdit && (
+            <p className="text-[12px] text-muted-foreground">Only {agent.name ?? agent.slug}&rsquo;s admins can change this.</p>
+          )}
+        </VaultSection>
+        <VaultSection id="agent-test-page" title="Test page permissions" anchors={['cred-test-page-permission']}
+          summary="for testing only">
+          <AgentTestPagePermissionSection slug={agent.slug} canEdit={canEdit} />
           {!canEdit && (
             <p className="text-[12px] text-muted-foreground">Only {agent.name ?? agent.slug}&rsquo;s admins can change this.</p>
           )}
