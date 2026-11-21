@@ -707,6 +707,8 @@ def _thread_history(turn, ref: dict) -> dict | None:
 def _agent_repo(agent) -> str | None:
     if agent is None:
         return None
+    if agent.source == "stored":
+        return ""  # no repo: the own-repo rail has nothing to allow
     from apps.agents.credentials.delegations import agent_repo
 
     return agent_repo(agent)
@@ -754,7 +756,9 @@ def _ship_grant(turn, agent, rel: str) -> dict | None:
     * the target names a GitHub repo (`repo_url`) — the grant is scoped to it,
       so with no repo there is nothing to grant.
     """
-    if agent is None or not turn.agent_id:
+    if agent is None or not turn.agent_id or agent.source == "stored":
+        # A stored agent has no repo to ship to: it changes itself only by a draft a person
+        # publishes (docs/architecture/stored-agents.md).
         return None
     if turn.initiator_kind != who.USER or not is_verified(turn):
         return None

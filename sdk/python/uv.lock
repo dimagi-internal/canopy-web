@@ -233,7 +233,7 @@ wheels = [
 
 [[package]]
 name = "dimagi-canopy"
-version = "0.34.0"
+version = "0.35.0"
 source = { editable = "." }
 dependencies = [
     { name = "pyjwt", extra = ["crypto"] },

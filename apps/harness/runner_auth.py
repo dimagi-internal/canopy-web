@@ -48,6 +48,10 @@ _RULES: tuple[tuple[frozenset[str], str], ...] = (
     # (`apps/agents/api.post_bootstrap_report`). Missing here, every report a
     # keyless box made was refused — 401 on the revoked PAT, 403 on its own token.
     (frozenset({"POST"}), rf"/api/agents/{_SLUG}/bootstrap-report"),
+    # A stored agent has no repository: its box fetches the definition it materializes,
+    # for an agent the box may hold, published revisions only, and no credential in it
+    # (`apps/agent_definitions/api.get_agent_definition_archive`).
+    (frozenset({"GET"}), rf"/api/agents/{_SLUG}/definition/archive"),
     (frozenset({"GET"}), r"/api/workspaces"),
     # Its device key: re-registering after an ECDH key change.
     (frozenset({"GET", "POST"}), r"/api/runner-device-keys"),

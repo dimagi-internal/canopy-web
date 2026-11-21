@@ -20,6 +20,7 @@ from .agent import (
     PreferredAgent,
     SenderTrust,
 )
+from .definition import AgentDefinitionBlob, AgentDefinitionRevision
 from .kb import (
     KbPassage,
     KbSource,
@@ -75,6 +76,8 @@ __all__ = [
     "AgentCredential",
     "AgentCredentialAlert",
     "AgentCredentialRead",
+    "AgentDefinitionBlob",
+    "AgentDefinitionRevision",
     "AgentGoogleMint",
     "AgentGrant",
     "AgentLicense",

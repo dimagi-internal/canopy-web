@@ -494,6 +494,15 @@ class AgentActorRouteIn(StrictModel):
     turn_mode: Literal["", "manual", "auto"] = ""
 
 
+class AgentSourceOut(StrictModel):
+    """Where a runner gets the agent's definition: its repo (`repo`), or the stored
+    revision `revision` named by `root_sha256` (`stored`, docs/architecture/stored-agents.md)."""
+
+    source: Literal["repo", "stored"] = "repo"
+    revision: int | None = None
+    root_sha256: str | None = None
+
+
 class AgentRuntimeOut(StrictModel):
     """What a runner needs from canopy-web to run this agent: the repo pointer,
     the secret-reference names to resolve from the env store, the agent CLIs it
@@ -507,6 +516,9 @@ class AgentRuntimeOut(StrictModel):
     #: The agent CLIs it runs on, preferred first, and a model for each it names.
     clis: list[str] = ["claude-code"]
     cli_models: dict[str, str] = {}
+    #: Where the definition comes from: a stored agent has no `repo_url`, and its box
+    #: materializes `definition.revision` from canopy instead of cloning.
+    definition: AgentSourceOut = Field(default_factory=AgentSourceOut)
 
 
 class AgentPluginOut(StrictModel):
@@ -561,6 +573,8 @@ class AgentOut(StrictModel):
     # operational state rather than repo config, so the self-publish upsert
     # cannot turn it on.
     slack_enabled: bool = False
+    #: `stored` when canopy keeps the definition (no git repo), else `repo`.
+    source: Literal["repo", "stored"] = "repo"
     # The PLUGIN this instance runs, named exactly as the caller's
     # `canopy-agents` catalog names it (apps/plugins/services.py), so
     # `/plugin install <name>@canopy-agents` and `/<name>:setup` are right.
@@ -592,6 +606,10 @@ class AgentDefinitionOut(StrictModel):
                     "reach them?' is a fleet question. Names tenants only: no "
                     "board, credentials or turns are disclosed.",
     )
+    #: `stored`: canopy keeps the definition (no repo); `revision` is the live one.
+    source: Literal["repo", "stored"] = "repo"
+    revision: int | None = None
+    root_sha256: str | None = None
 
 
 class AgentOwnerOut(StrictModel):

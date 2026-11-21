@@ -5496,6 +5496,269 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/stored": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Create an agent whose definition canopy stores (no GitHub repository)
+         * @description Stamps the agent from the canopy agent factory (the same scaffold `/canopy:create-agent`
+         *     writes) and stores it as revision 1, published. No repository and no GitHub token: its
+         *     runners materialize the definition from canopy. The creator owns it (from inside an agent's
+         *     turn, the person who asked for that turn). 409 when the slug is taken.
+         */
+        readonly post: operations["create_stored_agent"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/definition/convert": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Turn a repo agent into a stored one, from its files
+         * @description The uploaded files (a repo's tracked files) become revision 1, published, and the agent
+         *     stops pointing at a repository (`repo_url` becomes ""). The file policy applies to every file:
+         *     one outside it refuses the whole conversion (422 with `problems`). The files canopy writes
+         *     itself (`.claude-plugin/`, `.claude/settings.json`, `bin/<slug>-email`, `.gitignore`) are
+         *     ignored if uploaded and rewritten. 409 for an agent that is already stored.
+         */
+        readonly post: operations["convert_agent_definition"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/definition": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * An agent's stored definition: live, draft, policy
+         * @description `source` says where the definition lives. For a stored agent, the live revision, the one
+         *     draft (if any) and the file policy every write is held to. `can_draft` / `can_publish` say
+         *     what the caller may do here.
+         */
+        readonly get: operations["get_agent_definition"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/definition/revisions": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Every revision of a stored agent's definition, newest first */
+        readonly get: operations["list_agent_definition_revisions"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/definition/revisions/{number}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * One revision of a stored agent's definition, with its file tree
+         * @description `tree` is `{path: {sha256, size, executable}}`; `root_sha256` is its manifest root
+         *     (`canopy_sdk.agent_definition.manifest_root`).
+         */
+        readonly get: operations["get_agent_definition_revision"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/definition/revisions/{number}/files/{path}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * One file of a revision, as it is stored
+         * @description The file's bytes as `text/plain; charset=utf-8` (every stored file is UTF-8 text). 404
+         *     for a path the revision does not hold.
+         */
+        readonly get: operations["get_agent_definition_file"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/definition/revisions/{number}/diff": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What changed in a revision, file by file
+         * @description A unified diff per changed file, from `against` to `number`. Without `against`, the
+         *     revision is compared with the one it was made on (its parent), or with nothing.
+         */
+        readonly get: operations["diff_agent_definition_revisions"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/definition/drafts": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Propose changes to a stored agent's definition (creates or replaces its one draft)
+         * @description `changes` are applied to the LIVE revision `base`: `content` (text) or `content_b64`
+         *     writes a file, `content: null` deletes one. The result replaces any earlier draft (whose
+         *     approval request, if any, is withdrawn). A `base` that is not live is 409 `stale_base`; a
+         *     change the file policy refuses is 422 with `problems`. Nothing goes live: a person who
+         *     administers the agent publishes the draft. When an agent writes it (its own login, or any
+         *     turn's token), canopy files an approval request (`approval_id`) to the agent's owner and
+         *     admins, who approve it from its page with a passkey.
+         */
+        readonly post: operations["draft_agent_definition"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/definition/revisions/{number}/publish": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Publish a stored agent's draft: it becomes what its runners run
+         * @description Draft `number` goes live and the old live revision is superseded; the files canopy writes
+         *     itself are rewritten for it, and the agent's skill catalog is read again from it. 409 when
+         *     `number` is not the draft, or was drafted on a revision that is no longer live. 403 for an
+         *     agent's own login or any token a turn holds: an agent proposes, a person publishes.
+         */
+        readonly post: operations["publish_agent_definition"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/definition/revisions/{number}/discard": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Discard a stored agent's draft
+         * @description The draft is kept, marked discarded, and its approval request (if any) is withdrawn.
+         */
+        readonly post: operations["discard_agent_definition"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/definition/rollback": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Roll a stored agent back to an earlier revision
+         * @description A NEW revision with revision `revision`'s files is created and published; history is
+         *     never rewritten. Any open draft is discarded. 409 for a revision that was never published.
+         */
+        readonly post: operations["rollback_agent_definition"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/definition/archive": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * A revision of a stored agent as a gzip'd tar
+         * @description `application/gzip`: a tar of the revision's files (regular files only, mode 0644 or
+         *     0755), with `X-Canopy-Revision`, `X-Canopy-Root-Sha256`, `X-Canopy-Published-At`
+         *     (ISO 8601, UTC) and `X-Canopy-Workspace`. `revision` is a number or `live`. A runner's own token reads it for an
+         *     agent its box may hold, live or published revisions only; a person, any revision of an
+         *     agent they can see. It holds no credential.
+         */
+        readonly get: operations["get_agent_definition_archive"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/": {
         readonly parameters: {
             readonly query?: never;
@@ -5954,7 +6217,8 @@ export interface paths {
          *     runs as this agent, the same bar the upsert holds `DEFINITION_FIELDS` to. The
          *     cloud boxes that take its turns are asked to re-run their bootstrap, as a
          *     repo change through the upsert does.
-         *     A value that is not a github.com repository is a 422.
+         *     A value that is not a github.com repository is a 422; a stored agent has no
+         *     repository (409).
          */
         readonly patch: operations["set_repository"];
         readonly trace?: never;
@@ -6608,7 +6872,10 @@ export interface paths {
         };
         /** List the agent's skill catalog */
         readonly get: operations["list_skills"];
-        /** Replace the agent's skill catalog */
+        /**
+         * Replace the agent's skill catalog
+         * @description 409 for a stored agent: its catalog is read from its live revision when it is published.
+         */
         readonly put: operations["replace_skills"];
         readonly post?: never;
         readonly delete?: never;
@@ -30334,6 +30601,248 @@ export interface components {
              */
             readonly projects: readonly components["schemas"]["SpawnedProjectOut"][];
         };
+        /** StoredAgentOut */
+        readonly StoredAgentOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Name */
+            readonly name: string;
+            /** Workspace */
+            readonly workspace: string;
+            /**
+             * Source
+             * @default stored
+             * @constant
+             */
+            readonly source: "stored";
+            /** Revision */
+            readonly revision: number;
+            /** Root Sha256 */
+            readonly root_sha256: string;
+        };
+        /** StoredAgentIn */
+        readonly StoredAgentIn: {
+            /** Name */
+            readonly name: string;
+            /** Slug */
+            readonly slug: string;
+            /** Mandate */
+            readonly mandate: string;
+            /**
+             * Stakeholders
+             * @default
+             */
+            readonly stakeholders: string;
+            /** Workspace */
+            readonly workspace: string;
+        };
+        /** DefinitionAuthorOut */
+        readonly DefinitionAuthorOut: {
+            /**
+             * Email
+             * @default
+             */
+            readonly email: string;
+            /**
+             * By Agent
+             * @default false
+             */
+            readonly by_agent: boolean;
+            /** Turn Id */
+            readonly turn_id?: string | null;
+        };
+        /** DefinitionRevisionSummaryOut */
+        readonly DefinitionRevisionSummaryOut: {
+            /** Number */
+            readonly number: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "draft" | "published" | "superseded" | "discarded";
+            /** Root Sha256 */
+            readonly root_sha256: string;
+            /** Message */
+            readonly message: string;
+            /** Parent */
+            readonly parent?: number | null;
+            readonly author: components["schemas"]["DefinitionAuthorOut"];
+            /** Files */
+            readonly files: number;
+            /** Size */
+            readonly size: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Published At */
+            readonly published_at?: string | null;
+            /** Published By */
+            readonly published_by?: string | null;
+            /** Approval Id */
+            readonly approval_id?: number | null;
+        };
+        /** DefinitionConvertIn */
+        readonly DefinitionConvertIn: {
+            /** Files */
+            readonly files: readonly components["schemas"]["DefinitionFileIn"][];
+            /**
+             * Message
+             * @default
+             */
+            readonly message: string;
+        };
+        /** DefinitionFileIn */
+        readonly DefinitionFileIn: {
+            /** Path */
+            readonly path: string;
+            /** Content B64 */
+            readonly content_b64: string;
+            /**
+             * Executable
+             * @default false
+             */
+            readonly executable: boolean;
+        };
+        /** DefinitionOut */
+        readonly DefinitionOut: {
+            /**
+             * Source
+             * @enum {string}
+             */
+            readonly source: "repo" | "stored";
+            readonly live?: components["schemas"]["DefinitionRevisionSummaryOut"] | null;
+            readonly draft?: components["schemas"]["DefinitionRevisionSummaryOut"] | null;
+            readonly policy: components["schemas"]["DefinitionPolicyOut"];
+            /**
+             * Can Draft
+             * @default false
+             */
+            readonly can_draft: boolean;
+            /**
+             * Can Publish
+             * @default false
+             */
+            readonly can_publish: boolean;
+        };
+        /** DefinitionPolicyOut */
+        readonly DefinitionPolicyOut: {
+            /** Max Files */
+            readonly max_files: number;
+            /** Max File Bytes */
+            readonly max_file_bytes: number;
+            /** Max Tree Bytes */
+            readonly max_tree_bytes: number;
+            /** Editable */
+            readonly editable: readonly string[];
+            /** Generated */
+            readonly generated: readonly string[];
+        };
+        /** DefinitionRevisionOut */
+        readonly DefinitionRevisionOut: {
+            /** Number */
+            readonly number: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "draft" | "published" | "superseded" | "discarded";
+            /** Root Sha256 */
+            readonly root_sha256: string;
+            /** Message */
+            readonly message: string;
+            /** Parent */
+            readonly parent?: number | null;
+            readonly author: components["schemas"]["DefinitionAuthorOut"];
+            /** Files */
+            readonly files: number;
+            /** Size */
+            readonly size: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Published At */
+            readonly published_at?: string | null;
+            /** Published By */
+            readonly published_by?: string | null;
+            /** Approval Id */
+            readonly approval_id?: number | null;
+            /** Tree */
+            readonly tree: {
+                readonly [key: string]: components["schemas"]["DefinitionTreeEntryOut"];
+            };
+        };
+        /** DefinitionTreeEntryOut */
+        readonly DefinitionTreeEntryOut: {
+            /** Sha256 */
+            readonly sha256: string;
+            /** Size */
+            readonly size: number;
+            /** Executable */
+            readonly executable: boolean;
+        };
+        /** DefinitionDiffOut */
+        readonly DefinitionDiffOut: {
+            /** Revision */
+            readonly revision: number;
+            /** Against */
+            readonly against: number;
+            /** Files */
+            readonly files: readonly components["schemas"]["DefinitionFileDiffOut"][];
+        };
+        /** DefinitionFileDiffOut */
+        readonly DefinitionFileDiffOut: {
+            /** Path */
+            readonly path: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "added" | "deleted" | "modified" | "mode";
+            /** Diff */
+            readonly diff: string;
+            /**
+             * Truncated
+             * @default false
+             */
+            readonly truncated: boolean;
+        };
+        /** DefinitionChangeIn */
+        readonly DefinitionChangeIn: {
+            /** Path */
+            readonly path: string;
+            /** Content */
+            readonly content?: string | null;
+            /** Content B64 */
+            readonly content_b64?: string | null;
+            /** Executable */
+            readonly executable?: boolean | null;
+        };
+        /** DefinitionDraftIn */
+        readonly DefinitionDraftIn: {
+            /** Base */
+            readonly base: number;
+            /** Changes */
+            readonly changes: readonly components["schemas"]["DefinitionChangeIn"][];
+            /**
+             * Message
+             * @default
+             */
+            readonly message: string;
+        };
+        /** DefinitionRollbackIn */
+        readonly DefinitionRollbackIn: {
+            /** Revision */
+            readonly revision: number;
+            /**
+             * Message
+             * @default
+             */
+            readonly message: string;
+        };
         /** AgentOut */
         readonly AgentOut: {
             /** Id */
@@ -30387,6 +30896,12 @@ export interface components {
              * @default false
              */
             readonly slack_enabled: boolean;
+            /**
+             * Source
+             * @default repo
+             * @enum {string}
+             */
+            readonly source: "repo" | "stored";
             readonly plugin?: components["schemas"]["AgentPluginOut"] | null;
         };
         /**
@@ -30661,6 +31176,16 @@ export interface components {
              * @description Workspace slugs of OTHER instances running this same definition. Cross-tenant on purpose — 'would this fix reach them?' is a fleet question. Names tenants only: no board, credentials or turns are disclosed.
              */
             readonly shared_with?: readonly string[];
+            /**
+             * Source
+             * @default repo
+             * @enum {string}
+             */
+            readonly source: "repo" | "stored";
+            /** Revision */
+            readonly revision?: number | null;
+            /** Root Sha256 */
+            readonly root_sha256?: string | null;
         };
         /** AgentDetailOut */
         readonly AgentDetailOut: {
@@ -30715,6 +31240,12 @@ export interface components {
              * @default false
              */
             readonly slack_enabled: boolean;
+            /**
+             * Source
+             * @default repo
+             * @enum {string}
+             */
+            readonly source: "repo" | "stored";
             readonly plugin?: components["schemas"]["AgentPluginOut"] | null;
             readonly definition?: components["schemas"]["AgentDefinitionOut"] | null;
             readonly read_mode?: components["schemas"]["ReadModeSettingOut"] | null;
@@ -31286,6 +31817,24 @@ export interface components {
             readonly cli_models: {
                 readonly [key: string]: string;
             };
+            readonly definition?: components["schemas"]["AgentSourceOut"];
+        };
+        /**
+         * AgentSourceOut
+         * @description Where a runner gets the agent's definition: its repo (`repo`), or the stored
+         *     revision `revision` named by `root_sha256` (`stored`, docs/architecture/stored-agents.md).
+         */
+        readonly AgentSourceOut: {
+            /**
+             * Source
+             * @default repo
+             * @enum {string}
+             */
+            readonly source: "repo" | "stored";
+            /** Revision */
+            readonly revision?: number | null;
+            /** Root Sha256 */
+            readonly root_sha256?: string | null;
         };
         /**
          * AgentRunnerOut
@@ -33937,6 +34486,10 @@ export interface components {
             };
             /** Delegated Withheld */
             readonly delegated_withheld?: readonly components["schemas"]["DelegatedWithheldOut"][];
+            /** Definition */
+            readonly definition?: {
+                readonly [key: string]: unknown;
+            };
         };
         /**
          * DelegatedEntryOut
@@ -61372,6 +61925,389 @@ export interface operations {
             };
         };
     };
+    readonly create_stored_agent: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["StoredAgentIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["StoredAgentOut"];
+                };
+            };
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly convert_agent_definition: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["DefinitionConvertIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DefinitionRevisionSummaryOut"];
+                };
+            };
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly get_agent_definition: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DefinitionOut"];
+                };
+            };
+        };
+    };
+    readonly list_agent_definition_revisions: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["DefinitionRevisionSummaryOut"][];
+                };
+            };
+        };
+    };
+    readonly get_agent_definition_revision: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly number: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DefinitionRevisionOut"];
+                };
+            };
+        };
+    };
+    readonly get_agent_definition_file: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly number: number;
+                readonly path: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly diff_agent_definition_revisions: {
+        readonly parameters: {
+            readonly query?: {
+                readonly against?: number | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly number: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DefinitionDiffOut"];
+                };
+            };
+        };
+    };
+    readonly draft_agent_definition: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["DefinitionDraftIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DefinitionRevisionSummaryOut"];
+                };
+            };
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly publish_agent_definition: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly number: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DefinitionRevisionSummaryOut"];
+                };
+            };
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly discard_agent_definition: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly number: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DefinitionRevisionSummaryOut"];
+                };
+            };
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly rollback_agent_definition: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["DefinitionRollbackIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DefinitionRevisionSummaryOut"];
+                };
+            };
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly get_agent_definition_archive: {
+        readonly parameters: {
+            readonly query?: {
+                readonly revision?: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     readonly list_agents: {
         readonly parameters: {
             readonly query?: {
@@ -63132,6 +64068,15 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["CountOut"];
+                };
+            };
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };

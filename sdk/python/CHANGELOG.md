@@ -2,6 +2,17 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.35.0 — 2026-11-21
+
+**Stored agents: an agent whose definition canopy keeps, with no git repo.**
+
+- `canopy_sdk.agent_definition`: `manifest_root(files)` (the sha256 of the canonical manifest,
+  `[{"path","sha256","size","executable"}]` sorted by path, compact JSON with sorted keys),
+  `manifest_entry`, `manifest_root_of_files`, and the file policy `check_tree(files, slug=,
+  allow_generated=False) -> list[Problem]` (editable paths, server-generated paths, one executable,
+  caps of 200 files / 256 KB a file / 2 MB in all, UTF-8 only, secret-shaped strings refused),
+  `editable(path)`, `generated_paths(slug)`, `secret_kinds(text)`, `policy()`. Additive.
+
 ## 0.34.0 — 2026-11-21
 
 **Reply push: canopy POSTs an agent's replies to a relay host.**

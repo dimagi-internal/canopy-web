@@ -14,12 +14,14 @@ Modules:
 * ``canopy_sdk.conformance`` — checks against a live host, plus pytest fixtures.
 * ``canopy_sdk.agent_tasks`` — call a canopy agent inline and get a
   schema-validated result back (``AgentTasks``).
+* ``canopy_sdk.agent_definition`` — a stored agent's definition: the manifest root
+  both sides compute and the file policy canopy-web enforces.
 * ``canopy_sdk.ondemand`` — optional (``ondemand`` extra): run a dedicated
   capability on a stopped-when-idle EC2 instance.
 """
 from .agent_tasks import AgentTasks
 from .contract import CONTRACT_VERSION
 
-__version__ = "0.34.0"
+__version__ = "0.35.0"
 
 __all__ = ["CONTRACT_VERSION", "AgentTasks", "__version__"]

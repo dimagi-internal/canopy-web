@@ -241,6 +241,7 @@ NOT_ABOUT_A_PROJECT = {
     "kind": ["project"],
     "user_code": ["GUARD-CODE"],
     "id": ["1"],
+    "path": ["persona.md"],
 }
 
 

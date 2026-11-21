@@ -107,6 +107,7 @@ INSTALLED_APPS = [
     "apps.session_sharing",
     "apps.push",
     "apps.approvals",
+    "apps.agent_definitions",
     "apps.agents",
     "apps.agent_runs",
     "apps.workspaces",
