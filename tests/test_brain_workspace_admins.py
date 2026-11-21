@@ -216,6 +216,10 @@ def test_the_project_readers_never_offer_run_now_and_are_never_configured_here(w
     r = _run(w["connect_owner"], slug="project-readers")
     assert r.status_code == 422 and "built in" in r.json()["detail"]
     assert _configure(w["root"], "connect", "project-readers", enabled=False).status_code == 403
+    # A per-person learner is canopy-wide too: never switched on from one workspace.
+    assert learners["coaching"]["configurable"] is False
+    assert _configure(w["connect_owner"], "connect", "agent-memory", enabled=True).status_code == 403
+    assert not BrainCapability.objects.get(slug="agent-memory").enabled
 
 
 # ---- the setting: inheritance and eligibility --------------------------------------------------------------

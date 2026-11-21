@@ -9,8 +9,8 @@ A learner (`BrainCapability`) is canopy-wide. Configuring one here is bounded by
 learner's operator, if it has one, must be an agent of this workspace or one below it, and so must the one it is
 given (`refusal`). A canopy admin registers learners and changes what people agreed to (its class, purposes,
 audience) through `/api/brain/capabilities/`; this route changes only whether it runs and how (`enabled`,
-`operator`, `entry`, `schedule`, and `scope`, which may only narrow). The built-in project readers are canopy's, not
-a workspace's, and are never configured here."""
+`operator`, `entry`, `schedule`, and `scope`, which may only narrow), and only a project or system learner: a
+per-person learner (coaching, memory) and the built-in project readers are canopy-wide, never a workspace's."""
 from __future__ import annotations
 
 from django.http import HttpRequest
@@ -28,7 +28,7 @@ from apps.workspaces.models import Workspace
 
 from . import learning_reads, readers, registry
 from .api_state import the_person
-from .models import BrainCapability
+from .models import ABOUT_A_PERSON, BrainCapability
 from .schemas import CapabilityOut, LearnerConfigIn, LearningReadsIn, LearningReadsOut
 
 router = Router(auth=session_auth, tags=["brain"])
@@ -53,6 +53,8 @@ def learner_refusal(user, ws: str, cap: BrainCapability) -> str:
     """Why `user` may not configure `cap` at `ws`, or ""."""
     if cap.slug == readers.PROJECT_READERS:
         return "the project readers are built in: canopy's, never a workspace's to configure"
+    if cap.purpose_class in ABOUT_A_PERSON:
+        return f"{cap.slug} learns about one person wherever they work: a canopy admin configures it"
     if not may_manage(user, ws):
         return f"only {ws}'s owners and admins (or an ancestor's) configure its learners"
     if cap.operator_id is not None and cap.operator.workspace_id not in _subtree(ws):

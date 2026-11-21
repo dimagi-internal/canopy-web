@@ -351,7 +351,8 @@ count. `tests/test_brain_workspace_scope.py` pins each role's slice.
   changes nothing records nothing.
 - **A learner** (`PATCH /api/w/<ws>/brain/learners/{slug}/`): whether it is enabled, its operator, `entry`, `schedule`,
   and `scope` (only narrowing). A learner is canopy-wide, so a workspace configures only one whose operator, if it has
-  one, is an agent of `<ws>` or below, and gives it only such an agent (`api_manage.learner_refusal`); enabling one
+  one, is an agent of `<ws>` or below, and gives it only such an agent, and only a project or system learner
+  (`api_manage.learner_refusal`; a per-person learner is canopy-wide); enabling one
   nobody active answers for makes the person its accountable admin (`registry.update`). Its class, purposes and audience
   (what people agreed to) stay a canopy admin's (`/api/brain/capabilities/`). The built-in project readers are never
   configured here.
