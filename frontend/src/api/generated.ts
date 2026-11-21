@@ -25399,6 +25399,8 @@ export interface components {
              * @default
              */
             readonly origin: string;
+            /** Context */
+            readonly context?: string | null;
         };
         /**
          * MessageAppOut

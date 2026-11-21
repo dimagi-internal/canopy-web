@@ -17,6 +17,14 @@ A relay arrival is a visitor assertion carrying `canopy_channel` (`canopy_sdk.co
 
 The SDK half is `canopy_sdk.host.relay.RelayClient`: `token_for` mints and caches the person's token (bound to the agent with `canopy_agent`) until five minutes before it expires, and `open_session` / `send` / `turn` / `messages` call the contact routes with it; `RelayError.code` is canopy's refusal code.
 
+## Context the host attests on a message
+
+A send may carry `context`: what the host knows about this moment (the person's stage, the task they are on), as a compact JWS the site signs with its own key (`typ: canopy-context+jwt`; `canopy_sdk.attested_context.sign_context`, or `RelayClient.send(context=...)`). The person's words stay the message's `text`; the host's facts never join them.
+
+- `contact_api._attested_context` checks it with the site's own keys (`assertions.keys_for_app`, the keys its arrival verified with): the `typ`, the site's name as `iss`, at most 60 seconds, a single-use `jti` (failing closed), `format` `markdown` or `json` and a body of at most 16384 characters. Its `sub` must be the conversation's contact (`Contact.external_id`) and its `session` the conversation's id, else `422 context_mismatch`; anything else that does not verify is `422 bad_context`. A sensitive conversation takes none.
+- It is kept on the one turn it rode with (`origin_ref["host_context"] = {site, format, body}`), and the envelope carries it as `host_context: {site, format, body, attested: true}` on that turn only (`caller_context._host_context`); the next turn does not inherit it. The canopy plugin prints it fenced and labelled as the site's, data and not instructions.
+- It is content: retention's turn scrub drops it with the prompt (`retention.services._scrub_turns`), and a person deleting a session's words drops it with the rest of `origin_ref` (`canopy_sessions.content_deletion`).
+
 ## Limits
 
 Three budgets bound what one site, one person and one agent can spend. Each is off or generous for a site that never relays.
@@ -32,7 +40,8 @@ Three budgets bound what one site, one person and one agent can spend. Each is o
 | Question | Where |
 |---|---|
 | The arrival: channel claim, always a contact, the site's budget | `apps/contacts/contact_api.py::contact_token` |
-| A send: the relay source, the send budget | `apps/contacts/contact_api.py::send`, `_spend_send` |
+| A send: the relay source, the send budget, the attested context | `apps/contacts/contact_api.py::send`, `_spend_send`, `_attested_context` |
+| The context on the envelope | `apps/harness/caller_context.py::_host_context` |
 | The channel on a turn | `apps/harness/initiator.py::channel`, `apps/tokens/middleware.py` (`request.relay_channel`) |
 | The budgets | `apps/embedding/rate_limit.py`, `apps/admission/evaluate.py` |
-| The host's client | `sdk/python/src/canopy_sdk/host/relay.py` |
+| The host's client; the context's wire | `sdk/python/src/canopy_sdk/host/relay.py`, `sdk/python/src/canopy_sdk/attested_context.py` |

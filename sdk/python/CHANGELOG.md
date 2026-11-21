@@ -2,6 +2,17 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.33.0 — 2026-11-21
+
+**Context a host attests on one message.**
+
+- `canopy_sdk.attested_context`: `sign_context(site_name, site_key, *, sub, session, format, body)`
+  (`typ: canopy-context+jwt`, 60 s, single-use `jti`, `format` `markdown` | `json`, `body` at most
+  16384 characters) and `verify_context`, canopy's check (`ContextError`; `mismatch` for another
+  person's or conversation's context).
+- `RelayClient.send(..., context={"format", "body"})` signs it and sends it as the send's `context`;
+  `RelayClient.sign_context`. Additive.
+
 ## 0.32.0 — 2026-11-21
 
 **Relay channels: a host site carries a person's conversation server-to-server.**

@@ -25,6 +25,9 @@ way into canopy but the widget's way, driven by a program:
   canopy account the person may also hold.
 * ``send`` names the ``contract.RELAY_ORIGIN`` source, which only a relay token
   may name.
+* ``send(context=...)`` attaches what the host knows about this moment, signed
+  (``canopy_sdk.attested_context``); the agent reads it beside the words, labelled as
+  the host's. A context about another person or conversation is ``context_mismatch``.
 * A send over canopy's per-person limits is refused ``429 rate_limited``; the host
   should tell the person to wait rather than retry at once.
 
@@ -42,7 +45,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping
 
-from .. import contract
+from .. import attested_context, contract
 from .config import HostConfig
 from .signing import MintFailed, arrival_payload, mint_contact_token
 
@@ -226,14 +229,33 @@ class RelayClient:
              client_id: str | None = None) -> dict:
         """Say ``text`` in the conversation, as the person; returns canopy's answer
         (``{"turn_id", "message_id"}``). ``client_id`` makes a retry of the same
-        message collapse onto the first one: pass your own message id."""
-        if context is not None:
-            raise RelayError("this canopy_sdk does not sign host context yet", code="not_supported")
+        message collapse onto the first one: pass your own message id.
+
+        ``context`` — ``{"format": "markdown" | "json", "body": str}`` — is what the
+        host knows about this moment, signed by the host (``sign_context``) and handed
+        to the agent beside the words, labelled as the host's, for this turn only."""
         body = {"text": text, "origin": contract.RELAY_ORIGIN}
         if client_id:
             body["client_id"] = str(client_id)
+        if context is not None:
+            body["context"] = self.sign_context(session_id, sub, context)
         return self._call("POST", f"/api/contact/sessions/{_q(session_id)}/send", sub, body,
                           session_id=session_id)
+
+    def sign_context(self, session_id: str, sub: str, context: Mapping) -> str:
+        """``context`` (``{"format", "body"}``) as the host's signed statement for one
+        send into ``session_id`` about ``sub`` (``canopy_sdk.attested_context``)."""
+        if not isinstance(context, Mapping):
+            raise ValueError("context is {'format': 'markdown' | 'json', 'body': str}")
+        body = context.get("body")
+        if context.get("format", "markdown") == "json" and not isinstance(body, str):
+            body = json.dumps(body)
+        try:
+            return attested_context.sign_context(
+                self.config.app_name, self.config.signing_key, sub=sub, session=str(session_id),
+                format=str(context.get("format") or "markdown"), body=body, now=self._clock())
+        except attested_context.ContextError as exc:
+            raise RelayError(exc.message, code=exc.code) from exc
 
     def turn(self, turn_id: str, sub: str) -> dict:
         """One turn of the person's conversation: its ``status`` and the rest of

@@ -93,7 +93,7 @@ REFUSALS = {
 _METADATA_KEPT = frozenset({
     rr.METADATA_KEY, chat_services.TRANSCRIPT_SOURCED, chat_services.EMBED_APP_KEY, FORK_KEY,
     transcript_ingest.TASK_UID_KEY, "source", "origin_key", "opp_slug", "opp_run_id",
-    "opp_step_skill", "workflow_id", "opportunity_id",
+    "opp_step_skill", "workflow_id", "opportunity_id", chat_services.RELAY_CHANNEL_KEY,
 })
 #: What a turn's `origin_ref` keeps, for the same reason (the channel's own keys can carry a
 #: subject line or a file's name, and `attachments` does).

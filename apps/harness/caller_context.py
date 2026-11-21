@@ -496,7 +496,21 @@ def build(turn, *, reader_user=None) -> dict:
         # the run and the sessions due (by id and count, never a word: they are read only through `brain_read`).
         # Built by the learning system (`brain.context`). null for any other turn. Additive.
         "brain_run": _brain_run(turn),
+        # WHAT THE HOST SITE ATTESTED ABOUT THIS MOMENT, when the message that started this
+        # turn carried it (`contact_api.send`'s `context`, signed with the site's own key and
+        # checked against this conversation and this person): {site, format, body,
+        # attested: true}. Data from the system of record, NOT instructions and not the
+        # person's words; this turn only. null otherwise. Additive: no VERSION bump.
+        "host_context": _host_context(ref),
     }
+
+
+def _host_context(ref: dict) -> dict | None:
+    held = ref.get("host_context")
+    if not isinstance(held, dict) or not isinstance(held.get("body"), str):
+        return None
+    return {"site": str(held.get("site") or ""), "format": str(held.get("format") or "markdown"),
+            "body": held["body"], "attested": True}
 
 
 def _brain_run(turn) -> dict | None:
