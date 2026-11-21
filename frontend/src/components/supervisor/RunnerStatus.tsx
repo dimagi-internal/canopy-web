@@ -121,7 +121,7 @@ export function RunnerStatus({
               tells two near-identical rows apart, so it is the last thing that
               should be decoration: it moves up the emphasis ladder, up to 12px,
               and onto the second line rather than off the screen. */}
-          {r.host && (
+          {r.host && r.host !== r.name && (
             <span className="hidden min-w-0 truncate text-xs text-muted-foreground sm:inline">{r.host}</span>
           )}
           <span className="shrink-0 text-xs text-muted-foreground">{relative(r.last_heartbeat_at)}</span>
@@ -131,7 +131,7 @@ export function RunnerStatus({
               of hidden. A runner you cannot identify is the failure this list
               exists to prevent. (No readiness-drill badge sits beside it: drills are a debugging tool, and a
               months-old failure would paint a healthy box red — they live on the runner's detail.) */}
-          {r.host && (
+          {r.host && r.host !== r.name && (
             <span className="flex items-baseline gap-2 pl-[18px] text-xs sm:hidden">
               <span className="min-w-0 truncate text-muted-foreground">{r.host}</span>
             </span>

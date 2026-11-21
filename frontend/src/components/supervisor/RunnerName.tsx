@@ -2,9 +2,10 @@ import { useState, type JSX } from 'react'
 import { setRunnerName, type RunnerOut } from '@/api/harness'
 import { SettingRow } from '@/components/supervisor/SettingRow'
 
-// The runner's name (`Runner.name`): what people see for it everywhere. A runner
-// administrator's setting. Routing, pins and the vault follow the runner's id, and
-// the box keeps the name it paired as (`paired_as`), so a rename changes nothing else.
+// The runner's one name (`Runner.name`): what people see for it everywhere; a cloud
+// box's host is the same string, so renaming moves both. A runner administrator's
+// setting. Routing, pins and the vault follow the runner's id; `paired_as` is the
+// box's internal pairing key and is not shown.
 export function RunnerName({
   runner,
   onChange,
@@ -44,12 +45,11 @@ export function RunnerName({
       .finally(() => setSaving(false))
   }
 
-  const pairedAs = runner.paired_as && runner.paired_as !== runner.name ? `Paired as ${runner.paired_as}.` : ''
   return (
     <SettingRow
       label="Name"
       testId="runner-name"
-      help={editing ? 'What people see for this runner. Routing and the vault are unchanged.' : pairedAs || runner.name}
+      help={editing ? 'The one name for this runner, shown everywhere. Routing and the vault are unchanged.' : runner.name}
       control={
         editing ? (
           <div className="flex items-center gap-1.5">
