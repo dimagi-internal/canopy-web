@@ -483,7 +483,17 @@ def build(turn, *, reader_user=None) -> dict:
         # (`submit_agent_task_result`), so canopy's plugin Stop hook reads this to
         # keep the agent from ending the turn while `status` is not done. null otherwise.
         "agent_task": _agent_task(ref),
+        # THE LEARNING RUN THIS TURN IS (`apps/brain`), when it is one: the learner, its target, who it answers to,
+        # the run and the sessions due (by id and count, never a word: they are read only through `brain_read`).
+        # Built by the learning system (`brain.context`). null for any other turn. Additive.
+        "brain_run": _brain_run(turn),
     }
+
+
+def _brain_run(turn) -> dict | None:
+    from apps.brain import context  # noqa: PLC0415 — harness ↛ brain at import
+
+    return context.of_turn(turn)
 
 
 def _agent_task(ref: dict) -> dict | None:

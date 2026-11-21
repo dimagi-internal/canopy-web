@@ -530,7 +530,7 @@ def heartbeat(
     code_version: str = "", code_sha: str = "", code_committed_at: int = 0,
     projects: list[str] | None = None, profiles: int = 0,
     health: dict | None = None, mailboxes_readable: list[str] | None = None,
-    envelope: int = 0, midturn: int = 0, agents_unprepared: list[str] | None = None,
+    envelope: int = 0, midturn: int = 0, isolated: int = 0, agents_unprepared: list[str] | None = None,
     data_mode: str = "", data_mode_hash: str = "", claude_model: str = "",
     clis: dict | None = None,
 ) -> Runner:
@@ -635,6 +635,13 @@ def heartbeat(
     # the same reply twice, so it must never be handed one.
     if int(runner.capabilities.get("midturn") or 0) != int(midturn or 0):
         runner.capabilities = {**runner.capabilities, "midturn": int(midturn or 0)}
+        if "capabilities" not in fields:
+            fields.append("capabilities")
+    # Whether this runner's CODE keeps nothing of an `isolated` turn for later ones (a learning run's:
+    # `claim.isolation_refusal`). Reported, same contract as `midturn`: absent = 0, and such a box is never
+    # handed one.
+    if int(runner.capabilities.get("isolated") or 0) != int(isolated or 0):
+        runner.capabilities = {**runner.capabilities, "isolated": int(isolated or 0)}
         if "capabilities" not in fields:
             fields.append("capabilities")
     # Which agent CLIs the box has (`harness.clis`). A level, like `envelope`:

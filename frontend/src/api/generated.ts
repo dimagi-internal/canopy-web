@@ -19682,6 +19682,27 @@ export interface paths {
         readonly patch: operations["configure_learner"];
         readonly trace?: never;
     };
+    readonly "/api/brain/flags/{flag_id}/acknowledge": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Acknowledge something a removal could not undo (its owner or the workspace's managers)
+         * @description You have seen what a learning run made that canopy could not take back after a session it came from was
+         *     removed, and decided what to do with it: the alert raised to its owner closes.
+         */
+        readonly post: operations["acknowledge_learning_flag"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/brain/targets": {
         readonly parameters: {
             readonly query?: never;
@@ -44522,6 +44543,11 @@ export interface components {
              * @default 0
              */
             readonly midturn: number;
+            /**
+             * Isolated
+             * @default 0
+             */
+            readonly isolated: number;
             /** Clis */
             readonly clis?: {
                 readonly [key: string]: unknown;
@@ -44842,6 +44868,11 @@ export interface components {
             readonly cli_model: string;
             readonly invocation?: components["schemas"]["InvocationOut"] | null;
             readonly page_site?: components["schemas"]["ClaimPageSiteOut"] | null;
+            /**
+             * Isolated
+             * @default false
+             */
+            readonly isolated: boolean;
         };
         /**
          * InvocationOut
@@ -51844,6 +51875,42 @@ export interface components {
              */
             readonly small: number;
         };
+        /** BrainFlagOut */
+        readonly BrainFlagOut: {
+            /** Id */
+            readonly id: number;
+            /**
+             * Kind
+             * @description `app_label.model` of a row canopy holds, or `github.pull`, `github.issue`, `link`.
+             */
+            readonly kind: string;
+            /**
+             * Ref
+             * @description The row's id, or the URL.
+             */
+            readonly ref: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Run */
+            readonly run: number;
+            /** Learner */
+            readonly learner: string;
+            /**
+             * Owner
+             * @description Whom it is raised to: the person the run answered to.
+             * @default
+             */
+            readonly owner: string;
+            /** Reason */
+            readonly reason: string;
+            /** Changed At */
+            readonly changed_at?: string | null;
+            /**
+             * Acknowledged
+             * @default false
+             */
+            readonly acknowledged: boolean;
+        };
         /** BrainLearnerState */
         readonly BrainLearnerState: {
             /** Slug */
@@ -51971,6 +52038,11 @@ export interface components {
              * @description Where learners run, here and below.
              */
             readonly targets?: readonly components["schemas"]["BrainTargetOut"][];
+            /**
+             * Flags
+             * @description What a learning run made that a removal could not undo, to its owner and the workspace's managers, newest first.
+             */
+            readonly flags?: readonly components["schemas"]["BrainFlagOut"][];
             readonly runs: components["schemas"]["BrainRunCounts"];
             /** Cascade */
             readonly cascade: readonly components["schemas"]["BrainCascadeCounts"][];
@@ -78876,6 +78948,44 @@ export interface operations {
             };
             /** @description Unprocessable Entity */
             readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly acknowledge_learning_flag: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly flag_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
                 headers: {
                     readonly [name: string]: unknown;
                 };

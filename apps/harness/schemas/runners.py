@@ -744,6 +744,9 @@ class HeartbeatIn(Schema):
     # turn (`Turn.rides_turn`). Absent (older code) means 0:
     # it is never handed one, because it would bridge the same reply twice.
     midturn: int = 0
+    # 1 = this runner's code keeps nothing of an `isolated` turn (`ClaimedTurnOut.isolated`, a learning run's)
+    # for later turns: Claude Code's auto memory is off for it. Absent (older code) means 0: never handed one.
+    isolated: int = 0
     # Which agent CLIs this box has, signed in and confining (`clis.sanitize`):
     # {"codex": {"signed_in": true, "profiles": 3, "envelope": 2, "version": "…"}}.
     # A level like `profiles`: absent (older code) means the box is read as Claude

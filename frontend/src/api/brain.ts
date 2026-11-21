@@ -77,3 +77,14 @@ export async function runTargetNow(ws: string, id: number): Promise<BrainRun> {
   })
   return unwrap(res, 'Could not start the run') as BrainRun
 }
+
+export type BrainFlag = components['schemas']['BrainFlagOut']
+
+/** Acknowledge something a learning run made that a removal could not undo (its owner or the workspace's managers). */
+export async function acknowledgeFlag(ws: string, id: number): Promise<void> {
+  const res = await apiV2.POST('/api/brain/flags/{flag_id}/acknowledge', {
+    params: { path: { flag_id: id } },
+    headers: pin(ws),
+  })
+  unwrap(res, 'Could not acknowledge it')
+}

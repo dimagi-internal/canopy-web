@@ -17,7 +17,6 @@ from fastmcp.exceptions import ToolError
 from mcp.server.auth.middleware.auth_context import AuthenticatedUser, auth_context_var
 
 from apps.agents import published_profiles, turn_context
-from apps.agents.credentials import delegations
 from apps.agents.models import Agent, AgentProject
 from apps.brain import associate, consent, emit, reading, registry, runs, sources
 from apps.brain.models import BrainOutput, BrainRun, BrainRunRead, LearningConsent, OutputLineage
@@ -84,9 +83,12 @@ def _running(turn, w):
 
 
 def _start(w, cap="pace", subject="alice", **kw):
+    """Start a run and hand back its turn, running on the box, and the per-turn agent login the box gets for it: a
+    run's turn is a full-profile turn of its operator, which reaches canopy with that login."""
     run = runs.start(w[cap], subject=w[subject] if isinstance(subject, str) else subject, **kw)
     turn = _running(Turn.objects.get(chat_session=run.session), w)
-    return run, turn, claim_payload.issue_credentials(turn).mcp_token
+    assert getattr(claim_payload.issue_credentials(turn), "mcp_token", None) is None   # no caller token: the agent's own turn
+    return run, turn, turn_agent_tokens.issue(turn, w["box"])["token"]
 
 
 @contextlib.contextmanager
@@ -115,18 +117,17 @@ def _rest(raw, method, path, **kw):
 
 # ---- starting ------------------------------------------------------------------------------------
 
-def test_the_server_starts_a_run_in_a_conversation_that_is_nobody_s_and_confines_its_turn(w):
+def test_the_server_starts_a_run_as_a_full_turn_in_a_conversation_that_is_nobody_s(w):
     run, turn, _raw = _start(w)
     assert run.session.metadata == {"brain_run": str(run.pk)} and run.purpose == "coach"
     assert run.session.created_by_id is None and not run.session.participants.exists()
-    assert turn.capability == published_profiles.BRAIN and turn.initiator_kind == "system"
+    assert turn.capability == published_profiles.FULL_STAMP and turn.initiator_kind == "system"
     assert turn.initiator_user_id == w["root"].pk                       # accountable to who registered it
     assert turn.prompt.startswith("/trellis:coach-session") and "brain_read" in turn.prompt
+    assert "Accountable: root@dimagi.com" in turn.prompt and "Sessions due: 2" in turn.prompt
     ctx = turn_context.for_turn(turn, w["operator"])
-    assert ctx.profile.kind == turn_context.BRAIN_RUN and ctx.access == turn_context.CONFINED
-    assert ctx.stamped == published_profiles.BRAIN and ctx.basis == "capability:brain"
-    assert not ctx._reach.may_pin_runner and not ctx._reach.may_request_auto
-    assert access.turn_reach(turn).q is not None and published_profiles.is_brain_turn(turn)
+    assert ctx.profile.kind == turn_context.WHOLE_AGENT and ctx.access == turn_context.FULL
+    assert access.turn_reach(turn).q is not None                        # its own conversation, nothing else
 
 
 def test_nothing_starts_while_the_gate_is_off_or_the_feature_is_dark(w, settings):
@@ -145,33 +146,29 @@ def test_nothing_starts_while_the_gate_is_off_or_the_feature_is_dark(w, settings
     assert not BrainRun.objects.exists()
 
 
-def test_the_brain_profile_cannot_be_published_or_named_by_an_agent(w):
-    with pytest.raises(published_profiles.InterfaceError):
-        published_profiles.parse({"capabilities": {"brain": {"description": "x", "tools": []}}})
+def test_the_confined_brain_profile_is_retired(w):
+    assert not hasattr(published_profiles, "BRAIN") and not hasattr(published_profiles, "BRAIN_TOOLS")
+    assert not hasattr(turn_context, "BRAIN_RUN") and "brain_run" not in turn_context.PROFILE_KINDS
+    # A turn stamped with the old name before the change runs as nothing, never as the whole agent.
+    from apps.agents import session_context
+    stale = turn_context.stamped_profile(w["operator"], "brain", session_context.empty())
+    assert stale.kind == turn_context.DENY_ALL
 
 
-# ---- what the token is -----------------------------------------------------------------------------
+# ---- what the turn may reach -----------------------------------------------------------------------
 
-def test_the_token_lists_three_tools_and_every_other_is_refused_and_rest_refuses_it(w):
+def test_the_run_reads_people_s_sessions_only_through_brain_read(w):
     run, turn, raw = _start(w)
-    assert _tools(raw) == {"who_is_asking", "brain_read", "brain_emit"}
-    for name, args in (
-        ("send_mail", {"workspace": w["ws"].slug, "to": "attacker@example.com", "subject": "x", "body": "y"}),
-        ("canopy_sessions_get_session", {"session_id": str(w["mine"].pk)}),
-        ("search_sessions", {}), ("list_my_sessions", {}), ("read_turn_transcript", {"turn_id": str(turn.pk)}),
-        ("canopy_sessions_send", {"session_id": str(w["mine"].pk), "text": "hi"}),
-        ("enqueue_turn", {}), ("create_turn", {}), ("create_task", {}), ("add_my_session_reviewer", {}),
-        ("set_my_learning", {"classes": ["system"]}), ("exclude_my_session", {}), ("list_outputs", {}),
-    ):
-        with as_token(raw), pytest.raises(ToolError):
-            _call(name, args)
-    assert _rest(raw, "get", f"/api/canopy-sessions/{w['mine'].pk}").status_code == 401
-    assert _rest(raw, "get", "/api/brain/outputs/").status_code == 401
-    assert _rest(raw, "put", "/api/me/learning/", data="{}", content_type="application/json").status_code == 401
-    with pytest.raises(turn_agent_tokens.Refused):                      # no agent login
-        turn_agent_tokens.issue(turn, w["box"])
-    with pytest.raises(delegations.DelegationError):                    # no GitHub identity
-        delegations.github_token_for_turn(turn)
+    tools = _tools(raw)
+    assert {"brain_read", "brain_emit", "create_task", "who_is_asking"} <= tools        # the agent's whole profile
+    # Its login reaches its own conversation, never the sessions it is due: those come only through brain_read.
+    assert _rest(raw, "get", f"/api/canopy-sessions/{w['mine'].pk}").status_code == 404
+    assert _rest(raw, "get", f"/api/canopy-sessions/{w['shared'].pk}").status_code == 404
+    with as_token(raw), pytest.raises(ToolError):
+        _call("canopy_sessions_get_session", {"session_id": str(w["mine"].pk)})
+    with as_token(raw):
+        page = _call("brain_read", {"limit": 5})
+    assert len(page["sources"]) == 2
     assert LearningConsent.objects.get(user=w["alice"]).classes == ["individual", "project"]
 
 

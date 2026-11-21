@@ -251,6 +251,9 @@ def sweep(source_ids=None) -> dict:
         if gone:
             done[_apply_output(out, gone, len(rows))] += 1
     scrub_link_evidence(source_ids, memo)
+    from . import lineage  # noqa: PLC0415 — lineage calls back into this module
+
+    done["artifacts"] = lineage.sweep(source_ids, memo)
     done["runs"] = scrub_runs(source_ids, memo)
     for kind, fn in _STORES.items():
         _sweep_store(kind, fn, source_ids)

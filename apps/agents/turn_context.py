@@ -63,10 +63,9 @@ HOST_SITE = "host_site"
 #: An entry bound to one workspace app (`app_entries`): canopy's fixed tools for that app.
 APP_ENTRY = "app_entry"
 SESSION_REVIEW = "session_review"
-BRAIN_RUN = "brain_run"
 DENY_ALL = "deny_all"
 NO_AGENT = "no_agent"
-PROFILE_KINDS = frozenset({WHOLE_AGENT, READ_MODE, HOST_SITE, APP_ENTRY, SESSION_REVIEW, BRAIN_RUN, DENY_ALL, NO_AGENT})
+PROFILE_KINDS = frozenset({WHOLE_AGENT, READ_MODE, HOST_SITE, APP_ENTRY, SESSION_REVIEW, DENY_ALL, NO_AGENT})
 
 #: What a stage reports when the answer needs something only the claim knows.
 PENDING = "pending"
@@ -444,18 +443,6 @@ def _review_rule(reach: _Reach, trace: list) -> _Reach:
                    may_pin_runner=False, basis=f"capability:{profiles_mod.SESSION_REVIEW}")
 
 
-def _brain_rule(reach: _Reach, trace: list) -> _Reach:
-    """A turn in a brain run's conversation runs in its own profile, for whoever started it: it only
-    narrows. What it reads is other people's words, so no later message there picks up the agent's whole
-    profile, nor a login, a token or a send."""
-    if reach.access == REFUSED:
-        trace.append(TraceEntry("brain_run", "already refused"))
-        return reach
-    trace.append(TraceEntry("brain_run", profiles_mod.BRAIN))
-    return replace(reach, access=CONFINED, name=profiles_mod.BRAIN, may_request_auto=False,
-                   may_pin_runner=False, basis=f"capability:{profiles_mod.BRAIN}")
-
-
 def _sensitive_entry(iface: dict, requested, session_ctx) -> str | None:
     """The `data: sensitive` entry this request is in: the one it names, else the one its conversation's
     site selects. Who is asking is not checked here."""
@@ -505,8 +492,6 @@ def _rules(agent, asker: Asker, session_ctx, requested, turn, trace: list) -> _R
     reach = _base_stage(agent, reach, asker, requested, session_ctx, turn, trace)
     if session_ctx.is_review:
         reach = _review_rule(reach, trace)
-    if session_ctx.is_brain:
-        reach = _brain_rule(reach, trace)
     return _sensitive_rule(agent, reach, requested, session_ctx, trace)
 
 
@@ -515,8 +500,6 @@ def _rules(agent, asker: Asker, session_ctx, requested, turn, trace: list) -> _R
 def _kind_of(name: str, agent=None) -> str:
     if name == profiles_mod.SESSION_REVIEW:
         return SESSION_REVIEW
-    if name == profiles_mod.BRAIN:
-        return BRAIN_RUN
     if app_entries.app_of_entry(getattr(agent, "interface", None), name):
         return APP_ENTRY
     return READ_MODE if profiles_mod.is_read_mode(name) else HOST_SITE
@@ -544,7 +527,7 @@ def stamped_profile(agent, stamp: str, session_ctx) -> Profile:
     that has since gone: canopy's default read profile is not what it was admitted to."""
     if stamp == profiles_mod.FULL_STAMP:
         return Profile(kind=WHOLE_AGENT, _agent=agent)
-    if stamp in (profiles_mod.SESSION_REVIEW, profiles_mod.BRAIN):
+    if stamp == profiles_mod.SESSION_REVIEW:
         return _profile_of(agent, stamp, session_ctx)
     published, _cap = profiles_mod.published_profile(getattr(agent, "interface", None), stamp)
     if published is None and (not profiles_mod.is_read_mode(stamp) or session_ctx.sensitive):

@@ -174,6 +174,46 @@ def configure_learner(request: HttpRequest, slug: str, payload: LearnerConfigIn)
     return _cap_out(cap)
 
 
+# ---- what a removal could not undo ---------------------------------------------------------------------------
+
+def flags_out(user, ws: str, slugs) -> list[dict]:
+    """Flagged artifacts at `ws` and below that `user` sees: in a workspace they manage, or raised to them."""
+    from .models import BrainRunArtifact  # noqa: PLC0415 — as the other lazy model reads here
+
+    where = set(slugs) & _subtree(ws)
+    managed = perms.slugs_with(user, perms.BRAIN_MANAGE, within=where)
+    sup = bool(getattr(user, "is_superuser", False))
+    qs = (BrainRunArtifact.objects.filter(state=BrainRunArtifact.FLAGGED, workspace_id__in=where)
+          .select_related("run__capability", "owner").order_by("-changed_at", "-pk"))
+    return [{"id": a.pk, "kind": a.kind, "ref": a.ref, "workspace": a.workspace_id, "run": a.run_id,
+             "learner": a.run.capability.slug, "owner": getattr(a.owner, "email", "") or "", "reason": a.reason,
+             "changed_at": a.changed_at, "acknowledged": a.acknowledged_at is not None}
+            for a in qs[:200] if sup or a.workspace_id in managed or a.owner_id == user.pk]
+
+
+@router.post("/brain/flags/{flag_id}/acknowledge", response={204: None, **refusals(403, 404)},
+             summary="Acknowledge something a removal could not undo (its owner or the workspace's managers)")
+@gate("brain.manage", "self", kind="action")  # its owner, or a manager of its workspace; a person only, off MCP
+def acknowledge_learning_flag(request: HttpRequest, flag_id: int):
+    """You have seen what a learning run made that canopy could not take back after a session it came from was
+    removed, and decided what to do with it: the alert raised to its owner closes."""
+    from ninja import Status  # noqa: PLC0415 — only these routes answer 204
+
+    from . import alerts_removal  # noqa: PLC0415 — alerts_removal reads this app's models
+    from .models import BrainRunArtifact  # noqa: PLC0415 — as above
+
+    user = the_person(request)
+    ws = _pinned(request)
+    art = BrainRunArtifact.objects.filter(pk=flag_id, state=BrainRunArtifact.FLAGGED,
+                                          workspace_id__in=_subtree(ws)).first()
+    if art is None:
+        raise ProblemError(404, "No such flag here", type_=TYPE_NOT_FOUND)
+    if not alerts_removal.may_acknowledge(user, art):
+        raise ProblemError(403, "Only its owner or the workspace's managers acknowledge it", type_=TYPE_FORBIDDEN)
+    alerts_removal.acknowledge(art, user)
+    return Status(204, None)
+
+
 # ---- targets ------------------------------------------------------------------------------------------------
 
 def _visible_targets(ws: str):

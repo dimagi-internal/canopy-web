@@ -28,6 +28,8 @@ PRESENCE = "asks whether any row exists; reads no words"
 READERS: dict[str, str] = {
     "apps/agents/credentials/secret_requests.py": PLUMBING,
     "apps/agents/move.py": PLUMBING,
+    "apps/brain/lineage.py": ("a learning run's own conversation, for the links its turn reported making (URLs only, "
+                              "stored as ids and links, never a word: `lineage.record_reported`)"),
     "apps/brain/reading.py": BRAIN,
     "apps/canopy_sessions/access.py": CHAT,
     "apps/canopy_sessions/activity.py": INGEST,

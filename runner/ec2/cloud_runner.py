@@ -779,6 +779,9 @@ def _heartbeat_body(active_turn_ids: list[str], **extra) -> dict:
         # The caller-envelope version this code reads (2 = `profile: "confined"`);
         # canopy-web gives caller turns only to a box that reports it.
         "envelope": ENVELOPE_VERSION,
+        # This code keeps nothing of an `isolated` turn (a learning run's) for later turns
+        # (`ISOLATED_TURN_ENV`); canopy-web hands such a turn only to a box that reports it.
+        "isolated": ISOLATED_VERSION,
     }
     # Omitted until the first inbox probe: absent is "unknown", [] is "none".
     readable = mailboxes_readable()
@@ -13219,6 +13222,16 @@ def profiles_supported(plugin_root: pathlib.Path | None = None) -> int:
 #: explicitly here rather than inferred from an unrelated variable.
 ONE_SHOT_TURN_ENV = {"CANOPY_ONE_SHOT_TURN": "1"}
 
+#: A turn canopy-web marks `isolated` (a learning run's: it read other people's sessions through `brain_read`)
+#: keeps nothing on this box for the agent's later turns: Claude Code's auto memory is off for it, so what it read
+#: is never written to the memory the agent's other sessions load. Reported on the heartbeat as `isolated`.
+ISOLATED_TURN_ENV = {"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}
+ISOLATED_VERSION = 1
+
+
+def _isolation_env(turn: dict) -> dict:
+    return dict(ISOLATED_TURN_ENV) if turn.get("isolated") else {}
+
 
 def _killed_by_shutdown(ok: bool, turn_id: str) -> bool:
     """True when an unfinished turn died because the box itself is powering off (a
@@ -14444,7 +14457,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             # No GitHub identity (canopy refuses one for a caller's turn anyway),
             # no chat key, no repo worktrees: only what says who and which turn.
             per_turn = {**_write_envelope(turn), **_lineage_env(turn), **ONE_SHOT_TURN_ENV,
-                        **_page_site_env(turn),
+                        **_page_site_env(turn), **_isolation_env(turn),
                         **(SENSITIVE_DATA_ENV if SENSITIVE_DATA_MODE else {})}
         else:
             # What this turn alone carries: its GitHub identity (first — the cwd's
@@ -14460,7 +14473,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             per_turn = {**_github_turn_env(runner_id, turn), **_write_envelope(turn),
                         **_chat_key_env(turn), **_lineage_env(turn), **scoped_env,
                         **_agent_token_env(runner_id, turn), **ONE_SHOT_TURN_ENV,
-                        **_page_site_env(turn),
+                        **_page_site_env(turn), **_isolation_env(turn),
                         **(SENSITIVE_DATA_ENV if SENSITIVE_DATA_MODE else {})}
         _clear_canopy_needs_auth()
         _TURN_ENV.extra = dict(per_turn)

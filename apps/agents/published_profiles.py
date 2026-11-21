@@ -107,14 +107,6 @@ SESSION_REVIEW = "session_review"
 SESSION_REVIEW_TOOLS = ("Read", "ToolSearch", "mcp__*canopy-web__who_is_asking",
                         "mcp__*canopy-web__read_asked_session")
 
-#: The profile every turn of a brain run (`brain.BrainRun`) runs in: canopy's, built here, on every agent, never
-#: publishable and never widened. It reads sources through `brain_read` (what `brain.eligible` allows, scrubbed) and
-#: writes only through `brain_emit` (outputs that carry the lineage of what it read). No login, GitHub, mail, vault,
-#: Bash or Write: the words it reads are other people's, and may have been aimed at it.
-BRAIN = "brain"
-BRAIN_TOOLS = ("Read", "ToolSearch", "mcp__*canopy-web__who_is_asking",
-               "mcp__*canopy-web__brain_read", "mcp__*canopy-web__brain_emit")
-
 #: `Turn.capability` for a turn in the agent's FULL profile. Empty so that every
 #: turn predating this reads as "full", which is what it was.
 FULL_STAMP = ""
@@ -134,8 +126,6 @@ def stamp_words(stamp: str) -> str:
         return "read mode"
     if stamp == SESSION_REVIEW:
         return "a one-session review"
-    if stamp == BRAIN:
-        return "a learning run"
     return f"the host site '{stamp}'"
 
 
@@ -229,7 +219,7 @@ def parse(doc) -> dict:
     for name, cap in caps.items():
         if not isinstance(name, str) or not _NAME.match(name):
             raise InterfaceError(f"profile name {name!r} must match {_NAME.pattern}")
-        if name in (SESSION_REVIEW, BRAIN):
+        if name == SESSION_REVIEW:
             raise InterfaceError(f"profile name {name!r} is canopy's own and cannot be published")
         if not isinstance(cap, dict):
             raise InterfaceError(f"{name} must be a mapping")
@@ -503,13 +493,6 @@ def is_review_turn(turn) -> bool:
     return session_access.is_review_conversation(session_access.turn_conversation(turn))
 
 
-def is_brain_turn(turn) -> bool:
-    """Whether `turn` belongs to a chat that is one run of a brain learning feature."""
-    from apps.canopy_sessions import access as session_access  # noqa: PLC0415 — access imports the agents app
-
-    return session_access.is_brain_conversation(session_access.turn_conversation(turn))
-
-
 def grant_facts(turn, agent, *, context=None) -> dict:
     """The envelope's account of the asker's standing, from the Turn Context: `granted_by`
     (one word: owner | admin | system | session:<role> | grant:<line> | capability:<name> | refused), `role` (where they stand on the agent's role ladder, None
@@ -565,10 +548,6 @@ def profile(agent, name: str) -> dict | None:
     """
     if name == FULL_STAMP:
         return None
-    if name == BRAIN:
-        return {"name": BRAIN, "entry": None, "tools": list(BRAIN_TOOLS), "bash": [],
-                "description": f"{agent.slug} runs one learning feature: it reads what people agreed to and emits what it learned.",
-                "read_paths": ["{cwd}/**"], "write_paths": []}
     if name == SESSION_REVIEW:
         return {"name": SESSION_REVIEW, "entry": None, "tools": list(SESSION_REVIEW_TOOLS), "bash": [],
                 "description": f"{agent.slug} reviews one session someone asked it to, and replies to them.",

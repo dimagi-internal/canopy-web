@@ -405,6 +405,19 @@ class BrainTargetOut(StrictModel):
     can_manage: bool = Field(False, description="Whether you may run it now or take it away.")
 
 
+class BrainFlagOut(StrictModel):
+    id: int
+    kind: str = Field(description="`app_label.model` of a row canopy holds, or `github.pull`, `github.issue`, `link`.")
+    ref: str = Field(description="The row's id, or the URL.")
+    workspace: str
+    run: int
+    learner: str
+    owner: str = Field("", description="Whom it is raised to: the person the run answered to.")
+    reason: str
+    changed_at: dt.datetime | None = None
+    acknowledged: bool = False
+
+
 class BrainStateOut(StrictModel):
     learning_reads: LearningReadsOut | None = Field(None, description="\"Learning reads\" of the pinned workspace; "
                                                     "null when the read is not pinned.")
@@ -419,6 +432,8 @@ class BrainStateOut(StrictModel):
     links: list[BrainLinkGroup] = Field(description="Stored links of sessions you read, by project and tier.")
     learners: list[BrainLearnerState]
     targets: list[BrainTargetOut] = Field(default_factory=list, description="Where learners run, here and below.")
+    flags: list[BrainFlagOut] = Field(default_factory=list, description="What a learning run made that a removal "
+                                      "could not undo, to its owner and the workspace's managers, newest first.")
     runs: BrainRunCounts
     cascade: list[BrainCascadeCounts]
 

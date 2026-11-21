@@ -125,6 +125,7 @@ api = CanopyNinjaAPI(
 # `SettingChange` row commit together. Registered here, before any router is
 # added, so it reaches every route — and so every entry point (web UI, CLI,
 # script, MCP tool) through the one place they all pass.
+from apps.brain import lineage as _brain_lineage  # noqa: E402
 from apps.events import audit as _audit  # noqa: E402
 
 
@@ -142,6 +143,8 @@ def _operation_id_of(func) -> str:
 
 _audit.register_operation_id(_operation_id_of)
 api.add_decorator(_audit.audited)
+# What a learning run's turn makes through any route is recorded against the sessions it read (apps/brain/lineage.py).
+api.add_decorator(_brain_lineage.capturing)
 
 
 def _problem_response(request: HttpRequest, problem: Problem, members: dict | None = None) -> HttpResponse:
