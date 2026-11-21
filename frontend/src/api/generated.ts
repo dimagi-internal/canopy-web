@@ -11432,6 +11432,38 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/sites/contacts/erase": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * A host site makes canopy forget some of its people, signed
+         * @description The host site, the system of record for its people, makes canopy forget them.
+         *
+         *     The body is a compact JWS signed by the site's own key (`Content-Type:
+         *     application/jwt`): `typ` `canopy-contact-erase+jwt`, `iss` = its host-site name, `aud` =
+         *     this URL, at most 60 s, single-use `jti`, optional `canopy_workspace`, and `subs` — 1
+         *     to 100 of the site's own ids. Send it with `canopy_sdk.host.contacts.erase_contacts`.
+         *
+         *     For each person this site vouches for: their conversations and every word, file and
+         *     turn in them, their contact tokens and act-as-you permissions, the facts recorded about
+         *     them in this workspace, and the person record when nothing else holds it, are deleted;
+         *     a tombstone keeps only the site's id and when. Nobody else's data is touched.
+         *     Idempotent: `{results: [{sub, status: erased|not_found}]}`. 503 when a stored file could
+         *     not be deleted: what is done stays done, and sending again finishes the rest.
+         */
+        readonly post: operations["erase_contacts"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/sign-offs/{sign_off_id}": {
         readonly parameters: {
             readonly query?: never;
@@ -41263,6 +41295,18 @@ export interface components {
             /** Results */
             readonly results: readonly components["schemas"]["ContactRecordResultOut"][];
         };
+        /** ContactErasureResultOut */
+        readonly ContactErasureResultOut: {
+            /** Sub */
+            readonly sub: string;
+            /** Status */
+            readonly status: string;
+        };
+        /** ContactErasuresOut */
+        readonly ContactErasuresOut: {
+            /** Results */
+            readonly results: readonly components["schemas"]["ContactErasureResultOut"][];
+        };
         /** SignOffOut */
         readonly SignOffOut: {
             /** Id */
@@ -69468,6 +69512,30 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ContactRecordsOut"];
+                };
+            };
+        };
+    };
+    readonly erase_contacts: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/jwt": string;
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ContactErasuresOut"];
                 };
             };
         };

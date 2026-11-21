@@ -93,3 +93,42 @@ def update_contacts(request: HttpRequest):
     """
     app, claims = _verified(request, service.UPDATE)
     return _answer(service.apply_update(app, claims))
+
+
+class ContactErasureResultOut(Schema):
+    sub: str
+    #: `erased`, or `not_found` (canopy holds no such person for this site: never known, or
+    #: already erased).
+    status: str
+
+
+class ContactErasuresOut(Schema):
+    results: list[ContactErasureResultOut]
+
+
+@router.post("/erase", auth=None, response=ContactErasuresOut, openapi_extra=_JWT_BODY,
+             summary="A host site makes canopy forget some of its people, signed")
+@gate("host", kind="action")  # auth=None; a request signed by the site's own registered key IS the credential
+def erase_contacts(request: HttpRequest):
+    """The host site, the system of record for its people, makes canopy forget them.
+
+    The body is a compact JWS signed by the site's own key (`Content-Type:
+    application/jwt`): `typ` `canopy-contact-erase+jwt`, `iss` = its host-site name, `aud` =
+    this URL, at most 60 s, single-use `jti`, optional `canopy_workspace`, and `subs` — 1
+    to 100 of the site's own ids. Send it with `canopy_sdk.host.contacts.erase_contacts`.
+
+    For each person this site vouches for: their conversations and every word, file and
+    turn in them, their contact tokens and act-as-you permissions, the facts recorded about
+    them in this workspace, and the person record when nothing else holds it, are deleted;
+    a tombstone keeps only the site's id and when. Nobody else's data is touched.
+    Idempotent: `{results: [{sub, status: erased|not_found}]}`. 503 when a stored file could
+    not be deleted: what is done stays done, and sending again finishes the rest.
+    """
+    from apps.canopy_sessions.content_deletion import BytesRemain  # noqa: PLC0415 — canopy_sessions loads with a call
+
+    app, claims = _verified(request, service.ERASE)
+    try:
+        return {"results": service.apply_erase(app, claims)}
+    except BytesRemain:
+        raise HttpError(503, "files_remain: a stored file could not be deleted; send the erasure again "
+                             "to finish it") from None

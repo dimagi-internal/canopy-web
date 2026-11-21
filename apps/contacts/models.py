@@ -476,6 +476,37 @@ class Contact(models.Model):
         return self.AUTH_RANK.get(self.auth_result, 0) >= self.AUTH_RANK[grade]
 
 
+class ContactErasure(models.Model):
+    """A host site made canopy forget one of its people (`services.erase`, its signed
+    `POST /api/sites/contacts/erase`): the record that it did, and nothing about the person
+    but the host's own id for them.
+
+    The host is the system of record (docs/architecture/host-systems-of-record.md), so
+    when it says a person is gone canopy deletes the contact, its conversations and their
+    words, its tokens and act-as-you permissions, the facts recorded about them in that
+    workspace, and the `Person` when nothing else holds it. This row is what stays: so an
+    erasure is provable, so an update the host signed BEFORE it cannot bring the person
+    back (`services.apply_host_record`), and so a later arrival is visibly a new one.
+    Keyed `(app, external_id)`, the contact's own key; erasing again only moves `erased_at`.
+    """
+
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE,
+                                  related_name="contact_erasures")
+    app = models.ForeignKey("tokens.AppCredential", on_delete=models.CASCADE, related_name="contact_erasures")
+    #: The host's own id for the person: the contact's `external_id`.
+    external_id = models.CharField(max_length=200)
+    erased_at = models.DateTimeField()
+    #: Who asked: `host` (the site's signed erasure) or `retention`.
+    reason = models.CharField(max_length=32, default="host")
+
+    class Meta:
+        db_table = "contact_erasures"
+        constraints = [models.UniqueConstraint(fields=["app", "external_id"], name="one_erasure_per_app_person")]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"erased {self.app_id}:{self.pk} at {self.erased_at:%Y-%m-%d}"
+
+
 # --- the fleet brain: what agents know about a person --------------
 #
 # Two layers:

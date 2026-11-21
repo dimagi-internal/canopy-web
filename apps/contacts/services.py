@@ -22,12 +22,13 @@ from __future__ import annotations
 import logging
 
 from django.db import IntegrityError, transaction
-from django.db.models import F
+from django.db.models import F, Q
+from django.utils import timezone
 
 from .email_auth import grade_from_headers, grade_of
 from apps.workspaces import permissions as perms
 
-from .models import Contact
+from .models import Contact, ContactErasure, Person, PersonFact
 
 logger = logging.getLogger(__name__)
 
@@ -335,10 +336,15 @@ def record_embed_visitor(
     return contact
 
 
-def apply_host_record(*, app, item: dict, signed_at) -> tuple[Contact, str]:
+#: `apply_host_record`'s answer for an update the host signed before it erased the person.
+ERASED = "erased"
+
+
+def apply_host_record(*, app, item: dict, signed_at) -> tuple[Contact | None, str]:
     """The host site's own fields for one of its people, from its signed
     `POST /api/sites/contacts` (`host_grants.contact_records`): `(contact, status)`,
-    `status` `created`, `updated` or `stale`.
+    `status` `created`, `updated` or `stale` — or `(None, ERASED)` for an update signed
+    before the host erased that person (`erase`): a late delivery never brings them back.
 
     A host site is the SYSTEM OF RECORD for the people it brings
     (docs/architecture/host-systems-of-record.md). It may write exactly three fields,
@@ -363,6 +369,11 @@ def apply_host_record(*, app, item: dict, signed_at) -> tuple[Contact, str]:
         fields["host_profile"] = item["profile"]
     version = int(item["version"])
     sub = item["sub"]
+    erased = (ContactErasure.objects.filter(app=app, external_id=sub, erased_at__gte=signed_at)
+              .values_list("erased_at", flat=True).first())
+    if erased is not None and not Contact.objects.filter(app=app, external_id=sub).exists():
+        # Signed before the host erased this person: a late delivery must not bring them back.
+        return None, ERASED
     for _attempt in range(2):
         try:
             with transaction.atomic():
@@ -391,6 +402,92 @@ def apply_host_record(*, app, item: dict, signed_at) -> tuple[Contact, str]:
             # Two requests created the same person at once; the loser re-reads the winner's row.
             continue
     raise RuntimeError("could not record the host's contact")  # pragma: no cover
+
+
+#: What hangs off a `Person` only as a log of reads and searches about them, kept no longer
+#: than the person is. Anything else (a contact of another workspace, a login, facts other
+#: workspaces hold, the person's own grants, addresses, directives, memory) keeps the person.
+_PERSON_LOGS = frozenset({"accesses", "audit_events", "searches", "session_memory"})
+
+
+def _person_held(person: Person) -> bool:
+    """Whether anything but logs about them still refers to `person`. Fails closed: a
+    relation it does not know is one that holds the person."""
+    if person.user_id is not None:
+        return True
+    for rel in Person._meta.related_objects:
+        accessor = rel.get_accessor_name()
+        if accessor in _PERSON_LOGS or not accessor:
+            continue
+        if getattr(person, accessor).exists():
+            return True
+    return False
+
+
+def _scrub_contact_turns(contact: Contact, now) -> int:
+    """The words of every turn this contact started that no deleted conversation took with
+    it: the row and ids stay, as a purged turn's do (`retention.services._scrub_turns`)."""
+    from apps.harness.models import CallerToken, Turn, TurnEvent, TurnTranscript  # noqa: PLC0415 — harness models import contacts
+
+    ids = list(Turn.objects.filter(initiator_contact=contact).values_list("pk", flat=True))
+    if ids:
+        Turn.objects.filter(pk__in=ids).update(prompt="", result_note="", report_summary="", report_title="",
+                                               work_product_urls=[], origin_ref={}, content_purged_at=now)
+        TurnEvent.objects.filter(turn_id__in=ids).delete()
+        TurnTranscript.objects.filter(turn_id__in=ids).delete()
+        CallerToken.objects.filter(turn_id__in=ids).delete()
+    return len(ids)
+
+
+def erase(contact: Contact, *, reason: str = "host") -> None:
+    """Forget a host site's person, because the site — their system of record — said so
+    (`POST /api/sites/contacts/erase`, docs/architecture/host-systems-of-record.md).
+
+    Deletes, for THIS contact only: its conversations with every word, file and turn in
+    them (`content_deletion.erase_session`), the words of any other turn it started, its
+    contact tokens and act-as-you permissions (they go with the contact row), the facts
+    canopy recorded about the person in this workspace, and the `Person` itself when
+    nothing else holds it (`_person_held`: another workspace's contact, a login, facts
+    elsewhere). Then leaves a `ContactErasure` tombstone keyed `(app, external_id)`.
+
+    Never anyone else's: another contact of the same person (another workspace, another
+    site) keeps its conversations, and where another contact in this workspace is the
+    same person, only the facts this contact's own turns or notes produced go.
+    Idempotent by construction: the second call finds no contact (`not_found`)."""
+    from apps.canopy_sessions import content_deletion  # noqa: PLC0415 — canopy_sessions imports contacts
+    from apps.canopy_sessions.models import Session  # noqa: PLC0415 — as above
+
+    now = timezone.now()
+    for session in Session.objects.filter(contact=contact).order_by("created_at"):
+        # Each conversation commits on its own: a file store that refuses (`BytesRemain`)
+        # stops the erasure with what is done kept, and the host's retry finishes it.
+        content_deletion.erase_session(session)
+    with transaction.atomic():
+        locked = Contact.objects.select_for_update().filter(pk=contact.pk).first()
+        if locked is None:
+            return
+        _scrub_contact_turns(locked, now)
+        person = locked.person
+        if person is not None:
+            facts = PersonFact.objects.filter(person=person, workspace_id=locked.workspace_id)
+            if Contact.objects.filter(person=person, workspace_id=locked.workspace_id).exclude(pk=locked.pk).exists():
+                facts = facts.filter(_produced_by(locked))
+            facts.delete()
+        app_id, external_id, workspace_id = locked.app_id, locked.external_id, locked.workspace_id
+        locked.delete()
+        if person is not None and not _person_held(person):
+            person.delete()
+        if app_id and external_id:
+            ContactErasure.objects.update_or_create(
+                app_id=app_id, external_id=external_id,
+                defaults={"workspace_id": workspace_id, "erased_at": now, "reason": reason[:32]})
+    logger.info("contact %s erased (%s); person %s", contact.pk, reason,
+                "kept" if person is not None and Person.objects.filter(pk=person.pk).exists() else "gone")
+
+
+def _produced_by(contact: Contact) -> Q:
+    """The facts THIS contact produced: mirrored from its notes, or recorded in its turns."""
+    return Q(source_contact=contact) | Q(source_turn__initiator_contact=contact)
 
 
 def record_slack_user(

@@ -96,5 +96,25 @@ def apply_update(app, claims: dict) -> list[dict]:
                             "reason": f"{exc.code}: {exc.message}"})
             continue
         contact, status = services.apply_host_record(app=app, item=item, signed_at=signed_at)
+        if contact is None:
+            results.append({"sub": item["sub"], "contact_id": None, "status": wire.REFUSED,
+                            "reason": "erased: this update was signed before the site erased this person"})
+            continue
         results.append({"sub": item["sub"], "contact_id": contact.pk, "status": status})
+    return results
+
+
+def apply_erase(app, claims: dict) -> list[dict]:
+    """Each `sub` of a verified erasure: `erased`, or `not_found` when canopy holds no such
+    person for THIS site (never erased, or already erased). `[{sub, status}]`."""
+    from apps.contacts.models import Contact  # noqa: PLC0415 — as `services`: kept beside its one reader
+
+    results = []
+    for sub in claims["subs"]:
+        contact = Contact.objects.filter(workspace_id=app.workspace_id, app=app, external_id=sub).first()
+        if contact is None:
+            results.append({"sub": sub, "status": wire.NOT_FOUND})
+            continue
+        services.erase(contact, reason="host")
+        results.append({"sub": sub, "status": wire.ERASED})
     return results
