@@ -300,11 +300,16 @@ class BrainRun(models.Model):
     STATE_CHOICES = [(OPEN, "Open"), (DONE, "Done"), (FAILED, "Failed")]
 
     capability = models.ForeignKey(BrainCapability, on_delete=models.PROTECT, related_name="runs")
-    #: What it is about: `person` (a user id), `project` (a project pk) or `system`.
+    #: What it is about: `person` (a user id), `project` (a project pk) or `system` (its `scope`).
     subject_type = models.CharField(max_length=16)
     subject = models.CharField(max_length=64, blank=True, default="")
     #: The one purpose this run reads for (one of its feature's declared purposes).
     purpose = models.CharField(max_length=40)
+    #: The workspace the run was started for (a slug; "" for none): it reads only eligible sources of that workspace
+    #: and the ones below it (`reading.candidates`), and what it emits is that workspace's (`emit`), seen by its
+    #: owners and its ancestors' (`outputs.visible_to`). A `system` run's subject is this slug too, so one run is
+    #: open per feature and workspace (`brain_one_open_run`).
+    scope = models.CharField(max_length=64, blank=True, default="", db_default="")
     #: A lower bound a caller may set by hand: the run reads only sources past this pk. The scheduler passes 0 and
     #: relies on what earlier clean runs read (`reading.candidates`), so a source that becomes eligible late is read.
     floor = models.BigIntegerField(default=0)

@@ -19,6 +19,7 @@ from django.utils import timezone
 
 from apps.canopy_sessions import transcript_read
 from apps.common import redact
+from apps.workspaces import services as wsvc
 
 from . import readers
 from .eligibility import eligible_sources
@@ -60,7 +61,14 @@ def candidates(run: BrainRun, after: int = 0):
     elif run.subject_type == "project":
         qs = qs.filter(links__subject_type=SourceLink.PROJECT_SUBJECT, links__subject=run.subject,
                        links__tier=SourceLink.CORE)
+    if run.scope:
+        qs = qs.filter(workspace_id__in=subtree(run.scope))
     return qs.filter(pk__gt=max(after, run.floor)).exclude(learned(run)).order_by("pk")
+
+
+def subtree(slug: str) -> set[str]:
+    """A run's scope: its workspace and every workspace below it (`workspaces.services.descendant_slugs`)."""
+    return {slug} | wsvc.descendant_slugs({slug})
 
 
 def learned(run: BrainRun) -> Q:

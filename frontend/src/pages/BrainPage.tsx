@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useState, type JSX, type ReactNode } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import { Button, StatusBadge } from 'canopy-ui/ui'
 
 import {
@@ -16,11 +16,13 @@ import {
 import { Td, Th, Tr } from '@/components/DataTable'
 import { relativeAge } from '@/lib/relativeAge'
 import { scopedPath } from '@/lib/scopedLinks'
+import { HealthViews } from './health/HealthViews'
 
-// THE BRAIN: canopy learning as it stands. It renders; it never decides: every count is the server's
-// (`apps/brain/state.py`). The routes refuse an agent, a turn's token and an MCP client, and answer only with sessions
-// and projects you already read. A canopy admin starts a learner's run here ("Run now"); what it found shows under
-// Findings, which act on nothing by themselves.
+// THE BRAIN of one workspace (/w/:workspace/brain): canopy learning in it and the workspaces below it, as the
+// viewer's role there allows. Its owners and admins see the subtree's counts, links, runs and findings; a member sees
+// their own. It renders; it never decides: every count and every refusal is the server's (`apps/brain/state.py`), and
+// every read is pinned to this workspace. Its owner (or a canopy admin) starts a learner's run here ("Run now"),
+// reading only this subtree; what it found shows under Findings, which act on nothing by themselves.
 
 const CLASSES = ['individual', 'memory', 'project', 'system'] as const
 
@@ -28,36 +30,31 @@ const CLASSES = ['individual', 'memory', 'project', 'system'] as const
 const sessionHref = (workspace: string, id: string) => scopedPath(workspace, `/sessions/${id}`)
 
 export function BrainPage(): JSX.Element {
+  const { workspace = '' } = useParams()
   const [state, setState] = useState<BrainState | null>(null)
   const [error, setError] = useState('')
   // Bumped when a run starts, so the runs list reads again.
   const [runsKey, setRunsKey] = useState(0)
 
   useEffect(() => {
-    getBrainState().then(setState, (e: unknown) => setError(e instanceof Error ? e.message : 'Could not load'))
-  }, [])
+    setState(null)
+    setError('')
+    getBrainState(workspace).then(setState, (e: unknown) => setError(e instanceof Error ? e.message : 'Could not load'))
+  }, [workspace])
 
-  const home = state?.workspaces[0]
   return (
-    <div className="mx-auto max-w-6xl space-y-4 p-4 sm:p-6">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-lg font-semibold text-foreground">Canopy Brain</h1>
-          <p className="text-[13px] text-muted-foreground">
-            What canopy may learn from, who agreed, what learns, and what it found. Only you see this view of it.
-          </p>
-        </div>
-        <nav aria-label="Related" className="flex flex-wrap gap-3 text-[13px]">
-          <Link className="underline" to="/settings/learning">Your learning settings</Link>
-          {home && <Link className="underline" to={scopedPath(home, '/network')}>Who works with whom</Link>}
-        </nav>
-      </header>
+    <div className="space-y-4">
+      <HealthViews title="Learning" />
+      <nav aria-label="Related" className="flex flex-wrap gap-3 text-[13px]">
+        <Link className="underline" to="/settings/learning">Your learning settings</Link>
+      </nav>
       {error ? (
         <p className="text-[13px] text-destructive">{error}</p>
       ) : !state ? (
         <p className="text-[13px] text-muted-foreground">Loading…</p>
       ) : (
-        <NowTab state={state} runsKey={runsKey} onStarted={() => setRunsKey((k) => k + 1)} />
+        <NowTab key={workspace} ws={workspace} state={state} runsKey={runsKey}
+                onStarted={() => setRunsKey((k) => k + 1)} />
       )}
     </div>
   )
@@ -93,7 +90,9 @@ function counts(map: Record<string, number>): string {
 
 // ---- Now ---------------------------------------------------------------------------------------------
 
-function NowTab({ state, runsKey, onStarted }: { state: BrainState; runsKey: number; onStarted: () => void }): JSX.Element {
+function NowTab({ ws, state, runsKey, onStarted }: {
+  ws: string; state: BrainState; runsKey: number; onStarted: () => void
+}): JSX.Element {
   return (
     <div className="space-y-4">
       <Section title="Rollout">
@@ -116,30 +115,34 @@ function NowTab({ state, runsKey, onStarted }: { state: BrainState; runsKey: num
           </>
         }
       >
-        <Table>
-          <thead>
-            <Tr head="label">
-              <Th>Workspace</Th>
-              <Th align="right">Members</Th>
-              <Th align="right">Any</Th>
-              {CLASSES.map((c) => (
-                <Th key={c} align="right">{c}</Th>
-              ))}
-            </Tr>
-          </thead>
-          <tbody>
-            {state.consent.workspaces.map((w) => (
-              <Tr key={w.workspace} rule="bottom-last">
-                <Td>{w.name}</Td>
-                <Td numeric align="right">{w.members}</Td>
-                <Td numeric align="right">{w.agreed_any}</Td>
+        {state.consent.workspaces.length === 0 ? (
+          <Empty>Counts by workspace are for its owners and admins.</Empty>
+        ) : (
+          <Table>
+            <thead>
+              <Tr head="label">
+                <Th>Workspace</Th>
+                <Th align="right">Members</Th>
+                <Th align="right">Any</Th>
                 {CLASSES.map((c) => (
-                  <Td key={c} numeric align="right">{w.agreed[c] ?? 0}</Td>
+                  <Th key={c} align="right">{c}</Th>
                 ))}
               </Tr>
-            ))}
-          </tbody>
-        </Table>
+            </thead>
+            <tbody>
+              {state.consent.workspaces.map((w) => (
+                <Tr key={w.workspace} rule="bottom-last">
+                  <Td>{w.name}</Td>
+                  <Td numeric align="right">{w.members}</Td>
+                  <Td numeric align="right">{w.agreed_any}</Td>
+                  {CLASSES.map((c) => (
+                    <Td key={c} numeric align="right">{w.agreed[c] ?? 0}</Td>
+                  ))}
+                </Tr>
+              ))}
+            </tbody>
+          </Table>
+        )}
       </Section>
 
       <Section title="Sources" note="What could be learned from: open or withdrawn, and the sealed ones by why.">
@@ -171,7 +174,7 @@ function NowTab({ state, runsKey, onStarted }: { state: BrainState; runsKey: num
         )}
       </Section>
 
-      <StoredLinks state={state} />
+      <StoredLinks ws={ws} state={state} />
 
       <Section title="Learners" note="What is registered to learn, whether it is on, how much of a session it reads, and who answers for it.">
         <Table>
@@ -184,7 +187,7 @@ function NowTab({ state, runsKey, onStarted }: { state: BrainState; runsKey: num
               <Th hideBelow="md">Schedule</Th>
               <Th hideBelow="md">Operator</Th>
               <Th>Accountable admin</Th>
-              {state.canopy_admin && <Th srOnly>Run now</Th>}
+              {state.can_run && <Th srOnly>Run now</Th>}
             </Tr>
           </thead>
           <tbody>
@@ -201,9 +204,9 @@ function NowTab({ state, runsKey, onStarted }: { state: BrainState; runsKey: num
                 <Td hideBelow="md" tone="muted">{l.schedule || '—'}</Td>
                 <Td hideBelow="md" tone="muted">{l.operator || '—'}</Td>
                 <Td tone="muted">{l.accountable || 'nobody yet'}</Td>
-                {state.canopy_admin && (
+                {state.can_run && (
                   <Td>
-                    <RunNow learner={l} reads={state.reads_enabled} onStarted={onStarted} />
+                    <RunNow ws={ws} learner={l} reads={state.reads_enabled} onStarted={onStarted} />
                   </Td>
                 )}
               </Tr>
@@ -212,8 +215,8 @@ function NowTab({ state, runsKey, onStarted }: { state: BrainState; runsKey: num
         </Table>
       </Section>
 
-      <Runs key={runsKey} state={state} />
-      <Findings />
+      <Runs key={runsKey} ws={ws} state={state} />
+      <Findings ws={ws} />
 
       <Section
         title="Removals and cascade work"
@@ -281,8 +284,9 @@ function usePaged<T>(load: (before: number) => Promise<{ next_before: number; do
   return { rows, error, done, loadMore: () => void more(next), reload }
 }
 
-function StoredLinks({ state }: { state: BrainState }): JSX.Element {
-  const { rows, error, done, loadMore } = usePaged<BrainStoredLink>(getBrainLinks, 'links')
+function StoredLinks({ ws, state }: { ws: string; state: BrainState }): JSX.Element {
+  const load = useCallback((before: number) => getBrainLinks(ws, before), [ws])
+  const { rows, error, done, loadMore } = usePaged<BrainStoredLink>(load, 'links')
   return (
     <Section title="Stored links" note="Which project each session you can read is tied to, and how sure canopy is.">
       {state.links.length === 0 ? (
@@ -338,8 +342,9 @@ function StoredLinks({ state }: { state: BrainState }): JSX.Element {
 /** How often the runs list reads again while a run is still open. */
 const RUN_POLL_MS = 15_000
 
-function Runs({ state }: { state: BrainState }): JSX.Element {
-  const { rows, error, done, loadMore, reload } = usePaged<BrainRun>(getBrainRuns, 'runs')
+function Runs({ ws, state }: { ws: string; state: BrainState }): JSX.Element {
+  const load = useCallback((before: number) => getBrainRuns(ws, before), [ws])
+  const { rows, error, done, loadMore, reload } = usePaged<BrainRun>(load, 'runs')
   const running = rows.some((r) => r.state === 'open')
   useEffect(() => {
     if (!running) return
@@ -404,8 +409,11 @@ function Runs({ state }: { state: BrainState }): JSX.Element {
 
 type Learner = BrainState['learners'][number]
 
-/** "Run now": one run of a learner, started by a canopy admin. The server says why when it cannot start. */
-function RunNow({ learner, reads, onStarted }: { learner: Learner; reads: boolean; onStarted: () => void }): JSX.Element {
+/** "Run now": one run of a learner for this workspace's subtree, started by its owner or a canopy admin, who then
+ *  answers for it. The server says why when it cannot start. */
+function RunNow({ ws, learner, reads, onStarted }: {
+  ws: string; learner: Learner; reads: boolean; onStarted: () => void
+}): JSX.Element {
   const [project, setProject] = useState('')
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
@@ -417,7 +425,7 @@ function RunNow({ learner, reads, onStarted }: { learner: Learner; reads: boolea
     setBusy(true)
     setNote('')
     try {
-      const run = await runLearnerNow(learner.slug, project)
+      const run = await runLearnerNow(ws, learner.slug, project)
       setNote(`Run ${run.id} started`)
       onStarted()
     } catch (e) {
@@ -454,12 +462,12 @@ function bodyFields(body: Record<string, unknown>): [string, string][] {
     .map(([k, v]) => [k.replace(/_/g, ' '), Array.isArray(v) ? v.map(String).join(', ') : String(v)])
 }
 
-function Findings(): JSX.Element {
+function Findings({ ws }: { ws: string }): JSX.Element {
   const [rows, setRows] = useState<BrainOutput[] | null>(null)
   const [error, setError] = useState('')
   useEffect(() => {
-    listBrainOutputs().then(setRows, (e: unknown) => setError(e instanceof Error ? e.message : 'Could not load'))
-  }, [])
+    listBrainOutputs(ws).then(setRows, (e: unknown) => setError(e instanceof Error ? e.message : 'Could not load'))
+  }, [ws])
   return (
     <Section
       title="Findings"

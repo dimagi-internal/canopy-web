@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
 
 const getBrainState = vi.fn()
 const getBrainLinks = vi.fn()
@@ -16,11 +16,13 @@ const learner = (slug: string, purpose_class: string) => ({
   slug, name: slug, purpose_class, enabled: true, scope: 'full', schedule: '', operator: 'ada', accountable: 'JJ',
 })
 
-const STATE = (canopy_admin: boolean) => ({
+const STATE = (owner: boolean) => ({
   reads_enabled: true,
+  workspace: 'dimagi',
+  can_run: owner,
   workspaces: ['dimagi'],
-  admin_workspaces: [],
-  canopy_admin,
+  admin_workspaces: owner ? ['dimagi'] : [],
+  canopy_admin: false,
   consent: {
     mine: ['system'],
     workspaces: [
@@ -40,8 +42,8 @@ const RUN = {
   sessions: [{ session_id: 's1', workspace: 'dimagi', title: 'runner debugging' }], hidden: 1,
 }
 
-function setup(admin = false) {
-  getBrainState.mockResolvedValue(STATE(admin))
+function setup(owner = false) {
+  getBrainState.mockResolvedValue(STATE(owner))
   getBrainLinks.mockResolvedValue({ links: [{ id: 9, project: 'supply', name: 'Supply', workspace: 'dimagi', tier: 'core',
     how: 'declared', confidence: null, evidence: [], session_id: 's1', title: 'tender work', started_at: '' }],
   next_before: 9, done: true })
@@ -54,8 +56,10 @@ function setup(admin = false) {
   }])
   runLearnerNow.mockResolvedValue({ ...RUN, id: 4, state: 'open' })
   return render(
-    <MemoryRouter initialEntries={['/brain']}>
-      <BrainPage />
+    <MemoryRouter initialEntries={['/w/dimagi/brain']}>
+      <Routes>
+        <Route path="/w/:workspace/brain" element={<BrainPage />} />
+      </Routes>
     </MemoryRouter>,
   )
 }
@@ -69,6 +73,11 @@ describe('BrainPage', () => {
   it('shows the live state: rollout, consent, sources, links to sessions, learners and runs', async () => {
     setup()
     expect(await screen.findByText('Reads on')).toBeTruthy()
+    // Every read is pinned to the page's workspace.
+    expect(getBrainState).toHaveBeenCalledWith('dimagi')
+    await waitFor(() => expect(getBrainLinks).toHaveBeenCalledWith('dimagi', 0))
+    expect(getBrainRuns).toHaveBeenCalledWith('dimagi', 0)
+    expect(listBrainOutputs).toHaveBeenCalledWith('dimagi')
     expect(within(screen.getByRole('region', { name: 'Consent' })).getByText('12')).toBeTruthy()
     expect(within(screen.getByRole('region', { name: 'Sources' })).getByText('sensitive 2')).toBeTruthy()
     const links = screen.getByRole('region', { name: 'Stored links' })
@@ -77,7 +86,7 @@ describe('BrainPage', () => {
     const runs = screen.getByRole('region', { name: 'Runs' })
     expect(await within(runs).findByText(/\+1 you do not read/)).toBeTruthy()
     expect(screen.queryByRole('tab')).toBeNull()                          // one page, no preview tab
-    expect(screen.queryByRole('button', { name: 'Run now' })).toBeNull()   // not a canopy admin
+    expect(screen.queryByRole('button', { name: 'Run now' })).toBeNull()   // not this workspace's owner
   })
 
   it('renders findings with their fields and the sessions they cite', async () => {
@@ -92,20 +101,20 @@ describe('BrainPage', () => {
     expect(findings.textContent).toContain('2 sessions you do not read')
   })
 
-  it('lets a canopy admin run a learner now, a project learner for a named project', async () => {
+  it('lets the workspace owner run a learner now for this workspace, a project learner for a named project', async () => {
     setup(true)
     const learners = await screen.findByRole('region', { name: 'Learners' })
     const buttons = within(learners).getAllByRole('button', { name: 'Run now' })
     expect(buttons).toHaveLength(2)                                       // system and project; not the per-person one
     expect(within(learners).getByText('per person')).toBeTruthy()
     fireEvent.click(buttons[0])
-    await waitFor(() => expect(runLearnerNow).toHaveBeenCalledWith('system-learning', ''))
+    await waitFor(() => expect(runLearnerNow).toHaveBeenCalledWith('dimagi', 'system-learning', ''))
     expect(await within(learners).findByText('Run 4 started')).toBeTruthy()
     await waitFor(() => expect(getBrainRuns).toHaveBeenCalledTimes(2))    // the runs list reads again
     expect((buttons[1] as HTMLButtonElement).disabled).toBe(true)        // no project named yet
     fireEvent.change(within(learners).getByLabelText('Project for project-learning'), { target: { value: 'supply' } })
     fireEvent.click(buttons[1])
-    await waitFor(() => expect(runLearnerNow).toHaveBeenCalledWith('project-learning', 'supply'))
+    await waitFor(() => expect(runLearnerNow).toHaveBeenCalledWith('dimagi', 'project-learning', 'supply'))
   })
 
   it('shows why a run cannot start, in the server\'s words', async () => {

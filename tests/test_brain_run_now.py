@@ -54,7 +54,7 @@ def w(settings):
 
 
 def _run(w, slug="system-learning", who="root", **body):
-    return _client(w[who]).post(f"/api/brain/capabilities/{slug}/runs/", body, content_type="application/json")
+    return _client(w[who]).post(f"/api/w/acme/brain/capabilities/{slug}/runs/", body, content_type="application/json")
 
 
 def test_run_now_starts_one_system_run_and_refuses_a_second(w):
@@ -63,7 +63,8 @@ def test_run_now_starts_one_system_run_and_refuses_a_second(w):
     body = r.json()
     assert body["subject_type"] == "system" and body["subject"] == "system" and body["state"] == "open"
     run = BrainRun.objects.get(pk=body["id"])
-    assert run.subject_type == "system" and run.subject == "" and run.session is not None
+    assert run.subject_type == "system" and run.subject == "acme" and run.scope == "acme" and run.session is not None
+    assert body["scope"] == "acme"
     assert Turn.objects.filter(chat_session=run.session).count() == 1
     again = _run(w)
     assert again.status_code == 422 and f"run {run.pk}" in again.json()["detail"]
@@ -87,17 +88,17 @@ def test_run_now_says_why_it_cannot_start(w, settings, change, words):
     assert not BrainRun.objects.exists()
 
 
-def test_nobody_accountable_and_a_person_learner_are_refused(w):
-    w["root"].is_active = False
+def test_the_starter_answers_for_the_run_and_a_person_learner_is_refused(w):
+    w["root"].is_active = False                                         # the learner's own admin is gone
     w["root"].save(update_fields=["is_active"])
-    other = user("root2")
-    other.is_superuser = True
-    other.save()
-    member(other, w["ws"])
-    r = _client(other).post("/api/brain/capabilities/system-learning/runs/", {}, content_type="application/json")
-    assert r.status_code == 422 and "accountable" in r.json()["detail"]
+    r = _client(w["owner"]).post("/api/w/acme/brain/capabilities/system-learning/runs/", {},
+                                 content_type="application/json")
+    assert r.status_code == 200, r.content                               # the workspace owner who started it answers
+    turn = Turn.objects.get(chat_session=BrainRun.objects.get(pk=r.json()["id"]).session)
+    assert turn.initiator_user_id == w["owner"].pk
     coaching = BrainCapability.objects.get(slug="coaching")
-    r = _client(other).post(f"/api/brain/capabilities/{coaching.slug}/runs/", {}, content_type="application/json")
+    r = _client(w["owner"]).post(f"/api/w/acme/brain/capabilities/{coaching.slug}/runs/", {},
+                                 content_type="application/json")
     assert r.status_code == 422 and "one person" in r.json()["detail"]
 
 
@@ -117,7 +118,7 @@ def test_only_a_canopy_admin_as_a_person(w):
     assert _run(w, who="alice").status_code == 403                                     # not a canopy admin
     w["operator"].user.is_superuser = True                                              # even a superuser agent login
     w["operator"].user.save()
-    r = Client().post("/api/brain/capabilities/system-learning/runs/", {}, content_type="application/json",
+    r = Client().post("/api/w/acme/brain/capabilities/system-learning/runs/", {}, content_type="application/json",
                       **bearer_headers(pat_token(w["operator"].user)))
     assert r.status_code == 403
     box = Runner.objects.create(name="cloud-1", kind=Runner.CLOUD, owner=w["owner"], workspace=w["ws"],
@@ -125,10 +126,10 @@ def test_only_a_canopy_admin_as_a_person(w):
     turn = Turn.objects.create(agent=w["operator"], prompt="x", idempotency_key="k2", status=Turn.RUNNING,
                                claimed_by=box, initiator_kind="user", initiator_user=w["root"])
     token = turn_agent_tokens.issue(turn, box)["token"]
-    r = Client().post("/api/brain/capabilities/system-learning/runs/", {}, content_type="application/json",
+    r = Client().post("/api/w/acme/brain/capabilities/system-learning/runs/", {}, content_type="application/json",
                       **bearer_headers(token))
     assert r.status_code == 403
-    assert _client(w["root"]).post("/api/brain/capabilities/system-learning/runs/", {}, content_type="application/json",
+    assert _client(w["root"]).post("/api/w/acme/brain/capabilities/system-learning/runs/", {}, content_type="application/json",
                                    HTTP_X_CANOPY_TURN_ID="x").status_code == 403
     assert "run_brain_capability" in api_tools.EXCLUDED
     assert act_as.route_refusal("POST", "/api/brain/capabilities/system-learning/runs/", "write",
@@ -139,7 +140,8 @@ def test_only_a_canopy_admin_as_a_person(w):
 def test_the_schedule_runs_a_system_learner_once_per_interval(w):
     BrainCapability.objects.filter(slug="system-learning").update(schedule="daily")
     started = schedule.run_due()
-    assert [(r.capability.slug, r.subject_type, r.subject) for r in started] == [("system-learning", "system", "")]
+    assert [(r.capability.slug, r.subject_type, r.subject, r.scope) for r in started] == [
+        ("system-learning", "system", "acme", "acme")]
     assert BrainCursor.objects.filter(capability__slug="system-learning", subject_type="system").exists()
     BrainRun.objects.update(state=BrainRun.DONE)
     assert schedule.run_due() == []                                      # within the interval
