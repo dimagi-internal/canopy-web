@@ -360,3 +360,21 @@ def test_a_person_over_mcp_and_an_act_as_permission_are_still_refused(w):
     for path in ("/api/w/connect/brain/learning-reads", "/api/w/connect/brain/targets/1/runs",
                  "/api/w/connect/brain/outputs/1/status", "/api/w/connect/brain/state"):
         assert act_as.route_refusal("POST", path, "write", is_tool=True) is not None, path
+
+
+def test_an_admin_agent_aims_a_learner_over_mcp(w):
+    """`add_learning_target`'s own `workspace` (where to aim) is also the tool's routing argument, so the MCP call
+    reaches the unpinned `/api/brain/targets`: the body's workspace is then where it acts, by the same rule."""
+    w["target"].schedule.delete()
+    with _mcp_as(_login(w)):
+        async_to_sync(mcp.call_tool)("add_learning_target", {"learner": "system-learning", "workspace": "connect"})
+    t = BrainTarget.objects.get()
+    assert t.workspace_id == "connect"
+    t.schedule.delete()
+    with _mcp_as(_login(w, agent="dee")), pytest.raises(ToolError):
+        async_to_sync(mcp.call_tool)("add_learning_target", {"learner": "system-learning", "workspace": "connect"})
+    with _mcp_as(_run_login(w)), pytest.raises(ToolError, match="learning run"):
+        async_to_sync(mcp.call_tool)("add_learning_target", {"learner": "system-learning", "workspace": "connect"})
+    with _mcp_as(_login(w)), pytest.raises(ToolError, match="name the workspace"):
+        async_to_sync(mcp.call_tool)("add_learning_target", {"learner": "system-learning"})
+    assert not BrainTarget.objects.exists()
