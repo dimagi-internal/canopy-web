@@ -309,6 +309,10 @@ def add_learning_target(request: HttpRequest, payload: BrainTargetIn) -> dict:
     or a project, a project learner a project. Refused when its operator lives outside that workspace and the ones
     above it, it has no operator or nobody answers for it, or it is aimed there already."""
     actor = actor_mod.of(request)
+    # Unpinned, the body's `workspace` is where it acts: it is also the MCP tool's routing argument, so the tool
+    # reaches this route unpinned. The same rule then holds, with that workspace as the pin.
+    if not getattr(request, "workspace_slug", None) and payload.workspace.strip():
+        request.workspace_slug = payload.workspace.strip().lower()
     ws = _pinned(request)
     cap = BrainCapability.objects.filter(slug=payload.learner).select_related("operator").first()
     if cap is None:
