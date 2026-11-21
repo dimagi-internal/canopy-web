@@ -68,7 +68,7 @@ Vocabulary (closed — add to it deliberately, never in passing):
 * the permissions of ``apps/workspaces/permissions.py``: ``content.write``,
   ``agent.work``, ``session.drive``, ``events.write``, ``logs.read``,
   ``members.manage``, ``integrations``, ``runners.route``, ``retention.manage``,
-  ``admission.manage``, ``projects.decide``, ``own``, ``control``.
+  ``admission.manage``, ``projects.decide``, ``brain.manage``, ``own``, ``control``.
 * ``agent-edit`` — ``access.may_edit_agent``: the ``agent_edit`` permission on THIS agent (its
   owner, an admin, its own login, or an access-list line whose role holds it); being an editor of its
   workspace is not enough.
@@ -163,7 +163,7 @@ VOCABULARY: frozenset[str] = frozenset({
     "anonymous", "token-link", "authenticated", "self", "member",
     "content.write", "agent.work", "session.drive", "events.write", "logs.read",
     "members.manage", "integrations", "runners.route", "retention.manage",
-    "admission.manage", "projects.decide", "own", "control",
+    "admission.manage", "projects.decide", "brain.manage", "own", "control",
     "agent-edit", "agent-admin", "agent-owner", "vault-admin", "project-admin", "project-member", "app-guest", "agent-login", "session-acl", "turn-content",
     "runner", "runner-admin", "runner-holds-agent", "license",
     "contact", "signed-link", "host", "beta-reviewer", "superuser", "fleet-holder",

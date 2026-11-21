@@ -32,7 +32,6 @@ ROUTES = (STATE, LINKS, RUNS)
 
 @pytest.fixture()
 def w(settings):
-    settings.BRAIN_READS_ENABLED = True          # the leg-7 reader really has the session through the project leg
     out = project_leg_world()
     learner = out["proj"]
     learner.registered_by = out["owner"]
@@ -62,7 +61,10 @@ def _writes(ctx) -> list[str]:
 
 def test_a_member_sees_their_own_and_counts(w):
     body = client(w["alice"]).get(STATE).json()
-    assert body["reads_enabled"] is True and body["workspaces"] == ["acme"]
+    assert body["learning_reads"] is None and body["workspaces"] == ["acme"]      # unpinned: no one workspace's setting
+    pinned = client(w["alice"]).get("/api/w/acme/brain/state").json()
+    assert pinned["learning_reads"]["on"] is True and pinned["learning_reads"]["can_edit"] is False
+    assert pinned["can_manage"] is False
     assert body["admin_workspaces"] == [] and body["canopy_admin"] is False
     assert body["consent"] == {"mine": ["project"], "workspaces": []}           # counts are the owners' and admins'
 
@@ -81,7 +83,7 @@ def test_an_admin_sees_the_workspace_whole(w):
     body = client(w["owner"]).get(STATE).json()
     assert body["admin_workspaces"] == ["acme"]
     acme = body["consent"]["workspaces"][0]
-    assert acme["members"] == 5 and acme["agreed"]["project"] == 2 and acme["agreed"]["system"] == 0
+    assert acme["members"] == 5 and acme["agreed"]["project"] is None and acme["agreed"]["system"] is None  # 2 and 0: hidden, "<3"
     assert body["runs"] == {"open": 0, "done": 1, "failed": 0}
     assert body["sources"][0]["scope"] == "workspace" and body["sources"][0]["open"] == 2
     cascade = body["cascade"][0]

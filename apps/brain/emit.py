@@ -15,7 +15,7 @@ from django.db import transaction
 from apps.agents.models import AgentProject
 from apps.common import redact
 
-from . import associate, readers
+from . import associate, learning_reads
 from .eligibility import eligible
 from .models import BrainOutput, BrainRun, BrainRunRead, BrainSource, OutputLineage, SourceLink
 
@@ -33,7 +33,7 @@ LINK_TIERS = ("core", "adjacent", "candidate", "rejected")
 
 def emit(run: BrainRun, *, kind: str, title: str, body: dict, source_ids, turn_id: str = ""):
     cap = run.capability
-    if not readers.enabled() or not cap.enabled or run.state != BrainRun.OPEN:
+    if learning_reads.run_refusal(cap, run.subject, run.scope) or not cap.enabled or run.state != BrainRun.OPEN:
         raise EmitRefusedError("this run may not emit")
     if kind not in (cap.output_kinds or []):
         raise EmitRefusedError(f"{cap.slug} emits {', '.join(cap.output_kinds) or 'nothing'}, not {kind!r}")

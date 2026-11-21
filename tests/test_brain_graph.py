@@ -29,7 +29,6 @@ URL = "/api/workspaces/acme/graph"
 
 @pytest.fixture()
 def w(settings):
-    settings.BRAIN_READS_ENABLED = True               # so the leg-7 reader really has the session through the leg
     out = project_leg_world()
     ws, alice, bob, carol = out["ws"], out["alice"], out["bob"], out["carol"]
     Session.objects.filter(pk=out["session"].pk).update(title="deploy supply")

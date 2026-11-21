@@ -18,7 +18,7 @@ from django.utils import timezone
 from apps.agents.models import AgentProject
 from apps.workspaces import services as wsvc
 
-from . import reading, readers, runs
+from . import learning_reads, reading, runs
 from .models import PROJECT, SYSTEM, BrainCapability, BrainCursor, BrainRun
 from .registry import SCHEDULES
 
@@ -64,7 +64,7 @@ def subjects_of(cap: BrainCapability) -> list[tuple]:
 def run_due(now=None) -> list[BrainRun]:
     """Start every run that is due. Safe from any number of workers: `runs.start` is one transaction and a
     second open run for the same project is refused by the database."""
-    if not readers.enabled():
+    if not learning_reads.any_on():
         return []
     runs.abandon_stale(now)
     started = []

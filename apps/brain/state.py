@@ -8,7 +8,8 @@ bounded by what they already read:
 * **Projects** only ones they may read (`project_read_q`), in their own workspaces.
 * **Workspace-wide counts** (sources, removals, cascade work) only where they hold `logs.read` (the health
   dashboard's gate); elsewhere the same counts over their own sources and their own removals.
-* **Consent** as counts per workspace and class; nobody's name. The viewer's own classes are theirs.
+* **Consent** as counts per workspace and class; nobody's name, and a count below `SMALL` is hidden (None, "<3")
+  so a small workspace's few are not named by elimination. The viewer's own classes are theirs.
 * **Learners** are what `/api/brain/capabilities/` already lists, with who answers for each (`registry.accountable`).
 * **Runs** of a feature about a project they read or about themselves; every run to a canopy admin.
 
@@ -17,7 +18,6 @@ from __future__ import annotations
 
 import datetime as dt
 
-from django.conf import settings
 from django.db.models import CharField, Count, Q
 from django.db.models.functions import Cast
 from django.utils import timezone
@@ -30,10 +30,12 @@ from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
-from . import registry
+from . import readers, registry
 from .eligibility import covers
 from .models import (
     CLASSES,
+    PROJECT,
+    SYSTEM,
     BrainCapability,
     BrainOutput,
     BrainRun,
@@ -50,6 +52,12 @@ from .models import (
 RECENT = dt.timedelta(days=7)
 #: Rows one page of links or runs answers at most.
 MAX_LIMIT = 100
+#: A consent count below this is hidden (None): in a small workspace a count of 1 or 2 names people.
+SMALL = 3
+
+
+def _hide_small(n: int) -> int | None:
+    return n if n >= SMALL else None
 
 
 def _name(u) -> str:
@@ -83,9 +91,9 @@ def consent_counts(user, slugs, admin: set[str]) -> dict:
     rows = []
     for ws in workspaces:
         mine = [c for c in consents if c.user_id in members[ws.slug] and covers(c, ws.slug)]
-        rows.append({"workspace": ws.slug, "name": ws.display_name, "members": len(members[ws.slug]),
-                     "agreed_any": len({c.user_id for c in mine if c.classes}),
-                     "agreed": {cls: sum(1 for c in mine if cls in (c.classes or [])) for cls in CLASSES}})
+        rows.append({"workspace": ws.slug, "name": ws.display_name, "members": len(members[ws.slug]), "small": SMALL,
+                     "agreed_any": _hide_small(len({c.user_id for c in mine if c.classes})),
+                     "agreed": {cls: _hide_small(sum(1 for c in mine if cls in (c.classes or []))) for cls in CLASSES}})
     own = next((c for c in consents if c.user_id == user.pk), None) or LearningConsent.objects.filter(
         user=user, revoked_at__isnull=True).first()
     return {"mine": list(own.classes) if own else [], "workspaces": rows}
@@ -138,11 +146,17 @@ def link_groups(user, slugs, admin: set[str]) -> list[dict]:
     return sorted(rows, key=lambda r: (r["workspace"], r["project"], r["tier"]))
 
 
-def learners() -> list[dict]:
+def learners(user=None, pin: str = "") -> list[dict]:
+    """Every learner, whether a run of it can start at all (`runnable`) and whether `user` may configure it at `pin`
+    (`api_manage.learner_refusal`)."""
+    from .api_manage import learner_refusal  # noqa: PLC0415 — api_manage reads this module's neighbours
+
     caps = BrainCapability.objects.select_related("operator", "registered_by").order_by("slug")
     return [{"slug": c.slug, "name": c.name, "purpose_class": c.purpose_class, "enabled": c.enabled, "scope": c.scope,
-             "schedule": c.schedule, "operator": c.operator.slug if c.operator_id else "",
-             "accountable": _name(registry.accountable(c))} for c in caps]
+             "schedule": c.schedule, "operator": c.operator.slug if c.operator_id else "", "entry": c.entry,
+             "accountable": _name(registry.accountable(c)),
+             "runnable": c.purpose_class in (PROJECT, SYSTEM) and c.slug != readers.PROJECT_READERS,
+             "configurable": bool(pin and user is not None and not learner_refusal(user, pin, c))} for c in caps]
 
 
 def _runs(user, slugs, admin: set[str]):
@@ -195,14 +209,16 @@ def cascade_counts(user, slugs, admin: set[str]) -> list[dict]:
     return [out[k] for k in sorted(out)]
 
 
-def summary(user, slugs) -> dict:
+def summary(user, slugs, pin: str = "") -> dict:
+    from .api_manage import may_manage, reads_out  # noqa: PLC0415 — api_manage reads this module's neighbours
+
     slugs = set(slugs)
     admin = _admin_slugs(user, slugs)
-    return {"reads_enabled": bool(getattr(settings, "BRAIN_READS_ENABLED", False)),
-            "workspaces": sorted(slugs), "admin_workspaces": sorted(admin),
+    return {"learning_reads": reads_out(user, pin) if pin else None, "workspace": pin,
+            "can_manage": may_manage(user, pin), "workspaces": sorted(slugs), "admin_workspaces": sorted(admin),
             "canopy_admin": bool(getattr(user, "is_superuser", False)),
             "consent": consent_counts(user, slugs, admin), "sources": source_counts(user, slugs, admin),
-            "links": link_groups(user, slugs, admin), "learners": learners(), "runs": run_counts(user, slugs, admin),
+            "links": link_groups(user, slugs, admin), "learners": learners(user, pin), "runs": run_counts(user, slugs, admin),
             "cascade": cascade_counts(user, slugs, admin)}
 
 

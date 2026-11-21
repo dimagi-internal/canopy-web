@@ -85,9 +85,9 @@ def session_world():
 
 
 def _brain_shapes(shapes, ws, owner, mate, agent):
-    """The brain's project leg (inert unless `BRAIN_READS_ENABLED`): a chat tied to a workspace project
+    """The brain's project leg (inert unless its workspace has "Learning reads" on): a chat tied to a workspace project
     whose people both agreed to project learning, one where a participant did not, and one tied only by a
-    weak (candidate) link. Tests that judge every shape run with the gate on and off."""
+    weak (candidate) link. Tests that judge every shape run with the setting on and off."""
     from apps.agents.models import AgentProject
     from apps.brain import associate, registry, sources
     from apps.brain.models import LearningConsent

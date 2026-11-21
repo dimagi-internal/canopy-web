@@ -5,7 +5,8 @@
 `project` class, none excluded it, nothing sealed), is readable, read-only, by every PERSON who may read
 that project (`agents.services.projects.project_read_q`). Never an agent's login: an agent reads a
 project's sessions through a brain run, in the confined `brain` profile, not through the session ACL. `canopy_sessions.access` asks `project_q`
-and `audience` asks `project_reader_ids`; both are inert until `settings.BRAIN_READS_ENABLED`.
+and `audience` asks `project_reader_ids`; both answer only for sessions of a workspace with "Learning reads" on
+(`learning_reads`, through `eligible_sources`).
 Stored rows only, never `may_pull`, redacted on the way out (`canopy_sessions.transcript_read.readable_window`).
 
 **The record.** Every read the brain allows leaves one `brain.read` row in the event log of the
@@ -15,7 +16,6 @@ from __future__ import annotations
 
 import logging
 
-from django.conf import settings
 from django.db.models import CharField, Q
 from django.db.models.functions import Cast
 
@@ -25,6 +25,7 @@ from apps.events import services as events
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
+from . import learning_reads
 from .eligibility import eligible_sources
 from .models import BrainSource, SourceLink
 
@@ -37,10 +38,6 @@ READ_EVENT = "brain.read"
 EVENT_SOURCE = "brain.read"
 
 
-def enabled() -> bool:
-    return bool(getattr(settings, "BRAIN_READS_ENABLED", False))
-
-
 def _core_links():
     return SourceLink.objects.filter(subject_type=SourceLink.PROJECT_SUBJECT, tier=SourceLink.CORE)
 
@@ -50,9 +47,9 @@ def is_agent_login(user) -> bool:
 
 
 def project_q(user) -> Q:
-    """The sessions `user` reads through the project leg, as a `Q` on `Session`. Empty while the rollout
-    gate is off, for anyone signed out, for an agent's login, and for a user who reads no project."""
-    if not enabled() or not getattr(user, "is_authenticated", False) or is_agent_login(user):
+    """The sessions `user` reads through the project leg, as a `Q` on `Session`. Empty while no workspace has
+    "Learning reads" on (a session's own workspace must: `eligible_sources`), for anyone signed out, for an agent's login, and for a user who reads no project."""
+    if not learning_reads.any_on() or not getattr(user, "is_authenticated", False) or is_agent_login(user):
         return Q(pk__in=[])
     readable = (AgentProject.objects.filter(project_read_q(user)).annotate(key=Cast("pk", CharField()))
                 .values("key"))
@@ -66,7 +63,7 @@ def project_reader_ids(session) -> set[int]:
     when its source is eligible. A workspace project's readers are the workspace's members; a personal
     one's is its lead. Never an agent's login (`project_q`). For `audience`, which holds this equal to
     the ACL."""
-    if not enabled():
+    if not learning_reads.any_on():
         return set()
     source = BrainSource.objects.filter(kind=BrainSource.SESSION, ref=str(session.pk)).first()
     if source is None or not eligible_sources(PROJECT_READERS, READ).filter(pk=source.pk).exists():

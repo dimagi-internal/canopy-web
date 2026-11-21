@@ -19,7 +19,7 @@ from apps.harness.models import Runner, Turn
 from apps.harness.signals import turn_status_changed
 from apps.mcp.auth import CanopyPATVerifier
 from apps.mcp.server import mcp
-from tests.fixtures.brain_world import brain_world, member, user
+from tests.fixtures.brain_world import brain_world, member, reads, user
 
 pytestmark = pytest.mark.django_db
 
@@ -34,7 +34,6 @@ def _chat(w, who, title, *lines):
 
 @pytest.fixture()
 def w(settings):
-    settings.BRAIN_READS_ENABLED = True
     settings.MCP_WRITE_LIMIT = 10_000
     out = brain_world()
     out.pop("session").delete()
@@ -185,7 +184,7 @@ def test_what_is_not_due_is_not_started(w, change, settings):
     elif change == "no_schedule":
         registry.update(w["proj"], schedule="")
     else:
-        settings.BRAIN_READS_ENABLED = False
+        reads(w["ws"], False)
     assert schedule.run_due() == []
     assert not BrainRun.objects.exists()
 
@@ -355,7 +354,7 @@ def test_the_project_s_sessions_are_listed_only_as_far_as_the_caller_may_read_th
     assert {r["session_id"] for r in _list(_client(w["alice"]), "core,candidate").json()} == {str(mine.pk), str(weak.pk)}
     # carol reads alice's session through the project leg, once everyone in it agreed (alice did); never the gate off
     assert {r["session_id"] for r in _list(_client(w["carol"])).json()} == {str(theirs.pk), str(mine.pk)}
-    settings.BRAIN_READS_ENABLED = False
+    reads(w["ws"], False)
     assert [r["session_id"] for r in _list(_client(w["carol"])).json()] == [str(theirs.pk)]
     # nothing but ids, titles and the way the tie was made
     assert set(got[0]) == {"session_id", "title", "workspace", "tier", "how", "confidence", "started_at"}

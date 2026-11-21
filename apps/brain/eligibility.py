@@ -21,7 +21,7 @@ from apps.harness import runner_requirements as rr
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
-from . import participants
+from . import learning_reads, participants
 from .models import (
     ABOUT_A_PERSON,
     BRAIN_RUN_KEY,
@@ -138,6 +138,8 @@ def explain(source=None, capability=None, purpose: str = "", subject=None, *, cl
     reason = participants.sealed_reason(facts.session)
     if reason:
         return _no(f"sealed:{reason}")
+    if not learning_reads.is_on(facts.workspace):
+        return _no("learning_reads_off")
     slug = ""
     if capability is not None:
         cap = _capability(capability)
@@ -228,7 +230,10 @@ def eligible_sources(capability, purpose: str, subject=None):
     if (cap is None or not cap.enabled or cap.purpose_class not in CLASSES
             or purpose not in (cap.purposes or [])):
         return none
-    qs = (BrainSource.objects.filter(kind__in=cap.source_kinds or [], state=BrainSource.OPEN,
+    on = learning_reads.on_slugs()                                          # "Learning reads", as `explain` asks it
+    if not on:
+        return none
+    qs = (BrainSource.objects.filter(kind__in=cap.source_kinds or [], state=BrainSource.OPEN, workspace_id__in=on,
                                      session__isnull=False, session__contact__isnull=True,
                                      session__content_deleted_at__isnull=True)
           .exclude(session__metadata__has_key=rr.METADATA_KEY)

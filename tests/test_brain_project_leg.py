@@ -18,13 +18,12 @@ from apps.events.models import Event
 from apps.harness import runner_requirements as rr
 from apps.workspaces.models import WorkspaceMembership
 from tests.fixtures.brain_project_leg import SECRET, client, project_leg_world
-from tests.fixtures.brain_world import capability, user
+from tests.fixtures.brain_world import capability, reads, user
 
 pytestmark = pytest.mark.django_db
 
 @pytest.fixture()
 def w(settings):
-    settings.BRAIN_READS_ENABLED = True
     return project_leg_world()
 
 
@@ -42,7 +41,7 @@ def test_a_projects_reader_reads_a_session_everyone_in_it_agreed_to_and_the_gate
     assert access.role_for(w["reader"], s) is None
     assert not access.can_write(w["reader"], s) and not access.can_share(w["reader"], s)
     assert not access.may_pull(w["reader"], s) and not access.may_move(w["reader"], s)
-    settings.BRAIN_READS_ENABLED = False
+    reads(w["ws"], False)
     assert access.can_read(w["reader"], s, brain=True) is False
     assert client(w["reader"]).get(f"/api/canopy-sessions/{s.pk}").status_code == 404
 

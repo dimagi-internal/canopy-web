@@ -220,6 +220,7 @@ QUERY_ALLOWLIST = {
     ("apps/brain/runs.py", "_subject"): "the server names the project of a run and refuses a personal one",
     ("apps/brain/reading.py", "_project_context"): "a judge run is started by the server for a workspace project (runs._subject refuses a personal one); it reads the project's own outcome and open tasks",
     ("apps/brain/emit.py", "_emit_link"): "rules on a workspace project of the source's own workspace and refuses a personal one; metadata only",
+    ("apps/brain/learning_reads.py", "area"): "reads only the workspace of the project a run is about, to say where the run reads; nothing of the project is shown",
     ("apps/brain/schedule.py", "projects_of"): "starts runs for workspace-visible active projects only, never a personal one",
     ("apps/brain/api_admin.py", "list_project_sessions"): "asks may_read_project on the row before listing anything, and lists only sessions the caller may read",
     ("apps/brain/readers.py", "project_reader_ids"): "computes who reads a session through its projects: a personal project yields only its own readers",

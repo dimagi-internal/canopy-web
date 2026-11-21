@@ -73,6 +73,8 @@ _BRAIN_PAGE = ("the person's own view of canopy learning on the /brain page, ref
                "(apps/brain/api_state.py)")
 _REPORTING = ("who manages whom decides who reads a person's learning outputs: a workspace owner's own act, "
               "never an agent's or an MCP client's (apps/brain)")
+_BRAIN_MANAGE = ("a workspace's owners and admins managing its learning (learning reads, its learners, a run), "
+                 "as a person: never an agent or an MCP client (apps/brain/api_manage.py)")
 _BYTES = "returns raw bytes, which a tool result cannot carry"
 
 #: Path prefixes whose every route belongs to another principal.
@@ -127,7 +129,7 @@ EXCLUDED: dict[str, str] = {
     "exclude_my_session": _BRAIN, "include_my_session": _BRAIN, "get_my_session_learning": _BRAIN,
     "get_my_disclosure": _BRAIN, "list_my_removed_sessions": _BRAIN,
     "declare_my_session_project": _BRAIN, "undeclare_my_session_project": _BRAIN,
-    "run_brain_capability": "a canopy admin starting a learning run, as a person: never an agent or an MCP client",
+    "run_brain_capability": _BRAIN_MANAGE, "set_learning_reads": _BRAIN_MANAGE, "configure_learner": _BRAIN_MANAGE,
     "brain_state": _BRAIN_PAGE, "brain_state_links": _BRAIN_PAGE, "brain_state_runs": _BRAIN_PAGE,
     "list_reporting": _REPORTING, "set_reporting": _REPORTING, "end_reporting": _REPORTING,
     "contact_token": _HOST,

@@ -287,8 +287,12 @@ class BrainConsentWorkspace(StrictModel):
     workspace: str
     name: str
     members: int
-    agreed_any: int = Field(description="Members who agreed to at least one class for this workspace.")
-    agreed: dict[str, int] = Field(description="Per class, members who agreed to it for this workspace.")
+    agreed_any: int | None = Field(description="Members who agreed to at least one class for this workspace; null "
+                                   "when fewer than `small` (hidden, shown as \"<3\").")
+    agreed: dict[str, int | None] = Field(description="Per class, members who agreed to it for this workspace; null "
+                                          "when fewer than `small`.")
+    small: int = Field(description="A count below this is hidden (null), so a small workspace's few are not named "
+                                   "by elimination.")
 
 
 class BrainConsentState(StrictModel):
@@ -321,7 +325,49 @@ class BrainLearnerState(StrictModel):
     scope: str
     schedule: str
     operator: str
+    entry: str = Field("", description="The plugin command a run starts with.")
     accountable: str = Field(description="The canopy admin its runs act for, or empty: nobody active.")
+    runnable: bool = Field(description="Whether a run of it can be started here at all: a project or system learner, "
+                           "never the built-in project readers (they never run) or a per-person learner.")
+    configurable: bool = Field(False, description="Whether you may enable or configure it here: you manage this "
+                               "workspace's learning and its operator, if any, lives in this workspace or below.")
+
+
+class LearningReadsChange(StrictModel):
+    at: dt.datetime
+    by: str = Field(description="Who changed it (their email).")
+    before: bool | None = Field(description="The workspace's own setting before: on, off, or null (inherited).")
+    after: bool | None = Field(description="Its own setting after.")
+    was_on: bool = Field(description="Whether learning reads were in effect before.")
+    now_on: bool = Field(description="Whether they are in effect after.")
+
+
+class LearningReadsOut(StrictModel):
+    workspace: str
+    on: bool = Field(description="Whether learners may read this workspace's sessions (each still needs everyone's "
+                     "consent).")
+    own: bool | None = Field(description="This workspace's own setting; null when it inherits.")
+    source: str = Field(description="The workspace whose setting decides it, or empty: none does, so off.")
+    can_edit: bool = Field(description="Whether you may change it: an owner or admin here or above, as yourself.")
+    changes: list[LearningReadsChange] = Field(default_factory=list,
+                                               description="Its latest changes, newest first (to those who may edit).")
+
+
+class LearningReadsIn(StrictModel):
+    model_config = ConfigDict(extra="forbid")
+
+    on: bool | None = Field(description="On, off, or null to inherit from the nearest workspace above that sets it.")
+
+
+class LearnerConfigIn(StrictModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool | None = None
+    operator: str | None = Field(None, description="An agent's slug in this workspace or below, or empty for none.")
+    entry: str | None = Field(None, description="One plugin command, `/<plugin>:<skill> [args]`.")
+    schedule: Literal["", "hourly", "daily", "weekly"] | None = None
+    scope: Literal["full", "conversation", "userinput", "opening"] | None = Field(
+        None, description="May only narrow: full, conversation, userinput, opening.")
 
 
 class BrainRunCounts(StrictModel):
@@ -341,10 +387,11 @@ class BrainCascadeCounts(StrictModel):
 
 
 class BrainStateOut(StrictModel):
-    reads_enabled: bool = Field(description="BRAIN_READS_ENABLED: whether any learner may read a session.")
+    learning_reads: LearningReadsOut | None = Field(None, description="\"Learning reads\" of the pinned workspace; "
+                                                    "null when the read is not pinned.")
     workspace: str = Field("", description="The workspace the read is pinned to; it covers the ones below it too.")
-    can_run: bool = Field(False, description="Whether you may start a learner's run here: its owner, or a canopy "
-                          "admin.")
+    can_manage: bool = Field(False, description="Whether you manage learning here (its owners and admins, an "
+                             "ancestor's, or a canopy admin): its findings, Run now, its learners and Learning reads.")
     workspaces: list[str]
     admin_workspaces: list[str] = Field(description="Where you see workspace-wide counts.")
     canopy_admin: bool

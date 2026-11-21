@@ -15,7 +15,7 @@ from apps.harness.models import Turn
 from apps.tokens import kinds
 
 from . import emit as emit_mod
-from . import readers, reading
+from . import learning_reads, reading
 from .models import BRAIN_RUN_KEY, BrainRun
 from .schemas import BrainEmitIn, BrainEmitOut, BrainReadOut
 
@@ -35,8 +35,9 @@ def _run_of(request: HttpRequest) -> tuple[BrainRun, Turn]:
            if run_id else None)
     if run is None or turn.status in Turn.TERMINAL or turn.capability != "brain":
         raise ProblemError(404, "No learning run here", type_=TYPE_NOT_FOUND)
-    if not readers.enabled():
-        raise ProblemError(403, "Learning reads are not switched on", type_=TYPE_FORBIDDEN)
+    why = learning_reads.run_refusal(run.capability, run.subject, run.scope)
+    if why:
+        raise ProblemError(403, why, type_=TYPE_FORBIDDEN)
     return run, turn
 
 

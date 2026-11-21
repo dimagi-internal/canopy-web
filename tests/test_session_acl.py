@@ -23,6 +23,7 @@ from apps.canopy_sessions.models import SessionParticipant
 from apps.harness import turn_asker
 from apps.workspaces.models import WorkspaceMembership
 from tests._source import iter_app_sources
+from tests.fixtures.brain_world import reads
 from tests.fixtures.session_world import make_member, make_user, session_world
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -75,8 +76,8 @@ def _socket_pulls(user, session):
 def test_rest_the_socket_and_the_list_agree_for_every_shape_and_person(brain, settings):
     """ONE answer per (person, session), whichever route they come in by. With the brain's rollout gate
     on as well as off: its project leg is a leg like the others."""
-    settings.BRAIN_READS_ENABLED = brain
-    people, shapes, _ws = _world()
+    people, shapes, ws = _world()
+    reads(ws, brain)
     for who, user in people.items():
         c = _client(user)
         listed = {r["id"] for r in c.get("/api/canopy-sessions/?state=all").json()}
