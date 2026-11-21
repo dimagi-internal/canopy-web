@@ -1,13 +1,11 @@
 """Re-test a signed-out box's Claude login directly — the laptop `claude.probe.local`.
 
 A laptop runner learns its login is gone from a session transcript (the Stop hook
-sees the CLI's "Please run /login" record, `hooks.report_signed_out`). Before this
-module it learned the login was BACK the same way: only when some session on the
-box happened to end on a real reply (`hooks.note_signed_in`), or when the
-not-ready marker aged out (`readiness.MARKER_TTL_SECONDS`). A signed-out box claims
-no turns, so no session arrives to prove anything, and every stale session that
-ended on the expired-login message pushed the TTL back. The owner signed in again
-and the runner stayed red for up to 15+ minutes.
+sees the CLI's "Please run /login" record, `hooks.report_signed_out`). It cannot
+learn the login is BACK that way: a signed-out box claims no turns, so no session
+arrives to prove it, and a stray session's real reply (`hooks.note_signed_in`) or
+the marker TTL (`readiness.MARKER_TTL_SECONDS`, which every stale expired-login
+session restarts) can leave the box red long after its owner signed in again.
 
 So while — and only while — the box is marked signed out, `readiness.compute` asks
 the Claude Code CLI one short question, at most once per `PROBE_INTERVAL_SECONDS`.

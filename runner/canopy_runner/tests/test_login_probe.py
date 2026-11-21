@@ -1,9 +1,8 @@
 """A laptop box marked signed out re-tests its Claude login directly.
 
-Before login_probe, nothing did: the mark cleared only when a stray session's Stop
-hook saw a real reply, or after the 15-minute marker TTL — and a signed-out box
-claims no turns, so no session arrives. jj-mbp-cdp stayed ready:false for ~40
-minutes after its owner signed back in (2026-11-20).
+A signed-out box claims no turns, so no session arrives to prove the login is
+back; without the probe the mark lifts only on a stray session's Stop hook or the
+marker TTL, long after its owner signed in again.
 """
 from __future__ import annotations
 
