@@ -1,9 +1,10 @@
-"""A small world for the brain's tests: one workspace, three people, one session two of them are in."""
+"""A small world for the brain's tests: one workspace, three people, one session two of them are in. Its workspace
+has "Learning reads" on (`reads`), so what a test judges is consent; the setting's own tests turn it off."""
 from __future__ import annotations
 
 from django.contrib.auth.models import User
 
-from apps.brain import consent, registry, sources
+from apps.brain import consent, learning_reads, registry, sources
 from apps.brain.models import BrainCapability
 from apps.canopy_sessions.models import Session, SessionParticipant
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -17,6 +18,11 @@ def member(u, ws, role=WorkspaceMembership.EDITOR):
     WorkspaceMembership.objects.create(user=u, workspace=ws, role=role)
 
 
+def reads(ws, on: bool | None = True, by=None):
+    """Set a workspace's "Learning reads" (None: inherit)."""
+    learning_reads.set_reads(ws, on, by=by)
+
+
 def capability(slug, cls, purposes=("learn",), enabled=True, **kw):
     return BrainCapability.objects.create(slug=slug, name=slug, purpose_class=cls, purposes=list(purposes),
                                           enabled=enabled, subject_type="project" if cls == "project" else "person",
@@ -28,6 +34,7 @@ def brain_world():
     owner = user("jj")
     ws = Workspace.objects.create(slug="acme", display_name="Acme", created_by=owner)
     member(owner, ws, WorkspaceMembership.OWNER)
+    reads(ws)
     alice, bob, carol = user("alice"), user("bob"), user("carol")
     for u in (alice, bob, carol):
         member(u, ws)

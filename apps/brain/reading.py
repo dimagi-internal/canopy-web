@@ -9,7 +9,7 @@ WHICH sessions a learner reads, never which lines of one. One call serves at mos
 source that fits in a call; one larger than a call pages across calls (`next_index`), never splitting a row. Every
 source served is recorded (`BrainRunRead`, and a `brain.read` event) and the directives of the people in it travel
 with it; the sources removed since the feature learned from them for this subject are named (`revoked`). Nothing is
-read while `BRAIN_READS_ENABLED` is off."""
+read in a workspace whose "Learning reads" is off (`eligibility.explain`)."""
 from __future__ import annotations
 
 from django.db import transaction
@@ -21,7 +21,7 @@ from apps.canopy_sessions import transcript_read
 from apps.common import redact
 from apps.workspaces import services as wsvc
 
-from . import readers
+from . import learning_reads, readers
 from .eligibility import eligible_sources
 from .models import (
     ABOUT_A_PERSON,
@@ -45,7 +45,7 @@ JUDGE_LINES, JUDGE_LINE_CHARS = transcript_read.OPENING_LINES, transcript_read.O
 
 
 class NotReadingError(RuntimeError):
-    """This run may read nothing now: the rollout gate is off, its feature is disabled or it is not open."""
+    """This run may read nothing now: "Learning reads" is off wherever it reads, its feature is disabled or it is not open."""
 
 
 def candidates(run: BrainRun, after: int = 0):
@@ -115,7 +115,8 @@ def read_next(run: BrainRun, *, after: int = 0, limit: int = MAX_SOURCES, turn_i
     is left past it. A source larger than a whole call is served in parts: its last part's `next_index` (and the
     response's) is what to pass as `index`, with `next_after`, to read on in it. The caller carries the position:
     reading a source twice discloses nothing new."""
-    if not readers.enabled() or not run.capability.enabled or run.state != BrainRun.OPEN:
+    if (learning_reads.run_refusal(run.capability, run.subject, run.scope) or not run.capability.enabled
+            or run.state != BrainRun.OPEN):
         raise NotReadingError("this run may not read")
     limit = max(1, min(int(limit), MAX_SOURCES))
     view = view_of(run)

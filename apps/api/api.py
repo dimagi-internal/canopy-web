@@ -296,6 +296,7 @@ from apps.agents.api_a2a import router as a2a_router  # noqa: E402
 from apps.brain.api import router as brain_router  # noqa: E402
 from apps.brain.api_admin import router as brain_admin_router  # noqa: E402
 from apps.brain.api_graph import router as brain_graph_router  # noqa: E402
+from apps.brain.api_manage import router as brain_manage_router  # noqa: E402
 from apps.brain.api_run import router as brain_run_router  # noqa: E402
 from apps.brain.api_state import router as brain_state_router  # noqa: E402
 from apps.agents.api import router as agents_router  # noqa: E402
@@ -606,6 +607,7 @@ api.add_router("", brain_run_router)  # /api/brain/run/…: the two tools of a l
 api.add_router("", brain_admin_router)  # /api/brain/…: capabilities, reporting lines, outputs
 api.add_router("", brain_graph_router)  # /api/workspaces/{slug}/graph: how work, people and projects relate
 api.add_router("", brain_state_router)  # /api/brain/state: the brain as it stands, for the /brain page
+api.add_router("", brain_manage_router)  # /api/brain/learning-reads, /learners/…: a workspace manages its learning
 api.add_router("", brain_router)  # /api/me/learning/: a person's consent to canopy learning
 api.add_router("/hcp", hcp_router)  # Human Context Protocol v1 over the people brain
 api.add_router("/hcp/v2", hcp_v2_router)  # Human Context Protocol v2: canopy's model, the governance plane

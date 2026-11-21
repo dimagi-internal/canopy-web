@@ -23,7 +23,7 @@ from apps.harness import initiator as who
 from apps.harness import services as harness
 from apps.harness.models import Turn
 
-from . import readers, registry
+from . import learning_reads, registry
 from .eligibility import eligible
 from .models import (
     ABOUT_A_PERSON,
@@ -69,8 +69,9 @@ def refusal(cap: BrainCapability, subject=None, *, scope: str = "", need_entry: 
     """Why a run of `cap` for `subject` in `scope` cannot start now, in words its starter can act on, or "". `start`
     asks the same; "Run now" also needs the plugin command the run starts with (`entry`) and names who answers for the
     run (`accountable`, else the feature's own admin)."""
-    if not readers.enabled():
-        return "canopy's learning reads are switched off (BRAIN_READS_ENABLED)"
+    why = learning_reads.run_refusal(cap, subject, scope)
+    if why:
+        return why
     if not cap.enabled:
         return f"{cap.slug} is disabled"
     if cap.operator_id is None:
@@ -103,8 +104,9 @@ def start(cap: BrainCapability, *, subject=None, purpose: str = "", floor: int =
           accountable=None) -> BrainRun:
     """Start one run of `cap` about `subject`, reading only `scope`'s subtree when given, answering to
     `accountable` (the person who started it) or else the feature's own admin (`registry.accountable`)."""
-    if not readers.enabled():
-        raise StartRefusedError("canopy's learning reads are not switched on")
+    why = learning_reads.run_refusal(cap, subject, scope)
+    if why:
+        raise StartRefusedError(why)
     if not cap.enabled or cap.operator_id is None:
         raise StartRefusedError(f"{cap.slug} is not enabled or has no operator agent")
     purpose = purpose or (cap.purposes or [""])[0]

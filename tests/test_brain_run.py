@@ -29,7 +29,7 @@ from apps.harness.models import Runner, Turn
 from apps.mcp.auth import CanopyPATVerifier
 from apps.mcp.server import mcp
 from apps.tokens.models import PersonalToken
-from tests.fixtures.brain_world import brain_world, member, user
+from tests.fixtures.brain_world import brain_world, member, reads, user
 
 pytestmark = pytest.mark.django_db
 
@@ -52,7 +52,6 @@ def _chat(w, who, text, *, others=()):
 
 @pytest.fixture()
 def w(settings):
-    settings.BRAIN_READS_ENABLED = True
     settings.MCP_WRITE_LIMIT = 10_000                                   # one registrant's runs share a write budget
     out = brain_world()
     out.pop("session").delete()                                          # the base world's empty chat is not under test
@@ -131,10 +130,10 @@ def test_the_server_starts_a_run_in_a_conversation_that_is_nobody_s_and_confines
 
 
 def test_nothing_starts_while_the_gate_is_off_or_the_feature_is_dark(w, settings):
-    settings.BRAIN_READS_ENABLED = False
-    with pytest.raises(runs.StartRefusedError, match="switched on"):
+    reads(w["ws"], False)
+    with pytest.raises(runs.StartRefusedError, match="learning reads are off"):
         runs.start(w["pace"], subject=w["alice"])
-    settings.BRAIN_READS_ENABLED = True
+    reads(w["ws"])
     registry.update(w["pace"], enabled=False)
     with pytest.raises(runs.StartRefusedError, match="enabled"):
         runs.start(w["pace"], subject=w["alice"])
@@ -204,10 +203,10 @@ def test_a_run_ends_with_its_turn_and_with_the_gate(w, settings):
     run, turn, raw = _start(w)
     with as_token(raw):
         assert _call("brain_read", {"limit": 1})["sources"]
-    settings.BRAIN_READS_ENABLED = False
+    reads(w["ws"], False)
     with as_token(raw), pytest.raises(ToolError):
         _call("brain_read", {})
-    settings.BRAIN_READS_ENABLED = True
+    reads(w["ws"])
     Turn.objects.filter(pk=turn.pk).update(status=Turn.DONE, finished_at=timezone.now())
     with as_token(raw), pytest.raises(ToolError):
         _call("brain_read", {})

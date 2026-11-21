@@ -107,7 +107,6 @@ def test_enabling_a_seeded_learner_makes_the_admin_accountable_for_its_runs(w):
 def test_a_feature_whose_admin_is_gone_is_not_run_until_another_enables_it(w, settings):
     from apps.brain import runs
 
-    settings.BRAIN_READS_ENABLED = True
     other = user("root2")
     other.is_superuser = True
     other.save()

@@ -38,7 +38,7 @@ export async function listBrainOutputs(ws: string): Promise<BrainOutput[]> {
   return unwrap(res, 'Failed to load outputs') as BrainOutput[]
 }
 
-/** Start one run of a learner for `ws` (its owner, or a canopy admin); a project learner names the project. */
+/** Start one run of a learner for `ws` (its owners and admins, or a canopy admin); a project learner names the project. */
 export async function runLearnerNow(ws: string, slug: string, project = ''): Promise<BrainRun> {
   const res = await apiV2.POST('/api/brain/capabilities/{slug}/runs/', {
     params: { path: { slug } },
@@ -46,4 +46,20 @@ export async function runLearnerNow(ws: string, slug: string, project = ''): Pro
     headers: pin(ws),
   })
   return unwrap(res, 'Could not start the run') as BrainRun
+}
+
+export type LearningReads = components['schemas']['LearningReadsOut']
+export type BrainLearner = components['schemas']['CapabilityOut']
+export type LearnerConfig = components['schemas']['LearnerConfigIn']
+
+/** Turn "Learning reads" on or off at `ws`, or `null` to inherit (its owners and admins, or an ancestor's). */
+export async function setLearningReads(ws: string, on: boolean | null): Promise<LearningReads> {
+  const res = await apiV2.PUT('/api/brain/learning-reads', { body: { on }, headers: pin(ws) })
+  return unwrap(res, 'Could not change learning reads') as LearningReads
+}
+
+/** Enable or configure a learner whose operator lives at `ws` or below (its owners and admins). */
+export async function configureLearner(ws: string, slug: string, body: LearnerConfig): Promise<BrainLearner> {
+  const res = await apiV2.PATCH('/api/brain/learners/{slug}/', { params: { path: { slug } }, body, headers: pin(ws) })
+  return unwrap(res, 'Could not change the learner') as BrainLearner
 }

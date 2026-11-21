@@ -19463,14 +19463,15 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /**
-         * Run a learner now for a workspace (its owner, or a canopy admin)
+         * Run a learner now for a workspace (its owners and admins, or a canopy admin)
          * @description Starts one run of the learner now for the workspace the request is pinned to (`/api/w/<ws>/…`), reading only
          *     eligible sessions of that workspace and the ones below it; what it finds is that workspace's, seen by its owners
-         *     and its ancestors'. A `system` learner runs once over that subtree; a `project` learner for the project named by
-         *     `project` (a handle of an active workspace project in that subtree). An owner of the workspace (an ancestor's owner
-         *     is one) or a canopy admin, as a person only, never through an agent or MCP; the run answers to them. Refused,
-         *     with the reason, when learning reads are switched off, the learner is disabled or has no operator or entry, or a
-         *     run of it for that subject and workspace is still open. Then on `GET /api/w/<ws>/brain/state/runs`.
+         *     and admins and its ancestors'. A `system` learner runs once over that subtree; a `project` learner for the project
+         *     named by `project` (a handle of an active workspace project in that subtree). An owner or admin of the workspace
+         *     (an ancestor's is one) or a canopy admin, as a person only, never through an agent or MCP; the run answers to them.
+         *     Refused, with the reason, when learning reads are off in every workspace it would read, the learner is disabled,
+         *     built in or has no operator or entry, its operator lives outside this workspace and the ones above it, or a run
+         *     of it for that subject and workspace is still open. Then on `GET /api/w/<ws>/brain/state/runs`.
          */
         readonly post: operations["run_brain_capability"];
         readonly delete?: never;
@@ -19556,7 +19557,8 @@ export interface paths {
          * What learning produced, for you
          * @description The learning outputs you may read: about you, about people you coach or manage (outputs, never
          *     transcripts; the manager's only as yourself, never through an agent or a turn), about projects you may read, and
-         *     canopy's system findings where you own the workspace a run was started for (or one above it). Pinned to a
+         *     canopy's system findings where you own or administer the workspace a run was started for (or one above it),
+         *     as yourself only. Pinned to a
          *     workspace (`/api/w/<ws>/…`), only that workspace's and the ones below it. Never a withdrawn or stale one. Newest
          *     first.
          */
@@ -19604,10 +19606,10 @@ export interface paths {
         };
         /**
          * Canopy learning as it stands, for you (counts; stores nothing)
-         * @description Whether learners may read at all, how many people agreed to each class in your workspaces, the sources and
+         * @description Whether learners may read this workspace's sessions ("Learning reads") and its recent changes, how many people agreed to each class in your workspaces, the sources and
          *     why some are sealed, the stored links of sessions you read by project and tier, the learners and who answers for
-         *     each, runs by state and the removal work still to do. Workspace-wide counts only where you hold `logs.read`;
-         *     elsewhere your own.
+         *     each (and whether you may configure it here), runs by state and the removal work still to do. Workspace-wide
+         *     counts only where you hold `logs.read`; elsewhere your own. A consent count below 3 is null.
          */
         readonly get: operations["brain_state"];
         readonly put?: never;
@@ -19657,6 +19659,53 @@ export interface paths {
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/brain/learning-reads": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Turn learning reads on or off for a workspace (its owners and admins)
+         * @description Whether learners may read the sessions of the workspace the request is pinned to (`/api/w/<ws>/…`): on, off,
+         *     or null to inherit from the nearest workspace above that sets it (none: off). Its workspaces below inherit it
+         *     unless they set their own. On, a session is still read only when everyone in it agreed. Every change is
+         *     audited and listed on the brain page.
+         */
+        readonly put: operations["set_learning_reads"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/brain/learners/{slug}/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        /**
+         * Enable or configure a learner from a workspace (its owners and admins)
+         * @description Enable or disable a learner, name its operator agent and the plugin command a run starts with, its schedule,
+         *     or narrow how much of a session it reads, from the workspace the request is pinned to. Only a learner whose
+         *     operator (if it has one) is an agent of this workspace or below, and only to such an agent. Enabling one that
+         *     nobody active answers for makes you its accountable admin: its scheduled runs act for you. What it may learn
+         *     and who sees it (its class, purposes, audience) are a canopy admin's, at its registration.
+         */
+        readonly patch: operations["configure_learner"];
         readonly trace?: never;
     };
     readonly "/api/me/learning/": {
@@ -51811,16 +51860,21 @@ export interface components {
             readonly members: number;
             /**
              * Agreed Any
-             * @description Members who agreed to at least one class for this workspace.
+             * @description Members who agreed to at least one class for this workspace; null when fewer than `small` (hidden, shown as "<3").
              */
-            readonly agreed_any: number;
+            readonly agreed_any: number | null;
             /**
              * Agreed
-             * @description Per class, members who agreed to it for this workspace.
+             * @description Per class, members who agreed to it for this workspace; null when fewer than `small`.
              */
             readonly agreed: {
-                readonly [key: string]: number;
+                readonly [key: string]: number | null;
             };
+            /**
+             * Small
+             * @description A count below this is hidden (null), so a small workspace's few are not named by elimination.
+             */
+            readonly small: number;
         };
         /** BrainLearnerState */
         readonly BrainLearnerState: {
@@ -51839,10 +51893,27 @@ export interface components {
             /** Operator */
             readonly operator: string;
             /**
+             * Entry
+             * @description The plugin command a run starts with.
+             * @default
+             */
+            readonly entry: string;
+            /**
              * Accountable
              * @description The canopy admin its runs act for, or empty: nobody active.
              */
             readonly accountable: string;
+            /**
+             * Runnable
+             * @description Whether a run of it can be started here at all: a project or system learner, never the built-in project readers (they never run) or a per-person learner.
+             */
+            readonly runnable: boolean;
+            /**
+             * Configurable
+             * @description Whether you may enable or configure it here: you manage this workspace's learning and its operator, if any, lives in this workspace or below.
+             * @default false
+             */
+            readonly configurable: boolean;
         };
         /** BrainLinkGroup */
         readonly BrainLinkGroup: {
@@ -51890,11 +51961,8 @@ export interface components {
         };
         /** BrainStateOut */
         readonly BrainStateOut: {
-            /**
-             * Reads Enabled
-             * @description BRAIN_READS_ENABLED: whether any learner may read a session.
-             */
-            readonly reads_enabled: boolean;
+            /** @description "Learning reads" of the pinned workspace; null when the read is not pinned. */
+            readonly learning_reads?: components["schemas"]["LearningReadsOut"] | null;
             /**
              * Workspace
              * @description The workspace the read is pinned to; it covers the ones below it too.
@@ -51902,11 +51970,11 @@ export interface components {
              */
             readonly workspace: string;
             /**
-             * Can Run
-             * @description Whether you may start a learner's run here: its owner, or a canopy admin.
+             * Can Manage
+             * @description Whether you manage learning here (its owners and admins, an ancestor's, or a canopy admin): its findings, Run now, its learners and Learning reads.
              * @default false
              */
-            readonly can_run: boolean;
+            readonly can_manage: boolean;
             /** Workspaces */
             readonly workspaces: readonly string[];
             /**
@@ -51929,6 +51997,69 @@ export interface components {
             readonly runs: components["schemas"]["BrainRunCounts"];
             /** Cascade */
             readonly cascade: readonly components["schemas"]["BrainCascadeCounts"][];
+        };
+        /** LearningReadsChange */
+        readonly LearningReadsChange: {
+            /**
+             * At
+             * Format: date-time
+             */
+            readonly at: string;
+            /**
+             * By
+             * @description Who changed it (their email).
+             */
+            readonly by: string;
+            /**
+             * Before
+             * @description The workspace's own setting before: on, off, or null (inherited).
+             */
+            readonly before: boolean | null;
+            /**
+             * After
+             * @description Its own setting after.
+             */
+            readonly after: boolean | null;
+            /**
+             * Was On
+             * @description Whether learning reads were in effect before.
+             */
+            readonly was_on: boolean;
+            /**
+             * Now On
+             * @description Whether they are in effect after.
+             */
+            readonly now_on: boolean;
+        };
+        /** LearningReadsOut */
+        readonly LearningReadsOut: {
+            /** Workspace */
+            readonly workspace: string;
+            /**
+             * On
+             * @description Whether learners may read this workspace's sessions (each still needs everyone's consent).
+             */
+            readonly on: boolean;
+            /**
+             * Own
+             * @description This workspace's own setting; null when it inherits.
+             */
+            readonly own: boolean | null;
+            /**
+             * Source
+             * @description The workspace whose setting decides it, or empty: none does, so off.
+             */
+            readonly source: string;
+            /**
+             * Can Edit
+             * @description Whether you may change it: an owner or admin here or above, as yourself.
+             */
+            readonly can_edit: boolean;
+            /**
+             * Changes
+             * @description Its latest changes, newest first (to those who may edit).
+             */
+            readonly changes?: readonly components["schemas"]["LearningReadsChange"][];
         };
         /** BrainLinkPageOut */
         readonly BrainLinkPageOut: {
@@ -51981,6 +52112,36 @@ export interface components {
             readonly next_before: number;
             /** Done */
             readonly done: boolean;
+        };
+        /** LearningReadsIn */
+        readonly LearningReadsIn: {
+            /**
+             * On
+             * @description On, off, or null to inherit from the nearest workspace above that sets it.
+             */
+            readonly on: boolean | null;
+        };
+        /** LearnerConfigIn */
+        readonly LearnerConfigIn: {
+            /** Enabled */
+            readonly enabled?: boolean | null;
+            /**
+             * Operator
+             * @description An agent's slug in this workspace or below, or empty for none.
+             */
+            readonly operator?: string | null;
+            /**
+             * Entry
+             * @description One plugin command, `/<plugin>:<skill> [args]`.
+             */
+            readonly entry?: string | null;
+            /** Schedule */
+            readonly schedule?: ("" | "hourly" | "daily" | "weekly") | null;
+            /**
+             * Scope
+             * @description May only narrow: full, conversation, userinput, opening.
+             */
+            readonly scope?: ("full" | "conversation" | "userinput" | "opening") | null;
         };
         /** LearningClassOut */
         readonly LearningClassOut: {
@@ -78536,6 +78697,101 @@ export interface operations {
             };
             /** @description Forbidden */
             readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly set_learning_reads: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LearningReadsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LearningReadsOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly configure_learner: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LearnerConfigIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CapabilityOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
                 headers: {
                     readonly [name: string]: unknown;
                 };

@@ -16,6 +16,7 @@ from apps.canopy_sessions import access, audience
 from apps.canopy_sessions.models import RunnerBinding, Session, SessionParticipant
 from apps.contacts import services as contacts
 from apps.harness.models import Runner
+from tests.fixtures.brain_world import reads
 from tests.fixtures.session_world import make_member
 from tests.fixtures.session_world import session_world as _world
 
@@ -56,8 +57,8 @@ def _more_shapes(people, shapes, ws):
 
 @pytest.mark.parametrize("brain", [False, True])
 def test_the_audience_is_exactly_who_the_acl_lets_read(brain, settings):
-    settings.BRAIN_READS_ENABLED = brain
     people, shapes, ws = _world()
+    reads(ws, brain)
     _more_shapes(people, shapes, ws)
     # The audience names who MAY read, the coach included: its login reads inside a turn its
     # administrator asked (`access.review_grantors`), which is the widest case.

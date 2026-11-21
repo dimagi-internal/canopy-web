@@ -16,7 +16,6 @@ from apps.api.route_gates import gate
 from apps.contacts import people
 from apps.harness import acting_person
 from apps.tokens import kinds
-from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
 from . import state
@@ -43,14 +42,13 @@ def the_person(request: HttpRequest):
             summary="Canopy learning as it stands, for you (counts; stores nothing)")
 @gate("self")  # your own view: counts, and only rows of sessions and projects you already read
 def brain_state(request: HttpRequest) -> dict:
-    """Whether learners may read at all, how many people agreed to each class in your workspaces, the sources and
+    """Whether learners may read this workspace's sessions ("Learning reads") and its recent changes, how many people agreed to each class in your workspaces, the sources and
     why some are sealed, the stored links of sessions you read by project and tier, the learners and who answers for
-    each, runs by state and the removal work still to do. Workspace-wide counts only where you hold `logs.read`;
-    elsewhere your own."""
+    each (and whether you may configure it here), runs by state and the removal work still to do. Workspace-wide
+    counts only where you hold `logs.read`; elsewhere your own. A consent count below 3 is null."""
     user = the_person(request)
     pin = getattr(request, "workspace_slug", None)
-    return {**state.summary(user, wsvc.request_workspace_slugs(request)), "workspace": pin or "",
-            "can_run": bool(pin) and (bool(getattr(user, "is_superuser", False)) or perms.can(user, pin, perms.OWN))}
+    return state.summary(user, wsvc.request_workspace_slugs(request), pin or "")
 
 
 @router.get("/brain/state/links", response={200: BrainLinkPageOut, **refusals(403, 422)},

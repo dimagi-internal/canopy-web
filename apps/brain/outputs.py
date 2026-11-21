@@ -10,13 +10,14 @@
 * `memory`, about a person: that person. (The agents serving them read their HCP entries under their
   own grant; this is not that path.)
 * `project`, about a project: whoever may read the project (`project_read_q`), within its workspace.
-* `system`: canopy's superusers and the owners of the output's workspace, which for a run started for a workspace is
-  that workspace (`emit`); an ancestor's owner owns it too (`perms.slugs_with` counts inherited ownership), a
-  sub-workspace's or a sibling's owner does not.
+* `system`: canopy's superusers and the owners and admins of the output's workspace (`perms.BRAIN_MANAGE`), which for
+  a run started for a workspace is that workspace (`emit`); an ancestor's owner or admin holds it too
+  (`perms.slugs_with` counts inherited roles), a sub-workspace's or a sibling's does not. The owners' and admins' leg
+  opens only to the PERSON (`as_person`, as the manager leg): never an agent's login, a turn's token or an MCP call.
 
 A withdrawn output is seen by no one, and neither is a `stale` one (a source of it was removed: its words are
-emptied and it waits to be derived again from the rest). Outputs are derived, so they stay readable while
-`BRAIN_READS_ENABLED` is off; nothing new is made then."""
+emptied and it waits to be derived again from the rest). Outputs are derived, so they stay readable after a
+workspace turns "Learning reads" off (`learning_reads`); nothing new is made from its sessions then."""
 from __future__ import annotations
 
 from django.db.models import CharField, Q
@@ -33,7 +34,8 @@ from .models import INDIVIDUAL, MEMORY, PROJECT, SYSTEM, BrainOutput
 
 def visible_to(user, *, as_person: bool = False):
     """The outputs `user` may read, as a queryset (workspace-scoped, as every read). `as_person` says the
-    request is the person themselves (`api_admin.manager_leg_open`); only then does the manager leg open."""
+    request is the person themselves (`api_admin.manager_leg_open`); only then do the manager leg and the owners' and
+    admins' `system` leg open."""
     if not getattr(user, "is_authenticated", False):
         return BrainOutput.objects.none()
     from apps.canopy_sessions import access  # noqa: PLC0415 — canopy_sessions imports this app's readers
@@ -52,11 +54,10 @@ def visible_to(user, *, as_person: bool = False):
     readable = (AgentProject.objects.filter(project_read_q(user)).annotate(key=Cast("pk", CharField()))
                 .values("key"))
     q |= Q(capability__purpose_class=PROJECT, subject_type="project", subject__in=readable)
-    owned = perms.slugs_with(user, perms.OWN)
     if getattr(user, "is_superuser", False):
         q |= Q(capability__purpose_class=SYSTEM)
-    elif owned:
-        q |= Q(capability__purpose_class=SYSTEM, workspace_id__in=owned)
+    elif as_person and not _is_agent_login(user) and (managed := perms.slugs_with(user, perms.BRAIN_MANAGE)):
+        q |= Q(capability__purpose_class=SYSTEM, workspace_id__in=managed)
     return live.filter(q).distinct()
 
 

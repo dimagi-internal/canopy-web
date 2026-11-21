@@ -31,7 +31,6 @@ pytestmark = pytest.mark.django_db
 
 @pytest.fixture()
 def w(settings):
-    settings.BRAIN_READS_ENABLED = True
     return project_leg_world()
 
 

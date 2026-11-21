@@ -19,7 +19,7 @@ from apps.canopy_sessions.models import Message, Session
 from apps.harness import act_as, turn_agent_tokens
 from apps.harness.models import Runner, Turn
 from apps.mcp import api_tools
-from tests.fixtures.brain_world import brain_world, member, user
+from tests.fixtures.brain_world import brain_world, member, reads, user
 from tests.token_helpers import bearer_headers, pat_token
 
 pytestmark = pytest.mark.django_db
@@ -33,7 +33,6 @@ def _client(u) -> Client:
 
 @pytest.fixture()
 def w(settings):
-    settings.BRAIN_READS_ENABLED = True
     out = brain_world()
     root = user("root")
     root.is_superuser = True
@@ -74,14 +73,14 @@ def test_run_now_starts_one_system_run_and_refuses_a_second(w):
 
 
 @pytest.mark.parametrize(("change", "words"), [
-    ({"gate": False}, "switched off"),
+    ({"gate": False}, "learning reads are off"),
     ({"enabled": False}, "disabled"),
     ({"operator": None}, "no operator"),
     ({"entry": ""}, "no entry"),
 ])
 def test_run_now_says_why_it_cannot_start(w, settings, change, words):
     if change.pop("gate", True) is False:
-        settings.BRAIN_READS_ENABLED = False
+        reads(w["ws"], False)
     BrainCapability.objects.filter(slug="system-learning").update(**change)
     r = _run(w)
     assert r.status_code == 422 and words in r.json()["detail"]

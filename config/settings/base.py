@@ -1010,7 +1010,3 @@ LOGGING = {
 DEFAULT_CLI_MODELS = env.dict("DEFAULT_CLI_MODELS", default={"claude-code": "opus[1m]"})
 
 
-# --- Canopy Brain (apps/brain) -----------------------------------------------------------------
-# No transcript is served to any learning reader until the read paths and the removal cascade are
-# merged and the owner turns this on (docs/architecture/brain.md). Consent collection does not wait.
-BRAIN_READS_ENABLED = env.bool("BRAIN_READS_ENABLED", default=False)

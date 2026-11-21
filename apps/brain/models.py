@@ -397,3 +397,17 @@ class BrainCursor(models.Model):
     class Meta:
         constraints = [models.UniqueConstraint(fields=["capability", "subject_type", "subject"],
                                                name="brain_cursor_one")]
+
+
+class WorkspaceLearningReads(models.Model):
+    """"Learning reads" for one workspace: whether learners may read its sessions at all. No row means unset, which
+    inherits from the nearest ancestor that sets it, and off at the root (`learning_reads.effective`). Set on the
+    workspace's brain page by its owners and admins (or an ancestor's), each change audited
+    (`api_admin.set_learning_reads`)."""
+
+    workspace = models.OneToOneField("workspaces.Workspace", on_delete=models.CASCADE, primary_key=True,
+                                     related_name="learning_reads")
+    on = models.BooleanField()
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="+")
+    updated_at = models.DateTimeField(auto_now=True)

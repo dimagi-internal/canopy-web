@@ -14,7 +14,7 @@ from apps.brain import associate, emit, reading, registry, schedule, sources
 from apps.brain.models import BrainCapability, BrainOutput, BrainRun, BrainRunRead, LearningConsent
 from apps.canopy_sessions.models import Session, SessionParticipant
 from apps.workspaces.models import Workspace, WorkspaceMembership as M
-from tests.fixtures.brain_world import member, user
+from tests.fixtures.brain_world import member, reads, user
 
 pytestmark = pytest.mark.django_db
 
@@ -27,7 +27,6 @@ def _client(u) -> Client:
 
 @pytest.fixture()
 def w(settings):
-    settings.BRAIN_READS_ENABLED = True
     registry.ensure_builtin()
     registry.ensure_learners()
     jj, md, sib, mem, out = user("jj"), user("md"), user("sib"), user("mem"), user("out")
@@ -35,6 +34,7 @@ def w(settings):
     connect = Workspace.objects.create(slug="connect", display_name="Connect", created_by=jj, parent=dimagi)
     labs = Workspace.objects.create(slug="labs", display_name="Labs", created_by=jj, parent=dimagi)
     family = Workspace.objects.create(slug="family", display_name="Family", created_by=out)
+    reads(dimagi)                                         # on at the root: connect and labs inherit it
     member(jj, dimagi, M.OWNER)
     member(md, connect, M.OWNER)
     member(md, dimagi)                                    # an editor of the parent: never its aggregate

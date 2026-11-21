@@ -254,7 +254,7 @@ def visible_session_q(user, *, brain: bool = False) -> Q:
        role gains nothing; revoking the opt-in or the role drops the next read.
     7. (the brain's) the session is tied to a project you may read and everyone whose words are in it
        agreed to project learning (`brain.readers.project_q`): read-only, redacted, stored rows, never
-       a pull; off while `BRAIN_READS_ENABLED` is off.
+       a pull; only in a workspace with "Learning reads" on (`brain.learning_reads`).
     6. you administer the runner it is bound to (`RunnerAdmin`, an explicit
        per-box grant its owner made) and it is a runner-discovered session
        (`_runner_admin_q`). READ-ONLY (`role_for` gives a viewer) and no pull
@@ -297,25 +297,25 @@ def _own_legs_q(user) -> Q:
 
 def _brain_project_q(user) -> Q:
     """Leg 7: a session tied to a project, readable by that project's readers, read-only and redacted,
-    when everyone whose words are in it agreed (`apps.brain.readers.project_q`). Inert until the
-    rollout gate (`BRAIN_READS_ENABLED`) is on. Never `may_pull`, never a write: `role_for` gives it a
+    when everyone whose words are in it agreed (`apps.brain.readers.project_q`). Inert for a session whose
+    workspace has "Learning reads" off (`brain.learning_reads`). Never `may_pull`, never a write: `role_for` gives it a
     viewer, the role every read-only leg gets. A person reading as themselves only: never a request
     held to a reach (an agent turn's caller token, a turn scoped to one grantor), and never an agent's
     login (`readers.project_q`); an agent reads a project's sessions through a brain run."""
-    from apps.brain import readers  # noqa: PLC0415 — brain imports this module
+    from apps.brain import learning_reads, readers  # noqa: PLC0415 — brain imports this module
 
-    if not readers.enabled() or reach_of(user) is not None:
+    if not learning_reads.any_on() or reach_of(user) is not None:
         return Q(pk__in=[])
     return readers.project_q(user)
 
 
 def read_through_brain_only(user, session) -> bool:
     """Whether the brain's project leg is the ONLY thing that lets `user` read `session`: such a read is
-    redacted (`transcript_read.readable_window`) and recorded. False when the gate is off, so this
-    costs nothing while the brain reads nothing."""
-    from apps.brain import readers  # noqa: PLC0415 — brain imports this module
+    redacted (`transcript_read.readable_window`) and recorded. False while no workspace has "Learning reads"
+    on, so this costs one read while the brain reads nothing."""
+    from apps.brain import learning_reads  # noqa: PLC0415 — brain imports this module
 
-    if session is None or not readers.enabled() or not getattr(user, "is_authenticated", False):
+    if session is None or not learning_reads.any_on() or not getattr(user, "is_authenticated", False):
         return False
     return session.pk in brain_only_ids(user, [session.pk])
 
@@ -323,11 +323,11 @@ def read_through_brain_only(user, session) -> bool:
 def brain_only_ids(user, session_ids) -> set:
     """`read_through_brain_only` for a whole page, in two queries: which of `session_ids` `user` reads
     ONLY through the brain's project leg. Asked once per request by a list, never per row. Empty while
-    the gate is off."""
-    from apps.brain import readers  # noqa: PLC0415 — brain imports this module
+    no workspace has "Learning reads" on."""
+    from apps.brain import learning_reads  # noqa: PLC0415 — brain imports this module
 
     ids = {i for i in session_ids if i}
-    if not ids or not readers.enabled() or not getattr(user, "is_authenticated", False):
+    if not ids or not learning_reads.any_on() or not getattr(user, "is_authenticated", False):
         return set()
     own = set(Session.objects.filter(pk__in=ids).filter(_own_legs_q(user)).values_list("pk", flat=True))
     rest = ids - own

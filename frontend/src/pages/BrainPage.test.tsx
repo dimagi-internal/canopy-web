@@ -8,30 +8,40 @@ const getBrainLinks = vi.fn()
 const getBrainRuns = vi.fn()
 const listBrainOutputs = vi.fn()
 const runLearnerNow = vi.fn()
-vi.mock('@/api/brain', () => ({ getBrainState, getBrainLinks, getBrainRuns, listBrainOutputs, runLearnerNow }))
+const setLearningReads = vi.fn()
+const configureLearner = vi.fn()
+vi.mock('@/api/brain', () => ({
+  getBrainState, getBrainLinks, getBrainRuns, listBrainOutputs, runLearnerNow, setLearningReads, configureLearner,
+}))
 
 const { BrainPage } = await import('./BrainPage')
 
-const learner = (slug: string, purpose_class: string) => ({
-  slug, name: slug, purpose_class, enabled: true, scope: 'full', schedule: '', operator: 'ada', accountable: 'JJ',
+const learner = (slug: string, purpose_class: string, more: Record<string, unknown> = {}) => ({
+  slug, name: slug, purpose_class, enabled: true, scope: 'full', schedule: '', operator: 'ada', entry: '',
+  accountable: 'JJ', runnable: purpose_class === 'system' || purpose_class === 'project', configurable: false, ...more,
 })
 
 const STATE = (owner: boolean) => ({
-  reads_enabled: true,
+  learning_reads: {
+    workspace: 'dimagi', on: true, own: true, source: 'dimagi', can_edit: owner,
+    changes: owner ? [{ at: new Date().toISOString(), by: 'jj@dimagi.com', before: null, after: true, was_on: false,
+      now_on: true }] : [],
+  },
   workspace: 'dimagi',
-  can_run: owner,
+  can_manage: owner,
   workspaces: ['dimagi'],
   admin_workspaces: owner ? ['dimagi'] : [],
   canopy_admin: false,
   consent: {
     mine: ['system'],
     workspaces: [
-      { workspace: 'dimagi', name: 'Dimagi', members: 12, agreed_any: 3, agreed: { individual: 1, memory: 0, project: 3, system: 2 } },
+      { workspace: 'dimagi', name: 'Dimagi', members: 12, small: 3, agreed_any: 3, agreed: { individual: null, memory: null, project: 3, system: null } },
     ],
   },
   sources: [{ workspace: 'dimagi', scope: 'yours', open: 4, withdrawn: 1, sealed: { sensitive: 2 } }],
   links: [{ project: 'supply', name: 'Supply', workspace: 'dimagi', tier: 'core', count: 2 }],
-  learners: [learner('system-learning', 'system'), learner('project-learning', 'project'), learner('coaching', 'individual')],
+  learners: [learner('system-learning', 'system', { configurable: owner }), learner('project-learning', 'project'),
+    learner('coaching', 'individual'), learner('project-readers', 'project', { runnable: false, operator: '' })],
   runs: { open: 0, done: 1, failed: 0 },
   cascade: [],
 })
@@ -72,13 +82,18 @@ afterEach(() => {
 describe('BrainPage', () => {
   it('shows the live state: rollout, consent, sources, links to sessions, learners and runs', async () => {
     setup()
-    expect(await screen.findByText('Reads on')).toBeTruthy()
+    const reads = await screen.findByRole('region', { name: 'Learning reads' })
+    expect(within(reads).getByText('On')).toBeTruthy()
+    expect(within(reads).getByText('set here')).toBeTruthy()
+    expect(within(reads).queryByRole('combobox')).toBeNull()              // a member sees it, never changes it
     // Every read is pinned to the page's workspace.
     expect(getBrainState).toHaveBeenCalledWith('dimagi')
     await waitFor(() => expect(getBrainLinks).toHaveBeenCalledWith('dimagi', 0))
     expect(getBrainRuns).toHaveBeenCalledWith('dimagi', 0)
     expect(listBrainOutputs).toHaveBeenCalledWith('dimagi')
-    expect(within(screen.getByRole('region', { name: 'Consent' })).getByText('12')).toBeTruthy()
+    const consent = screen.getByRole('region', { name: 'Consent' })
+    expect(within(consent).getByText('12')).toBeTruthy()
+    expect(within(consent).getAllByText('<3')).toHaveLength(3)             // a count under three is never shown
     expect(within(screen.getByRole('region', { name: 'Sources' })).getByText('sensitive 2')).toBeTruthy()
     const links = screen.getByRole('region', { name: 'Stored links' })
     await waitFor(() => expect(within(links).getByRole('link', { name: 'tender work' }).getAttribute('href'))
@@ -107,6 +122,7 @@ describe('BrainPage', () => {
     const buttons = within(learners).getAllByRole('button', { name: 'Run now' })
     expect(buttons).toHaveLength(2)                                       // system and project; not the per-person one
     expect(within(learners).getByText('per person')).toBeTruthy()
+    expect(within(learners).getByText('built in')).toBeTruthy()           // the project readers never run
     fireEvent.click(buttons[0])
     await waitFor(() => expect(runLearnerNow).toHaveBeenCalledWith('dimagi', 'system-learning', ''))
     expect(await within(learners).findByText('Run 4 started')).toBeTruthy()
@@ -119,9 +135,39 @@ describe('BrainPage', () => {
 
   it('shows why a run cannot start, in the server\'s words', async () => {
     setup(true)
-    runLearnerNow.mockRejectedValue(new Error("canopy's learning reads are switched off (BRAIN_READS_ENABLED)"))
+    runLearnerNow.mockRejectedValue(new Error('learning reads are off in dimagi and the workspaces below it'))
     const learners = await screen.findByRole('region', { name: 'Learners' })
     fireEvent.click(within(learners).getAllByRole('button', { name: 'Run now' })[0])
-    expect(await within(learners).findByText(/switched off/)).toBeTruthy()
+    expect(await within(learners).findByText(/learning reads are off in dimagi/)).toBeTruthy()
+  })
+
+  it('lets its owners and admins change learning reads, and lists every change', async () => {
+    setup(true)
+    setLearningReads.mockResolvedValue({})
+    const reads = await screen.findByRole('region', { name: 'Learning reads' })
+    expect(within(reads).getByText('jj@dimagi.com')).toBeTruthy()
+    expect(within(reads).getByText('inherit → on')).toBeTruthy()
+    const save = within(reads).getByRole('button', { name: 'Save' }) as HTMLButtonElement
+    expect(save.disabled).toBe(true)                                     // nothing changed yet
+    fireEvent.change(within(reads).getByLabelText('Learning reads in dimagi'), { target: { value: 'inherit' } })
+    fireEvent.click(save)
+    await waitFor(() => expect(setLearningReads).toHaveBeenCalledWith('dimagi', null))
+    await waitFor(() => expect(getBrainState).toHaveBeenCalledTimes(2))   // the page reads again
+  })
+
+  it('configures a learner its owners and admins may configure, and only that one', async () => {
+    setup(true)
+    configureLearner.mockResolvedValue({})
+    const learners = await screen.findByRole('region', { name: 'Learners' })
+    const configure = within(learners).getAllByRole('button', { name: 'Configure' })
+    expect(configure).toHaveLength(1)                                     // only system-learning is configurable here
+    fireEvent.click(configure[0])
+    const form = within(learners).getByRole('form', { name: 'Configure system-learning' })
+    fireEvent.change(within(form).getByLabelText('Entry command'), { target: { value: '/canopy:brain-learn' } })
+    fireEvent.change(within(form).getByLabelText('Schedule'), { target: { value: 'daily' } })
+    fireEvent.click(within(form).getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(configureLearner).toHaveBeenCalledWith('dimagi', 'system-learning', {
+      operator: 'ada', entry: '/canopy:brain-learn', schedule: 'daily', enabled: true,
+    }))
   })
 })

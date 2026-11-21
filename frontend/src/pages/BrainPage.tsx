@@ -3,15 +3,18 @@ import { Link, useParams } from 'react-router-dom'
 import { Button, StatusBadge } from 'canopy-ui/ui'
 
 import {
+  configureLearner,
   getBrainLinks,
   getBrainRuns,
   getBrainState,
   listBrainOutputs,
   runLearnerNow,
+  setLearningReads,
   type BrainOutput,
   type BrainRun,
   type BrainState,
   type BrainStoredLink,
+  type LearningReads,
 } from '@/api/brain'
 import { Td, Th, Tr } from '@/components/DataTable'
 import { relativeAge } from '@/lib/relativeAge'
@@ -21,8 +24,9 @@ import { HealthViews } from './health/HealthViews'
 // THE BRAIN of one workspace (/w/:workspace/brain): canopy learning in it and the workspaces below it, as the
 // viewer's role there allows. Its owners and admins see the subtree's counts, links, runs and findings; a member sees
 // their own. It renders; it never decides: every count and every refusal is the server's (`apps/brain/state.py`), and
-// every read is pinned to this workspace. Its owner (or a canopy admin) starts a learner's run here ("Run now"),
-// reading only this subtree; what it found shows under Findings, which act on nothing by themselves.
+// every read is pinned to this workspace. Its owners and admins (or an ancestor's, or a canopy admin) turn "Learning
+// reads" on or off here, enable and configure the learners whose operator lives here, and start a learner's run
+// ("Run now"), reading only this subtree; what it found shows under Findings, which act on nothing by themselves.
 
 const CLASSES = ['individual', 'memory', 'project', 'system'] as const
 
@@ -35,11 +39,15 @@ export function BrainPage(): JSX.Element {
   const [error, setError] = useState('')
   // Bumped when a run starts, so the runs list reads again.
   const [runsKey, setRunsKey] = useState(0)
+  // Bumped after a change here (learning reads, a learner), so the state reads again.
+  const [stateKey, setStateKey] = useState(0)
 
+  useEffect(() => {
+    getBrainState(workspace).then(setState, (e: unknown) => setError(e instanceof Error ? e.message : 'Could not load'))
+  }, [workspace, stateKey])
   useEffect(() => {
     setState(null)
     setError('')
-    getBrainState(workspace).then(setState, (e: unknown) => setError(e instanceof Error ? e.message : 'Could not load'))
   }, [workspace])
 
   return (
@@ -54,7 +62,7 @@ export function BrainPage(): JSX.Element {
         <p className="text-[13px] text-muted-foreground">Loading…</p>
       ) : (
         <NowTab key={workspace} ws={workspace} state={state} runsKey={runsKey}
-                onStarted={() => setRunsKey((k) => k + 1)} />
+                onStarted={() => setRunsKey((k) => k + 1)} onChanged={() => setStateKey((k) => k + 1)} />
       )}
     </div>
   )
@@ -90,27 +98,22 @@ function counts(map: Record<string, number>): string {
 
 // ---- Now ---------------------------------------------------------------------------------------------
 
-function NowTab({ ws, state, runsKey, onStarted }: {
-  ws: string; state: BrainState; runsKey: number; onStarted: () => void
+function NowTab({ ws, state, runsKey, onStarted, onChanged }: {
+  ws: string; state: BrainState; runsKey: number; onStarted: () => void; onChanged: () => void
 }): JSX.Element {
+  const readsOn = state.learning_reads?.on ?? false
+  // The learner whose settings are open, by slug.
+  const [editing, setEditing] = useState('')
   return (
     <div className="space-y-4">
-      <Section title="Rollout">
-        <p className="flex flex-wrap items-center gap-2 text-[13px] text-foreground">
-          <StatusBadge tone={state.reads_enabled ? 'success' : 'neutral'} dot>
-            {state.reads_enabled ? 'Reads on' : 'Reads off'}
-          </StatusBadge>
-          {state.reads_enabled
-            ? 'Learners may read the sessions everyone in them agreed to.'
-            : 'No learner reads a session yet. Consent and links work; nothing is learned until BRAIN_READS_ENABLED is on.'}
-        </p>
-      </Section>
+      {state.learning_reads && <LearningReadsSection ws={ws} reads={state.learning_reads} onChanged={onChanged} />}
 
       <Section
         title="Consent"
         note={
           <>
-            Members who agreed to each class, per workspace: counts, never names. You agreed to{' '}
+            Members who agreed to each class, per workspace: counts, never names; a count under{' '}
+            {state.consent.workspaces[0]?.small ?? 3} shows as &lt;{state.consent.workspaces[0]?.small ?? 3}. You agreed to{' '}
             {state.consent.mine.length ? state.consent.mine.join(', ') : 'nothing yet'}.
           </>
         }
@@ -134,9 +137,9 @@ function NowTab({ ws, state, runsKey, onStarted }: {
                 <Tr key={w.workspace} rule="bottom-last">
                   <Td>{w.name}</Td>
                   <Td numeric align="right">{w.members}</Td>
-                  <Td numeric align="right">{w.agreed_any}</Td>
+                  <Td numeric align="right">{w.agreed_any ?? `<${w.small}`}</Td>
                   {CLASSES.map((c) => (
-                    <Td key={c} numeric align="right">{w.agreed[c] ?? 0}</Td>
+                    <Td key={c} numeric align="right">{w.agreed[c] ?? `<${w.small}`}</Td>
                   ))}
                 </Tr>
               ))}
@@ -187,12 +190,13 @@ function NowTab({ ws, state, runsKey, onStarted }: {
               <Th hideBelow="md">Schedule</Th>
               <Th hideBelow="md">Operator</Th>
               <Th>Accountable admin</Th>
-              {state.can_run && <Th srOnly>Run now</Th>}
+              {state.can_manage && <Th srOnly>Manage</Th>}
             </Tr>
           </thead>
           <tbody>
             {state.learners.map((l) => (
-              <Tr key={l.slug} rule="bottom-last">
+              <Fragment key={l.slug}>
+              <Tr rule="bottom-last">
                 <Td>
                   {l.name} <span className="font-mono text-muted-foreground">{l.slug}</span>
                 </Td>
@@ -204,12 +208,27 @@ function NowTab({ ws, state, runsKey, onStarted }: {
                 <Td hideBelow="md" tone="muted">{l.schedule || '—'}</Td>
                 <Td hideBelow="md" tone="muted">{l.operator || '—'}</Td>
                 <Td tone="muted">{l.accountable || 'nobody yet'}</Td>
-                {state.can_run && (
+                {state.can_manage && (
                   <Td>
-                    <RunNow ws={ws} learner={l} reads={state.reads_enabled} onStarted={onStarted} />
+                    <span className="flex flex-wrap items-center gap-1.5">
+                      <RunNow ws={ws} learner={l} reads={readsOn} onStarted={onStarted} />
+                      {l.configurable && (
+                        <Button size="sm" variant="ghost" onClick={() => setEditing(editing === l.slug ? '' : l.slug)}>
+                          {editing === l.slug ? 'Close' : 'Configure'}
+                        </Button>
+                      )}
+                    </span>
                   </Td>
                 )}
               </Tr>
+              {editing === l.slug && (
+                <Tr rule="bottom-last">
+                  <Td colSpan={8}>
+                    <LearnerForm ws={ws} learner={l} onSaved={() => { setEditing(''); onChanged() }} />
+                  </Td>
+                </Tr>
+              )}
+              </Fragment>
             ))}
           </tbody>
         </Table>
@@ -409,8 +428,8 @@ function Runs({ ws, state }: { ws: string; state: BrainState }): JSX.Element {
 
 type Learner = BrainState['learners'][number]
 
-/** "Run now": one run of a learner for this workspace's subtree, started by its owner or a canopy admin, who then
- *  answers for it. The server says why when it cannot start. */
+/** "Run now": one run of a learner for this workspace's subtree, started by its owners or admins (or a canopy admin),
+ *  who then answer for it. The server says why when it cannot start. */
 function RunNow({ ws, learner, reads, onStarted }: {
   ws: string; learner: Learner; reads: boolean; onStarted: () => void
 }): JSX.Element {
@@ -421,6 +440,7 @@ function RunNow({ ws, learner, reads, onStarted }: {
   if (learner.purpose_class === 'individual' || learner.purpose_class === 'memory') {
     return <span className="text-xs text-muted-foreground">per person</span>
   }
+  if (!learner.runnable) return <span className="text-xs text-muted-foreground">built in</span>
   const go = async () => {
     setBusy(true)
     setNote('')
@@ -446,12 +466,151 @@ function RunNow({ ws, learner, reads, onStarted }: {
         />
       )}
       <Button size="sm" variant="outline" disabled={busy || (needsProject && !project.trim())}
-              title={reads ? undefined : 'Learning reads are switched off; the server will say so'}
+              title={reads ? undefined : 'Learning reads are off here; the server will say so'}
               onClick={() => void go()}>
         {busy ? 'Starting…' : 'Run now'}
       </Button>
       {note && <span role="status" className="text-xs text-muted-foreground">{note}</span>}
     </span>
+  )
+}
+
+const onOff = (v: boolean | null | undefined) => (v == null ? 'inherit' : v ? 'on' : 'off')
+
+/** "Learning reads": whether learners may read this workspace's sessions at all. Its owners and admins change it; every
+ *  change is listed, newest first. */
+function LearningReadsSection({ ws, reads, onChanged }: {
+  ws: string; reads: LearningReads; onChanged: () => void
+}): JSX.Element {
+  const [choice, setChoice] = useState(onOff(reads.own))
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState('')
+  const save = async () => {
+    setBusy(true)
+    setNote('')
+    try {
+      await setLearningReads(ws, choice === 'inherit' ? null : choice === 'on')
+      onChanged()
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : 'Could not save')
+    } finally {
+      setBusy(false)
+    }
+  }
+  const where = reads.own != null
+    ? 'set here'
+    : reads.source ? `inherited from ${reads.source}` : 'not set here or above, so off'
+  return (
+    <Section
+      title="Learning reads"
+      note="Whether learners may read this workspace's sessions (and the ones below it that do not set their own). On, a session is still read only when everyone in it agreed."
+    >
+      <p className="flex flex-wrap items-center gap-2 text-[13px] text-foreground">
+        <StatusBadge tone={reads.on ? 'success' : 'neutral'} dot>{reads.on ? 'On' : 'Off'}</StatusBadge>
+        <span className="text-muted-foreground">{where}</span>
+      </p>
+      {reads.can_edit && (
+        <div className="flex flex-wrap items-center gap-1.5 text-[13px]">
+          <label htmlFor="learning-reads" className="text-muted-foreground">Learning reads in {ws}</label>
+          <select
+            id="learning-reads"
+            value={choice}
+            onChange={(e) => setChoice(e.target.value)}
+            className="rounded-md border border-input bg-background px-1.5 py-0.5 text-xs text-foreground"
+          >
+            <option value="on">On</option>
+            <option value="off">Off</option>
+            <option value="inherit">Inherit</option>
+          </select>
+          <Button size="sm" variant="outline" disabled={busy || choice === onOff(reads.own)} onClick={() => void save()}>
+            {busy ? 'Saving…' : 'Save'}
+          </Button>
+          {note && <span role="status" className="text-xs text-destructive">{note}</span>}
+        </div>
+      )}
+      {(reads.changes ?? []).length > 0 && (
+        <Table>
+          <thead>
+            <Tr head="label">
+              <Th>When</Th>
+              <Th>Who</Th>
+              <Th>Setting</Th>
+              <Th>In effect</Th>
+            </Tr>
+          </thead>
+          <tbody>
+            {(reads.changes ?? []).map((c) => (
+              <Tr key={`${c.at}-${c.by}`} rule="bottom-last">
+                <Td tone="muted" nowrap>{relativeAge(c.at, undefined, { seconds: false })}</Td>
+                <Td>{c.by || 'someone'}</Td>
+                <Td>{onOff(c.before)} → {onOff(c.after)}</Td>
+                <Td>{c.was_on ? 'on' : 'off'} → {c.now_on ? 'on' : 'off'}</Td>
+              </Tr>
+            ))}
+          </tbody>
+        </Table>
+      )}
+    </Section>
+  )
+}
+
+const SCHEDULES = ['', 'hourly', 'daily', 'weekly'] as const
+
+/** A learner's settings a workspace's owners and admins may change: whether it is on, its operator agent (of this
+ *  workspace or below), the plugin command a run starts with, and its schedule. The server refuses the rest. */
+function LearnerForm({ ws, learner, onSaved }: { ws: string; learner: Learner; onSaved: () => void }): JSX.Element {
+  const [enabled, setEnabled] = useState(learner.enabled)
+  const [operator, setOperator] = useState(learner.operator)
+  const [entry, setEntry] = useState(learner.entry)
+  const [schedule, setSchedule] = useState(learner.schedule)
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState('')
+  const field = 'rounded-md border border-input bg-background px-1.5 py-0.5 text-xs text-foreground'
+  const save = async () => {
+    setBusy(true)
+    setNote('')
+    try {
+      await configureLearner(ws, learner.slug, {
+        operator: operator.trim(),
+        entry: entry.trim(),
+        schedule: schedule as (typeof SCHEDULES)[number],
+        enabled,
+      })
+      onSaved()
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : 'Could not save')
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <form
+      aria-label={`Configure ${learner.slug}`}
+      className="flex flex-wrap items-center gap-2 text-xs"
+      onSubmit={(e) => { e.preventDefault(); void save() }}
+    >
+      <label className="flex items-center gap-1">
+        <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Enabled
+      </label>
+      <label className="flex items-center gap-1">
+        Operator
+        <input aria-label="Operator agent" placeholder="agent slug" value={operator}
+               onChange={(e) => setOperator(e.target.value)} className={`w-24 ${field}`} />
+      </label>
+      <label className="flex items-center gap-1">
+        Entry
+        <input aria-label="Entry command" placeholder="/plugin:skill" value={entry}
+               onChange={(e) => setEntry(e.target.value)} className={`w-44 ${field}`} />
+      </label>
+      <label className="flex items-center gap-1">
+        Schedule
+        <select aria-label="Schedule" value={schedule} onChange={(e) => setSchedule(e.target.value)} className={field}>
+          {SCHEDULES.map((s) => <option key={s} value={s}>{s || 'by hand'}</option>)}
+        </select>
+      </label>
+      <Button size="sm" variant="outline" type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save'}</Button>
+      {note && <span role="status" className="text-destructive">{note}</span>}
+    </form>
   )
 }
 
