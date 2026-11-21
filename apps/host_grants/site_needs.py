@@ -356,3 +356,32 @@ def is_site_tool(session, tool: str) -> bool:
         return "canopy" in server.lower()
     app = site_app(session) if session is not None else None
     return app is not None and mcp_apps.indexed_tool(app, name) is not None
+
+
+# --- the site as the system of record for its people ----
+
+
+def site_facts_of(app):
+    """The site's own facts (`site.json`'s `site` block) as canopy last verified them, or
+    None. Read LIVE, with no owner adopting them, for the facts that widen nothing:
+    `person_scheme` and `retention_days` (as `resource_schemes_for`). Fails closed."""
+    if app is None:
+        return None
+    document = needs_for(app).document
+    return document.site if document is not None else None
+
+
+def person_scheme_for(app) -> str:
+    """The URI scheme of the site's records of its people (`site.person_scheme`), or "":
+    a contact's `record_uri` must be under it (`contact_records`). No verifiable document,
+    no scheme, so no `record_uri` is kept."""
+    facts = site_facts_of(app)
+    return facts.person_scheme if facts is not None else ""
+
+
+def retention_days_for(app) -> int | None:
+    """How many days the site asks canopy to keep its contacts' conversations
+    (`site.retention_days`), or None. canopy keeps the shorter of it and the workspace's
+    own rule (`retention.services._sweep_site_contacts`)."""
+    facts = site_facts_of(app)
+    return facts.retention_days if facts is not None else None

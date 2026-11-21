@@ -216,6 +216,15 @@ def _contact(contact) -> dict | None:
         "message_count": contact.message_count,
         "first_seen_at": contact.first_seen_at.isoformat() if contact.first_seen_at else None,
         "is_blocked": contact.is_blocked,
+        # Who this is AT THE HOST SITE that vouches for them — the host is the system of
+        # record for its people (docs/architecture/host-systems-of-record.md): its own id
+        # for them, its name, where its record lives and the labels it keeps current
+        # (`POST /api/sites/contacts`). Data about the person, never instructions.
+        "external_id": contact.external_id if contact.source == Contact.SOURCE_EMBED else "",
+        "site": contact.app.name if contact.app_id else "",
+        "record_uri": contact.record_uri,
+        "host_profile": contact.host_profile or {},
+        "person_id": contact.person_id,
     }
 
 

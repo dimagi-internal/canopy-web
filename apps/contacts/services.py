@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import F
 
 from .email_auth import grade_from_headers, grade_of
@@ -333,6 +333,64 @@ def record_embed_visitor(
     Contact.objects.filter(pk=contact.pk).update(**updates)
     contact.refresh_from_db()
     return contact
+
+
+def apply_host_record(*, app, item: dict, signed_at) -> tuple[Contact, str]:
+    """The host site's own fields for one of its people, from its signed
+    `POST /api/sites/contacts` (`host_grants.contact_records`): `(contact, status)`,
+    `status` `created`, `updated` or `stale`.
+
+    A host site is the SYSTEM OF RECORD for the people it brings
+    (docs/architecture/host-systems-of-record.md). It may write exactly three fields,
+    `display_name`, `record_uri` and `host_profile`, and only with a `version` newer than
+    the one canopy holds — so a retry or an out-of-order delivery changes nothing
+    (`stale`). This is the one path that overwrites `display_name` rather than filling a
+    blank (`record_embed_visitor`): the site's own signed word about its own field.
+    `notes` and `attributes` stay the workspace's and are never touched here.
+
+    `item` is already checked (`canopy_sdk.contacts.check_item`, against the site's
+    `person_scheme`): `{sub, version, display_name?, record_uri?, profile?}`, a field left
+    out left as it is. A missing person is created, keyed `(app, sub)` exactly as a
+    visitor of that site is, graded `app_signed` — and **granted nothing**, like every
+    other recorder here.
+    """
+    fields = {}
+    if "display_name" in item:
+        fields["display_name"] = item["display_name"][:200]
+    if "record_uri" in item:
+        fields["record_uri"] = item["record_uri"]
+    if "profile" in item:
+        fields["host_profile"] = item["profile"]
+    version = int(item["version"])
+    sub = item["sub"]
+    for _attempt in range(2):
+        try:
+            with transaction.atomic():
+                contact = (Contact.objects.select_for_update()
+                           .filter(workspace_id=app.workspace_id, app=app, external_id=sub).first())
+                if contact is None:
+                    contact = Contact.objects.create(
+                        workspace_id=app.workspace_id, app=app, external_id=sub,
+                        source=Contact.SOURCE_EMBED, person=person_for(app=app, external_id=sub),
+                        auth_result=Contact.AUTH_APP_SIGNED, last_auth_result=Contact.AUTH_APP_SIGNED,
+                        auth_detail="host site record", message_count=0,
+                        host_profile_version=version, host_profile_signed_at=signed_at, **fields)
+                    logger.info("contact %s recorded by %s's own record in %s — no membership granted",
+                                contact.pk, app.name, app.workspace_id)
+                    return contact, "created"
+                if version <= contact.host_profile_version:
+                    return contact, "stale"
+                for name, value in fields.items():
+                    setattr(contact, name, value)
+                contact.host_profile_version = version
+                contact.host_profile_signed_at = signed_at
+                contact.save(update_fields=[*fields, "host_profile_version", "host_profile_signed_at",
+                                            "last_seen_at"])
+                return contact, "updated"
+        except IntegrityError:
+            # Two requests created the same person at once; the loser re-reads the winner's row.
+            continue
+    raise RuntimeError("could not record the host's contact")  # pragma: no cover
 
 
 def record_slack_user(

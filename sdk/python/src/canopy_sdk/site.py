@@ -51,6 +51,14 @@ says how long a scheme's result ids are: canopy then keeps a link under it only 
 ``<scheme>://`` and exactly that many url-safe characters. Without it an id may be up
 to ``resources.MAX_ID_LENGTH`` of them.
 
+``site.person_scheme`` (optional, SDK 0.30+; ``CANOPY_HOST["PERSON_SCHEME"]``) is the URI
+scheme of the site's own records of its people (``labs-worker``): the site is the SYSTEM
+OF RECORD for the people it brings, and a contact's ``record_uri``
+(``canopy_sdk.contacts``) must be under it. ``site.retention_days`` (optional, SDK 0.30+;
+``RETENTION_DAYS``) is how long canopy keeps the conversations of this site's contacts;
+canopy enforces the shorter of it and the workspace's own rule. Both are read LIVE, like
+``resource_schemes``: neither widens anything.
+
 canopy finds the document beside the site's registered JWKS, or — knowing only
 the site's address — at ``WELL_KNOWN_PATH`` on its origin (mount
 ``canopy_sdk.django.views.site_document`` there) or at ``canopy/site.json``
@@ -209,10 +217,44 @@ def _site(value) -> dict:
            "mcp_resource": _url(value.get("mcp_resource"), "site.mcp_resource"),
            "resource_schemes": _schemes(value.get("resource_schemes"))}
     out["resource_id_lengths"] = _id_lengths(value.get("resource_id_lengths"), out["resource_schemes"])
-    for key in ("resource_schemes", "resource_id_lengths"):
+    out["person_scheme"] = _person_scheme(value.get("person_scheme"))
+    out["retention_days"] = _retention_days(value.get("retention_days"))
+    for key in ("resource_schemes", "resource_id_lengths", "person_scheme", "retention_days"):
         if not out[key]:
             del out[key]
     return out if any(out.values()) else {}
+
+
+def _person_scheme(value) -> str:
+    """``site.person_scheme``: the URI scheme of the site's records of its people
+    (``labs-worker``), checked like a resource scheme (``resources.check_scheme``)."""
+    from .resources import ResourceError, check_scheme
+
+    if value is None or value == "":
+        return ""
+    if not isinstance(value, str):
+        raise SiteDocumentError("malformed", "site.person_scheme must be a URI scheme")
+    try:
+        return check_scheme(value)
+    except ResourceError as exc:
+        raise SiteDocumentError("malformed", f"site.person_scheme: {exc.message}") from exc
+
+
+#: The bounds on ``site.retention_days``: at least a day, at most ten years.
+MIN_RETENTION_DAYS = 1
+MAX_RETENTION_DAYS = 3650
+
+
+def _retention_days(value) -> int | None:
+    """``site.retention_days``: how many days canopy keeps the conversations of this site's
+    contacts. canopy enforces the shorter of it and the workspace's own retention rule."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) \
+            or not MIN_RETENTION_DAYS <= value <= MAX_RETENTION_DAYS:
+        raise SiteDocumentError("malformed", f"site.retention_days must be a whole number of days from "
+                                             f"{MIN_RETENTION_DAYS} to {MAX_RETENTION_DAYS}")
+    return value
 
 
 def _id_lengths(value, schemes: list[str]) -> dict[str, int]:
@@ -253,7 +295,7 @@ def _schemes(value) -> list[str]:
 
 #: The keys of ``site``, in order.
 SITE_FACTS: tuple[str, ...] = ("origins", "jwks_url", "issuer", "mcp_resource", "resource_schemes",
-                               "resource_id_lengths")
+                               "resource_id_lengths", "person_scheme", "retention_days")
 
 
 def _normalize(claims: Mapping) -> dict:
@@ -294,7 +336,8 @@ def site_document(site_name: str, *, pages: Sequence[Mapping] = (), sensitive_da
     """The payload, validated: ``pages`` as ``[{key, title, scopes}]``,
     ``sensitive_data`` as ``{"requires": {"handles_sensitive", "runner_flag"}}``, ``uses`` as
     ``{"agents", "sensitive_data_agents", "version"}``, ``site`` as ``{"origins",
-    "jwks_url", "issuer", "mcp_resource", "resource_schemes", "resource_id_lengths"}`` (each optional; left out
+    "jwks_url", "issuer", "mcp_resource", "resource_schemes", "resource_id_lengths", "person_scheme",
+    "retention_days"}`` (each optional; left out
     when empty), ``title`` the site's display name and ``scope_labels`` as ``{scope: phrase}`` (both optional,
     descriptive text for the consent prompt)."""
     name = str(site_name or "").strip()
@@ -331,6 +374,12 @@ class SiteFacts:
     resource_schemes: tuple[str, ...] = ()
     #: ``((scheme, n), ...)``: the exact length of a scheme's result ids, where declared.
     resource_id_lengths: tuple[tuple[str, int], ...] = ()
+    #: The URI scheme of the site's own records of its people (``labs-worker``): a contact's
+    #: ``record_uri`` must be under it (``canopy_sdk.contacts``). "" when none is declared.
+    person_scheme: str = ""
+    #: How many days canopy keeps the conversations of this site's contacts (the shorter of
+    #: this and the workspace's own rule wins). None when the site declares none.
+    retention_days: int | None = None
 
     def resource_policy(self) -> dict[str, int | None]:
         """``{scheme: declared id length or None}``, as ``resources.validate_link`` takes it."""
@@ -377,7 +426,9 @@ class SiteNeeds:
                             issuer=body["site"]["issuer"], mcp_resource=body["site"]["mcp_resource"],
                             resource_schemes=tuple(body["site"].get("resource_schemes") or ()),
                             resource_id_lengths=tuple(
-                                (body["site"].get("resource_id_lengths") or {}).items()))
+                                (body["site"].get("resource_id_lengths") or {}).items()),
+                            person_scheme=body["site"].get("person_scheme") or "",
+                            retention_days=body["site"].get("retention_days"))
                   if body.get("site") else None),
             title=body.get("title", ""), scope_labels=dict(body.get("scope_labels") or {}),
             claims=dict(claims))

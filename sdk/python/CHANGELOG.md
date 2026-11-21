@@ -2,6 +2,20 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.30.0 — 2026-11-21
+
+**A host site is the system of record for the people it brings.**
+
+- `canopy_sdk.contacts` (both halves) and `canopy_sdk.host.contacts`: `update_contacts(config,
+  contacts)` keeps canopy's copy of your people current — each `{sub, display_name?,
+  record_uri?, profile?, version}`, written only when `version` is newer — and
+  `erase_contacts(config, subs)` makes canopy forget them. Both POST a JWS signed by the
+  site key as the body (`application/jwt`) to `/api/sites/contacts[/erase]`.
+- `site.json`'s `site` block gains `person_scheme` (the scheme of your records of people;
+  `CANOPY_HOST["PERSON_SCHEME"]`) and `retention_days` (`RETENTION_DAYS`); `SiteFacts`
+  carries both. System check `canopy_host.E012` refuses a bad value at startup.
+- `canopy_sdk.fetch.post_bytes`. Additive; nothing existing changed.
+
 ## 0.29.2 — 2026-11-09
 
 Comment wording only in a bundled CloudFormation template; no behaviour change.
