@@ -596,3 +596,25 @@ class BrainTargetIn(StrictModel):
     project: str = Field("", description="A workspace project's handle there, for a project target.")
     cron: str = Field("", description="Its schedule, 5-field cron; empty for daily at 06:00.")
     timezone: str = Field("", description="An IANA time zone; empty for UTC.")
+
+
+class LearningOptInIn(StrictModel):
+    model_config = ConfigDict(extra="forbid")
+
+    classes: list[str] = Field(description="Classes to add: individual, memory, project, system. Only ever adds.")
+    people: list[str] = Field(default_factory=list, description="Members' emails, here or in a workspace below.")
+    already_agreed: bool = Field(False, description="Also everyone here or below who agreed to any class already.")
+
+
+class OptInPersonOut(StrictModel):
+    email: str
+    added: list[str]
+    classes: list[str]
+    refused: str = ""
+
+
+class ConsentPersonOut(StrictModel):
+    email: str
+    name: str
+    classes: list[str]
+    workspaces: list[str]

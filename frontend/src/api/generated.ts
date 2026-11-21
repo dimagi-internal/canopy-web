@@ -19909,6 +19909,35 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/brain/consent": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Who here has agreed to which learning (its owners and admins)
+         * @description Every member of the pinned workspace and those below it who has agreed to any learning, with their classes
+         *     and the workspaces it covers (empty: all of theirs).
+         */
+        readonly get: operations["list_consent"];
+        readonly put?: never;
+        /**
+         * Opt people in to learning (its owners and admins)
+         * @description Add learning classes to the consent of members of the pinned workspace or below: those named (`people`, by
+         *     email) and, with `already_agreed`, everyone there who agreed to any class already. It only adds: taking a class
+         *     away, narrowing and withdrawing a session stay each person's own, in Settings → Learning, where the change shows
+         *     as made by you. A person with no consent gets one covering only their workspaces you manage; one whose consent
+         *     reaches a workspace you do not manage is refused (`refused`). Each person's change is on their own audit log.
+         */
+        readonly post: operations["opt_people_in"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/me/learning/": {
         readonly parameters: {
             readonly query?: never;
@@ -52788,6 +52817,50 @@ export interface components {
              */
             readonly explanation: string;
         };
+        /** ConsentPersonOut */
+        readonly ConsentPersonOut: {
+            /** Email */
+            readonly email: string;
+            /** Name */
+            readonly name: string;
+            /** Classes */
+            readonly classes: readonly string[];
+            /** Workspaces */
+            readonly workspaces: readonly string[];
+        };
+        /** OptInPersonOut */
+        readonly OptInPersonOut: {
+            /** Email */
+            readonly email: string;
+            /** Added */
+            readonly added: readonly string[];
+            /** Classes */
+            readonly classes: readonly string[];
+            /**
+             * Refused
+             * @default
+             */
+            readonly refused: string;
+        };
+        /** LearningOptInIn */
+        readonly LearningOptInIn: {
+            /**
+             * Classes
+             * @description Classes to add: individual, memory, project, system. Only ever adds.
+             */
+            readonly classes: readonly string[];
+            /**
+             * People
+             * @description Members' emails, here or in a workspace below.
+             */
+            readonly people?: readonly string[];
+            /**
+             * Already Agreed
+             * @description Also everyone here or below who agreed to any class already.
+             * @default false
+             */
+            readonly already_agreed: boolean;
+        };
         /** LearningClassOut */
         readonly LearningClassOut: {
             /**
@@ -79766,6 +79839,86 @@ export interface operations {
             };
             /** @description Not Found */
             readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly list_consent: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["ConsentPersonOut"][];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly opt_people_in: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LearningOptInIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["OptInPersonOut"][];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
                 };

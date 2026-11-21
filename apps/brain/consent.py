@@ -1,9 +1,10 @@
 """A person's agreement to canopy learning: the only code that writes `LearningConsent` and
 `SourceExclusion`.
 
-Every act here is the person's own. The routes (`api.py`) refuse an agent's login, a turn's
-token, a runner and a site's token before calling in; nothing in this module trusts that, and
-nothing calls it for anyone else (`tests/test_brain_consent_api.py`). Each change is on the
+Every act here is the person's own, except `admin_opt_in`: a workspace's owner or admin (a person, or an admin
+agent working for one; `api_manage.opt_people_in`) may ADD classes to a member's consent there. Taking a class away,
+narrowing, revoking and withdrawing a session stay the person's alone. The person's routes (`api.py`) refuse an agent's
+login, a turn's token, a runner and a site's token before calling in (`tests/test_brain_consent_api.py`). Each change is on the
 person's own audit (`learning.*`, `hcp.audit`) and, ids only, in the event log of every
 workspace they are in.
 
@@ -188,6 +189,50 @@ def set_consent(user, *, classes, workspaces=None, include_new: bool | None = No
         _look_again(user)
     _sync_coaching(user, on=INDIVIDUAL in classes)
     return row
+
+
+class OptInRefusedError(ValueError):
+    """An admin may not opt this person in (the reason is shown per person)."""
+
+
+@transaction.atomic
+def admin_opt_in(user, *, classes, managed: set[str], by: str) -> tuple[LearningConsent, list[str]]:
+    """Add `classes` to `user`'s consent on an admin's word (`by`, as the audit names them). Only ever adds: a class
+    the person has is kept, their scope, rules and directives are untouched. `managed` is the set of workspaces the
+    admin manages learning in: a person with no consent gets one covering only their workspaces in it (no new ones),
+    and one whose consent already reaches a workspace outside it is refused (an admin never widens what the person
+    agreed to somewhere they do not manage). Returns the row and the classes added."""
+    classes = set(classes)
+    if not classes or classes - set(CLASSES):
+        raise RefusedError(f"classes must be a non-empty set of {', '.join(CLASSES)}")
+    mine = set(wsvc.user_workspace_slugs(user))
+    row = live(user)
+    if row is None:
+        scope = sorted(mine & managed)
+        if not scope:
+            raise OptInRefusedError("not in a workspace you manage")
+        row = LearningConsent.objects.create(user=user, classes=sorted(classes), workspaces=scope,
+                                             known_workspaces=sorted(mine), include_new=False)
+        added = sorted(classes)
+        _record(user, CONSENTED, purpose=f"opted in to canopy learning by {by}",
+                detail=",".join(added), ids={"classes": added, "by": by})
+    else:
+        reach = set(row.workspaces or []) or mine
+        if reach - managed:
+            raise OptInRefusedError("their consent covers workspaces you do not manage: "
+                                    + ", ".join(sorted(reach - managed)))
+        added = sorted(classes - set(row.classes))
+        if not added:
+            return row, []
+        row.classes = sorted(set(row.classes) | classes)
+        row.save(update_fields=["classes"])
+        for cls in added:
+            _record(user, CLASS_ADDED, purpose=f"opted in to canopy learning for {cls} by {by}", detail=cls,
+                    ids={"class": cls, "by": by})
+    if PROJECT in row.classes:
+        _look_again(user)
+    _sync_coaching(user, on=INDIVIDUAL in row.classes)
+    return row, added
 
 
 @transaction.atomic

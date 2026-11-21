@@ -39,7 +39,7 @@ from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
 from . import actor as actor_mod
-from . import budget, eligibility, learning_reads, participants, readers, registry, sources, targets
+from . import budget, consent, eligibility, learning_reads, participants, readers, registry, sources, targets
 from .models import ABOUT_A_PERSON, BrainCapability, BrainRun, BrainTarget
 from .schemas import (
     BrainRunState,
@@ -48,9 +48,12 @@ from .schemas import (
     BrainTargetOut,
     BrainWhyOut,
     CapabilityOut,
+    ConsentPersonOut,
     LearnerConfigIn,
     LearningReadsIn,
     LearningReadsOut,
+    LearningOptInIn,
+    OptInPersonOut,
 )
 
 router = Router(auth=session_auth, tags=["brain"])
@@ -485,3 +488,86 @@ def why_not_read(request: HttpRequest, session_id: uuid.UUID, learner: str = rea
     reason, words = _said(verdict.reason, user) if not verdict.ok else ("", "")
     return {"session_id": str(session.pk), "learner": cap.slug, "eligible": verdict.ok, "reason": reason,
             "explanation": words}
+
+
+# ---- consent, on an admin's word ---------------------------------------------------------------------------------
+
+def _members(ws: str) -> dict[int, object]:
+    """The people (never an agent's login, never a guest) who are members of `ws` or a workspace below it."""
+    from django.contrib.auth import get_user_model  # noqa: PLC0415 — as the other lazy model imports here
+
+    from apps.workspaces.models import WorkspaceMembership  # noqa: PLC0415 — as the other lazy model imports here
+
+    ids = (WorkspaceMembership.objects.filter(workspace_id__in=_subtree(ws))
+           .exclude(role=WorkspaceMembership.GUEST).values_list("user_id", flat=True))
+    agents = set(Agent.objects.exclude(user_id=None).values_list("user_id", flat=True))
+    return {u.pk: u for u in get_user_model().objects.filter(pk__in=set(ids) - agents, is_active=True)}
+
+
+def _managing(request: HttpRequest):
+    actor = actor_mod.of(request)
+    ws = _pinned(request)
+    if not actor.may_manage(ws):
+        raise ProblemError(403, f"Only {ws}'s owners and admins (or an ancestor's) opt its people in",
+                           type_=TYPE_FORBIDDEN)
+    return actor, ws
+
+
+@router.get("/brain/consent", response={200: list[ConsentPersonOut], **refusals(403, 422)},
+            summary="Who here has agreed to which learning (its owners and admins)")
+@gate("brain.manage")  # an owner or admin here or above, or a canopy admin; a person or an admin agent
+def list_consent(request: HttpRequest) -> list[dict]:
+    """Every member of the pinned workspace and those below it who has agreed to any learning, with their classes
+    and the workspaces it covers (empty: all of theirs)."""
+    _actor, ws = _managing(request)
+    people = _members(ws)
+    rows = consent.LearningConsent.objects.filter(user_id__in=people, revoked_at__isnull=True)
+    return [{"email": people[r.user_id].email, "name": people[r.user_id].get_full_name(),
+             "classes": list(r.classes), "workspaces": list(r.workspaces or [])}
+            for r in rows.order_by("user__email")]
+
+
+@router.post("/brain/consent", response={200: list[OptInPersonOut], **refusals(403, 422)},
+             summary="Opt people in to learning (its owners and admins)")
+@gate("brain.manage", setting=True)  # an owner or admin here or above, or a canopy admin; a person or an admin agent
+def opt_people_in(request: HttpRequest, payload: LearningOptInIn) -> list[dict]:
+    """Add learning classes to the consent of members of the pinned workspace or below: those named (`people`, by
+    email) and, with `already_agreed`, everyone there who agreed to any class already. It only adds: taking a class
+    away, narrowing and withdrawing a session stay each person's own, in Settings → Learning, where the change shows
+    as made by you. A person with no consent gets one covering only their workspaces you manage; one whose consent
+    reaches a workspace you do not manage is refused (`refused`). Each person's change is on their own audit log."""
+    actor, ws = _managing(request)
+    people = _members(ws)
+    by_email = {u.email.lower(): u for u in people.values()}
+    unknown = sorted({e.strip().lower() for e in payload.people} - set(by_email))
+    if unknown:
+        raise ProblemError(422, "Invalid request", type_=TYPE_VALIDATION,
+                           detail=f"not a member of {ws} or below: {', '.join(unknown)}")
+    chosen = {by_email[e.strip().lower()].pk for e in payload.people}
+    if payload.already_agreed:
+        chosen |= set(consent.LearningConsent.objects.filter(user_id__in=people, revoked_at__isnull=True)
+                      .values_list("user_id", flat=True))
+    if not chosen:
+        raise ProblemError(422, "Invalid request", type_=TYPE_VALIDATION, detail="name someone to opt in")
+    managed = actor.managed(wsvc.descendant_slugs({ws}) | {ws} | {s for u in chosen
+                                                                  for s in wsvc.user_workspace_slugs(people[u])})
+    out = []
+    for pk in sorted(chosen, key=lambda k: people[k].email):
+        u = people[pk]
+        try:
+            row, added = consent.admin_opt_in(u, classes=payload.classes, managed=managed, by=actor.label)
+        except consent.RefusedError as e:
+            raise ProblemError(422, "Invalid request", type_=TYPE_VALIDATION, detail=str(e)) from e
+        except consent.OptInRefusedError as e:
+            live = consent.live(u)
+            out.append({"email": u.email, "added": [], "classes": list(live.classes) if live else [],
+                        "refused": str(e)})
+            continue
+        out.append({"email": u.email, "added": added, "classes": list(row.classes)})
+    actor_mod.note(request, actor)
+    workspace = Workspace.objects.get(slug=ws)
+    audit.note_change(scope=f"workspace:{ws}/learning_consent", before={}, after={"people": out},
+                      workspace=workspace,
+                      summary=f"{actor.label} opted {sum(1 for o in out if o['added'])} people in to "
+                              f"{', '.join(sorted(set(payload.classes)))} learning in {ws}")
+    return out

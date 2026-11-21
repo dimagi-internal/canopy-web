@@ -378,3 +378,60 @@ def test_an_admin_agent_aims_a_learner_over_mcp(w):
     with _mcp_as(_login(w)), pytest.raises(ToolError, match="name the workspace"):
         async_to_sync(mcp.call_tool)("add_learning_target", {"learner": "system-learning"})
     assert not BrainTarget.objects.exists()
+
+
+# ---- an admin opts people in --------------------------------------------------------------------------------------
+
+def test_an_admin_agent_opts_in_everyone_who_already_agreed_over_mcp(w):
+    LearningConsent.objects.filter(user=w["bob"]).update(classes=["individual"])
+    carol = user("carol")
+    member(carol, w["connect"])                                         # agreed to nothing: left alone
+    with _mcp_as(_login(w)):
+        async_to_sync(mcp.call_tool)("opt_people_in", {"workspace": "connect", "classes": ["system", "project"],
+                                                       "already_agreed": True})
+    assert LearningConsent.objects.get(user=w["bob"], revoked_at=None).classes == ["individual", "project", "system"]
+    assert not LearningConsent.objects.filter(user=carol).exists()
+    row = SettingChange.objects.filter(operation="opt_people_in").latest("pk")
+    assert row.acting["agent"] == "cee"
+    bys = [(e.payload or {}).get("by", "") for e in Event.objects.filter(kind="learning.class_added")]
+    assert bys and all(b.startswith("cee for ") for b in bys)
+
+
+def test_an_admin_opts_in_a_named_member_scoped_to_what_they_manage(w):
+    carol = user("carol")
+    member(carol, w["connect"])
+    c = Client()
+    c.force_login(w["connect_admin"])
+    r = c.post("/api/w/connect/brain/consent", {"classes": ["system"], "people": [carol.email]}, content_type=J)
+    assert r.status_code == 200, r.content
+    assert r.json() == [{"email": carol.email, "added": ["system"], "classes": ["system"], "refused": ""}]
+    row = LearningConsent.objects.get(user=carol)
+    assert row.workspaces == ["connect"] and row.include_new is False
+    assert [p["email"] for p in c.get("/api/w/connect/brain/consent").json()] == sorted(
+        [w["alice"].email, w["bob"].email, carol.email])
+    # It only adds; the person still narrows or ends it themselves.
+    assert c.post("/api/w/connect/brain/consent", {"classes": ["system"], "people": [carol.email]},
+                  content_type=J).json()[0]["added"] == []
+
+
+def test_opt_in_refuses_a_non_admin_a_learning_run_a_stranger_and_reach_beyond_what_is_managed(w):
+    outsider = user("outsider")
+    c = Client()
+    c.force_login(w["connect_editor"])
+    assert c.post("/api/w/connect/brain/consent", {"classes": ["system"], "already_agreed": True},
+                  content_type=J).status_code == 403
+    r = Client().post("/api/w/connect/brain/consent", {"classes": ["system"], "already_agreed": True},
+                      content_type=J, **bearer_headers(_login(w, agent="dee")))
+    assert r.status_code == 403
+    r = Client().post("/api/w/connect/brain/consent", {"classes": ["system"], "already_agreed": True},
+                      content_type=J, **bearer_headers(_run_login(w)))
+    assert r.status_code == 403
+    c.force_login(w["connect_admin"])
+    r = c.post("/api/w/connect/brain/consent", {"classes": ["system"], "people": [outsider.email]}, content_type=J)
+    assert r.status_code == 422
+    # Alice's consent covers every workspace she is in; once she is in one connect's admin does not manage, it is hers.
+    other = Workspace.objects.create(slug="other", display_name="Other", created_by=outsider)
+    member(w["alice"], other)
+    r = c.post("/api/w/connect/brain/consent", {"classes": ["memory"], "people": [w["alice"].email]}, content_type=J)
+    assert r.json()[0]["refused"].startswith("their consent covers workspaces you do not manage")
+    assert "memory" not in LearningConsent.objects.get(user=w["alice"], revoked_at=None).classes
