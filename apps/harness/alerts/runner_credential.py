@@ -67,6 +67,11 @@ OUT_OF_CREDIT_MARKERS = ("out of credit",)
 _PROBED_AT = re.compile(r"\s*·\s*probed\s+\S+\s*$", re.IGNORECASE)
 
 _BOX_LOGIN = "box-login"
+#: A laptop runner's own Claude login (`claude.probe.local`, published by
+#: `runner/canopy_runner/canopy_runner/login_probe.py` while the box is marked
+#: signed out). Not an entry on any credential list: whoever uses the machine
+#: signs it in there with `claude /login`, and the box re-probes on its own.
+LOCAL = "local"
 
 
 def runner_path(runner) -> str:
@@ -130,6 +135,8 @@ def entry_for(runner, slot: str):
     box), `api-key` (an older bundle's API key). The tokens are found the way
     the status view finds them (`runners._first_values`).
     """
+    if slot == LOCAL:
+        return None
     if slot in ("subscription-1", "subscription-2"):
         return _first_values(runner)["claude_token" if slot == "subscription-1" else "claude_token_secondary"]
     if is_login(slot):
@@ -170,12 +177,14 @@ def _removable(runner, slot: str) -> bool:
 
 
 def is_login(slot: str) -> bool:
-    return slot == _BOX_LOGIN or slot.startswith(_BOX_LOGIN + ":")
+    return slot in (_BOX_LOGIN, LOCAL) or slot.startswith(_BOX_LOGIN + ":")
 
 
 def title_for(runner, slot: str, *, no_credit: bool = False) -> str:
     """`The "<label>" token|login|API key on <runner> no longer works` (or `is out
     of credit`) — never the slot."""
+    if slot == LOCAL and not no_credit:
+        return f"Claude is not signed in on {runner.name}"
     state = "is out of credit" if no_credit else "no longer works"
     return f'The "{label_for(runner, slot)}" {_noun(slot)} on {runner.name} {state}'
 
@@ -183,6 +192,10 @@ def title_for(runner, slot: str, *, no_credit: bool = False) -> str:
 def body_for(runner, slot: str, *, no_credit: bool = False) -> str:
     """One plain sentence: what is wrong and what fixes it."""
     noun = _noun(slot)
+    if slot == LOCAL and not no_credit:
+        return ("Its Claude login has lapsed, so it takes no turns. Sign in with `claude /login` "
+                "on that machine; the runner checks the login itself and is ready again "
+                "within about 2 minutes.")
     if no_credit:
         what = ("Its account has no credit left, so the runner has moved on to its next "
                 "credential, and paused itself if none was left.")
