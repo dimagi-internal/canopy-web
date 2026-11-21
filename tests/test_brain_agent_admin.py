@@ -280,6 +280,21 @@ def test_a_projects_lead_and_an_agent_working_for_them_manage_its_targets(pw):
                           **bearer_headers(other)).status_code == 403
 
 
+def test_an_agent_working_for_a_projects_lead_sets_a_project_findings_status(pw):
+    out = BrainOutput.objects.create(capability=pw["learner"], kind="finding", workspace=pw["connect"],
+                                     subject_type="project", subject=str(pw["project"].pk), title="relay finding")
+    path = f"/api/w/connect/brain/outputs/{out.pk}/status"
+    token = _login(pw, agent="dee", by="alice")
+    assert Client().post(path, {"status": "done"}, content_type=J, **bearer_headers(token)).status_code == 403
+    pw["project"].member_agents.add(pw["dee"])
+    r = Client().post(path, {"status": "done"}, content_type=J, **bearer_headers(token))
+    assert r.status_code == 200, r.content
+    out.refresh_from_db()
+    assert out.status == "done" and out.status_by == pw["dee"].user
+    other = _login(pw, agent="dee", by="bob")                          # bob reads the project but leads nothing
+    assert Client().post(path, {"status": "open"}, content_type=J, **bearer_headers(other)).status_code == 403
+
+
 # ---- what stays the person's ---------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("method, path, body", [

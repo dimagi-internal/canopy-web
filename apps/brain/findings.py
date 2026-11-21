@@ -22,7 +22,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.agents.models import AgentProject
-from apps.agents.services.projects import may_read_project
+from apps.agents.services.projects import may_read_project, project_read_q
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
@@ -86,7 +86,8 @@ def actor_may_set(actor, out: BrainOutput) -> bool:
     if cls == PROJECT:
         from .api_manage import may_manage_target  # noqa: PLC0415 — api_manage reads this module
 
-        project = AgentProject.objects.filter(pk=out.subject).first() if out.subject.isdecimal() else None
+        project = (AgentProject.objects.filter(project_read_q(actor.user), pk=out.subject).first()
+                   if out.subject.isdecimal() else None)
         return (project is not None and acts_for(actor.user, out)
                 and may_manage_target(actor, out.workspace_id, project))
     return False
