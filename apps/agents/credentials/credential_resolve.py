@@ -25,7 +25,7 @@ from apps.events import services as events
 from apps.harness import aws_iam_proof, device_keys
 from apps.harness.models import Runner
 
-from .. import mailbox, services
+from .. import definition_store, mailbox, services
 from . import accounts, authority, licenses, vault_alerts, vault_members, workspace_vaults, zk
 from .pat_rotation import CANOPY_PAT_REF
 
@@ -74,6 +74,8 @@ class Resolved:
     #: {value_zk, provider, identity, delegated_by_email, waiting}} (`accounts`).
     delegated: dict = field(default_factory=dict)
     delegated_withheld: list = field(default_factory=list)
+    #: `{source, revision, root_sha256}` (`definition_store.source_of`).
+    definition: dict = field(default_factory=dict)
     via: str = field(default="", compare=False)
 
     def response_fields(self) -> dict:
@@ -313,6 +315,7 @@ def resolve(request: HttpRequest, agent, refs: str | None) -> Resolved | Refusal
         zk=True, kv=agent.zk_kv, wrap=zk_wrap,
         agent_id=str(agent.pk),
         vaults=layers,
+        definition=definition_store.source_of(agent),
     )
     read = (list(values) + list(delegated)
             + [f"{layer['name']}/{n}" for layer in layers for n in layer["values"]])

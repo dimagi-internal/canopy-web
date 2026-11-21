@@ -35,6 +35,12 @@ from pathlib import Path
 
 import requests
 
+from apps.contacts.hcp.sensitive import _context_turn
+from apps.harness import initiator as who
+from apps.harness.models import Turn
+from apps.workspaces import permissions as perms
+from apps.workspaces import services as wsvc
+
 from .credentials import delegations
 
 GITHUB_API = delegations.GITHUB_API
@@ -78,6 +84,40 @@ class RepoState:
     suggested_slug: str = ""
     head_sha: str = ""
     base_tree: str = ""
+
+
+#: Slugs the SPA needs for itself: `/w/:ws/agents/new` is the create page, and
+#: `scaffold` / `stored` are create routes under `/api/agents/`.
+RESERVED_SLUGS = frozenset({"new", "scaffold", "stored"})
+
+
+#: How sure canopy must be of a person before an agent's register makes THEM the owner:
+#: signed in, or on their own token / private runner — never a weaker claim.
+OWNER_ASSURANCES = ("session", "pat", "private-runner-key")
+
+
+def creating_owner(request, home):
+    """Who owns an agent this request creates: the caller — unless the caller is an
+    AGENT's own login registering it from inside one of its live turns, when it is the
+    person who asked for that turn. Otherwise an agent creating an agent for a person
+    would own it, and the person would have to transfer it by hand.
+
+    The parent turn (`X-Canopy-Parent-Turn`, which the canopy CLI sends) is checked, not
+    taken on trust: it must be live, belong to the caller's own agent, and have been
+    asked by a person canopy verified who may create agents in `home`. Anything short of
+    that leaves the caller the owner, as before."""
+    caller = request.user
+    slug = who._agent_login_of(caller)
+    turn = _context_turn() if slug else None
+    if (turn is None or turn.agent_id is None or turn.agent.slug != slug
+            or turn.status not in (Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN)
+            or turn.initiator_kind != who.USER or turn.initiator_user_id is None
+            or turn.initiator_assurance not in OWNER_ASSURANCES):
+        return caller
+    person = turn.initiator_user
+    if not perms.role_allows(wsvc.member_role(person, home), perms.AGENT_WORK):
+        return caller
+    return person
 
 
 def expected_paths(slug: str) -> set[str]:

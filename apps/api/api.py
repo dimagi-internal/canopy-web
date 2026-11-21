@@ -302,6 +302,7 @@ from apps.brain.api_graph import router as brain_graph_router  # noqa: E402
 from apps.brain.api_manage import router as brain_manage_router  # noqa: E402
 from apps.brain.api_run import router as brain_run_router  # noqa: E402
 from apps.brain.api_state import router as brain_state_router  # noqa: E402
+from apps.agent_definitions.api import router as agent_definitions_router  # noqa: E402
 from apps.agents.api import router as agents_router  # noqa: E402
 from apps.agents.api import turns_router as agent_turns_router  # noqa: E402
 from apps.agents.api_board import router as agent_board_router  # noqa: E402
@@ -485,6 +486,8 @@ api.add_router("/sessions", sessions_router)
 # Before the agents router: `…/projects/propose/` must not be read as a project ref.
 api.add_router("/agents", proposals_router)  # proposed projects + backings
 api.add_router("/agents", checkins_project_router)  # a project's check-ins + its timeline
+# Before the agents router: `POST /stored` must never be read as a slug.
+api.add_router("/agents", agent_definitions_router)  # a stored agent's definition
 api.add_router("/agents", agents_router)
 # The rest of apps/agents' surface, split by subdomain. Mounted in the order the
 # routes were written in, which is the order of /api/openapi.json's paths.

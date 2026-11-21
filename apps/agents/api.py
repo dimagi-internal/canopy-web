@@ -34,7 +34,6 @@ from apps.api.errors import (
 from apps.api.pagination import Page, clamp_limit, paginate
 from apps.api.route_gates import gate
 from apps.canopy_sessions.control import close_agent_sessions
-from apps.contacts.hcp.sensitive import _context_turn
 from apps.events import audit
 from apps.harness import agent_report, clis, turn_access
 from apps.harness import initiator as who
@@ -46,7 +45,7 @@ from apps.tokens.middleware import minting_refusal
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from . import access, agent_login, profile_settings, command_sync, creation, mailbox, services
+from . import access, agent_login, definition_store, profile_settings, command_sync, creation, mailbox, services
 from . import move as agent_move
 from .creation import repo_url
 from .credentials import delegations, licenses, login_test_key
@@ -125,33 +124,9 @@ def list_agents(request: HttpRequest, limit: int = 100) -> Page[AgentOut]:
         update={"plugin": _plugin_out(a, refs)}))
 
 
-#: How sure canopy must be of a person before an agent's register makes THEM the owner:
-#: signed in, or on their own token / private runner — never a weaker claim.
-_OWNER_ASSURANCES = ("session", "pat", "private-runner-key")
-
-
 def _creating_owner(request: HttpRequest, home):
-    """Who owns an agent this request creates: the caller — unless the caller is an
-    AGENT's own login registering it from inside one of its live turns, when it is the
-    person who asked for that turn. Otherwise an agent creating an agent for a person
-    would own it, and the person would have to transfer it by hand.
-
-    The parent turn (`X-Canopy-Parent-Turn`, which the canopy CLI sends) is checked, not
-    taken on trust: it must be live, belong to the caller's own agent, and have been
-    asked by a person canopy verified who may create agents in `home`. Anything short of
-    that leaves the caller the owner, as before."""
-    caller = request.user
-    slug = who._agent_login_of(caller)
-    turn = _context_turn() if slug else None
-    if (turn is None or turn.agent_id is None or turn.agent.slug != slug
-            or turn.status not in (Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN)
-            or turn.initiator_kind != who.USER or turn.initiator_user_id is None
-            or turn.initiator_assurance not in _OWNER_ASSURANCES):
-        return caller
-    person = turn.initiator_user
-    if not perms.role_allows(wsvc.member_role(person, home), perms.AGENT_WORK):
-        return caller
-    return person
+    """Who owns an agent this request creates (`creation.creating_owner`)."""
+    return creation.creating_owner(request, home)
 
 
 #: What an agent says about itself: changing one of these on an existing agent needs `agent_edit`.
@@ -241,6 +216,8 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
     # the agent's admins', like its credentials. A field sent with the value
     # already stored is not a change: the plugin re-upserts on every publish.
     # Creating an agent, and editing its name/description/persona, stay editor.
+    if existing is not None and existing.is_stored and payload.repo_url not in (None, ""):
+        _refuse_repo_on_stored(existing)
     if existing is not None and not existing.is_admin(request.user):
         changed = [f for f in services.DEFINITION_FIELDS
                    if getattr(payload, f, None) is not None
@@ -302,6 +279,16 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
     return Status(201, AgentOut.model_validate(agent))
 
 
+def _refuse_repo_on_stored(agent) -> None:
+    """A stored agent's definition is canopy's (docs/architecture/stored-agents.md): pointing
+    it at a repository would let that repo's code run instead of what a person published."""
+    if agent.is_stored:
+        raise ProblemError(409, f"{agent.slug} is a stored agent", type_=TYPE_CONFLICT,
+                           detail="Its definition is kept in canopy, so it has no repository; change it "
+                                  "with a draft (POST /api/agents/{slug}/definition/drafts).",
+                           members={"error": "stored_agent"})
+
+
 def _move(request: HttpRequest, agent, workspace: str, *, dry_run: bool = False) -> dict:
     """Gate, then dry-run or carry out a move (apps/agents/move.py), reporting the
     change to the settings audit. A dry run notes an unchanged value, so the audit
@@ -348,7 +335,7 @@ def move_agent(request: HttpRequest, slug: str, payload: AgentMoveIn, dry_run: b
 # never read as a slug.
 
 #: A slug the SPA needs for itself: `/w/:ws/agents/new` is the create page.
-_RESERVED_SLUGS = {"new", "scaffold"}
+_RESERVED_SLUGS = creation.RESERVED_SLUGS
 
 
 def _scaffold_slug(request: HttpRequest, workspace: str, raw_slug: str, repo: str) -> str:
@@ -919,9 +906,11 @@ def set_repository(request: HttpRequest, slug: str, payload: RepositoryIn) -> Ag
     runs as this agent, the same bar the upsert holds `DEFINITION_FIELDS` to. The
     cloud boxes that take its turns are asked to re-run their bootstrap, as a
     repo change through the upsert does.
-    A value that is not a github.com repository is a 422."""
+    A value that is not a github.com repository is a 422; a stored agent has no
+    repository (409)."""
 
     agent = agent_for_admin(request, slug)
+    _refuse_repo_on_stored(agent)
     full = delegations.repo_full_name(payload.repo_url.strip())
     if not full:
         raise HttpError(422, "give a github.com repository, e.g. https://github.com/dimagi/muse")
@@ -1039,6 +1028,7 @@ def get_agent_runtime(request: HttpRequest, slug: str) -> AgentRuntimeOut:
         workspace=agent.workspace_id,
         clis=list(agent.clis or []),
         cli_models=dict(agent.cli_models or {}),
+        definition=definition_store.source_of(agent),
     )
 
 

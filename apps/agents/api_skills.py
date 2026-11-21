@@ -40,10 +40,15 @@ def list_skills(request: HttpRequest, slug: str) -> list[AgentSkillOut]:
     return [AgentSkillOut.model_validate(s) for s in services.list_skills(agent)]
 
 
-@router.put("/{slug}/skills/", response=CountOut, summary="Replace the agent's skill catalog",)
+@router.put("/{slug}/skills/", response={200: CountOut, **refusals(409)},
+            summary="Replace the agent's skill catalog",)
 @gate("agent-edit", kind="content")
 def replace_skills(request: HttpRequest, slug: str, payload: AgentSkillCatalogIn) -> CountOut:
+    """409 for a stored agent: its catalog is read from its live revision when it is published."""
     agent = agent_for_edit(request, slug)
+    if agent.is_stored:
+        raise HttpError(409, f"{agent.slug} is a stored agent: its skill catalog comes from its published "
+                             "definition (docs/architecture/stored-agents.md)")
     count = services.replace_skills(agent, payload.skills)
     return CountOut(count=count)
 

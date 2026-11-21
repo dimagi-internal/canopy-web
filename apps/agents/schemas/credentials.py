@@ -393,6 +393,9 @@ class AgentCredentialsResolveOut(StrictModel):
     #: on their own machine — the delegated credentials that are someone's own and so not
     #: theirs: name, provider and whose. Never a value. Use your own account for these.
     delegated_withheld: list[DelegatedWithheldOut] = Field(default_factory=list)
+    #: Where the definition comes from (`{source, revision, root_sha256}`): a stored agent
+    #: is materialized from canopy, not cloned (docs/architecture/stored-agents.md).
+    definition: dict[str, Any] = Field(default_factory=dict)
 
 
 class ZkWrapMissingOut(StrictModel):

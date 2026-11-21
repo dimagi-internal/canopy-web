@@ -113,6 +113,16 @@ class Agent(models.Model):
         max_length=300, blank=True, default="", help_text="Agent's git repo.",
     )
     repo_ref = models.CharField(max_length=120, blank=True, default="main")
+    # Where the definition lives: "repo" (`repo_url` @ `repo_ref`) or "stored" (a file
+    # tree canopy-web keeps in revisions, `AgentDefinitionRevision`; `repo_url` is "").
+    # docs/architecture/stored-agents.md.
+    REPO, STORED = "repo", "stored"
+    SOURCE_CHOICES = [(REPO, "a git repository"), (STORED, "stored in canopy")]
+    source = models.CharField(max_length=8, choices=SOURCE_CHOICES, default=REPO)
+    #: A stored agent's published revision: what its runners materialize. Null for a
+    #: repo agent, and for a stored one only while it is being created.
+    live_revision = models.ForeignKey("agents.AgentDefinitionRevision", null=True, blank=True,
+                                      on_delete=models.SET_NULL, related_name="+")
     # The agent CLIs this agent may run on, preferred first (`harness.clis`): the
     # claim picks the first one the box has signed in and can confine the turn on.
     # Part of the agent's definition, like its repo (agents.services.DEFINITION_FIELDS).
@@ -206,6 +216,11 @@ class Agent(models.Model):
         from .. import mailbox
 
         return self.email.strip().lower() if mailbox.describe(self)["kind"] == "google" else ""
+
+    @property
+    def is_stored(self) -> bool:
+        """Is its definition stored in canopy (no git repo)?"""
+        return self.source == self.STORED
 
     def is_own_login(self, user) -> bool:
         """Is `user` this agent's OWN canopy login (`Agent.user`)?

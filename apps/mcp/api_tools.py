@@ -84,6 +84,8 @@ EXCLUDED_PREFIXES: dict[str, str] = {
 #: operationId → why it is not a tool.
 EXCLUDED: dict[str, str] = {
     "_auth_smoke": "internal smoke route",
+    "get_agent_definition_archive": "a stored agent's revision as a gzip'd tar, for a runner or `canopy agent "
+                                    "materialize`; a tool reads one file with get_agent_definition_file",
     "health": "health check",
     "request_connection_call": "a screen's call, on a person's session; a token is refused, and an agent "
                                "uses its own connection in its turn",

@@ -25,6 +25,7 @@ same functions, so they cannot disagree.
    A computer without the runner app gets a `computer` runner made for it that only holds its device
    keys: it never claims or heartbeats and is left out of every fleet list, routing picker and health
    report. Detail: [`access-direct-use-and-admission.md`](access-direct-use-and-admission.md) → "Direct use of an agent".
+   A stored agent's plugin is materialized from canopy instead of cloned ([stored-agents.md](stored-agents.md)).
 2. **Let it run on its own, on a runner.** A laptop running the runner app or a fleet cloud box.
    Schedules, mail and dispatches start these turns; schedules fire from canopy-web itself, so no
    laptop has to be awake.
