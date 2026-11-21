@@ -207,6 +207,11 @@ def _scrub_turns(turn_ids: list, now: dt.datetime) -> None:
             Turn.objects.filter(pk__in=ids).update(
                 prompt="", result_note="", report_summary="", content_purged_at=now,
             )
+            # What a host site attested on the message (`contact_api.HOST_CONTEXT_KEY`) is
+            # content like the prompt it rode with.
+            for turn in Turn.objects.filter(pk__in=ids, origin_ref__has_key="host_context").only("origin_ref"):
+                ref = {k: v for k, v in (turn.origin_ref or {}).items() if k != "host_context"}
+                Turn.objects.filter(pk=turn.pk).update(origin_ref=ref)
             TurnEvent.objects.filter(turn_id__in=ids).delete()
             TurnTranscript.objects.filter(turn_id__in=ids).delete()
             CallerToken.objects.filter(turn_id__in=ids).delete()

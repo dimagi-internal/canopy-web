@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import logging
 
+from canopy_sdk import attested_context as wire
 from canopy_sdk import contract
+from django.core.cache import cache
 from django.http import HttpRequest
 from ninja import Router, Schema
 from ninja.errors import HttpError
@@ -495,6 +497,13 @@ class ContactSendIn(Schema):
     #: canopy attests itself. A relay token (one minted with `canopy_channel`) may
     #: also name `site_message`, which is its default.
     origin: str = ""
+    #: What the host knows about this moment, ATTESTED: a compact JWS signed with the
+    #: site's own key (`typ: canopy-context+jwt`; `canopy_sdk.attested_context`), about
+    #: this conversation (`session`) and this person (`sub`, the id the site signed into
+    #: their arrival). The agent reads it on this turn only, beside the words and
+    #: labelled as the host's. Another person's or conversation's is refused 422
+    #: `context_mismatch`; one that does not verify, 422 `bad_context`.
+    context: str | None = None
 
 
 def _tenant_for(app, agent_slug: str):
@@ -699,6 +708,7 @@ def send(request: HttpRequest, session_id: str, payload: ContactSendIn) -> dict:
         raise HttpError(422, str(exc)) from None
     if relay and not origin:
         origin = contract.RELAY_ORIGIN  # `Turn.ORIGIN_SITE_MESSAGE`
+    attested = _attested_context(request, session, payload.context) if payload.context else None
     _spend_send(request)
 
     # The page this was sent from: the agent reaches its site through that page's grant.
@@ -715,8 +725,48 @@ def send(request: HttpRequest, session_id: str, payload: ContactSendIn) -> dict:
         # A contact's own token is their chat surface (the widget).
         chat_surface=True,
         initiator=who.for_request(request, via=who.channel(request, "contact")),
+        origin_ref={HOST_CONTEXT_KEY: attested} if attested else None,
     )
     return {"turn_id": str(turn.id) if turn else None, "message_id": message.id}
+
+
+#: Where a send's attested context is kept on its turn (`Turn.origin_ref`), and what
+#: the envelope's `host_context` block is built from (`caller_context._host_context`).
+HOST_CONTEXT_KEY = "host_context"
+
+
+def _attested_context(request: HttpRequest, session, token: str) -> dict:
+    """The site's signed context for this send, verified: `{site, format, body}`.
+
+    Checked against the SITE's own keys (`assertions.keys_for_app`, the keys its
+    arrival assertion verified with), and bound to this conversation and this
+    person: a site cannot put words in another person's turn, or carry a context
+    from one conversation into another. Its `jti` is spent once, failing closed.
+    A sensitive conversation keeps no plaintext the person did not seal, so a
+    context there is refused rather than stored open."""
+    app = request.delegated_app
+    if sensitivity.is_sensitive(session):
+        raise HttpError(422, "bad_context: a sensitive conversation takes no host context")
+    try:
+        keys = assertions.keys_for_app(app, token)
+    except assertions.AssertionError_ as exc:
+        raise HttpError(422, f"bad_context: {exc.code}: {exc.message}") from None
+
+    def spend(claims: dict) -> None:
+        ttl = max(1, int(claims["exp"]) - int(claims["iat"]) + contract.LEEWAY_SECONDS)
+        # Fails CLOSED: a cache that cannot record the jti reads as a replay.
+        if not cache.add(f"host-context:jti:{app.pk}:{claims['jti']}", 1, timeout=ttl):
+            raise wire.ContextError("replayed", "this context has already been used")
+
+    try:
+        claims = wire.verify_context(token, keys, site=app.name, sub=session.contact.external_id,
+                                     session=str(session.pk), spend_jti=spend,
+                                     algorithms=assertions.ALLOWED_ALGORITHMS)
+    except wire.ContextError as exc:
+        if exc.code == "mismatch":
+            raise HttpError(422, f"context_mismatch: {exc.message}") from None
+        raise HttpError(422, f"bad_context: {exc.code}: {exc.message}") from None
+    return {"site": app.name, "format": claims["format"], "body": claims["body"]}
 
 
 def _spend_send(request: HttpRequest) -> None:
