@@ -79,9 +79,27 @@ one of their sessions out and back. **Every person-only brain route asks one que
 person's own browser session or a PAT they minted by hand, never an MCP call, and never what
 `harness.acting_person.refusal` refuses (an agent's login, a turn's login or token, a request naming a turn, a
 runner). An OAuth client signed in as them and a site's or MCP host grant's delegated token speak FOR them and are
-a 403 too (`tests/test_brain_person_only.py`). The same question opens the manager leg, the owners' `system` leg,
-the reporting routes, the brain page and its management routes. None of them is an MCP tool
-(`apps/mcp/api_tools.py` `EXCLUDED`). Nobody opts anyone in; there is no admin route.
+a 403 too (`tests/test_brain_person_only.py`). The same question opens the manager leg and the reporting routes. None
+of these is an MCP tool (`apps/mcp/api_tools.py` `EXCLUDED`). Nobody opts anyone in; there is no admin route for a
+person's consent.
+
+**Managing a workspace's learning is not a person's own choice, and an admin agent may do it.** One rule,
+`actor.of` (`apps/brain/actor.py`), answers every management route: "Learning reads", a learner's switch, operator, entry
+and scope (and becoming accountable for a learner nobody answers for, which makes the PERSON accountable, never the
+agent), targets (add, take away, budget), Run now, a `system` or `project` finding's status, acknowledging a flag, and
+the brain page's reads and why-not lookup. The caller is the person as themselves (`person.refusal`), or an agent's
+own login inside its own running turn (the per-turn login, `turn_asker.serving_turn`; never a stored token) whose
+turn answers to a person (`turn_asker.accountable_person`: its verified asker, the person it was started for, or its
+schedule's creator); `Actor.may_manage` asks that the login AND that person each own or administer the workspace
+(`perms.BRAIN_MANAGE`, inherited roles count) or be a canopy admin. A project target, and a `project` finding, are also
+the project's lead's and admins' (`api_manage.may_manage_target`), and an agent's working for one of them once it is a
+member agent of the project. A learning run's own turn (its conversation stamped `brain_run`, canopy's `brain-run`
+initiator, or a credential or `X-Canopy-Turn-Id` naming one) is refused every management route, person or agent, so a run
+never widens itself. An OAuth client, a delegated, act-as (`act_as.EXCLUDED_PATTERNS`) or caller token, a guest, a
+contact and a non-member are refused. These routes are MCP tools, since agents reach canopy through MCP; a person's
+token over MCP is still refused. Every management write names who acted: a setting's `SettingChange.acting` (agent,
+turn, the person it answers to; `audit.note_acting`), shown on the page as "by <agent> for <person>", and an event for
+Run now, a flag or a finding's status (`actor.event`, `findings.set_status`) (`tests/test_brain_agent_admin.py`).
 
 `PUT /api/me/learning/` takes the whole set of `classes`; every other field (`workspaces`, `include_new`,
 `standing_rules`, `directives`) changes only when sent, so a class toggle never moves the scope or resets
@@ -191,8 +209,9 @@ Outputs (`BrainOutput`) are read by their class's audience (`outputs.visible_to`
 workspaces they coach, `access.coach_scope`) and their manager; `memory` by
 the person; `project` by the project's readers; `system` by canopy admins and the owners and admins of the output's workspace
 (`perms.BRAIN_MANAGE`; inherited roles count, so an ancestor's owner or admin sees a descendant's findings and a
-sub-workspace's or a sibling's never sees them; this leg opens only to the person as themselves, as the manager leg,
-never an agent's login or an MCP call; a run started for a workspace writes its findings as that workspace's, `emit`). Pinned to a
+sub-workspace's or a sibling's never sees them; this leg opens to the person as themselves and to an admin agent in its
+own turn (`actor.of`: where its login and its turn's person both manage, `Actor.managed`), never an agent's stored token
+or a person's token over MCP; a run started for a workspace writes its findings as that workspace's, `emit`). Pinned to a
 workspace, the route answers only that workspace's outputs and the ones below it. Only `active`
 outputs are seen: a withdrawn or stale one is seen by no one. Outputs are derived, so they stay readable after
 a workspace turns "Learning reads" off; nothing new is made from its sessions then. `ReportingLine` (`apps/brain/reporting.py`, set by a workspace
@@ -276,9 +295,9 @@ follows the operator's turn mode and rails. What makes it a learning run:
 ## A finding's lifecycle, and repeats (`apps/brain/findings.py`)
 
 An output's `state` is the cascade's (active, withdrawn, stale) and nobody sets it. Its `status` is the people's:
-`open` when made, then `accepted`, `dismissed` or `done` (`POST /api/w/<ws>/brain/outputs/{id}/status`, person-only, off
-MCP, each change an event in its workspace). Only someone who sees it AND acts for its audience sets it
-(`findings.may_set`): a `system` finding's workspace owners and admins (or an ancestor's) or a canopy admin, a `project`
+`open` when made, then `accepted`, `dismissed` or `done` (`POST /api/w/<ws>/brain/outputs/{id}/status`, by the management
+rule, each change an event in its workspace naming who made it). Only someone who sees it AND acts for its audience sets it
+(`findings.may_set`; an admin agent only a `system` or `project` one, `findings.actor_may_set`): a `system` finding's workspace owners and admins (or an ancestor's) or a canopy admin, a `project`
 output's members who may read the project, an `individual` or `memory` output's own person.
 
 A run names what an output is with a `key`. An emit whose kind and key match an output of the same learner, subject and
@@ -303,7 +322,7 @@ its rows (`lineage.register_undo`: a task no one has started or finished is dele
 draft are deleted); a sent email, a published update, a PR, an issue, a link or anything else is flagged. A flag is
 listed on its workspace's brain page ("Could not be undone", `api_manage.flags_out`) to its owner (the person the run
 answered to) and the workspace's managers, and raised to its owner as a `learning_removal` alert until one of them
-acknowledges it (`POST /api/w/<ws>/brain/flags/{id}/acknowledge`, person-only, off MCP). An artifact holds ids and a
+acknowledges it (`POST /api/w/<ws>/brain/flags/{id}/acknowledge`, by the management rule). An artifact holds ids and a
 link, never a word.
 
 ## Removal and the cascade (`apps/brain/cascade.py`)
@@ -401,8 +420,8 @@ run starts, never during one; a run is one turn by construction (its first turn'
 
 **Run now** on the brain page (`POST /api/w/<ws>/brain/targets/{id}/runs`) is the target's schedule's own Run now
 (`targets.run_now`): one run now, answering to the schedule's creator, with who pressed it recorded. It is the target
-workspace's owners' and admins' (an ancestor's are too, `perms.BRAIN_MANAGE`) or a canopy admin's, as a person only (off
-MCP), and refused with the reason when the run cannot start or there is nothing new. Adding and taking away a target
+workspace's owners' and admins' (an ancestor's are too, `perms.BRAIN_MANAGE`) or a canopy admin's, by the management
+rule (a person, or an admin agent in its own turn), and refused with the reason when the run cannot start or there is nothing new. Adding and taking away a target
 (`POST /api/w/<ws>/brain/targets`, `DELETE …/targets/{id}`) are settings of the same people, for `<ws>` or a workspace
 below it, never above. A clean end of the run's turn (`signals`, `runs.finish`) makes what it read count as learned; a
 failed one counts nothing and the next fire reads it again. A run open past `BRAIN_RUN_TIMEOUT_SECONDS` (six hours by
@@ -429,8 +448,8 @@ A workspace's view of the brain, among the health dashboard's views and linked f
 workspaces below it the viewer is in. That scope is ONE function the page, the outputs list and the graph share
 (`scope.of_request`, `scope.below`: the read rule every list follows, so an unpinned outputs list never mixes two
 organisations); what each shows inside it is still its own rule. Its routes
-(`GET /api/brain/state`, `/state/links`, `/state/runs`) are the person's own as themselves (`person.the_person`), none
-is an MCP tool, and they write nothing (`tests/test_brain_page.py` captures every query). The page holds no copy of a
+(`GET /api/brain/state`, `/state/links`, `/state/runs`) are the person's own as themselves, or an admin agent's pinned to
+a workspace it manages (`actor.of`), and they write nothing (`tests/test_brain_page.py` captures every query). The page holds no copy of a
 count. `tests/test_brain_workspace_scope.py` pins each role's slice.
 
 - **Its owners and admins** (`logs.read`, the health dashboard's gate; an ancestor's owner or admin holds it below)
@@ -438,12 +457,13 @@ count. `tests/test_brain_workspace_scope.py` pins each role's slice.
   count below `state.SMALL`, three, hidden as "<3" so a small workspace's few are not named by elimination),
   sources open, withdrawn and sealed by why, link counts by project and tier on its readable projects, removal work
   (`state._scoped`), and the runs started for those workspaces (`state._runs`). They also manage learning there
-  (`can_manage`, `perms.BRAIN_MANAGE`, as a person only, none of it an MCP tool): its `system` findings, its targets
+  (`can_manage`, `perms.BRAIN_MANAGE`, by the management rule): its `system` findings, its targets
   (add, Run now, take away), and the two settings below.
 - **A member** sees their own: their classes, their own sources and removals, the links of sessions they read, runs
   about them, and the outputs `outputs.visible_to` already gives them.
 - **Why a session is not read** (`GET /api/w/<ws>/brain/why/{session_id}?learner=`, `api_manage.why_not_read`): for a
-  session in `<ws>` or below that the viewer is in or reads through legs 1 to 6, whether a learner may read it now and
+  session in `<ws>` or below that the viewer is in or reads through legs 1 to 6 (an admin agent: one its own login
+  reads), whether a learner may read it now and
   why not, by `eligibility.explain` itself. A reason about a person says "you" or "someone in it", never who.
 - **Everyone** sees the learners and who answers for each (`registry.accountable`); which agent operates one, its
   entry and who answers for it only inside the operator's organisation (`registry.shown_to`), the same on

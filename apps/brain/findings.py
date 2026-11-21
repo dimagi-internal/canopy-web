@@ -5,7 +5,10 @@
 set it (`may_set`) is someone who sees the output (`outputs.visible_to`, as the person) AND acts for its audience: a
 `system` finding's workspace's owners and admins (or an ancestor's, `perms.BRAIN_MANAGE`) or a canopy admin; a
 `project` output's project readers who are members of its workspace; an `individual` or `memory` output's own person.
-Each change is the person's own act (`person.the_person`), off MCP, and an event in the output's workspace.
+An admin agent in its own turn (`actor.Actor`, `actor_may_set`) sets a `system` finding's where it and the person its
+turn answers to manage learning, and a `project` output's where it reads the project and they manage learning there or
+lead or administer the project; never an output about a person. Each change is an event in the output's workspace
+naming who made it (and for an agent, its turn and its person).
 
 A run names what an output IS with a `key` (`brain_emit`). An emit whose kind and key match an output of the same
 learner, subject and workspace that is still active and open or accepted is a repeat (`match`): it folds in (`fold`),
@@ -70,6 +73,25 @@ def may_set(user, out: BrainOutput) -> bool:
     return acts_for(user, out)
 
 
+def actor_may_set(actor, out: BrainOutput) -> bool:
+    """`may_set` for a management `actor.Actor`: the person as `may_set`; an admin agent only for a `system` or
+    `project` output, by the management rule."""
+    if not actor.is_agent:
+        return may_set(actor.user, out)
+    if out.state != BrainOutput.ACTIVE:
+        return False
+    cls = out.capability.purpose_class
+    if cls == SYSTEM:
+        return actor.may_manage(out.workspace_id)
+    if cls == PROJECT:
+        from .api_manage import may_manage_target  # noqa: PLC0415 — api_manage reads this module
+
+        project = AgentProject.objects.filter(pk=out.subject).first() if out.subject.isdecimal() else None
+        return (project is not None and acts_for(actor.user, out)
+                and may_manage_target(actor, out.workspace_id, project))
+    return False
+
+
 def acts_for(user, out: BrainOutput, memo: dict | None = None) -> bool:
     """`may_set` for an output already known to be visible to `user` as the person (a list's rows): whether they act
     for its audience. `memo` keeps the per-workspace and per-project answers across a page."""
@@ -93,7 +115,8 @@ def acts_for(user, out: BrainOutput, memo: dict | None = None) -> bool:
     return False
 
 
-def set_status(out: BrainOutput, status: str, *, by) -> BrainOutput:
+def set_status(out: BrainOutput, status: str, *, by, acting: dict | None = None) -> BrainOutput:
+    """Set `out`'s status as `by`; `acting` (`Actor.record`) names an agent, its turn and its person in the event."""
     if status not in STATUSES:
         raise ValueError(f"status must be one of {', '.join(STATUSES)}")
     if status == out.status:
@@ -101,17 +124,18 @@ def set_status(out: BrainOutput, status: str, *, by) -> BrainOutput:
     was = out.status
     BrainOutput.objects.filter(pk=out.pk).update(status=status, status_at=timezone.now(), status_by=by)
     out.refresh_from_db()
-    _record(out, was, by)
+    _record(out, was, by, acting or {})
     return out
 
 
-def _record(out: BrainOutput, was: str, by) -> None:
+def _record(out: BrainOutput, was: str, by, acting: dict) -> None:
     from apps.events import services as events  # noqa: PLC0415 — as the other event writers of this app
 
     try:
         events.record([{"source": "brain.output", "kind": "output.status",
                         "summary": f"{out.capability.slug} output {out.pk}: {was} -> {out.status}",
-                        "payload": {"output": out.pk, "from": was, "to": out.status, "by_id": getattr(by, "pk", None)}}],
+                        "payload": {"output": out.pk, "from": was, "to": out.status, "by_id": getattr(by, "pk", None),
+                                    **acting}}],
                       workspace=out.workspace)
     except Exception:  # noqa: BLE001 — a log line never fails the act
         logger.exception("could not record the status change of output %s", out.pk)

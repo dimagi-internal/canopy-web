@@ -19628,7 +19628,8 @@ export interface paths {
          * @description Your call on something learning produced: `accepted` (someone takes it up), `dismissed` (not worth acting on),
          *     `done` (acted on) or back to `open`. Yours only if you see it and act for its audience: a system finding's
          *     workspace owners and admins (or an ancestor's), a project output's members who may read the project, an output
-         *     about you. A repeat later folds into it while it is open or accepted. Every change is in its workspace's log.
+         *     about you; an admin agent in its own turn, a system or project finding where it and its person manage learning.
+         *     A repeat later folds into it while it is open or accepted. Every change is in its workspace's log.
          */
         readonly post: operations["set_output_status"];
         readonly delete?: never;
@@ -19769,7 +19770,7 @@ export interface paths {
          *     much of a session it reads, from the workspace the request is pinned to. Only a learner whose operator (if it has
          *     one) is an agent of this workspace or below, and only to such an agent, which must also live where every target
          *     of it is or above (its targets' schedules move to it). Enabling one that nobody active answers for makes you its
-         *     accountable admin: its targets' schedules act for you. What it may learn
+         *     accountable admin: its targets' schedules act for you (an agent's turn: the person it answers to). What it may learn
          *     and who sees it (its class, purposes, audience) are a canopy admin's, at its registration.
          */
         readonly patch: operations["configure_learner"];
@@ -19896,7 +19897,8 @@ export interface paths {
          * Why a learner may or may not read a session (yours, or one you read)
          * @description Whether `learner` (default: a project's readers) may read this session now, and if not, why, by the same rule
          *     every learning read asks (`eligibility.explain`). Only for a session in this workspace or below that you are in or
-         *     read yourself. A reason about a person says whether it is you or "someone in it", never who.
+         *     read yourself (an admin agent here: one its own login reads). A reason about a person says whether it is you or
+         *     "someone in it", never who.
          */
         readonly get: operations["why_not_read"];
         readonly put?: never;
