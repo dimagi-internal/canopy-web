@@ -53,3 +53,35 @@ def check_resource_schemes(app_configs=None, **kwargs):
                 hint="The length of the url-safe id after '<scheme>://', e.g. 24 for "
                      "secrets.token_urlsafe(18). " + hint, id="canopy_host.E011"))
     return errors
+
+
+@checks.register(checks.Tags.compatibility)
+def check_person_scheme(app_configs=None, **kwargs):
+    """``CANOPY_HOST["PERSON_SCHEME"]`` is a scheme a host may name its records under
+    (``canopy_sdk.resources.check_scheme``), and ``RETENTION_DAYS`` a whole number of days
+    ``site.json`` accepts. Either one bad makes the signed ``site.json`` malformed."""
+    from ..resources import ResourceError, check_scheme
+    from ..site import MAX_RETENTION_DAYS, MIN_RETENTION_DAYS
+    from . import conf
+
+    try:
+        scheme = conf.person_scheme()
+        days = conf.retention_days()
+    except Exception as exc:  # noqa: BLE001 — an unreadable CANOPY_HOST is its own error
+        return [checks.Error(f"CANOPY_HOST could not be read: {exc}", id="canopy_host.E010")]
+    hint = "Until this is fixed site.json is malformed and canopy reads none of it."
+    errors = []
+    if scheme:
+        try:
+            check_scheme(scheme)
+        except ResourceError as exc:
+            errors.append(checks.Error(
+                f"CANOPY_HOST['PERSON_SCHEME'] is {scheme!r}: {exc.message}",
+                hint="Name your records of people under a scheme of your own, e.g. 'myapp-person'. " + hint,
+                id="canopy_host.E012"))
+    if days is not None and (isinstance(days, bool) or not isinstance(days, int)
+                             or not MIN_RETENTION_DAYS <= days <= MAX_RETENTION_DAYS):
+        errors.append(checks.Error(
+            f"CANOPY_HOST['RETENTION_DAYS'] is {days!r}: a whole number of days from "
+            f"{MIN_RETENTION_DAYS} to {MAX_RETENTION_DAYS}, or None", hint=hint, id="canopy_host.E012"))
+    return errors

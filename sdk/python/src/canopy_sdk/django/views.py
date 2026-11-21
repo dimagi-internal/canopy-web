@@ -152,7 +152,11 @@ def site_facts(request, config) -> dict:
     * ``resource_schemes`` — ``RESOURCE_SCHEMES``: the schemes of the links this
       site's tools return, which canopy keeps;
     * ``resource_id_lengths`` — ``RESOURCE_ID_LENGTHS``: the exact length of each
-      scheme's result ids, so canopy keeps nothing longer.
+      scheme's result ids, so canopy keeps nothing longer;
+    * ``person_scheme`` — ``PERSON_SCHEME``: the scheme of this site's records of its
+      people, which a contact's ``record_uri`` must be under;
+    * ``retention_days`` — ``RETENTION_DAYS``: how long canopy keeps this site's contacts'
+      conversations.
     """
     overrides = conf.site_facts_overrides()
     base = _origin_of(config.issuer) or _origin_of(request.build_absolute_uri("/"))
@@ -167,7 +171,8 @@ def site_facts(request, config) -> dict:
             "issuer": config.issuer if config.grant_enabled else "",
             "mcp_resource": config.resource if config.grant_enabled else "",
             "resource_schemes": conf.resource_schemes(),
-            "resource_id_lengths": conf.resource_id_lengths()}
+            "resource_id_lengths": conf.resource_id_lengths(),
+            "person_scheme": conf.person_scheme(), "retention_days": conf.retention_days()}
 
 
 @require_GET

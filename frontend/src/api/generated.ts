@@ -11399,6 +11399,39 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/sites/contacts": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * A host site writes its own record of its people, signed
+         * @description The host site is the system of record for the people it brings; this keeps canopy's
+         *     copy of them current.
+         *
+         *     The body is a compact JWS signed by the site's own key (`Content-Type:
+         *     application/jwt`): `typ` `canopy-contact-update+jwt`, `iss` = its host-site name,
+         *     `aud` = this URL, at most 60 s, single-use `jti`, optional `canopy_workspace`, and
+         *     `contacts` — 1 to 100 of `{sub, display_name?, record_uri?, profile?, version}`. Build
+         *     and send it with `canopy_sdk.host.contacts.update_contacts`.
+         *
+         *     A missing person is created (keyed by the site and `sub`, granted nothing). Only
+         *     `display_name`, `record_uri` (under the site's `site.person_scheme`) and `profile` (at
+         *     most 40 keys, 4096 bytes) are written, and only when `version` is newer than the one
+         *     canopy holds; otherwise the item is `stale`. Each item is answered on its own:
+         *     `{results: [{sub, contact_id, status, reason?}]}`.
+         */
+        readonly post: operations["update_contacts"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/sign-offs/{sign_off_id}": {
         readonly parameters: {
             readonly query?: never;
@@ -41214,6 +41247,22 @@ export interface components {
              */
             readonly agent: string;
         };
+        /** ContactRecordResultOut */
+        readonly ContactRecordResultOut: {
+            /** Sub */
+            readonly sub: string;
+            /** Contact Id */
+            readonly contact_id?: number | null;
+            /** Status */
+            readonly status: string;
+            /** Reason */
+            readonly reason?: string | null;
+        };
+        /** ContactRecordsOut */
+        readonly ContactRecordsOut: {
+            /** Results */
+            readonly results: readonly components["schemas"]["ContactRecordResultOut"][];
+        };
         /** SignOffOut */
         readonly SignOffOut: {
             /** Id */
@@ -69395,6 +69444,30 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RunnerAttestationOut"];
+                };
+            };
+        };
+    };
+    readonly update_contacts: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/jwt": string;
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ContactRecordsOut"];
                 };
             };
         };

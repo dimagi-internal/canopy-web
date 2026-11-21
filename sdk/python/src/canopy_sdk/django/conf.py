@@ -62,6 +62,13 @@
         # site.resource_id_lengths: the exact length of a scheme's result ids, so canopy
         # keeps a link under it only as <scheme>:// plus that many url-safe characters.
         "RESOURCE_ID_LENGTHS": {},  # e.g. {"labs-result": 24}
+        # This site is the system of record for the people it brings to canopy: the URI
+        # scheme of its own record of a person (site.person_scheme). A contact's record_uri
+        # (canopy_sdk.host.contacts.update_contacts) must be under it.
+        "PERSON_SCHEME": "",        # e.g. "labs-worker"
+        # site.retention_days: how long canopy keeps your contacts' conversations (the
+        # shorter of this and the workspace's own rule wins). None: canopy's rules alone.
+        "RETENTION_DAYS": None,     # e.g. 90
         # Where the panel mints. Default: reverse("canopy_host:panel_token").
         "PANEL_TOKEN_URL": "",       # a literal URL, or
         "PANEL_TOKEN_URL_NAME": "",  # a URL name of the host's own, reversed per request
@@ -292,6 +299,18 @@ def resource_id_lengths() -> dict:
     ``canopy_host.E011`` at startup and again when ``site.json`` is built."""
     value = raw().get("RESOURCE_ID_LENGTHS") or {}
     return dict(value) if isinstance(value, Mapping) else value
+
+
+def person_scheme() -> str:
+    """``PERSON_SCHEME`` as set: the URI scheme of this site's records of its people,
+    declared in ``site.json`` as ``site.person_scheme`` (checked by ``canopy_host.E012``)."""
+    return str(raw().get("PERSON_SCHEME") or "").strip()
+
+
+def retention_days():
+    """``RETENTION_DAYS`` as set (None when unset), declared as ``site.retention_days``."""
+    value = raw().get("RETENTION_DAYS")
+    return None if value in (None, "") else value
 
 
 def panel_options() -> dict:

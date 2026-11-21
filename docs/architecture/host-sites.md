@@ -53,6 +53,10 @@ The Turn Context resolver (`turn_context.resolve_turn_context`; order in [access
 - **Ceiling.** `ceiling` optionally narrows the host's tools on the owner's word, for every turn on that site (`published_profiles.site_ceiling`). Absent, the host's grant decides; it can never widen.
 - **Contacts.** A contact (no passkey, so no act-as-you permission) is not offered an agent that has an entry for the site (`apps/contacts/contact_api.py::_for_contacts`).
 
+## The site is the system of record for its people
+
+A site keeps canopy's copy of the people it brings current (`POST /api/sites/contacts`, signed with its own key): a pointer to its own record (`record_uri`, under the `person_scheme` its `site.json` declares) and a small profile it owns. canopy never becomes the authority for anything the site holds → [host-systems-of-record.md](host-systems-of-record.md).
+
 ## The gateway
 
 `site_tools` / `site_call` / `site_read` (`apps/mcp/tools/site.py`) do what `apps/host_grants/host_gateway.py` says (its module docstring is the rule): resolve the turn's site from the conversation (never an argument), refuse unless the site is live and issues host grants, the turn may use that site, and the sender holds a confirmed, unexpired grant for it; then call the host's MCP server with DPoP, as the sender. **There is no fallback to the agent's own credential**: it would hand the visitor whatever the agent can reach.

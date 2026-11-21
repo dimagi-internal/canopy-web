@@ -356,6 +356,25 @@ class Contact(models.Model):
         "nothing here may be the thing that grants.",
     )
 
+    # --- what the host site owns ---------------------------------------------
+    #
+    # A host site is the SYSTEM OF RECORD for the people it brings
+    # (docs/architecture/host-systems-of-record.md). These four are the host's, written
+    # only by its signed `POST /api/sites/contacts` (`services.apply_host_record`) and
+    # never by a workspace editor; `notes` and `attributes` above stay the workspace's own.
+    #: Where the host's record of this person lives: `<site.person_scheme>://<id>`
+    #: (`canopy_sdk.contacts.check_record_uri`), "" when the host has named none.
+    record_uri = models.CharField(max_length=256, blank=True, default="")
+    #: The host's cache of this person: labels an agent may see on every turn (stage,
+    #: language, programme, consent), never history. At most 40 keys and 4096 bytes
+    #: (`canopy_sdk.contacts.check_profile`).
+    host_profile = models.JSONField(default=dict, blank=True)
+    #: The host's version of the three fields above; a write with a version no newer is
+    #: `stale` and changes nothing, so retries and reordering are safe.
+    host_profile_version = models.BigIntegerField(default=0)
+    #: When the host's signed update that set them was issued (`iat`).
+    host_profile_signed_at = models.DateTimeField(null=True, blank=True)
+
     #: Set to stop this person reaching an agent at all.
     #:
     #: A contact is the one principal an outsider can cause canopy to create —
