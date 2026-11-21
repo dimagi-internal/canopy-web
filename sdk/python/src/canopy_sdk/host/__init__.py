@@ -25,6 +25,8 @@
 * ``authorization_server_metadata`` / ``protected_resource_metadata`` — discovery.
 * ``RelayClient`` (``canopy_sdk.host.relay``) — a RELAY host: the site carries a
   person's conversation server-to-server over a channel of its own.
+* ``verify_reply`` → ``Reply`` (``canopy_sdk.host.replies``) — canopy's signed push of
+  an agent's reply to the host's ``reply_webhook_url``.
 
 Framework-free. ``canopy_sdk.django`` wires all of it into a Django project.
 """
@@ -37,6 +39,7 @@ from .metadata import authorization_server_metadata, protected_resource_metadata
 from .pages import Page, PageRegistry, PageTokens
 from .probe import ProbeDisabled, ProbeHandler, ProbeResult
 from .relay import RelayClient, RelayError
+from .replies import Reply, ReplyRefused, verify_reply
 from .resource import DelegatedPrincipal, DPoPRefused, ResourceVerifier
 from .signing import MintFailed, arrival_payload, issue_id_jag, mint_contact_token, sign_visitor_assertion
 from .subject import Subject, SubjectRefused, verify_subject
@@ -47,9 +50,9 @@ __all__ = [
     "ExecutionRefused", "GrantHandler",
     "GrantRefused", "GrantResult", "HostConfig", "HostNotConfigured", "MetadataError", "MintFailed",
     "Page", "PageRegistry", "PageTokens", "ProbeDisabled", "ProbeHandler", "ProbeIdentity", "ProbeResult",
-    "RelayClient", "RelayError",
+    "RelayClient", "RelayError", "Reply", "ReplyRefused",
     "ResourceVerifier", "View", "ViewRefused", "arrival_payload", "authorization_server_metadata",
     "delegated_principal", "issue_id_jag", "mint_contact_token", "presented_dpop_jkt",
     "protected_resource_metadata", "same_resource", "sign_visitor_assertion", "Subject", "SubjectRefused",
-    "verify_execution", "verify_subject", "verify_view",
+    "verify_execution", "verify_reply", "verify_subject", "verify_view",
 ]

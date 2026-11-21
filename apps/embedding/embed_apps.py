@@ -382,7 +382,8 @@ def register(*, user, workspace_slug: str, name: str, origins: list[str],
 
 def update(*, user, app: AppCredential, workspace_slug: str, origins=None, agents=None,
            public_keys=None, jwks_url=None, host_issuer=None,
-           host_mcp_resource=None, default_agent=None) -> AppCredential:
+           host_mcp_resource=None, default_agent=None, reply_webhook_url=None,
+           reply_mode=None) -> AppCredential:
     """Change what this workspace's site may do. Every field is this tenant's
     own, so there is one gate — owning the workspace the row belongs to."""
     require(user, workspace_slug, perms.OWN)
@@ -405,6 +406,16 @@ def update(*, user, app: AppCredential, workspace_slug: str, origins=None, agent
     if host_mcp_resource is not None:
         app.host_mcp_resource = _clean_host_url(host_mcp_resource, what="host MCP resource")
         fields.append("host_mcp_resource")
+    if reply_webhook_url is not None:
+        # canopy POSTs the site's contacts' conversations here (`host_grants/reply_relay.py`).
+        app.reply_webhook_url = _clean_host_url(reply_webhook_url, what="reply webhook URL") or None
+        fields.append("reply_webhook_url")
+    if reply_mode is not None:
+        if reply_mode not in dict(AppCredential.REPLY_MODE_CHOICES):
+            raise EmbedAppError("bad_reply_mode", f"reply_mode is one of "
+                                f"{', '.join(dict(AppCredential.REPLY_MODE_CHOICES))}")
+        app.reply_mode = reply_mode
+        fields.append("reply_mode")
     if fields:
         app.save(update_fields=fields)
     if agents is not None:

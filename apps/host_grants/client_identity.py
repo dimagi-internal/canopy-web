@@ -244,6 +244,17 @@ def sign_sign_off(site_name: str, *, subject: str, sign_off: dict, now: float, j
                                    sign_off=sign_off, now=now, jti=jti)
 
 
+def sign_reply(audience: str, *, sub: str, site: str, session: str, turn: str, seq: int,
+               text: str, ended: bool, error: str = "", now: float | None = None) -> str:
+    """A reply pushed to a host's `reply_webhook_url` (`reply_relay.py`): the same client
+    key, so a host believes it exactly as it believes `Canopy-Execution`."""
+    from canopy_sdk.host import replies  # noqa: PLC0415 — the host half of the SDK, needed only here
+
+    return replies.sign_reply(_client_key(), client_id(), audience, sub=sub, site=site,
+                              session=session, turn=turn, seq=seq, text=text, ended=ended,
+                              error=error, now=now)
+
+
 def credentials() -> consumer.ClientCredentials:
     """canopy's client identity as the SDK's `ClientCredentials` — for the
     conformance checks a host site's "Test connection" runs. Raises

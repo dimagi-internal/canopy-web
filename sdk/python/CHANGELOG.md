@@ -2,6 +2,16 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.34.0 — 2026-11-21
+
+**Reply push: canopy POSTs an agent's replies to a relay host.**
+
+- `canopy_sdk.host.replies`: `verify_reply(token, *, config, audience=None, client_keys=None,
+  replay_store=None) -> Reply` (`site`, `sub`, `session`, `turn`, `seq`, `text`, `ended`, `error`),
+  `ReplyRefused`, and canopy's half, `sign_reply` (`typ: canopy-reply+jwt`, signed with canopy's
+  client key, five minutes). The host treats `(turn, seq)` as its idempotency key.
+- `HostConfig.reply_url` (`CANOPY_HOST["REPLY_URL"]`): the `aud` a reply must carry. Additive.
+
 ## 0.33.0 — 2026-11-21
 
 **Context a host attests on one message.**
