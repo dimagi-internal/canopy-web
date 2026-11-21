@@ -266,11 +266,23 @@ class BrainOutput(models.Model):
     #: The run that emitted it, and a hash of what it said and cited, so emitting twice is one output.
     run = models.ForeignKey("brain.BrainRun", null=True, blank=True, on_delete=models.SET_NULL, related_name="outputs")
     fingerprint = models.CharField(max_length=64, blank=True, default="")
+    #: Where it stands with the people who act on it (`findings.STATUSES`), apart from `state`, which is the cascade's.
+    #: Set by a person who may act on it (`findings.may_set`); a repeat folds into an open or accepted one.
+    status = models.CharField(max_length=12, default="open", db_default="open")
+    status_at = models.DateTimeField(null=True, blank=True)
+    status_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+                                  related_name="+")
+    #: What makes two outputs the same thing, as the run that emitted it names it (a short slug); "" never folds.
+    key = models.CharField(max_length=200, blank=True, default="", db_default="")
+    #: How many emits folded into it (the first counts), and when the last one did.
+    seen = models.PositiveIntegerField(default=1, db_default=1)
+    last_seen_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        indexes = [models.Index(fields=["subject_type", "subject", "state"], name="brain_output_by_subject")]
+        indexes = [models.Index(fields=["subject_type", "subject", "state"], name="brain_output_by_subject"),
+                   models.Index(fields=["capability", "workspace", "key"], name="brain_output_by_key")]
         constraints = [models.UniqueConstraint(fields=["run", "fingerprint"], condition=~models.Q(fingerprint=""),
                                                name="brain_output_once_per_run")]
 
@@ -331,6 +343,9 @@ class BrainRun(models.Model):
     target = models.ForeignKey("BrainTarget", null=True, blank=True, on_delete=models.SET_NULL, related_name="runs")
     #: The schedule slot it answers (null for a Run now): one run per target and slot, however many firers report it.
     slot = models.DateTimeField(null=True, blank=True)
+    #: The context document the run was started with (`context.document`, typed by `schemas.BrainRunContext`, with
+    #: its `version`): what its turn was told, kept as it was told. Ids and names, never a word of a session.
+    context = models.JSONField(default=dict, blank=True, db_default={})
 
     class Meta:
         #: One open run per feature and subject: two workers starting the same run race on this, not on a read.
@@ -358,6 +373,14 @@ class BrainTarget(models.Model):
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
                                    related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
+    #: Its budget (`budget.py`): sessions a run reads and outputs it writes; runs, outputs and tokens per UTC day.
+    #: A run stops cleanly at a cap: `brain_read` serves nothing more, `brain_emit` refuses, a fire starts nothing.
+    max_sources_per_run = models.PositiveIntegerField(default=50, db_default=50)
+    max_outputs_per_run = models.PositiveIntegerField(default=20, db_default=20)
+    max_runs_per_day = models.PositiveIntegerField(default=4, db_default=4)
+    max_outputs_per_day = models.PositiveIntegerField(default=50, db_default=50)
+    #: Null: no token cap. Checked before a run starts, from what the boxes reported (`events.SessionUsage`).
+    max_tokens_per_day = models.PositiveBigIntegerField(null=True, blank=True)
 
     class Meta:
         constraints = [

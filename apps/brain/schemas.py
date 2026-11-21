@@ -147,6 +147,14 @@ class BrainOutputOut(StrictModel):
     title: str
     body: dict
     state: str = Field(description="active | stale (a source it came from was removed).")
+    status: str = Field("open", description="open | accepted | dismissed | done: where it stands with the people who "
+                        "act on it.")
+    status_at: dt.datetime | None = None
+    status_by: str = Field("", description="Who set its status.")
+    key: str = Field("", description="What makes a repeat the same thing: a repeat folds into an open or accepted one.")
+    seen: int = Field(1, description="How many emits folded into it, the first included.")
+    last_seen_at: dt.datetime | None = None
+    may_set_status: bool = Field(False, description="Whether you may change its status.")
     created_at: dt.datetime
     sessions: list[BrainOutputSession] = Field(default_factory=list,
                                                description="The sessions it cites that you read yourself.")
@@ -173,6 +181,14 @@ class BrainReadSource(StrictModel):
     directives: list[str] = Field(description="Words the people in this source asked every reader to be shown.")
 
 
+class BrainRunBudgetLeft(StrictModel):
+    max_sources_per_run: int = 0
+    max_outputs_per_run: int = 0
+    sources_left: int
+    outputs_left: int
+    stopped: str = Field("", description="`sources` when this run's budget of sessions ended the reading.")
+
+
 class BrainReadOut(StrictModel):
     run: int
     learner: str
@@ -188,6 +204,8 @@ class BrainReadOut(StrictModel):
     project: dict | None = Field(None, description="For a project judge: its outcome and open tasks.")
     revoked: list[int] = Field(default_factory=list, description="Sources removed since this learner learned from "
                                "them: what came from them is withdrawn; do not rely on or rebuild it. Told once.")
+    budget: BrainRunBudgetLeft | None = Field(None, description="What this run may still read and write; when "
+                                              "`stopped` is set the run's budget ended the reading.")
 
 
 class BrainEmitIn(StrictModel):
@@ -197,11 +215,15 @@ class BrainEmitIn(StrictModel):
     title: str = ""
     body: dict
     sources: list[int] = Field(description="The `source` ids this output came from; each must have been read in this run.")
+    key: str = Field("", max_length=200, description="A short stable slug naming WHAT this is (e.g. "
+                     "`canopy-web:friction:mcp-422-shape`): an output of the same kind and key, still open or accepted, "
+                     "for the same subject and workspace, takes this one in as a repeat instead of a new output.")
 
 
 class BrainEmitOut(StrictModel):
     id: int
     state: str
+    folded: bool = Field(False, description="It was a repeat, folded into an existing output (`id`).")
 
 
 class DisclosureDayOut(StrictModel):
@@ -388,6 +410,47 @@ class BrainTargetRun(StrictModel):
     created_at: dt.datetime
 
 
+class BrainBudgetToday(StrictModel):
+    runs: int
+    outputs: int
+    tokens: int
+
+
+class BrainTargetBudget(StrictModel):
+    max_sources_per_run: int
+    max_outputs_per_run: int
+    max_runs_per_day: int
+    max_outputs_per_day: int
+    max_tokens_per_day: int | None = None
+    today: BrainBudgetToday
+
+
+class BrainTargetBudgetIn(StrictModel):
+    model_config = ConfigDict(extra="forbid")
+
+    max_sources_per_run: int | None = Field(None, ge=1, le=500)
+    max_outputs_per_run: int | None = Field(None, ge=1, le=200)
+    max_runs_per_day: int | None = Field(None, ge=1, le=48)
+    max_outputs_per_day: int | None = Field(None, ge=1, le=1000)
+    max_tokens_per_day: int | None = Field(None, ge=1, description="Null leaves it as it is; 0 is refused. Send "
+                                           "`clear_tokens` to remove the cap.")
+    clear_tokens: bool = False
+
+
+class BrainOutputStatusIn(StrictModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: str = Field(description="open | accepted | dismissed | done")
+
+
+class BrainWhyOut(StrictModel):
+    session_id: str
+    learner: str
+    eligible: bool
+    reason: str = Field("", description="Why not, as a code (`eligibility.explain`), with no one else named.")
+    explanation: str = Field("", description="The same, in words.")
+
+
 class BrainTargetOut(StrictModel):
     id: int
     learner: str
@@ -403,6 +466,7 @@ class BrainTargetOut(StrictModel):
     created_at: dt.datetime
     last_run: BrainTargetRun | None = None
     can_manage: bool = Field(False, description="Whether you may run it now or take it away.")
+    budget: BrainTargetBudget | None = Field(None, description="Its budget and what it spent today (UTC).")
 
 
 class BrainFlagOut(StrictModel):
@@ -464,6 +528,43 @@ class BrainRunSession(StrictModel):
     title: str
 
 
+class BrainRunContextTarget(StrictModel):
+    id: int
+    kind: str = Field(description="workspace | project")
+    workspace: str
+    project: str = ""
+    schedule_id: int
+
+
+class BrainRunContextPerson(StrictModel):
+    email: str
+    name: str = ""
+
+
+class BrainRunContext(StrictModel):
+    """What a learning run's turn is told about itself (`brain.context`): in its first prompt and as `brain_run` in
+    its caller envelope. Ids and names, never a word of a session. `version` changes only when a field's meaning does."""
+
+    version: int
+    run: int
+    state: str
+    learner: str
+    learner_name: str
+    purpose_class: str
+    purpose: str
+    entry: str = ""
+    output_kinds: list[str] = Field(default_factory=list)
+    subject_type: str
+    subject: str = ""
+    scope: str = ""
+    target: BrainRunContextTarget | None = None
+    accountable: BrainRunContextPerson | None = None
+    sessions_due: int
+    source_ids_due: list[int] = Field(default_factory=list)
+    budget: BrainRunBudgetLeft
+    how: str
+
+
 class BrainRunState(StrictModel):
     id: int
     learner: str
@@ -477,6 +578,8 @@ class BrainRunState(StrictModel):
     reads: int = Field(description="Sources it read.")
     sessions: list[BrainRunSession] = Field(description="The ones you read yourself.")
     hidden: int = Field(description="The ones you do not: a count only.")
+    context: BrainRunContext | None = Field(None, description="What the run was told when it started, without the ids "
+                                            "of the sessions due (their count stays).")
 
 
 class BrainRunPageOut(StrictModel):

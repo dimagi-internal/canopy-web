@@ -255,6 +255,15 @@ def link_page(user, slugs, *, before: int = 0, limit: int = 50) -> dict:
     return {"links": out, "next_before": rows[-1].pk if rows else 0, "done": len(page) <= limit}
 
 
+def context_shown(run: BrainRun) -> dict | None:
+    """The context document a run was started with (`context.document`), as the page shows it: the ids of the
+    sessions due left out (their count stays), since the viewer may not read them. None for a run from before it was
+    kept."""
+    if not run.context:
+        return None
+    return {**run.context, "source_ids_due": []}
+
+
 def run_page(user, slugs, *, before: int = 0, limit: int = 25) -> dict:
     """Runs, newest first, with what each read: the sessions the viewer reads by id and title, the rest a count."""
     limit = _limit(limit)
@@ -282,5 +291,5 @@ def run_page(user, slugs, *, before: int = 0, limit: int = 25) -> dict:
                     "subject": subject, "scope": r.scope, "state": r.state, "created_at": r.created_at, "finished_at": r.finished_at,
                     "reads": len(got), "sessions": [{"session_id": s.pk, "workspace": s.workspace_id,
                                                      "title": redact.redact_text(s.title or "")[0]} for s in shown],
-                    "hidden": len(got) - len(shown)})
+                    "hidden": len(got) - len(shown), "context": context_shown(r)})
     return {"runs": out, "next_before": rows[-1].pk if rows else 0, "done": len(page) <= limit}

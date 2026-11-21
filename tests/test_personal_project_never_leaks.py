@@ -225,6 +225,7 @@ QUERY_ALLOWLIST = {
     ("apps/brain/api_admin.py", "list_project_sessions"): "asks may_read_project on the row before listing anything, and lists only sessions the caller may read",
     ("apps/brain/readers.py", "project_reader_ids"): "computes who reads a session through its projects: a personal project yields only its own readers",
     ("apps/brain/associate.py", "_candidate_projects"): "workspace-visible projects only: a layer never links a personal project, and it reads no project content",
+    ("apps/brain/findings.py", "acts_for"): "asks may_read_project on the row before saying a member may set the status of a project output they already see",
     ("apps/brain/reading.py", "candidates"): "reads only the workspace of the project a run is about, to keep its reads to that workspace; nothing of the project is shown",
     ("apps/brain/sources.py", "drop_foreign_links"): "the ids of the projects of a moved session's new workspace, to delete its links to any other; nothing is shown",
     ("apps/brain/management/commands/brain_validate_links.py", "handle"): "an operator's command, run by hand, naming the project it measures",

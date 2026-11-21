@@ -9,7 +9,8 @@ WHICH sessions a learner reads, never which lines of one. One call serves at mos
 source that fits in a call; one larger than a call pages across calls (`next_index`), never splitting a row. Every
 source served is recorded (`BrainRunRead`, and a `brain.read` event) and the directives of the people in it travel
 with it; the sources removed since the feature learned from them for this subject are named (`revoked`). Nothing is
-read in a workspace whose "Learning reads" is off (`eligibility.explain`)."""
+read in a workspace whose "Learning reads" is off (`eligibility.explain`). A run reads at most its target's budget of
+sessions (`budget`): past it, nothing more is served and the answer says so (`done`, `budget.stopped`)."""
 from __future__ import annotations
 
 from django.db import transaction
@@ -22,7 +23,7 @@ from apps.canopy_sessions import transcript_read
 from apps.common import redact
 from apps.workspaces import services as wsvc
 
-from . import learning_reads, readers
+from . import budget, learning_reads, readers
 from .eligibility import eligible_sources
 from .models import (
     ABOUT_A_PERSON,
@@ -122,6 +123,13 @@ def read_next(run: BrainRun, *, after: int = 0, limit: int = MAX_SOURCES, turn_i
             or run.state != BrainRun.OPEN):
         raise NotReadingError("this run may not read")
     limit = max(1, min(int(limit), MAX_SOURCES))
+    left = budget.run_left(run)
+    if index is not None:
+        limit = 1                                       # the rest of a source already served (and counted)
+    elif left["sources"] <= 0:
+        return _stopped(run, after, left)
+    else:
+        limit = min(limit, left["sources"])
     view = view_of(run)
     page = list(candidates(run, after).select_related("session")[:limit])
     served, used, next_index = [], 0, None
@@ -152,13 +160,31 @@ def read_next(run: BrainRun, *, after: int = 0, limit: int = MAX_SOURCES, turn_i
         last = page[-1].pk - 1                          # read on in the same source
     else:
         last = page[-1].pk if page else after
+    left = budget.run_left(run)
+    stopped = "sources" if left["sources"] <= 0 and next_index is None else ""
     out = {"run": run.pk, "learner": run.capability.slug, "purpose": run.purpose,
            "subject_type": run.subject_type, "subject": run.subject, "sources": served, "view": view,
            "next_after": last, "next_index": next_index,
-           "done": next_index is None and not candidates(run, last).exists(), "revoked": revoked}
+           "done": bool(stopped) or (next_index is None and not candidates(run, last).exists()), "revoked": revoked,
+           "budget": _budget(run, left, stopped)}
     if run.purpose == JUDGE and run.subject_type == "project":
         out["project"] = _project_context(run)
     return out
+
+
+def _budget(run: BrainRun, left: dict, stopped: str) -> dict:
+    lim = budget.limits(run.target)
+    return {"max_sources_per_run": lim.max_sources_per_run, "max_outputs_per_run": lim.max_outputs_per_run,
+            "sources_left": left["sources"], "outputs_left": left["outputs"], "stopped": stopped}
+
+
+def _stopped(run: BrainRun, after: int, left: dict) -> dict:
+    """The run's budget of sessions is spent: nothing more is served, and it is told so (`done`, `budget.stopped`)."""
+    with transaction.atomic():
+        revoked = _deliver_revocations(run)
+    return {"run": run.pk, "learner": run.capability.slug, "purpose": run.purpose, "subject_type": run.subject_type,
+            "subject": run.subject, "sources": [], "view": view_of(run), "next_after": after, "next_index": None,
+            "done": True, "revoked": revoked, "budget": _budget(run, left, "sources")}
 
 
 def _deliver_revocations(run: BrainRun) -> list[int]:

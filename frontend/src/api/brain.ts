@@ -88,3 +88,38 @@ export async function acknowledgeFlag(ws: string, id: number): Promise<void> {
   })
   unwrap(res, 'Could not acknowledge it')
 }
+
+export type BrainOutputStatus = 'open' | 'accepted' | 'dismissed' | 'done'
+
+/** Say where a finding stands (its audience's actors only: a system finding's workspace owners and admins). */
+export async function setOutputStatus(ws: string, id: number, status: BrainOutputStatus): Promise<BrainOutput> {
+  const res = await apiV2.POST('/api/brain/outputs/{output_id}/status', {
+    params: { path: { output_id: id } },
+    body: { status },
+    headers: pin(ws),
+  })
+  return unwrap(res, 'Could not change its status') as BrainOutput
+}
+
+export type BrainTargetBudgetIn = components['schemas']['BrainTargetBudgetIn']
+
+/** Change a target's budget (its workspace's owners and admins). */
+export async function setTargetBudget(ws: string, id: number, body: BrainTargetBudgetIn): Promise<BrainTarget> {
+  const res = await apiV2.PATCH('/api/brain/targets/{target_id}/budget', {
+    params: { path: { target_id: id } },
+    body,
+    headers: pin(ws),
+  })
+  return unwrap(res, 'Could not change the budget') as BrainTarget
+}
+
+export type BrainWhy = components['schemas']['BrainWhyOut']
+
+/** Why `learner` may or may not read a session you are in or read yourself. */
+export async function whyNotRead(ws: string, sessionId: string, learner: string): Promise<BrainWhy> {
+  const res = await apiV2.GET('/api/brain/why/{session_id}', {
+    params: { path: { session_id: sessionId }, query: { learner } },
+    headers: pin(ws),
+  })
+  return unwrap(res, 'Could not look that up') as BrainWhy
+}

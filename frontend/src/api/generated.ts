@@ -19396,7 +19396,9 @@ export interface paths {
          * Write what this run learned
          * @description For a turn in a learning run: one output of a kind its feature declares, about the run's own subject,
          *     citing the sources it came from. Every cited source must be one this run read and must still be open to
-         *     it; otherwise nothing is written (422). The words are scrubbed. The same output twice is one.
+         *     it; otherwise nothing is written (422). The words are scrubbed. The same output twice is one, and one whose
+         *     `key` matches an open finding of this learner and subject folds into it (`folded`). Past the run's budget of
+         *     outputs a new one is refused (422).
          */
         readonly post: operations["brain_emit"];
         readonly delete?: never;
@@ -19532,13 +19534,36 @@ export interface paths {
          * @description The learning outputs you may read: about you, about people you coach or manage (outputs, never
          *     transcripts; the manager's only as yourself, never through an agent or a turn), about projects you may read, and
          *     canopy's system findings where you own or administer the workspace a run was started for (or one above it),
-         *     as yourself only. Pinned to a
-         *     workspace (`/api/w/<ws>/…`), only that workspace's and the ones below it. Never a withdrawn or stale one. Newest
-         *     first.
+         *     as yourself only. Pinned to a workspace (`/api/w/<ws>/…`), only that workspace's and the ones below it;
+         *     unpinned, your one organisation's (the read rule every list follows). Never a withdrawn or stale one. `status`
+         *     narrows to open, accepted, dismissed or done. Newest first.
          */
         readonly get: operations["list_outputs"];
         readonly put?: never;
         readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/brain/outputs/{output_id}/status": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Say where a finding stands: open, accepted, dismissed or done
+         * @description Your call on something learning produced: `accepted` (someone takes it up), `dismissed` (not worth acting on),
+         *     `done` (acted on) or back to `open`. Yours only if you see it and act for its audience: a system finding's
+         *     workspace owners and admins (or an ancestor's), a project output's members who may read the project, an output
+         *     about you. A repeat later folds into it while it is open or accepted. Every change is in its workspace's log.
+         */
+        readonly post: operations["set_output_status"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -19765,6 +19790,50 @@ export interface paths {
          *     (learning reads off there, the learner disabled or without an operator or entry, a run still open, nothing new).
          */
         readonly post: operations["run_learning_target"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/brain/targets/{target_id}/budget": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        /**
+         * Change a target's budget (its owners and admins)
+         * @description How much one run of this target may read (sessions) and write (outputs), and how many runs, outputs and tokens
+         *     it may spend in a UTC day. A run stops cleanly at a cap: nothing more is read or written, and a fire past a daily
+         *     cap starts nothing and says why. Fields left out keep their value; `clear_tokens` removes the token cap.
+         */
+        readonly patch: operations["set_target_budget"];
+        readonly trace?: never;
+    };
+    readonly "/api/brain/why/{session_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Why a learner may or may not read a session (yours, or one you read)
+         * @description Whether `learner` (default: a project's readers) may read this session now, and if not, why, by the same rule
+         *     every learning read asks (`eligibility.explain`). Only for a session in this workspace or below that you are in or
+         *     read yourself. A reason about a person says whether it is you or "someone in it", never who.
+         */
+        readonly get: operations["why_not_read"];
+        readonly put?: never;
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -51384,6 +51453,8 @@ export interface components {
              * @description Sources removed since this learner learned from them: what came from them is withdrawn; do not rely on or rebuild it. Told once.
              */
             readonly revoked?: readonly number[];
+            /** @description What this run may still read and write; when `stopped` is set the run's budget ended the reading. */
+            readonly budget?: components["schemas"]["BrainRunBudgetLeft"] | null;
         };
         /** BrainReadSource */
         readonly BrainReadSource: {
@@ -51415,12 +51486,41 @@ export interface components {
              */
             readonly directives: readonly string[];
         };
+        /** BrainRunBudgetLeft */
+        readonly BrainRunBudgetLeft: {
+            /**
+             * Max Sources Per Run
+             * @default 0
+             */
+            readonly max_sources_per_run: number;
+            /**
+             * Max Outputs Per Run
+             * @default 0
+             */
+            readonly max_outputs_per_run: number;
+            /** Sources Left */
+            readonly sources_left: number;
+            /** Outputs Left */
+            readonly outputs_left: number;
+            /**
+             * Stopped
+             * @description `sources` when this run's budget of sessions ended the reading.
+             * @default
+             */
+            readonly stopped: string;
+        };
         /** BrainEmitOut */
         readonly BrainEmitOut: {
             /** Id */
             readonly id: number;
             /** State */
             readonly state: string;
+            /**
+             * Folded
+             * @description It was a repeat, folded into an existing output (`id`).
+             * @default false
+             */
+            readonly folded: boolean;
         };
         /** BrainEmitIn */
         readonly BrainEmitIn: {
@@ -51443,6 +51543,12 @@ export interface components {
              * @description The `source` ids this output came from; each must have been read in this run.
              */
             readonly sources: readonly number[];
+            /**
+             * Key
+             * @description A short stable slug naming WHAT this is (e.g. `canopy-web:friction:mcp-422-shape`): an output of the same kind and key, still open or accepted, for the same subject and workspace, takes this one in as a repeat instead of a new output.
+             * @default
+             */
+            readonly key: string;
         };
         /** CapabilityOut */
         readonly CapabilityOut: {
@@ -51649,6 +51755,40 @@ export interface components {
              */
             readonly state: string;
             /**
+             * Status
+             * @description open | accepted | dismissed | done: where it stands with the people who act on it.
+             * @default open
+             */
+            readonly status: string;
+            /** Status At */
+            readonly status_at?: string | null;
+            /**
+             * Status By
+             * @description Who set its status.
+             * @default
+             */
+            readonly status_by: string;
+            /**
+             * Key
+             * @description What makes a repeat the same thing: a repeat folds into an open or accepted one.
+             * @default
+             */
+            readonly key: string;
+            /**
+             * Seen
+             * @description How many emits folded into it, the first included.
+             * @default 1
+             */
+            readonly seen: number;
+            /** Last Seen At */
+            readonly last_seen_at?: string | null;
+            /**
+             * May Set Status
+             * @description Whether you may change its status.
+             * @default false
+             */
+            readonly may_set_status: boolean;
+            /**
              * Created At
              * Format: date-time
              */
@@ -51679,6 +51819,14 @@ export interface components {
              * @description Scrubbed of secrets.
              */
             readonly title: string;
+        };
+        /** BrainOutputStatusIn */
+        readonly BrainOutputStatusIn: {
+            /**
+             * Status
+             * @description open | accepted | dismissed | done
+             */
+            readonly status: string;
         };
         /** GraphEdgeOut */
         readonly GraphEdgeOut: {
@@ -51810,6 +51958,15 @@ export interface components {
             readonly notes: readonly string[];
             /** Truncated */
             readonly truncated: boolean;
+        };
+        /** BrainBudgetToday */
+        readonly BrainBudgetToday: {
+            /** Runs */
+            readonly runs: number;
+            /** Outputs */
+            readonly outputs: number;
+            /** Tokens */
+            readonly tokens: number;
         };
         /** BrainCascadeCounts */
         readonly BrainCascadeCounts: {
@@ -52048,6 +52205,20 @@ export interface components {
             /** Cascade */
             readonly cascade: readonly components["schemas"]["BrainCascadeCounts"][];
         };
+        /** BrainTargetBudget */
+        readonly BrainTargetBudget: {
+            /** Max Sources Per Run */
+            readonly max_sources_per_run: number;
+            /** Max Outputs Per Run */
+            readonly max_outputs_per_run: number;
+            /** Max Runs Per Day */
+            readonly max_runs_per_day: number;
+            /** Max Outputs Per Day */
+            readonly max_outputs_per_day: number;
+            /** Max Tokens Per Day */
+            readonly max_tokens_per_day?: number | null;
+            readonly today: components["schemas"]["BrainBudgetToday"];
+        };
         /** BrainTargetOut */
         readonly BrainTargetOut: {
             /** Id */
@@ -52104,6 +52275,8 @@ export interface components {
              * @default false
              */
             readonly can_manage: boolean;
+            /** @description Its budget and what it spent today (UTC). */
+            readonly budget?: components["schemas"]["BrainTargetBudget"] | null;
         };
         /** BrainTargetRun */
         readonly BrainTargetRun: {
@@ -52223,6 +52396,84 @@ export interface components {
              */
             readonly started_at: string;
         };
+        /**
+         * BrainRunContext
+         * @description What a learning run's turn is told about itself (`brain.context`): in its first prompt and as `brain_run` in
+         *     its caller envelope. Ids and names, never a word of a session. `version` changes only when a field's meaning does.
+         */
+        readonly BrainRunContext: {
+            /** Version */
+            readonly version: number;
+            /** Run */
+            readonly run: number;
+            /** State */
+            readonly state: string;
+            /** Learner */
+            readonly learner: string;
+            /** Learner Name */
+            readonly learner_name: string;
+            /** Purpose Class */
+            readonly purpose_class: string;
+            /** Purpose */
+            readonly purpose: string;
+            /**
+             * Entry
+             * @default
+             */
+            readonly entry: string;
+            /** Output Kinds */
+            readonly output_kinds?: readonly string[];
+            /** Subject Type */
+            readonly subject_type: string;
+            /**
+             * Subject
+             * @default
+             */
+            readonly subject: string;
+            /**
+             * Scope
+             * @default
+             */
+            readonly scope: string;
+            readonly target?: components["schemas"]["BrainRunContextTarget"] | null;
+            readonly accountable?: components["schemas"]["BrainRunContextPerson"] | null;
+            /** Sessions Due */
+            readonly sessions_due: number;
+            /** Source Ids Due */
+            readonly source_ids_due?: readonly number[];
+            readonly budget: components["schemas"]["BrainRunBudgetLeft"];
+            /** How */
+            readonly how: string;
+        };
+        /** BrainRunContextPerson */
+        readonly BrainRunContextPerson: {
+            /** Email */
+            readonly email: string;
+            /**
+             * Name
+             * @default
+             */
+            readonly name: string;
+        };
+        /** BrainRunContextTarget */
+        readonly BrainRunContextTarget: {
+            /** Id */
+            readonly id: number;
+            /**
+             * Kind
+             * @description workspace | project
+             */
+            readonly kind: string;
+            /** Workspace */
+            readonly workspace: string;
+            /**
+             * Project
+             * @default
+             */
+            readonly project: string;
+            /** Schedule Id */
+            readonly schedule_id: number;
+        };
         /** BrainRunPageOut */
         readonly BrainRunPageOut: {
             /** Runs */
@@ -52286,6 +52537,8 @@ export interface components {
              * @description The ones you do not: a count only.
              */
             readonly hidden: number;
+            /** @description What the run was told when it started, without the ids of the sessions due (their count stays). */
+            readonly context?: components["schemas"]["BrainRunContext"] | null;
         };
         /** LearningReadsIn */
         readonly LearningReadsIn: {
@@ -52343,6 +52596,48 @@ export interface components {
              * @default
              */
             readonly timezone: string;
+        };
+        /** BrainTargetBudgetIn */
+        readonly BrainTargetBudgetIn: {
+            /** Max Sources Per Run */
+            readonly max_sources_per_run?: number | null;
+            /** Max Outputs Per Run */
+            readonly max_outputs_per_run?: number | null;
+            /** Max Runs Per Day */
+            readonly max_runs_per_day?: number | null;
+            /** Max Outputs Per Day */
+            readonly max_outputs_per_day?: number | null;
+            /**
+             * Max Tokens Per Day
+             * @description Null leaves it as it is; 0 is refused. Send `clear_tokens` to remove the cap.
+             */
+            readonly max_tokens_per_day?: number | null;
+            /**
+             * Clear Tokens
+             * @default false
+             */
+            readonly clear_tokens: boolean;
+        };
+        /** BrainWhyOut */
+        readonly BrainWhyOut: {
+            /** Session Id */
+            readonly session_id: string;
+            /** Learner */
+            readonly learner: string;
+            /** Eligible */
+            readonly eligible: boolean;
+            /**
+             * Reason
+             * @description Why not, as a code (`eligibility.explain`), with no one else named.
+             * @default
+             */
+            readonly reason: string;
+            /**
+             * Explanation
+             * @description The same, in words.
+             * @default
+             */
+            readonly explanation: string;
         };
         /** LearningClassOut */
         readonly LearningClassOut: {
@@ -78680,6 +78975,7 @@ export interface operations {
             readonly query?: {
                 readonly subject_type?: string;
                 readonly subject?: string;
+                readonly status?: string;
                 readonly limit?: number;
             };
             readonly header?: never;
@@ -78695,6 +78991,59 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["BrainOutputOut"][];
+                };
+            };
+        };
+    };
+    readonly set_output_status: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly output_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["BrainOutputStatusIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BrainOutputOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -79103,6 +79452,110 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["BrainRunState"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly set_target_budget: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly target_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["BrainTargetBudgetIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BrainTargetOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly why_not_read: {
+        readonly parameters: {
+            readonly query?: {
+                readonly learner?: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BrainWhyOut"];
                 };
             };
             /** @description Forbidden */

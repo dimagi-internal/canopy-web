@@ -28,7 +28,7 @@ from apps.harness import schedule_hooks
 from apps.harness.models import AgentSchedule
 from apps.workspaces.models import Workspace
 
-from . import reading, readers, registry, runs
+from . import budget, reading, readers, registry, runs
 from .models import PROJECT, SYSTEM, BrainCapability, BrainRun, BrainTarget
 
 logger = logging.getLogger(__name__)
@@ -100,6 +100,17 @@ def add(cap: BrainCapability, *, workspace: Workspace, project: AgentProject | N
         raise TargetRefusedError(f"{cap.slug} is already aimed there") from e
 
 
+def set_budget(target: BrainTarget, **changes) -> BrainTarget:
+    """Change the target's budget (`budget.FIELDS`); `max_tokens_per_day` None removes the token cap."""
+    unknown = set(changes) - set(budget.FIELDS)
+    if unknown:
+        raise TargetRefusedError(f"no such budget: {', '.join(sorted(unknown))}")
+    for field, value in changes.items():
+        setattr(target, field, value)
+    target.save(update_fields=list(changes))
+    return target
+
+
 def remove(target: BrainTarget) -> None:
     """Take the target away: its schedule goes with it (deleting either deletes both), and a run still open for it
     is left to finish."""
@@ -157,13 +168,13 @@ def run_place_refusal(cap: BrainCapability, ws: str) -> str:
 
 def why_not(target: BrainTarget, *, accountable=None) -> str:
     """Why a run for this target cannot start now, or "": the run's own refusals (learning reads, enabled, operator,
-    entry, accountable, one open), and where its operator lives."""
+    entry, accountable, one open), where its operator lives, and its budget for the day (`budget.start_refusal`)."""
     cap = target.capability
     subject, scope = subject_of(target)
     if subject is not None and (subject.is_personal or subject.status != AgentProject.ACTIVE):
         return f"{subject.handle} is not an active workspace project"
     return (kind_refusal(cap, subject) or run_place_refusal(cap, scope)
-            or runs.refusal(cap, subject, scope=scope, accountable=accountable))
+            or runs.refusal(cap, subject, scope=scope, accountable=accountable) or budget.start_refusal(target))
 
 
 def has_new(target: BrainTarget) -> bool:

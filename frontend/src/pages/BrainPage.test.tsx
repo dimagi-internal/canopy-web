@@ -13,9 +13,12 @@ const removeTarget = vi.fn()
 const setLearningReads = vi.fn()
 const configureLearner = vi.fn()
 const acknowledgeFlag = vi.fn()
+const setOutputStatus = vi.fn()
+const setTargetBudget = vi.fn()
+const whyNotRead = vi.fn()
 vi.mock('@/api/brain', () => ({
   getBrainState, getBrainLinks, getBrainRuns, listBrainOutputs, runTargetNow, addTarget, removeTarget, setLearningReads,
-  configureLearner, acknowledgeFlag,
+  configureLearner, acknowledgeFlag, setOutputStatus, setTargetBudget, whyNotRead,
 }))
 
 const { BrainPage } = await import('./BrainPage')
@@ -50,7 +53,9 @@ const STATE = (owner: boolean) => ({
   targets: [
     { id: 7, learner: 'system-learning', workspace: 'dimagi', project: '', label: 'dimagi', schedule_id: 70,
       agent: 'ada', cron: '0 6 * * *', timezone: 'UTC', enabled: true, created_by: 'jj@dimagi.com', created_at: '',
-      last_run: null, can_manage: owner },
+      last_run: null, can_manage: owner,
+      budget: { max_sources_per_run: 50, max_outputs_per_run: 20, max_runs_per_day: 4, max_outputs_per_day: 50,
+        max_tokens_per_day: null, today: { runs: 1, outputs: 2, tokens: 1200 } } },
     { id: 8, learner: 'project-learning', workspace: 'dimagi', project: 'supply', label: 'dimagi/supply', schedule_id: 80,
       agent: 'ada', cron: '0 7 * * 1', timezone: 'UTC', enabled: false, created_by: 'jj@dimagi.com', created_at: '',
       last_run: { id: 3, state: 'done', created_at: new Date().toISOString() }, can_manage: owner },
@@ -66,6 +71,13 @@ const RUN = {
   id: 3, learner: 'system-learning', purpose: 'improve', subject_type: 'system', subject: 'system', state: 'done',
   created_at: new Date().toISOString(), finished_at: null, reads: 2,
   sessions: [{ session_id: 's1', workspace: 'dimagi', title: 'runner debugging' }], hidden: 1,
+  context: { version: 1, run: 3, state: 'done', learner: 'system-learning', learner_name: 'System learning',
+    purpose_class: 'system', purpose: 'improve', entry: '/canopy:brain-learn', output_kinds: ['finding'],
+    subject_type: 'system', subject: 'dimagi', scope: 'dimagi',
+    target: { id: 7, kind: 'workspace', workspace: 'dimagi', project: '', schedule_id: 70 },
+    accountable: { email: 'jj@dimagi.com', name: 'JJ' }, sessions_due: 9, source_ids_due: [],
+    budget: { max_sources_per_run: 50, max_outputs_per_run: 20, sources_left: 0, outputs_left: 0, stopped: '' },
+    how: 'Read only with brain_read' },
 }
 
 function setup(owner = false) {
@@ -77,7 +89,7 @@ function setup(owner = false) {
   listBrainOutputs.mockResolvedValue([{
     id: 1, learner: 'system-learning', kind: 'finding', workspace: 'dimagi', subject_type: 'system', subject: '',
     title: 'The runner idles without a delegation', body: { severity: 'high', fix: 'surface the 409', nested: { x: 1 } },
-    state: 'active', created_at: new Date().toISOString(),
+    state: 'active', status: 'open', seen: 3, may_set_status: true, created_at: new Date().toISOString(),
     sessions: [{ session_id: 's1', workspace: 'dimagi', title: 'runner debugging' }], hidden_sessions: 2,
   }])
   runTargetNow.mockResolvedValue({ ...RUN, id: 4, state: 'open' })
@@ -96,6 +108,46 @@ afterEach(() => {
 })
 
 describe('BrainPage', () => {
+  it('shows what a run was told, its target\'s budget and today\'s use', async () => {
+    setup(true)
+    expect(await screen.findByText('context')).toBeTruthy()
+    expect(screen.getByText('jj@dimagi.com', { selector: 'dd' })).toBeTruthy()
+    expect(screen.getByText(/today 1\/4 runs, 2\/50 outputs, 1200 tokens/)).toBeTruthy()
+  })
+
+  it('changes a target\'s budget', async () => {
+    setup(true)
+    setTargetBudget.mockResolvedValue({})
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Budget…' }))[0])
+    const form = screen.getByRole('form', { name: 'Budget of dimagi' })
+    fireEvent.change(within(form).getByLabelText('sessions a run'), { target: { value: '10' } })
+    fireEvent.click(within(form).getByRole('button', { name: 'Save budget' }))
+    await waitFor(() => expect(setTargetBudget).toHaveBeenCalledWith('dimagi', 7, expect.objectContaining({
+      max_sources_per_run: 10, clear_tokens: true })))
+  })
+
+  it('moves a finding along its lifecycle and shows how often it was seen', async () => {
+    setup(true)
+    expect(await screen.findByText('seen 3 times')).toBeTruthy()
+    setOutputStatus.mockResolvedValue({ ...(await listBrainOutputs.mock.results[0].value)[0], status: 'accepted' })
+    fireEvent.click(screen.getByRole('button', { name: 'Accept' }))
+    await waitFor(() => expect(setOutputStatus).toHaveBeenCalledWith('dimagi', 1, 'accepted'))
+    expect(await screen.findByRole('button', { name: 'Done' })).toBeTruthy()
+  })
+
+  it('says why a session is not read, naming no one', async () => {
+    setup()
+    whyNotRead.mockResolvedValue({ session_id: 'x', learner: 'project-readers', eligible: false,
+      reason: 'no_consent:someone', explanation: 'Someone in it has not agreed to canopy learning' })
+    const form = await screen.findByRole('form', { name: 'Why is a session not read' })
+    fireEvent.change(within(form).getByLabelText('Session'),
+      { target: { value: 'https://canopy.dimagi.com/w/dimagi/sessions/0f8fad5b-d9cb-469f-a165-70867728950e' } })
+    fireEvent.click(within(form).getByRole('button', { name: 'Look up' }))
+    await waitFor(() => expect(whyNotRead).toHaveBeenCalledWith('dimagi', '0f8fad5b-d9cb-469f-a165-70867728950e',
+      'project-readers'))
+    expect(await screen.findByText(/may not read it: Someone in it has not agreed/)).toBeTruthy()
+  })
+
   it('shows the live state: rollout, consent, sources, links to sessions, learners and runs', async () => {
     setup()
     const reads = await screen.findByRole('region', { name: 'Learning reads' })

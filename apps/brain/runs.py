@@ -131,8 +131,11 @@ def start(cap: BrainCapability, *, subject=None, purpose: str = "", floor: int =
     session = session_services.create_session(
         workspace=cap.operator.workspace, agent=cap.operator, title=f"{cap.name}: learning run {run.pk}",
         metadata={BRAIN_RUN_METADATA_KEY: str(run.pk), **({"brain_target": target.pk} if target is not None else {})})
-    BrainRun.objects.filter(pk=run.pk).update(session=session)
     run.session = session
+    from .context import document  # noqa: PLC0415 — context reads reading, which reads this module's neighbours
+
+    run.context = document(run, accountable=accountable)     # what its turn is told, kept as it was told
+    BrainRun.objects.filter(pk=run.pk).update(session=session, context=run.context)
     harness.enqueue_turn(
         session=session, origin=Turn.ORIGIN_API, prompt=prompt(cap, run, accountable=accountable),
         idempotency_key=f"brain-run:{run.pk}",

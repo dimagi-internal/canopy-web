@@ -41,7 +41,7 @@ from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
-from . import associate, outputs, participants
+from . import associate, outputs, participants, scope
 from .models import BRAIN_RUN_KEY, BrainSource, OutputLineage, ReportingLine, SourceLink, SourceParticipant
 
 #: The most of each kind one graph draws; the most recent first.
@@ -75,9 +75,10 @@ def _name(u: dict) -> str:
 
 
 def tree(viewer, root: Workspace) -> list[str]:
-    """`root` and every workspace below it the viewer is in (a member, or inherited from an owner/admin role)."""
-    mine = wsvc.user_workspace_slugs(viewer)
-    return [ws.slug for ws, _ in wsvc.subtree(root, lambda s: s in mine)]
+    """`root` and every workspace below it the viewer is in, in tree order: the brain's one viewer scope
+    (`scope.below`)."""
+    allowed = scope.below(viewer, root.slug)
+    return [ws.slug for ws, _ in wsvc.subtree(root, lambda s: s in allowed)]
 
 
 #: Where the brain's own rows are read from. Only `live` (the tables) today; `brain_reads` is the one place that
