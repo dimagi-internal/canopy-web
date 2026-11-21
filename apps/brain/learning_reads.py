@@ -89,9 +89,16 @@ def run_refusal(cap, subject=None, scope: str = "") -> str:
 def set_reads(workspace: Workspace, value: bool | None, *, by) -> tuple[Effective, Effective]:
     """Set `workspace`'s own setting (None: inherit again). Returns (before, after)."""
     before = effective(workspace.slug)
+    was_on = on_slugs()
     if value is None:
         WorkspaceLearningReads.objects.filter(workspace=workspace).delete()
     else:
         WorkspaceLearningReads.objects.update_or_create(workspace=workspace,
                                                         defaults={"on": bool(value), "updated_by": by})
+    now_on = on_slugs() - was_on
+    if now_on:
+        # The associator skipped these workspaces' sessions while reads were off: it looks at them again.
+        from .associate import due_again  # noqa: PLC0415 — associate reads this module
+
+        due_again(workspace_id__in=now_on)
     return before, effective(workspace.slug)

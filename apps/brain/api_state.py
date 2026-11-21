@@ -11,31 +11,16 @@ from django.http import HttpRequest
 from ninja import Router
 
 from apps.api.auth import session_auth
-from apps.api.errors import TYPE_FORBIDDEN, ProblemError, refusals
+from apps.api.errors import refusals
 from apps.api.route_gates import gate
-from apps.contacts import people
-from apps.harness import acting_person
-from apps.tokens import kinds
 from apps.workspaces import services as wsvc
 
 from . import state
+from .person import the_person  # noqa: F401 — the routes below and api_manage ask it
 from .schemas import BrainLinkPageOut, BrainRunPageOut, BrainStateOut
 
 router = Router(auth=session_auth, tags=["brain"])
 
-#: The credentials a person uses as themselves: their browser session or a PAT they minted by hand.
-PERSON_KINDS = frozenset({kinds.SESSION, kinds.PAT})
-
-
-def the_person(request: HttpRequest):
-    """The person, as themselves, else a 403: never an agent's login, a turn's or caller token, an act-as or OAuth
-    token, a runner, a site's token or an MCP call."""
-    kind = kinds.of_request(request)
-    user = getattr(request, "user", None)
-    if (getattr(request, "via_mcp", False) or kind is None or kind.name not in PERSON_KINDS
-            or not people.is_human_account(user) or acting_person.refusal(request) is not None):
-        raise ProblemError(403, "Only the person, as themselves, may see this", type_=TYPE_FORBIDDEN)
-    return user
 
 
 @router.get("/brain/state", response={200: BrainStateOut, **refusals(403, 422)},

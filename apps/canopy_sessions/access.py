@@ -125,8 +125,8 @@ def is_review_conversation(session) -> bool:
 
 
 def is_brain_conversation(session) -> bool:
-    """A chat that is one run of a brain learning feature. Everything in it runs in the
-    `published_profiles.BRAIN` profile: it reads sources through `brain_read` and nothing else."""
+    """A chat that is one run of a brain learning feature (`apps.brain.runs`): no other turn reads it, and
+    what it learns from comes only through `brain_read`."""
     return session is not None and BRAIN_RUN_METADATA_KEY in (session.metadata or {})
 
 

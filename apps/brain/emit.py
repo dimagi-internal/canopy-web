@@ -3,7 +3,8 @@
 An output is about the run's own subject (never one it names), of a kind its feature declares, and cites the
 sources it came from. Every cited source must be one THIS run read (`BrainRunRead`) and must still be eligible
 now: a source cited but never read, or one whose people withdrew since, is refused whole. The lineage
-(`OutputLineage`) is written from the reads, so a later removal can find every output a source fed. The words
+(`OutputLineage`) is written from the reads, every source the run had read by then and not only the cited ones
+(`write_lineage`): all of it was in the run's context, so a later removal of any of them reaches the output. The words
 are scrubbed like every learning read, keys as well as values. Emitting the same thing twice is one output."""
 from __future__ import annotations
 
@@ -17,7 +18,7 @@ from apps.common import redact
 
 from . import associate, learning_reads
 from .eligibility import eligible
-from .models import BrainOutput, BrainRun, BrainRunRead, BrainSource, OutputLineage, SourceLink
+from .models import ABOUT_A_PERSON, BrainOutput, BrainRun, BrainRunRead, BrainSource, OutputLineage, SourceLink
 
 MAX_BODY_CHARS, MAX_SOURCES = 20_000, 50
 
@@ -48,11 +49,11 @@ def emit(run: BrainRun, *, kind: str, title: str, body: dict, source_ids, turn_i
     if set(ids) - read:
         raise EmitRefusedError(f"cites a source this run did not read: {sorted(set(ids) - read)}")
     sources = list(BrainSource.objects.filter(pk__in=ids).select_related("session"))
-    subject = int(run.subject) if cap.subject_type == "person" else None
+    subject = int(run.subject) if cap.purpose_class in ABOUT_A_PERSON else None
     for s in sources:
         if not eligible(s, cap, run.purpose, subject):
             raise EmitRefusedError(f"source {s.pk} is no longer open to this feature")
-    workspaces = {s.workspace_id for s in sources}
+    workspaces = {s.session.workspace_id if s.session is not None else s.workspace_id for s in sources}
     if run.scope:
         # A run started for a workspace reads only its subtree and what it learns is that workspace's: its owners
         # and their ancestors' see it (`outputs.visible_to`).
@@ -71,11 +72,22 @@ def emit(run: BrainRun, *, kind: str, title: str, body: dict, source_ids, turn_i
             capability=cap, kind=kind, workspace_id=workspaces.pop(), subject_type=run.subject_type,
             subject=run.subject, title=clean_title, body=scrubbed, turn_id=turn_id, run=run,
             fingerprint=fingerprint)
-        for s in sources:
-            people = sorted(s.participants.filter(user__isnull=False).values_list("user_id", flat=True))
-            OutputLineage.objects.create(output_kind="brain.output", output_id=str(out.pk), source=s,
-                                         participant_scope=people)
+        write_lineage(run, out, cited=ids)
     return out
+
+
+def write_lineage(run: BrainRun, out: BrainOutput, *, cited) -> None:
+    """`out`'s lineage: every source `run` has read so far, `cited` marking the ones it names. Each row carries the
+    people whose words were in the source then (its consents). Idempotent."""
+    cited = set(cited)
+    for read in BrainRunRead.objects.filter(run=run).select_related("source"):
+        s = read.source
+        people = sorted(s.participants.filter(user__isnull=False).values_list("user_id", flat=True))
+        row, made = OutputLineage.objects.get_or_create(
+            output_kind="brain.output", output_id=str(out.pk), source=s,
+            defaults={"participant_scope": people, "cited": s.pk in cited})
+        if not made and s.pk in cited and not row.cited:
+            OutputLineage.objects.filter(pk=row.pk).update(cited=True)
 
 
 def _emit_link(run: BrainRun, *, body: dict, source_ids):
@@ -101,7 +113,7 @@ def _emit_link(run: BrainRun, *, body: dict, source_ids):
     source = BrainSource.objects.select_related("session").get(pk=ids[0])
     if not eligible(source, run.capability, run.purpose):
         raise EmitRefusedError(f"source {source.pk} is no longer open to this feature")
-    project = AgentProject.objects.filter(pk=run.subject, workspace_id=source.workspace_id).first()
+    project = AgentProject.objects.filter(pk=run.subject, workspace_id=source.session.workspace_id).first()
     if project is None or project.is_personal:
         raise EmitRefusedError("a link rules on a workspace project of the source's own workspace")
     evidence = body.get("evidence") or []

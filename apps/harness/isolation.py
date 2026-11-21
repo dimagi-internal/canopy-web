@@ -3,14 +3,16 @@
 A learning run's turn reads other people's sessions (through `brain_read`, recorded). What it read must not leak
 into the operator agent's memory or into its unrelated sessions: its conversation is its own (no creator, no
 participant, readable by no other turn, `canopy_sessions.access`), and on the box Claude Code's auto memory is off
-for it, so nothing it read is written to the memory the agent's later turns load. canopy-web marks such a turn
+for it, so nothing it read is written to the memory the agent's later turns load, and its Claude session is deleted
+once it ends, so no later turn reads it off the disk. canopy-web marks such a turn
 `isolated` in its claim (`ClaimedTurnOut.isolated`), and only a box whose code reports that it honours the mark
 (`isolated` on its heartbeat, `runner/ec2/cloud_runner.py` `ISOLATED_TURN_ENV`) is handed one; any other waits.
 A laptop runner drives its turns in the person's own Claude app and does not report it."""
 from __future__ import annotations
 
-#: The level a box must report (`Runner.capabilities["isolated"]`) to take an isolated turn.
-ISOLATED_VERSION = 1
+#: The level a box must report (`Runner.capabilities["isolated"]`) to take an isolated turn: 2 is auto memory off
+#: AND the turn's Claude session deleted once it ends (`runner/ec2/cloud_runner.py` `_isolated_forget_turn`).
+ISOLATED_VERSION = 2
 
 
 def is_isolated(turn) -> bool:

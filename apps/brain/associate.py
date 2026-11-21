@@ -34,7 +34,7 @@ from apps.canopy_sessions.models import Session
 from apps.harness.models import Turn
 
 from . import participants, sources
-from .eligibility import everyone_agreed
+from .eligibility import agreed_sources, everyone_agreed
 from .models import BRAIN_RUN_KEY, PROJECT, BrainSource, ProjectSignature, SourceLink
 
 logger = logging.getLogger(__name__)
@@ -185,11 +185,28 @@ def put(source: BrainSource, project: AgentProject, *, how: str, tier: str, evid
             new.save()
             return new
         if outranks(row, new):
+            if _another_rejection(row, new) and new.by_id not in (row.rejected_by or []):
+                row.rejected_by = [*(row.rejected_by or []), new.by_id]     # theirs sticks too
+                row.save(update_fields=["rejected_by", "updated_at"])
             return row
         for field in ("how", "tier", "evidence", "confidence", "model", "by", "by_agent"):
             setattr(row, field, getattr(new, field))
         row.save()
         return row
+
+
+def _another_rejection(row: SourceLink, new: SourceLink) -> bool:
+    """`new` is a second person's rejection of a link a person already rejected."""
+    rejects = (SourceLink.DECLARED, SourceLink.REJECTED)
+    return ((row.how, row.tier) == rejects == (new.how, new.tier) and row.by_id is not None
+            and new.by_id is not None and new.by_id != row.by_id)
+
+
+def rejects(link: SourceLink, user) -> bool:
+    """Has `user` rejected this link: the person holding the rejection, or another who rejected it too."""
+    uid = getattr(user, "pk", user)
+    return (link.how, link.tier) == (SourceLink.DECLARED, SourceLink.REJECTED) and (
+        link.by_id == uid or uid in (link.rejected_by or []))
 
 
 def rejected_by_a_person(source: BrainSource, project: AgentProject) -> SourceLink | None:
@@ -207,12 +224,27 @@ def declare(source: BrainSource, project: AgentProject, *, tier: str, by=None, b
 
 
 def undeclare(source: BrainSource, project: AgentProject, *, by) -> bool:
-    """A person withdraws their own declaration; the automatic layers look again straight away."""
-    n, _ = SourceLink.objects.filter(source=source, subject_type=SourceLink.PROJECT_SUBJECT,
-                                     subject=str(project.pk), how=SourceLink.DECLARED, by=by).delete()
-    if n:
-        associate(source)  # at once: the row held the place of whatever the layers had found
-    return bool(n)
+    """A person withdraws their own declaration; the automatic layers look again straight away. A rejection someone
+    else also made stays theirs: it passes to the next of them (`rejected_by`)."""
+    with transaction.atomic():
+        row = (SourceLink.objects.select_for_update()
+               .filter(source=source, subject_type=SourceLink.PROJECT_SUBJECT, subject=str(project.pk)).first())
+        if row is None:
+            return False
+        others = [u for u in (row.rejected_by or []) if u != by.pk]
+        if row.how == SourceLink.DECLARED and row.by_id != by.pk and by.pk in (row.rejected_by or []):
+            row.rejected_by = others                                  # one of the others takes theirs back
+            row.save(update_fields=["rejected_by", "updated_at"])
+            return True
+        if row.how != SourceLink.DECLARED or row.by_id != by.pk:
+            return False
+        if row.tier == SourceLink.REJECTED and others:
+            row.by_id, row.rejected_by = others[0], others[1:]       # the next person's rejection holds the place
+            row.save(update_fields=["by", "rejected_by", "updated_at"])
+            return True
+        row.delete()
+    associate(source)  # at once: the row held the place of whatever the layers had found
+    return True
 
 
 # ---- the layers ----------------------------------------------------------------------------------
@@ -318,6 +350,28 @@ def link_signals(source: BrainSource, session) -> int:
     return n
 
 
+def may_look(source: BrainSource | None, session) -> bool:
+    """May the automatic layers look at this session at all: it has a source and a session, is not sealed, and
+    everyone in it agreed to `project` where "Learning reads" is on (`everyone_agreed`). What `associate` asks before
+    it writes and what a preview of its links asks before it shows one (`proposals_for`)."""
+    return (source is not None and session is not None and not participants.sealed_reason(session)
+            and everyone_agreed(source, PROJECT))
+
+
+def proposals_for(sessions) -> dict:
+    """What `associate` would make for these sessions, stored nowhere: `propose_many` over the ones it may look at
+    (`may_look`, asked for all of them at once through `eligibility.agreed_sources`); the rest propose nothing, and
+    so does a session with no source yet (`run_due` makes it first; this writes nothing). The graph's would-be links
+    are this."""
+    sessions = list(sessions)
+    agreed = set(agreed_sources(PROJECT).filter(session_id__in=[s.pk for s in sessions])
+                 .values_list("session_id", flat=True))                  # `may_look` for the lot, in one query
+    looked = [s for s in sessions if s.pk in agreed and not participants.sealed_reason(s)]
+    out = {s.pk: [] for s in sessions}
+    out.update(propose_many(looked))
+    return out
+
+
 def associate(source: BrainSource) -> bool:
     """Look at one source: refresh who is in it, then layer 1, then layer 2. False when it is sealed, has
     no session, or not everyone in it agreed to `project`: the automatic layers never judge a session
@@ -326,13 +380,21 @@ def associate(source: BrainSource) -> bool:
     now = timezone.now()
     if session is not None:
         sources.refresh(source, session)
-    if session is None or participants.sealed_reason(session) or not everyone_agreed(source, PROJECT):
+    if not may_look(source, session):
         BrainSource.objects.filter(pk=source.pk).update(associate_due_at=None, associated_at=now)
         return False
     link_dispatched(source, session)
     link_signals(source, session)
     BrainSource.objects.filter(pk=source.pk).update(associate_due_at=None, associated_at=now)
     return True
+
+
+def due_again(**where) -> int:
+    """Look again at the open sources matching `where`: what made the automatic layers skip them may have changed
+    (reads turned on, a person agreed to project learning or let a session back in)."""
+    return (BrainSource.objects.filter(kind=BrainSource.SESSION, state=BrainSource.OPEN, **where)
+            .filter(Q(associate_due_at__isnull=True) | Q(associate_due_at__gt=timezone.now()))
+            .update(associate_due_at=timezone.now()))
 
 
 def schedule(session_id, *, delay: dt.timedelta = DEBOUNCE) -> int:

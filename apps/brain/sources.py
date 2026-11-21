@@ -12,7 +12,7 @@ from django.db import transaction
 from apps.agents.models import Agent
 
 from . import participants
-from .models import BrainSource, SourceParticipant
+from .models import BrainSource, SourceLink, SourceParticipant
 
 
 def for_session(session) -> BrainSource:
@@ -69,6 +69,8 @@ def refresh(source: BrainSource, session=None) -> BrainSource:
         changed.append("sealed_reason")
     if changed:
         source.save(update_fields=[*changed, "updated_at"])
+    if "workspace" in changed:
+        drop_foreign_links(source)
     # Everyone whose words are in it stays, even once taken out of it (`participants.people_of`); an
     # exclusion is its own row and outlives the excluder's participant row (`eligibility`).
     want = {(u, c): how for how, u, c in participants.people_of(session)}
@@ -82,3 +84,13 @@ def refresh(source: BrainSource, session=None) -> BrainSource:
         elif have[(u, c)].how != how:
             SourceParticipant.objects.filter(pk=have[(u, c)].pk).update(how=how)
     return source
+
+
+def drop_foreign_links(source: BrainSource) -> int:
+    """A link never crosses a workspace (`associate._candidate_projects`): once a session moves, its links to projects
+    of the workspace it left go, whoever made them, so nothing there reads it or learns from it."""
+    from apps.agents.models import AgentProject  # noqa: PLC0415 — agents reads this app's neighbours
+
+    here = AgentProject.objects.filter(workspace_id=source.workspace_id).values_list("pk", flat=True)
+    return (SourceLink.objects.filter(source=source, subject_type=SourceLink.PROJECT_SUBJECT)
+            .exclude(subject__in=[str(pk) for pk in here]).delete()[0])

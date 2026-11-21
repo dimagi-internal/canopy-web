@@ -11,18 +11,15 @@ from apps.agents.services.projects import may_read_project
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError, refusals
 from apps.api.route_gates import gate
-from apps.harness import acting_person
-from apps.tokens import kinds
+from apps.canopy_sessions import access
+from apps.canopy_sessions.models import Session
+from apps.common import redact
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.gates import membership_or_404
 from apps.workspaces.gates import require as require_role
 
-from apps.canopy_sessions import access
-from apps.canopy_sessions.models import Session
-from apps.common import redact
-
-from . import cascade, outputs, registry, reporting, targets
+from . import cascade, outputs, person, registry, reporting, targets
 from .models import BrainCapability, OutputLineage, SourceLink
 from .schemas import (
     BrainOutputOut,
@@ -37,11 +34,13 @@ from .schemas import (
 router = Router(auth=session_auth, tags=["brain"])
 
 
-def _cap_out(c: BrainCapability) -> dict:
+def _cap_out(c: BrainCapability, *, shown: bool = True) -> dict:
+    """A learner as the API shows it. `shown` False (`registry.shown_to`: another tenant's) leaves out who operates
+    it and the command its runs start with."""
     return {"slug": c.slug, "name": c.name, "description": c.description, "purpose_class": c.purpose_class,
             "subject_type": c.subject_type, "purposes": c.purposes, "source_kinds": c.source_kinds,
             "output_kinds": c.output_kinds, "audience": c.audience,
-            "operator": c.operator.slug if c.operator_id else "", "entry": c.entry,
+            "operator": c.operator.slug if c.operator_id and shown else "", "entry": c.entry if shown else "",
             "enabled": c.enabled, "scope": c.scope}
 
 
@@ -63,8 +62,11 @@ def _operator(slug: str):
 @gate("authenticated")
 def list_capabilities(request: HttpRequest) -> list[dict]:
     """Every registered capability: its class, the purposes it reads for and who sees what it produces.
-    What a person agrees to when they agree to a class."""
-    return [_cap_out(c) for c in BrainCapability.objects.select_related("operator").order_by("slug")]
+    What a person agrees to when they agree to a class. Which agent operates one, and the command its runs start
+    with, only inside the operator's own organisation (`registry.shown_to`)."""
+    caps = list(BrainCapability.objects.select_related("operator").order_by("slug"))
+    shown = registry.shown_to(request.user, caps)
+    return [_cap_out(c, shown=c.pk in shown) for c in caps]
 
 
 @router.post("/brain/capabilities/", response={200: CapabilityOut, **refusals(403, 422)},
@@ -109,12 +111,11 @@ def patch_capability(request: HttpRequest, slug: str, payload: CapabilityPatch) 
 
 # ---- who manages whom -----------------------------------------------------------------------------
 # PERSON-ONLY, like `/api/me/learning/`: who manages whom decides who reads a person's learning outputs, so
-# only a person as themselves sets, ends or lists it (`acting_person.refusal`), and none is an MCP tool
+# only a person as themselves sets, ends or lists it (`person.refusal`), and none is an MCP tool
 # (`apps/mcp/api_tools.py` EXCLUDED).
 
 def _person_only(request: HttpRequest) -> None:
-    if acting_person.refusal(request) is not None:
-        raise ProblemError(403, "Only a person, as themselves, may do this", type_=TYPE_FORBIDDEN)
+    person.the_person(request)
 
 
 def _line_out(line) -> dict:
@@ -203,19 +204,11 @@ def list_project_sessions(request: HttpRequest, slug: str, handle: str, tiers: s
 
 # ---- what was produced ----------------------------------------------------------------------------
 
-#: The credentials the manager leg opens for: the manager's own browser session or a PAT they minted by hand,
-#: as HCP's governance acts (`contacts.hcp_api.GOVERNANCE_KINDS`). Never an OAuth sign-in (an AI client or
-#: connector acting for them), a host site's or MCP host grant's delegated token, an act-as or caller token.
-MANAGER_KINDS = frozenset({kinds.SESSION, kinds.PAT})
-
-
 def manager_leg_open(request: HttpRequest) -> bool:
-    """Is this request the manager themselves, so `outputs.visible_to` may open the manager leg? A person
-    (`acting_person.is_person`), on one of `MANAGER_KINDS`, and not an MCP tool call: managers see a report's
-    outputs as themselves, never through an AI client. Every other leg is unchanged."""
-    kind = kinds.of_request(request)
-    return (kind is not None and kind.name in MANAGER_KINDS and not getattr(request, "via_mcp", False)
-            and not kinds.speaks_for_a_turn(request) and acting_person.is_person(request))
+    """Is this request the manager themselves, so `outputs.visible_to` may open the manager leg? The one person
+    question (`person.is_person`): their browser session or a PAT they minted by hand, never an MCP call, an OAuth
+    client, a site's token, an agent or a turn. Every other leg is unchanged."""
+    return person.is_person(request)
 
 
 @router.get("/brain/outputs/", response=list[BrainOutputOut], summary="What learning produced, for you")
@@ -247,7 +240,7 @@ def _cited(user, rows) -> tuple[dict, dict]:
     with a scrubbed title. Three reads for a whole page."""
     cited: dict[str, list] = {}
     for oid, sid in (OutputLineage.objects.filter(output_kind=cascade.OUTPUT_KIND, output_id__in=[str(o.pk) for o in rows],
-                                                  source__session_id__isnull=False)
+                                                  source__session_id__isnull=False, cited=True)
                      .values_list("output_id", "source__session_id")):
         cited.setdefault(oid, []).append(sid)
     every = {s for ids in cited.values() for s in ids}

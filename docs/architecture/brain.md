@@ -60,8 +60,11 @@ same way (`tests/test_brain_participants_live.py`). `tests/test_brain_eligibilit
 per-workspace setting, off unless set, a workspace with no setting of its own inheriting the nearest ancestor's that
 has one (`learning_reads.effective`). Because the check is in `explain`, every learning read follows it without one of
 its own: a run's `brain_read` and `brain_emit`, the project readers' leg, the automatic association layers and the
-graph's would-be links (`everyone_agreed`). Coaching does not go through `explain` (`coaching_allows`), so the setting
+graph's would-be links (`everyone_agreed`, and `agreed_sources` for a listing). Coaching does not go through `explain` (`coaching_allows`), so the setting
 does not stop coaching. Nothing is cached; a change is the next request's answer.
+
+A source is judged where its session is NOW: the session's workspace is read live (`_facts`, and the listing's SQL),
+never the workspace its source last saw, so a session moved to another workspace is judged there at once.
 
 `eligible` is `eligibility.explain`, which says why. Without a capability, `explain` asks the same question of a
 purpose class (what `everyone_agreed` asks).
@@ -72,8 +75,12 @@ names matches. A rule the code cannot read denies (`rule_denies`).
 ## Consent is the person's alone (`apps/brain/api.py`, `apps/brain/consent.py`)
 
 `/api/me/learning/` reads, sets and ends a person's consent; `/api/me/learning/sessions/{id}/` takes
-one of their sessions out and back. Each route asks `harness.acting_person.refusal`: an agent's login, a
-turn's token, a runner and a request naming a turn are a 403, and none of them is an MCP tool
+one of their sessions out and back. **Every person-only brain route asks one question, `person.refusal`**: the
+person's own browser session or a PAT they minted by hand, never an MCP call, and never what
+`harness.acting_person.refusal` refuses (an agent's login, a turn's login or token, a request naming a turn, a
+runner). An OAuth client signed in as them and a site's or MCP host grant's delegated token speak FOR them and are
+a 403 too (`tests/test_brain_person_only.py`). The same question opens the manager leg, the owners' `system` leg,
+the reporting routes, the brain page and its management routes. None of them is an MCP tool
 (`apps/mcp/api_tools.py` `EXCLUDED`). Nobody opts anyone in; there is no admin route.
 
 `PUT /api/me/learning/` takes the whole set of `classes`; every other field (`workspaces`, `include_new`,
@@ -98,7 +105,10 @@ link, and a pick to tie it to another project of its workspace.
 
 Every change is on the person's own audit (`learning.consented|class_added|class_removed|revoked|
 source_withdrawn|source_restored` in `PersonAuditEvent`) and, ids only, in the event log of each
-workspace they are in (source `brain.consent`).
+workspace they are in (source `brain.consent`); taking one session out or back is logged only in that session's
+own workspace, never another organisation's. `brain.consent` and `brain.read` events are kept from the event log's
+pruning (`events.keep`): the cascade asks who ever agreed (`cascade.ever_agreed`) and the disclosure summary is
+recomputed from the reads.
 
 ## Coaching is `individual`
 
@@ -129,16 +139,24 @@ confers no read by itself; only a `core` link opens the project leg.
   that were dispatched or declared, never from a signals link, so a guess cannot feed itself. It only
   widens; nothing a person added is removed.
 - **A person's rejection sticks.** A person's `rejected` declaration outranks every automatic layer and
-  every agent; only that same person undoes it (`undeclare`), and a different participant's attempt is a
-  409. An agent's declaration outranks the automatic layers but never a person's.
+  every agent; only that same person undoes it (`undeclare`). Another person rejecting it too is recorded
+  (`SourceLink.rejected_by`), so when the first takes theirs back the next one's holds it; another person's
+  `core` against a rejection is a 409. An agent's declaration outranks the automatic layers but never a person's.
 - **Never across a workspace, never a personal project.** Automatic layers link only workspace-visible
   projects of the source's own workspace, and neither a person nor an agent can declare a personal one.
 - **Only sessions everyone in agreed to `project`.** The dispatched and signals layers and the
   signature seed skip a source unless every human in it agreed to `project` for its workspace, none
-  excluded it and no contact is in it (`eligibility.everyone_agreed`). A declaration still stands.
+  excluded it and no contact is in it (`associate.may_look`, `eligibility.everyone_agreed`). A declaration still
+  stands. A source skipped is looked at again when what skipped it changes (`associate.due_again`): "Learning reads"
+  turning on there, a person in it agreeing to `project`, a removal undone.
+- **A moved session leaves its links behind.** When a session moves to another workspace its source follows
+  (`signals._a_moved_session`, `sources.refresh`) and its links to projects of the workspace it left go
+  (`sources.drop_foreign_links`); the project leg and a project run also read only links to a project of the
+  session's own workspace.
 - **Computed, then written.** `associate.propose` (`propose_dispatched`, `propose_signals`) computes what layers 1 and
   2 would make, reading only; `link_dispatched` and `link_signals` write what it returns, through `put`, whose
-  `outranks` decides whether a stored link keeps its place. The relations graph's would-be links call the same compute.
+  `outranks` decides whether a stored link keeps its place. The relations graph's would-be links are
+  `associate.proposals_for`: the same compute over the sessions the associator would look at (`may_look`).
 - **Off-request and debounced.** An activity fold (a `Session` save naming `activity`) only marks its
   source due (`associate.schedule`, five minutes, so a burst is one look); the tick `brain.associate`
   (`associate.run_due`) makes sources for sessions that have none and looks at what is due. A sealed
@@ -180,7 +198,7 @@ outputs are seen: a withdrawn or stale one is seen by no one. Outputs are derive
 a workspace turns "Learning reads" off; nothing new is made from its sessions then. `ReportingLine` (`apps/brain/reporting.py`, set by a workspace
 owner by hand, each change an event) is the manager relationship; it opens a manager's reading of their reports'
 `individual` outputs made in the workspace the line is in, and nothing else, and only to the manager as a person
-(`api_admin.manager_leg_open`: their browser session or a PAT they minted by hand, as HCP's governance acts; never an
+(`api_admin.manager_leg_open`, which is `person.is_person`: their browser session or a PAT they minted by hand, as HCP's governance acts; never an
 agent, a turn's token, an act-as token, an OAuth or MCP client or a site's delegated token, and never an MCP call:
 `list_outputs` is an MCP tool, and through it the other legs answer but the manager leg stays shut). The reporting routes are person-only
 too and are not MCP tools; setting a line names "no such member" alike for an unknown address and a non-member.
@@ -227,9 +245,11 @@ follows the operator's turn mode and rails. What makes it a learning run:
 - **It is its own session with nothing carried over.** Its conversation has no creator and no participant, so no other
   turn of the operator, its asker or its login reads it (`tests/test_brain_full_profile.py`); it is never a learning
   source (`participants.sealed_reason`). On the box it is `isolated` (`harness.isolation`): the claim gives it only to
-  a runner whose code reports `isolated` on its heartbeat, which turns Claude Code's auto memory off for it
-  (`runner/ec2/cloud_runner.py` `ISOLATED_TURN_ENV`), so what it read never reaches the memory the agent's other turns
-  load. A laptop runner does not report it and takes none.
+  a runner whose code reports `isolated` at `ISOLATED_VERSION` on its heartbeat, which turns Claude Code's auto memory
+  off for it (`runner/ec2/cloud_runner.py` `ISOLATED_TURN_ENV`), so what it read never reaches the memory the agent's
+  other turns load, and deletes its Claude session (transcript, tool results, todos) once it ends and its rows have
+  shipped (`_isolated_forget_turn`), so no later turn reads it off the disk. A laptop runner does not report it and
+  takes none.
 
 - **`brain_read`** serves the run's next eligible sources once each, in order, leaving out what a clean run of the
   same feature already read for the same subject, each through the core read (`transcript_read.read`) in the feature's
@@ -240,11 +260,14 @@ follows the operator's turn mode and rails. What makes it a learning run:
   `brain.read` event).
 - **`brain_emit`** writes one output of a declared kind, about the run's own subject, citing sources. Every cited
   source must be one this run read and must still be eligible now, or nothing is written. The lineage
-  (`OutputLineage`: the source and the people whose words were in it) is written from the reads. Words are scrubbed,
+  (`OutputLineage`: the source and the people whose words were in it) is written from the reads: every source the run
+  had read when it emitted, not only the cited ones (`emit.write_lineage`), since all of them were in its context, so
+  a removal of any reaches the output; `cited` marks the ones it names, which are all a screen shows. Words are scrubbed,
   object keys as well as values; the same output twice is one. Emits spend a budget of their own per run turn
   (`mcp.rate_limit`, `BRAIN_RUN_WRITE_LIMIT`), not the accountable admin's.
-- The run's conversation holds the words it read, in the operator's own turn record, readable by the operator's admins as
-  any of its work is, until a source it read is removed: then the cascade deletes the conversation's content.
+- The run's conversation holds the words it read. It has no creator and no participant and is not runner-discovered, so
+  no session leg reads it and nor do its turns' content routes (`turn_access` asks the session's ACL): nobody reads it
+  in canopy-web, the operator's admins included. When a source it read is removed the cascade deletes its content.
 
 ## Lineage over everything a run makes (`apps/brain/lineage.py`, `alerts_removal.py`)
 
@@ -357,7 +380,8 @@ MCP), and refused with the reason when the run cannot start or there is nothing 
 (`POST /api/w/<ws>/brain/targets`, `DELETE …/targets/{id}`) are settings of the same people, for `<ws>` or a workspace
 below it, never above. A clean end of the run's turn (`signals`, `runs.finish`) makes what it read count as learned; a
 failed one counts nothing and the next fire reads it again. A run open past `BRAIN_RUN_TIMEOUT_SECONDS` (six hours by
-default) is abandoned as failed at the next fire. A system run's outputs are findings: they act on nothing by themselves.
+default) is abandoned as failed at the next fire, and its turn is stopped (`harness.cancel_turn`), so nothing runs on
+for a run that is over. A system run's outputs are findings: they act on nothing by themselves.
 
 The **judge** (layer 3 of the associations; the registered `project-link-judge`) is such a run with the purpose `judge`:
 it is served only the sessions weakly tied to the project (a `candidate` link made by signals, never one a person or a
@@ -377,7 +401,7 @@ project history reads instead of re-deriving the selection.
 A workspace's view of the brain, among the health dashboard's views and linked from Settings → Learning (the flat
 `/brain` redirects to the active workspace's). Every read is pinned (`/api/w/<ws>/brain/…`) and covers `<ws>` and the
 workspaces below it the viewer is in (`wsvc.request_workspace_slugs`, the read rule every list follows). Its routes
-(`GET /api/brain/state`, `/state/links`, `/state/runs`) are the person's own as themselves (`api_state.the_person`), none
+(`GET /api/brain/state`, `/state/links`, `/state/runs`) are the person's own as themselves (`person.the_person`), none
 is an MCP tool, and they write nothing (`tests/test_brain_page.py` captures every query). The page holds no copy of a
 count. `tests/test_brain_workspace_scope.py` pins each role's slice.
 
@@ -390,7 +414,9 @@ count. `tests/test_brain_workspace_scope.py` pins each role's slice.
   (add, Run now, take away), and the two settings below.
 - **A member** sees their own: their classes, their own sources and removals, the links of sessions they read, runs
   about them, and the outputs `outputs.visible_to` already gives them.
-- **Everyone** sees the learners and who answers for each (`registry.accountable`). A session is named (id, scrubbed
+- **Everyone** sees the learners and who answers for each (`registry.accountable`); which agent operates one, its
+  entry and who answers for it only inside the operator's organisation (`registry.shown_to`), the same on
+  `/api/brain/capabilities/`, so tenants never meet there. A session is named (id, scrubbed
   title) only if the viewer reads it through legs 1 to 6, never the project leg; a run's read of one they do not, or
   an output's citation of it, is a count (`state.run_page`, `api_admin._cited`). A sub-workspace's owner never sees a
   sibling's or a parent's aggregate, runs or findings; a canopy admin also sees the unscoped runs. The runs list reads

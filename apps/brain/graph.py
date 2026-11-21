@@ -17,8 +17,9 @@ surface asks; nothing here is a new way in:
 * **Coaching**: the program (who coaches a workspace) is any member's to see (`list_coaches`); who a coach
   reads is the coach's roster (`access.review_grantors`) and the viewer's own opt-in.
 * **Outputs** are `outputs.visible_to`, their lineage drawn only to sessions already drawn.
-* **Proposed** links (`include=proposed`) are `associate.propose_many`, the compute `associate` writes and the
-  preview shows, over the drawn unsealed sessions, marked `proposed` and stored nowhere.
+* **Proposed** links (`include=proposed`) are `associate.proposals_for`, what `associate` would write, over the drawn
+  unsealed sessions it may look at (everyone in it agreed to project learning, "Learning reads" on), marked
+  `proposed` and stored nowhere.
 
 One query per kind of thing, whatever the number of sessions; capped (`MAX_*`), with `notes` saying what was
 left out."""
@@ -119,7 +120,7 @@ def brain_reads(viewer, slugs, *, sessions, unsealed, as_person: bool, manager_l
                                                        "subject", "created_at")[:MAX_OUTPUTS + 1])
     more = len(outs) > MAX_OUTPUTS
     outs = outs[:MAX_OUTPUTS]
-    lineage = list(OutputLineage.objects.filter(output_kind="brain.output",
+    lineage = list(OutputLineage.objects.filter(output_kind="brain.output", cited=True,
                                                 output_id__in=[str(o["pk"]) for o in outs],
                                                 source__session_id__in=unsealed)
                    .values_list("output_id", "source__session_id"))
@@ -261,7 +262,7 @@ def build(viewer, slugs, *, days: int = 30, proposed: bool = False, as_person: b
 
     # ---- projects and tasks ------------------------------------------------------------------------------------
     links = brain.links
-    would = associate.propose_many([s for s in rows if s.pk not in sealed]) if proposed else {}
+    would = associate.proposals_for([s for s in rows if s.pk not in sealed]) if proposed else {}
     task_rows = {t["pk"]: t for t in AgentTask.objects.filter(
         task_read_q(viewer), pk__in={tid for tid, _ in dispatched}, workspace_id__in=mine)
         .values("pk", "key", "title", "status", "project_id", "workspace_id", "updated_at")}

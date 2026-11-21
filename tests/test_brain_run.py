@@ -1,4 +1,4 @@
-"""A brain run (P4b): the confined `brain` profile, its two tools, and what they refuse.
+"""A brain run: its two tools (`brain_read`, `brain_emit`), and what they refuse.
 
 Through the real machinery, as `tests/test_session_review_asks.py` does: `runs.start` queues the operator's turn,
 the turn is claimed for its real credentials (`claim_payload.issue_credentials`), and those go through REST and the

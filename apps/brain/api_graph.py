@@ -4,7 +4,7 @@ A sibling of the workspace network (`/api/workspaces/{slug}/network`, admins, fr
 is any member's, and every node and edge in it is one the caller already sees on another surface
 (`apps/brain/graph.py`). Reporting lines are drawn only for a person as themselves and never through MCP, as the
 reporting route answers; the brain's would-be links (`include=proposed`) only for the person as themselves
-(`api_state.the_person`), and storing nothing."""
+(`person.the_person`), and storing nothing."""
 from __future__ import annotations
 
 from typing import Literal
@@ -15,12 +15,11 @@ from ninja import Router
 from apps.api.auth import session_auth
 from apps.api.errors import refusals
 from apps.api.route_gates import gate
-from apps.harness import acting_person
 from apps.workspaces.gates import membership_or_404
 
-from . import graph
+from . import graph, person
 from .api_admin import manager_leg_open
-from .api_state import the_person as _the_person
+from .person import the_person as _the_person
 from .schemas import WorkspaceGraphOut
 
 router = Router(auth=session_auth, tags=["brain"])
@@ -43,6 +42,6 @@ def workspace_graph(request: HttpRequest, slug: str, days: int = 30, tree: bool 
     proposed = include == "proposed"
     if proposed:
         _the_person(request)
-    as_person = acting_person.refusal(request) is None and not getattr(request, "via_mcp", False)
+    as_person = person.is_person(request)
     return graph.build(request.user, slugs, days=days, proposed=proposed, as_person=as_person,
                        manager_leg=manager_leg_open(request))

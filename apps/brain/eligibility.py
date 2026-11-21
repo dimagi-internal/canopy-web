@@ -121,7 +121,10 @@ def _facts(source) -> _Facts | None:
     source = BrainSource.objects.filter(pk=source.pk).select_related("session").first()
     if source is None:
         return None
-    return _Facts(source.session, source.workspace_id, source.state == BrainSource.OPEN,
+    # The session's workspace, read live like everything else about it (a session moved since the last refresh is
+    # judged where it is now, never where its source last saw it).
+    workspace = source.session.workspace_id if source.session is not None else source.workspace_id
+    return _Facts(source.session, workspace, source.state == BrainSource.OPEN,
                   tuple(source.participants.all()), frozenset(source.exclusions.values_list("user_id", flat=True)))
 
 
@@ -225,22 +228,37 @@ def eligible_sources(capability, purpose: str, subject=None):
     standing rule, who is a member where) is judged in Python over the people who consented, once, and
     handed to the query as sets: still nothing cached, and `tests/test_brain_eligible_sources.py` holds it
     to `eligible` over a whole world. A subject is a user (or id) for `individual`/`memory`."""
-    none = BrainSource.objects.none()
     cap = _capability(capability)
     if (cap is None or not cap.enabled or cap.purpose_class not in CLASSES
             or purpose not in (cap.purposes or [])):
-        return none
+        return BrainSource.objects.none()
+    return _sources(cap.purpose_class, slug=cap.slug, purpose=purpose, kinds=cap.source_kinds or [], subject=subject)
+
+
+def agreed_sources(cls: str):
+    """`everyone_agreed` for a whole listing, as ONE queryset: the sources canopy's automatic layers may look at for a
+    shared class (no capability, so only a standing rule naming nothing but the class or workspace counts, as
+    `explain` judges a class). What a preview of the associator's links asks (`associate.proposals_for`)."""
+    if cls not in SHARED:
+        return BrainSource.objects.none()
+    return _sources(cls, slug="", purpose="", kinds=[k for k, _ in BrainSource.KIND_CHOICES])
+
+
+def _sources(cls: str, *, slug: str, purpose: str, kinds, subject=None):
+    """The listing `eligible_sources` and `agreed_sources` share: `explain`'s rules for class `cls`, with `slug` and
+    `purpose` the capability's (empty for a class), as SQL plus sets judged once in Python."""
+    none = BrainSource.objects.none()
     on = learning_reads.on_slugs()                                          # "Learning reads", as `explain` asks it
     if not on:
         return none
-    qs = (BrainSource.objects.filter(kind__in=cap.source_kinds or [], state=BrainSource.OPEN, workspace_id__in=on,
+    qs = (BrainSource.objects.filter(kind__in=kinds, state=BrainSource.OPEN, session__workspace_id__in=on,
                                      session__isnull=False, session__contact__isnull=True,
                                      session__content_deleted_at__isnull=True)
           .exclude(session__metadata__has_key=rr.METADATA_KEY)
           .exclude(session__metadata__has_key=BRAIN_RUN_KEY))                # `participants.sealed_reason`
     consents = [c for c in LearningConsent.objects.filter(revoked_at__isnull=True)
-                if cap.purpose_class in (c.classes or [])]
-    if cap.purpose_class in ABOUT_A_PERSON:
+                if cls in (c.classes or [])]
+    if cls in ABOUT_A_PERSON:
         who = getattr(subject, "pk", subject)
         consents = [c for c in consents if c.user_id == who]
         if who is None or not consents:
@@ -254,21 +272,21 @@ def eligible_sources(capability, purpose: str, subject=None):
     for c in consents:
         for ws in workspaces:
             denied = (ws not in roles.get(c.user_id, {}) or not covers(c, ws)
-                      or any(rule_denies(r, capability=cap.slug, purpose=purpose, cls=cap.purpose_class,
+                      or any(rule_denies(r, capability=slug, purpose=purpose, cls=cls,
                                          workspace=ws) for r in (c.standing_rules or [])))
             if denied:
                 bad_in.setdefault(ws, set()).add(c.user_id)
     consenting = set(users)
-    if cap.purpose_class in ABOUT_A_PERSON:
+    if cls in ABOUT_A_PERSON:
         subject_id = consents[0].user_id
         allowed = [ws for ws in workspaces if subject_id not in bad_in.get(ws, set())]
         mine = SourceParticipant.objects.filter(source=OuterRef("pk"), user_id=subject_id)
         out = SourceExclusion.objects.filter(source=OuterRef("pk"), user_id=subject_id)
-        return qs.filter(Exists(mine), ~Exists(out), workspace_id__in=allowed)
+        return qs.filter(Exists(mine), ~Exists(out), session__workspace_id__in=allowed)
     humans = SourceParticipant.objects.filter(source=OuterRef("pk"), user__isnull=False)
     bad = ~Q(user_id__in=consenting)
     for ws, people in bad_in.items():
-        bad |= Q(source__workspace_id=ws, user_id__in=people)
+        bad |= Q(source__session__workspace_id=ws, user_id__in=people)
     contacts = SourceParticipant.objects.filter(source=OuterRef("pk"), contact__isnull=False)
     out = SourceExclusion.objects.filter(source=OuterRef("pk"))      # anyone's, member or not, for good
     qs = qs.filter(Exists(humans), ~Exists(contacts), ~Exists(out), ~Exists(humans.filter(bad)))
@@ -300,7 +318,7 @@ def _live_people_agree(qs, consenting: set[int], bad_in: dict[str, set[int]]):
                    ~Exists(unconsented_starter(by_chat)), ~Exists(unconsented_starter(by_canopy)))
     for ws, people in bad_in.items():
         people = sorted(people)
-        qs = qs.exclude(Q(workspace_id=ws) & (Exists(added.filter(user_id__in=people))
+        qs = qs.exclude(Q(session__workspace_id=ws) & (Exists(added.filter(user_id__in=people))
                                               | Exists(started(by_chat, people)) | Exists(started(by_canopy, people))))
     return qs
 

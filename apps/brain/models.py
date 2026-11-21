@@ -211,6 +211,9 @@ class SourceLink(models.Model):
                            related_name="+")
     by_agent = models.ForeignKey("agents.Agent", null=True, blank=True, on_delete=models.SET_NULL,
                                  related_name="+")
+    #: Everyone else who rejected it (user ids), besides `by`: each person's rejection sticks until THEY take it back,
+    #: so when `by` does, the next of these holds it (`associate.undeclare`).
+    rejected_by = models.JSONField(default=list, blank=True, db_default=[])
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -276,12 +279,17 @@ class OutputLineage(models.Model):
     """One output's one source: written by `brain_emit` from the turn's ACTUAL reads, so the cascade
     knows what to withdraw. `output_kind` names the store (`brain.output` now; an existing store later
     carries its own kind). `participant_scope` is the people whose words were in the source at the time:
-    the consents the output carries."""
+    the consents the output carries.
+
+    An output carries a row for EVERY source its run had read when it was written, not only those it cites: what a
+    run read is all in its context, so a removal of any of them reaches the output (as it reaches the run's artifacts
+    and conversation). `cited` marks the ones it names as its evidence, which are what a screen shows."""
 
     output_kind = models.CharField(max_length=40, default="brain.output")
     output_id = models.CharField(max_length=64)
     source = models.ForeignKey(BrainSource, on_delete=models.CASCADE, related_name="lineage")
     participant_scope = models.JSONField(default=list, blank=True)
+    cited = models.BooleanField(default=True, db_default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -291,9 +299,10 @@ class OutputLineage(models.Model):
 
 
 class BrainRun(models.Model):
-    """One run of a learning feature: a conversation of its operator agent, confined to the brain's own
-    profile (`published_profiles.BRAIN`), that reads sources and emits outputs, nothing else. The server
-    makes it (`runs.start`); nothing a turn says makes one."""
+    """One run of a learning feature: a conversation of its operator agent, whose turn is an ordinary full-profile
+    turn of that agent set up by the learning system (`context`), reading the sessions due only through `brain_read`
+    and recording what it makes against them (`lineage`). The server makes it (`runs.start`); nothing a turn says
+    makes one."""
 
     OPEN, DONE, FAILED = "open", "done", "failed"
     STATE_CHOICES = [(OPEN, "Open"), (DONE, "Done"), (FAILED, "Failed")]

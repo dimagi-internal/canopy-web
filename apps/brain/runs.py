@@ -187,9 +187,16 @@ def _close_rederivations(run: BrainRun) -> None:
 
 def abandon_stale(now=None) -> int:
     """Close as failed every run open longer than the timeout: its turn never reported an end. What it read
-    counts for nothing, so the next run reads it again; its turn, if it ever runs on, may no longer read or emit."""
+    counts for nothing, so the next run reads it again. Its turn is stopped too (`harness.cancel_turn`: a queued one
+    at once, a running one by its runner), so no turn runs on for a run that is over."""
     now = now or timezone.now()
     timeout = int(getattr(settings, "BRAIN_RUN_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS))
-    return BrainRun.objects.filter(state=BrainRun.OPEN, created_at__lt=now - dt.timedelta(seconds=timeout)).update(
+    stale = list(BrainRun.objects.filter(state=BrainRun.OPEN, created_at__lt=now - dt.timedelta(seconds=timeout))
+                 .values_list("pk", "session_id"))
+    n = BrainRun.objects.filter(pk__in=[pk for pk, _ in stale], state=BrainRun.OPEN).update(
         state=BrainRun.FAILED, finished_at=now)
+    for turn in Turn.objects.filter(chat_session_id__in=[sid for _, sid in stale if sid],
+                                    status__in=list(Turn.NON_TERMINAL)):
+        harness.cancel_turn(turn, by="the learning system: the run timed out")
+    return n
 
