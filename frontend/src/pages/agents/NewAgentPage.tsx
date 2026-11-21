@@ -9,6 +9,7 @@ import {
   scaffoldAgent,
   type RepoCheckOut,
 } from '@/api/agentCreation'
+import { createStoredAgent } from '@/api/agentDefinitions'
 import { setAgentGitHub } from '@/api/agents'
 import { GitHubTokenSteps } from '@/components/agents/GitHubTokenSteps'
 import { mailboxHint, useHostedDomains } from '@/components/agents/hostedMail'
@@ -33,12 +34,18 @@ import { rememberedOwner, remember, Step, Field, RepoState, Problem } from './Ne
  * and a token scoped to it; the token pushes the scaffold and then becomes the
  * agent's GitHub identity, so one paste covers both and no app install (which on
  * an org needs an org owner) is involved. Canopy never creates a repo.
+ *
+ * Or a STORED agent: no repository and no token at all. Canopy stamps the same factory
+ * and keeps the files itself (docs/architecture/stored-agents.md); its definition is
+ * then changed by drafts on its Definition tab.
  */
 export function NewAgentPage(): JSX.Element {
   const { workspace = '' } = useParams<{ workspace: string }>()
   const navigate = useNavigate()
   const canCreate = roleAllows(useWorkspaceRole(workspace), 'agent.work')
 
+  const [kind, setKind] = useState<'repo' | 'stored'>('repo')
+  const stored = kind === 'stored'
   const [name, setName] = useState('')
   const [slug, setSlug] = useState('')
   const [slugEdited, setSlugEdited] = useState(false)
@@ -106,9 +113,24 @@ export function NewAgentPage(): JSX.Element {
     !name.trim() && 'a name',
     !effectiveSlug && 'a slug',
     !mandate.trim() && 'a mandate',
-    !token.trim() && 'a GitHub token (step 2)',
-    token.trim() && !ready && 'a repository the token can push to (step 2)',
+    !stored && !token.trim() && 'a GitHub token (step 2)',
+    !stored && token.trim() && !ready && 'a repository the token can push to (step 2)',
   ].filter((m): m is string => Boolean(m))
+
+  const createStored = async () => {
+    setCreateError(null)
+    setCreating('Creating the agent…')
+    try {
+      const made = await createStoredAgent({
+        workspace, slug: effectiveSlug, name: name.trim(), mandate: mandate.trim(), stakeholders: stakeholders.trim(),
+      })
+      navigate(scopedPath(workspace, `/agents/${made.slug}/settings?created=stored#setup`))
+    } catch (e) {
+      setCreateError(e instanceof CreationError ? e : new CreationError(0, String(e)))
+    } finally {
+      setCreating('')
+    }
+  }
 
   const create = async () => {
     const agent = {
@@ -163,9 +185,21 @@ export function NewAgentPage(): JSX.Element {
   return (
     <div className="max-w-3xl px-6 py-8">
       <WorkbenchSubHeader title="New agent" />
-      <p className="-mt-2 mb-6 text-[13px] text-foreground-secondary">
-        Makes its GitHub repository and registers it here. Its persona and first skill come after, in Claude Code.
+      <p className="-mt-2 mb-4 text-[13px] text-foreground-secondary">
+        {stored
+          ? 'Canopy keeps its files: no GitHub repository or token. Its persona and first skill come after, as a draft you publish.'
+          : 'Makes its GitHub repository and registers it here. Its persona and first skill come after, in Claude Code.'}
       </p>
+      <fieldset className="mb-6 flex flex-wrap gap-4 text-[13px]" aria-label="Where its definition lives">
+        <label className="flex items-center gap-2">
+          <input type="radio" name="agent-kind" checked={!stored} onChange={() => setKind('repo')} />
+          In a GitHub repository
+        </label>
+        <label className="flex items-center gap-2">
+          <input type="radio" name="agent-kind" checked={stored} onChange={() => setKind('stored')} />
+          Stored agent (kept in canopy, no repository)
+        </label>
+      </fieldset>
 
       <Step n={1} title="Who it is" done={aboutDone}>
         <Field label="Name">
@@ -189,6 +223,7 @@ export function NewAgentPage(): JSX.Element {
             placeholder="Find good first issues for new contributors."
           />
         </Field>
+        {!stored && <>
         <Field label="Mailbox (optional — Google or canopy-hosted)" hint={mailboxHint(mailbox, hostedDomains)}>
           <Input value={mailbox} onChange={(e) => setMailbox(e.target.value)}
             placeholder={`${effectiveSlug || 'scout'}@${hostedDomains[0] ?? 'example.org'}`} />
@@ -198,12 +233,13 @@ export function NewAgentPage(): JSX.Element {
           <Input value={googleAccount} onChange={(e) => setGoogleAccount(e.target.value)}
             placeholder={`${effectiveSlug || 'scout'}@dimagi-ai.com`} aria-label="Google account" />
         </Field>
+        </>}
         <Field label="Who it serves (optional)">
           <Input value={stakeholders} onChange={(e) => setStakeholders(e.target.value)} placeholder="the contributor team" />
         </Field>
       </Step>
 
-      <Step n={2} title="Where its code lives" done={ready}>
+      {!stored && <Step n={2} title="Where its code lives" done={ready}>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)]">
           <Field label="Owner" hint="The GitHub account or org it lives under.">
             <Input value={owner} onChange={(e) => setOwner(e.target.value.trim())} placeholder="dimagi-internal" />
@@ -248,14 +284,16 @@ export function NewAgentPage(): JSX.Element {
             setSlug(s)
           }}
         />
-      </Step>
+      </Step>}
 
-      <Step n={3} title="Create it" done={false}>
+      <Step n={stored ? 2 : 3} title="Create it" done={false}>
         <p className="mb-3 text-[12px] text-muted-foreground">
-          Pushes the template with your token, registers the agent here with you as its owner, and saves the token
-          as its GitHub identity. Safe to run again if it stops partway.
+          {stored
+            ? 'Stamps the agent template into canopy as its first revision, published, with you as its owner.'
+            : 'Pushes the template with your token, registers the agent here with you as its owner, and saves the ' +
+              'token as its GitHub identity. Safe to run again if it stops partway.'}
         </p>
-        <Button onClick={() => void create()} disabled={missing.length > 0 || Boolean(creating)}>
+        <Button onClick={() => void (stored ? createStored() : create())} disabled={missing.length > 0 || Boolean(creating)}>
           {creating || 'Create agent'}
         </Button>
         {missing.length > 0 && !creating && (

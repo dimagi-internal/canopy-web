@@ -655,6 +655,12 @@ export const SURFACES: SurfaceDescriptor[] = [
     use: 'When you want to see how this agent\'s skills changed over time.',
   },
   {
+    path: '/w/:workspace/agents/:slug/definition',
+    group: 'Agent workspace',
+    title: 'Agent definition',
+    use: 'When you want to read, publish or roll back the files canopy keeps for a stored agent.',
+  },
+  {
     path: '/w/:workspace/agents/:slug/capabilities',
     group: 'Agent workspace',
     title: 'Cloud capabilities',

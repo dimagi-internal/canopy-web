@@ -1,5 +1,7 @@
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 import { CheckCircle2 } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { scopedPath } from '@/lib/scopedLinks'
 import { AgentHowItRuns } from '@/components/agents/AgentHowItRuns'
 import { AgentClisControl } from '@/components/agents/AgentClisControl'
 import { AgentRepositoryControl } from '@/components/agents/AgentRepositoryControl'
@@ -76,13 +78,25 @@ export function OverviewTab({ agent, isAdmin, canRoute, admins, hold, setHold, c
             </Setting>
           </div>
         )}
-        <div id="repository" className="scroll-mt-6 border-t border-border">
-          <Setting title="Repository" who={admins} canEdit={isAdmin}
-                   description="The GitHub repository its runners clone and run, and the branch.">
-            <AgentRepositoryControl slug={agent.slug} initialUrl={agent.definition?.repo_url ?? ''}
-                                    initialRef={agent.definition?.repo_ref ?? ''} canEdit={isAdmin} />
-          </Setting>
-        </div>
+        {agent.definition?.source === 'stored' ? (
+          <div id="repository" className="scroll-mt-6 border-t border-border">
+            <Setting title="Definition" who={admins} canEdit={false}
+                     description="Canopy keeps this agent's files (no repository); its runners run the live revision.">
+              <p className="text-[13px]">
+                Revision {agent.definition.revision ?? '—'} is live.{' '}
+                <Link to={scopedPath(agent.workspace ?? '', `/agents/${agent.slug}/definition`)} className="text-primary hover:underline">Open its definition</Link>
+              </p>
+            </Setting>
+          </div>
+        ) : (
+          <div id="repository" className="scroll-mt-6 border-t border-border">
+            <Setting title="Repository" who={admins} canEdit={isAdmin}
+                     description="The GitHub repository its runners clone and run, and the branch.">
+              <AgentRepositoryControl slug={agent.slug} initialUrl={agent.definition?.repo_url ?? ''}
+                                      initialRef={agent.definition?.repo_ref ?? ''} canEdit={isAdmin} />
+            </Setting>
+          </div>
+        )}
         <div id="clis" className="scroll-mt-6 border-t border-border">
           <Setting title="Agent CLIs" who={admins} canEdit={isAdmin}
                    description="The agent CLIs it is set up for — Claude Code, Codex — its default first, and the model each starts on. A new chat or schedule can pick any of them. A CLI can be added once a runner here has it.">
