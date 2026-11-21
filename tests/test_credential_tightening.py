@@ -131,7 +131,8 @@ def test_the_cli_authorize_flow_still_mints_from_a_browser(user):
     browser.force_login(user)
     resp = browser.post(_cli_url())
     assert resp.status_code == 302
-    assert resp["Location"].startswith("http://127.0.0.1:8765/cb?token=")
+    # A one-time code the loopback trades at /auth/cli/token/, never the token itself.
+    assert resp["Location"].startswith("http://127.0.0.1:8765/cb?code=")
 
 
 def test_the_refusal_reads_the_credential_that_authenticated():
