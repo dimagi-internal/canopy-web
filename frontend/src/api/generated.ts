@@ -19415,7 +19415,8 @@ export interface paths {
         /**
          * What learns from canopy's sessions
          * @description Every registered capability: its class, the purposes it reads for and who sees what it produces.
-         *     What a person agrees to when they agree to a class.
+         *     What a person agrees to when they agree to a class. Which agent operates one, and the command its runs start
+         *     with, only inside the operator's own organisation (`registry.shown_to`).
          */
         readonly get: operations["list_capabilities"];
         readonly put?: never;

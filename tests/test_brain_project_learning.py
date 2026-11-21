@@ -370,9 +370,12 @@ def test_an_idea_withdraws_with_its_only_source_and_goes_stale_with_one_of_sever
     _link(w, a)
     _link(w, b)
     [run] = fire(w["target"])
-    page = reading.read_next(run, limit=5)
-    ids = [x["source"] for x in page["sources"]]
-    only = emit.emit(run, kind="idea", title="Import prices", body={"why": "x"}, source_ids=[ids[0]])
+    first = reading.read_next(run, limit=1)
+    # Written when the run had read only the first source: derived from it alone.
+    only = emit.emit(run, kind="idea", title="Import prices", body={"why": "x"},
+                     source_ids=[first["sources"][0]["source"]])
+    second = reading.read_next(run, after=first["next_after"], limit=1)
+    ids = [first["sources"][0]["source"], second["sources"][0]["source"]]
     both = emit.emit(run, kind="idea", title="Stop re-keying", body={"why": "y"}, source_ids=ids)
     consent.exclude(w["alice"], sources.for_session(a))
     cascade.sweep()

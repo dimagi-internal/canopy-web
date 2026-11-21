@@ -113,13 +113,28 @@ def list_events(
     return qs[: max(1, min(limit, 500))]
 
 
+#: Event sources `prune` never drops: a record a person is owed for as long as it applies (registered by the app
+#: that writes it, `keep`), not a log.
+_KEPT: dict[str, str] = {}
+
+
+def keep(source: str, why: str) -> None:
+    """`prune` never drops events of `source` (`why` says whose record it is)."""
+    _KEPT[source] = why
+
+
+def kept() -> dict[str, str]:
+    return dict(_KEPT)
+
+
 def prune(*, older_than: dt.timedelta) -> int:
-    """Drop events untouched for longer than ``older_than``. Returns the count.
+    """Drop events untouched for longer than ``older_than``, less the sources an app keeps (`keep`). Returns the
+    count.
 
     Anchored on ``last_seen_at``, not ``first_seen_at``: a fault that started
     three weeks ago and is STILL happening is the most interesting row in the
     table, and pruning by when it began would delete exactly that one.
     """
     cutoff = timezone.now() - older_than
-    deleted, _ = Event.objects.filter(last_seen_at__lt=cutoff).delete()
+    deleted, _ = Event.objects.filter(last_seen_at__lt=cutoff).exclude(source__in=list(_KEPT)).delete()
     return deleted

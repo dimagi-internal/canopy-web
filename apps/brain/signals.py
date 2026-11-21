@@ -27,6 +27,17 @@ def _schedule_after_fold(sender, instance, created, update_fields=None, **kwargs
     transaction.on_commit(lambda: associate.schedule(session_id))
 
 
+@receiver(post_save, sender="canopy_sessions.Session", dispatch_uid="brain_a_moved_session_follows")
+def _a_moved_session(sender, instance, created, update_fields=None, **kwargs):
+    """A session moved to another workspace: its source follows it after the commit (`sources.refresh`), and its
+    links to projects of the workspace it left go (`sources.drop_foreign_links`)."""
+    if created or (update_fields is not None and "workspace" not in update_fields):
+        return
+    if (BrainSource.objects.filter(kind=BrainSource.SESSION, ref=str(instance.pk))
+            .exclude(workspace_id=instance.workspace_id).exists()):
+        _refresh_after_commit(instance.pk)
+
+
 #: The `Turn` fields that say who started it and in which conversation.
 _WHO_AND_WHERE = frozenset({"initiator_user", "initiator_contact", "chat_session", "canopy_session"})
 

@@ -18,6 +18,7 @@ from django.db import transaction
 from apps.canopy_sessions import transcript_read
 from apps.events import services as events
 from apps.harness import invocations
+from apps.workspaces import services as wsvc
 
 from .models import INDIVIDUAL, MEMORY, PROJECT, SYSTEM, BrainCapability, BrainSource
 
@@ -36,6 +37,34 @@ logger = logging.getLogger(__name__)
 
 class RefusedError(ValueError):
     """The registration asked for is not one a canopy admin may make (a 422 at the route)."""
+
+
+def shown_to(user, caps) -> set[int]:
+    """Of `caps`, the learners whose operator, entry and accountable admin `user` may see: a canopy admin sees every
+    one; anyone else only one whose operator lives in their own tenant tree (an organisation never learns which agent
+    or person runs another's learning), or, with no operator, one whose accountable admin is canopy's or theirs. Everything else about
+    a learner (its class, purposes, audience) is what people agree to and is shown to everyone."""
+    caps = list(caps)
+    if getattr(user, "is_superuser", False):
+        return {c.pk for c in caps}
+    if not getattr(user, "is_authenticated", False):
+        return set()
+    mine = set(wsvc.tree_roots(wsvc.user_workspace_slugs(user)).values())
+    homes = {c.operator.workspace_id for c in caps if c.operator_id}
+    roots = wsvc.tree_roots(homes) if homes else {}
+    answer: dict[int, bool] = {}
+
+    def theirs(registrant) -> bool:
+        """With no operator, whoever answers for it: canopy's own admin, or someone of the viewer's organisation."""
+        if registrant is None:
+            return True
+        if registrant.pk not in answer:
+            answer[registrant.pk] = registrant.is_superuser or bool(
+                set(wsvc.tree_roots(wsvc.user_workspace_slugs(registrant)).values()) & mine)
+        return answer[registrant.pk]
+
+    return {c.pk for c in caps if (roots.get(c.operator.workspace_id) in mine if c.operator_id
+                                   else theirs(c.registered_by))}
 
 
 def accountable(cap: BrainCapability):

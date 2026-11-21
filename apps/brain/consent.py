@@ -22,7 +22,7 @@ from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
 from . import cascade
-from .models import CLASSES, INDIVIDUAL, BrainSource, LearningConsent, SourceExclusion
+from .models import CLASSES, INDIVIDUAL, PROJECT, BrainSource, LearningConsent, SourceExclusion
 
 logger = logging.getLogger(__name__)
 
@@ -65,15 +65,17 @@ def _person(user):
     return contact_services.person_for(user=user)
 
 
-def _record(user, event_type: str, *, purpose: str, detail: str = "", ids: dict | None = None) -> None:
-    """One event on the person's own log and one ids-only row in each workspace they are in."""
+def _record(user, event_type: str, *, purpose: str, detail: str = "", ids: dict | None = None,
+            workspaces=None) -> None:
+    """One event on the person's own log and one ids-only row in each workspace they are in, or only in
+    `workspaces` (a session's own, for an act about one session: another organisation's log never names it)."""
     from apps.contacts import hcp  # noqa: PLC0415 — contacts imports this module
 
     person = _person(user)
     if person is not None:
         hcp.audit(person, event_type, actor=hcp.user_actor(user), purpose=purpose, detail=detail)
     payload = {"user_id": user.pk, **(ids or {})}
-    for slug in sorted(wsvc.user_workspace_slugs(user)):
+    for slug in sorted(wsvc.user_workspace_slugs(user) if workspaces is None else set(workspaces)):
         try:
             events.record([{"source": SOURCE, "kind": event_type, "payload": payload}],
                           workspace=Workspace(pk=slug))
@@ -182,6 +184,8 @@ def set_consent(user, *, classes, workspaces=None, include_new: bool | None = No
                     ids={"class": cls})
     if before - set(classes) or (before and _narrows(was, _state(row))):
         cascade.after_commit(cascade.sources_of(user))
+    if PROJECT in classes:
+        _look_again(user)
     _sync_coaching(user, on=INDIVIDUAL in classes)
     return row
 
@@ -199,6 +203,14 @@ def revoke(user) -> bool:
     cascade.after_commit(cascade.sources_of(user))
     _sync_coaching(user, on=False)
     return True
+
+
+def _look_again(user) -> None:
+    """The associator skips a session until everyone in it agreed to project learning: once this person does (or
+    widens it), their sessions are looked at again."""
+    from .associate import due_again  # noqa: PLC0415 — associate reads this module's neighbours
+
+    due_again(pk__in=cascade.sources_of(user))
 
 
 def _sync_coaching(user, *, on: bool) -> None:
@@ -250,7 +262,7 @@ def exclude(user, source: BrainSource) -> bool:
         _, made = SourceExclusion.objects.get_or_create(user=user, source=source)
         if made:
             _record(user, SOURCE_WITHDRAWN, purpose="remove a session from canopy learning",
-                    detail=source.ref, ids={"source": source.pk, "ref": source.ref})
+                    detail=source.ref, ids={"source": source.pk, "ref": source.ref}, workspaces=[source.workspace_id])
             cascade.after_commit([source.pk])
     return made
 
@@ -261,8 +273,11 @@ def include(user, source: BrainSource) -> bool:
     with transaction.atomic():
         n, _ = SourceExclusion.objects.filter(user=user, source=source).delete()
         if n:
+            from .associate import due_again  # noqa: PLC0415 — associate reads this module's neighbours
+
+            due_again(pk=source.pk)
             _record(user, SOURCE_RESTORED, purpose="allow a session in canopy learning again",
-                    detail=source.ref, ids={"source": source.pk, "ref": source.ref})
+                    detail=source.ref, ids={"source": source.pk, "ref": source.ref}, workspaces=[source.workspace_id])
     return bool(n)
 
 

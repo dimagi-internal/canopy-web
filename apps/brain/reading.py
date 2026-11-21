@@ -17,6 +17,7 @@ from django.db.models import CharField, Q
 from django.db.models.functions import Cast
 from django.utils import timezone
 
+from apps.agents.models import AgentProject
 from apps.canopy_sessions import transcript_read
 from apps.common import redact
 from apps.workspaces import services as wsvc
@@ -61,8 +62,10 @@ def candidates(run: BrainRun, after: int = 0):
     elif run.subject_type == "project":
         qs = qs.filter(links__subject_type=SourceLink.PROJECT_SUBJECT, links__subject=run.subject,
                        links__tier=SourceLink.CORE)
+    if run.subject_type == "project":
+        qs = qs.filter(session__workspace__in=AgentProject.objects.filter(pk=run.subject).values("workspace_id"))
     if run.scope:
-        qs = qs.filter(workspace_id__in=subtree(run.scope))
+        qs = qs.filter(session__workspace_id__in=subtree(run.scope))
     return qs.filter(pk__gt=max(after, run.floor)).exclude(learned(run)).order_by("pk")
 
 
@@ -85,7 +88,7 @@ def learned(run: BrainRun) -> Q:
 
 def _project_context(run: BrainRun) -> dict:
     """The project a judge rules for: what done looks like and what is still open. Its own words, not a session's."""
-    from apps.agents.models import AgentProject, AgentTask  # noqa: PLC0415 — as the other lazy imports here
+    from apps.agents.models import AgentTask  # noqa: PLC0415 — as the other lazy imports here
 
     project = AgentProject.objects.filter(pk=run.subject).first()
     if project is None:

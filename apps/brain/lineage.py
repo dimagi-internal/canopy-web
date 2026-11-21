@@ -27,7 +27,7 @@ from django.db import transaction
 from django.db.models.signals import post_save
 from django.utils import timezone
 
-from .models import BrainRun, BrainRunArtifact, BrainRunRead, BrainSource, OutputLineage
+from .models import ABOUT_A_PERSON, BrainRun, BrainRunArtifact, BrainRunRead, BrainSource, OutputLineage
 
 logger = logging.getLogger(__name__)
 
@@ -249,7 +249,7 @@ def sweep(source_ids=None, memo: dict | None = None) -> dict:
         if art is None:
             continue
         cap, purpose = art.run.capability, art.run.purpose
-        subject = int(art.run.subject) if cap.subject_type == "person" and art.run.subject.isdecimal() else None
+        subject = int(art.run.subject) if cap.purpose_class in ABOUT_A_PERSON and art.run.subject.isdecimal() else None
         why = next((r for r in (removed_reason(x.source, cap.purpose_class, subject, x.participant_scope or [],
                                                capability=cap.slug, purpose=purpose, memo=memo) for x in lineage) if r),
                    "")

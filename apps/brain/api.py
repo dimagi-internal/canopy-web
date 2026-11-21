@@ -1,7 +1,8 @@
 """`/api/me/learning/`: a person's agreement to canopy learning, and taking one session out of it.
 
-PERSON-ONLY. Every route asks `acting_person.refusal` and answers 403 for an agent's login, a
-turn's token, a runner or a site's token, and none is an MCP tool (`apps/mcp/api_tools.py`
+PERSON-ONLY. Every route asks `person.refusal` and answers 403 for anything but the person's own browser
+session or hand-minted PAT (an agent's login, a turn's token, a runner, an OAuth client, a site's token), and none
+is an MCP tool (`apps/mcp/api_tools.py`
 EXCLUDED): an agent that could turn this on would be consenting for someone. Reading is the
 person's too. `docs/architecture/brain.md`."""
 from __future__ import annotations
@@ -11,30 +12,33 @@ import uuid
 from django.http import HttpRequest
 from ninja import Router
 
+from apps.agents.models import AgentProject
+from apps.agents.services.projects import may_read_project
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_CONFLICT, TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError, refusals
 from apps.api.route_gates import gate
-from apps.agents.models import AgentProject
-from apps.agents.services.projects import may_read_project
 from apps.canopy_sessions import access
 from apps.canopy_sessions.models import Session
-from apps.contacts import people
-from apps.harness import acting_person
 from apps.workspaces import services as wsvc
 
-from . import associate, consent, disclosure, participants, sources
+from . import associate, consent, disclosure, participants, person, sources
 from .models import CLASSES, SourceExclusion, SourceLink
-from .schemas import AgentLinkIn, DisclosureDayOut, RemovedSessionOut, LearningIn, LearningOut, LearningSourceOut, PersonLinkIn
+from .schemas import (
+    AgentLinkIn,
+    DisclosureDayOut,
+    LearningIn,
+    LearningOut,
+    LearningSourceOut,
+    PersonLinkIn,
+    RemovedSessionOut,
+)
 
 router = Router(auth=session_auth, tags=["brain"])
 
 
 def _the_person(request: HttpRequest):
-    """The signed-in person as themselves, or a 403 naming nothing about why."""
-    user = request.user
-    if acting_person.refusal(request) is not None or not people.is_human_account(user):
-        raise ProblemError(403, "Only the person may do this", type_=TYPE_FORBIDDEN)
-    return user
+    """The signed-in person as themselves (`person.the_person`), or a 403 naming nothing about why."""
+    return person.the_person(request)
 
 
 def _out(user) -> dict:
@@ -176,7 +180,8 @@ def declare_my_session_project(request: HttpRequest, session_id: uuid.UUID, hand
     project = _project_of(user, session, handle)
     source = sources.for_session(session)
     row = associate.declare(source, project, tier=payload.tier, by=user)
-    if row.by_id != user.pk or row.tier != payload.tier:
+    if not ((row.by_id == user.pk and row.tier == payload.tier)
+            or (payload.tier == "rejected" and associate.rejects(row, user))):
         raise ProblemError(409, "Conflict", type_=TYPE_CONFLICT,
                            detail="Someone else in this session rejected this link; only they can undo it")
     return _source_out(user, session)

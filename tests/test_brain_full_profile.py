@@ -44,7 +44,7 @@ def w():
     Message.objects.create(session=out["session"], role=Message.USER, turn_index=0, plaintext="the runner idles",
                            author={"user_id": out["alice"].pk})
     box = Runner.objects.create(name="cloud-1", kind=Runner.CLOUD, owner=owner, workspace=ws, status=Runner.ONLINE,
-                                last_heartbeat_at=timezone.now(), capabilities={"isolated": 1})
+                                last_heartbeat_at=timezone.now(), capabilities={"isolated": isolation.ISOLATED_VERSION})
     target = targets.add(BrainCapability.objects.get(pk=system.pk), workspace=ws, by=owner)
     run, why = targets.start(target)
     assert run is not None, why
@@ -128,6 +128,10 @@ def test_a_run_s_turn_is_isolated_and_only_a_runner_that_isolates_takes_it(w):
     laptop = Runner.objects.create(name="laptop", kind=Runner.CLOUD, owner=w["owner"], workspace=w["ws"],
                                    status=Runner.ONLINE, last_heartbeat_at=timezone.now(), capabilities={})
     assert "keeps nothing" in isolation.refusal(laptop, w["turn"])
+    # A box on code that turns auto memory off but keeps the run's Claude session on disk (level 1) takes none.
+    older = Runner.objects.create(name="older", kind=Runner.CLOUD, owner=w["owner"], workspace=w["ws"],
+                                  status=Runner.ONLINE, last_heartbeat_at=timezone.now(), capabilities={"isolated": 1})
+    assert "keeps nothing" in isolation.refusal(older, w["turn"])
     assert isolation.refusal(w["box"], w["turn"]) is None
     # The claim passes the old runner over, even pinned to it (above the pin), and the isolating one takes it.
     Turn.objects.filter(pk=w["turn"].pk).update(pinned_runner=laptop)

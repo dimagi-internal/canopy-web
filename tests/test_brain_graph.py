@@ -170,6 +170,12 @@ def test_a_coach_sees_their_roster_and_everyone_sees_the_program(w):
 def test_proposed_links_are_the_brains_compute_marked_and_written_nowhere(w, django_capture_on_commit_callbacks):
     ProjectSignature.objects.create(project=w["project"], name_terms=["payroll", "carol"])
     SessionParticipant.objects.create(session=w["carols"], user=w["alice"])
+    # The associator looks only at a session everyone in it agreed to project learning for, and so does its preview.
+    assert not [e for e in graph.build(w["alice"], ["acme"], proposed=True, as_person=True)["edges"] if e["proposed"]]
+    from apps.brain.models import LearningConsent
+
+    LearningConsent.objects.create(user=w["carol"], classes=["project"])
+    sources.for_session(w["carols"])                       # the associator's tick makes a session's source first
     before = (SourceLink.objects.count(), list(SourceLink.objects.values_list("pk", "tier", "how")))
     with django_capture_on_commit_callbacks() as callbacks, CaptureQueriesContext(connection) as ctx:
         body = graph.build(w["alice"], ["acme"], proposed=True, as_person=True)

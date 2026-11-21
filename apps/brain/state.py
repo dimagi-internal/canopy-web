@@ -10,7 +10,8 @@ bounded by what they already read:
   dashboard's gate); elsewhere the same counts over their own sources and their own removals.
 * **Consent** as counts per workspace and class; nobody's name, and a count below `SMALL` is hidden (None, "<3")
   so a small workspace's few are not named by elimination. The viewer's own classes are theirs.
-* **Learners** are what `/api/brain/capabilities/` already lists, with who answers for each (`registry.accountable`).
+* **Learners** are what `/api/brain/capabilities/` already lists, with who answers for each (`registry.accountable`);
+  who operates and answers for one only inside its operator's organisation (`registry.shown_to`).
 * **Runs** of a feature about a project they read or about themselves; every run to a canopy admin.
 
 `tests/test_brain_page.py` holds the routes to no write at all."""
@@ -151,10 +152,12 @@ def learners(user=None, pin: str = "", targets: list[dict] = ()) -> list[dict]:
     and whether `user` may configure it at `pin` (`api_manage.learner_refusal`)."""
     from .api_manage import learner_refusal  # noqa: PLC0415 — api_manage reads this module's neighbours
 
-    caps = BrainCapability.objects.select_related("operator", "registered_by").order_by("slug")
+    caps = list(BrainCapability.objects.select_related("operator", "registered_by").order_by("slug"))
+    shown = registry.shown_to(user, caps) if user is not None else set()
     return [{"slug": c.slug, "name": c.name, "purpose_class": c.purpose_class, "enabled": c.enabled, "scope": c.scope,
-             "operator": c.operator.slug if c.operator_id else "", "entry": c.entry,
-             "accountable": _name(registry.accountable(c)),
+             "operator": c.operator.slug if c.operator_id and c.pk in shown else "",
+             "entry": c.entry if c.pk in shown else "",
+             "accountable": _name(registry.accountable(c)) if c.pk in shown else "",
              "runnable": c.purpose_class in (PROJECT, SYSTEM) and c.slug != readers.PROJECT_READERS,
              "targets": sum(1 for t in targets if t["learner"] == c.slug),
              "configurable": bool(pin and user is not None and not learner_refusal(user, pin, c))} for c in caps]

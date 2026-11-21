@@ -13224,13 +13224,31 @@ ONE_SHOT_TURN_ENV = {"CANOPY_ONE_SHOT_TURN": "1"}
 
 #: A turn canopy-web marks `isolated` (a learning run's: it read other people's sessions through `brain_read`)
 #: keeps nothing on this box for the agent's later turns: Claude Code's auto memory is off for it, so what it read
-#: is never written to the memory the agent's other sessions load. Reported on the heartbeat as `isolated`.
+#: is never written to the memory the agent's other sessions load, and once it ends (its rows shipped) its Claude
+#: session goes (`_isolated_forget_turn`), so no later turn of the agent reads it off the disk and canopy-web's
+#: removal cascade has no copy here to miss. Reported on the heartbeat as `isolated`: 2 is this whole contract.
 ISOLATED_TURN_ENV = {"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}
-ISOLATED_VERSION = 1
+ISOLATED_VERSION = 2
 
 
 def _isolation_env(turn: dict) -> dict:
     return dict(ISOLATED_TURN_ENV) if turn.get("isolated") else {}
+
+
+def _isolated_forget_turn(turn: dict, cwd: pathlib.Path | None, session_ids) -> None:
+    """After an isolated turn, however it ended and after its rows shipped: delete every Claude session it opened or
+    resumed (`_session_paths`: transcript, sidecar with its whole tool results, todos, file history, session env) and
+    its caller envelope. canopy-web holds the transcript; the box keeps nothing of what the run read."""
+    if not turn.get("isolated"):
+        return
+    turn_id = str(turn.get("id") or "")
+    workdir = cwd if cwd is not None else pathlib.Path(WORK_DIR) / turn_id[:8]
+    sids = [session_ids] if isinstance(session_ids, str) else list(session_ids or ())
+    paths = [CALLER_ROOT / f"{turn_id}.json"] if turn_id else []
+    for sid in dict.fromkeys(x for x in sids if x):
+        paths += _session_paths(workdir, sid)
+    for path in paths:
+        _unlink_or_rmtree(path)
 
 
 def _killed_by_shutdown(ok: bool, turn_id: str) -> bool:
@@ -14809,6 +14827,13 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                 forget["confined"], keep=forget["keep"], attachments=forget["attachments"])
         except Exception as exc:  # noqa: BLE001 — the secrets below must still go
             _log(f"warn: sensitive-data cleanup for {str(turn_id)[:8]} failed: {exc}")
+        try:
+            # A learning run's turn keeps nothing of what it read on this box (canopy-web `harness.isolation`).
+            _isolated_forget_turn(turn, forget["cwd"],
+                                  [*(getattr(_TURN_ENV, "session_ids", None) or []), forget["resumed"],
+                                   forget["cli_session_id"]])
+        except Exception as exc:  # noqa: BLE001 — the secrets below must still go
+            _log(f"warn: isolated-turn cleanup for {str(turn_id)[:8]} failed: {exc}")
         _TURN_ENV.session_ids = None
         _TURN_ENV.attachment_dir = None
         _TURN_ENV.mcp_config = None
