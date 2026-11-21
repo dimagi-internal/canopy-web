@@ -5,7 +5,7 @@ A host site (Connect Labs, HQ, ace-web, …; [host-sites.md](host-sites.md)) tha
 - an **anchor**: the `Contact` (`apps/contacts/models.py`), keyed by the site and the site's own id for the person (`app`, `external_id`), and its `Person`, keyed by the site's signer and that id. Never merged with another site's person;
 - a **pointer** to where the host's record lives: `Contact.record_uri`, `<site.person_scheme>://<id>`;
 - a **cache the host owns**: `Contact.host_profile` (with `host_profile_version`, `host_profile_signed_at`), a few labels an agent may see on every turn (stage, language, programme, consent), never history;
-- the **working sessions** of its conversations, under retention.
+- the **working sessions** of its conversations, under retention (the site may set its own) and deleted when the host erases the person.
 
 canopy never becomes the authority for anything the host owns. The workspace's own words about a person (`notes`, `attributes`) stay the workspace's; the host never writes them, and canopy never writes the host's fields from anywhere but the host's signed request.
 
@@ -24,6 +24,22 @@ The body is a compact JWS signed by the site's own key (`Content-Type: applicati
 - **Created if missing, granted nothing.** A missing person is created (`source=embed`, grade `app_signed`, no conversation), so a host can register people before they first write in. Recording grants nothing, as for every contact.
 - **Each item answered on its own** (`created` / `updated` / `stale` / `refused` with a reason), so one bad item never sinks the others. Item rules are the SDK's (`canopy_sdk.contacts::check_item`): `record_uri` under the declared scheme with a url-safe id, at most 256 characters; `profile` at most 40 keys and 4096 bytes.
 
+## The host makes canopy forget: `POST /api/sites/contacts/erase`
+
+Signed the same way (`typ` `canopy-contact-erase+jwt`, `subs`: up to 100 of the site's ids). For each person the site vouches for, `contacts.services.erase`:
+
+- deletes their conversations with every word, file and turn in them, and records the transcripts as deleted so a runner cannot ship them back (`content_deletion.erase_session`). Unlike a person deleting their own words, it is never refused for a busy session: the system of record has said the person is gone;
+- scrubs the words of any other turn they started, and deletes their contact tokens and act-as-you permissions (they go with the contact row);
+- deletes the facts recorded about the person in that workspace; where another contact in the same workspace is the same `Person`, only the facts this contact's own turns or notes produced;
+- deletes the `Person` when nothing else holds it (`services._person_held`: another workspace's contact, a login, facts elsewhere; only logs about the person do not count). Fails closed: an unknown relation keeps the person;
+- leaves a `ContactErasure` tombstone keyed `(app, external_id)` with `erased_at`: the proof it happened, and the reason an update the host signed BEFORE the erasure is refused (`erased`) instead of bringing the person back. A later arrival creates a new contact; the tombstone stays.
+
+Nothing of anyone else's goes: another site's contact with the same id, an email or Slack contact, or the same person's record in another workspace. Idempotent: a second erasure answers `not_found` and changes nothing.
+
+## The host's retention
+
+`site.retention_days` (`CANOPY_HOST["RETENTION_DAYS"]`) holds the site's contacts' conversations to the site's own period (`retention.services._sweep_site_contacts`, rule `site_rule`): read live like `person_scheme`, and applied whatever `CANOPY_RETENTION_ENFORCE` says, as the sensitive-data period is. A shorter workspace rule still applies when enforcement is on, so the shorter of the two wins.
+
 ## The agent sees who the person is at the host
 
 The caller envelope's `contact` block (`apps/harness/caller_context.py::_contact`) carries `external_id` (for a site's contact), `site`, `record_uri`, `host_profile` and `person_id`. The canopy plugin prints them as data about the person, never as instructions.
@@ -36,5 +52,7 @@ The caller envelope's `contact` block (`apps/harness/caller_context.py::_contact
 | The wire (both halves) | `sdk/python/src/canopy_sdk/contacts.py`; the host's client `sdk/python/src/canopy_sdk/host/contacts.py` |
 | Verify and apply an update | `apps/host_grants/contact_records.py`, `apps/host_grants/contact_records_api.py` |
 | Write one person | `contacts.services.apply_host_record` |
-| The site's declared scheme | `site_needs.person_scheme_for` |
+| The site's declared scheme and retention | `site_needs.person_scheme_for`, `site_needs.retention_days_for` |
+| Erase one person; the tombstone | `contacts.services.erase`, `ContactErasure`; a conversation `content_deletion.erase_session` |
+| The site's retention | `retention.services._sweep_site_contacts` |
 | What the agent is told | `apps/harness/caller_context.py::_contact` |

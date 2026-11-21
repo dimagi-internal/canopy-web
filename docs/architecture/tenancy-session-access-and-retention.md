@@ -40,6 +40,7 @@ Rule resolution is `apps/retention/policy.py` (module docstring); what each kind
 - A chat is one unit: its turns resolve by the SESSION's attributes and its expired messages go as a prefix. **`Session.retention_floor_index` stops a runner re-ship (backfill, reset) writing purged history back**; `persist_transcript_rows` and `_next_index` (`apps/canopy_sessions/transcript_ingest.py`) enforce it, so any new `Message` writer must go through them.
 - Shared transcripts are deleted. Deployment-wide rules (no workspace) are Django-admin only and are the only rules that govern shared transcripts.
 - **A sensitive conversation is held to its own clock** whatever `CANOPY_RETENTION_ENFORCE` says (`retention/services.py::_sweep_sensitive`, a forced rule tallied as `#0`); a shorter workspace rule still wins when enforcement is on. A turn is sensitive through any ancestor, so forced retention reaches a session-less sensitive turn.
+- **A host site's contacts' conversations are held to the site's own `site.retention_days`** the same way (`retention/services.py::_sweep_site_contacts`, tallied as `#-<site id>`), and a host's erasure deletes them outright → [host-systems-of-record.md](host-systems-of-record.md).
 
 ## Deleting your own session's content
 

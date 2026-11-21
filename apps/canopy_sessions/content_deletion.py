@@ -268,6 +268,43 @@ def delete_content(session, *, by) -> dict:
     return counts
 
 
+def erase_session(session) -> None:
+    """A host site made canopy forget the contact whose conversation this is
+    (`contacts.services.erase`, docs/architecture/host-systems-of-record.md): everything
+    `delete_content` drops — the words, the files' stored objects, the turns' words and the
+    transcript tombstones that keep a runner from shipping it back — and then the row
+    itself, with every row that hangs off it.
+
+    Never refused for a busy session, unlike a person's own delete: the system of record
+    has said this person is gone, and a turn still running with them is cut off (its rows
+    go with the session's). The files' objects still go first, and a store that refuses
+    raises `BytesRemain` with no row touched, so the host's retry finishes the rest."""
+    _delete_bytes(session)
+    with transaction.atomic():
+        binding = RunnerBinding.objects.select_for_update().filter(session=session).first()
+        locked = Session.objects.select_for_update().filter(pk=session.pk).first()
+        if locked is None:
+            return
+        now = timezone.now()
+        turn_ids = list(Turn.objects.filter(sensitivity.turns_of_q(locked.pk)).values_list("pk", flat=True))
+        transcripts = _transcript_ids(locked, binding, turn_ids)
+        _drop_words(locked, binding=binding, turn_ids=turn_ids, now=now)
+        DeletedTranscript.objects.bulk_create(
+            [DeletedTranscript(transcript_id=t[:100], session_id=locked.pk) for t in transcripts],
+            ignore_conflicts=True)
+        with lifecycle.acting(by=None):
+            lifecycle.record(lifecycle.CONTENT_DELETED, locked)
+        session_content_deleted.send(sender=Session, session=locked, turn_ids=turn_ids, by=None)
+        session_id = locked.pk
+        Session.objects.filter(pk=session_id).delete()
+
+        def _tell_open_tabs():
+            groups.publish(groups.session_group(session_id), {"type": "session.rebuilt"})
+            chat_services.recheck_sockets(session_id)
+
+        transaction.on_commit(_tell_open_tabs)
+
+
 def absorb(session) -> None:
     """A deleted transcript was shipped into `session`, a row other than the one deleted
     (`transcript_ingest.refuses_ship`). When that transcript is all it could hold, it is the
