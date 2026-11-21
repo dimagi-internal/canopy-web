@@ -25,6 +25,8 @@ from django.db import transaction
 from django.db.models import F
 
 from .email_auth import grade_from_headers, grade_of
+from apps.workspaces import permissions as perms
+
 from .models import Contact
 
 logger = logging.getLogger(__name__)
@@ -202,11 +204,17 @@ def resolve_arrival(*, app, contact: Contact, claims: dict):
     Who-is-asking §2 (D1: no dynamic user creation). In order:
 
       1. The contact is already linked to a user (`promote_to_user`): that user.
-      2. The site signed `email_verified: true` for an address that exactly
-         one active canopy user provably holds (`user_for_verified_email`: a
-         VERIFIED allauth email, or — with none — an agent's own login):
-         link the contact and return that user.
+      2. A site canopy trusts for email (`AppCredential.asserts_verified_email`,
+         a canopy superuser's decision) signed `email_verified: true` for an
+         address that exactly one active canopy user provably holds
+         (`user_for_verified_email`: a VERIFIED allauth email, or — with none —
+         an agent's own login): link the contact and return that user. Any
+         other site's `email_verified` is its own say-so and is not honoured.
       3. Otherwise None — the visitor is a contact, as before.
+
+    A workspace owner or admin never arrives this way (None, whichever step found
+    them): the site's signing key would otherwise speak for the people who run
+    the tenant. They use canopy itself, signed in as themselves.
 
     Either way the user must be a member of the site's workspace, and that is
     the gate: someone allowed in this tenant arrives as themselves, anyone else
@@ -226,10 +234,13 @@ def resolve_arrival(*, app, contact: Contact, claims: dict):
     user = None
     if contact.user_id:
         user = User.objects.filter(pk=contact.user_id, is_active=True).first()
-    elif claims.get("email_verified") is True:
+    elif claims.get("email_verified") is True and getattr(app, "asserts_verified_email", False):
         user = user_for_verified_email(str(claims.get("email") or ""))
     # A question about the VISITOR's membership, asked through the one authorizer.
     if user is None or not wsvc.is_member(user, contact.workspace_id):
+        return None
+    if perms.can(user, contact.workspace_id, perms.MEMBERS_MANAGE):
+        # Admin and up (the tier that manages members): never through a site.
         return None
     if contact.user_id is None:
         promote_to_user(contact, user)

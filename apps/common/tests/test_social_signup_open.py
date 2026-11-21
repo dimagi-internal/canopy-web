@@ -69,7 +69,8 @@ def _google_login(email: str, request) -> SocialLogin:
     account = SocialAccount(
         provider="google",
         uid="118273645509",
-        extra_data={"email": email, "email_verified": True},
+        # `hd`: a Google Workspace account at the address's own domain.
+        extra_data={"email": email, "email_verified": True, "hd": email.rpartition("@")[2]},
     )
     provider = get_social_adapter().get_provider(request, "google")
     sociallogin = SocialLogin(user=user, account=account, provider=provider)

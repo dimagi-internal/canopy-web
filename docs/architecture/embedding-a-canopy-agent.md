@@ -241,11 +241,13 @@ canopy's side is `apps/embedding/assertions.py`): `EdDSA`, `ES256` or `RS256`
 only (never HMAC: the key is public, so a symmetric algorithm would let anyone
 sign); `aud` must match; `exp` at most 120 seconds out; each `jti` works once.
 
-**What the visitor becomes** (`contacts.services.resolve_arrival`). If the
-assertion carries `email` with `email_verified: true` for an address that exactly
-one active canopy user provably holds, **and that user is a member of the site's
-workspace**, they arrive as that user, with their own permissions; arrival never
-creates an account. Anyone else is a `Contact` in the workspace that owns your
+**What the visitor becomes** (`contacts.services.resolve_arrival`). If your site
+is one canopy trusts for email (`asserts_verified_email`, set by a canopy
+superuser) and the assertion carries `email` with `email_verified: true` for an
+address that exactly one active canopy user provably holds, **and that user is a
+member of the site's workspace**, they arrive as that user, with their own
+permissions; arrival never creates an account. A workspace owner or admin never
+arrives through a site, and is a contact there. Anyone else is a `Contact` in the workspace that owns your
 app: not a member of anything, able to talk to the agents you were allowed to
 offer and see their own conversations, and nothing else. `/api/contact/` is the
 entire surface a contact token reaches. The token comes back with `kind` saying

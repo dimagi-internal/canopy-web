@@ -140,10 +140,14 @@ def test_auth_can_be_disabled(db):
 # ──────────────────────────────────────────────────────────────────────
 
 
-def _make_social_login(email: str, *, verified: bool = True) -> Mock:
+def _make_social_login(email: str, *, verified: bool = True, hd: str | None = None) -> Mock:
     sociallogin = Mock()
     sociallogin.account = Mock()
-    sociallogin.account.extra_data = {"email": email}
+    # Google sends `hd` for a Workspace account; the double is one by default, at
+    # the address's own domain.
+    hosted = email.rpartition("@")[2].lower() if hd is None else hd
+    sociallogin.account.extra_data = {"email": email, **({"hd": hosted} if hosted else {})}
+    sociallogin.is_existing = False
     # Real allauth SocialLogin always populates `.email_addresses` by the time
     # `pre_social_login` runs. Google marks a Workspace address verified, and the
     # allowlist now trusts an address only when it is, so the default double is
@@ -158,7 +162,7 @@ def _make_social_login(email: str, *, verified: bool = True) -> Mock:
 
 
 @override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com")
-def test_adapter_accepts_dimagi_email(rf):
+def test_adapter_accepts_dimagi_email(rf, db):
     adapter = CustomSocialAccountAdapter()
     request = rf.get("/accounts/google/login/callback/")
     sociallogin = _make_social_login("alice@dimagi.com")
@@ -188,7 +192,7 @@ def test_adapter_rejects_substring_match(rf, db):
 
 
 @override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com")
-def test_adapter_rejects_missing_email(rf):
+def test_adapter_rejects_missing_email(rf, db):
     adapter = CustomSocialAccountAdapter()
     request = rf.get("/accounts/google/login/callback/")
     sociallogin = _make_social_login("")
@@ -197,7 +201,7 @@ def test_adapter_rejects_missing_email(rf):
 
 
 @override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="")
-def test_adapter_allows_any_when_domain_unset(rf):
+def test_adapter_allows_any_when_domain_unset(rf, db):
     adapter = CustomSocialAccountAdapter()
     request = rf.get("/accounts/google/login/callback/")
     sociallogin = _make_social_login("anyone@example.com")
@@ -206,7 +210,7 @@ def test_adapter_allows_any_when_domain_unset(rf):
 
 
 @override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com")
-def test_adapter_case_insensitive(rf):
+def test_adapter_case_insensitive(rf, db):
     adapter = CustomSocialAccountAdapter()
     request = rf.get("/accounts/google/login/callback/")
     sociallogin = _make_social_login("Alice@DIMAGI.COM")
@@ -254,10 +258,11 @@ def test_adapter_does_not_connect_already_existing_sociallogin(db):
     """is_existing=True means this SocialAccount is already linked — must not
     re-connect (that would be allauth's own job, not ours)."""
     User = get_user_model()
-    User.objects.create_user(username="jit@dimagi.com", email="jit@dimagi.com")
+    linked = User.objects.create_user(username="jit@dimagi.com", email="jit@dimagi.com")
 
     adapter = CustomSocialAccountAdapter()
     sociallogin = _make_jit_social_login("jit@dimagi.com", is_existing=True)
+    sociallogin.user = linked
 
     adapter.pre_social_login(Mock(), sociallogin)
 
@@ -729,3 +734,103 @@ def test_social_auto_signup_needs_a_verified_email(rf, db):
     sociallogin.user = get_user_model()(username="alice", email="alice@dimagi.com")
     with pytest.raises(ImmediateHttpResponse):
         adapter.save_user(rf.get("/accounts/google/login/callback/"), sociallogin)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Google `hd`: an allowlisted address counts only from a Workspace account
+# ──────────────────────────────────────────────────────────────────────
+
+
+@override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com,dimagi-associate.com")
+def test_a_consumer_google_account_at_an_allowlisted_address_is_refused(db):
+    """A verified address at an allowlisted domain, on a Google account with no
+    `hd`: anyone receiving mail there could have made it. Refused, with a page
+    that says it is a personal account and what to use instead."""
+    sociallogin = _make_jit_social_login("someone@dimagi-associate.com")
+    sociallogin.account.extra_data = {"email": "someone@dimagi-associate.com"}
+
+    with pytest.raises(ImmediateHttpResponse) as exc:
+        CustomSocialAccountAdapter().pre_social_login(
+            RequestFactory().get("/accounts/google/login/callback/"), sociallogin)
+
+    assert exc.value.response.status_code == 403
+    body = exc.value.response.content.decode()
+    assert "personal Google account" in body and "work Google account" in body
+    sociallogin.connect.assert_not_called()
+
+
+@override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com")
+def test_a_workspace_account_of_another_domain_is_refused(db):
+    sociallogin = _make_social_login("alice@dimagi.com", hd="evil.example")
+    with pytest.raises(ImmediateHttpResponse):
+        CustomSocialAccountAdapter().pre_social_login(
+            RequestFactory().get("/accounts/google/login/callback/"), sociallogin)
+
+
+@override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com,dimagi-associate.com")
+def test_an_already_linked_workspace_account_keeps_signing_in(db):
+    """Google sends `hd` on every sign-in of a Workspace account, so an account
+    linked before the check passes it (and an address on a secondary domain of
+    an allowlisted Workspace, whose `hd` is the primary, too)."""
+    User = get_user_model()
+    linked = User.objects.create_user(username="bob@dimagi-associate.com",
+                                      email="bob@dimagi-associate.com")
+    sociallogin = _make_jit_social_login("bob@dimagi-associate.com", is_existing=True)
+    sociallogin.user = linked
+    sociallogin.account.extra_data = {"email": "bob@dimagi-associate.com", "hd": "dimagi.com"}
+
+    CustomSocialAccountAdapter().pre_social_login(Mock(), sociallogin)  # does not raise
+
+
+# ──────────────────────────────────────────────────────────────────────
+# An agent's Google account never opens a browser session as the agent
+# ──────────────────────────────────────────────────────────────────────
+
+
+def _agent_login(email="hal@dimagi-ai.com"):
+    from apps.agents.models import Agent
+    from apps.workspaces.models import Workspace
+
+    User = get_user_model()
+    owner = User.objects.create_user(username="jj@dimagi.com", email="jj@dimagi.com")
+    ws = Workspace.objects.create(slug="fleet", display_name="Fleet", created_by=owner)
+    login = User.objects.create_user(username=email, email=email)
+    Agent.objects.create(slug="hal", name="Hal", workspace=ws, owner=owner, user=login)
+    return login
+
+
+@override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com,dimagi-ai.com")
+def test_an_agents_google_account_is_not_linked_to_its_login(db):
+    login = _agent_login()
+    sociallogin = _make_jit_social_login("hal@dimagi-ai.com")
+
+    with pytest.raises(ImmediateHttpResponse) as exc:
+        CustomSocialAccountAdapter().pre_social_login(
+            RequestFactory().get("/accounts/google/login/callback/"), sociallogin)
+
+    assert exc.value.response.status_code == 403
+    assert "an agent" in exc.value.response.content.decode()
+    sociallogin.connect.assert_not_called()
+    assert not login.socialaccount_set.exists()
+
+
+@override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com,dimagi-ai.com")
+def test_an_agent_login_already_linked_to_google_is_refused_too(db):
+    login = _agent_login()
+    sociallogin = _make_jit_social_login("hal@dimagi-ai.com", is_existing=True)
+    sociallogin.user = login
+
+    with pytest.raises(ImmediateHttpResponse):
+        CustomSocialAccountAdapter().pre_social_login(
+            RequestFactory().get("/accounts/google/login/callback/"), sociallogin)
+
+
+@override_settings(AUTH_ALLOWED_EMAIL_DOMAIN="dimagi.com,dimagi-ai.com")
+def test_the_jit_merge_never_connects_onto_an_agent_login(db):
+    login = _agent_login()
+    sociallogin = _make_jit_social_login("hal@dimagi-ai.com")
+
+    CustomSocialAccountAdapter._connect_jit_identity(Mock(), sociallogin, "hal@dimagi-ai.com")
+
+    sociallogin.connect.assert_not_called()
+    assert login.pk
