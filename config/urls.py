@@ -6,6 +6,7 @@ from django.urls import include, path, re_path
 
 from apps.agents.views import RETIRED_INTERFACE_PATH, retired_interface_route
 from apps.api.api import api as api_v2
+from apps.common import admin_access
 from apps.api.views import redoc_docs, scalar_docs
 from apps.harness.views import download_runner, runner_app_home
 from apps.plugins import views as plugin_views
@@ -25,6 +26,9 @@ from apps.oauth_server.views_oauth import client_metadata as oauth_client_metada
 from apps.oauth_server.views_oauth import jwks as oauth_jwks
 from apps.walkthroughs.streaming import walkthrough_content as views_walkthrough_content
 from config.views import FLAT_ARTIFACT_PATH, csrf_view, flat_artifact_gone, health_check, spa_view
+
+# The admin opens through the Google session only: no password form.
+admin_access.install()
 
 urlpatterns = [
     path("admin/", admin.site.urls),

@@ -18,7 +18,7 @@ from config.views import FLAT_ARTIFACT_PATH
 
 PUBLIC_PATH_PREFIXES = (
     "/accounts/",            # allauth login/logout/callback
-    "/admin/",               # Django admin has its own auth
+    "/admin/",               # the admin gates itself: staff, Google session only (apps/common/admin_access.py)
     "/health/",              # health check for Cloud Run
     "/static/",              # static assets
     # The built SPA's content-hashed bundles — the same class of thing as

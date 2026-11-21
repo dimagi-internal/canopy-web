@@ -399,9 +399,9 @@ HCP_PROJECT_BOOST = env.float("HCP_PROJECT_BOOST", default=2.0)
 REQUIRE_AUTH = env.bool("REQUIRE_AUTH", default=True)
 
 # Passkey step-up (apps/passkeys). Unset, the WebAuthn relying
-# party is the host the browser is on (canopy.dimagi.com in production,
-# localhost in dev) and the expected origin is that host's scheme+host. Pin them
-# only if a proxy hides the real host.
+# party is the host the browser is on (localhost in dev) and the expected origin
+# is that host's scheme+host. Production pins both to canopy.dimagi.com
+# (config/settings/production.py); the env vars override either.
 PASSKEY_RP_ID = env("PASSKEY_RP_ID", default="")
 PASSKEY_ORIGINS = [o.strip() for o in env("PASSKEY_ORIGINS", default="").split(",") if o.strip()]
 PASSKEY_RP_NAME = env("PASSKEY_RP_NAME", default="Canopy")
