@@ -44910,6 +44910,21 @@ export interface components {
             readonly days?: readonly components["schemas"]["UsageDayIn"][];
         };
         /**
+         * ClaimDefinitionOut
+         * @description Where the turn's agent definition lives (`harness.stored_agents`).
+         */
+        readonly ClaimDefinitionOut: {
+            /** Source */
+            readonly source: string;
+            /** Revision */
+            readonly revision?: number | null;
+            /**
+             * Root Sha256
+             * @default
+             */
+            readonly root_sha256: string;
+        };
+        /**
          * ClaimPageSiteOut
          * @description A turn held on a host site's page (`published_profiles.page_turn`).
          */
@@ -45094,6 +45109,7 @@ export interface components {
              * @default false
              */
             readonly isolated: boolean;
+            readonly definition?: components["schemas"]["ClaimDefinitionOut"] | null;
         };
         /**
          * InvocationOut

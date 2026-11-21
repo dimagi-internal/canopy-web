@@ -316,6 +316,18 @@ class InvocationOut(Schema):
     rest: str = ""
 
 
+class ClaimDefinitionOut(Schema):
+    """Where the turn's agent definition lives (`harness.stored_agents`)."""
+
+    # "stored": a file tree kept in canopy-web, which the runner materializes
+    # (`canopy agent prepare` / `canopy agent sync`); its turns get no GitHub identity.
+    source: str
+    # The live revision's number, and the sha256 of its manifest; null/"" before one
+    # is published.
+    revision: int | None = None
+    root_sha256: str = ""
+
+
 class ClaimedTurnOut(TurnOut):
     """A turn as its CLAIMING runner receives it: everything `TurnOut` has, plus
     the caller envelope, so the runner can hand it to the agent without a second
@@ -357,6 +369,10 @@ class ClaimedTurnOut(TurnOut):
     # A learning run's turn (`harness.isolation`): it keeps nothing on the box for later turns, so the runner turns
     # Claude Code's auto memory off for it. Only a runner that reports `isolated` is handed one.
     isolated: bool = False
+    # For a turn whose agent is a STORED agent: its definition's live revision. The
+    # runner materializes and syncs it rather than cloning and pulling a GitHub
+    # repo. Null for a repo agent and for a turn with no agent.
+    definition: ClaimDefinitionOut | None = None
 
     # Nothing about a visitor's HOST credential is ever here (host grant
     # contract v1): the gateway (`site_call`) attaches it inside canopy-web, so
@@ -394,6 +410,12 @@ class ClaimedTurnOut(TurnOut):
         from ..isolation import is_isolated  # noqa: PLC0415 — as the resolvers around it
 
         return is_isolated(obj)
+
+    @staticmethod
+    def resolve_definition(obj) -> dict | None:
+        from ..stored_agents import definition_of  # noqa: PLC0415 — as the resolvers around it
+
+        return definition_of(obj.acting_agent)
 
     @staticmethod
     def resolve_page_site(obj) -> dict | None:
