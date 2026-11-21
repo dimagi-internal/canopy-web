@@ -122,6 +122,20 @@ class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
             # it belongs to this account; a Google account can carry an
             # unverified address at any domain.
             self._refuse(request, sociallogin, email)
+        elif not self._managed_by_allowed_domain(sociallogin):
+            # A verified address at an allowlisted domain is not yet proof that
+            # the domain issued the account: anyone who can receive mail there
+            # can register a CONSUMER Google account for it and verify it. Only
+            # a Google Workspace account carries `hd` (its hosted domain), and
+            # only the domain's own admin can make one.
+            self._refuse(request, sociallogin, email, reason=self.NOT_WORKSPACE)
+
+        if self._lands_on_agent_login(sociallogin, email):
+            # An agent's login is a machine's: it reaches canopy with tokens, never
+            # with a browser session. Its Google account's credentials live on
+            # runners, so letting them open the browser as the agent would turn a
+            # runner compromise into an interactive session.
+            self._refuse(request, sociallogin, email, reason=self.AGENT_LOGIN)
 
         if admitted_outside_domain:
             # Never run the JIT-identity merge on this branch: it connects
@@ -158,19 +172,54 @@ class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
             self._refuse(request, sociallogin, chosen)
         return super().save_user(request, sociallogin, form=form)
 
+    #: Why a sign-in was refused, for the page (`templates/auth/domain_rejected.html`).
+    NOT_ALLOWED = "not_allowed"
+    NOT_WORKSPACE = "not_workspace"
+    AGENT_LOGIN = "agent_login"
+
     @staticmethod
-    def _refuse(request, sociallogin, email):
+    def _refuse(request, sociallogin, email, *, reason=NOT_ALLOWED):
+        if reason != CustomSocialAccountAdapter.NOT_ALLOWED:
+            logger.warning("social login refused: %s", reason)
         response = render(
             request,
             "auth/domain_rejected.html",
             {
                 "email": email,
+                "reason": reason,
                 "allowed_domain": ", ".join(allowed_email_domains()),
                 "next": (sociallogin.state or {}).get("next") or "",
             },
             status=403,
         )
         raise ImmediateHttpResponse(response)
+
+    @staticmethod
+    def _managed_by_allowed_domain(sociallogin) -> bool:
+        """Google's `hd` claim (the account's Google Workspace domain) names an
+        allowlisted domain. Google sends it on every sign-in of a Workspace
+        account, read fresh from this login's ID token, so an account linked
+        before this check carries it as well. A consumer account has none."""
+        allowed = allowed_email_domains()
+        if not allowed:  # no allowlist (dev): there is no domain to be managed by
+            return True
+        hd = str((sociallogin.account.extra_data or {}).get("hd") or "").strip().lower()
+        return bool(hd) and hd in allowed
+
+    @staticmethod
+    def _lands_on_agent_login(sociallogin, email) -> bool:
+        """This sign-in would open a session as an agent's own login: an account
+        already linked to one, or the one user `_connect_jit_identity` would link."""
+        User = get_user_model()
+        if sociallogin.is_existing:
+            return User.objects.filter(pk=sociallogin.user.pk,
+                                       agent_identity__isnull=False).exists()
+        if not email:
+            return False
+        matches = list(User.objects.filter(email__iexact=email)
+                       .values_list("pk", flat=True)[:2])
+        return len(matches) == 1 and User.objects.filter(
+            pk=matches[0], agent_identity__isnull=False).exists()
 
     @staticmethod
     def _verified_emails(sociallogin) -> set[str]:
@@ -207,7 +256,9 @@ class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
             return
         User = get_user_model()
         matches = list(User.objects.filter(email__iexact=email)[:2])
-        if len(matches) == 1:
+        # Never onto an agent's login (`pre_social_login` refuses that sign-in
+        # before it gets here; this keeps the merge itself from ever doing it).
+        if len(matches) == 1 and not hasattr(matches[0], "agent_identity"):
             sociallogin.connect(request, matches[0])
 
 

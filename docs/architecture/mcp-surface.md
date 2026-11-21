@@ -70,7 +70,9 @@ the resolver REST and the WebSocket handshake use too.
 * **OAuth sign-in** (what MCP clients do by default): the 401 carries
   `WWW-Authenticate: Bearer resource_metadata="…"` (RFC 9728), the client registers
   itself (public clients only; registering grants nothing), and the consent page
-  needs a signed-in person (a session minted from a token cannot approve). **The
+  needs a signed-in person (a session minted from a token cannot approve) who
+  confirms with their passkey (`stepup.step_up_until`). The page leads with the
+  redirect host and marks the client's self-chosen name unverified. **The
   access token is an ordinary `PersonalToken`** tied to an `OAuthGrant`, so every
   tool and route treats it like a hand-minted PAT. Lifetimes (`ACCESS_TOKEN_TTL`,
   `REFRESH_TOKEN_TTL`, `CODE_TTL`), refresh rotation and reuse revocation (a retired

@@ -19,7 +19,7 @@ from django.test import Client
 
 from apps.contacts.models import Contact
 from apps.embedding import assertions
-from apps.tokens.models import DelegatedToken
+from apps.tokens.models import AppCredential, DelegatedToken
 from apps.workspaces.models import WorkspaceMembership
 from tests.fixtures.contact_websocket import _world
 
@@ -37,6 +37,9 @@ def _clean_cache():
 @pytest.fixture()
 def w():
     owner, ws, app, priv = _world()
+    # A site canopy trusts for email, so its members' verified addresses resolve them.
+    AppCredential.objects.filter(pk=app.pk).update(asserts_verified_email=True)
+    app.asserts_verified_email = True
     alice = User.objects.create_user("alice", "alice@dimagi.com", "pw")
     EmailAddress.objects.create(user=alice, email=alice.email, verified=True, primary=True)
     M.objects.create(user=alice, workspace=ws, role=M.EDITOR)
@@ -77,6 +80,26 @@ def test_a_linked_contact_arrives_as_the_user_without_repeating_the_email(w):
 ])
 def test_anything_less_is_a_contact(w, claims):
     assert _arrive(w["priv"], **claims)["kind"] == "contact"
+
+
+def test_a_site_not_trusted_for_email_cannot_resolve_a_member(w):
+    """`email_verified` is honoured only from a site a canopy superuser trusts for
+    it (`asserts_verified_email`); anyone else's is its own say-so."""
+    AppCredential.objects.filter(pk=w["app"].pk).update(asserts_verified_email=False)
+    got = _arrive(w["priv"], email="alice@dimagi.com", email_verified=True)
+    assert got["kind"] == "contact"
+    assert Contact.objects.get(pk=got["contact_id"]).user is None          # not linked
+
+
+@pytest.mark.parametrize("role", [M.OWNER, M.ADMIN])
+def test_an_owner_or_admin_never_arrives_through_a_site(w, role):
+    """Not by a verified email, and not as an already-linked contact either: a
+    site's signing key never speaks for the people who run the tenant."""
+    _arrive(w["priv"], sub="u-9", email="alice@dimagi.com", email_verified=True)   # linked as editor
+    M.objects.filter(user=w["alice"], workspace=w["ws"]).update(role=role)
+    assert _arrive(w["priv"], sub="u-9")["kind"] == "contact"
+    assert _arrive(w["priv"], sub="u-10", email="alice@dimagi.com",
+                   email_verified=True)["kind"] == "contact"
 
 
 def test_arrival_never_creates_an_account(w):

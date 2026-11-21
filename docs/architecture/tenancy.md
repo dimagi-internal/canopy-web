@@ -144,7 +144,11 @@ failure again.
 
 - **Sign-in:** Google OAuth via django-allauth, restricted to `AUTH_ALLOWED_EMAIL_DOMAIN`
   (`config/settings/base.py`; the deployed value is in `deploy/aws/canopy-web.cfn.yaml`).
-  A new login domain also needs the Google consent screen to allow it.
+  A new login domain also needs the Google consent screen to allow it. An allowlisted
+  address counts only when Google marks it verified AND the account is a Google Workspace
+  account of an allowlisted domain (its `hd` claim), so a consumer Google account made for
+  an allowlisted address is refused; an agent's own login never gets a browser session
+  through Google (`apps/common/auth_adapter.py::CustomSocialAccountAdapter.pre_social_login`).
 - **Personal access tokens** (`apps/tokens/`) authenticate machine callers with
   `Authorization: Bearer <raw>`; `apps.tokens.middleware.BearerTokenAuthMiddleware` resolves
   them after `AuthenticationMiddleware` and before `LoginRequiredMiddleware`. An MCP OAuth

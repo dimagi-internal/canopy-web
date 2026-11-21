@@ -19,31 +19,126 @@
     .btn-primary:hover { background: #c2410c; }
     .btn-cancel { background: #1a1a1a; color: #a3a3a3; border: 1px solid #2a2a2a; }
     .btn-cancel:hover { background: #2a2a2a; }
+    .dest { text-align: left; background: #0f0f0f; border: 2px solid #ea580c; border-radius: 6px; padding: .85rem 1.1rem; margin: 0 0 1rem; }
+    .dest .label { font-size: .8rem; color: #a3a3a3; margin: 0 0 .25rem; }
+    .dest .host { font-size: 1.35rem; font-weight: 700; color: #f5f5f5; font-family: ui-monospace, "SF Mono", Consolas, monospace; word-break: break-all; margin: 0; }
+    .dest .full { font-size: .75rem; color: #a3a3a3; font-family: ui-monospace, "SF Mono", Consolas, monospace; word-break: break-all; margin: .35rem 0 0; }
+    .unverified { display: inline-block; font-size: .7rem; font-weight: 600; color: #fbbf24; border: 1px solid #422006; background: #1c1815; border-radius: 4px; padding: .05rem .4rem; vertical-align: middle; }
+    .error { font-size: .85rem; color: #fca5a5; background: #1f1212; border: 1px solid #450a0a; border-radius: 4px; padding: .5rem .75rem; margin: 0 0 1rem; text-align: left; }
+    .error:empty { display: none; }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
     .warning { font-size: .8rem; color: #fbbf24; background: #1c1815; border: 1px solid #422006; border-radius: 4px; padding: .5rem .75rem; margin: 0 0 1rem; text-align: left; }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>Connect {{ client_name }} to canopy</h1>
-    <p><strong>{{ client_name }}</strong> is asking to use canopy-web as you.</p>
+    <h1>Connect an app to canopy</h1>
+    <div class="dest">
+      <p class="label">After you allow it, canopy sends the app's sign-in to</p>
+      <p class="host">{{ redirect_host }}</p>
+      <p class="full">{{ redirect_uri }}</p>
+    </div>
+    <p>The app calls itself <strong>{{ client_name }}</strong> <span class="unverified" title="Any app can register itself under any name.">name not verified</span>. Apps register themselves and pick their own name, so trust the address above, not the name.</p>
     <dl>
       <dt>Signed in as</dt>
       <dd>{{ request.user.email }}</dd>
-      <dt>It will be sent back to</dt>
-      <dd>{{ redirect_host }}</dd>
       <dt>What it can do</dt>
       <dd style="font-family: inherit;">Everything you can do in canopy-web, in every workspace you belong to, until you disconnect it in Settings.</dd>
     </dl>
-    <p class="warning">Only allow this if you just started connecting an app yourself — for example by adding canopy to Claude.</p>
-    <form method="post" action="{{ form_action }}">
+    <p class="warning">Only allow this if you just started connecting an app yourself, for example by adding canopy to Claude, and you recognise the address above.</p>
+    {% if not has_passkey %}
+    <p class="error">Allowing an app needs your passkey, and you have none yet. <a href="{{ api_base }}{{ register_url }}" style="color:#fdba74">Register one in Settings → Passkeys</a>, then reload this page.</p>
+    {% endif %}
+    <p class="error" id="stepup-error" role="alert">{{ error }}</p>
+    <form method="post" action="{{ form_action }}" id="consent">
       {% csrf_token %}
       {% for name, value in params.items %}<input type="hidden" name="{{ name }}" value="{{ value }}">
       {% endfor %}
       <div class="actions">
         <button class="btn btn-cancel" type="submit" name="decision" value="deny">Deny</button>
-        <button class="btn btn-primary" type="submit" name="decision" value="approve">Allow</button>
+        <button class="btn btn-primary" type="submit" name="decision" value="approve" id="allow"{% if not has_passkey %} disabled{% endif %}>Allow with passkey</button>
       </div>
     </form>
   </div>
+  {{ stepped_up|yesno:"true,false"|json_script:"stepped-up" }}
+  {{ api_base|json_script:"api-base" }}
+  <script>
+  // Allow runs a passkey step-up first (`/api/passkeys/step-up/*`, the same
+  // ceremony the app's own dialog runs), then submits; the server refuses an
+  // approval without one (`apps/oauth_server/views.py::authorize`).
+  (function () {
+    var form = document.getElementById('consent');
+    var allow = document.getElementById('allow');
+    var errorBox = document.getElementById('stepup-error');
+    var confirmed = JSON.parse(document.getElementById('stepped-up').textContent);
+    var api = JSON.parse(document.getElementById('api-base').textContent) + '/api/passkeys/step-up';
+    var csrf = form.querySelector('[name=csrfmiddlewaretoken]').value;
+
+    function fromB64u(v) {
+      var b = v.replace(/-/g, '+').replace(/_/g, '/');
+      var bin = atob(b + '='.repeat((4 - (b.length % 4)) % 4));
+      var out = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+      return out.buffer;
+    }
+    function toB64u(buf) {
+      var bytes = new Uint8Array(buf), bin = '';
+      for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+      return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    }
+    function post(path, body) {
+      return fetch(api + path, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+        body: JSON.stringify(body || {}),
+      }).then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (j) {
+          if (!r.ok) throw new Error(j.detail || 'The passkey check failed.');
+          return j;
+        });
+      });
+    }
+    function approve() {
+      var d = document.createElement('input');
+      d.type = 'hidden'; d.name = 'decision'; d.value = 'approve';
+      form.appendChild(d);
+      form.submit();
+    }
+    allow.addEventListener('click', function (ev) {
+      if (confirmed) return;  // a step-up is already in force: submit as usual
+      ev.preventDefault();
+      errorBox.textContent = '';
+      allow.disabled = true;
+      post('/begin').then(function (begin) {
+        var o = begin.options;
+        o.challenge = fromB64u(o.challenge);
+        o.allowCredentials = (o.allowCredentials || []).map(function (c) {
+          return Object.assign({}, c, { id: fromB64u(c.id) });
+        });
+        return navigator.credentials.get({ publicKey: o });
+      }).then(function (cred) {
+        if (!cred) throw new Error('No passkey was used.');
+        var r = cred.response, response = {
+          clientDataJSON: toB64u(r.clientDataJSON),
+          authenticatorData: toB64u(r.authenticatorData),
+          signature: toB64u(r.signature),
+        };
+        if (r.userHandle) response.userHandle = toB64u(r.userHandle);
+        return post('/finish', { credential: {
+          id: cred.id, rawId: toB64u(cred.rawId), type: cred.type, response: response,
+          clientExtensionResults: cred.getClientExtensionResults ? cred.getClientExtensionResults() : {},
+        } });
+      }).then(function () {
+        confirmed = true;
+        approve();
+      }).catch(function (e) {
+        allow.disabled = false;
+        errorBox.textContent = (e && e.name === 'NotAllowedError')
+          ? 'The passkey prompt was cancelled. Try again to allow the app.'
+          : (e && e.message) || 'The passkey check failed. Try again.';
+      });
+    });
+  })();
+  </script>
 </body>
 </html>
