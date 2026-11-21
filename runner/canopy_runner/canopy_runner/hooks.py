@@ -649,8 +649,9 @@ def report_signed_out(cfg: Config, client: Client, text: str) -> None:
             "kind": "claude_auth_required",
             "level": "error",
             "summary": (f"Claude is not signed in on {name}. It takes no turns until "
-                        f"someone signs in there (`claude /login`) — this does not "
-                        f"reset on its own."),
+                        f"someone signs in there (`claude /login`); once they do, the "
+                        f"runner checks the login itself and is ready again within "
+                        f"about 2 minutes."),
             "key": f"auth-required:{cfg.runner_id}",
         })
     except Exception:  # noqa: BLE001 — the alert must never break the hook

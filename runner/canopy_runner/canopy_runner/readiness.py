@@ -4,7 +4,8 @@ Two halves:
 - proactive: cdp_control.cdp_healthy() — is emdash up with its debug port (the
   preflight).
 - reactive: a marker file next to the runner's state. A failed turn writes it (with the
-  reason); a clean turn clears it. This is how "online but not logged in" — invisible to a
+  reason); a clean turn clears it. A signed-out mark is also re-tested directly
+  (login_probe.py) until the login answers again. This is how "online but not logged in" — invisible to a
   CDP probe — becomes a not-ready signal. It lives ON DISK so it survives --drain-one's
   one-shot process.
 """
@@ -113,6 +114,12 @@ def compute(cfg) -> tuple[bool, str]:
             return False, ("runtime is claude-cli but the Claude Code CLI or the ACP adapter "
                            f"({ADAPTER_PACKAGE}) is missing — `canopy-runner runtime set "
                            "claude-cli` installs the adapter")
+    # Signed out: re-test the login itself (rate-limited, only while marked), so a
+    # box whose owner signed back in goes green within a probe interval instead of
+    # waiting for a stray session's Stop hook or the TTL (login_probe.py).
+    from . import login_probe
+
+    login_probe.maybe_probe(cfg)
     marker = _marker(cfg)
     try:
         note = marker.read_text(encoding="utf-8", errors="replace").strip()
