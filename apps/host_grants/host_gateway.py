@@ -21,6 +21,14 @@ what those tools do:
    fresh proof per request (`htm`, `htu`, `ath`, `iat`, `jti`), and
    `Canopy-Actor: <agent slug>` for the host's audit.
 
+**The subject mode** (`_subject_context`) is the one call made with no grant: a turn of
+one of the site's own CONTACTS, on an entry its owner marked `contact_scoped`. It carries a
+canopy-signed subject statement naming that contact (`Authorization: CanopySubject`,
+`sub` = their `external_id`, from the turn's initiator) beside a DPoP proof with no `ath`,
+and the HOST authorizes every call against that one person
+(docs/architecture/host-systems-of-record.md). A non-contact turn, an entry without
+`contact_scoped` and a site with no MCP resource never reach it.
+
 **There is no fallback.** An expired or missing grant is a refusal that asks for
 the visitor to be back on the page. It is never a call made with the agent's own
 credential, which would hand the visitor whatever the agent can reach — the same
@@ -150,6 +158,11 @@ class SiteContext:
     #: every request of a View's `resources/read`, bound to the URI it reads. None for
     #: anything else; never set beside `execution` (`resolve` never sets it).
     view: dict | None = field(repr=False, default=None)
+    #: The SUBJECT MODE (`_subject_context`): a contact's turn on a `contact_scoped` entry,
+    #: with no grant and no token. What the subject statement states — `{sub, site, agent,
+    #: turn, session, capability}`, `sub` the contact's `external_id` — signed afresh as
+    #: `Authorization: CanopySubject` on every request. None for every other context.
+    subject: dict | None = field(repr=False, default=None)
 
     def allows(self, tool: str) -> bool:
         return tool_allowed(tool, ceiling=self.ceiling)
@@ -232,11 +245,18 @@ def resolve(turn_id: str, *, reason: str = "") -> SiteContext:
     # anyone outside canopy supplied.
     app = AppCredential.objects.filter(name=site, workspace_id=agent.workspace_id,
                                        revoked_at__isnull=True).first()
+    from apps.agents import published_profiles# noqa: PLC0415 — as the model reads above: loads with a call
+
+    if turn.initiator_contact_id and turn.initiator_kind == "contact" and turn.capability:
+        # One of the site's own CONTACTS (no passkey, so never a grant): only an entry its
+        # owner marked `contact_scoped` reaches the site, bound to that one contact.
+        cap = ((agent.interface or {}).get("capabilities") or {}).get(turn.capability)
+        if published_profiles.names_site(cap, site) and (cap or {}).get("contact_scoped") is True:
+            return _subject_context(turn, agent, session, site, app, cap, reqs)
+
     if app is None or not app.issues_host_grants():
         raise GatewayRefusal("site_not_configured",
                              f"{site} does not let me act for you there")
-
-    from apps.agents import published_profiles# noqa: PLC0415 — as the model reads above: loads with a call
 
     if turn.capability:
         # A confined turn: its own profile must name the site.
@@ -302,9 +322,52 @@ def resolve(turn_id: str, *, reason: str = "") -> SiteContext:
             "(`data: sensitive`), and this turn's does not; ask the agent's owner to set it")
     ctx = context_for_grant(app, grant, turn_id=str(turn.pk), agent_slug=agent.slug,
                             ceiling=ceiling,
-                            execution=execution.facts_for(turn, agent, session, effective))
+                            execution=execution.facts_for(turn, agent, session, effective, app=app))
     ctx.session_id = str(session.pk)
     return ctx
+
+
+def _subject_context(turn, agent, session, site: str, app, cap: dict, reqs) -> SiteContext:
+    """The SUBJECT MODE: a contact's turn, on an entry its owner marked `contact_scoped`,
+    reaches the site's tools with no grant, under a canopy-signed subject statement naming
+    that one contact (`client_identity.subject_statement`; the host verifies it with
+    `canopy_sdk.host.verify_subject` and authorizes every call against its `sub`).
+
+    Reached only from `resolve`, only for a turn whose initiator is a contact and whose own
+    profile (`Turn.capability`) names this site with `contact_scoped: true`. Refused unless
+    the site is live and names its MCP resource, the contact is the SITE's own (keyed by it,
+    with the site's id for them) and not blocked, and the runner meets the conversation's
+    requirements. `sub` is the contact's `external_id`, read here from the turn's
+    initiator — never an argument the agent sent."""
+    from apps.contacts.models import Contact  # noqa: PLC0415 — as `resolve`'s model reads: loads with a call
+    from apps.harness import runner_requirements as rr  # noqa: PLC0415 — as above
+
+    from . import client_identity  # noqa: PLC0415 — as `context_for_grant`
+
+    if app is None or not app.host_mcp_resource:
+        raise GatewayRefusal("site_not_configured", f"{site} does not let me reach its tools for you")
+    contact = turn.initiator_contact
+    if (contact is None or contact.app_id != app.pk or contact.source != Contact.SOURCE_EMBED
+            or not contact.external_id or contact.is_blocked):
+        raise GatewayRefusal("not_the_sites_contact",
+                             f"{site} does not know you as one of its own, so I cannot ask it about you")
+    if rr.SENSITIVE_DATA in reqs and not sensitive_data.handles_sensitive(agent, turn.capability):
+        raise GatewayRefusal(
+            "undeclared",
+            f"{site} gives its sensitive data only to a host site that handles sensitive data "
+            "(`data: sensitive`), and this turn's does not; ask the agent's owner to set it")
+    try:
+        client_identity.dpop_jkt()
+    except client_identity.ClientIdentityError:
+        raise GatewayRefusal("no_client_key", "canopy cannot reach sites on anyone's behalf "
+                             "right now") from None
+    return SiteContext(
+        turn_id=str(turn.pk), agent_slug=agent.slug, site=app.name, resource=app.host_mcp_resource,
+        scope="", expires_at=None, ceiling=list(cap.get("ceiling") or []), app_id=app.pk,
+        execution=execution.facts_for(turn, agent, session, reqs, app=app), session_id=str(session.pk),
+        subject={"sub": contact.external_id, "site": app.name, "agent": agent.slug, "turn": str(turn.pk),
+                 "session": str(session.pk), "capability": turn.capability or ""},
+    )
 
 
 def _push_ask(session, grant) -> None:
@@ -460,6 +523,10 @@ def _auth(ctx: SiteContext, mode: str = "dpop", view_uri: str = "", view_tool: V
 
     if mode not in PROOF_MODES:
         raise ValueError(f"unknown proof mode {mode!r}")
+    if ctx.subject is not None:
+        if mode != "dpop":
+            raise ValueError("the subject mode has no token to present any other way")
+        return _SubjectAuth(ctx)
     token = ctx._token
     stranger = None
     if mode == "stranger_key":
@@ -519,6 +586,50 @@ def _auth(ctx: SiteContext, mode: str = "dpop", view_uri: str = "", view_tool: V
                 ctx.resource, uri=view_tool.uri, access_token=token, rpc=rpc, **ctx.view)
 
     return _DPoP()
+
+
+def _subject_auth_class():
+    import httpx2  # noqa: PLC0415 — as _auth: the HTTP client loads with a call
+
+    from . import client_identity  # noqa: PLC0415 — as _auth
+
+    class SubjectAuth(httpx2.Auth):
+        """The SUBJECT MODE's credentials, fresh on EVERY request of the MCP session: a
+        subject statement naming the contact (`Authorization: CanopySubject`), a DPoP proof
+        by canopy's key with no `ath` (there is no token), and this turn's
+        `Canopy-Execution` (with `sub`). Each statement is bound to THIS JSON-RPC request
+        (`rpc`) and to the proof's key (`cnf.jkt`). Retries once on a `use_dpop_nonce`."""
+
+        def __init__(self, ctx: SiteContext):
+            self.ctx = ctx
+
+        def _sign(self, request, nonce=None):
+            htu = str(request.url.copy_with(query=None, fragment=None))
+            try:
+                body = request.content if request.method == "POST" else b""
+            except Exception:  # noqa: BLE001 - a streamed body: bound to nothing
+                body = b""
+            rpc = contract.rpc_digest_of_body(body)
+            request.headers["Authorization"] = consumer.subject_authorization(
+                client_identity.subject_statement(self.ctx.resource, self.ctx.subject, rpc=rpc))
+            request.headers[contract.DPOP_HEADER] = client_identity.dpop_proof(request.method, htu, nonce=nonce)
+            if self.ctx.execution is not None:
+                request.headers[contract.EXECUTION_HEADER] = client_identity.execution_statement(
+                    self.ctx.resource, self.ctx.execution, rpc=rpc)
+
+        def auth_flow(self, request):
+            self._sign(request)
+            response = yield request
+            nonce = response.headers.get(contract.DPOP_NONCE_HEADER)
+            if response.status_code == 401 and nonce:
+                self._sign(request, nonce=nonce)   # a fresh statement and proof: the first were spent
+                yield request
+
+    return SubjectAuth
+
+
+def _SubjectAuth(ctx: SiteContext):
+    return _subject_auth_class()(ctx)
 
 
 class ViewTool:

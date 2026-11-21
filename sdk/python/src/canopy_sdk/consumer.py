@@ -252,6 +252,31 @@ def view_statement(key, client_id: str, audience: str, *, subject: str, uri: str
     return sign(claims, key, headers={"kid": public_jwk(key)["kid"], "typ": contract.VIEW_TYP})
 
 
+def subject_statement(key, client_id: str, audience: str, *, sub: str, site: str, agent: str, turn: str,
+                      session: str, capability: str, jkt: str, rpc: str | None = None,
+                      now: float | None = None) -> str:
+    """canopy's subject statement (``Authorization: CanopySubject <jws>``) for ONE request an
+    agent's turn makes to a host for one of the host's own contacts: ``sub`` (the host's id
+    for them, from the turn's initiator — never from the agent), ``site``, ``agent``,
+    ``turn``, ``session``, ``capability``. Signed by canopy's CLIENT key, for ``audience``
+    (the host's MCP resource), living 60s, single-use ``jti``, bound to the DPoP key
+    (``cnf.jkt``) and, when given, the JSON-RPC request it rides (``rpc``)."""
+    if not (sub and site and agent and turn and session):
+        raise ValueError("a subject statement names its person, site, agent, turn and conversation")
+    issued = int(time.time() if now is None else now)
+    claims = {"sub": str(sub), "site": str(site), "agent": str(agent), "turn": str(turn),
+              "session": str(session), "capability": str(capability or ""),
+              "iss": client_id, "aud": audience, "iat": issued,
+              "exp": issued + contract.SUBJECT_MAX_LIFETIME, "jti": new_jti(), "cnf": {"jkt": jkt}}
+    if rpc:
+        claims["rpc"] = rpc
+    return sign(claims, key, headers={"kid": public_jwk(key)["kid"], "typ": contract.SUBJECT_TYP})
+
+
+def subject_authorization(statement: str) -> str:
+    return f"{contract.SUBJECT_AUTH_SCHEME} {statement}"
+
+
 def dpop_proof(key, htm: str, htu: str, *, access_token: str | None = None,
                nonce: str | None = None) -> str:
     """A fresh RFC 9449 proof for ONE request, signed by canopy's DPoP key."""

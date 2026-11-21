@@ -6399,6 +6399,10 @@ export interface paths {
         /**
          * Add or change one host site: only the fields sent change. dry_run checks without saving
          * @description A field of the wrong shape (an empty or over-long `bash` entry, a malformed path) is a 422.
+         *
+         *     `contact_scoped: true` also offers the agent to the site's own contacts, whose turns then reach
+         *     the site's tools bound to that one contact (a canopy-signed subject statement, no grant); the site
+         *     authorizes every call against them.
          */
         readonly put: operations["put_agent_host_site"];
         readonly post?: never;
@@ -30822,6 +30826,11 @@ export interface components {
              * @default false
              */
             readonly sensitive: boolean;
+            /**
+             * Contact Scoped
+             * @default false
+             */
+            readonly contact_scoped: boolean;
         };
         /**
          * AgentLoginRequestOut
@@ -31949,6 +31958,11 @@ export interface components {
              * @default false
              */
             readonly sensitive: boolean;
+            /**
+             * Contact Scoped
+             * @default false
+             */
+            readonly contact_scoped: boolean;
         };
         /** AgentHostSiteIn */
         readonly AgentHostSiteIn: {
@@ -31975,6 +31989,8 @@ export interface components {
             readonly own_login?: readonly string[] | null;
             /** Sensitive */
             readonly sensitive?: boolean | null;
+            /** Contact Scoped */
+            readonly contact_scoped?: boolean | null;
         };
         /** AgentAppEntriesOut */
         readonly AgentAppEntriesOut: {

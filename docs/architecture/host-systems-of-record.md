@@ -40,6 +40,16 @@ Nothing of anyone else's goes: another site's contact with the same id, an email
 
 `site.retention_days` (`CANOPY_HOST["RETENTION_DAYS"]`) holds the site's contacts' conversations to the site's own period (`retention.services._sweep_site_contacts`, rule `site_rule`): read live like `person_scheme`, and applied whatever `CANOPY_RETENTION_ENFORCE` says, as the sensitive-data period is. A shorter workspace rule still applies when enforcement is on, so the shorter of the two wins.
 
+## The agent asks the host about one person: `contact_scoped` and the subject statement
+
+A contact has no passkey, so never an act-as-you grant (`HostGrant`), and an agent that serves a site on pages is normally not offered to its contacts. An agent owner (or admin) may mark the agent's entry for a site **`contact_scoped`** (`PUT /api/agents/{slug}/host-sites/{site}` with `contact_scoped: true`, `profile_settings.set_site`; parsed by `published_profiles.parse`). Then:
+
+- `contact_api._for_contacts` offers the agent to that site's contacts (`published_profiles.contact_scoped`);
+- a contact's turn on that entry may use `site_tools`, `site_call` and `site_read`, and the gateway runs its **subject mode** (`host_gateway._subject_context`): no grant, no token. Each request carries `Authorization: CanopySubject <jws>` (`typ` `canopy-subject+jwt`, signed by canopy's client key, the CIMD key `Canopy-Execution` already uses; `client_identity.subject_statement`) naming `{sub, site, agent, turn, session, capability}`, bound to canopy's DPoP key (`cnf.jkt`) and to the JSON-RPC request (`rpc`), 60 s, single-use; a DPoP proof with no `ath`; and `Canopy-Execution`, which now carries `sub` too (`execution.subject_of`).
+- **The host authorizes every call against `sub`** (`canopy_sdk.host.verify_subject` → `Subject`). canopy's part is only to say truly who the turn is with.
+
+The subject mode is reachable only when every one of these holds (`host_gateway.resolve`), each pinned by a negative test in `tests/test_contact_scoped_site_tools.py`: the turn's initiator is a contact; the turn's own profile (`Turn.capability`) names the conversation's site with `contact_scoped: true`; the site is live and names its MCP resource (`host_mcp_resource`); the contact is the SITE's own (`Contact.app` is that site, `source` embed, an `external_id`), not blocked; and the runner meets the conversation's requirements. `sub` is the contact's `external_id`, read from the turn's initiator, never from the tool's arguments. Anything else takes the grant path, which refuses a contact.
+
 ## The agent sees who the person is at the host
 
 The caller envelope's `contact` block (`apps/harness/caller_context.py::_contact`) carries `external_id` (for a site's contact), `site`, `record_uri`, `host_profile` and `person_id`. The canopy plugin prints them as data about the person, never as instructions.
@@ -56,3 +66,5 @@ The caller envelope's `contact` block (`apps/harness/caller_context.py::_contact
 | Erase one person; the tombstone | `contacts.services.erase`, `ContactErasure`; a conversation `content_deletion.erase_session` |
 | The site's retention | `retention.services._sweep_site_contacts` |
 | What the agent is told | `apps/harness/caller_context.py::_contact` |
+| Offering an agent to a site's contacts | `contact_api._for_contacts`, `published_profiles.contact_scoped` |
+| The subject mode | `host_gateway._subject_context`, `client_identity.subject_statement`, `execution.subject_of`; the host's check `sdk/python/src/canopy_sdk/host/subject.py` |

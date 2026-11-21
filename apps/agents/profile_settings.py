@@ -18,7 +18,8 @@ from . import published_profiles as profiles_mod
 from . import sensitive_data
 from .models import Agent
 
-#: The fields of a profile, in either setting. A host site adds `ceiling`, `own_login`, `sensitive`.
+#: The fields of a profile, in either setting. A host site adds `ceiling`, `own_login`, `sensitive`,
+#: `contact_scoped`.
 PROFILE_FIELDS = ("description", "entry", "tools", "bash", "read_paths", "write_paths")
 _RESERVED_KEYS = frozenset({*profiles_mod.READ_MODE_NAMES, profiles_mod.SESSION_REVIEW})
 _MAX_ENTRIES = 50
@@ -42,6 +43,7 @@ def new_site_defaults() -> dict:
         "ceiling": [],
         "own_login": [],
         "sensitive": False,
+        "contact_scoped": False,
     }
 
 
@@ -69,7 +71,8 @@ def read_mode_of(agent) -> dict:
 def _row(name: str, entry: dict, site: str) -> dict:
     return {"site": site, "key": name, **_profile_of(entry), "ceiling": entry.get("ceiling") or [],
             "own_login": (entry.get("own_login") or {}).get(site) or [],
-            "sensitive": entry.get("data") == sensitive_data.SENSITIVE}
+            "sensitive": entry.get("data") == sensitive_data.SENSITIVE,
+            "contact_scoped": entry.get("contact_scoped") is True}
 
 
 def host_sites_of(agent) -> list[dict]:
@@ -234,6 +237,8 @@ def set_site(agent, site: str, fields: dict, *, by, dry_run: bool = False):
                      own_login={site: merged["own_login"]} if merged["own_login"] else None)
         if merged["sensitive"]:
             entry["data"] = sensitive_data.SENSITIVE
+        if merged.get("contact_scoped"):
+            entry["contact_scoped"] = True
         caps[name] = _validated(name, entry)
     return _edit(agent, change, by=by, dry_run=dry_run)
 
