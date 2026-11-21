@@ -227,7 +227,7 @@ def list_agent_pinnable_runners(request: HttpRequest, slug: str) -> list[AgentPi
     runners = [
         r for r in runners
         if services.runner_may_hold_agent(r, agent, standings=standings)
-        and not cannot_serve(r, agent.slug)
+        and not cannot_serve(r, agent)
         and offered & set(clis.reported(r))
     ]
     order = (agent.runner_assignments.filter(source="", enabled=True).values_list("runner_id", flat=True)
@@ -259,7 +259,7 @@ def get_agent_route_preview(
     if actor and not who:
         raise HttpError(422, f"not an email address: {actor!r}")
     defaults, priorities = routing.load_assignment_rows([agent.pk])
-    rows = routing.labelled_assignment_rows(agent.pk, source, who, defaults, priorities, serves=agent.slug)
+    rows = routing.labelled_assignment_rows(agent.pk, source, who, defaults, priorities, serves=agent)
     ladder = [priorities.get((agent.pk, source, who)) if who else None, priorities.get((agent.pk, source, ""))]
     strict = next((rule[0].strict for rule in ladder if rule), False)
     follows = (None if agent.pk in agents_with_own_order([agent.pk])

@@ -1351,6 +1351,17 @@ def _plugins_check(now: float | None = None, home: pathlib.Path | None = None) -
         loc = str((markets.get(key.rpartition("@")[2]) or {}).get("installLocation") or "")
         if not sha or not loc or not (pathlib.Path(loc) / ".git").exists():
             continue
+        if _is_stored_clone(pathlib.Path(loc)):
+            # A stored agent's revisions are each ONE orphan commit, so the installed sha
+            # is never an ancestor of a newer one: behind means "not HEAD".
+            head = git(loc, "rev-parse", "HEAD")
+            if head is None or head.returncode != 0 or head.stdout.strip() == sha:
+                continue
+            waited = now - _clone_moved_at(loc)
+            if waited > PLUGIN_REFRESH_GRACE_SECONDS:
+                behind.append(f"{key} {entry.get('version') or '?'} is not the revision synced to "
+                              f"{loc}, which moved {_ago(waited)} ago")
+            continue
         anc = git(loc, "merge-base", "--is-ancestor", sha, "HEAD")
         if anc is None or anc.returncode != 0:
             continue                          # unknown here, or installed ahead of the clone
@@ -6766,6 +6777,11 @@ def _github_turn_env(runner_id: str, turn: dict) -> dict:
     requested_by = _requested_by_from(turn)
     if not _turn_agent_slug(turn) and not turn.get("project"):
         return {"CANOPY_REQUESTED_BY": requested_by}
+    if _turn_says_stored(turn):
+        # A stored agent has no repo: canopy-web refuses it an identity (409), and the
+        # turn needs none — it changes itself through definition drafts, not pushes.
+        _is_stored_agent(_turn_agent_slug(turn), turn)
+        return {"CANOPY_REQUESTED_BY": requested_by}
     turn_id = str(turn["id"])
     status, body = _api("POST", f"/runners/{runner_id}/turns/{turn_id}/github-token")
     token = str((body or {}).get("token") or "") if status == 200 else ""
@@ -7114,6 +7130,11 @@ def _fetch_clone(clone: pathlib.Path, env: dict | None = None, *, pull: bool = F
     repo fetched without a token fails, and a confined turn has none) is logged and turns the `clones` health
     check amber once the clone is older than CLONE_STALE_SECONDS."""
     key = str(clone)
+    if _is_stored_clone(clone):
+        # A stored agent's clone (origin `canopy://…`): git has nothing to fetch. Its
+        # "pull" is `canopy agent sync` (`_sync_stored_clone`, which may raise
+        # StoredAgentError); its "fetch" is a no-op — the sync already moved origin/main.
+        return _sync_stored_clone(clone.name, clone) if pull else True
     cmd = ["git", "-C", key, *(["pull", "--ff-only", "--quiet"] if pull else ["fetch", "--quiet", "origin"])]
     error = ""
     try:
@@ -7155,6 +7176,8 @@ def _clone_age(clone: pathlib.Path, now: float) -> float:
 def _clone_refresh_blocker(slug: str) -> str:
     """Why the runner's own fetch of `slug`'s clone ran WITHOUT the agent owner's GitHub
     delegation, for the `clones` check — "" when nothing here kept it from using one."""
+    if _is_stored_agent(slug):
+        return ""
     if SENSITIVE_DATA_MODE:
         return "this is a sensitive-data box: it never borrows a GitHub token, so a private repo cannot be fetched here"
     err = _TURN_ENV_ERRORS.get(slug)
@@ -7172,19 +7195,27 @@ def _clones_check(now: float | None = None) -> None:
     now = time.time() if now is None else now
     with _CLONE_FETCH_LOCK:
         failing = {k: dict(v) for k, v in _CLONE_FETCH.items() if v.get("error")}
-    stale, blocked = [], []
+    stale, blocked, stored = [], [], []
     for key, rec in sorted(failing.items()):
         age = _clone_age(pathlib.Path(key), now)
         if age > CLONE_STALE_SECONDS:
             how = "never fetched" if age == float("inf") else f"last fetched {int(age // 60)} min ago"
+            if _is_stored_clone(pathlib.Path(key)):
+                stored.append(f"{pathlib.Path(key).name} ({how.replace('fetched', 'synced')}): {rec['error']}")
+                continue
             stale.append(f"{pathlib.Path(key).name} ({how}): {rec['error']}")
             blocked.append(pathlib.Path(key).name)
-    if stale:
+    if stored and not stale:
+        _set_check("clones", "warn", "new sessions run a STALE revision of a stored agent — "
+                   + "; ".join(stored) + ". `canopy agent sync --runner` brings its clone to the live "
+                   "revision; its error is above and in this runner's log.")
+    elif stale:
         why = [f"{name}: {r}" for name in blocked if (r := _clone_refresh_blocker(name))]
         _set_check("clones", "warn", "new sessions run STALE skills and rails — " + "; ".join(stale) +
                    ". A private repo needs the agent's GitHub token, which its owner lends at the "
                    "agent's Settings → External accounts → GitHub" +
-                   (" — " + "; ".join(why) if why else "; one is lent and this box holds it, so the fetch itself failed") + ".")
+                   (" — " + "; ".join(why) if why else "; one is lent and this box holds it, so the fetch itself failed") + "."
+                   + (" Stored agents behind too: " + "; ".join(stored) + "." if stored else ""))
     else:
         _set_check("clones", "ok", "")
 
@@ -7200,7 +7231,7 @@ def _clone_refresh_env(slug: str, env: dict | None) -> dict | None:
     read-only in effect, and is never part of the turn's environment (the confined env is an
     allowlist built before and apart from this). Not on a sensitive-data box, which holds
     nothing it need not."""
-    if (env or {}).get("GH_TOKEN") or SENSITIVE_DATA_MODE or not slug:
+    if (env or {}).get("GH_TOKEN") or SENSITIVE_DATA_MODE or not slug or _is_stored_agent(slug):
         return env
     # In force NOW, not as last cached: the server's per-turn gate (`…/github-token`, a 409
     # once the delegation is withdrawn or its person stops being an admin) is not asked
@@ -8145,6 +8176,170 @@ def agents_unprepared() -> list[str] | None:
     return sorted(s for s in tried if not (pathlib.Path(AGENT_ROOT) / s / ".git").is_dir())
 
 
+# ── stored agents ────────────────────────────────────────────────────────────
+# A STORED agent's definition is a file tree kept in canopy-web, not a GitHub repo
+# (canopy-web docs/architecture/runners.md § A stored agent on a runner). The claim says so
+# (`turn["definition"]["source"] == "stored"`), and `canopy agent prepare --runner`
+# materializes its live revision into AGENT_ROOT/<slug> as a git repo whose HEAD is
+# `refs/remotes/origin/main` and whose origin is `canopy://<workspace>/<slug>`. So
+# everything downstream of "a clone" — worktrees, `_link_clone_state`, the plugin
+# install, `agents_unprepared` — is unchanged. What differs is here:
+#
+#   * no GitHub identity and no CANOPY_AGENT_REPO for its turns (`_github_turn_env`);
+#   * `canopy agent sync --runner --slug <slug>` in place of `git pull`
+#     (`_fetch_clone`), and never a borrowed token for it (`_clone_refresh_env`);
+#   * a turn never runs WITHOUT the materialized clone, or past a canopy CLI too old to
+#     sync one: either fails the turn saying why (`StoredAgentError`), because the
+#     alternative is running stale code, or none of the agent at all, without a word.
+
+#: A stored agent's clone names this as its origin. git never fetches it.
+STORED_ORIGIN_PREFIX = "canopy://"
+STORED_SYNC_TIMEOUT = int(os.environ.get("STORED_SYNC_TIMEOUT", "300"))
+#: Agents a claimed turn said are stored (`_is_stored_agent`), by slug.
+_STORED_AGENTS: set[str] = set()
+#: One sync per agent at a time: two turns claimed together share the first's result.
+_STORED_SYNC_LOCKS: dict[str, threading.Lock] = {}
+_STORED_SYNC_LOCKS_GUARD = threading.Lock()
+UPDATE_CANOPY_HINT = ("update the canopy plugin and CLI on this box (a runner refresh re-bootstraps "
+                      "it: the runner's page → Refresh)")
+
+
+class StoredAgentError(RuntimeError):
+    """A stored agent's turn that must not run: its clone could not be materialized, or
+    this box's canopy CLI is too old to keep it at the live revision."""
+
+
+def _turn_says_stored(turn: dict | None) -> bool | None:
+    """What the claim says: True (stored), False (`definition` names another source),
+    None when it says nothing (a repo agent, or a server from before stored agents)."""
+    d = (turn or {}).get("definition")
+    if not isinstance(d, dict) or not d.get("source"):
+        return None
+    return d.get("source") == "stored"
+
+
+def _is_stored_clone(clone: pathlib.Path) -> bool:
+    """Whether `clone` is a materialized stored agent: its origin is `canopy://…`."""
+    if not (pathlib.Path(clone) / ".git").exists():
+        return False
+    url = _git_out("-C", str(clone), "config", "--get", "remote.origin.url", timeout=10)
+    return bool(url) and url.strip().startswith(STORED_ORIGIN_PREFIX)
+
+
+def _is_stored_agent(slug: str, turn: dict | None = None) -> bool:
+    """Is `slug` a stored agent? The turn's claim says so when it carries `definition`
+    (and is remembered, for the box's own refreshes); else what a claim said before;
+    else the clone itself (a `canopy://` origin)."""
+    if not slug:
+        return False
+    said = _turn_says_stored(turn)
+    if said is True:
+        _STORED_AGENTS.add(slug)
+        return True
+    if said is False:
+        _STORED_AGENTS.discard(slug)
+        return False
+    return slug in _STORED_AGENTS or _is_stored_clone(pathlib.Path(AGENT_ROOT) / slug)
+
+
+def _canopy_runner_env() -> dict:
+    """The environment `canopy agent prepare|sync --runner` runs in: this box's own token
+    (never a person's PAT, never a GitHub token) and AGENT_ROOT."""
+    env = _off_disk_env(dict(os.environ))
+    for key in _GITHUB_ENV_KEYS:
+        env.pop(key, None)
+    env.setdefault("AGENT_ROOT", AGENT_ROOT)
+    env["CANOPY_TOKEN"] = _bearer(min_life=900)
+    return env
+
+
+def _cli_too_old(returncode: int, said: str) -> bool:
+    """A usage error from click: the CLI predates `canopy agent sync --runner` (an older
+    `agent sync` is the manager-sync command, which has no `--runner`)."""
+    return returncode == 2 or any(m in said for m in ("No such option", "No such command",
+                                                       "Missing option", "no such option"))
+
+
+def stored_sync(slug: str) -> dict:
+    """Run `canopy agent sync --runner --slug <slug>` and return the JSON line it prints
+    (`{slug, revision, root_sha256, commit, changed}`). Raises StoredAgentError: with the
+    update hint when the CLI is too old to have it."""
+    try:
+        r = subprocess.run([_canopy_cli(), "agent", "sync", "--runner", "--slug", slug],
+                           capture_output=True, text=True, timeout=STORED_SYNC_TIMEOUT,
+                           env=_canopy_runner_env())
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise StoredAgentError(f"`canopy agent sync` for stored agent {slug} did not run: {exc}") from exc
+    said = " ".join((r.stderr or r.stdout or f"exit {r.returncode}").split())[-300:]
+    if r.returncode != 0:
+        if _cli_too_old(r.returncode, said):
+            raise StoredAgentError(
+                f"{slug} is a stored agent, and this box's canopy CLI cannot sync one "
+                f"(`canopy agent sync --runner`: {said}); {UPDATE_CANOPY_HINT}")
+        raise StoredAgentError(f"`canopy agent sync` for stored agent {slug} failed: {said}")
+    for line in reversed((r.stdout or "").splitlines()):
+        line = line.strip()
+        if line.startswith("{"):
+            try:
+                doc = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(doc, dict) and "revision" in doc:
+                return doc
+    raise StoredAgentError(f"`canopy agent sync` for stored agent {slug} printed no revision ({said})")
+
+
+#: What `_sync_stored_clone` runs, given the slug. A name of its own so a test swaps in
+#: a fake: no test may reach a real canopy-web.
+_STORED_SYNCER = stored_sync
+
+
+def _sync_stored_clone(slug: str, clone: pathlib.Path) -> bool:
+    """Bring a stored agent's clone to its live revision — its `git pull` — and RECORD
+    how it went for the `clones` check. A sync that fails is logged and the turn runs the
+    revision last synced (as a failed pull does), EXCEPT a CLI too old to sync at all,
+    which raises StoredAgentError: that box would never move again."""
+    key = str(clone)
+    with _STORED_SYNC_LOCKS_GUARD:
+        lock = _STORED_SYNC_LOCKS.setdefault(slug, threading.Lock())
+    error, fatal = "", None
+    with lock:
+        try:
+            doc = _STORED_SYNCER(slug)
+            if doc.get("changed"):
+                _log(f"stored agent {slug}: synced to revision {doc.get('revision')} "
+                     f"({str(doc.get('commit') or '')[:12]})")
+        except StoredAgentError as exc:
+            error = str(exc)[:300]
+            if UPDATE_CANOPY_HINT in str(exc):
+                fatal = exc
+    now = time.time()
+    with _CLONE_FETCH_LOCK:
+        rec = _CLONE_FETCH.setdefault(key, {"ok_at": 0.0, "failed_at": 0.0, "error": ""})
+        if error:
+            rec.update(failed_at=now, error=error)
+        else:
+            rec.update(ok_at=now, error="")
+    if fatal is not None:
+        raise fatal
+    if error:
+        _log(f"warn: {error}; new sessions on {slug} run the revision this box last synced")
+    return not error
+
+
+def _require_stored_clone(slug: str) -> None:
+    """A stored agent's turn runs in its materialized clone or not at all: a scratch dir
+    would be a turn with none of the agent in it, reporting done."""
+    clone = pathlib.Path(AGENT_ROOT) / slug
+    if _is_stored_clone(clone):
+        return
+    why = (_HEALTH.get(f"prepare.{slug}") or {}).get("detail") or ""
+    raise StoredAgentError(
+        f"{slug} is a stored agent and this box has not materialized it"
+        + (f" (canopy agent prepare: {why[:200]})" if why else "")
+        + f"; a canopy CLI from before stored agents cannot — {UPDATE_CANOPY_HINT}")
+
+
 #: The turn env key `_github_turn_env` names the agent's repo under (`owner/name`).
 AGENT_REPO_ENV = "CANOPY_AGENT_REPO"
 _GITHUB_REPO = re.compile(r"^[\w-][\w.-]*/[\w-][\w.-]*$")
@@ -8184,7 +8379,7 @@ _PREPARED_WITH_GITHUB: dict[str, float] = {}
 _LAZY_CLONER = _clone_agent_repo
 
 
-def _ensure_agent_clone(slug: str, env: dict | None = None) -> None:
+def _ensure_agent_clone(slug: str, env: dict | None = None, *, stored: bool = False) -> None:
     """Set an agent up NOW if this box has no clone of it — before its turn runs.
 
     `env` is the turn's own environment: its GitHub identity clones the agent's
@@ -8197,8 +8392,15 @@ def _ensure_agent_clone(slug: str, env: dict | None = None) -> None:
     `done` (answering with the fleet's plugins only). canopy-web asks the box to refresh when an agent is registered
     (apps/agents/setup.py::request_setup), but a turn can arrive first. Waiting a
     bootstrap here is slower; running as nobody is wrong. It also stamps
-    `_BOOTSTRAPPED_AT`, which discharges that pending refresh."""
+    `_BOOTSTRAPPED_AT`, which discharges that pending refresh.
+
+    A STORED agent (`stored`) has no repo to clone: `canopy agent prepare` materializes
+    it. A clone of it that is still a GitHub checkout (an agent converted to stored since
+    this box cloned it) is prepared again, which materializes over it."""
     if not slug or _safe_session_dirname(slug) != slug:
+        return
+    if stored:
+        _ensure_stored_clone(slug, env)
         return
     github = bool((env or {}).get("GH_TOKEN"))
 
@@ -8230,6 +8432,26 @@ def _ensure_agent_clone(slug: str, env: dict | None = None) -> None:
         if github:
             _PREPARED_WITH_GITHUB[slug] = time.time()
         _LAZY_BOOTSTRAPPER(slug, env)
+
+
+def _ensure_stored_clone(slug: str, env: dict | None) -> None:
+    """`_ensure_agent_clone` for a stored agent: prepare it when this box has no
+    materialized clone of it, at most once per LAZY_BOOTSTRAP_RETRY."""
+    clone = pathlib.Path(AGENT_ROOT) / slug
+    if _is_stored_clone(clone):
+        return
+    _BOOTSTRAP_DONE.wait(timeout=BOOTSTRAP_TIMEOUT_SECONDS)
+    with _LAZY_BOOTSTRAP_LOCK:
+        if _is_stored_clone(clone):
+            return
+        if time.time() - _LAZY_BOOTSTRAP_TRIED.get(slug, 0.0) < LAZY_BOOTSTRAP_RETRY:
+            return
+        _LAZY_BOOTSTRAP_TRIED[slug] = time.time()
+        _log(f"agent {slug}: a stored agent with no materialized clone on this box"
+             f"{' (its clone is a GitHub checkout)' if (clone / '.git').exists() else ''} "
+             "— preparing it before its turn runs")
+        # No turn GitHub identity is passed: a stored agent's turn has none.
+        _LAZY_BOOTSTRAPPER(slug, {k: v for k, v in (env or {}).items() if k not in _GITHUB_ENV_KEYS})
 
 
 def _turn_cwd(turn: dict, turn_id: str, env: dict | None = None) -> pathlib.Path:
@@ -8264,11 +8486,18 @@ def _turn_cwd(turn: dict, turn_id: str, env: dict | None = None) -> pathlib.Path
     sits beside the one it was cut from.
 
     `env` is the turn's own environment: its git fetches and pulls use the
-    turn's GitHub identity, since this box holds none of its own."""
+    turn's GitHub identity, since this box holds none of its own.
+
+    A STORED agent's clone is materialized by `canopy agent prepare` and synced by
+    `canopy agent sync` where a repo agent's is cloned and pulled (`_fetch_clone`); its
+    turn raises StoredAgentError rather than run without it."""
     session_id = turn.get("_worktree_of") or _chat_session_id(turn)
     slug = _turn_agent_slug(turn)
+    stored = _is_stored_agent(slug, turn)
     if slug:
-        _ensure_agent_clone(slug, env)
+        _ensure_agent_clone(slug, env, stored=stored)
+    if stored:
+        _require_stored_clone(slug)
     # A PROJECT turn (a repo, no agent) works in its own worktree of that repo, at
     # (an empty scratch dir would send such turns looking for /opt/canopy-web).
     project = "" if slug else (turn.get("project") or "")
@@ -14510,7 +14739,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             # The clone first: whether the agent has an env to resolve at all is read
             # from its template (an agent this box has never seen is bootstrapped now,
             # cloned with this turn's GitHub identity).
-            _ensure_agent_clone(slug, per_turn)
+            _ensure_agent_clone(slug, per_turn, stored=_is_stored_agent(slug, turn))
             if _turn_values(slug) is None:
                 note = (f"[runner] could not resolve {slug}'s credentials: "
                         f"{_TURN_ENV_ERRORS.get(slug) or 'no answer from the canopy CLI'}")
@@ -14530,7 +14759,13 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             per_turn["CANOPY_AGENT_ENV_FILE"] = str(env_path)
             _TURN_ENV.extra["CANOPY_AGENT_ENV_FILE"] = str(env_path)
             off_disk_env = True
-        cwd = None if job else _turn_cwd(turn, turn_id, env=_agent_env(slug))
+        try:
+            cwd = None if job else _turn_cwd(turn, turn_id, env=_agent_env(slug))
+        except StoredAgentError as exc:
+            # Never run a stored agent from no clone, or from one this box cannot move.
+            _post_finish(turn_id, {"status": "failed", "result_note": f"[runner] {exc}"})
+            _log(f"turn {turn_id[:8]} NOT run — {exc}")
+            return
         forget["cwd"] = cwd
         resume_id = turn.get("_resume_id") or None
         prompt = turn.get("prompt", "")

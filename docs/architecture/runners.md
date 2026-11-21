@@ -202,6 +202,27 @@ from canopy-web. The flow is in the module docstrings of `apps/harness/runner_pr
   whoever made the project), else `failed` with the box's reason; a failure never marks the runner not-ready.
 - A repo that is not an agent's also needs the owner's opt-in before repo work routes to it.
 
+## A stored agent on a runner
+
+A stored agent's definition is a file tree kept in canopy-web, not a GitHub repo. A runner materializes its
+live revision into a local git repo (origin `canopy://<workspace>/<slug>`, HEAD on `origin/main`), so
+everything downstream of a clone is unchanged. The server half is `apps/harness/stored_agents.py`. Rules:
+
+- **The claim says so.** `ClaimedTurnOut.definition` is `{source: "stored", revision, root_sha256}` for a
+  stored agent's turn and null otherwise. Its turns get no GitHub identity (`turn_github_token` answers 409)
+  and no `CANOPY_AGENT_REPO`.
+- **Cloud box:** `canopy agent prepare --runner` materializes it (`cloud_runner._ensure_stored_clone`, also
+  over a GitHub clone of an agent converted since), and `canopy agent sync --runner` replaces `git pull`
+  (`cloud_runner._sync_stored_clone`, reached through `_fetch_clone`). A turn never runs without the
+  materialized clone or on a canopy CLI too old to sync one: it fails saying to update canopy
+  (`cloud_runner.StoredAgentError`). Any other failed sync runs the last synced revision and turns the
+  `clones` check amber, as a failed pull does. Confined turns work the same way: no credential is involved.
+- **Laptop:** the checkout is `~/.canopy/agents/<slug>`, brought to the live revision before a new session
+  is cut from it (`runner/canopy_runner/canopy_runner/stored_agents.py::ensure_checkout`). emdash has no
+  project for it, so routing never refuses a laptop for lacking one (`routing.cannot_serve`) and a new thread
+  on an emdash box runs headless (`desktop.maybe_execute`). A caller's confined turn runs only through emdash
+  on a laptop, so it cannot run there: route it to a cloud runner.
+
 ## An agent's state document
 
 `AgentStateDocument` is one JSON document per agent, a backup on canopy-web that the agent writes after each

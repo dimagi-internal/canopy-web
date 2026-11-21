@@ -72,6 +72,7 @@ from .routing_orders import (  # noqa: F401
     repo_order_allows,
     repo_order_for,
     ridable_sessions,
+    routed_agent,
     routed_slug,
     runner_target_q,
     runner_tenant_slugs,

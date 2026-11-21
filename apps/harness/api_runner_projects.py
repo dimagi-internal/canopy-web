@@ -13,7 +13,7 @@ from ninja.errors import HttpError
 from apps.agents.gates import agent_for_read
 from apps.api.route_gates import gate
 
-from . import runner_projects, runner_repos
+from . import runner_projects, runner_repos, stored_agents
 from . import runners as harness_runners
 from .api import router, runner_admin_or_404, runner_or_404, runner_read_q
 from .models import Runner, RunnerProjectRequest
@@ -78,6 +78,9 @@ def add_runner_project(request: HttpRequest, runner_id: uuid.UUID, payload: Runn
     repo_url, name = payload.repo_url, payload.name
     if payload.agent:
         agent = agent_for_read(request, payload.agent.strip())
+        if stored_agents.is_stored(agent):
+            raise HttpError(422, f"{agent.name} is a stored agent: a laptop runs it from "
+                                 f"~/.canopy/agents/{agent.slug}, synced from canopy, and needs no repo")
         if not agent.repo_url:
             raise HttpError(422, f"{agent.name} has no repo set; set it on the agent's Settings first")
         repo_url, name = agent.repo_url, agent.slug

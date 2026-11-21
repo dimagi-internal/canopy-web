@@ -947,3 +947,70 @@ def test_a_long_reply_is_cut_with_a_marker_linking_the_turn(cfg):
     assert long_note.endswith(
         "… [truncated — full reply: https://canopy.example.org/w/dimagi/agents/ace/turns#turn-0001-aaaa]")
     assert short_note == "short"
+
+
+# ── stored agents ───────────────────────────────────────────────────────────
+# A stored agent has no repo: its checkout is ~/.canopy/agents/<slug>, brought to the
+# live revision by `canopy agent materialize` before a new session is cut from it.
+
+STORED = {"source": "stored", "revision": 3, "root_sha256": "ab" * 32}
+
+
+def _stored_turn(**kw):
+    return _turn(project="", agent_slug="connect-helper", definition=STORED, **kw)
+
+
+def test_a_stored_agent_resolves_to_its_materialized_checkout(cfg, tmp_path, monkeypatch):
+    from canopy_runner import stored_agents
+
+    seen = []
+    monkeypatch.setattr(stored_agents, "ensure_checkout",
+                        lambda slug, **kw: seen.append(slug) or tmp_path / ".canopy" / "agents" / slug)
+    repo, base = desktop.project_repo(cfg, "connect-helper", _stored_turn())
+    assert repo == tmp_path / ".canopy" / "agents" / "connect-helper" and base == "HEAD"
+    assert seen == ["connect-helper"]
+    # Without the turn (or for a repo agent) nothing changes: no emdash project, no checkout.
+    with pytest.raises(RuntimeError, match="no checkout"):
+        desktop.project_repo(cfg, "connect-helper")
+
+
+def test_a_stored_agents_new_thread_on_an_emdash_box_runs_headless(cfg, monkeypatch):
+    monkeypatch.setattr(desktop, "_adapter_missing", lambda: False)
+    made = []
+    monkeypatch.setattr(desktop.TurnRun, "run", lambda self: made.append(self.cli))
+    action = desktop.maybe_execute(cfg, FakeClient(), "r", _stored_turn(), "th")
+    assert action.startswith("desktop:create:")
+    for th in list(desktop.IN_FLIGHT.values()):
+        th.join()
+    assert made == [True]
+
+
+def test_a_stored_agent_on_an_emdash_box_without_the_adapter_is_left_to_say_why(cfg, monkeypatch):
+    monkeypatch.setattr(desktop, "_adapter_missing", lambda: True)
+    assert desktop.maybe_execute(cfg, FakeClient(), "r", _stored_turn(), "th") is None
+    from canopy_runner.execute import _stored_on_emdash
+    assert "stored agent" in _stored_on_emdash(_stored_turn())
+    assert _stored_on_emdash(_turn(agent_slug="hal")) == ""
+
+
+def test_a_stored_agents_confined_turn_says_where_it_can_run(cfg, monkeypatch):
+    monkeypatch.setattr(desktop.caller, "confined_profile", lambda turn: {"name": "read"})
+    assert desktop.maybe_execute(cfg, FakeClient(), "r", _stored_turn(), "th") is None
+    from canopy_runner.execute import _stored_on_emdash
+    assert "cloud runner" in _stored_on_emdash(_stored_turn())
+
+
+def test_a_stored_agent_that_cannot_be_fetched_fails_its_turn_with_the_reason(cfg, monkeypatch):
+    from canopy_runner import stored_agents
+
+    def broken(slug, **kw):
+        raise stored_agents.StoredAgentError("connect-helper is a stored agent, and ... update canopy")
+
+    monkeypatch.setattr(stored_agents, "ensure_checkout", broken)
+    monkeypatch.setattr(desktop, "_current", desktop.CLAUDE_CLI)
+    client = FakeClient()
+    run = desktop.TurnRun(cfg, client, "r", _stored_turn(), "th", {"reuse": False}, reuse="")
+    monkeypatch.setattr(run, "_prompt", lambda: "hi")
+    run.run()
+    fails = client.of("fail_turn")
+    assert fails and "update canopy" in fails[0][1][1]

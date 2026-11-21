@@ -250,6 +250,7 @@ from .sessions import (  # noqa: F401
 )
 from .turns import (  # noqa: F401
     CallerContextOut,
+    ClaimDefinitionOut,
     ClaimedTurnOut,
     ClaimPageSiteOut,
     InitiatorOnBehalfOut,

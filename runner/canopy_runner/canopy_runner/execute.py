@@ -28,7 +28,7 @@ from pathlib import Path
 
 from . import (caller, cdp_control, chat_bridge, chat_key, delivery, dialog, emdash, hooks,
                native_permissions, page_site, readiness, scoped_token, session_naming, startup_watch, transcript)
-from . import transfer, whois
+from . import stored_agents, transfer, whois
 from .client import ClientError
 from .tail import TailReader
 
@@ -729,6 +729,21 @@ def _repoint(asked: str, got: str, turn: dict, envelope) -> None:
     caller.clear_pending(asked)
 
 
+def _stored_on_emdash(turn: dict) -> str:
+    """A STORED agent has no repo, so emdash has no project to drive for it: its turns run
+    headless (desktop.maybe_execute), and one that reached here cannot run on this box."""
+    if not stored_agents.is_stored(turn):
+        return ""
+    slug = turn.get("agent_slug") or ""
+    if caller.confined_profile(turn) is not None:
+        return (f"'{slug}' is a stored agent: emdash has no project for it, and a caller's "
+                "confined turn runs only through emdash on a laptop — route its confined turns "
+                "to a cloud runner")
+    return (f"'{slug}' is a stored agent: emdash has no project for it, so this laptop runs it "
+            "headless, which needs the Claude Code CLI and the ACP adapter; one is missing here "
+            "(the runner's page shows its readiness)")
+
+
 def _project_missing(cfg, target: str) -> str:
     """Is `target` (an agent slug or repo) an emdash project on this box? "" if yes,
     or if emdash's DB cannot say; else a note for the caller to fail the turn with.
@@ -1367,7 +1382,7 @@ def execute_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> 
     # Before anything is written for the session: a box without the agent's repo
     # cannot create it, and that says nothing about the box's health — so no
     # readiness.mark_failed here (see _project_missing).
-    missing_project = _project_missing(cfg, agent)
+    missing_project = _stored_on_emdash(turn) or _project_missing(cfg, agent)
     if missing_project:
         logger.error("CREATE skipped turn=%s agent=%s: %s", turn_id, agent, missing_project)
         client.fail_turn(turn_id, missing_project)
