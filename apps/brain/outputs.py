@@ -13,7 +13,9 @@
 * `system`: canopy's superusers and the owners and admins of the output's workspace (`perms.BRAIN_MANAGE`), which for
   a run started for a workspace is that workspace (`emit`); an ancestor's owner or admin holds it too
   (`perms.slugs_with` counts inherited roles), a sub-workspace's or a sibling's does not. The owners' and admins' leg
-  opens only to the PERSON (`as_person`, as the manager leg): never an agent's login, a turn's token or an MCP call.
+  opens to the PERSON (`as_person`, as the manager leg) and to an admin agent in its own turn (`acting`, an
+  `actor.Actor`: only where its login AND the person its turn answers to manage, `Actor.managed`); never to a stored
+  agent token, a turn's caller token or a person's token over MCP.
 
 A withdrawn output is seen by no one, and neither is a `stale` one (a source of it was removed: its words are
 emptied and it waits to be derived again from the rest). Outputs are derived, so they stay readable after a
@@ -32,10 +34,11 @@ from . import reporting
 from .models import INDIVIDUAL, MEMORY, PROJECT, SYSTEM, BrainOutput
 
 
-def visible_to(user, *, as_person: bool = False):
+def visible_to(user, *, as_person: bool = False, acting=None):
     """The outputs `user` may read, as a queryset (workspace-scoped, as every read). `as_person` says the
     request is the person themselves (`api_admin.manager_leg_open`); only then do the manager leg and the owners' and
-    admins' `system` leg open."""
+    admins' `system` leg open. `acting` (an admin agent's `actor.Actor`, whose `user` is `user`) opens the `system` leg
+    where it manages learning, and nothing else."""
     if not getattr(user, "is_authenticated", False):
         return BrainOutput.objects.none()
     from apps.canopy_sessions import access  # noqa: PLC0415 — canopy_sessions imports this app's readers
@@ -57,6 +60,9 @@ def visible_to(user, *, as_person: bool = False):
     if getattr(user, "is_superuser", False):
         q |= Q(capability__purpose_class=SYSTEM)
     elif as_person and not _is_agent_login(user) and (managed := perms.slugs_with(user, perms.BRAIN_MANAGE)):
+        q |= Q(capability__purpose_class=SYSTEM, workspace_id__in=managed)
+    elif (acting is not None and acting.is_agent and acting.user.pk == user.pk
+          and (managed := acting.managed(mine))):
         q |= Q(capability__purpose_class=SYSTEM, workspace_id__in=managed)
     return live.filter(q).distinct()
 

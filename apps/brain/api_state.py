@@ -1,7 +1,8 @@
 """`GET /api/brain/state`, `/state/links`, `/state/runs`: the brain as it stands, for the `/brain` page.
 
-PERSON-ONLY (`the_person`: never an agent's login, a turn's or caller token, an act-as or OAuth token, a runner, a
-site's token or an MCP call), and none is an MCP tool. Read only, and only what the person already reads: sessions
+The person as themselves, or an admin agent's own login in its own turn pinned to a workspace it and the person
+its turn answers to manage (`actor.of`, the management rule: never an OAuth, delegated, act-as or caller token, a
+runner, or a learning run's own turn); each is an MCP tool. Read only, and only what the caller already reads: sessions
 through legs 1 to 6, projects they may read, workspace-wide counts where they hold `logs.read`. WORKSPACE-SCOPED: the
 page calls them pinned (`/api/w/<ws>/brain/…`), which covers `<ws>` and the workspaces below it the caller is in
 (`wsvc.request_workspace_slugs`, the read rule every list follows). `apps/brain/state.py`."""
@@ -11,15 +12,24 @@ from django.http import HttpRequest
 from ninja import Router
 
 from apps.api.auth import session_auth
-from apps.api.errors import refusals
+from apps.api.errors import TYPE_FORBIDDEN, ProblemError, refusals
 from apps.api.route_gates import gate
 
+from . import actor as actor_mod
 from . import scope, state
-from .person import the_person  # noqa: F401 — the routes below and api_manage ask it
 from .schemas import BrainLinkPageOut, BrainRunPageOut, BrainStateOut
 
 router = Router(auth=session_auth, tags=["brain"])
 
+
+def _viewer(request: HttpRequest):
+    """Who reads the page: the person, or an admin agent pinned to a workspace it (and its person) manages."""
+    actor = actor_mod.of(request)
+    pin = getattr(request, "workspace_slug", None) or ""
+    if actor.is_agent and not actor.may_manage(pin):
+        raise ProblemError(403, "An agent reads the brain page only of a workspace it and its person manage, pinned "
+                           "(/api/w/<ws>/…)", type_=TYPE_FORBIDDEN)
+    return actor.user, pin
 
 
 @router.get("/brain/state", response={200: BrainStateOut, **refusals(403, 422)},
@@ -30,9 +40,8 @@ def brain_state(request: HttpRequest) -> dict:
     why some are sealed, the stored links of sessions you read by project and tier, the learners and who answers for
     each (and whether you may configure it here), runs by state and the removal work still to do. Workspace-wide
     counts only where you hold `logs.read`; elsewhere your own. A consent count below 3 is null."""
-    user = the_person(request)
-    pin = getattr(request, "workspace_slug", None)
-    return state.summary(user, scope.of_request(request), pin or "")
+    user, pin = _viewer(request)
+    return state.summary(user, scope.of_request(request), pin)
 
 
 @router.get("/brain/state/links", response={200: BrainLinkPageOut, **refusals(403, 422)},
@@ -40,7 +49,7 @@ def brain_state(request: HttpRequest) -> dict:
 @gate("session-acl")  # only sessions you read (legs 1 to 6) and projects you may read
 def brain_state_links(request: HttpRequest, before: int = 0, limit: int = 50) -> dict:
     """Each link with its session (title scrubbed) and how it was made. Pass `next_before` as `before` for more."""
-    user = the_person(request)
+    user, _pin = _viewer(request)
     return state.link_page(user, scope.of_request(request), before=before, limit=limit)
 
 
@@ -50,5 +59,5 @@ def brain_state_links(request: HttpRequest, before: int = 0, limit: int = 50) ->
 def brain_state_runs(request: HttpRequest, before: int = 0, limit: int = 25) -> dict:
     """Each run's learner, purpose, subject and state, and what it read: the sessions you read by title, the rest a
     count. A canopy admin sees every run. Pass `next_before` as `before` for more."""
-    user = the_person(request)
+    user, _pin = _viewer(request)
     return state.run_page(user, scope.of_request(request), before=before, limit=limit)

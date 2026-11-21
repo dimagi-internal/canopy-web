@@ -241,6 +241,21 @@ def _principal(turn: Turn):
     return None
 
 
+def accountable_person(turn: Turn):
+    """The person `turn` answers to: the person it does the work of (`_principal`), else, for a turn canopy started
+    (a schedule firing), the person who set it up (a system turn's `initiator_user`). None when no active person
+    stands behind it (an agent's own work, an unverified asker, a contact)."""
+    try:
+        person = _principal(turn)
+    except Refused:
+        return None
+    if person is not None:
+        return person
+    if turn.initiator_kind == who.SYSTEM and turn.initiator_user_id and _is_person(turn.initiator_user):
+        return turn.initiator_user
+    return None
+
+
 def _is_person(user) -> bool:
     return bool(user is not None and user.is_active
                 and not Agent.objects.filter(user_id=user.pk).exists())

@@ -1,10 +1,10 @@
 """The `/brain` page's routes: `GET /api/brain/state`, `/state/links` and `/state/runs`.
 
-Person-only (never an agent's login, a turn's token, an act-as token or an MCP call), legs 1 to 6
+The person, or an admin agent in its own turn (`brain.actor`, `tests/test_brain_agent_admin.py`; never an agent's
+stored token, a non-admin's turn, an act-as token or a person's token over MCP), legs 1 to 6
 only (a reader who has a session only through the brain's project leg sees no row of it), workspace-wide counts only
 where the viewer holds `logs.read`, and not one write: every route's queries are captured and none writes."""
 from __future__ import annotations
-
 
 import pytest
 from django.db import connection
@@ -145,7 +145,7 @@ def test_the_page_costs_the_same_for_more_sessions(w):
     assert queries(0) == queries(5)
 
 
-def test_only_the_person_as_themselves(w):
+def test_never_a_stored_token_or_a_turn_that_does_not_manage(w):
     owner = w["owner"]
     login = user("hal_login")
     member(login, w["ws"])
@@ -158,9 +158,9 @@ def test_only_the_person_as_themselves(w):
     for url in ROUTES:
         assert Client().get(url).status_code in (401, 403)                                   # nobody
         assert Client().get(url, **bearer_headers(pat_token(login))).status_code == 403     # an agent's login
-        assert Client().get(url, **bearer_headers(turn_login)).status_code == 403           # a turn's token
+        assert Client().get(url, **bearer_headers(turn_login)).status_code == 403           # a non-admin's turn
         assert client(w["alice"]).get(url, HTTP_X_CANOPY_TURN_ID="x").status_code == 403    # naming a turn
         # An act-as-you grant reaches none of it.
         assert act_as.route_refusal("GET", url, "read", is_tool=False) is not None
     for name in ("brain_state", "brain_state_links", "brain_state_runs", "run_learning_target"):
-        assert name in api_tools.EXCLUDED                                                     # not an MCP tool
+        assert name not in api_tools.EXCLUDED                                     # an MCP tool: the route decides
