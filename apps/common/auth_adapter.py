@@ -236,6 +236,14 @@ class CustomAccountAdapter(DefaultAccountAdapter):
     def is_open_for_signup(self, request):
         return False
 
+    def authenticate(self, request, **credentials):
+        # allauth's `/accounts/login/` password form ends here. Every identity comes
+        # from Google, so no stored password signs anyone in: an account that has one
+        # (a superuser made by `createsuperuser`) would otherwise reach the admin past
+        # Google and the domain allowlist (`apps/common/admin_access.py`).
+        logger.warning("refused a password sign-in at /accounts/login/")
+        return None
+
     def is_safe_url(self, url):
         # allauth's own check trusts every host in ALLOWED_HOSTS, and labs runs
         # with ALLOWED_HOSTS=["*"] (the ALB health-checks by IP) — so any

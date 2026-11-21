@@ -6,9 +6,9 @@ hands the browser's response to py_webauthn, which checks the signature, the
 challenge, the origin and the relying-party id. Nothing here re-implements any
 of that.
 
-The relying party is the HOST the browser is on (`canopy.dimagi.com` in
-production, `localhost` in dev) unless `PASSKEY_RP_ID` / `PASSKEY_ORIGINS`
-pin it. A passkey is bound to its RP id by the authenticator itself, so one
+The relying party is `PASSKEY_RP_ID` / `PASSKEY_ORIGINS`, pinned to
+`canopy.dimagi.com` in production (`config/settings/production.py`); unpinned
+(dev, tests) it is the HOST the browser is on. A passkey is bound to its RP id by the authenticator itself, so one
 registered on one host simply is not offered on another — the failure is a
 "no passkey" prompt, never a bypass.
 """

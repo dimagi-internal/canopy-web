@@ -152,6 +152,12 @@ failure again.
   visitor who has an account) resolves to a `User`; every surface applies that user's ACL.
   A token acts with exactly its person's role (`roles.md` → "A token can do whatever its
   person can").
+- **No stored password signs anyone in.** allauth's password form refuses
+  (`auth_adapter.CustomAccountAdapter.authenticate`), and `/admin/` has no login form: it opens
+  only to an active staff user's browser session, never a token or a token-minted session
+  (`apps/common/admin_access.py`). The passkey relying party is pinned to `canopy.dimagi.com`
+  in production (`config/settings/production.py`; `PASSKEY_RP_ID` / `PASSKEY_ORIGINS`
+  override), never the request's Host.
 - **One resolver, and a prefix per kind.** REST, MCP and the WebSocket handshake all resolve a
   bearer with `apps/tokens/principal.py::resolve_bearer`. Tokens name their kind by prefix (each model's `PREFIX`, listed in
   `apps/tokens/principal.py`). A prefixed token is looked up in its own table only, and refused
