@@ -70,8 +70,9 @@ def test_a_new_revision_updates_the_installed_plugin(tmp_path, monkeypatch):
     line = json.dumps({"slug": "connect-helper", "revision": 4, "commit": "c", "changed": True})
     run, calls = _fake(tmp_path, out=line + "\n")
     stored_agents.ensure_checkout("connect-helper", run=run, home=tmp_path)
-    assert calls[1:] == [["/stub/claude", "plugin", "marketplace", "update", "connect-helper"],
-                         ["/stub/claude", "plugin", "update", "connect-helper@connect-helper",
+    claude = str(Path("/stub/claude"))
+    assert calls[1:] == [[claude, "plugin", "marketplace", "update", "connect-helper"],
+                         [claude, "plugin", "update", "connect-helper@connect-helper",
                           "--scope", "user"]]
 
 
