@@ -154,7 +154,9 @@ confers no read by itself; only a `core` link opens the project leg.
 
 A `BrainCapability` is registered by a canopy admin (`POST /api/brain/capabilities/`, superuser only): one purpose
 class, the purposes it declares, the source kinds and output kinds it works with, an `operator` agent and the plugin
-`entry` a run starts with. It starts dark (`enabled` false). Its runs act for an accountable admin
+`entry` a run starts with. It starts dark (`enabled` false). A learner may ship preset with its operator and entry (`registry.PRESETS`:
+`system-learning` with `ada` and `/canopy:brain-learn`, applied by `registry.apply_presets` and migration `0017` when it has
+no operator yet and the agent exists, never over a choice someone made), so turning it on is one switch plus a target. Its runs act for an accountable admin
 (`registry.accountable`: who registered it, while active); a canopy admin who enables or changes a feature nobody active
 answers for (a seeded learner, or one whose registrant left) becomes its accountable admin, and enabling one with nobody
 is refused. Its audience is its class's (`registry.CLASS_AUDIENCE`)
@@ -203,9 +205,9 @@ cached; `tests/test_brain_project_leg.py` holds the two equal over a world.
 
 ## A run (`apps/brain/runs.py`, `reading.py`, `emit.py`, `api_run.py`)
 
-The server starts a run of a feature (`runs.start`): a conversation of the operator agent stamped `metadata.brain_run`,
-with no creator and no participant, and a first turn queued as canopy's own, accountable to whoever registered the feature
-(or, for Run now, to the person who started it). A run carries a workspace `scope` (`BrainRun.scope`): it reads only
+The server starts a run of a feature (`runs.start`) for a target (above): a conversation of the operator agent stamped
+`metadata.brain_run`, with no creator and no participant, and a first turn queued as canopy's own, accountable to the
+target schedule's creator (the learner's accountable admin). A run carries a workspace `scope` (`BrainRun.scope`): it reads only
 eligible sources of that workspace and the ones below it (`reading.candidates`, `reading.subtree`, the existing
 `descendant_slugs` walk), and what it emits is that workspace's (`emit`). Eligibility, consent and the cascade are
 unchanged: the scope only narrows what a run reads and who sees what it found. A `system` run's subject is its scope,
@@ -283,27 +285,46 @@ reader's own reads, never a word; recomputable from the raw events (`disclosure.
 `GET /api/me/learning/disclosure/` and `/api/me/learning/removed/` are the person's own and off MCP.
 The Settings page `/settings/learning` shows them beside the class switches.
 
-## Scheduled learning, Run now, and the judge (`apps/brain/schedule.py`)
+## Where a learner runs: targets and their schedules (`apps/brain/targets.py`)
 
-A project or system feature with an operator, an enabled flag and a `schedule` (`hourly`, `daily`, `weekly`) is run by the
-`brain.schedule` tick for each of its subjects (`schedule.subjects_of`): a project feature for each ACTIVE workspace project
-of the operator's workspace tree (never a personal one), scoped to that project's workspace; a system feature for each
-workspace of the operator's tree, each run reading that workspace's subtree. It runs only when a run is due
-(`BrainCursor.last_run_at`) and there is something new: an eligible source no clean run of the feature read for that
-subject (`reading.learned`), so a session linked, agreed to or backfilled late is still read.
+A learner runs only where it is aimed. A **target** (`BrainTarget`) is a workspace (a run reads eligible sources of it and
+the workspaces below it) or a workspace project (the sessions `core`-tied to it, in its workspace's subtree); a learner
+with no target never runs. A `system` learner takes either; a `project` learner only projects (what it makes is for the
+project's readers); the per-person learners and the built-in project readers take none (`targets.kind_refusal`). Each
+target has its own runs, what they read (`reading.learned`, by the run's subject) and findings: a workspace target's
+run is about `system` and that workspace, a project target's about the project, scoped to its workspace
+(`targets.subject_of`, `runs.subject_of`). The learner's operator must live in the target's workspace or above it
+(`targets.run_place_refusal`), so a run never puts a workspace's words in a sibling's or a sub-workspace's agent; a
+change of operator that would break that, or that takes the operator away while targets stand, is refused
+(`targets.operator_refusal`).
 
-**Run now** (`POST /api/w/<ws>/brain/capabilities/{slug}/runs/`, the brain page's button) starts one run the same way
-(`runs.start`), scoped to `<ws>`, for that workspace's owners and admins (an ancestor's are too, `perms.BRAIN_MANAGE`)
-or a canopy admin, as a person only (`api_state.the_person`; off MCP), who then answers for the run; an owner or admin
-of a sub-workspace cannot start one above it, and an unpinned call is a 422. The learner's operator must be an agent of
-`<ws>` or a workspace above it (`api_manage.run_place_refusal`), so a run never puts a workspace's words in a sibling's or
-a sub-workspace's agent; the built-in project readers never run. A system feature runs over the subtree; a project feature for the workspace project
-named by `project`, of that subtree. It is refused with the reason (`runs.refusal`) when "Learning reads" is off in every
-workspace it would read (`learning_reads.run_refusal`), the feature is disabled or has no operator or no `entry`, or a run of it for that subject and workspace is still open; a
-person-class feature is not started there. A system run's
-outputs are findings: they act on nothing by themselves. A clean end of the run's turn (`signals`, `runs.finish`) makes what it read count as learned; a failed one counts
-nothing and the next interval reads it again. One open run per feature and project (`brain_one_open_run`, so two workers
-cannot both start one); a run open past `BRAIN_RUN_TIMEOUT_SECONDS` (six hours by default) is abandoned as failed.
+**Each target's schedule is a normal canopy schedule** (`harness.AgentSchedule`) on the operator agent, made with the
+target (`targets.add`; daily at 06:00 UTC unless given): its cron, Run now and history are on the agent's schedules page
+beside its other schedules, and canopy's own clock fires it (`harness.schedule_clock`, or a laptop runner reporting the
+slot). It fires as the learner's accountable admin's standing request (`created_by` is `registry.accountable`, kept in
+step by `targets.follow` when the learner's operator, entry or admin changes), so a fire whose admin may no longer
+direct the operator is refused like any trigger (`triggers.refusal`). Whoever added the target is recorded on it and in
+its `SettingChange`. Deleting the schedule deletes the target, and taking the target away deletes its schedule.
+
+The fire does not enqueue a plain turn: the harness asks the brain's announcer (`harness.schedule_hooks`, registered in
+`apps.py`; a project check-in's is the other), which consumes the slot whatever comes of it and starts a run
+(`targets.start` → `runs.start`) only when one may start (`targets.why_not`: learning reads, enabled, operator, entry,
+accountable, where the operator lives, an active project) and there is something new for the target (`targets.has_new`:
+an eligible source no clean run of it read, so a session linked, agreed to or backfilled late is still read). One run per
+target and slot (`brain_one_run_per_slot`), however many firers report it, and one open per target
+(`brain_one_open_run`). A slot that starts nothing leaves a `brain.target` event saying why. The run's turn is an
+occurrence of the schedule (`origin_ref.schedule_id`), so the schedule's history lists it; its `grace_minutes` is the
+run timeout and it is `always_run`. There is no other scheduler: no learner field, interval or tick decides when a
+learner runs.
+
+**Run now** on the brain page (`POST /api/w/<ws>/brain/targets/{id}/runs`) is the target's schedule's own Run now
+(`targets.run_now`): one run now, answering to the schedule's creator, with who pressed it recorded. It is the target
+workspace's owners' and admins' (an ancestor's are too, `perms.BRAIN_MANAGE`) or a canopy admin's, as a person only (off
+MCP), and refused with the reason when the run cannot start or there is nothing new. Adding and taking away a target
+(`POST /api/w/<ws>/brain/targets`, `DELETE …/targets/{id}`) are settings of the same people, for `<ws>` or a workspace
+below it, never above. A clean end of the run's turn (`signals`, `runs.finish`) makes what it read count as learned; a
+failed one counts nothing and the next fire reads it again. A run open past `BRAIN_RUN_TIMEOUT_SECONDS` (six hours by
+default) is abandoned as failed at the next fire. A system run's outputs are findings: they act on nothing by themselves.
 
 The **judge** (layer 3 of the associations; the registered `project-link-judge`) is such a run with the purpose `judge`:
 it is served only the sessions weakly tied to the project (a `candidate` link made by signals, never one a person or a
@@ -332,8 +353,8 @@ count. `tests/test_brain_workspace_scope.py` pins each role's slice.
   count below `state.SMALL`, three, hidden as "<3" so a small workspace's few are not named by elimination),
   sources open, withdrawn and sealed by why, link counts by project and tier on its readable projects, removal work
   (`state._scoped`), and the runs started for those workspaces (`state._runs`). They also manage learning there
-  (`can_manage`, `perms.BRAIN_MANAGE`, as a person only, none of it an MCP tool): its `system` findings, Run now, and
-  the two settings below.
+  (`can_manage`, `perms.BRAIN_MANAGE`, as a person only, none of it an MCP tool): its `system` findings, its targets
+  (add, Run now, take away), and the two settings below.
 - **A member** sees their own: their classes, their own sources and removals, the links of sessions they read, runs
   about them, and the outputs `outputs.visible_to` already gives them.
 - **Everyone** sees the learners and who answers for each (`registry.accountable`). A session is named (id, scrubbed
@@ -349,8 +370,8 @@ count. `tests/test_brain_workspace_scope.py` pins each role's slice.
   writes one `SettingChange` per change (who, the workspace, its own setting and what was in effect before and after,
   `audit.note_change`), and the page lists the latest (`api_manage.reads_out`) to those who may change it. A change that
   changes nothing records nothing.
-- **A learner** (`PATCH /api/w/<ws>/brain/learners/{slug}/`): whether it is enabled, its operator, `entry`, `schedule`,
-  and `scope` (only narrowing). A learner is canopy-wide, so a workspace configures only one whose operator, if it has
+- **A learner** (`PATCH /api/w/<ws>/brain/learners/{slug}/`): whether it is enabled, its operator, `entry`, and
+  `scope` (only narrowing); where and when it runs is its targets. A learner is canopy-wide, so a workspace configures only one whose operator, if it has
   one, is an agent of `<ws>` or below, and gives it only such an agent, and only a project or system learner
   (`api_manage.learner_refusal`; a per-person learner is canopy-wide); enabling one
   nobody active answers for makes the person its accountable admin (`registry.update`). Its class, purposes and audience

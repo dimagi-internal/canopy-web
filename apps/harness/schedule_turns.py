@@ -43,10 +43,15 @@ logger = logging.getLogger(__name__)
 def _occurrences(schedule):
     """This schedule's turns — scheduled AND manual. Occurrence-based, not
     origin-based: a "Run now" turn is an attempt at the same work, so it must
-    participate in latest/supersede/release exactly as a fired slot does."""
-    return Turn.objects.filter(
-        agent_id=schedule.agent_id, origin_ref__schedule_id=schedule.id
-    )
+    participate in latest/supersede/release exactly as a fired slot does.
+
+    A schedule an announcer owns may start its turn in a conversation of the
+    agent (a learning target's brain run, `schedule_hooks`): a session turn names
+    no agent, so the agent is matched through its conversation too."""
+    mine = Q(agent_id=schedule.agent_id)
+    if schedule_hooks.owns(schedule):
+        mine |= Q(chat_session__agent_id=schedule.agent_id)
+    return Turn.objects.filter(mine, origin_ref__schedule_id=schedule.id)
 
 
 def latest_occurrence_turn(schedule) -> Turn | None:

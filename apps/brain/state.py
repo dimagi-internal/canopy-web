@@ -146,16 +146,17 @@ def link_groups(user, slugs, admin: set[str]) -> list[dict]:
     return sorted(rows, key=lambda r: (r["workspace"], r["project"], r["tier"]))
 
 
-def learners(user=None, pin: str = "") -> list[dict]:
-    """Every learner, whether a run of it can start at all (`runnable`) and whether `user` may configure it at `pin`
-    (`api_manage.learner_refusal`)."""
+def learners(user=None, pin: str = "", targets: list[dict] = ()) -> list[dict]:
+    """Every learner, whether it can be aimed and run at all (`runnable`), how many of `targets` (the page's) are its,
+    and whether `user` may configure it at `pin` (`api_manage.learner_refusal`)."""
     from .api_manage import learner_refusal  # noqa: PLC0415 — api_manage reads this module's neighbours
 
     caps = BrainCapability.objects.select_related("operator", "registered_by").order_by("slug")
     return [{"slug": c.slug, "name": c.name, "purpose_class": c.purpose_class, "enabled": c.enabled, "scope": c.scope,
-             "schedule": c.schedule, "operator": c.operator.slug if c.operator_id else "", "entry": c.entry,
+             "operator": c.operator.slug if c.operator_id else "", "entry": c.entry,
              "accountable": _name(registry.accountable(c)),
              "runnable": c.purpose_class in (PROJECT, SYSTEM) and c.slug != readers.PROJECT_READERS,
+             "targets": sum(1 for t in targets if t["learner"] == c.slug),
              "configurable": bool(pin and user is not None and not learner_refusal(user, pin, c))} for c in caps]
 
 
@@ -210,15 +211,17 @@ def cascade_counts(user, slugs, admin: set[str]) -> list[dict]:
 
 
 def summary(user, slugs, pin: str = "") -> dict:
-    from .api_manage import may_manage, reads_out  # noqa: PLC0415 — api_manage reads this module's neighbours
+    from .api_manage import may_manage, reads_out, targets_out  # noqa: PLC0415 — api_manage reads this module's neighbours
 
     slugs = set(slugs)
     admin = _admin_slugs(user, slugs)
+    aimed = [t for t in targets_out(user, pin) if t["workspace"] in slugs] if pin else []
     return {"learning_reads": reads_out(user, pin) if pin else None, "workspace": pin,
             "can_manage": may_manage(user, pin), "workspaces": sorted(slugs), "admin_workspaces": sorted(admin),
             "canopy_admin": bool(getattr(user, "is_superuser", False)),
             "consent": consent_counts(user, slugs, admin), "sources": source_counts(user, slugs, admin),
-            "links": link_groups(user, slugs, admin), "learners": learners(user, pin), "runs": run_counts(user, slugs, admin),
+            "links": link_groups(user, slugs, admin), "learners": learners(user, pin, aimed), "targets": aimed,
+            "runs": run_counts(user, slugs, admin),
             "cascade": cascade_counts(user, slugs, admin)}
 
 

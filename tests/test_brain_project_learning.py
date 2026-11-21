@@ -1,4 +1,4 @@
-"""Project learning: runs started on a schedule per active project and only for what is new, and the judge
+"""Project learning: runs started by a project target's schedule and only for what is new, and the judge
 that rules on weakly tied sessions (layer 3 of `associate`)."""
 from __future__ import annotations
 
@@ -11,15 +11,15 @@ from django.utils import timezone
 from mcp.server.auth.middleware.auth_context import AuthenticatedUser, auth_context_var
 
 from apps.agents.models import Agent, AgentProject, AgentTask
-from apps.brain import associate, consent, emit, reading, registry, runs, schedule, sources
-from apps.brain.models import BrainCapability, BrainRun, LearningConsent, SourceLink
+from apps.brain import associate, consent, emit, reading, registry, runs, sources, targets
+from apps.brain.models import BrainCapability, BrainRun, BrainTarget, LearningConsent, SourceLink
 from apps.canopy_sessions.models import Message, Session
 from apps.harness import claim_payload
-from apps.harness.models import Runner, Turn
+from apps.harness.models import AgentSchedule, Runner, Turn
 from apps.harness.signals import turn_status_changed
 from apps.mcp.auth import CanopyPATVerifier
 from apps.mcp.server import mcp
-from tests.fixtures.brain_world import brain_world, member, reads, user
+from tests.fixtures.brain_world import aim, brain_world, fire, member, reads, user
 
 pytestmark = pytest.mark.django_db
 
@@ -48,7 +48,8 @@ def w(settings):
                                        last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
     out["project"] = AgentProject.objects.create(agent=op, ext_id="P1", name="Supply", handle="supply",
                                                  status=AgentProject.ACTIVE, outcome="Tenders run end to end")
-    registry.update(out["proj"], operator=op, output_kinds=["idea"], enabled=True, schedule="daily", by=root)
+    registry.update(out["proj"], operator=op, output_kinds=["idea"], entry="/canopy:brain-learn", enabled=True, by=root)
+    out["target"] = aim(out["proj"], out["ws"], out["project"])
     for u in (out["alice"], out["bob"]):
         LearningConsent.objects.create(user=u, classes=["project"])
     return out
@@ -67,27 +68,27 @@ def _end(run, status=Turn.DONE):
     return run
 
 
-# ---- the schedule --------------------------------------------------------------------------------
+# ---- a target's schedule ----------------------------------------------------------------------------
 
 def _titles(run):
     return [x["title"] for x in reading.read_next(run, limit=5)["sources"]]
 
 
-def test_a_run_starts_per_active_project_only_when_there_is_something_new(w):
-    assert schedule.run_due() == []                                       # nothing linked yet
+def test_a_target_s_fire_starts_a_run_only_when_there_is_something_new(w):
+    assert fire(w["target"]) == []                                        # nothing linked yet
     s = _chat(w, w["alice"], "tenders", "build the tender view")
     _link(w, s)
-    [run] = schedule.run_due()
+    [run] = fire(w["target"])
     assert (run.capability, run.subject, run.floor, run.purpose) == (w["proj"], str(w["project"].pk), 0, "learn")
-    assert schedule.run_due() == []                                       # one is open; and not due yet
+    assert run.target == w["target"] and run.scope == w["ws"].slug
+    assert fire(w["target"]) == []                                        # one is open
     reading.read_next(run, limit=5)
     _end(run)
     assert run.state == BrainRun.DONE
-    assert schedule.run_due(now=timezone.now() + dt.timedelta(days=2)) == []          # due, but nothing new
+    assert fire(w["target"]) == []                                        # nothing new
     s2 = _chat(w, w["alice"], "more tenders", "add a filter")
     _link(w, s2)
-    assert schedule.run_due() == []                                       # new, but not due yet (daily)
-    [again] = schedule.run_due(now=timezone.now() + dt.timedelta(days=2))
+    [again] = fire(w["target"])
     assert _titles(again) == ["more tenders"]                              # only what no clean run read
 
 
@@ -98,11 +99,11 @@ def test_a_session_linked_or_agreed_to_late_is_still_read(w):
     _link(w, late)
     newest = _chat(w, w["alice"], "newest", "z")
     _link(w, newest)
-    [run] = schedule.run_due()
+    [run] = fire(w["target"])
     assert _titles(run) == ["early", "newest"]
     _end(run)
     LearningConsent.objects.create(user=w["carol"], classes=["project"])  # late consent, an OLDER source id
-    [again] = schedule.run_due(now=timezone.now() + dt.timedelta(days=2))
+    [again] = fire(w["target"])
     assert _titles(again) == ["late"]                                     # a max-id cursor would have skipped it
 
 
@@ -118,21 +119,22 @@ def test_a_run_reads_past_its_floor_only(w):
 def test_a_failed_run_counts_nothing_and_is_tried_again(w):
     s = _chat(w, w["alice"], "tenders", "build the tender view")
     _link(w, s)
-    [run] = schedule.run_due()
+    [run] = fire(w["target"])
     reading.read_next(run, limit=5)
     _end(run, Turn.FAILED)
     assert run.state == BrainRun.FAILED
-    [again] = schedule.run_due(now=timezone.now() + dt.timedelta(days=2))
+    [again] = fire(w["target"])
     assert _titles(again) == ["tenders"]
 
 
 def test_a_run_whose_turn_never_ends_is_abandoned_and_does_not_hold_the_project(w, settings):
     settings.BRAIN_RUN_TIMEOUT_SECONDS = 3600
     _link(w, _chat(w, w["alice"], "tenders", "build the tender view"))
-    [stuck] = schedule.run_due()
+    [stuck] = fire(w["target"])
     reading.read_next(stuck, limit=5)
-    assert schedule.run_due(now=timezone.now() + dt.timedelta(minutes=30)) == []      # open, not yet stale
-    [again] = schedule.run_due(now=timezone.now() + dt.timedelta(days=2))
+    assert fire(w["target"]) == []                                        # open, not yet stale
+    BrainRun.objects.filter(pk=stuck.pk).update(created_at=timezone.now() - dt.timedelta(hours=2))
+    [again] = fire(w["target"])
     stuck.refresh_from_db()
     assert stuck.state == BrainRun.FAILED and _titles(again) == ["tenders"]
     with pytest.raises(reading.NotReadingError):
@@ -154,14 +156,14 @@ def test_a_stale_output_s_remaining_sources_are_read_again_and_its_request_close
     a, b = _chat(w, w["alice"], "one", "we keep re-keying"), _chat(w, w["alice"], "two", "again the re-keying")
     _link(w, a)
     _link(w, b)
-    [run] = schedule.run_due()
+    [run] = fire(w["target"])
     ids = [x["source"] for x in reading.read_next(run, limit=5)["sources"]]
     both = emit.emit(run, kind="idea", title="Stop re-keying", body={"why": "y"}, source_ids=ids)
     _end(run)
     consent.exclude(w["alice"], sources.for_session(a))
     cascade.sweep()
     ask = RederiveRequest.objects.get(output=both, done_at__isnull=True)
-    [again] = schedule.run_due(now=timezone.now() + dt.timedelta(days=2))
+    [again] = fire(w["target"])
     page = reading.read_next(again, limit=5)
     assert [x["title"] for x in page["sources"]] == ["two"] and page["revoked"] == [ids[0]]
     assert reading.read_next(again, after=page["next_after"])["revoked"] == []           # told once
@@ -170,7 +172,7 @@ def test_a_stale_output_s_remaining_sources_are_read_again_and_its_request_close
     assert ask.done_at is not None
 
 
-@pytest.mark.parametrize("change", ["paused", "personal", "no_operator", "disabled", "no_schedule", "gate_off"])
+@pytest.mark.parametrize("change", ["paused", "personal", "no_operator", "disabled", "no_target", "gate_off"])
 def test_what_is_not_due_is_not_started(w, change, settings):
     _link(w, _chat(w, w["alice"], "tenders", "build the tender view"))
     if change == "paused":
@@ -181,38 +183,29 @@ def test_what_is_not_due_is_not_started(w, change, settings):
         BrainCapability.objects.filter(pk=w["proj"].pk).update(operator=None)
     elif change == "disabled":
         registry.update(w["proj"], enabled=False)
-    elif change == "no_schedule":
-        registry.update(w["proj"], schedule="")
+    elif change == "no_target":
+        targets.remove(w["target"])
+        assert not BrainTarget.objects.exists() and not AgentSchedule.objects.exists()   # its schedule went with it
+        return
     else:
         reads(w["ws"], False)
-    assert schedule.run_due() == []
+    assert fire(w["target"]) == []
     assert not BrainRun.objects.exists()
 
 
-def test_two_projects_each_get_their_own_run_and_a_sessions_people_must_have_agreed(w):
+def test_two_project_targets_each_get_their_own_run_and_a_sessions_people_must_have_agreed(w):
     other = AgentProject.objects.create(agent=w["operator"], ext_id="P2", name="Other", handle="other",
                                         status=AgentProject.ACTIVE)
+    other_target = aim(w["proj"], w["ws"], other)
     a, b = _chat(w, w["alice"], "a", "x"), _chat(w, w["alice"], "b", "y")
     _link(w, a)
     _link(w, b, other)
     unagreed = _chat(w, w["carol"], "carol's", "z")                       # carol never agreed
     _link(w, unagreed)
-    runs_ = schedule.run_due()
+    runs_ = fire(w["target"], other_target)
     assert {r.subject for r in runs_} == {str(w["project"].pk), str(other.pk)}
     page = reading.read_next(next(r for r in runs_ if r.subject == str(w["project"].pk)), limit=5)
     assert [s["title"] for s in page["sources"]] == ["a"]
-
-
-def test_the_registry_validates_a_schedule(w):
-    with pytest.raises(registry.RefusedError):
-        registry.update(w["proj"], schedule="every minute")
-    assert registry.update(w["proj"], schedule="weekly").schedule == "weekly"
-
-
-def test_the_scheduler_is_a_tick():
-    from apps.common import ticks
-
-    assert "brain.schedule" in ticks.jobs()
 
 
 # ---- the judge -----------------------------------------------------------------------------------
@@ -316,7 +309,7 @@ def test_the_judge_agrees_with_a_hand_list_through_the_pipeline(w):
 def test_an_idea_a_project_run_emits_carries_its_lineage(w):
     s = _chat(w, w["alice"], "tenders", "we keep re-keying the tender prices")
     _link(w, s)
-    [run] = schedule.run_due()
+    [run] = fire(w["target"])
     page = reading.read_next(run, limit=5)
     out = emit.emit(run, kind="idea", title="Import tender prices", body={"why": "re-keying"},
                     source_ids=[x["source"] for x in page["sources"]])
@@ -376,7 +369,7 @@ def test_an_idea_withdraws_with_its_only_source_and_goes_stale_with_one_of_sever
     a, b = _chat(w, w["alice"], "one", "we keep re-keying"), _chat(w, w["alice"], "two", "again the re-keying")
     _link(w, a)
     _link(w, b)
-    [run] = schedule.run_due()
+    [run] = fire(w["target"])
     page = reading.read_next(run, limit=5)
     ids = [x["source"] for x in page["sources"]]
     only = emit.emit(run, kind="idea", title="Import prices", body={"why": "x"}, source_ids=[ids[0]])

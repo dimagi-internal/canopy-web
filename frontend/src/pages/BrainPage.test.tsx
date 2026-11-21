@@ -7,18 +7,22 @@ const getBrainState = vi.fn()
 const getBrainLinks = vi.fn()
 const getBrainRuns = vi.fn()
 const listBrainOutputs = vi.fn()
-const runLearnerNow = vi.fn()
+const runTargetNow = vi.fn()
+const addTarget = vi.fn()
+const removeTarget = vi.fn()
 const setLearningReads = vi.fn()
 const configureLearner = vi.fn()
 vi.mock('@/api/brain', () => ({
-  getBrainState, getBrainLinks, getBrainRuns, listBrainOutputs, runLearnerNow, setLearningReads, configureLearner,
+  getBrainState, getBrainLinks, getBrainRuns, listBrainOutputs, runTargetNow, addTarget, removeTarget, setLearningReads,
+  configureLearner,
 }))
 
 const { BrainPage } = await import('./BrainPage')
 
 const learner = (slug: string, purpose_class: string, more: Record<string, unknown> = {}) => ({
-  slug, name: slug, purpose_class, enabled: true, scope: 'full', schedule: '', operator: 'ada', entry: '',
-  accountable: 'JJ', runnable: purpose_class === 'system' || purpose_class === 'project', configurable: false, ...more,
+  slug, name: slug, purpose_class, enabled: true, scope: 'full', operator: 'ada', entry: '',
+  accountable: 'JJ', runnable: purpose_class === 'system' || purpose_class === 'project', targets: 0,
+  configurable: false, ...more,
 })
 
 const STATE = (owner: boolean) => ({
@@ -42,6 +46,14 @@ const STATE = (owner: boolean) => ({
   links: [{ project: 'supply', name: 'Supply', workspace: 'dimagi', tier: 'core', count: 2 }],
   learners: [learner('system-learning', 'system', { configurable: owner }), learner('project-learning', 'project'),
     learner('coaching', 'individual'), learner('project-readers', 'project', { runnable: false, operator: '' })],
+  targets: [
+    { id: 7, learner: 'system-learning', workspace: 'dimagi', project: '', label: 'dimagi', schedule_id: 70,
+      agent: 'ada', cron: '0 6 * * *', timezone: 'UTC', enabled: true, created_by: 'jj@dimagi.com', created_at: '',
+      last_run: null, can_manage: owner },
+    { id: 8, learner: 'project-learning', workspace: 'dimagi', project: 'supply', label: 'dimagi/supply', schedule_id: 80,
+      agent: 'ada', cron: '0 7 * * 1', timezone: 'UTC', enabled: false, created_by: 'jj@dimagi.com', created_at: '',
+      last_run: { id: 3, state: 'done', created_at: new Date().toISOString() }, can_manage: owner },
+  ],
   runs: { open: 0, done: 1, failed: 0 },
   cascade: [],
 })
@@ -64,7 +76,7 @@ function setup(owner = false) {
     state: 'active', created_at: new Date().toISOString(),
     sessions: [{ session_id: 's1', workspace: 'dimagi', title: 'runner debugging' }], hidden_sessions: 2,
   }])
-  runLearnerNow.mockResolvedValue({ ...RUN, id: 4, state: 'open' })
+  runTargetNow.mockResolvedValue({ ...RUN, id: 4, state: 'open' })
   return render(
     <MemoryRouter initialEntries={['/w/dimagi/brain']}>
       <Routes>
@@ -102,6 +114,10 @@ describe('BrainPage', () => {
     expect(await within(runs).findByText(/\+1 you do not read/)).toBeTruthy()
     expect(screen.queryByRole('tab')).toBeNull()                          // one page, no preview tab
     expect(screen.queryByRole('button', { name: 'Run now' })).toBeNull()   // not this workspace's owner
+    expect(screen.queryByRole('form', { name: 'Add a target' })).toBeNull()
+    const aimed = screen.getByRole('region', { name: 'Targets' })
+    expect(within(aimed).getByText('dimagi/supply')).toBeTruthy()            // everyone sees where learners run
+    expect(within(aimed).getByText('(paused)', { exact: false })).toBeTruthy()
   })
 
   it('renders findings with their fields and the sessions they cite', async () => {
@@ -116,29 +132,41 @@ describe('BrainPage', () => {
     expect(findings.textContent).toContain('2 sessions you do not read')
   })
 
-  it('lets the workspace owner run a learner now for this workspace, a project learner for a named project', async () => {
+  it('lets its owners and admins run a target now, add one and take one away', async () => {
+    setup(true)
+    addTarget.mockResolvedValue({})
+    removeTarget.mockResolvedValue(undefined)
+    const aimed = await screen.findByRole('region', { name: 'Targets' })
+    const buttons = within(aimed).getAllByRole('button', { name: 'Run now' })
+    expect(buttons).toHaveLength(2)
+    fireEvent.click(buttons[0])
+    await waitFor(() => expect(runTargetNow).toHaveBeenCalledWith('dimagi', 7))
+    expect(await within(aimed).findByText('Run 4 started')).toBeTruthy()
+    await waitFor(() => expect(getBrainRuns).toHaveBeenCalledTimes(2))    // the runs list reads again
+    const form = within(aimed).getByRole('form', { name: 'Add a target' })
+    fireEvent.change(within(form).getByLabelText('Project'), { target: { value: 'supply' } })
+    fireEvent.click(within(form).getByRole('button', { name: 'Add target' }))
+    await waitFor(() => expect(addTarget).toHaveBeenCalledWith('dimagi', {
+      learner: 'system-learning', workspace: 'dimagi', project: 'supply', cron: '0 6 * * *', timezone: 'UTC',
+    }))
+    fireEvent.click(within(aimed).getAllByRole('button', { name: 'Remove' })[1])
+    await waitFor(() => expect(removeTarget).toHaveBeenCalledWith('dimagi', 8))
+  })
+
+  it('shows the learners: built in and per person take no target', async () => {
     setup(true)
     const learners = await screen.findByRole('region', { name: 'Learners' })
-    const buttons = within(learners).getAllByRole('button', { name: 'Run now' })
-    expect(buttons).toHaveLength(2)                                       // system and project; not the per-person one
     expect(within(learners).getByText('per person')).toBeTruthy()
     expect(within(learners).getByText('built in')).toBeTruthy()           // the project readers never run
-    fireEvent.click(buttons[0])
-    await waitFor(() => expect(runLearnerNow).toHaveBeenCalledWith('dimagi', 'system-learning', ''))
-    expect(await within(learners).findByText('Run 4 started')).toBeTruthy()
-    await waitFor(() => expect(getBrainRuns).toHaveBeenCalledTimes(2))    // the runs list reads again
-    expect((buttons[1] as HTMLButtonElement).disabled).toBe(true)        // no project named yet
-    fireEvent.change(within(learners).getByLabelText('Project for project-learning'), { target: { value: 'supply' } })
-    fireEvent.click(buttons[1])
-    await waitFor(() => expect(runLearnerNow).toHaveBeenCalledWith('dimagi', 'project-learning', 'supply'))
+    expect(within(learners).queryByRole('button', { name: 'Run now' })).toBeNull()
   })
 
   it('shows why a run cannot start, in the server\'s words', async () => {
     setup(true)
-    runLearnerNow.mockRejectedValue(new Error('learning reads are off in dimagi and the workspaces below it'))
-    const learners = await screen.findByRole('region', { name: 'Learners' })
-    fireEvent.click(within(learners).getAllByRole('button', { name: 'Run now' })[0])
-    expect(await within(learners).findByText(/learning reads are off in dimagi/)).toBeTruthy()
+    runTargetNow.mockRejectedValue(new Error('learning reads are off in dimagi and the workspaces below it'))
+    const aimed = await screen.findByRole('region', { name: 'Targets' })
+    fireEvent.click(within(aimed).getAllByRole('button', { name: 'Run now' })[0])
+    expect(await within(aimed).findByText(/learning reads are off in dimagi/)).toBeTruthy()
   })
 
   it('lets its owners and admins change learning reads, and lists every change', async () => {
@@ -164,10 +192,9 @@ describe('BrainPage', () => {
     fireEvent.click(configure[0])
     const form = within(learners).getByRole('form', { name: 'Configure system-learning' })
     fireEvent.change(within(form).getByLabelText('Entry command'), { target: { value: '/canopy:brain-learn' } })
-    fireEvent.change(within(form).getByLabelText('Schedule'), { target: { value: 'daily' } })
     fireEvent.click(within(form).getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(configureLearner).toHaveBeenCalledWith('dimagi', 'system-learning', {
-      operator: 'ada', entry: '/canopy:brain-learn', schedule: 'daily', enabled: true,
+      operator: 'ada', entry: '/canopy:brain-learn', enabled: true,
     }))
   })
 })

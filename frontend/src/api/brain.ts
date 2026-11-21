@@ -38,16 +38,6 @@ export async function listBrainOutputs(ws: string): Promise<BrainOutput[]> {
   return unwrap(res, 'Failed to load outputs') as BrainOutput[]
 }
 
-/** Start one run of a learner for `ws` (its owners and admins, or a canopy admin); a project learner names the project. */
-export async function runLearnerNow(ws: string, slug: string, project = ''): Promise<BrainRun> {
-  const res = await apiV2.POST('/api/brain/capabilities/{slug}/runs/', {
-    params: { path: { slug } },
-    body: { project },
-    headers: pin(ws),
-  })
-  return unwrap(res, 'Could not start the run') as BrainRun
-}
-
 export type LearningReads = components['schemas']['LearningReadsOut']
 export type BrainLearner = components['schemas']['CapabilityOut']
 export type LearnerConfig = components['schemas']['LearnerConfigIn']
@@ -62,4 +52,28 @@ export async function setLearningReads(ws: string, on: boolean | null): Promise<
 export async function configureLearner(ws: string, slug: string, body: LearnerConfig): Promise<BrainLearner> {
   const res = await apiV2.PATCH('/api/brain/learners/{slug}/', { params: { path: { slug } }, body, headers: pin(ws) })
   return unwrap(res, 'Could not change the learner') as BrainLearner
+}
+
+export type BrainTarget = components['schemas']['BrainTargetOut']
+export type BrainTargetIn = components['schemas']['BrainTargetIn']
+
+/** Aim a learner at `ws` (or a workspace below it, or a project there), on a schedule of its own. */
+export async function addTarget(ws: string, body: BrainTargetIn): Promise<BrainTarget> {
+  const res = await apiV2.POST('/api/brain/targets', { body, headers: pin(ws) })
+  return unwrap(res, 'Could not add the target') as BrainTarget
+}
+
+/** Take a learner's target away; its schedule goes with it. */
+export async function removeTarget(ws: string, id: number): Promise<void> {
+  const res = await apiV2.DELETE('/api/brain/targets/{target_id}', { params: { path: { target_id: id } }, headers: pin(ws) })
+  unwrap(res, 'Could not remove the target')
+}
+
+/** Run one target now: its schedule's own Run now. The server says why when it cannot start. */
+export async function runTargetNow(ws: string, id: number): Promise<BrainRun> {
+  const res = await apiV2.POST('/api/brain/targets/{target_id}/runs', {
+    params: { path: { target_id: id } },
+    headers: pin(ws),
+  })
+  return unwrap(res, 'Could not start the run') as BrainRun
 }

@@ -55,6 +55,8 @@ def _subject(cap: BrainCapability, subject, scope: str = "") -> tuple[str, str]:
         if project is None or project.is_personal:
             raise StartRefusedError("a project feature is run for one workspace project")
         return "project", str(project.pk)
+    if isinstance(subject, AgentProject):
+        return "project", str(subject.pk)   # a system learner aimed at a project (`targets`): that project's sessions
     return "system", scope          # one system subject per workspace scope ("" for none)
 
 
@@ -101,7 +103,7 @@ def prompt(cap: BrainCapability, run: BrainRun) -> str:
 
 @transaction.atomic
 def start(cap: BrainCapability, *, subject=None, purpose: str = "", floor: int = 0, scope: str = "",
-          accountable=None) -> BrainRun:
+          accountable=None, target=None, slot=None) -> BrainRun:
     """Start one run of `cap` about `subject`, reading only `scope`'s subtree when given, answering to
     `accountable` (the person who started it) or else the feature's own admin (`registry.accountable`)."""
     why = learning_reads.run_refusal(cap, subject, scope)
@@ -119,7 +121,7 @@ def start(cap: BrainCapability, *, subject=None, purpose: str = "", floor: int =
     try:
         with transaction.atomic():
             run = BrainRun.objects.create(capability=cap, subject_type=subject_type, subject=subject_id,
-                                          purpose=purpose, floor=max(0, floor), scope=scope)
+                                          purpose=purpose, floor=max(0, floor), scope=scope, target=target, slot=slot)
     except IntegrityError as e:
         raise StartRefusedError(f"a run of {cap.slug} for this subject is already open") from e
     session = session_services.create_session(
@@ -129,8 +131,17 @@ def start(cap: BrainCapability, *, subject=None, purpose: str = "", floor: int =
     run.session = session
     harness.enqueue_turn(
         session=session, origin=Turn.ORIGIN_API, prompt=prompt(cap, run), idempotency_key=f"brain-run:{run.pk}",
-        origin_ref={"brain_run": str(run.pk)}, initiator=who.system(via="brain-run", accountable=accountable))
+        origin_ref={"brain_run": str(run.pk), **_schedule_ref(target, slot)},
+        initiator=who.system(via="brain-run", accountable=accountable))
     return run
+
+
+def _schedule_ref(target, slot) -> dict:
+    """A target's run is an occurrence of its schedule: the schedule's history lists it beside its fires."""
+    if target is None:
+        return {}
+    ref = {"schedule_id": target.schedule_id, "schedule_name": target.schedule.name}
+    return {**ref, "slot": slot.isoformat()} if slot is not None else {**ref, "manual": True}
 
 
 def finish(run: BrainRun, *, ok: bool) -> None:

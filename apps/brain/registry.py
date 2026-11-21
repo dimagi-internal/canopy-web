@@ -34,10 +34,6 @@ CLASS_SUBJECT = {INDIVIDUAL: "person", MEMORY: "person", PROJECT: "project", SYS
 
 logger = logging.getLogger(__name__)
 
-#: How often a scheduled feature runs, per subject (`schedule.py`). Empty means by hand only.
-SCHEDULES = {"": None, "hourly": 3600, "daily": 86400, "weekly": 7 * 86400}
-
-
 class RefusedError(ValueError):
     """The registration asked for is not one a canopy admin may make (a 422 at the route)."""
 
@@ -71,11 +67,6 @@ def _entry(entry: str) -> None:
         raise RefusedError("entry must be one plugin command: /<plugin>:<skill> [args]")
 
 
-def _schedule(schedule: str) -> None:
-    if schedule not in SCHEDULES:
-        raise RefusedError(f"schedule must be one of {', '.join(repr(s) for s in SCHEDULES)}")
-
-
 def _scope(scope: str) -> str:
     if scope not in transcript_read.VIEWS:
         raise RefusedError(f"scope must be one of {', '.join(transcript_read.VIEWS)}")
@@ -97,7 +88,7 @@ def _record_scope(cap: BrainCapability, was: str, by) -> None:
 
 def register(*, slug: str, name: str, purpose_class: str, purposes, description: str = "",
              source_kinds=(BrainSource.SESSION,), output_kinds=(), audience=None, operator=None,
-             schedule: str = "", enabled: bool = False, entry: str = "", registered_by=None,
+             enabled: bool = False, entry: str = "", registered_by=None,
              scope: str = transcript_read.FULL) -> BrainCapability:
     if purpose_class not in CLASS_AUDIENCE:
         raise RefusedError(f"purpose_class must be one of {', '.join(CLASS_AUDIENCE)}")
@@ -105,7 +96,6 @@ def register(*, slug: str, name: str, purpose_class: str, purposes, description:
     if BrainCapability.objects.filter(slug=slug).exists():
         raise RefusedError(f"{slug} is already registered")
     _entry(entry)
-    _schedule(schedule)
     if enabled and not getattr(registered_by, "is_active", False):
         raise RefusedError("an enabled feature runs accountable to an active canopy admin; name one")
     kinds = _words("source_kinds", list(source_kinds))
@@ -115,7 +105,7 @@ def register(*, slug: str, name: str, purpose_class: str, purposes, description:
         slug=slug, name=name[:120], description=description, purpose_class=purpose_class,
         subject_type=CLASS_SUBJECT[purpose_class], purposes=_words("purposes", list(purposes)),
         source_kinds=kinds, output_kinds=_words("output_kinds", list(output_kinds)),
-        audience=_audience(purpose_class, audience), operator=operator, schedule=schedule[:64],
+        audience=_audience(purpose_class, audience), operator=operator,
         entry=entry.strip(), registered_by=registered_by, enabled=bool(enabled), scope=scope)
 
 
@@ -138,12 +128,10 @@ def update(cap: BrainCapability, *, by=None, **changes) -> BrainCapability:
     for key in ("purposes", "source_kinds", "output_kinds"):
         if key in changes:
             setattr(cap, key, _words(key, changes.pop(key)))
-    if "schedule" in changes:
-        _schedule(changes["schedule"])
     if "entry" in changes:
         _entry(changes["entry"])
         cap.entry = changes.pop("entry").strip()
-    for key in ("name", "description", "schedule", "enabled", "operator"):
+    for key in ("name", "description", "enabled", "operator"):
         if key in changes:
             setattr(cap, key, changes.pop(key))
     changes.pop("purpose_class", None)
@@ -196,8 +184,29 @@ LEARNERS = [
 ]
 
 
+#: What a learner ships set up with, so enabling it is one switch plus a target: its operator agent (by slug) and the
+#: plugin command its runs start with. Applied to a learner that has no operator yet, when that agent exists
+#: (`apply_presets`; migration `0017_preset_system_learning` does the same); never over a choice someone made.
+PRESETS = {"system-learning": {"operator": "ada", "entry": "/canopy:brain-learn"}}
+
+
+def apply_presets(caps=None, agents=None) -> list[str]:
+    """Give each preset learner with no operator its preset operator and entry, when that agent exists. Returns the
+    slugs set. `caps`/`agents` are the model classes (a migration passes its historical ones)."""
+    from apps.agents.models import Agent  # noqa: PLC0415 — agents reads this app's neighbours
+
+    caps, agents = caps or BrainCapability, agents or Agent
+    done = []
+    for slug, preset in PRESETS.items():
+        agent = agents.objects.filter(slug=preset["operator"]).first()
+        if agent is not None and caps.objects.filter(slug=slug, operator__isnull=True).update(
+                operator=agent, entry=preset["entry"]):
+            done.append(slug)
+    return done
+
+
 def ensure_learners() -> dict[str, BrainCapability]:
-    """Register the dark learners that are missing; the ones there are left as they are."""
+    """Register the dark learners that are missing, with their presets; the ones there are left as they are."""
     out = {}
     for spec in LEARNERS:
         cls = spec["purpose_class"]
@@ -205,4 +214,6 @@ def ensure_learners() -> dict[str, BrainCapability]:
             **{k: v for k, v in spec.items() if k != "slug"}, "subject_type": CLASS_SUBJECT[cls],
             "source_kinds": [BrainSource.SESSION], "audience": list(CLASS_AUDIENCE[cls]), "enabled": False})
         out[spec["slug"]] = cap
+    if apply_presets():
+        out = {slug: BrainCapability.objects.get(pk=cap.pk) for slug, cap in out.items()}
     return out

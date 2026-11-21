@@ -2,10 +2,14 @@
 has "Learning reads" on (`reads`), so what a test judges is consent; the setting's own tests turn it off."""
 from __future__ import annotations
 
-from django.contrib.auth.models import User
+import datetime as dt
+import itertools
 
-from apps.brain import consent, learning_reads, registry, sources
-from apps.brain.models import BrainCapability
+from django.contrib.auth.models import User
+from django.utils import timezone
+
+from apps.brain import consent, learning_reads, registry, sources, targets
+from apps.brain.models import BrainCapability, BrainRun
 from apps.canopy_sessions.models import Session, SessionParticipant
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -21,6 +25,29 @@ def member(u, ws, role=WorkspaceMembership.EDITOR):
 def reads(ws, on: bool | None = True, by=None):
     """Set a workspace's "Learning reads" (None: inherit)."""
     learning_reads.set_reads(ws, on, by=by)
+
+
+def aim(cap, workspace, project=None, by=None, **kw):
+    """Aim a learner at a workspace (or a project of it): a target with its own schedule (`targets.add`)."""
+    return targets.add(cap, workspace=workspace, project=project, by=by or cap.registered_by, **kw)
+
+
+_slots = itertools.count(1)
+
+
+def fire(*aimed) -> list:
+    """Fire each target's schedule at a new slot, as canopy's clock does; the runs that started."""
+    from apps.harness import schedule_turns
+
+    out = []
+    for t in aimed:
+        slot = (timezone.now() + dt.timedelta(minutes=next(_slots))).replace(second=0, microsecond=0)
+        t.schedule.refresh_from_db()
+        schedule_turns.fire_schedule(t.schedule, slot)
+        run = BrainRun.objects.filter(target=t, slot=slot).first()
+        if run is not None:
+            out.append(run)
+    return out
 
 
 def capability(slug, cls, purposes=("learn",), enabled=True, **kw):

@@ -3,18 +3,18 @@
 dimagi → {connect, labs}. An owner of dimagi sees every descendant's aggregate and findings; connect's owner sees
 connect's and never labs' (a sibling) or dimagi's (a parent); a member sees their own; a non-member nothing. A run
 started for a workspace reads only its subtree, what it finds is that workspace's, and an owner cannot start one
-above their own workspace. The schedule runs a system learner per workspace that has something new."""
+above their own workspace. Each workspace target's schedule runs a system learner there when it has something new."""
 from __future__ import annotations
 
 import pytest
 from django.test import Client
 
 from apps.agents.models import Agent, AgentProject
-from apps.brain import associate, emit, reading, registry, schedule, sources
+from apps.brain import associate, emit, reading, registry, sources
 from apps.brain.models import BrainCapability, BrainOutput, BrainRun, BrainRunRead, LearningConsent
 from apps.canopy_sessions.models import Session, SessionParticipant
 from apps.workspaces.models import Workspace, WorkspaceMembership as M
-from tests.fixtures.brain_world import member, reads, user
+from tests.fixtures.brain_world import aim, fire, member, reads, user
 
 pytestmark = pytest.mark.django_db
 
@@ -49,6 +49,7 @@ def w(settings):
     cap = BrainCapability.objects.get(slug="system-learning")
     registry.update(cap, by=jj, operator=ada, entry="/canopy:brain-learn", enabled=True)
     cap.refresh_from_db()
+    aimed = {ws.slug: aim(cap, ws, by=jj) for ws in (dimagi, connect, labs)}
 
     def chat(ws, by, *others):
         s = Session.objects.create(workspace=ws, created_by=by, origin=Session.ORIGIN_WEB, title=f"{ws.slug} work")
@@ -65,6 +66,7 @@ def w(settings):
     finds = {ws: BrainOutput.objects.create(capability=cap, kind="finding", workspace_id=ws, subject_type="system",
                                             subject=ws, title=f"{ws} finding") for ws in ("dimagi", "connect", "labs")}
     return {"jj": jj, "md": md, "sib": sib, "mem": mem, "out": out, "cap": cap, "ada": ada, "project": project,
+            "targets": aimed,
             "s_connect": s_connect, "s_labs": s_labs, "s_dimagi": s_dimagi, "runs": runs, "finds": finds}
 
 
@@ -135,22 +137,24 @@ def test_a_non_member_sees_nothing(w):
     assert body["workspaces"] == ["family"] and body["sources"] == [] and body["links"] == []
 
 
-def test_a_run_reads_only_its_subtree_and_its_findings_are_its_workspace_s(w):
+def _run(u, ws, target):
+    return _client(u).post(f"/api/w/{ws}/brain/targets/{target.pk}/runs", {}, content_type="application/json")
+
+
+def test_a_run_reads_only_its_target_s_subtree_and_its_findings_are_its_workspace_s(w):
     BrainRun.objects.all().delete()
-    r = _client(w["md"]).post("/api/w/connect/brain/capabilities/system-learning/runs/", {},
-                              content_type="application/json")
+    t = w["targets"]
+    r = _run(w["md"], "connect", t["connect"])
     assert r.status_code == 200, r.content
     run = BrainRun.objects.get(pk=r.json()["id"])
-    assert run.scope == "connect"
+    assert run.scope == "connect" and run.target == t["connect"]
     assert [s.session_id for s in reading.candidates(run)] == [w["s_connect"].pk]
-    top = _client(w["jj"]).post("/api/w/dimagi/brain/capabilities/system-learning/runs/", {},
-                                content_type="application/json")
+    top = _run(w["jj"], "dimagi", t["dimagi"])
     wide = BrainRun.objects.get(pk=top.json()["id"])
     assert {s.session_id for s in reading.candidates(wide)} == {
         w["s_connect"].pk, w["s_labs"].pk, w["s_dimagi"].pk}
-    # One open run per learner per workspace: a second at connect waits, a run at labs does not.
-    again = _client(w["md"]).post("/api/w/connect/brain/capabilities/system-learning/runs/", {},
-                                  content_type="application/json")
+    # One open run per target: a second at connect waits, the run at dimagi did not.
+    again = _run(w["md"], "connect", t["connect"])
     assert again.status_code == 422 and f"run {run.pk}" in again.json()["detail"]
     # What the dimagi run finds about connect's session is dimagi's: connect's owner does not see it.
     BrainRunRead.objects.create(run=wide, source=sources.for_session(w["s_connect"]))
@@ -161,25 +165,25 @@ def test_a_run_reads_only_its_subtree_and_its_findings_are_its_workspace_s(w):
     assert "cross-team" not in _findings(w["md"], "connect") | _findings(w["md"], "dimagi")
 
 
-def test_an_owner_cannot_start_a_run_above_their_workspace(w):
-    r = _client(w["md"]).post("/api/w/dimagi/brain/capabilities/system-learning/runs/", {},
-                              content_type="application/json")
-    assert r.status_code == 403
-    r = _client(w["mem"]).post("/api/w/connect/brain/capabilities/system-learning/runs/", {},
-                               content_type="application/json")
-    assert r.status_code == 403
-    r = _client(w["jj"]).post("/api/w/connect/brain/capabilities/system-learning/runs/", {},
-                              content_type="application/json")
+def test_an_owner_runs_and_aims_nothing_above_their_workspace(w):
+    t = w["targets"]
+    assert _run(w["md"], "dimagi", t["dimagi"]).status_code == 403
+    assert _run(w["md"], "connect", t["dimagi"]).status_code == 404            # not a target at connect or below
+    assert _run(w["mem"], "connect", t["connect"]).status_code == 403
+    r = _run(w["jj"], "connect", t["connect"])
     assert r.status_code == 200 and r.json()["scope"] == "connect"           # an ancestor's owner may
-    assert _client(w["jj"]).post("/api/brain/capabilities/system-learning/runs/", {},
+    aim_up = _client(w["md"]).post("/api/w/connect/brain/targets", {"learner": "system-learning", "workspace": "dimagi"},
+                                   content_type="application/json")
+    assert aim_up.status_code == 403
+    assert _client(w["jj"]).post(f"/api/brain/targets/{t['labs'].pk}/runs", {},
                                  content_type="application/json").status_code == 422   # it names its workspace
 
 
-def test_the_schedule_runs_per_workspace_with_something_new(w):
+def test_each_workspace_target_runs_on_its_own_schedule_with_something_new(w):
     BrainRun.objects.all().delete()
-    BrainCapability.objects.filter(pk=w["cap"].pk).update(schedule="daily")
     LearningConsent.objects.filter(user=w["sib"]).update(classes=["project"])  # labs has nothing for system
-    started = schedule.run_due()
+    t = w["targets"]
+    started = fire(t["dimagi"], t["connect"], t["labs"])
     assert sorted(r.scope for r in started) == ["connect", "dimagi"]
-    assert all(r.subject == r.scope for r in started)
-    assert schedule.run_due() == []                                            # within the interval
+    assert all(r.subject == r.scope and r.target.workspace_id == r.scope for r in started)
+    assert fire(t["dimagi"], t["connect"]) == []                                   # each still open

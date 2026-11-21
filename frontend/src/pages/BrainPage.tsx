@@ -8,12 +8,15 @@ import {
   getBrainRuns,
   getBrainState,
   listBrainOutputs,
-  runLearnerNow,
+  addTarget,
+  removeTarget,
+  runTargetNow,
   setLearningReads,
   type BrainOutput,
   type BrainRun,
   type BrainState,
   type BrainStoredLink,
+  type BrainTarget,
   type LearningReads,
 } from '@/api/brain'
 import { Td, Th, Tr } from '@/components/DataTable'
@@ -187,7 +190,7 @@ function NowTab({ ws, state, runsKey, onStarted, onChanged }: {
               <Th>Class</Th>
               <Th>Enabled</Th>
               <Th hideBelow="sm">Scope</Th>
-              <Th hideBelow="md">Schedule</Th>
+              <Th align="right">Targets</Th>
               <Th hideBelow="md">Operator</Th>
               <Th>Accountable admin</Th>
               {state.can_manage && <Th srOnly>Manage</Th>}
@@ -205,19 +208,20 @@ function NowTab({ ws, state, runsKey, onStarted, onChanged }: {
                   <StatusBadge tone={l.enabled ? 'success' : 'neutral'}>{l.enabled ? 'on' : 'off'}</StatusBadge>
                 </Td>
                 <Td hideBelow="sm">{l.scope}</Td>
-                <Td hideBelow="md" tone="muted">{l.schedule || '—'}</Td>
+                <Td numeric align="right">
+                  {l.runnable ? (l.targets ?? 0) : <span className="text-xs text-muted-foreground">
+                    {l.purpose_class === 'individual' || l.purpose_class === 'memory' ? 'per person' : 'built in'}
+                  </span>}
+                </Td>
                 <Td hideBelow="md" tone="muted">{l.operator || '—'}</Td>
                 <Td tone="muted">{l.accountable || 'nobody yet'}</Td>
                 {state.can_manage && (
                   <Td>
-                    <span className="flex flex-wrap items-center gap-1.5">
-                      <RunNow ws={ws} learner={l} reads={readsOn} onStarted={onStarted} />
-                      {l.configurable && (
-                        <Button size="sm" variant="ghost" onClick={() => setEditing(editing === l.slug ? '' : l.slug)}>
-                          {editing === l.slug ? 'Close' : 'Configure'}
-                        </Button>
-                      )}
-                    </span>
+                    {l.configurable && (
+                      <Button size="sm" variant="ghost" onClick={() => setEditing(editing === l.slug ? '' : l.slug)}>
+                        {editing === l.slug ? 'Close' : 'Configure'}
+                      </Button>
+                    )}
                   </Td>
                 )}
               </Tr>
@@ -233,6 +237,8 @@ function NowTab({ ws, state, runsKey, onStarted, onChanged }: {
           </tbody>
         </Table>
       </Section>
+
+      <Targets ws={ws} state={state} reads={readsOn} onStarted={onStarted} onChanged={onChanged} />
 
       <Runs key={runsKey} ws={ws} state={state} />
       <Findings ws={ws} />
@@ -428,50 +434,110 @@ function Runs({ ws, state }: { ws: string; state: BrainState }): JSX.Element {
 
 type Learner = BrainState['learners'][number]
 
-/** "Run now": one run of a learner for this workspace's subtree, started by its owners or admins (or a canopy admin),
- *  who then answer for it. The server says why when it cannot start. */
-function RunNow({ ws, learner, reads, onStarted }: {
-  ws: string; learner: Learner; reads: boolean; onStarted: () => void
+/** Where learners run: each target a workspace (with the ones below it) or a workspace project, on a schedule of its own
+ *  (a normal canopy schedule on the operator agent, listed beside its other schedules). Its owners and admins (or an
+ *  ancestor's) add targets here, run one now (its schedule's own Run now) or take one away. A learner with no target
+ *  does not run. */
+function Targets({ ws, state, reads, onStarted, onChanged }: {
+  ws: string; state: BrainState; reads: boolean; onStarted: () => void; onChanged: () => void
 }): JSX.Element {
+  const aimable = state.learners.filter((l) => l.runnable)
+  const [learner, setLearner] = useState(aimable[0]?.slug ?? '')
+  const [where, setWhere] = useState(ws)
   const [project, setProject] = useState('')
+  const [cron, setCron] = useState('0 6 * * *')
+  const [tz, setTz] = useState('UTC')
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
-  const needsProject = learner.purpose_class === 'project'
-  if (learner.purpose_class === 'individual' || learner.purpose_class === 'memory') {
-    return <span className="text-xs text-muted-foreground">per person</span>
-  }
-  if (!learner.runnable) return <span className="text-xs text-muted-foreground">built in</span>
-  const go = async () => {
+  const field = 'rounded-md border border-input bg-background px-1.5 py-0.5 text-xs text-foreground'
+  const act = async <T,>(what: () => Promise<T>, done: (r: T) => string, after: () => void) => {
     setBusy(true)
     setNote('')
     try {
-      const run = await runLearnerNow(ws, learner.slug, project)
-      setNote(`Run ${run.id} started`)
-      onStarted()
+      setNote(done(await what()))
+      after()
     } catch (e) {
-      setNote(e instanceof Error ? e.message : 'Could not start')
+      setNote(e instanceof Error ? e.message : 'Could not do that')
     } finally {
       setBusy(false)
     }
   }
+  const targets: readonly BrainTarget[] = state.targets ?? []
   return (
-    <span className="flex flex-wrap items-center gap-1.5">
-      {needsProject && (
-        <input
-          aria-label={`Project for ${learner.slug}`}
-          placeholder="project handle"
-          value={project}
-          onChange={(e) => setProject(e.target.value)}
-          className="w-28 rounded-md border border-input bg-background px-1.5 py-0.5 text-xs text-foreground"
-        />
+    <Section
+      title="Targets"
+      note="Where each learner runs, on its own schedule. A learner with no target does not run; a run reads only its target's sessions that everyone in them agreed to."
+    >
+      {targets.length === 0 ? (
+        <Empty>No learner is aimed here or below.</Empty>
+      ) : (
+        <Table>
+          <thead>
+            <Tr head="label">
+              <Th>Learner</Th>
+              <Th>Target</Th>
+              <Th hideBelow="sm">Schedule</Th>
+              <Th hideBelow="md">Agent</Th>
+              <Th>Last run</Th>
+              <Th srOnly>Manage</Th>
+            </Tr>
+          </thead>
+          <tbody>
+            {targets.map((t) => (
+              <Tr key={t.id} rule="bottom-last">
+                <Td>{t.learner}</Td>
+                <Td>{t.label}</Td>
+                <Td hideBelow="sm" tone="muted">
+                  <span className="font-mono">{t.cron}</span> {t.timezone}{t.enabled ? '' : ' (paused)'}
+                </Td>
+                <Td hideBelow="md" tone="muted">{t.agent}</Td>
+                <Td tone="muted">
+                  {t.last_run ? `${t.last_run.state}, ${relativeAge(t.last_run.created_at, undefined, { seconds: false })}` : 'never'}
+                </Td>
+                <Td>
+                  {t.can_manage && (
+                    <span className="flex flex-wrap items-center gap-1.5">
+                      <Button size="sm" variant="outline" disabled={busy}
+                              title={reads ? undefined : 'Learning reads are off here; the server will say so'}
+                              onClick={() => void act(() => runTargetNow(ws, t.id), (r) => `Run ${r.id} started`, onStarted)}>
+                        Run now
+                      </Button>
+                      <Button size="sm" variant="ghost" disabled={busy}
+                              onClick={() => void act(() => removeTarget(ws, t.id), () => `Took ${t.label} away`, onChanged)}>
+                        Remove
+                      </Button>
+                    </span>
+                  )}
+                </Td>
+              </Tr>
+            ))}
+          </tbody>
+        </Table>
       )}
-      <Button size="sm" variant="outline" disabled={busy || (needsProject && !project.trim())}
-              title={reads ? undefined : 'Learning reads are off here; the server will say so'}
-              onClick={() => void go()}>
-        {busy ? 'Starting…' : 'Run now'}
-      </Button>
-      {note && <span role="status" className="text-xs text-muted-foreground">{note}</span>}
-    </span>
+      {state.can_manage && aimable.length > 0 && (
+        <form
+          aria-label="Add a target"
+          className="flex flex-wrap items-center gap-2 text-xs"
+          onSubmit={(e) => {
+            e.preventDefault()
+            void act(() => addTarget(ws, { learner, workspace: where.trim(), project: project.trim(), cron: cron.trim(),
+                                             timezone: tz.trim() }), () => 'Target added', onChanged)
+          }}
+        >
+          <select aria-label="Learner" value={learner} onChange={(e) => setLearner(e.target.value)} className={field}>
+            {aimable.map((l) => <option key={l.slug} value={l.slug}>{l.slug}</option>)}
+          </select>
+          <input aria-label="Workspace" placeholder="workspace" value={where} onChange={(e) => setWhere(e.target.value)}
+                 className={`w-24 ${field}`} />
+          <input aria-label="Project" placeholder="project (optional)" value={project}
+                 onChange={(e) => setProject(e.target.value)} className={`w-32 ${field}`} />
+          <input aria-label="Cron" value={cron} onChange={(e) => setCron(e.target.value)} className={`w-24 font-mono ${field}`} />
+          <input aria-label="Time zone" value={tz} onChange={(e) => setTz(e.target.value)} className={`w-32 ${field}`} />
+          <Button size="sm" variant="outline" type="submit" disabled={busy || !learner}>Add target</Button>
+        </form>
+      )}
+      {note && <p role="status" className="text-xs text-muted-foreground">{note}</p>}
+    </Section>
   )
 }
 
@@ -554,15 +620,13 @@ function LearningReadsSection({ ws, reads, onChanged }: {
   )
 }
 
-const SCHEDULES = ['', 'hourly', 'daily', 'weekly'] as const
-
 /** A learner's settings a workspace's owners and admins may change: whether it is on, its operator agent (of this
- *  workspace or below), the plugin command a run starts with, and its schedule. The server refuses the rest. */
+ *  workspace or below) and the plugin command a run starts with. Where and when it runs is its targets. The server refuses
+ *  the rest. */
 function LearnerForm({ ws, learner, onSaved }: { ws: string; learner: Learner; onSaved: () => void }): JSX.Element {
   const [enabled, setEnabled] = useState(learner.enabled)
   const [operator, setOperator] = useState(learner.operator)
   const [entry, setEntry] = useState(learner.entry)
-  const [schedule, setSchedule] = useState(learner.schedule)
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
   const field = 'rounded-md border border-input bg-background px-1.5 py-0.5 text-xs text-foreground'
@@ -573,7 +637,6 @@ function LearnerForm({ ws, learner, onSaved }: { ws: string; learner: Learner; o
       await configureLearner(ws, learner.slug, {
         operator: operator.trim(),
         entry: entry.trim(),
-        schedule: schedule as (typeof SCHEDULES)[number],
         enabled,
       })
       onSaved()
@@ -601,12 +664,6 @@ function LearnerForm({ ws, learner, onSaved }: { ws: string; learner: Learner; o
         Entry
         <input aria-label="Entry command" placeholder="/plugin:skill" value={entry}
                onChange={(e) => setEntry(e.target.value)} className={`w-44 ${field}`} />
-      </label>
-      <label className="flex items-center gap-1">
-        Schedule
-        <select aria-label="Schedule" value={schedule} onChange={(e) => setSchedule(e.target.value)} className={field}>
-          {SCHEDULES.map((s) => <option key={s} value={s}>{s || 'by hand'}</option>)}
-        </select>
       </label>
       <Button size="sm" variant="outline" type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save'}</Button>
       {note && <span role="status" className="text-destructive">{note}</span>}

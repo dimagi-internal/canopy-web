@@ -162,5 +162,5 @@ def test_only_the_person_as_themselves(w):
         assert client(w["alice"]).get(url, HTTP_X_CANOPY_TURN_ID="x").status_code == 403    # naming a turn
         # An act-as-you grant reaches none of it.
         assert act_as.route_refusal("GET", url, "read", is_tool=False) is not None
-    for name in ("brain_state", "brain_state_links", "brain_state_runs", "run_brain_capability"):
+    for name in ("brain_state", "brain_state_links", "brain_state_runs", "run_learning_target"):
         assert name in api_tools.EXCLUDED                                                     # not an MCP tool
