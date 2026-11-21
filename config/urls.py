@@ -13,6 +13,7 @@ from apps.reviews.views import review_page
 from apps.slack import views as slack_views
 from apps.slack import views_auth as slack_auth
 from apps.tokens.cli_authorize_views import cli_authorize as views_cli_authorize
+from apps.tokens.cli_authorize_views import cli_token as views_cli_token
 from apps.tokens.mint_session import mint_session
 from apps.connections.views import connections_callback, connections_start
 from apps.github_connect.views import github_connect_callback, github_connect_start
@@ -39,6 +40,7 @@ urlpatterns = [
     path("download/runner/<str:platform>", download_runner, name="download-runner"),
     path("api/debug/mint-session/", mint_session, name="debug-mint-session"),
     path("auth/cli/authorize/", views_cli_authorize, name="cli_authorize"),
+    path("auth/cli/token/", views_cli_token, name="cli_token"),
     # The GitHub App connect flow. Bare views (redirects + session), and
     # deliberately NOT public: the callback exists to bind a GitHub grant to a
     # canopy identity, so there is nothing to do without a logged-in user.

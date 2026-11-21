@@ -60,6 +60,9 @@ PUBLIC_PATH_PREFIXES = (
     # anything that can sign (apps/oauth_server/views_oauth.py). Exact paths.
     "/oauth/client.json",
     "/oauth/jwks.json",
+    # The CLI mint's code exchange: the loopback holds no credential yet, and the
+    # one-time code `cli_authorize` sent it is the proof (apps/tokens/cli_authorize_views.py).
+    "/auth/cli/token/",
     # The OAuth token endpoint and discovery documents. The token endpoint
     # self-enforces every grant it serves: canopy's own jwt-bearer grant
     # (private_key_jwt + DPoP + a signed grant, one allowed client —
