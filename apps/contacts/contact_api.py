@@ -41,7 +41,9 @@ from apps.embedding import defaults as agent_defaults
 from apps.embedding.audit import client_ip
 from apps.embedding.audit import record as audit
 from apps.embedding.rate_limit import (
+    ContactSendRateLimitError,
     ContactTokenRateLimitError,
+    check_contact_send,
     check_contact_token_client,
     check_contact_token_issuer,
 )
@@ -150,7 +152,7 @@ _STATUS = {
     "no_jti": 400, "unknown_issuer": 401, "bad_signature": 401, "no_key": 401,
     "wrong_audience": 401, "expired": 401, "too_long": 400, "replayed": 401,
     "rate_limited": 429, "ambiguous_issuer": 409, "workspace_mismatch": 409,
-    "bad_workspace": 400,
+    "bad_workspace": 400, "bad_channel": 400,
 }
 
 
@@ -196,7 +198,9 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
         raise HttpError(_STATUS.get(exc.code, 401), f"{exc.code}: {exc.message}")
 
     try:
-        check_contact_token_issuer(claimed.name)
+        # The site's own budget when a superuser set one (a relay site mints one token
+        # per person per half hour), else the deployment's.
+        check_contact_token_issuer(claimed.name, getattr(claimed, "contact_token_issuer_limit", None))
     except ContactTokenRateLimitError as exc:
         audit(event=EmbedAuditLog.EXCHANGE, request=request, app=claimed, ok=False,
               reason="rate_limited", detail="per-issuer")
@@ -241,6 +245,17 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
         raise HttpError(400, f"agent_mismatch: the assertion is bound to {bound_slug!r}; "
                              f"send agent_slug={bound_slug!r}")
 
+    # A RELAY arrival (`contract.CHANNEL_CLAIM`): the site carries this person's
+    # conversation server-to-server over a channel of its own, from the VERIFIED
+    # assertion. Refused, not ignored, when malformed: ignoring it would serve a
+    # relay as a widget and record the wrong channel on every turn.
+    try:
+        relay_channel = contract.parse_channel_claim(claims.get(contract.CHANNEL_CLAIM))
+    except ValueError as exc:
+        audit(event=EmbedAuditLog.EXCHANGE, request=request, app=app, ok=False,
+              reason="bad_channel", detail=str(exc)[:200])
+        raise HttpError(400, f"bad_channel: {exc}")
+
     try:
         workspace = _tenant_for(app, payload.agent_slug)
     except HttpError:
@@ -281,7 +296,12 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
     if contact is None:
         raise HttpError(400, "the assertion does not identify a visitor")
 
-    user = contact_services.resolve_arrival(app=app, contact=contact, claims=claims)
+    # A relay arrival is always served as the CONTACT: the person is on the host's
+    # channel, not at a canopy browser, and a delegated USER token would hand the host
+    # their whole conversation history and the `/api/contact/` routes a relay drives
+    # would refuse it.
+    user = None if relay_channel else \
+        contact_services.resolve_arrival(app=app, contact=contact, claims=claims)
     grant = _redeem_host_grant(request, app, payload.id_jag, claims=claims,
                                contact=contact, user=user, runner_requirements=runner_reqs,
                                agent=bound_agent)
@@ -308,10 +328,12 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
     raw, token = ContactToken.issue(app=app, contact=contact, ttl_seconds=ttl,
                                     runner_requirements=runner_reqs,
                                     verified_email=_trusted_email(app, claims),
-                                    bound_agent=bound_agent, host_grant=grant)
+                                    bound_agent=bound_agent, host_grant=grant,
+                                    channel=relay_channel)
     audit(event=EmbedAuditLog.EXCHANGE, request=request, app=app,
           detail=f"contact={contact.identity} grade=app_signed ttl={ttl}s host_grant={granted}"
-                 f"{f' agent={bound_slug}' if bound_slug else ''}")
+                 f"{f' agent={bound_slug}' if bound_slug else ''}"
+                 f"{f' relay={relay_channel}' if relay_channel else ''}")
     return ContactTokenOut(
         token=raw,
         expires_at=token.expires_at.isoformat(),
@@ -470,7 +492,8 @@ class ContactSendIn(Schema):
     #: The routing SOURCE, as a user's send may declare it — so a host's work for a
     #: contact (ace-web's runs: `ace_web`) routes like the same host's work for a
     #: user. Only sources a caller may name; `email` and `slack` are channels
-    #: canopy attests itself.
+    #: canopy attests itself. A relay token (one minted with `canopy_channel`) may
+    #: also name `site_message`, which is its default.
     origin: str = ""
 
 
@@ -669,13 +692,18 @@ def send(request: HttpRequest, session_id: str, payload: ContactSendIn) -> dict:
         raise HttpError(422, "message text is required")
     from apps.harness.schemas import chat_send_origin
 
+    relay = bool(getattr(request, "relay_channel", ""))
+    try:
+        origin = chat_send_origin(payload.origin, relay=relay)
+    except ValueError as exc:
+        raise HttpError(422, str(exc)) from None
+    if relay and not origin:
+        origin = contract.RELAY_ORIGIN  # `Turn.ORIGIN_SITE_MESSAGE`
+    _spend_send(request)
+
     # The page this was sent from: the agent reaches its site through that page's grant.
     note_request_grant(session, request)
 
-    try:
-        origin = chat_send_origin(payload.origin)
-    except ValueError as exc:
-        raise HttpError(422, str(exc)) from None
     # `user` is the anonymous request user. `enqueue_turn` ignores an
     # unauthenticated one, so the turn simply carries no `enqueued_by` — which
     # is correct: nobody with an account sent this. A routing rule that wants
@@ -689,6 +717,19 @@ def send(request: HttpRequest, session_id: str, payload: ContactSendIn) -> dict:
         initiator=who.for_request(request, via=who.channel(request, "contact")),
     )
     return {"turn_id": str(turn.id) if turn else None, "message_id": message.id}
+
+
+def _spend_send(request: HttpRequest) -> None:
+    """Count this send against the contact's budget (`rate_limit.check_contact_send`):
+    429 `rate_limited` over it. After the request is known to be well-formed, so a
+    malformed one costs nothing, and before anything is written."""
+    try:
+        check_contact_send(request.contact.pk)
+    except ContactSendRateLimitError as exc:
+        # Logged, not audited: a host looping on one person would otherwise write
+        # an audit row per refused send.
+        log.info("contact %s over its send budget: %s", request.contact.pk, exc)
+        raise HttpError(429, f"rate_limited: {exc}") from None
 
 
 @contact_router.get("/sessions/{session_id}/messages", response=MessagePageOut,
@@ -1001,6 +1042,7 @@ def contact_app_view_message(request: HttpRequest, session_id: str, tool_call_id
     session = _session_or_404(request, session_id)
     text = payload.text
     ref = _app_run(mcp_apps_views.check_message, session, _app_viewer(request), tool_call_id, text)
+    _spend_send(request)
     note_request_grant(session, request)
     message, turn = send_paths.send_from(
         "contact_app_view", session=session, text=text, user=request.user,

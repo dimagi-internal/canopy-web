@@ -23,6 +23,8 @@
   one fixed, low-privilege principal, so the whole chain is exercised on a
   schedule without a visitor.
 * ``authorization_server_metadata`` / ``protected_resource_metadata`` — discovery.
+* ``RelayClient`` (``canopy_sdk.host.relay``) — a RELAY host: the site carries a
+  person's conversation server-to-server over a channel of its own.
 
 Framework-free. ``canopy_sdk.django`` wires all of it into a Django project.
 """
@@ -34,6 +36,7 @@ from .grant import GrantHandler, GrantRefused, GrantResult
 from .metadata import authorization_server_metadata, protected_resource_metadata
 from .pages import Page, PageRegistry, PageTokens
 from .probe import ProbeDisabled, ProbeHandler, ProbeResult
+from .relay import RelayClient, RelayError
 from .resource import DelegatedPrincipal, DPoPRefused, ResourceVerifier
 from .signing import MintFailed, arrival_payload, issue_id_jag, mint_contact_token, sign_visitor_assertion
 from .subject import Subject, SubjectRefused, verify_subject
@@ -44,6 +47,7 @@ __all__ = [
     "ExecutionRefused", "GrantHandler",
     "GrantRefused", "GrantResult", "HostConfig", "HostNotConfigured", "MetadataError", "MintFailed",
     "Page", "PageRegistry", "PageTokens", "ProbeDisabled", "ProbeHandler", "ProbeIdentity", "ProbeResult",
+    "RelayClient", "RelayError",
     "ResourceVerifier", "View", "ViewRefused", "arrival_payload", "authorization_server_metadata",
     "delegated_principal", "issue_id_jag", "mint_contact_token", "presented_dpop_jkt",
     "protected_resource_metadata", "same_resource", "sign_visitor_assertion", "Subject", "SubjectRefused",

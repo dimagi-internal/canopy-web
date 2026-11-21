@@ -26,7 +26,8 @@ _RUNNER = dict(AdmissionRule.RUNNER_KIND_CHOICES)
 
 #: The fields a create or update writes, beside `agent`.
 _FIELDS = ("origin", "principal", "sender", "access", "capability", "turn_mode", "runner_kind",
-           "reach", "wait_hours", "action", "reason", "notify_sender", "notify_owner", "enabled")
+           "reach", "wait_hours", "kind", "max_turns", "action", "reason", "notify_sender",
+           "notify_owner", "enabled")
 
 
 def summary(rule: AdmissionRule) -> str:
@@ -53,6 +54,8 @@ def summary(rule: AdmissionRule) -> str:
         extra.append("every runner that could take it paused indefinitely")
     elif rule.reach == AdmissionRule.OFFLINE:
         extra.append(f"no runner that could take it reachable for {rule.wait_hours}h")
+    if rule.kind == AdmissionRule.AGENT_DAILY_TURNS:
+        extra.append(f"past {rule.max_turns} turns by the agent in 24 hours")
     text = " ".join(parts)
     return f"{text}, {', '.join(extra)}" if extra else text
 
@@ -90,6 +93,7 @@ def choices() -> dict:
         "turn_modes": pairs(AdmissionRule.TURN_MODE_CHOICES),
         "runner_kinds": pairs(AdmissionRule.RUNNER_KIND_CHOICES),
         "reaches": pairs(AdmissionRule.REACH_CHOICES),
+        "kinds": pairs(AdmissionRule.KIND_CHOICES),
         "actions": pairs(AdmissionRule.ACTION_CHOICES),
     }
 
@@ -143,6 +147,9 @@ def update_rule(workspace, rule_id: int, data: dict, *, user) -> AdmissionRule:
     for f in _FIELDS:
         if f in data:
             setattr(rule, f, data[f])
+    if not rule.kind:
+        # Only a rule with a kind counts anything; a patch can send no null.
+        rule.max_turns = None
     _save(rule)
     _log(workspace, user, "admission.rule_updated", rule, before=before)
     return rule

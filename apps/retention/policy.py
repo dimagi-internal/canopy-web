@@ -28,6 +28,8 @@ SLACK_THREAD_KEY = "slack_thread"
 # was still a Slack conversation; detaching must not move it to another rule.
 SLACK_DETACHED_KEY = "slack_detached"
 EMAIL_THREAD_KEY = "email_thread_key"
+# A host site's relay conversation (apps/canopy_sessions/services.py::RELAY_CHANNEL_KEY).
+RELAY_CHANNEL_KEY = "relay_channel"
 
 _PRINCIPAL_FOR_INITIATOR = {
     "user": RetentionRule.MEMBER,
@@ -69,6 +71,8 @@ def chat_source(*, metadata: dict | None, origin: str) -> str:
         return "slack"
     if EMAIL_THREAD_KEY in metadata:
         return "email"
+    if metadata.get(RELAY_CHANNEL_KEY):
+        return "site_message"
     if origin == "runner":
         return RetentionRule.EMDASH
     return "canopy_web_chat"

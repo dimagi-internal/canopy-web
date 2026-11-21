@@ -346,6 +346,13 @@ class AppCredential(models.Model):
     #: host is asking for without reading a token. Informational: each TOKEN
     #: carries its own copy, and that copy is what reaches a session.
     last_runner_requirements = models.JSONField(default=list, blank=True)
+    #: How many contact tokens this site may mint per window
+    #: (`rate_limit.check_contact_token_issuer`); null = the deployment's
+    #: `CONTACT_TOKEN_ISSUER_LIMIT`. A relay site (one that carries its people's
+    #: conversations server-to-server) mints one per person per half hour, so a
+    #: busy one needs more than a widget does. Only a canopy superuser sets it: the
+    #: budget is what bounds the contacts a leaked signing key can create.
+    contact_token_issuer_limit = models.PositiveIntegerField(null=True, blank=True)
     #: MCP Apps (`apps/mcp_apps_host/mcp_apps.py`): which of the site's tools carry a
     #: View (`ui://` resource) and their visibility, plus the Views canopy has
     #: fetched (sha256, effective CSP, a cached copy for read-only rendering).
@@ -709,6 +716,12 @@ class ContactToken(models.Model):
     #: reason, as `DelegatedToken.host_grant`.
     host_grant = models.ForeignKey("tokens.HostGrant", on_delete=models.SET_NULL, null=True,
                                    blank=True, related_name="+")
+    #: The RELAY CHANNEL the site signed for this arrival (`contract.CHANNEL_CLAIM`,
+    #: e.g. `personalid`): the site carries this person's conversation server-to-server
+    #: and the person never opens canopy. "" for a widget. Turns sent with the token
+    #: are `relay:<site>:<channel>` (`initiator.channel`) and may name the
+    #: `site_message` source (`Turn.RELAY_SEND_ORIGINS`).
+    channel = models.CharField(max_length=32, blank=True, default="")
 
     class Meta:
         db_table = "contact_tokens"
@@ -716,13 +729,13 @@ class ContactToken(models.Model):
 
     @classmethod
     def issue(cls, *, app, contact, ttl_seconds, runner_requirements=(), verified_email="",
-              bound_agent=None, host_grant=None):
+              bound_agent=None, host_grant=None, channel=""):
         from django.utils import timezone
 
         raw = cls.PREFIX + secrets.token_urlsafe(32)
         token = cls.objects.create(
             app=app, contact=contact, runner_requirements=list(runner_requirements),
-            bound_agent=bound_agent, host_grant=host_grant,
+            bound_agent=bound_agent, host_grant=host_grant, channel=channel or "",
             verified_email=verified_email or "",
             token_hash=hash_token(raw),
             expires_at=timezone.now() + timezone.timedelta(seconds=ttl_seconds),

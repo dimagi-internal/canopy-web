@@ -152,6 +152,34 @@ def parse_agent_claim(value) -> str:
     return value.strip()
 
 
+#: The RELAY CHANNEL an arrival is for: the host carries this person's
+#: conversation server-to-server over a channel of its own (``personalid``,
+#: ``whatsapp``, ``sms``), and the person never opens canopy. canopy records turns
+#: sent with the token as ``relay:<site>:<channel>`` rather than ``widget:<site>``,
+#: lets them name the ``RELAY_ORIGIN`` source, and always serves the arrival as a
+#: CONTACT (never as a canopy account the person may also hold). Absent = a widget.
+CHANNEL_CLAIM = "canopy_channel"
+#: A channel name: lower-case letters, digits, ``_`` and ``-``; at most 32.
+CHANNEL_PATTERN = r"^[a-z0-9_-]{1,32}$"
+#: The turn source a relayed message is (``Turn.origin``): a message a host site
+#: carried for the person, who is present on the host's channel.
+RELAY_ORIGIN = "site_message"
+
+
+def parse_channel_claim(value) -> str:
+    """The claim's value. ``None`` / ``""`` -> ``""`` (no channel: a widget).
+
+    Raises ``ValueError`` for anything not matching ``CHANNEL_PATTERN``: canopy
+    refuses the arrival rather than record a channel it cannot name."""
+    import re
+
+    if value is None or value == "":
+        return ""
+    if not isinstance(value, str) or not re.fullmatch(CHANNEL_PATTERN, value):
+        raise ValueError(f"{CHANNEL_CLAIM} must match {CHANNEL_PATTERN}")
+    return value
+
+
 #: The canopy WORKSPACE (tenant) a host's signed request or assertion is for —
 #: its slug. A Host-site name is unique only within a workspace, so canopy
 #: needs the tenant beside it; this names it directly, where ``AGENT_CLAIM``

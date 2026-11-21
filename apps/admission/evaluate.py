@@ -102,7 +102,42 @@ def match(rule: AdmissionRule, known: dict) -> bool | None:
         elif field == "reach" and want == AdmissionRule.OFFLINE \
                 and known.get("waited_hours", 0) < rule.wait_hours:
             return False  # down, but not for as long as this rule waits
+    if rule.kind == AdmissionRule.AGENT_DAILY_TURNS:
+        have = known.get("daily_turns")
+        if have is None:
+            unknown = True
+        elif have < (rule.max_turns or 0):
+            return False  # under the cap
     return None if unknown else True
+
+
+#: How far back an `agent_daily_turns` rule counts.
+DAILY_WINDOW = dt.timedelta(hours=24)
+
+
+def daily_turns(turn) -> int:
+    """How many turns the turn's agent started in the 24 hours BEFORE this one —
+    what an `agent_daily_turns` rule compares with its cap. Counted up to the turn's
+    own creation, so the answer at its claim is the answer at its enqueue. A turn an
+    admission rule rejected never ran and does not count; neither does a person's
+    own session on their box (`local`), which no rule governs."""
+    from apps.harness.models import Turn, agent_turns_q  # noqa: PLC0415 — harness imports this app
+
+    agent = turn.acting_agent
+    at = turn.created_at or timezone.now()
+    return (Turn.objects.filter(agent_turns_q(agent), created_at__gte=at - DAILY_WINDOW,
+                                created_at__lt=at)
+            .exclude(pk=turn.pk)
+            .exclude(origin=Turn.ORIGIN_LOCAL)
+            .exclude(status=Turn.CANCELLED, result_note__startswith=REJECTED_PREFIX)
+            .count())
+
+
+def _counted(turn, known: dict, rules: list[AdmissionRule]) -> dict:
+    """`known` plus the counts a rule in `rules` compares with — read only when one does."""
+    if any(r.kind == AdmissionRule.AGENT_DAILY_TURNS for r in rules):
+        known = {**known, "daily_turns": daily_turns(turn)}
+    return known
 
 
 def _rules(agent) -> list[AdmissionRule]:
@@ -179,7 +214,7 @@ def at_enqueue(turn) -> bool:
     if agent is None:
         return False
     rules = _rules(agent)
-    known, detail = facts(turn), ""
+    known, detail = _counted(turn, facts(turn), rules), ""
     if any(r.reach for r in rules):
         reach, detail = reach_facts(turn)
         known.update(reach)
@@ -311,7 +346,8 @@ def at_claim(turn, runner, mode: str) -> bool:
     agent = turn.acting_agent
     if agent is None:
         return False
-    rule = decide(turn, agent, facts(turn, runner=runner, mode=mode or ""))
+    rules = _rules(agent)
+    rule = decide(turn, agent, _counted(turn, facts(turn, runner=runner, mode=mode or ""), rules), rules)
     return rule is not None and reject(turn, rule, runner=runner, mode=mode)
 
 

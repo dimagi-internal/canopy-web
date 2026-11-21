@@ -329,6 +329,7 @@ const CHANNEL: Record<string, string> = {
   email: "email",
   slack: "Slack",
   local: "a person's own computer",
+  site_message: "a host site's own channel",
 };
 
 export function channelText(channel: string): string {

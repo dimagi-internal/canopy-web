@@ -10,6 +10,8 @@ authenticated here.
 client and per issuer, because it is unauthenticated — the signed assertion IS
 the credential, so there is nobody to bill until one has been checked.
 
+A contact's sends (`/api/contact/sessions/{id}/send`) have a budget per contact.
+
 There is no per-credential exchange budget: no endpoint mints a token from a
 shared secret for an address in an app's allowed domains.
 """
@@ -94,18 +96,47 @@ def check_contact_token_client(client_ip) -> None:
         )
 
 
-def check_contact_token_issuer(name: str) -> None:
+def check_contact_token_issuer(name: str, limit: int | None = None) -> None:
     """The real bound: how many visitors one site may vouch for per window.
 
     Caps the rows a leaked signing key can create, and the verifications a
-    named app can make canopy perform.
+    named app can make canopy perform. `limit` is the site's own budget
+    (`AppCredential.contact_token_issuer_limit`, which only a canopy superuser
+    sets); None = the deployment's `CONTACT_TOKEN_ISSUER_LIMIT`.
     """
-    limit = int(getattr(settings, "CONTACT_TOKEN_ISSUER_LIMIT", 120))
+    if limit is None:
+        limit = int(getattr(settings, "CONTACT_TOKEN_ISSUER_LIMIT", 120))
     window = int(getattr(settings, "CONTACT_TOKEN_WINDOW_SECONDS", 60))
     if over(f"tokens:contact:iss:{name}", limit, window):
         raise ContactTokenRateLimitError(
             f"too many contact tokens for this site ({limit} per {window}s)"
         )
+
+
+# --- a contact's sends -------------------------------------------------------
+#
+# Every message a contact sends starts a turn, and a turn costs a model session on a
+# runner. A contact has no account and no budget of their own, and a relay site sends
+# for its people from a server, so nothing but this stops one person (or a host
+# looping on one person) from spending the agent's runners. Per CONTACT, not per
+# site: a busy site's other people are not held up by one of them.
+
+
+class ContactSendRateLimitError(Exception):
+    """Raised when one contact sends more than their budget."""
+
+
+def check_contact_send(contact_id) -> None:
+    """Count one send by `contact_id` against both budgets: per minute
+    (`CONTACT_SEND_PER_MINUTE`) and per day (`CONTACT_SEND_PER_DAY`)."""
+    per_minute = int(getattr(settings, "CONTACT_SEND_PER_MINUTE", 6))
+    per_day = int(getattr(settings, "CONTACT_SEND_PER_DAY", 200))
+    if over(f"contacts:send:min:{contact_id}", per_minute, 60):
+        raise ContactSendRateLimitError(
+            f"too many messages ({per_minute} a minute); wait a minute and send again")
+    if over(f"contacts:send:day:{contact_id}", per_day, 24 * 3600):
+        raise ContactSendRateLimitError(
+            f"too many messages today ({per_day} a day); try again tomorrow")
 
 
 # --- the site agents API ----------------------------------------------------
