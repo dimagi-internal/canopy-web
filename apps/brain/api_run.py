@@ -1,6 +1,7 @@
-"""`brain_read` and `brain_emit`: the two tools of a brain run, and the only canopy tools (besides `who_is_asking`)
-its caller token lists. Each answers only the caller token of a turn in a brain run's own conversation: not a
-person, not an agent's login, not a stored token, not a turn of any other chat. A run reads what
+"""`brain_read` and `brain_emit`: how a brain run reads its sources and writes what it learned. The run's turn is an
+ordinary full-profile turn of its operator agent (`runs.start`), but these two answer only the caller token of a turn
+in a brain run's own conversation while it runs: not a person, not an agent's login, not a stored token, not a turn
+of any other chat. `brain_read` is the only way a run reads the sessions it is due. A run reads what
 `brain.eligible` allows and writes only outputs that carry the lineage of what it read. `docs/architecture/brain.md`."""
 from __future__ import annotations
 
@@ -15,7 +16,7 @@ from apps.harness.models import Turn
 from apps.tokens import kinds
 
 from . import emit as emit_mod
-from . import learning_reads, reading
+from . import learning_reads, lineage, reading
 from .models import BRAIN_RUN_KEY, BrainRun
 from .schemas import BrainEmitIn, BrainEmitOut, BrainReadOut
 
@@ -23,17 +24,25 @@ router = Router(auth=session_auth, tags=["brain"])
 
 
 def _run_of(request: HttpRequest) -> tuple[BrainRun, Turn]:
-    """The open run whose own conversation this caller token belongs to, with its turn, else "not found".
-    Nothing but that token reaches a run: the turn is named by the credential, never by the request."""
+    """The open run whose own conversation the request's turn is in, with that turn, else "not found". The turn is
+    named by the credential, never by the request: a caller token's own turn, or the per-turn agent login canopy
+    issued for a running turn (`lineage.turn_of_request`; a full-profile turn reaches canopy with that login). A
+    stored token, a person or another turn reaches no run."""
     cred = getattr(request, "auth_credential", None) or {}
-    if kinds.kind_of(cred) is not kinds.KINDS[kinds.CALLER_TOKEN] or not cred.get("turn_id"):
+    kind = kinds.kind_of(cred)
+    if kind is kinds.KINDS[kinds.CALLER_TOKEN] and cred.get("turn_id"):
+        turn = lineage.turn_of_request(request)
+    elif kind is kinds.KINDS[kinds.PAT]:
+        turn = lineage.turn_of_request(request)          # the turn's agent login, while that turn runs
+    else:
+        turn = None
+    if turn is None:
         raise ProblemError(404, "No learning run here", type_=TYPE_NOT_FOUND)
-    turn = Turn.objects.select_related("chat_session").filter(pk=cred["turn_id"]).first()
     conversation = access.turn_conversation(turn) if turn is not None else None
     run_id = (conversation.metadata or {}).get(BRAIN_RUN_KEY) if access.is_brain_conversation(conversation) else None
     run = (BrainRun.objects.select_related("capability").filter(pk=run_id, session=conversation).first()
            if run_id else None)
-    if run is None or turn.status in Turn.TERMINAL or turn.capability != "brain":
+    if run is None or turn.status in Turn.TERMINAL:
         raise ProblemError(404, "No learning run here", type_=TYPE_NOT_FOUND)
     why = learning_reads.run_refusal(run.capability, run.subject, run.scope)
     if why:

@@ -428,3 +428,38 @@ class WorkspaceLearningReads(models.Model):
     updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
                                    related_name="+")
     updated_at = models.DateTimeField(auto_now=True)
+
+
+class BrainRunArtifact(models.Model):
+    """Something a learning run's turn made in canopy-web, or reported making outside it (a PR, an issue, a link).
+    Recorded by the server from the turn's own credential (`lineage`), never by the skill, with `OutputLineage`
+    (`output_kind` `brain.artifact`) to every source the run had read when it was made. When a removal reaches one of
+    those sources, the cascade WITHDRAWS what canopy can undo (a task, a draft) and FLAGS what it cannot (a sent email, a
+    pull request): flagged, it is listed on its workspace's brain page and raised to its owner (the person the run
+    answered to) until they acknowledge it (`alerts_removal`). Ids and a link only, never a word of what it says."""
+
+    LIVE, WITHDRAWN, FLAGGED = "live", "withdrawn", "flagged"
+    STATE_CHOICES = [(LIVE, "Live"), (WITHDRAWN, "Withdrawn"), (FLAGGED, "Flagged")]
+
+    run = models.ForeignKey(BrainRun, on_delete=models.CASCADE, related_name="artifacts")
+    #: `<app_label>.<model>` for a row canopy-web holds, else `link` (`github.pull`, `github.issue` for those).
+    kind = models.CharField(max_length=80)
+    #: The row's pk, or the URL.
+    ref = models.CharField(max_length=500)
+    #: Where it shows: the row's own workspace when it has one, else the run's.
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE, related_name="+")
+    #: Whom a flag is raised to: the person the run answered to.
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+                              related_name="+")
+    state = models.CharField(max_length=10, choices=STATE_CHOICES, default=LIVE)
+    #: Why it was withdrawn or flagged (`cascade.removed_reason`), in words.
+    reason = models.CharField(max_length=200, blank=True, default="")
+    changed_at = models.DateTimeField(null=True, blank=True)
+    acknowledged_at = models.DateTimeField(null=True, blank=True)
+    acknowledged_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+                                        related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["run", "kind", "ref"], name="brain_artifact_one")]
+        indexes = [models.Index(fields=["workspace", "state"], name="brain_artifact_by_ws")]

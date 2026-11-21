@@ -206,16 +206,30 @@ cached; `tests/test_brain_project_leg.py` holds the two equal over a world.
 ## A run (`apps/brain/runs.py`, `reading.py`, `emit.py`, `api_run.py`)
 
 The server starts a run of a feature (`runs.start`) for a target (above): a conversation of the operator agent stamped
-`metadata.brain_run`, with no creator and no participant, and a first turn queued as canopy's own, accountable to the
-target schedule's creator (the learner's accountable admin). A run carries a workspace `scope` (`BrainRun.scope`): it reads only
+`metadata.brain_run` (and `brain_target`), with no creator and no participant, and a first turn queued as canopy's own,
+accountable to the target schedule's creator (the learner's accountable admin). A run carries a workspace `scope` (`BrainRun.scope`): it reads only
 eligible sources of that workspace and the ones below it (`reading.candidates`, `reading.subtree`, the existing
 `descendant_slugs` walk), and what it emits is that workspace's (`emit`). Eligibility, consent and the cascade are
 unchanged: the scope only narrows what a run reads and who sees what it found. A `system` run's subject is its scope,
 so one run is open per feature and workspace.
-That stamp puts every turn in it in the confined `brain` profile (`published_profiles.BRAIN`,
-`turn_context._brain_rule`): no login, GitHub, mail, vault, Bash or Write, and a caller token that lists only
-`who_is_asking`, `brain_read` and `brain_emit`; REST refuses the token outright. Only that token reaches the two routes,
-and only while the turn runs and "Learning reads" is on somewhere it reads (`learning_reads.run_refusal`).
+**The run's turn is an ordinary full-profile turn of the operator** (`turn_context` resolves it like any system turn of
+the agent): its entry skill may do anything the agent's turns may (a task, a PR, a draft, a finding), and outbound
+follows the operator's turn mode and rails. What makes it a learning run:
+
+- **Its context is the learning system's** (`context.py`): the learner, the target, the accountable person, the run and
+  the sessions due (by source id and count, never a word), in its first prompt (`runs.prompt`) and in its caller
+  envelope as `brain_run` (`harness.caller_context`), read with `who_is_asking`.
+- **It reads the sessions due only through `brain_read`.** Its login reads its own conversation and nothing it is due
+  (`access.turn_reach`; the sessions are other people's), so every read is recorded and eligibility, consent and the
+  cascade apply unchanged. `brain_read` and `brain_emit` answer only a turn in the run's own conversation while it runs,
+  by its credential (a caller token's turn, or the per-turn agent login a full turn reaches canopy with,
+  `lineage.turn_of_request`), and only while "Learning reads" is on somewhere it reads (`learning_reads.run_refusal`).
+- **It is its own session with nothing carried over.** Its conversation has no creator and no participant, so no other
+  turn of the operator, its asker or its login reads it (`tests/test_brain_full_profile.py`); it is never a learning
+  source (`participants.sealed_reason`). On the box it is `isolated` (`harness.isolation`): the claim gives it only to
+  a runner whose code reports `isolated` on its heartbeat, which turns Claude Code's auto memory off for it
+  (`runner/ec2/cloud_runner.py` `ISOLATED_TURN_ENV`), so what it read never reaches the memory the agent's other turns
+  load. A laptop runner does not report it and takes none.
 
 - **`brain_read`** serves the run's next eligible sources once each, in order, leaving out what a clean run of the
   same feature already read for the same subject, each through the core read (`transcript_read.read`) in the feature's
@@ -231,6 +245,25 @@ and only while the turn runs and "Learning reads" is on somewhere it reads (`lea
   (`mcp.rate_limit`, `BRAIN_RUN_WRITE_LIMIT`), not the accountable admin's.
 - The run's conversation holds the words it read, in the operator's own turn record, readable by the operator's admins as
   any of its work is, until a source it read is removed: then the cascade deletes the conversation's content.
+
+## Lineage over everything a run makes (`apps/brain/lineage.py`, `alerts_removal.py`)
+
+`brain_emit` outputs stay the default record of what was learned, with their own lineage. Everything else the run's turn
+makes is recorded too, by the server, never by the skill: `lineage.capturing`, a decorator on every API route (beside
+the settings audit in `apps/api/api.py`), sees the rows a write by the run's turn creates (its credential names the turn;
+an MCP tool is the same route) and records each as a `BrainRunArtifact` with `OutputLineage` (`output_kind`
+`brain.artifact`) to every source the run had read by then, in the request's own transaction (`SKIP_APPS`/`SKIP_MODELS`
+leave out plumbing). The pull requests, issues and links the turn reports in its replies or result are recorded when the
+run ends (`lineage.record_reported`; canopy's own pages are rows already).
+
+When a removal reaches a source, the sweep (`lineage.sweep`, from `cascade.sweep`, judged by `cascade.removed_reason`
+on the run's learner) undoes what canopy can and **flags** what it cannot (`lineage.undo`): an app registers how to undo
+its rows (`lineage.register_undo`: a task no one has started or finished is deleted, a draft project update and a mail
+draft are deleted); a sent email, a published update, a PR, an issue, a link or anything else is flagged. A flag is
+listed on its workspace's brain page ("Could not be undone", `api_manage.flags_out`) to its owner (the person the run
+answered to) and the workspace's managers, and raised to its owner as a `learning_removal` alert until one of them
+acknowledges it (`POST /api/w/<ws>/brain/flags/{id}/acknowledge`, person-only, off MCP). An artifact holds ids and a
+link, never a word.
 
 ## Removal and the cascade (`apps/brain/cascade.py`)
 

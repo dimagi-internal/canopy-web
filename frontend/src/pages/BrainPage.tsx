@@ -3,15 +3,17 @@ import { Link, useParams } from 'react-router-dom'
 import { Button, StatusBadge } from 'canopy-ui/ui'
 
 import {
+  acknowledgeFlag,
+  addTarget,
   configureLearner,
   getBrainLinks,
   getBrainRuns,
   getBrainState,
   listBrainOutputs,
-  addTarget,
   removeTarget,
   runTargetNow,
   setLearningReads,
+  type BrainFlag,
   type BrainOutput,
   type BrainRun,
   type BrainState,
@@ -242,6 +244,7 @@ function NowTab({ ws, state, runsKey, onStarted, onChanged }: {
 
       <Runs key={runsKey} ws={ws} state={state} />
       <Findings ws={ws} />
+      <Flags ws={ws} flags={state.flags ?? []} onChanged={onChanged} />
 
       <Section
         title="Removals and cascade work"
@@ -668,6 +671,66 @@ function LearnerForm({ ws, learner, onSaved }: { ws: string; learner: Learner; o
       <Button size="sm" variant="outline" type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save'}</Button>
       {note && <span role="status" className="text-destructive">{note}</span>}
     </form>
+  )
+}
+
+const flagWhat = (f: BrainFlag) =>
+  f.kind === 'github.pull' ? 'Pull request' : f.kind === 'github.issue' ? 'Issue' : f.kind === 'link' ? 'Link'
+    : f.kind.split('.').pop() ?? f.kind
+
+/** What a learning run made that a removal could not undo: a sent email, a published update, a pull request. Its owner
+ *  (the person the run answered to) and the workspace's managers see it here, decide what to do with it, and
+ *  acknowledge it, which closes the alert raised to the owner. Shown only when there is one. */
+function Flags({ ws, flags, onChanged }: { ws: string; flags: readonly BrainFlag[]; onChanged: () => void }): JSX.Element | null {
+  const [note, setNote] = useState('')
+  if (flags.length === 0) return null
+  const ack = async (id: number) => {
+    setNote('')
+    try {
+      await acknowledgeFlag(ws, id)
+      onChanged()
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : 'Could not acknowledge it')
+    }
+  }
+  return (
+    <Section
+      title="Could not be undone"
+      note="A learning run made these from sessions that were later removed from learning. canopy withdrew what it could; these it cannot take back. Decide whether each should stand, then acknowledge it."
+    >
+      <Table>
+        <thead>
+          <Tr head="label">
+            <Th>What</Th>
+            <Th>Where</Th>
+            <Th hideBelow="sm">Run</Th>
+            <Th hideBelow="md">Owner</Th>
+            <Th hideBelow="md">Why</Th>
+            <Th srOnly>Acknowledge</Th>
+          </Tr>
+        </thead>
+        <tbody>
+          {flags.map((f) => (
+            <Tr key={f.id} rule="bottom-last">
+              <Td>{flagWhat(f)}</Td>
+              <Td>
+                {f.ref.startsWith('http') ? <a className="underline" href={f.ref} target="_blank" rel="noreferrer">{f.ref}</a>
+                  : <span className="font-mono">#{f.ref}</span>}
+              </Td>
+              <Td hideBelow="sm" tone="muted">{f.learner} {f.run}</Td>
+              <Td hideBelow="md" tone="muted">{f.owner || '—'}</Td>
+              <Td hideBelow="md" tone="muted">{f.reason}</Td>
+              <Td>
+                {f.acknowledged ? <StatusBadge tone="neutral">acknowledged</StatusBadge> : (
+                  <Button size="sm" variant="outline" onClick={() => void ack(f.id)}>Acknowledge</Button>
+                )}
+              </Td>
+            </Tr>
+          ))}
+        </tbody>
+      </Table>
+      {note && <p role="status" className="text-xs text-destructive">{note}</p>}
+    </Section>
   )
 }
 

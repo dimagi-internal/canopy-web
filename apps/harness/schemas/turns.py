@@ -354,6 +354,9 @@ class ClaimedTurnOut(TurnOut):
     # serves: the site, and the agent's own credentials for it that the runner must
     # leave out of the turn (`published_profiles.page_turn`). Null for every other turn.
     page_site: ClaimPageSiteOut | None = None
+    # A learning run's turn (`harness.isolation`): it keeps nothing on the box for later turns, so the runner turns
+    # Claude Code's auto memory off for it. Only a runner that reports `isolated` is handed one.
+    isolated: bool = False
 
     # Nothing about a visitor's HOST credential is ever here (host grant
     # contract v1): the gateway (`site_call`) attaches it inside canopy-web, so
@@ -385,6 +388,12 @@ class ClaimedTurnOut(TurnOut):
         if session is None or not sensitivity.any_sensitive(session, obj):
             return {}
         return session_sync.turn_end_held(session)
+
+    @staticmethod
+    def resolve_isolated(obj) -> bool:
+        from ..isolation import is_isolated  # noqa: PLC0415 — as the resolvers around it
+
+        return is_isolated(obj)
 
     @staticmethod
     def resolve_page_site(obj) -> dict | None:

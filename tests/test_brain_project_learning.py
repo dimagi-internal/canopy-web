@@ -14,7 +14,7 @@ from apps.agents.models import Agent, AgentProject, AgentTask
 from apps.brain import associate, consent, emit, reading, registry, runs, sources, targets
 from apps.brain.models import BrainCapability, BrainRun, BrainTarget, LearningConsent, SourceLink
 from apps.canopy_sessions.models import Message, Session
-from apps.harness import claim_payload
+from apps.harness import turn_agent_tokens
 from apps.harness.models import AgentSchedule, Runner, Turn
 from apps.harness.signals import turn_status_changed
 from apps.mcp.auth import CanopyPATVerifier
@@ -231,7 +231,7 @@ def _judge(w):
     turn = Turn.objects.get(chat_session=run.session)
     Turn.objects.filter(pk=turn.pk).update(status=Turn.RUNNING, claimed_by=w["box"])
     turn.refresh_from_db()
-    return run, claim_payload.issue_credentials(turn).mcp_token
+    return run, turn_agent_tokens.issue(turn, w["box"])["token"]     # a full turn reaches canopy with its login
 
 
 def test_the_judge_reads_only_weak_candidates_short_with_the_projects_own_words(w):

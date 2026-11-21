@@ -12,9 +12,10 @@ const addTarget = vi.fn()
 const removeTarget = vi.fn()
 const setLearningReads = vi.fn()
 const configureLearner = vi.fn()
+const acknowledgeFlag = vi.fn()
 vi.mock('@/api/brain', () => ({
   getBrainState, getBrainLinks, getBrainRuns, listBrainOutputs, runTargetNow, addTarget, removeTarget, setLearningReads,
-  configureLearner,
+  configureLearner, acknowledgeFlag,
 }))
 
 const { BrainPage } = await import('./BrainPage')
@@ -54,6 +55,9 @@ const STATE = (owner: boolean) => ({
       agent: 'ada', cron: '0 7 * * 1', timezone: 'UTC', enabled: false, created_by: 'jj@dimagi.com', created_at: '',
       last_run: { id: 3, state: 'done', created_at: new Date().toISOString() }, can_manage: owner },
   ],
+  flags: owner ? [{ id: 5, kind: 'github.pull', ref: 'https://github.com/dimagi-internal/canopy/pull/77', workspace: 'dimagi',
+    run: 3, learner: 'system-learning', owner: 'jj@dimagi.com', reason: 'a session it came from was removed (excluded)',
+    changed_at: new Date().toISOString(), acknowledged: false }] : [],
   runs: { open: 0, done: 1, failed: 0 },
   cascade: [],
 })
@@ -151,6 +155,22 @@ describe('BrainPage', () => {
     }))
     fireEvent.click(within(aimed).getAllByRole('button', { name: 'Remove' })[1])
     await waitFor(() => expect(removeTarget).toHaveBeenCalledWith('dimagi', 8))
+  })
+
+  it('lists what a removal could not undo to those who may act on it, and acknowledges it', async () => {
+    setup(true)
+    acknowledgeFlag.mockResolvedValue(undefined)
+    const flags = await screen.findByRole('region', { name: 'Could not be undone' })
+    expect(within(flags).getByRole('link', { name: 'https://github.com/dimagi-internal/canopy/pull/77' })).toBeTruthy()
+    expect(within(flags).getByText('Pull request')).toBeTruthy()
+    fireEvent.click(within(flags).getByRole('button', { name: 'Acknowledge' }))
+    await waitFor(() => expect(acknowledgeFlag).toHaveBeenCalledWith('dimagi', 5))
+  })
+
+  it('shows no such section when there is nothing to acknowledge', async () => {
+    setup()
+    await screen.findByRole('region', { name: 'Learners' })
+    expect(screen.queryByRole('region', { name: 'Could not be undone' })).toBeNull()
   })
 
   it('shows the learners: built in and per person take no target', async () => {

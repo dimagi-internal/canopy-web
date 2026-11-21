@@ -211,7 +211,7 @@ def cascade_counts(user, slugs, admin: set[str]) -> list[dict]:
 
 
 def summary(user, slugs, pin: str = "") -> dict:
-    from .api_manage import may_manage, reads_out, targets_out  # noqa: PLC0415 — api_manage reads this module's neighbours
+    from .api_manage import flags_out, may_manage, reads_out, targets_out  # noqa: PLC0415 — api_manage reads this module's neighbours
 
     slugs = set(slugs)
     admin = _admin_slugs(user, slugs)
@@ -221,6 +221,7 @@ def summary(user, slugs, pin: str = "") -> dict:
             "canopy_admin": bool(getattr(user, "is_superuser", False)),
             "consent": consent_counts(user, slugs, admin), "sources": source_counts(user, slugs, admin),
             "links": link_groups(user, slugs, admin), "learners": learners(user, pin, aimed), "targets": aimed,
+            "flags": flags_out(user, pin, slugs) if pin else [],
             "runs": run_counts(user, slugs, admin),
             "cascade": cascade_counts(user, slugs, admin)}
 
