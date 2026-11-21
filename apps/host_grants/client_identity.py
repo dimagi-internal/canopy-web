@@ -210,6 +210,16 @@ def execution_statement(audience: str, facts: dict, *, access_token: str | None 
                                         jkt=dpop_jkt(), access_token=access_token, rpc=rpc)
 
 
+def subject_statement(audience: str, facts: dict, *, rpc: str | None = None) -> str:
+    """The subject statement (`Authorization: CanopySubject`) for ONE request an agent's turn
+    makes to a host for one of the host's own contacts, with no grant
+    (`host_gateway.resolve`'s subject mode): `facts` is `{sub, site, agent, turn, session,
+    capability}`, `sub` the contact's `external_id` from the turn's initiator. Signed by the
+    client key the host already trusts, bound to canopy's DPoP key and the JSON-RPC request,
+    60s, single-use."""
+    return consumer.subject_statement(_client_key(), client_id(), audience, jkt=dpop_jkt(), rpc=rpc, **facts)
+
+
 def view_statement(audience: str, *, subject: str, uri: str, session: str, access_token: str,
                    viewer: str = "", agent: str = "", rpc: str | None = None) -> str:
     """`Canopy-View` for ONE request a person's own View makes to a host

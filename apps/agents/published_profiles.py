@@ -41,6 +41,8 @@ under `READ_MODE_STAMP`):
         # ceiling: ["mcp__*connect_labs__marketplace_*"]   # OPTIONAL site tool limit ("Site tools it may use")
 
 One entry per site, and one site per entry (`answering`, the one writer, enforces both).
+`contact_scoped: true` (optional) also lets the site's own contacts reach the agent there, the
+site's tools bound to that one contact (`contact_scoped`).
 
 **An app entry** names ONE workspace app instead of a site (`apps: [<key>]`); its tools are canopy's
 own and fixed (`apps/agents/app_entries.py`), and `ceiling` there can only narrow them.
@@ -235,7 +237,8 @@ def parse(doc) -> dict:
             out[name] = _app_entry(cap, name)
             continue
         bad = set(cap) - {"description", "entry", "tools", "bash", "read_paths",
-                          "write_paths", "input", "sites", "ceiling", "own_login", "data"}
+                          "write_paths", "input", "sites", "ceiling", "own_login", "data",
+                          "contact_scoped"}
         if bad:
             raise InterfaceError(f"{name}: unknown key(s) {sorted(bad)}")
         entry = cap.get("entry")
@@ -333,6 +336,16 @@ def _sites(cap: dict, name: str) -> dict:
         raise InterfaceError(f"{name}.ceiling needs `sites:` — a tool limit bounds the tools of "
                              "the sites it names")
     out = {"sites": sites, "ceiling": ceiling}
+    scoped = cap.get("contact_scoped", False)
+    if not isinstance(scoped, bool):
+        raise InterfaceError(f"{name}.contact_scoped must be true or false", f"{name}.contact_scoped")
+    if scoped:
+        if not sites:
+            raise InterfaceError(f"{name}.contact_scoped needs `sites:` — it lets the site's own contacts "
+                                 "reach the tools of the site it names", f"{name}.contact_scoped")
+        # Written only when on, so every interface published before the key existed
+        # parses to exactly what it did.
+        out["contact_scoped"] = True
     own = _own_login(cap.get("own_login"), name, sites)
     if own:
         # Written only when present, so every interface published before the key
@@ -453,6 +466,15 @@ def page_site_of(turn, agent=None) -> str:
     if agent is None or not site:
         return ""
     return site if site in page_sites(agent) else ""
+
+
+def contact_scoped(agent, site: str) -> bool:
+    """Whether the agent's owner let the site's own CONTACTS reach the agent on `site`, with
+    the site's tools bound to that one contact (`contact_scoped: true` on the entry that lists
+    the site): `contact_api._for_contacts` then offers the agent to them, and a contact's turn
+    there reaches the site's tools under a canopy-signed subject statement, with no grant
+    (`host_gateway.resolve`; docs/architecture/host-systems-of-record.md)."""
+    return _cap_for_site(agent, site).get("contact_scoped") is True
 
 
 def site_ceiling(agent, site: str) -> list[str]:

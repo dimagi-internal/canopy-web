@@ -211,6 +211,18 @@ VIEW_MAX_LIFETIME = 60
 VIEW_REQUIRED_CLAIMS: tuple[str, ...] = (
     "iss", "aud", "iat", "exp", "jti", "cnf", "ath", "actor", "sub", "uri", "session")
 
+#: canopy's signed word that a request is an agent's turn with ONE of the host's own
+#: contacts — a person the host vouches for and canopy knows only as the host's id for
+#: them (``sub``) — and nothing else: no grant, no token. Sent as ``Authorization:
+#: CanopySubject <jws>`` beside a DPoP proof (no ``ath``: there is no access token) by
+#: canopy's gateway, only for a host-site entry its owner marked ``contact_scoped``. The
+#: host authorizes EVERY call against ``sub``: ``canopy_sdk.host.verify_subject``.
+SUBJECT_AUTH_SCHEME = "CanopySubject"
+SUBJECT_TYP = "canopy-subject+jwt"
+SUBJECT_MAX_LIFETIME = 60
+SUBJECT_REQUIRED_CLAIMS: tuple[str, ...] = (
+    "iss", "aud", "iat", "exp", "jti", "cnf", "sub", "site", "agent", "turn", "session")
+
 #: Where a canopy deployment serves its Client ID Metadata Document (its
 #: ``client_id`` IS this URL) and its client-auth JWKS, relative to its base URL.
 CLIENT_METADATA_PATH = "/oauth/client.json"

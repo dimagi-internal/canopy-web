@@ -756,12 +756,15 @@ class AgentHostSiteOut(AnsweringProfile):
     # Names of the agent's own credentials that are its login on this site, kept out of its conversations.
     own_login: list[str] = []
     sensitive: bool = False
+    # The site's own contacts reach the agent here, the site's tools bound to that one contact.
+    contact_scoped: bool = False
 
 
 class NewSiteDefaults(AnsweringProfile):
     ceiling: list[str] = []
     own_login: list[str] = []
     sensitive: bool = False
+    contact_scoped: bool = False
 
 
 class AgentHostSitesOut(StrictModel):
@@ -775,6 +778,9 @@ class AgentHostSiteIn(ReadModeIn):
     ceiling: list[str] | None = None
     own_login: list[str] | None = None
     sensitive: bool | None = None
+    # Let the site's own contacts reach the agent here, the site's tools bound to that one
+    # contact and authorized by the site on every call (docs/architecture/host-systems-of-record.md).
+    contact_scoped: bool | None = None
 
 
 class AgentAppEntryOut(StrictModel):

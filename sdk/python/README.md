@@ -26,10 +26,10 @@ with the sdist and wheel attached):
 
 ```
 # requirements.txt / pyproject — from the tag
-dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.30.0#subdirectory=sdk/python
+dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.31.0#subdirectory=sdk/python
 
 # or from the Release's wheel
-dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.30.0/dimagi_canopy-0.30.0-py3-none-any.whl
+dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.31.0/dimagi_canopy-0.31.0-py3-none-any.whl
 ```
 
 Add the `django` extra (`dimagi-canopy[django] @ ...`) for `canopy_sdk.django`,
@@ -42,7 +42,7 @@ library, address-pinned.
 | Module | For | Key names |
 |---|---|---|
 | `canopy_sdk.contract` | both sides | `CONTRACT_VERSION`, `AGENT_CLAIM`, `WORKSPACE_CLAIM`, `ID_JAG_TYP`, `JWT_BEARER_GRANT`, `CLIENT_ASSERTION_TYPE`, lifetime caps, `ASSERTION_ALGORITHMS`, `GRANT_ALGORITHMS`, `jwk_thumbprint`, `ath`, `metadata_url`, `normalize_htu` |
-| `canopy_sdk.host` | a host site | `HostConfig`, `sign_visitor_assertion`, `issue_id_jag`, `arrival_payload`, `mint_contact_token`, `PageRegistry`, `PageTokens`, `GrantHandler`, `ResourceVerifier`, `DPoPGate`, `verify_execution` → `Execution` (`sensitive_clearance`), `verify_view` → `View`, `ProbeIdentity`, `ProbeHandler`, `authorization_server_metadata`, `protected_resource_metadata` |
+| `canopy_sdk.host` | a host site | `HostConfig`, `sign_visitor_assertion`, `issue_id_jag`, `arrival_payload`, `mint_contact_token`, `PageRegistry`, `PageTokens`, `GrantHandler`, `ResourceVerifier`, `DPoPGate`, `verify_execution` → `Execution` (`sensitive_clearance`, `sub`), `verify_view` → `View`, `verify_subject` → `Subject`, `ProbeIdentity`, `ProbeHandler`, `authorization_server_metadata`, `protected_resource_metadata` |
 | `canopy_sdk.consumer` | canopy | `verify_visitor_assertion`, `check_id_jag`, `ClientCredentials`, `client_assertion`, `execution_statement`, `view_statement`, `dpop_proof`, `request_token`, `parse_token_response`, `redeem_id_jag` |
 | `canopy_sdk.site_agents` | both sides | the site agents API: `fetch_site_agents` → `SiteAgents` (`agent(slug)`, `site_settings_url`, `SiteAgent` + `problem_links` of `AgentProblem`, `AgentCapability`, `RunnerFlag`), `SiteAgentsError` (`code`, `status`), `request_assertion`, `verify_site_agents`; canopy's `verify_request`, `sign_site_agents`, `content_version` |
 | `canopy_sdk.site` | both sides | the site's needs (`site.json`): `site_document`, `sign_site_document`; canopy's `verify_site_document` → `SiteNeeds` (`site`: `SiteFacts`), `site_document_url`, `WELL_KNOWN_PATH` |
@@ -50,7 +50,7 @@ library, address-pinned.
 | `canopy_sdk.contacts` | both sides | a host as the system of record for its people: `update_token`, `erase_token`, `check_item`, `check_record_uri`, `check_profile`, canopy's `verify_update` / `verify_erase`, `UPDATE_PATH`, `ERASE_PATH`; the host's client is `canopy_sdk.host.contacts` (`update_contacts`, `erase_contacts`); see [Your people: you are the system of record](#your-people-you-are-the-system-of-record) |
 | `canopy_sdk.stores` | a host | `JtiStore` (also the DPoP replay cache), `TokenStore`, `IssuedToken`, in-memory implementations |
 | `canopy_sdk.fetch` | a host | SSRF-safe `get_json` / `get_text` / `post_form` (https only, vetted + pinned addresses, no redirects, bounded) |
-| `canopy_sdk.django` | a Django host | settings (`CANOPY_HOST`), views, models + migrations, the DPoP ASGI gate, `execution.verify_execution(request)`, `execution.verify_view(request, uri=, subject=)`, `site_agents.current()` / `last_error()` / `refresh()`, `canopy/site.json`, `{% canopy_panel %}` |
+| `canopy_sdk.django` | a Django host | settings (`CANOPY_HOST`), views, models + migrations, the DPoP ASGI gate, `execution.verify_execution(request)`, `execution.verify_view(request, uri=, subject=)`, `execution.verify_subject(request, rpc=)`, `site_agents.current()` / `last_error()` / `refresh()`, `canopy/site.json`, `{% canopy_panel %}` |
 | `canopy_sdk.agent_tasks` | anything that calls an agent | `AgentTasks` (`create`, `get(id, wait_s=)`, `wait`, `cancel`, `run` → the result), `AgentTaskError` (`status`, `detail`, `errors`), `AgentTaskFailed`, `AgentTaskTimeout`; see [Agent tasks](#agent-tasks-call-an-agent-get-a-structured-result) |
 | `canopy_sdk.ondemand` | a site that runs a dedicated capability | `OnDemandInstance`, `EphemeralInstance`, `run_command`, `send_command`, `Lease`, `JobStore`, `Job`, `assets.asset_path`; see [On-demand capabilities](#on-demand-capabilities) |
 | `canopy_sdk.conformance` | anyone | `check_metadata`, `check_jwks`, `check_client`, `check_grant`, `check_mcp`, `run`; the live grant: `request_probe`, `check_live_grant`, `check_probe_tool`, `check_out_of_scope_refused`, `check_requires_dpop`, `run_live`; pytest fixtures |
@@ -740,6 +740,36 @@ erase_contacts(conf.get_host_config(), ["personalid:ana"])
 - Erasure deletes the person's contact sessions and their content, tokens, act-as-you
   permissions and the facts canopy recorded about them in that workspace, and
   answers `not_found` on a second call.
+
+### Answering an agent about ONE of your people: the subject statement
+
+A contact (one of your own people, with no canopy account and so no passkey or act-as-you
+grant) can still have its agent ask your MCP about THEM, if the agent's owner marked its
+host-site entry for your site `contact_scoped`. canopy's gateway then sends, on every
+request:
+
+```
+Authorization: CanopySubject <jws>   # typ canopy-subject+jwt, canopy's client key, aud = your RESOURCE
+DPoP: <proof>                        # htm, htu, iat, jti — no ath: there is no token
+Canopy-Execution: <jws>              # as always, now with sub
+```
+
+```python
+from canopy_sdk.django.execution import verify_subject   # or canopy_sdk.host.verify_subject
+
+subject = verify_subject(request, rpc=(method, params))   # SubjectRefused if anything is off
+if subject.sub != f"personalid:{worker.username}":       # YOU authorize every call against sub
+    raise PermissionDenied
+```
+
+`Subject` is `(site, sub, agent, turn, session, capability, claims)`; `sub` is your own id for
+the person (the visitor assertion's `sub`), which canopy takes from the turn's initiator, never
+from the agent. Checked: `typ`, the key canopy's client metadata names, `aud`, `iss`, 60 s, the
+DPoP proof's binding to `cnf.jkt` and its `htm`/`htu`, `rpc`, and both `jti`s spent once (pass
+a shared `replay_store` in a multi-worker host; the Django wrapper does). The `DPoPGate`
+passes a `CanopySubject` request through untouched; pass `jkt=subject.jkt` to
+`verify_execution`. Your MCP framework sees `Authorization: CanopySubject`, not `Bearer`:
+route it to `verify_subject` before your bearer-token verifier.
 
 ## The live probe (optional, recommended)
 

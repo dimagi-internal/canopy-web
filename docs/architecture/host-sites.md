@@ -51,7 +51,7 @@ The Turn Context resolver (`turn_context.resolve_turn_context`; order in [access
 - **Gateway tools.** Its profile gains canopy's site tools and the page's own actions (`published_profiles.GATEWAY_TOOLS`, `PAGE_TOOLS`), so an owner cannot publish a site and forget the tool that opens it.
 - **Everyone reaches the site as themselves.** On a site the agent has an entry for, every turn held on that site's page, the owner's included, reaches the site only under the sender's act-as-you permission (`HostGrant`, `apps/tokens/models.py`; passkey-confirmed, at most 30 minutes), never with the agent's own credentials. The runner withholds the entry's `own_login` names (`published_profiles.page_site_of`, `page_turn`, `own_login_of`).
 - **Ceiling.** `ceiling` optionally narrows the host's tools on the owner's word, for every turn on that site (`published_profiles.site_ceiling`). Absent, the host's grant decides; it can never widen.
-- **Contacts.** A contact (no passkey, so no act-as-you permission) is not offered an agent that has an entry for the site (`apps/contacts/contact_api.py::_for_contacts`).
+- **Contacts.** A contact (no passkey, so no act-as-you permission) is not offered an agent that has an entry for the site (`apps/contacts/contact_api.py::_for_contacts`) — unless the entry is `contact_scoped`: then the site's contacts reach the agent there, and a contact's turn reaches the site's tools bound to that one contact under a canopy-signed subject statement, the site authorizing every call ([host-systems-of-record.md](host-systems-of-record.md)).
 
 ## The site is the system of record for its people
 
@@ -59,7 +59,7 @@ A site keeps canopy's copy of the people it brings current (`POST /api/sites/con
 
 ## The gateway
 
-`site_tools` / `site_call` / `site_read` (`apps/mcp/tools/site.py`) do what `apps/host_grants/host_gateway.py` says (its module docstring is the rule): resolve the turn's site from the conversation (never an argument), refuse unless the site is live and issues host grants, the turn may use that site, and the sender holds a confirmed, unexpired grant for it; then call the host's MCP server with DPoP, as the sender. **There is no fallback to the agent's own credential**: it would hand the visitor whatever the agent can reach.
+`site_tools` / `site_call` / `site_read` (`apps/mcp/tools/site.py`) do what `apps/host_grants/host_gateway.py` says (its module docstring is the rule): resolve the turn's site from the conversation (never an argument), refuse unless the site is live and issues host grants, the turn may use that site, and the sender holds a confirmed, unexpired grant for it; then call the host's MCP server with DPoP, as the sender. **There is no fallback to the agent's own credential**: it would hand the visitor whatever the agent can reach. The one call made without a grant is a site's own contact's turn on a `contact_scoped` entry (the subject mode, above).
 
 ## What the host sees
 

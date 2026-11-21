@@ -2,6 +2,20 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.31.0 — 2026-11-21
+
+**Host tools bound to one subject: an agent asks you about ONE of your own people.**
+
+- `canopy_sdk.host.verify_subject(request, *, config, client_keys=None, replay_store=None,
+  method=None, rpc=None) -> Subject(site, sub, agent, turn, session, capability, claims)`:
+  canopy's `Authorization: CanopySubject <jws>` (`typ: canopy-subject+jwt`, signed by its
+  client key) with a DPoP proof carrying no `ath`, for a contact's turn on a
+  `contact_scoped` entry. Raises `SubjectRefused`. Django: `canopy_sdk.django.execution.verify_subject`.
+- canopy's half: `consumer.subject_statement`, `consumer.subject_authorization`;
+  `contract.SUBJECT_AUTH_SCHEME`, `SUBJECT_TYP`, `SUBJECT_MAX_LIFETIME`, `SUBJECT_REQUIRED_CLAIMS`.
+- `Execution.sub`: `Canopy-Execution` names the contact (`sub`) when the turn's initiator is
+  one of the host's own contacts. Additive; nothing existing changed.
+
 ## 0.30.0 — 2026-11-21
 
 **A host site is the system of record for the people it brings.**
