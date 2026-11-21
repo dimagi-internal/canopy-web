@@ -96,7 +96,7 @@ that surface's rule.
   lineage only to sessions already drawn.
 - **`include=proposed`** adds what `associate.propose_many` computes (the batched `propose`, held equal by
   `tests/test_brain_graph.py`), only where it would change a stored tie (`associate.outranks`), over the
-  drawn unsealed sessions, marked `proposed`; person-only by the preview's rule (`api_preview._the_person`)
+  drawn unsealed sessions, marked `proposed`; person-only (`api_state.the_person`)
   and writes nothing (the test captures every query).
 - **One place reads the brain's rows**: `graph.brain_reads` (participants, ties, reporting lines, outputs and their
   lineage), given a `source` (`graph.LIVE`, the tables, is the only one). Nothing else in the module reads a brain table

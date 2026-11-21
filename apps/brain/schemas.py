@@ -10,24 +10,6 @@ from pydantic import ConfigDict, Field
 from apps.common.schemas import StrictModel
 
 
-class BrainSourceWindow(StrictModel):
-    since: dt.datetime
-    until: dt.datetime
-
-
-class BrainSourceOut(StrictModel):
-    """Where a brain read came from: `live` (what canopy holds now) or a `preview` snapshot (what it would do)."""
-
-    kind: Literal["live", "preview"] = "live"
-    id: int | None = Field(None, description="The preview's id: pass `source=preview:<id>`.")
-    window: BrainSourceWindow | None = Field(None, description="The preview's window.")
-    created_at: dt.datetime | None = Field(None, description="When the preview was computed.")
-
-
-def _live() -> BrainSourceOut:
-    return BrainSourceOut()
-
-
 class LearningClassOut(StrictModel):
     name: str = Field(description="individual | memory | project | system.")
     learns_about: str
@@ -71,7 +53,6 @@ class LearningSourceOut(StrictModel):
     excluded: bool
     projects: list[SourceLinkOut] = Field(
         default_factory=list, description="Projects of yours this session is tied to; only ones you may read.")
-    source: BrainSourceOut = Field(default_factory=_live, description="Where this was read from.")
 
 
 class PersonLinkIn(StrictModel):
@@ -153,6 +134,12 @@ class ReportingLineIn(StrictModel):
     manager: str = Field(description="Their manager's email; a member of the workspace.")
 
 
+class BrainOutputSession(StrictModel):
+    session_id: uuid.UUID
+    workspace: str
+    title: str = Field(description="Scrubbed of secrets.")
+
+
 class BrainOutputOut(StrictModel):
     id: int
     learner: str = Field(description="The slug of the learning feature that produced it.")
@@ -164,8 +151,9 @@ class BrainOutputOut(StrictModel):
     body: dict
     state: str = Field(description="active | stale (a source it came from was removed).")
     created_at: dt.datetime
-    sessions: list[str] = Field(default_factory=list, description="A preview recommendation's cited sessions.")
-    source: BrainSourceOut = Field(default_factory=_live, description="Where this was read from.")
+    sessions: list[BrainOutputSession] = Field(default_factory=list,
+                                               description="The sessions it cites that you read yourself.")
+    hidden_sessions: int = Field(0, description="The sessions it cites that you do not read: a count only.")
 
 
 class BrainReadMessage(StrictModel):
@@ -240,71 +228,9 @@ class ProjectSessionOut(StrictModel):
     how: str = Field(description="dispatched | signals | judged | declared.")
     confidence: float | None = None
     started_at: dt.datetime
-    source: BrainSourceOut = Field(default_factory=_live, description="Where this was read from.")
 
 
-# ---- the preview: what the brain WOULD do over the sessions you can read, storing nothing ----------------
-
-class PreviewVerdict(StrictModel):
-    ok: bool
-    reason: str = Field(description="Why not, as `eligibility.explain` names it; empty when ok.")
-
-
-class PreviewWouldRead(StrictModel):
-    now: PreviewVerdict
-    if_everyone_agreed: PreviewVerdict = Field(description="Every missing consent taken as given; every other "
-                                               "fence kept (sealed, removed, a contact, a non-member, a "
-                                               "consent ended or narrowed).")
-
-
-class PreviewParticipant(StrictModel):
-    user_id: int | None = None
-    contact_id: int | None = None
-    name: str
-
-
-class PreviewLink(StrictModel):
-    project: str
-    tier: str
-    how: str
-    evidence: list[str]
-    outranked_by: dict | None = Field(None, description="The stored link that would keep its place instead.")
-
-
-class PreviewTranscript(StrictModel):
-    view: str
-    messages: list[dict]
-    truncated: bool
-    chars: int
-
-
-class PreviewSessionRow(StrictModel):
-    id: str
-    title: str
-    workspace: dict
-    started_at: dt.datetime
-    participants: list[PreviewParticipant]
-    would_read: dict = Field(description="Per class: `project` and `system` a verdict pair; `individual` one per "
-                             "person in it, by user id.")
-    links: list[PreviewLink]
-
-
-class PreviewSession(PreviewSessionRow):
-    transcript: PreviewTranscript
-
-
-class PreviewWindow(StrictModel):
-    since: dt.datetime
-    until: dt.datetime
-
-
-class BrainPreviewOut(StrictModel):
-    window: PreviewWindow
-    view: str
-    sessions: list[PreviewSession]
-    next_after: str = Field(description="Pass this as `after` for the next page.")
-    done: bool
-
+# ---- the relations graph ----------------------------------------------------------------------------------
 
 class GraphNodeOut(StrictModel):
     """One thing in the graph. `ref` is what its own page is found by: a session's id, a project's handle, a task's
@@ -355,51 +281,7 @@ class WorkspaceGraphOut(StrictModel):
     truncated: bool
 
 
-# ---- the /brain page: the preview summed up, and the brain as it stands -------------------------------------
-
-class PreviewClassCount(StrictModel):
-    now: int
-    if_everyone_agreed: int
-
-
-class PreviewCounts(StrictModel):
-    sessions: int = Field(description="Sessions on this page.")
-    links: int = Field(description="Links canopy would store on this page (none a stored link keeps out).")
-    sealed: dict[str, int] = Field(description="Sessions shut to every use, by why.")
-    project: PreviewClassCount
-    system: PreviewClassCount
-    individual: PreviewClassCount = Field(description="Your own sessions' `individual` verdicts.")
-
-
-class PreviewLinkSession(StrictModel):
-    id: str
-    title: str
-    how: str
-    evidence: list[str]
-    outranked_by: dict | None = None
-
-
-class PreviewLinkGroup(StrictModel):
-    workspace: str
-    project: str
-    tier: str
-    sessions: list[PreviewLinkSession]
-
-
-class PreviewSummaryRow(PreviewSessionRow):
-    you: PreviewWouldRead | None = Field(None, description="The `individual` verdict about you, if you are in it.")
-
-
-class BrainWouldReadOut(StrictModel):
-    window: PreviewWindow
-    total: int = Field(description="Sessions in the whole window.")
-    sessions: list[PreviewSummaryRow] = Field(description="This page, without a line of any transcript.")
-    counts: PreviewCounts
-    would_link: list[PreviewLinkGroup] = Field(description="This page's links, by project and tier.")
-    next_after: str = Field(description="Pass this as `after` for the next page.")
-    done: bool
-    source: BrainSourceOut = Field(default_factory=_live, description="Where this was read from.")
-
+# ---- the /brain page: the brain as it stands ------------------------------------------------------------------
 
 class BrainConsentWorkspace(StrictModel):
     workspace: str
@@ -469,7 +351,6 @@ class BrainStateOut(StrictModel):
     learners: list[BrainLearnerState]
     runs: BrainRunCounts
     cascade: list[BrainCascadeCounts]
-    source: BrainSourceOut = Field(default_factory=_live, description="Where this was read from.")
 
 
 class BrainStoredLink(StrictModel):
@@ -490,7 +371,6 @@ class BrainLinkPageOut(StrictModel):
     links: list[BrainStoredLink]
     next_before: int = Field(description="Pass this as `before` for the next page.")
     done: bool
-    source: BrainSourceOut = Field(default_factory=_live, description="Where this was read from.")
 
 
 class BrainRunSession(StrictModel):
@@ -517,44 +397,9 @@ class BrainRunPageOut(StrictModel):
     runs: list[BrainRunState]
     next_before: int
     done: bool
-    source: BrainSourceOut = Field(default_factory=_live, description="Where this was read from.")
 
 
-# ---- preview snapshots ----------------------------------------------------------------------------------------
-
-class PreviewSnapshotIn(StrictModel):
+class RunNowIn(StrictModel):
     model_config = ConfigDict(extra="forbid")
 
-    since: dt.datetime | None = Field(None, description="Default: a day before `until`. A week at most.")
-    until: dt.datetime | None = Field(None, description="Default: now.")
-    view: Literal["full", "conversation", "userinput", "opening"] = "full"
-
-
-class PreviewSnapshotOut(StrictModel):
-    id: int
-    source: str = Field(description="What to pass as `source` (and `?preview=` in the app): `preview:<id>`.")
-    window: BrainSourceWindow
-    view: str
-    created_at: dt.datetime
-    expires_at: dt.datetime
-    sessions: int = Field(description="Sessions it holds now.")
-    outputs: int = Field(description="Recommendations published to it.")
-    truncated: bool = Field(description="The window held more sessions than one preview keeps.")
-
-
-class PreviewOutputIn(StrictModel):
-    model_config = ConfigDict(extra="forbid")
-
-    kind: str = Field(min_length=1, max_length=40, description="What sort of recommendation: finding, task, link, ….")
-    title: str = Field("", max_length=300)
-    body: dict = Field(default_factory=dict)
-    sessions: list[uuid.UUID] = Field(min_length=1, max_length=50,
-                                      description="The sessions it came from; each must be in the preview and one "
-                                                  "you still read.")
-    learner: str = Field("", max_length=64, description="The learner it stands in for; default `system-learning`.")
-
-
-class PreviewOutputsIn(StrictModel):
-    model_config = ConfigDict(extra="forbid")
-
-    outputs: list[PreviewOutputIn] = Field(max_length=100, description="Replaces every recommendation of the preview.")
+    project: str = Field("", description="For a project learner: the workspace project's handle. Ignored otherwise.")

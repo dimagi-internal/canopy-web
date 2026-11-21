@@ -58,6 +58,35 @@ def _subject(cap: BrainCapability, subject) -> tuple[str, str]:
     return "system", ""
 
 
+def subject_of(cap: BrainCapability, subject=None) -> tuple[str, str]:
+    """`(subject_type, subject)` a run of `cap` is about: a person's id, a workspace project's pk, or `system`."""
+    return _subject(cap, subject)
+
+
+def refusal(cap: BrainCapability, subject=None, *, need_entry: bool = True) -> str:
+    """Why a run of `cap` for `subject` cannot start now, in words a canopy admin can act on, or "". `start` asks
+    the same; "Run now" also needs the plugin command the run starts with (`entry`)."""
+    if not readers.enabled():
+        return "canopy's learning reads are switched off (BRAIN_READS_ENABLED)"
+    if not cap.enabled:
+        return f"{cap.slug} is disabled"
+    if cap.operator_id is None:
+        return f"{cap.slug} has no operator agent"
+    if need_entry and not cap.entry:
+        return f"{cap.slug} has no entry (the plugin command a run starts with)"
+    if registry.accountable(cap) is None:
+        return f"nobody active is accountable for {cap.slug}; a canopy admin enables it again"
+    try:
+        subject_type, subject_id = _subject(cap, subject)
+    except StartRefusedError as e:
+        return str(e)
+    open_run = BrainRun.objects.filter(capability=cap, subject_type=subject_type, subject=subject_id,
+                                       state=BrainRun.OPEN).first()
+    if open_run is not None:
+        return f"run {open_run.pk} of {cap.slug} for this subject is still open"
+    return ""
+
+
 def prompt(cap: BrainCapability, run: BrainRun) -> str:
     """The operator's first words: the feature's own command, then what it is for. Nothing from a source."""
     head = cap.entry or f"/{cap.slug}"

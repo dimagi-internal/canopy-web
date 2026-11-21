@@ -3,8 +3,8 @@
 A sibling of the workspace network (`/api/workspaces/{slug}/network`, admins, from the analytics fact log): this one
 is any member's, and every node and edge in it is one the caller already sees on another surface
 (`apps/brain/graph.py`). Reporting lines are drawn only for a person as themselves and never through MCP, as the
-reporting route answers; the brain's would-be links (`include=proposed`) only for the person, as the preview
-answers (`api_preview._the_person`), and storing nothing."""
+reporting route answers; the brain's would-be links (`include=proposed`) only for the person as themselves
+(`api_state.the_person`), and storing nothing."""
 from __future__ import annotations
 
 from typing import Literal
@@ -20,7 +20,7 @@ from apps.workspaces.gates import membership_or_404
 
 from . import graph
 from .api_admin import manager_leg_open
-from .api_preview import _the_person
+from .api_state import the_person as _the_person
 from .schemas import WorkspaceGraphOut
 
 router = Router(auth=session_auth, tags=["brain"])

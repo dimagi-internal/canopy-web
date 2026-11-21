@@ -22,8 +22,8 @@ from apps.contacts import people
 from apps.harness import acting_person
 from apps.workspaces import services as wsvc
 
-from . import associate, consent, disclosure, participants, sources, view
-from .models import CLASSES, SourceExclusion
+from . import associate, consent, disclosure, participants, sources
+from .models import CLASSES, SourceExclusion, SourceLink
 from .schemas import AgentLinkIn, DisclosureDayOut, RemovedSessionOut, LearningIn, LearningOut, LearningSourceOut, PersonLinkIn
 
 router = Router(auth=session_auth, tags=["brain"])
@@ -102,7 +102,16 @@ def _my_session(request: HttpRequest, user, session_id: uuid.UUID, *, readable: 
 
 
 def _source_out(user, session) -> dict:
-    return view.session_learning(user, session, view.LIVE_SOURCE)
+    source = sources.existing(session)
+    out = source is not None and SourceExclusion.objects.filter(user=user, source=source).exists()
+    links = []
+    # Which projects it belongs to only for someone who can read it now (not someone since taken out).
+    if source is not None and access.readable_sessions(user).filter(pk=session.pk).exists():
+        for link in source.links.filter(subject_type=SourceLink.PROJECT_SUBJECT).order_by("pk"):
+            project = AgentProject.objects.filter(pk=link.subject).first()
+            if project is not None and may_read_project(user, project):   # never reveal a project they cannot read
+                links.append({"project": project.handle, "name": project.name, "tier": link.tier, "how": link.how})
+    return {"session_id": session.pk, "excluded": out, "projects": links}
 
 
 @router.put("/me/learning/sessions/{session_id}/", response={200: LearningSourceOut, **refusals(403, 404)},
@@ -131,21 +140,13 @@ def include_my_session(request: HttpRequest, session_id: uuid.UUID) -> dict:
     return _source_out(user, session)
 
 
-@router.get("/me/learning/sessions/{session_id}/", response={200: LearningSourceOut, **refusals(403, 404, 422)},
+@router.get("/me/learning/sessions/{session_id}/", response={200: LearningSourceOut, **refusals(403, 404)},
             summary="Whether one of your sessions is out of canopy learning")
 @gate("self")
-def get_my_session_learning(request: HttpRequest, session_id: uuid.UUID, source: str = "live") -> dict:
-    """Whether you took it out, and the projects it is tied to that you may read. `source=preview:<id>`: the ties one
-    of your previews would make (not found when the session is not in it)."""
-    from .api_previews import source_of  # noqa: PLC0415 — api_previews imports api_preview, loaded with this app
-
+def get_my_session_learning(request: HttpRequest, session_id: uuid.UUID) -> dict:
     user = _the_person(request)
     session = _my_session(request, user, session_id)
-    src = source_of(request, source)
-    out = view.session_learning(user, session, src)
-    if out is None:
-        raise ProblemError(404, "Session not in this preview", type_=TYPE_NOT_FOUND)
-    return out
+    return _source_out(user, session)
 
 
 # ---- which project a session belongs to (layer 4: declared) -------------------------------------------

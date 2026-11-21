@@ -8,7 +8,7 @@ About a person (`individual`, `memory`): only the subject's consent counts, and 
 must be a participant. Shared (`project`, `system`): every human participant must permit the
 class and none may have excluded the source; a contact in it is a no.
 `eligible` is `explain`, which names the reason, and also judges a purpose class with no capability (what canopy's
-automatic layers and a preview ask), a session no source was made for, and "if everyone agreed" (`assume_consent`).
+automatic layers ask, `everyone_agreed`).
 `docs/architecture/brain.md` has the table; `tests/test_brain_eligibility.py` is it, row by row."""
 from __future__ import annotations
 
@@ -90,15 +90,11 @@ def _capability(capability) -> BrainCapability | None:
     return BrainCapability.objects.filter(slug=capability).first()
 
 
-def _consent_denial(user_id, consent, workspace, cls, *, capability="", purpose="", assume=False) -> str:
-    """Why this person's consent does not allow the use, or "". `assume` takes a MISSING consent (no row,
-    or the class not among its classes) as given; a consent they ended, a workspace they left out and a
-    standing rule still deny: those are the person's own acts, not a gap."""
+def _consent_denial(user_id, consent, workspace, cls, *, capability="", purpose="") -> str:
+    """Why this person's consent does not allow the use, or ""."""
     if consent is None:
-        if assume and not LearningConsent.objects.filter(user_id=user_id, revoked_at__isnull=False).exists():
-            return ""
         return f"no_consent:{user_id}"
-    if cls not in (consent.classes or []) and not assume:
+    if cls not in (consent.classes or []):
         return f"class_not_consented:{user_id}"
     if not covers(consent, workspace):
         return f"outside_workspaces:{user_id}"
@@ -110,8 +106,7 @@ def _consent_denial(user_id, consent, workspace, cls, *, capability="", purpose=
 
 @dataclass(frozen=True)
 class _Facts:
-    """What `explain` judges: a source as stored, or a session no source was made for yet (open, with no
-    stored participants and no exclusion, since both hang off a source)."""
+    """What `explain` judges: a source as stored."""
 
     session: object
     workspace: str
@@ -120,28 +115,22 @@ class _Facts:
     excluded: frozenset
 
 
-def _facts(source=None, session=None) -> _Facts | None:
-    if source is not None:
-        source = BrainSource.objects.filter(pk=source.pk).select_related("session").first()
-        if source is None:
-            return None
-        return _Facts(source.session, source.workspace_id, source.state == BrainSource.OPEN,
-                      tuple(source.participants.all()),
-                      frozenset(source.exclusions.values_list("user_id", flat=True)))
-    if session is None:
+def _facts(source) -> _Facts | None:
+    if source is None:
         return None
-    return _Facts(session, session.workspace_id, True, (), frozenset())
+    source = BrainSource.objects.filter(pk=source.pk).select_related("session").first()
+    if source is None:
+        return None
+    return _Facts(source.session, source.workspace_id, source.state == BrainSource.OPEN,
+                  tuple(source.participants.all()), frozenset(source.exclusions.values_list("user_id", flat=True)))
 
 
-def explain(source=None, capability=None, purpose: str = "", subject=None, *, session=None, cls: str = "",
-            assume_consent: bool = False) -> Eligibility:
+def explain(source=None, capability=None, purpose: str = "", subject=None, *, cls: str = "") -> Eligibility:
     """THE judgement, with its reason: may `capability` learn from this source for `purpose`, about `subject`?
     `eligible` is this. With no `capability`, the same question for a purpose CLASS (`cls`): what canopy's
-    automatic layers ask (`everyone_agreed`) and what a preview shows; only a standing rule naming nothing but
-    the class or workspace counts then. `session` stands in for a source not made yet. `assume_consent` (a
-    preview's "if everyone agreed") takes each missing consent as given and keeps every other fence: sealed,
-    withdrawn, anyone's exclusion, a contact, a non-member, a consent ended or narrowed. Fails closed."""
-    facts = _facts(source, session)
+    automatic layers ask (`everyone_agreed`); only a standing rule naming nothing but the class or workspace counts
+    then. Fails closed."""
+    facts = _facts(source)
     if facts is None:
         return _no("no_source")
     if not facts.open:
@@ -156,7 +145,7 @@ def explain(source=None, capability=None, purpose: str = "", subject=None, *, se
             return _no("capability_not_enabled")
         if cap.purpose_class not in CLASSES or purpose not in (cap.purposes or []):
             return _no("purpose_not_declared")
-        if (source.kind if source is not None else BrainSource.SESSION) not in (cap.source_kinds or []):
+        if source.kind not in (cap.source_kinds or []):
             return _no("source_kind_not_declared")
         cls, slug = cap.purpose_class, cap.slug
     elif cls not in CLASSES:
@@ -182,8 +171,7 @@ def explain(source=None, capability=None, purpose: str = "", subject=None, *, se
         needed = users
     consents = {c.user_id: c for c in LearningConsent.objects.filter(user_id__in=needed, revoked_at__isnull=True)}
     for uid in needed:
-        why = _consent_denial(uid, consents.get(uid), facts.workspace, cls, capability=slug, purpose=purpose,
-                              assume=assume_consent)
+        why = _consent_denial(uid, consents.get(uid), facts.workspace, cls, capability=slug, purpose=purpose)
         if why:
             return _no(why)
         member = _user(uid)

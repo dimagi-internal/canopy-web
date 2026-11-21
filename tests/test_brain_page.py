@@ -1,11 +1,10 @@
-"""The `/brain` page's routes: `GET /api/brain/state`, `/state/links`, `/state/runs` and `/preview/summary`.
+"""The `/brain` page's routes: `GET /api/brain/state`, `/state/links` and `/state/runs`.
 
-Person-only as the preview is (never an agent's login, a turn's token, an act-as token or an MCP call), legs 1 to 6
+Person-only (never an agent's login, a turn's token, an act-as token or an MCP call), legs 1 to 6
 only (a reader who has a session only through the brain's project leg sees no row of it), workspace-wide counts only
 where the viewer holds `logs.read`, and not one write: every route's queries are captured and none writes."""
 from __future__ import annotations
 
-import datetime as dt
 
 import pytest
 from django.db import connection
@@ -15,7 +14,7 @@ from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.brain import consent
-from apps.brain.models import BrainOutput, BrainRun, BrainRunRead, LearningConsent, RederiveRequest
+from apps.brain.models import BrainOutput, BrainRun, BrainRunRead, RederiveRequest
 from apps.canopy_sessions.models import Session
 from apps.harness import act_as, turn_agent_tokens
 from apps.harness.models import Runner, Turn
@@ -27,9 +26,8 @@ from tests.token_helpers import bearer_headers, pat_token
 
 pytestmark = pytest.mark.django_db
 
-STATE, LINKS, RUNS, SUMMARY = ("/api/brain/state", "/api/brain/state/links", "/api/brain/state/runs",
-                               "/api/brain/would-read")
-ROUTES = (STATE, LINKS, RUNS, SUMMARY)
+STATE, LINKS, RUNS = "/api/brain/state", "/api/brain/state/links", "/api/brain/state/runs"
+ROUTES = (STATE, LINKS, RUNS)
 
 
 @pytest.fixture()
@@ -105,7 +103,6 @@ def test_a_leg_7_only_reader_sees_no_row_of_the_session(w):
     assert reader.get(STATE).json()["links"] == []
     runs = reader.get(RUNS).json()["runs"]
     assert runs[0]["reads"] == 1 and runs[0]["sessions"] == [] and runs[0]["hidden"] == 1
-    assert reader.get(SUMMARY).json()["sessions"] == []
 
 
 def test_a_non_member_sees_nothing_of_the_workspace(w):
@@ -117,34 +114,6 @@ def test_a_non_member_sees_nothing_of_the_workspace(w):
     assert body["runs"] == {"open": 0, "done": 0, "failed": 0} and body["cascade"] == []
     assert [c["workspace"] for c in body["consent"]["workspaces"]] == ["else"]
     assert client(other).get(LINKS).json()["links"] == [] and client(other).get(RUNS).json()["runs"] == []
-    assert client(other).get(SUMMARY).json()["sessions"] == []
-
-
-def test_the_summary_sums_the_page_without_a_transcript(w):
-    LearningConsent.objects.filter(user=w["alice"]).update(classes=["project", "individual"])
-    body = client(w["alice"]).get(SUMMARY).json()
-    assert body["total"] == 1 and body["done"] is True
-    row = body["sessions"][0]
-    assert "transcript" not in row and SECRET not in str(body)
-    assert body["counts"]["project"] == {"now": 1, "if_everyone_agreed": 1}
-    assert body["counts"]["individual"] == {"now": 1, "if_everyone_agreed": 1}
-    assert body["counts"]["system"]["now"] == 0 and body["counts"]["sessions"] == 1
-    # One session's transcript is the preview's, asked for by id.
-    one = client(w["alice"]).get("/api/brain/preview", {"session": str(w["session"].pk)}).json()
-    assert [s["id"] for s in one["sessions"]] == [str(w["session"].pk)] and one["sessions"][0]["transcript"]
-    assert client(w["alice"]).get("/api/brain/preview", {"session": "nope"}).status_code == 422
-
-
-def test_the_summary_groups_the_links_it_would_store(w):
-    from apps.agents.models import AgentTask
-
-    task = AgentTask.objects.create(agent=w["lead"], project=w["project"], ext_id="T1", title="tender")
-    Turn.objects.create(chat_session=w["session"], raised_from_task=task, prompt="go", idempotency_key="k1")
-    body = client(w["alice"]).get(SUMMARY).json()
-    assert body["would_link"] == [{"workspace": "acme", "project": "supply", "tier": "core", "sessions": [
-        {"id": str(w["session"].pk), "title": body["sessions"][0]["title"], "how": "dispatched",
-         "evidence": [f"task:{task.pk}"], "outranked_by": None}]}]
-    assert body["counts"]["links"] == 1
 
 
 def test_no_route_writes(w, django_capture_on_commit_callbacks):
@@ -158,7 +127,7 @@ def test_no_route_writes(w, django_capture_on_commit_callbacks):
             assert callbacks == []
 
 
-def test_the_summary_costs_the_same_for_more_sessions(w):
+def test_the_page_costs_the_same_for_more_sessions(w):
     def queries(n_extra):
         for _ in range(n_extra):
             Session.objects.create(workspace=w["ws"], created_by=w["alice"], origin=Session.ORIGIN_WEB, title="x")
@@ -186,12 +155,7 @@ def test_only_the_person_as_themselves(w):
         assert Client().get(url, **bearer_headers(pat_token(login))).status_code == 403     # an agent's login
         assert Client().get(url, **bearer_headers(turn_login)).status_code == 403           # a turn's token
         assert client(w["alice"]).get(url, HTTP_X_CANOPY_TURN_ID="x").status_code == 403    # naming a turn
-        # An act-as-you READ grant reaches the preview and nothing of the page beside it.
+        # An act-as-you grant reaches none of it.
         assert act_as.route_refusal("GET", url, "read", is_tool=False) is not None
-    for name in ("brain_state", "brain_state_links", "brain_state_runs", "brain_would_read"):
+    for name in ("brain_state", "brain_state_links", "brain_state_runs", "run_brain_capability"):
         assert name in api_tools.EXCLUDED                                                     # not an MCP tool
-
-
-def test_a_window_past_a_week_is_refused(w):
-    since = (timezone.now() - dt.timedelta(days=30)).isoformat()
-    assert client(w["alice"]).get(SUMMARY, {"since": since}).status_code == 422

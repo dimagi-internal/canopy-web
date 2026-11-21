@@ -18,17 +18,23 @@ from apps.workspaces import services as wsvc
 from apps.workspaces.gates import membership_or_404
 from apps.workspaces.gates import require as require_role
 
+from apps.canopy_sessions import access
+from apps.canopy_sessions.models import Session
+from apps.common import redact
 
-from . import registry, reporting, view
-from .models import BrainCapability
+from . import cascade, outputs, registry, reporting, runs, schedule
+from .api_state import the_person
+from .models import PROJECT, SYSTEM, BrainCapability, OutputLineage, SourceLink
 from .schemas import (
     BrainOutputOut,
     CapabilityIn,
     CapabilityOut,
     CapabilityPatch,
+    BrainRunState,
     ProjectSessionOut,
     ReportingLineIn,
     ReportingLineOut,
+    RunNowIn,
 )
 
 router = Router(auth=session_auth, tags=["brain"])
@@ -100,6 +106,43 @@ def patch_capability(request: HttpRequest, slug: str, payload: CapabilityPatch) 
     return _cap_out(cap)
 
 
+@router.post("/brain/capabilities/{slug}/runs/", response={200: BrainRunState, **refusals(403, 404, 422)},
+             summary="Run a learner now (canopy admin)")
+@gate("superuser", kind="turn")  # starts one confined learning run, accountable to the learner's admin
+def run_brain_capability(request: HttpRequest, slug: str, payload: RunNowIn) -> dict:
+    """Starts one run of the learner now, as its schedule would: a `system` learner over every session eligible for
+    `system`, a `project` learner for the workspace project named by `project` (a handle in its operator's workspace
+    tree). A canopy admin as a person only, never through an agent or MCP. Refused, with the reason, when learning reads
+    are switched off, the learner is disabled or has no operator or entry, nobody active answers for it, or a run for
+    the subject is still open. What it reads and writes is then on `GET /api/brain/state/runs`."""
+    the_person(request)
+    _superuser(request)
+    cap = BrainCapability.objects.filter(slug=slug).select_related("operator").first()
+    if cap is None:
+        raise ProblemError(404, "No such learner", type_=TYPE_NOT_FOUND)
+    subject = None
+    if cap.purpose_class == PROJECT:
+        if cap.operator_id is None:
+            raise ProblemError(422, "Invalid request", type_=TYPE_VALIDATION, detail=f"{cap.slug} has no operator agent")
+        subject = schedule.projects_of(cap).filter(handle=payload.project.strip().lower()).first()
+        if subject is None:
+            raise ProblemError(422, "Invalid request", type_=TYPE_VALIDATION,
+                               detail="name an active workspace project of the learner's operator workspace")
+    elif cap.purpose_class != SYSTEM:
+        raise ProblemError(422, "Invalid request", type_=TYPE_VALIDATION,
+                           detail=f"{cap.slug} learns about one person; its runs are not started here")
+    why = runs.refusal(cap, subject)
+    if why:
+        raise ProblemError(422, "Invalid request", type_=TYPE_VALIDATION, detail=why)
+    try:
+        run = runs.start(cap, subject=subject)
+    except runs.StartRefusedError as e:
+        raise ProblemError(422, "Invalid request", type_=TYPE_VALIDATION, detail=str(e)) from e
+    return {"id": run.pk, "learner": cap.slug, "purpose": run.purpose, "subject_type": run.subject_type,
+            "subject": subject.handle if subject is not None else "system", "state": run.state,
+            "created_at": run.created_at, "finished_at": None, "reads": 0, "sessions": [], "hidden": 0}
+
+
 # ---- who manages whom -----------------------------------------------------------------------------
 # PERSON-ONLY, like `/api/me/learning/`: who manages whom decides who reads a person's learning outputs, so
 # only a person as themselves sets, ends or lists it (`acting_person.refusal`), and none is an MCP tool
@@ -165,23 +208,33 @@ def end_reporting(request: HttpRequest, slug: str, person_id: int):
 # ---- the sessions a project is tied to --------------------------------------------------------------
 
 @router.get("/brain/workspaces/{slug}/projects/{handle}/sessions/",
-            response={200: list[ProjectSessionOut], **refusals(403, 404, 422)},
+            response={200: list[ProjectSessionOut], **refusals(404)},
             summary="The sessions tied to a project that you may read")
 @gate("member")
 def list_project_sessions(request: HttpRequest, slug: str, handle: str, tiers: str = "core,adjacent",
-                          limit: int = 200, source: str = "live") -> list[dict]:
+                          limit: int = 200) -> list[dict]:
     """Which sessions a project's history is made of: the ones tied to it (`tiers`: core, adjacent, candidate,
     comma separated) that YOU may read, by the same rule as every session read: your own, and a teammate's through
     the project leg once everyone in it agreed. Ids, titles and how each tie was made, never a word of a transcript.
-    A project you may not read is not found. `source=preview:<id>`: the ties one of your previews would make."""
-    from .api_previews import source_of  # noqa: PLC0415 — api_previews imports api_preview, which this app loads late
-
+    A project you may not read is not found."""
     m = membership_or_404(request.user, slug)
     project = AgentProject.objects.filter(workspace=m.workspace, handle=handle.lower()).first()
     if project is None or not may_read_project(request.user, project):
         raise ProblemError(404, "No such project", type_=TYPE_NOT_FOUND)
     wanted = [t for t in tiers.split(",") if t in ("core", "adjacent", "candidate")] or ["core", "adjacent"]
-    return view.project_sessions(request.user, project, source_of(request, source), tiers=wanted, limit=limit)
+    links = (SourceLink.objects.filter(subject_type=SourceLink.PROJECT_SUBJECT, subject=str(project.pk),
+                                       tier__in=wanted, source__session__isnull=False)
+             .select_related("source__session").order_by("-source__session__created_at"))
+    readable = access.readable_ids(request.user, [lnk.source.session_id for lnk in links[:2000]], brain=True)
+    out = []
+    for link in links[:2000]:
+        s = link.source.session
+        if s.pk in readable:
+            out.append({"session_id": s.pk, "title": redact.redact_text(s.title or "")[0], "workspace": s.workspace_id,
+                        "tier": link.tier, "how": link.how, "confidence": link.confidence, "started_at": s.created_at})
+        if len(out) >= max(1, min(limit, 500)):
+            break
+    return out
 
 
 # ---- what was produced ----------------------------------------------------------------------------
@@ -201,17 +254,37 @@ def manager_leg_open(request: HttpRequest) -> bool:
             and not kinds.speaks_for_a_turn(request) and acting_person.is_person(request))
 
 
-@router.get("/brain/outputs/", response={200: list[BrainOutputOut], **refusals(403, 404, 422)},
-            summary="What learning produced, for you")
+@router.get("/brain/outputs/", response=list[BrainOutputOut], summary="What learning produced, for you")
 @gate("authenticated")  # visible_to: its class's audience, never wider
-def list_outputs(request: HttpRequest, subject_type: str = "", subject: str = "", limit: int = 100,
-                 source: str = "live") -> list[dict]:
+def list_outputs(request: HttpRequest, subject_type: str = "", subject: str = "", limit: int = 100) -> list[dict]:
     """The learning outputs you may read: about you, about people you coach or manage (outputs, never
     transcripts; the manager's only as yourself, never through an agent or a turn), about projects you may read, and
-    canopy's system findings if you administer. Never a withdrawn or stale one. Newest first.
-    `source=preview:<id>`: the recommendations published to one of your previews, as would-be outputs."""
-    from .api_previews import source_of  # noqa: PLC0415 — as above
+    canopy's system findings if you administer. Never a withdrawn or stale one. Newest first."""
+    qs = (outputs.visible_to(request.user, as_person=manager_leg_open(request)).select_related("capability")
+          .order_by("-created_at", "-pk"))
+    if subject_type:
+        qs = qs.filter(subject_type=subject_type)
+    if subject:
+        qs = qs.filter(subject=subject)
+    rows = list(qs[:max(1, min(limit, 500))])
+    cited, named = _cited(request.user, rows)
+    return [{"id": o.pk, "learner": o.capability.slug, "kind": o.kind, "workspace": o.workspace_id,
+             "subject_type": o.subject_type, "subject": o.subject, "title": o.title, "body": o.body,
+             "state": o.state, "created_at": o.created_at,
+             "sessions": [named[s] for s in cited.get(str(o.pk), []) if s in named],
+             "hidden_sessions": sum(1 for s in cited.get(str(o.pk), []) if s not in named)} for o in rows]
 
-    src = source_of(request, source)
-    return view.outputs(request.user, src, as_person=manager_leg_open(request), subject_type=subject_type,
-                        subject=subject, limit=limit)
+
+def _cited(user, rows) -> tuple[dict, dict]:
+    """Each output's cited sessions (`OutputLineage`), and of those the ones `user` reads through legs 1 to 6, by id
+    with a scrubbed title. Three reads for a whole page."""
+    cited: dict[str, list] = {}
+    for oid, sid in (OutputLineage.objects.filter(output_kind=cascade.OUTPUT_KIND, output_id__in=[str(o.pk) for o in rows],
+                                                  source__session_id__isnull=False)
+                     .values_list("output_id", "source__session_id")):
+        cited.setdefault(oid, []).append(sid)
+    every = {s for ids in cited.values() for s in ids}
+    readable = access.readable_ids(user, every)
+    named = {s.pk: {"session_id": s.pk, "workspace": s.workspace_id, "title": redact.redact_text(s.title or "")[0]}
+             for s in Session.objects.filter(pk__in=readable).only("pk", "workspace_id", "title")}
+    return cited, named
