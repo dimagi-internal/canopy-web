@@ -2,11 +2,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import type { ReactNode } from 'react'
-
-const at = (path: string) => ({ children }: { children: ReactNode }) => (
-  <MemoryRouter initialEntries={[path]}>{children}</MemoryRouter>
-)
 
 const getMySessionLearning = vi.fn()
 const removeMySession = vi.fn()
@@ -48,34 +43,15 @@ const onChange = vi.fn()
 describe('useSessionLearning', () => {
   it('is null for someone not in the session (the route says 404) or not a person (403)', async () => {
     getMySessionLearning.mockRejectedValue(new Error('Session not found'))
-    const { result } = renderHook(() => useSessionLearning('s1'), { wrapper: at('/') })
-    await waitFor(() => expect(getMySessionLearning).toHaveBeenCalledWith('s1', 'live'))
+    const { result } = renderHook(() => useSessionLearning('s1'))
+    await waitFor(() => expect(getMySessionLearning).toHaveBeenCalledWith('s1'))
     expect(result.current[0]).toBeNull()
   })
 
   it('carries the state for a participant', async () => {
     getMySessionLearning.mockResolvedValue(state(false))
-    const { result } = renderHook(() => useSessionLearning('s1'), { wrapper: at('/') })
+    const { result } = renderHook(() => useSessionLearning('s1'))
     await waitFor(() => expect(result.current[0]?.excluded).toBe(false))
-  })
-})
-
-describe('a preview source', () => {
-  it('asks for the preview, shows its banner and changes nothing while it is on', async () => {
-    getMySessionLearning.mockResolvedValue(state(false))
-    renderHook(() => useSessionLearning('s1'), { wrapper: at('/w/acme/sessions/s1?preview=7') })
-    await waitFor(() => expect(getMySessionLearning).toHaveBeenCalledWith('s1', 'preview:7'))
-    listProjects.mockResolvedValue([])
-    const preview = { ...state(false, [{ project: 'supply', name: 'Supply', tier: 'core', how: 'dispatched' }]),
-                      source: { kind: 'preview' as const, id: 7, created_at: null, window: null } }
-    render(
-      <MemoryRouter initialEntries={['/w/acme/sessions/s1?preview=7']}>
-        <SessionLearningPanel sessionId="s1" workspace="acme" state={preview} onChange={onChange} />
-      </MemoryRouter>,
-    )
-    expect(screen.getByTestId('brain-preview-banner').textContent).toContain('Preview: what the brain would do')
-    expect((screen.getByRole('button', { name: 'Remove from learning' }) as HTMLButtonElement).disabled).toBe(true)
-    expect((screen.getByRole('button', { name: 'Not this project' }) as HTMLButtonElement).disabled).toBe(true)
   })
 })
 

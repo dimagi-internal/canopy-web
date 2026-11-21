@@ -339,7 +339,7 @@ export const routeTable: RouteObject[] = [
       { path: '/ide/:id', element: <LazySection><IdePage /></LazySection> },
       { path: '/schedules', element: <SchedulesPage /> },
       { path: '/activity', element: <ActivityPage /> },
-      // Canopy learning as it stands and what it would do: the person's own view, across their workspaces.
+      // Canopy learning as it stands, its runs and what they found: the person's own view, across their workspaces.
       { path: '/brain', element: <BrainPage /> },
       { path: '/new-workspace', element: <FirstRunPage alwaysOfferForm /> },
       // Requests for access to Canopy itself (the public site's form) — they

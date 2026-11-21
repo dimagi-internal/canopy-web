@@ -48,10 +48,8 @@ export type SessionProjectLink = components['schemas']['SourceLinkOut']
 const sessionPath = (sessionId: string) => ({ params: { path: { session_id: sessionId } } })
 
 /** Whether this session is out of learning, and the projects it is tied to. 404 unless you are in it. */
-export async function getMySessionLearning(sessionId: string, source = 'live'): Promise<SessionLearning> {
-  const res = await apiV2.GET('/api/me/learning/sessions/{session_id}/', {
-    params: { path: { session_id: sessionId }, query: { source } },
-  })
+export async function getMySessionLearning(sessionId: string): Promise<SessionLearning> {
+  const res = await apiV2.GET('/api/me/learning/sessions/{session_id}/', sessionPath(sessionId))
   return unwrap(res, 'Failed to load this session’s learning') as SessionLearning
 }
 

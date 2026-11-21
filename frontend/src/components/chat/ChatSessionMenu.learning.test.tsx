@@ -40,7 +40,7 @@ describe('ChatSessionMenu — Learning…', () => {
   it('shows a participant the item, marked when removed, and opens the control', async () => {
     getMySessionLearning.mockResolvedValue({ session_id: 's1', excluded: true, projects: [] })
     render(<MemoryRouter><ChatSessionMenu {...props} /></MemoryRouter>)
-    await waitFor(() => expect(getMySessionLearning).toHaveBeenCalledWith('s1', 'live'))
+    await waitFor(() => expect(getMySessionLearning).toHaveBeenCalledWith('s1'))
     await openMenu()
     const item = await screen.findByTestId('session-learning')
     expect(item.textContent).toContain('removed')

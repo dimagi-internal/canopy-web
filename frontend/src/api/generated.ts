@@ -19453,6 +19453,30 @@ export interface paths {
         readonly patch: operations["patch_capability"];
         readonly trace?: never;
     };
+    readonly "/api/brain/capabilities/{slug}/runs/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Run a learner now (canopy admin)
+         * @description Starts one run of the learner now, as its schedule would: a `system` learner over every session eligible for
+         *     `system`, a `project` learner for the workspace project named by `project` (a handle in its operator's workspace
+         *     tree). A canopy admin as a person only, never through an agent or MCP. Refused, with the reason, when learning reads
+         *     are switched off, the learner is disabled or has no operator or entry, nobody active answers for it, or a run for
+         *     the subject is still open. What it reads and writes is then on `GET /api/brain/state/runs`.
+         */
+        readonly post: operations["run_brain_capability"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/brain/workspaces/{slug}/reporting/": {
         readonly parameters: {
             readonly query?: never;
@@ -19508,7 +19532,7 @@ export interface paths {
          * @description Which sessions a project's history is made of: the ones tied to it (`tiers`: core, adjacent, candidate,
          *     comma separated) that YOU may read, by the same rule as every session read: your own, and a teammate's through
          *     the project leg once everyone in it agreed. Ids, titles and how each tie was made, never a word of a transcript.
-         *     A project you may not read is not found. `source=preview:<id>`: the ties one of your previews would make.
+         *     A project you may not read is not found.
          */
         readonly get: operations["list_project_sessions"];
         readonly put?: never;
@@ -19531,7 +19555,6 @@ export interface paths {
          * @description The learning outputs you may read: about you, about people you coach or manage (outputs, never
          *     transcripts; the manager's only as yourself, never through an agent or a turn), about projects you may read, and
          *     canopy's system findings if you administer. Never a withdrawn or stale one. Newest first.
-         *     `source=preview:<id>`: the recommendations published to one of your previews, as would-be outputs.
          */
         readonly get: operations["list_outputs"];
         readonly put?: never;
@@ -19560,53 +19583,6 @@ export interface paths {
          *     nowhere (only for you as yourself). Capped; `notes` says what was left out.
          */
         readonly get: operations["workspace_graph"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/brain/preview": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * What learning would do over your sessions (stores nothing)
-         * @description For each session you can read that was created or active between `since` and `until` (the last day by
-         *     default, a week at most): who is in it, whether each class of learning could read it now and if everyone in it
-         *     agreed, with the reason, the project links canopy would make, and the session as a learner reads it, secrets
-         *     scrubbed. Nothing is stored or recorded. Pass `next_after` back as `after` for the next page, or name one
-         *     `session` of the window.
-         */
-        readonly get: operations["brain_preview"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/brain/would-read": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * Whether each class of learning could read your sessions, and the links canopy would make
-         * @description Per session you read: who is in it, whether each class could read it now and if everyone agreed, with the
-         *     reason, and the links canopy would make; what the page adds up to; its links by project and tier. Live: over
-         *     `since`..`until` (the last day by default, a week at most), computed now. `source=preview:<id>`: what that preview
-         *     computed over its own window. No line of a transcript (ask the preview with `session` for one).
-         */
-        readonly get: operations["brain_would_read"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -19679,69 +19655,6 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/brain/previews/": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /** Your previews, newest first */
-        readonly get: operations["list_brain_previews"];
-        readonly put?: never;
-        /**
-         * Run a preview: what learning would do over your sessions in a window, kept for a week
-         * @description Computes, over the sessions you read created or active in the window (the last day by default, a week at most),
-         *     who is in each, whether each class could read it now and if everyone agreed, and the project links canopy would
-         *     make, exactly as the live code would; and keeps it, so every brain screen can show it with `source=preview:<id>`.
-         *     Nothing of the brain itself is written.
-         */
-        readonly post: operations["create_brain_preview"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/brain/previews/{preview_id}/": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        readonly post?: never;
-        /** Delete one of your previews */
-        readonly delete: operations["delete_brain_preview"];
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/brain/previews/{preview_id}/outputs/": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        /**
-         * Publish recommendations to one of your previews
-         * @description Replaces the preview's recommendations: would-be `system` outputs from `/canopy:brain-preview --publish <id>`,
-         *     shown where outputs are shown when the preview is the source. Each must cite sessions of the preview that you still
-         *     read; words are scrubbed of secrets, object keys too. Only you see them.
-         */
-        readonly put: operations["put_brain_preview_outputs"];
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
     readonly "/api/me/learning/": {
         readonly parameters: {
             readonly query?: never;
@@ -19779,11 +19692,7 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /**
-         * Whether one of your sessions is out of canopy learning
-         * @description Whether you took it out, and the projects it is tied to that you may read. `source=preview:<id>`: the ties one
-         *     of your previews would make (not found when the session is not in it).
-         */
+        /** Whether one of your sessions is out of canopy learning */
         readonly get: operations["get_my_session_learning"];
         /**
          * Take one of your sessions out of canopy learning
@@ -51536,6 +51445,64 @@ export interface components {
              */
             readonly scope?: ("full" | "conversation" | "userinput" | "opening") | null;
         };
+        /** BrainRunSession */
+        readonly BrainRunSession: {
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            readonly session_id: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Title */
+            readonly title: string;
+        };
+        /** BrainRunState */
+        readonly BrainRunState: {
+            /** Id */
+            readonly id: number;
+            /** Learner */
+            readonly learner: string;
+            /** Purpose */
+            readonly purpose: string;
+            /** Subject Type */
+            readonly subject_type: string;
+            /** Subject */
+            readonly subject: string;
+            /** State */
+            readonly state: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Finished At */
+            readonly finished_at?: string | null;
+            /**
+             * Reads
+             * @description Sources it read.
+             */
+            readonly reads: number;
+            /**
+             * Sessions
+             * @description The ones you read yourself.
+             */
+            readonly sessions: readonly components["schemas"]["BrainRunSession"][];
+            /**
+             * Hidden
+             * @description The ones you do not: a count only.
+             */
+            readonly hidden: number;
+        };
+        /** RunNowIn */
+        readonly RunNowIn: {
+            /**
+             * Project
+             * @description For a project learner: the workspace project's handle. Ignored otherwise.
+             * @default
+             */
+            readonly project: string;
+        };
         /** ReportingLineOut */
         readonly ReportingLineOut: {
             /** Person Id */
@@ -51565,43 +51532,6 @@ export interface components {
              */
             readonly manager: string;
         };
-        /**
-         * BrainSourceOut
-         * @description Where a brain read came from: `live` (what canopy holds now) or a `preview` snapshot (what it would do).
-         */
-        readonly BrainSourceOut: {
-            /**
-             * Kind
-             * @default live
-             * @enum {string}
-             */
-            readonly kind: "live" | "preview";
-            /**
-             * Id
-             * @description The preview's id: pass `source=preview:<id>`.
-             */
-            readonly id?: number | null;
-            /** @description The preview's window. */
-            readonly window?: components["schemas"]["BrainSourceWindow"] | null;
-            /**
-             * Created At
-             * @description When the preview was computed.
-             */
-            readonly created_at?: string | null;
-        };
-        /** BrainSourceWindow */
-        readonly BrainSourceWindow: {
-            /**
-             * Since
-             * Format: date-time
-             */
-            readonly since: string;
-            /**
-             * Until
-             * Format: date-time
-             */
-            readonly until: string;
-        };
         /** ProjectSessionOut */
         readonly ProjectSessionOut: {
             /**
@@ -51630,8 +51560,6 @@ export interface components {
              * Format: date-time
              */
             readonly started_at: string;
-            /** @description Where this was read from. */
-            readonly source?: components["schemas"]["BrainSourceOut"];
         };
         /** BrainOutputOut */
         readonly BrainOutputOut: {
@@ -51668,11 +51596,30 @@ export interface components {
             readonly created_at: string;
             /**
              * Sessions
-             * @description A preview recommendation's cited sessions.
+             * @description The sessions it cites that you read yourself.
              */
-            readonly sessions?: readonly string[];
-            /** @description Where this was read from. */
-            readonly source?: components["schemas"]["BrainSourceOut"];
+            readonly sessions?: readonly components["schemas"]["BrainOutputSession"][];
+            /**
+             * Hidden Sessions
+             * @description The sessions it cites that you do not read: a count only.
+             * @default 0
+             */
+            readonly hidden_sessions: number;
+        };
+        /** BrainOutputSession */
+        readonly BrainOutputSession: {
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            readonly session_id: string;
+            /** Workspace */
+            readonly workspace: string;
+            /**
+             * Title
+             * @description Scrubbed of secrets.
+             */
+            readonly title: string;
         };
         /** GraphEdgeOut */
         readonly GraphEdgeOut: {
@@ -51804,233 +51751,6 @@ export interface components {
             readonly notes: readonly string[];
             /** Truncated */
             readonly truncated: boolean;
-        };
-        /** BrainPreviewOut */
-        readonly BrainPreviewOut: {
-            readonly window: components["schemas"]["PreviewWindow"];
-            /** View */
-            readonly view: string;
-            /** Sessions */
-            readonly sessions: readonly components["schemas"]["PreviewSession"][];
-            /**
-             * Next After
-             * @description Pass this as `after` for the next page.
-             */
-            readonly next_after: string;
-            /** Done */
-            readonly done: boolean;
-        };
-        /** PreviewLink */
-        readonly PreviewLink: {
-            /** Project */
-            readonly project: string;
-            /** Tier */
-            readonly tier: string;
-            /** How */
-            readonly how: string;
-            /** Evidence */
-            readonly evidence: readonly string[];
-            /**
-             * Outranked By
-             * @description The stored link that would keep its place instead.
-             */
-            readonly outranked_by?: {
-                readonly [key: string]: unknown;
-            } | null;
-        };
-        /** PreviewParticipant */
-        readonly PreviewParticipant: {
-            /** User Id */
-            readonly user_id?: number | null;
-            /** Contact Id */
-            readonly contact_id?: number | null;
-            /** Name */
-            readonly name: string;
-        };
-        /** PreviewSession */
-        readonly PreviewSession: {
-            /** Id */
-            readonly id: string;
-            /** Title */
-            readonly title: string;
-            /** Workspace */
-            readonly workspace: {
-                readonly [key: string]: unknown;
-            };
-            /**
-             * Started At
-             * Format: date-time
-             */
-            readonly started_at: string;
-            /** Participants */
-            readonly participants: readonly components["schemas"]["PreviewParticipant"][];
-            /**
-             * Would Read
-             * @description Per class: `project` and `system` a verdict pair; `individual` one per person in it, by user id.
-             */
-            readonly would_read: {
-                readonly [key: string]: unknown;
-            };
-            /** Links */
-            readonly links: readonly components["schemas"]["PreviewLink"][];
-            readonly transcript: components["schemas"]["PreviewTranscript"];
-        };
-        /** PreviewTranscript */
-        readonly PreviewTranscript: {
-            /** View */
-            readonly view: string;
-            /** Messages */
-            readonly messages: readonly {
-                readonly [key: string]: unknown;
-            }[];
-            /** Truncated */
-            readonly truncated: boolean;
-            /** Chars */
-            readonly chars: number;
-        };
-        /** PreviewWindow */
-        readonly PreviewWindow: {
-            /**
-             * Since
-             * Format: date-time
-             */
-            readonly since: string;
-            /**
-             * Until
-             * Format: date-time
-             */
-            readonly until: string;
-        };
-        /** BrainWouldReadOut */
-        readonly BrainWouldReadOut: {
-            readonly window: components["schemas"]["PreviewWindow"];
-            /**
-             * Total
-             * @description Sessions in the whole window.
-             */
-            readonly total: number;
-            /**
-             * Sessions
-             * @description This page, without a line of any transcript.
-             */
-            readonly sessions: readonly components["schemas"]["PreviewSummaryRow"][];
-            readonly counts: components["schemas"]["PreviewCounts"];
-            /**
-             * Would Link
-             * @description This page's links, by project and tier.
-             */
-            readonly would_link: readonly components["schemas"]["PreviewLinkGroup"][];
-            /**
-             * Next After
-             * @description Pass this as `after` for the next page.
-             */
-            readonly next_after: string;
-            /** Done */
-            readonly done: boolean;
-            /** @description Where this was read from. */
-            readonly source?: components["schemas"]["BrainSourceOut"];
-        };
-        /** PreviewClassCount */
-        readonly PreviewClassCount: {
-            /** Now */
-            readonly now: number;
-            /** If Everyone Agreed */
-            readonly if_everyone_agreed: number;
-        };
-        /** PreviewCounts */
-        readonly PreviewCounts: {
-            /**
-             * Sessions
-             * @description Sessions on this page.
-             */
-            readonly sessions: number;
-            /**
-             * Links
-             * @description Links canopy would store on this page (none a stored link keeps out).
-             */
-            readonly links: number;
-            /**
-             * Sealed
-             * @description Sessions shut to every use, by why.
-             */
-            readonly sealed: {
-                readonly [key: string]: number;
-            };
-            readonly project: components["schemas"]["PreviewClassCount"];
-            readonly system: components["schemas"]["PreviewClassCount"];
-            /** @description Your own sessions' `individual` verdicts. */
-            readonly individual: components["schemas"]["PreviewClassCount"];
-        };
-        /** PreviewLinkGroup */
-        readonly PreviewLinkGroup: {
-            /** Workspace */
-            readonly workspace: string;
-            /** Project */
-            readonly project: string;
-            /** Tier */
-            readonly tier: string;
-            /** Sessions */
-            readonly sessions: readonly components["schemas"]["PreviewLinkSession"][];
-        };
-        /** PreviewLinkSession */
-        readonly PreviewLinkSession: {
-            /** Id */
-            readonly id: string;
-            /** Title */
-            readonly title: string;
-            /** How */
-            readonly how: string;
-            /** Evidence */
-            readonly evidence: readonly string[];
-            /** Outranked By */
-            readonly outranked_by?: {
-                readonly [key: string]: unknown;
-            } | null;
-        };
-        /** PreviewSummaryRow */
-        readonly PreviewSummaryRow: {
-            /** Id */
-            readonly id: string;
-            /** Title */
-            readonly title: string;
-            /** Workspace */
-            readonly workspace: {
-                readonly [key: string]: unknown;
-            };
-            /**
-             * Started At
-             * Format: date-time
-             */
-            readonly started_at: string;
-            /** Participants */
-            readonly participants: readonly components["schemas"]["PreviewParticipant"][];
-            /**
-             * Would Read
-             * @description Per class: `project` and `system` a verdict pair; `individual` one per person in it, by user id.
-             */
-            readonly would_read: {
-                readonly [key: string]: unknown;
-            };
-            /** Links */
-            readonly links: readonly components["schemas"]["PreviewLink"][];
-            /** @description The `individual` verdict about you, if you are in it. */
-            readonly you?: components["schemas"]["PreviewWouldRead"] | null;
-        };
-        /** PreviewVerdict */
-        readonly PreviewVerdict: {
-            /** Ok */
-            readonly ok: boolean;
-            /**
-             * Reason
-             * @description Why not, as `eligibility.explain` names it; empty when ok.
-             */
-            readonly reason: string;
-        };
-        /** PreviewWouldRead */
-        readonly PreviewWouldRead: {
-            readonly now: components["schemas"]["PreviewVerdict"];
-            /** @description Every missing consent taken as given; every other fence kept (sealed, removed, a contact, a non-member, a consent ended or narrowed). */
-            readonly if_everyone_agreed: components["schemas"]["PreviewVerdict"];
         };
         /** BrainCascadeCounts */
         readonly BrainCascadeCounts: {
@@ -52187,8 +51907,6 @@ export interface components {
             readonly runs: components["schemas"]["BrainRunCounts"];
             /** Cascade */
             readonly cascade: readonly components["schemas"]["BrainCascadeCounts"][];
-            /** @description Where this was read from. */
-            readonly source?: components["schemas"]["BrainSourceOut"];
         };
         /** BrainLinkPageOut */
         readonly BrainLinkPageOut: {
@@ -52201,8 +51919,6 @@ export interface components {
             readonly next_before: number;
             /** Done */
             readonly done: boolean;
-            /** @description Where this was read from. */
-            readonly source?: components["schemas"]["BrainSourceOut"];
         };
         /** BrainStoredLink */
         readonly BrainStoredLink: {
@@ -52243,150 +51959,6 @@ export interface components {
             readonly next_before: number;
             /** Done */
             readonly done: boolean;
-            /** @description Where this was read from. */
-            readonly source?: components["schemas"]["BrainSourceOut"];
-        };
-        /** BrainRunSession */
-        readonly BrainRunSession: {
-            /**
-             * Session Id
-             * Format: uuid
-             */
-            readonly session_id: string;
-            /** Workspace */
-            readonly workspace: string;
-            /** Title */
-            readonly title: string;
-        };
-        /** BrainRunState */
-        readonly BrainRunState: {
-            /** Id */
-            readonly id: number;
-            /** Learner */
-            readonly learner: string;
-            /** Purpose */
-            readonly purpose: string;
-            /** Subject Type */
-            readonly subject_type: string;
-            /** Subject */
-            readonly subject: string;
-            /** State */
-            readonly state: string;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            readonly created_at: string;
-            /** Finished At */
-            readonly finished_at?: string | null;
-            /**
-             * Reads
-             * @description Sources it read.
-             */
-            readonly reads: number;
-            /**
-             * Sessions
-             * @description The ones you read yourself.
-             */
-            readonly sessions: readonly components["schemas"]["BrainRunSession"][];
-            /**
-             * Hidden
-             * @description The ones you do not: a count only.
-             */
-            readonly hidden: number;
-        };
-        /** PreviewSnapshotOut */
-        readonly PreviewSnapshotOut: {
-            /** Id */
-            readonly id: number;
-            /**
-             * Source
-             * @description What to pass as `source` (and `?preview=` in the app): `preview:<id>`.
-             */
-            readonly source: string;
-            readonly window: components["schemas"]["BrainSourceWindow"];
-            /** View */
-            readonly view: string;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            readonly created_at: string;
-            /**
-             * Expires At
-             * Format: date-time
-             */
-            readonly expires_at: string;
-            /**
-             * Sessions
-             * @description Sessions it holds now.
-             */
-            readonly sessions: number;
-            /**
-             * Outputs
-             * @description Recommendations published to it.
-             */
-            readonly outputs: number;
-            /**
-             * Truncated
-             * @description The window held more sessions than one preview keeps.
-             */
-            readonly truncated: boolean;
-        };
-        /** PreviewSnapshotIn */
-        readonly PreviewSnapshotIn: {
-            /**
-             * Since
-             * @description Default: a day before `until`. A week at most.
-             */
-            readonly since?: string | null;
-            /**
-             * Until
-             * @description Default: now.
-             */
-            readonly until?: string | null;
-            /**
-             * View
-             * @default full
-             * @enum {string}
-             */
-            readonly view: "full" | "conversation" | "userinput" | "opening";
-        };
-        /** PreviewOutputIn */
-        readonly PreviewOutputIn: {
-            /**
-             * Kind
-             * @description What sort of recommendation: finding, task, link, ….
-             */
-            readonly kind: string;
-            /**
-             * Title
-             * @default
-             */
-            readonly title: string;
-            /** Body */
-            readonly body?: {
-                readonly [key: string]: unknown;
-            };
-            /**
-             * Sessions
-             * @description The sessions it came from; each must be in the preview and one you still read.
-             */
-            readonly sessions: readonly string[];
-            /**
-             * Learner
-             * @description The learner it stands in for; default `system-learning`.
-             * @default
-             */
-            readonly learner: string;
-        };
-        /** PreviewOutputsIn */
-        readonly PreviewOutputsIn: {
-            /**
-             * Outputs
-             * @description Replaces every recommendation of the preview.
-             */
-            readonly outputs: readonly components["schemas"]["PreviewOutputIn"][];
         };
         /** LearningClassOut */
         readonly LearningClassOut: {
@@ -52479,8 +52051,6 @@ export interface components {
              * @description Projects of yours this session is tied to; only ones you may read.
              */
             readonly projects?: readonly components["schemas"]["SourceLinkOut"][];
-            /** @description Where this was read from. */
-            readonly source?: components["schemas"]["BrainSourceOut"];
         };
         /** SourceLinkOut */
         readonly SourceLinkOut: {
@@ -78554,6 +78124,59 @@ export interface operations {
             };
         };
     };
+    readonly run_brain_capability: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunNowIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BrainRunState"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not Found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     readonly list_reporting: {
         readonly parameters: {
             readonly query?: never;
@@ -78691,7 +78314,6 @@ export interface operations {
             readonly query?: {
                 readonly tiers?: string;
                 readonly limit?: number;
-                readonly source?: string;
             };
             readonly header?: never;
             readonly path: {
@@ -78711,26 +78333,8 @@ export interface operations {
                     readonly "application/json": readonly components["schemas"]["ProjectSessionOut"][];
                 };
             };
-            /** @description Forbidden */
-            readonly 403: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
             /** @description Not Found */
             readonly 404: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Unprocessable Entity */
-            readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
@@ -78746,7 +78350,6 @@ export interface operations {
                 readonly subject_type?: string;
                 readonly subject?: string;
                 readonly limit?: number;
-                readonly source?: string;
             };
             readonly header?: never;
             readonly path?: never;
@@ -78761,33 +78364,6 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["BrainOutputOut"][];
-                };
-            };
-            /** @description Forbidden */
-            readonly 403: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Not Found */
-            readonly 404: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Unprocessable Entity */
-            readonly 422: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -78836,109 +78412,9 @@ export interface operations {
             };
         };
     };
-    readonly brain_preview: {
-        readonly parameters: {
-            readonly query?: {
-                readonly since?: string | null;
-                readonly until?: string | null;
-                readonly view?: "full" | "conversation" | "userinput" | "opening";
-                readonly after?: string;
-                readonly limit?: number;
-                readonly session?: string;
-            };
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["BrainPreviewOut"];
-                };
-            };
-            /** @description Forbidden */
-            readonly 403: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Unprocessable Entity */
-            readonly 422: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    readonly brain_would_read: {
-        readonly parameters: {
-            readonly query?: {
-                readonly since?: string | null;
-                readonly until?: string | null;
-                readonly after?: string;
-                readonly limit?: number;
-                readonly source?: string;
-            };
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["BrainWouldReadOut"];
-                };
-            };
-            /** @description Forbidden */
-            readonly 403: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Not Found */
-            readonly 404: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Unprocessable Entity */
-            readonly 422: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
     readonly brain_state: {
         readonly parameters: {
-            readonly query?: {
-                readonly source?: string;
-            };
+            readonly query?: never;
             readonly header?: never;
             readonly path?: never;
             readonly cookie?: never;
@@ -78963,24 +78439,6 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Not Found */
-            readonly 404: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Unprocessable Entity */
-            readonly 422: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
         };
     };
     readonly brain_state_links: {
@@ -78988,7 +78446,6 @@ export interface operations {
             readonly query?: {
                 readonly before?: number;
                 readonly limit?: number;
-                readonly source?: string;
             };
             readonly header?: never;
             readonly path?: never;
@@ -79014,24 +78471,6 @@ export interface operations {
                     readonly "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Not Found */
-            readonly 404: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Unprocessable Entity */
-            readonly 422: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
         };
     };
     readonly brain_state_runs: {
@@ -79039,7 +78478,6 @@ export interface operations {
             readonly query?: {
                 readonly before?: number;
                 readonly limit?: number;
-                readonly source?: string;
             };
             readonly header?: never;
             readonly path?: never;
@@ -79058,186 +78496,6 @@ export interface operations {
             };
             /** @description Forbidden */
             readonly 403: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Not Found */
-            readonly 404: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Unprocessable Entity */
-            readonly 422: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    readonly list_brain_previews: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": readonly components["schemas"]["PreviewSnapshotOut"][];
-                };
-            };
-            /** @description Forbidden */
-            readonly 403: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    readonly create_brain_preview: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["PreviewSnapshotIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["PreviewSnapshotOut"];
-                };
-            };
-            /** @description Forbidden */
-            readonly 403: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Unprocessable Entity */
-            readonly 422: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    readonly delete_brain_preview: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly preview_id: number;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description No Content */
-            readonly 204: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Forbidden */
-            readonly 403: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Not Found */
-            readonly 404: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    readonly put_brain_preview_outputs: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly preview_id: number;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["PreviewOutputsIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["PreviewSnapshotOut"];
-                };
-            };
-            /** @description Forbidden */
-            readonly 403: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Not Found */
-            readonly 404: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Unprocessable Entity */
-            readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
@@ -79349,9 +78607,7 @@ export interface operations {
     };
     readonly get_my_session_learning: {
         readonly parameters: {
-            readonly query?: {
-                readonly source?: string;
-            };
+            readonly query?: never;
             readonly header?: never;
             readonly path: {
                 readonly session_id: string;
@@ -79380,15 +78636,6 @@ export interface operations {
             };
             /** @description Not Found */
             readonly 404: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Unprocessable Entity */
-            readonly 422: {
                 headers: {
                     readonly [name: string]: unknown;
                 };

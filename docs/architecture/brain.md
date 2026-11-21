@@ -56,10 +56,7 @@ session (`participants.people_of`), so someone who joined since the last refresh
 same way (`tests/test_brain_participants_live.py`). `tests/test_brain_eligibility.py` is the truth table.
 
 `eligible` is `eligibility.explain`, which says why. Without a capability, `explain` asks the same question of a
-purpose class (what `everyone_agreed` asks, and what a preview shows), and over a session no source was made for yet.
-Its `assume_consent` takes every MISSING consent as given (no consent row, or the class not among its classes) and
-keeps every other fence: sealed, withdrawn, anyone's exclusion, a contact, a non-member, a consent the person ended, a
-workspace they left out, a standing rule.
+purpose class (what `everyone_agreed` asks).
 
 A standing rule is deny-only: `{capability?, purpose?, class?, workspace?}`, denying when every key it
 names matches. A rule the code cannot read denies (`rule_denies`).
@@ -133,7 +130,7 @@ confers no read by itself; only a `core` link opens the project leg.
   excluded it and no contact is in it (`eligibility.everyone_agreed`). A declaration still stands.
 - **Computed, then written.** `associate.propose` (`propose_dispatched`, `propose_signals`) computes what layers 1 and
   2 would make, reading only; `link_dispatched` and `link_signals` write what it returns, through `put`, whose
-  `outranks` decides whether a stored link keeps its place. A preview calls the same compute.
+  `outranks` decides whether a stored link keeps its place. The relations graph's would-be links call the same compute.
 - **Off-request and debounced.** An activity fold (a `Session` save naming `activity`) only marks its
   source due (`associate.schedule`, five minutes, so a burst is one look); the tick `brain.associate`
   (`associate.run_due`) makes sources for sessions that have none and looks at what is due. A sealed
@@ -269,13 +266,21 @@ reader's own reads, never a word; recomputable from the raw events (`disclosure.
 `GET /api/me/learning/disclosure/` and `/api/me/learning/removed/` are the person's own and off MCP.
 The Settings page `/settings/learning` shows them beside the class switches.
 
-## Scheduled project learning and the judge (`apps/brain/schedule.py`)
+## Scheduled learning, Run now, and the judge (`apps/brain/schedule.py`)
 
-A project feature (`purpose_class` project) with an operator, an enabled flag and a `schedule` (`hourly`, `daily`,
-`weekly`) is run by the `brain.schedule` tick for each ACTIVE workspace project of the operator's workspace tree (never a
-personal one), only when a run is due (`BrainCursor.last_run_at`) and there is something new: an eligible source no clean
-run of the feature read for that project (`reading.learned`), so a session linked, agreed to or backfilled late is still
-read. A clean end of the run's turn (`signals`, `runs.finish`) makes what it read count as learned; a failed one counts
+A project or system feature with an operator, an enabled flag and a `schedule` (`hourly`, `daily`, `weekly`) is run by the
+`brain.schedule` tick for each of its subjects (`schedule.subjects_of`): a project feature for each ACTIVE workspace project
+of the operator's workspace tree (never a personal one), a system feature once, over every source eligible for `system`
+(subject `system`, `reading.candidates` with no project filter). It runs only when a run is due
+(`BrainCursor.last_run_at`) and there is something new: an eligible source no clean run of the feature read for that
+subject (`reading.learned`), so a session linked, agreed to or backfilled late is still read.
+
+**Run now** (`POST /api/brain/capabilities/{slug}/runs/`, the /brain page's button) starts one run the same way
+(`runs.start`), for a canopy admin as a person only (`api_state.the_person`; off MCP): a system feature over its one
+subject, a project feature for the workspace project named by `project`. It is refused with the reason
+(`runs.refusal`) when learning reads are off, the feature is disabled or has no operator or no `entry`, nobody active is
+accountable for it, or a run for the subject is still open; a person-class feature is not started there. A system run's
+outputs are findings: they act on nothing by themselves. A clean end of the run's turn (`signals`, `runs.finish`) makes what it read count as learned; a failed one counts
 nothing and the next interval reads it again. One open run per feature and project (`brain_one_open_run`, so two workers
 cannot both start one); a run open past `BRAIN_RUN_TIMEOUT_SECONDS` (six hours by default) is abandoned as failed.
 
@@ -292,74 +297,22 @@ hand-checked list; the plumbing is tested with a rule standing in for the model.
 (by the same rule as every session read): ids, titles and how each tie was made, never a word of a transcript. It is what a
 project history reads instead of re-deriving the selection.
 
-## Preview (`apps/brain/preview.py`, `api_preview.py`)
+## The `/brain` page (`frontend/src/pages/BrainPage.tsx`, `apps/brain/state.py`, `apps/brain/api_state.py`)
 
-`GET /api/brain/preview` is a person's dry run: for each session they read through legs 1 to 6 (never leg 7), created
-or active in a window (a day by default, a week at most), never a learning run's conversation, it says who is in it,
-whether each class could read it now and if everyone in it agreed (`explain`, with the reason; `individual` per person),
-the links the automatic layers would make (`associate.propose`, with any stored link that would keep its place), and the
-session as a learner reads it (`transcript_read.read`, scrubbed). It stores nothing: no source is made, no read
-recorded, no event; `tests/test_brain_preview.py` captures the call's queries and finds no write of its own and no
-on-commit callback. It answers with `BRAIN_READS_ENABLED` off. `session` narrows a page to one session of the window. Person-only: a browser session, a PAT minted by hand, or
-an act-as-you token under a READ grant (a step-up; `act_as.REST_READS` is the one REST read beside the tools such a
-token reaches); never an agent's login, a turn's or caller token, a runner, an OAuth client or a site's token, and not an
-MCP tool.
+One person's view of the brain as it stands, linked from Settings → Learning and the health dashboard's views. Its
+routes (`GET /api/brain/state`, `/state/links`, `/state/runs`) are the person's own as themselves
+(`api_state.the_person`), none is an MCP tool, and they write nothing (`tests/test_brain_page.py` captures every query).
+The page holds no copy of a count: the server computes them.
 
-## One data source for every brain screen (`apps/brain/view.py`)
-
-Every brain read a screen shows goes through `view.py`, from a source: `live` (the default) or `preview:<id>`, one of the
-person's preview snapshots. The same routes and response shapes either way, plus `source` (its kind, and for a preview its
-id, window and when it was computed): the /brain page's `GET /api/brain/state`, `/state/links`, `/state/runs` and
-`/would-read`, `GET /api/brain/outputs/`, a session's `GET /api/me/learning/sessions/{id}/` and a project's
-`GET /api/brain/workspaces/{slug}/projects/{handle}/sessions/`. `view.links(viewer, session_ids, source=…)` is the link
-read a graph takes. `live` is each surface's own read under its own rule, unchanged. A preview source is resolved by
-`view.resolve`: only its owner as a person, refused as the preview refuses (an agent's login, a turn's or caller token,
-an MCP call), else not found; and every read cuts it to the sessions the owner still reads through legs 1 to 6 that
-nobody removed (`snapshots.removed_sessions`) and to projects they may read, so a preview never shows more than its owner
-could see now. A preview holds no runs and no removal work. In the app the source is the URL's `?preview=<id>`
-(`frontend/src/brain/source.tsx`): every read passes it through, one banner says so with "Exit preview", links between
-brain screens keep it, and a session's Learning… menu shows the ties the preview would make with its controls off.
-
-## Preview snapshots (`apps/brain/snapshots.py`, `api_previews.py`)
-
-`POST /api/brain/previews/` (`since`, `until`, `view`; a day by default, a week at most) computes, over the owner's
-sessions of the window (legs 1 to 6, at most `MAX_SESSIONS`), exactly what the live code would: `preview.describe` over
-`eligibility.explain` and `associate.propose`, the effective links (a proposal unless a stored link keeps its place, and
-every stored link no proposal touches) and the /brain state's consent and learners. It writes that one
-`BrainPreviewSnapshot` row and nothing of the brain (no source, link, output, run or read; `tests/test_brain_previews.py`
-captures the call). A session already removed is left out. Kept `TTL` (a week), then deleted by the `brain.previews`
-tick; `GET` lists the owner's, `DELETE /{id}/` drops one.
-
-`PUT /api/brain/previews/{id}/outputs/` replaces its recommendations: would-be `system` outputs made on the owner's
-machine by `/canopy:brain-preview --publish <id>` (`kind`, `title`, `body`, the `sessions` cited, an optional
-`learner`). Every cited session must be in the snapshot and one the owner reads now (else 422); words are scrubbed as
-`brain_emit` scrubs, object keys too. They show where outputs show, from the preview source, marked as the preview's.
-
-Every route is person-only (`api_preview.the_person`), off MCP and outside act-as. A removal reaches every snapshot: the
-snapshot store is registered with `cascade.register_store(..., by_session=True)`, so each sweep drops a session that is
-gone, sealed, withdrawn or that anyone took out of learning, with its links and every recommendation citing it. A
-snapshot is a FENCE, never an input: no learner, `eligible`, association or cascade judgement reads one
-(`tests/test_brain_previews.py::test_nothing_that_decides_reads_a_snapshot`).
-
-## The `/brain` page (`frontend/src/pages/BrainPage.tsx`, `apps/brain/state.py`)
-
-One person's view of the brain, linked from Settings → Learning and the health dashboard's views. A switcher picks the
-source (live, or one of their previews), "Run a preview" makes one over a chosen window, and the same tabs show either.
-Its routes refuse whom the preview refuses, an act-as-you token included (only the preview is in `act_as.REST_READS`),
-none is an MCP tool, and they write nothing (`tests/test_brain_page.py`). The page holds no copy of a verdict, count or
-grouping.
-
-- **Now** (live): whether reads are on, consent as counts per workspace and class (never a name), sources open,
-  withdrawn and sealed by why, project links by project and tier, the learners with whom each answers to
-  (`registry.accountable`), runs, outputs (`outputs.visible_to`) and removal work. Workspace-wide counts (sources,
-  removals, the cascade) only where the viewer holds `logs.read`, the health dashboard's gate; elsewhere over their own
-  sources and removals (`state._scoped`). A session is named (id, scrubbed title) only if the viewer reads it through legs
-  1 to 6, never the project leg; a run's read of one they do not is a count (`state.run_page`). A run is listed when it
-  is about a project the viewer may read or about them; a canopy admin sees every run.
-- **Sessions** (`GET /api/brain/would-read`, `preview.summarise` live): per session whether each class could read it now
-  and if everyone agreed, with `you` (the `individual` verdict about the viewer), the links canopy would make by project
-  and tier, and what the page adds up to; no line of a transcript, which is fetched only when its row is opened, by
-  naming the `session` on `GET /api/brain/preview`.
+Whether reads are on; consent as counts per workspace and class (never a name); sources open, withdrawn and sealed by
+why; stored links by project and tier, each to its session; the learners with whom each answers to
+(`registry.accountable`) and, for a canopy admin, Run now; runs and what each read; findings (`GET /api/brain/outputs/`,
+`outputs.visible_to`) with their own fields and the sessions they cite; and removal work. Workspace-wide counts
+(sources, removals, the cascade) only where the viewer holds `logs.read`, the health dashboard's gate; elsewhere over
+their own sources and removals (`state._scoped`). A session is named (id, scrubbed title) only if the viewer reads it
+through legs 1 to 6, never the project leg: a link to one they do not read is not listed, and a run's read of it or an
+output's citation of it is a count (`state.run_page`, `api_admin._cited`). A run is listed when it is about a project the
+viewer may read or about them; a canopy admin sees every run, and the list reads again while one is open.
 
 ## Every reader is placed
 
@@ -367,7 +320,7 @@ The learners canopy has today and will have are registered, dark, by migration `
 link judge, project learning, system learning): none has an operator or is enabled, so registering them changes nothing, and
 coaching keeps reading through its own leg until it moves. `tests/test_message_readers_are_registered.py` lists every server
 module that reads a session's transcript rows and why it may (the chat itself, ingest, plumbing, a person sharing their own
-session, a notification, the preview); a new reader fails it until it is placed (calling the core read
+session, a notification); a new reader fails it until it is placed (calling the core read
 `transcript_read.read` counts), and a learning read belongs in `brain.reading`, which is the one module marked as such. The agent-side readers (`ada:session-review`, `canopy-run-review`, `canopy:agent-review`, the
 stall classifier, `canopy analyze/improve`, the contributor pages and check-in runs) read through the API, not through a
 server module; moving them to runs of a registered learner is work in the canopy plugin and the agents' repos.

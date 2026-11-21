@@ -470,6 +470,10 @@ Resources:
             # sites are not offered it until HCP_CONTACT_OPT_IN is true.
             - { Name: HCP_PEOPLE, Value: "jjackson@dimagi.com" }
             - { Name: HCP_CONTACT_OPT_IN, Value: "false" }
+            # Canopy Brain's rollout gate (apps/brain/readers.py): "true" lets learning
+            # runs read the sessions everyone in them agreed to. Flip it here, merge,
+            # deploy; "false" stops every read at once.
+            - { Name: BRAIN_READS_ENABLED, Value: "false" }
             # Memory search by meaning (apps/contacts/embeddings.py). Empty = off
             # (lexical only). Vertex (vertex/gemini-embedding-001) needs the four
             # HCP_VERTEX_* values from the GCP setup in docs/architecture/

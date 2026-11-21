@@ -24,13 +24,10 @@ PLUMBING = "plumbing that moves, deletes, seals or annotates rows and reads no m
 SHARING = "the session's own person sharing it: their act, scrubbed on the way out"
 BRAIN = "the brain's one learning read: eligible, scrubbed, recorded (`apps/brain/reading.py`)"
 PRESENCE = "asks whether any row exists; reads no words"
-PREVIEW = ("a person's own dry run of the brain over the sessions they already read (legs 1 to 6), scrubbed, "
-           "storing nothing (`apps/brain/preview.py`)")
 
 READERS: dict[str, str] = {
     "apps/agents/credentials/secret_requests.py": PLUMBING,
     "apps/agents/move.py": PLUMBING,
-    "apps/brain/preview.py": PREVIEW,
     "apps/brain/reading.py": BRAIN,
     "apps/canopy_sessions/access.py": CHAT,
     "apps/canopy_sessions/activity.py": INGEST,

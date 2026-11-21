@@ -19,11 +19,6 @@ class BrainConfig(AppConfig):
         ticks.register("brain.disclosure", _disclosure, 60 * 60)
         # Learning runs start off-request too, per active project, only when there is something new.
         ticks.register("brain.schedule", _schedule, 300)
-        # A preview snapshot is kept a week; a removal reaches it with every cascade sweep (`snapshots.sweep`).
-        ticks.register("brain.previews", _previews, 60 * 60)
-        from . import cascade, snapshots  # noqa: PLC0415 — as above
-
-        cascade.register_store(snapshots.KIND, snapshots.sweep, by_session=True)
 
 
 def _associate() -> None:
@@ -47,9 +42,3 @@ def _schedule() -> None:
     from . import schedule  # noqa: PLC0415 — models: the app registry is not ready at module load
 
     schedule.run_due()
-
-
-def _previews() -> None:
-    from . import snapshots  # noqa: PLC0415 — models: the app registry is not ready at module load
-
-    snapshots.expire()

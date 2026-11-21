@@ -139,12 +139,6 @@ EXCLUDED_TOOLS: dict[str, str] = {
     "site_read": "a host site is reached only under that site's own act-as-you permission",
 }
 
-#: The REST reads, not MCP tools, a READ permission reaches besides the tools: a person's own view that an agent
-#: may show them only while they are there to approve it with their passkey. GET only; flat paths.
-REST_READS: dict[str, str] = {
-    "/api/brain/preview": "the brain preview: what learning would do over the sessions the person reads",
-}
-
 _TENANT_PATH = re.compile(r"^/api/w/[^/]+(?P<rest>/.*)$")
 _SAFE = frozenset({"GET", "HEAD", "OPTIONS"})
 
@@ -169,11 +163,9 @@ def excluded(path: str) -> str | None:
 def route_refusal(method: str, path: str, scope: str, *, is_tool: bool) -> str | None:
     """Why a request under an act-as-you permission of `scope` may not make `method path`,
     or None when it may. `is_tool`: the route is one canopy's MCP server serves as a tool
-    (`mcp.api_tools.is_tool_route`) — the permission covers those and, under a READ grant, the
-    few person's-own reads in `REST_READS`, and nothing else."""
+    (`mcp.api_tools.is_tool_route`) — the permission covers those and nothing else."""
     method = (method or "").upper()
-    rest_read = method in _SAFE and scope == ActAsGrant.READ and flat_path(path).rstrip("/") in REST_READS
-    if not is_tool and not rest_read:
+    if not is_tool:
         return ("an act-as-you permission reaches only the routes canopy's MCP server serves "
                 "as tools, and this is not one")
     why = excluded(path)
