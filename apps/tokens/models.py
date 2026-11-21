@@ -353,6 +353,19 @@ class AppCredential(models.Model):
     #: busy one needs more than a widget does. Only a canopy superuser sets it: the
     #: budget is what bounds the contacts a leaked signing key can create.
     contact_token_issuer_limit = models.PositiveIntegerField(null=True, blank=True)
+    #: Where canopy POSTs the agent's replies in this site's contacts' conversations
+    #: (`apps/host_grants/reply_relay.py`): a relay site that carries those
+    #: conversations over its own channel, so it never has to poll. Null = no push.
+    #: canopy sends the person's conversation there, so it goes through the same
+    #: outbound rules as `host_issuer` (https, never private address space, no
+    #: redirects), and changing it needs a passkey step-up.
+    reply_webhook_url = models.URLField(null=True, blank=True, max_length=500)
+    #: `final`: one POST when a turn ends, with all its prose. `stream`: a POST per
+    #: piece of prose as it lands, then an `ended` one.
+    REPLY_FINAL, REPLY_STREAM = "final", "stream"
+    REPLY_MODE_CHOICES = [(REPLY_FINAL, "One reply when the turn ends"),
+                          (REPLY_STREAM, "Each piece of prose as it lands")]
+    reply_mode = models.CharField(max_length=8, choices=REPLY_MODE_CHOICES, default=REPLY_FINAL)
     #: MCP Apps (`apps/mcp_apps_host/mcp_apps.py`): which of the site's tools carry a
     #: View (`ui://` resource) and their visibility, plus the Views canopy has
     #: fetched (sha256, effective CSP, a cached copy for read-only rendering).
@@ -951,3 +964,42 @@ class SiteSignOff(models.Model):
         if self.state == self.OPEN and self.expires_at <= (now or timezone.now()):
             return "expired"
         return self.state
+
+
+class HostReplyDelivery(models.Model):
+    """One reply post to a host site's `reply_webhook_url`, delivered at most once.
+
+    Inserted BEFORE the first attempt under a unique `(turn, seq)` (and one `ended` row
+    per turn), so a re-delivered signal or two processes handling the same turn cannot
+    both post — the same rule as `slack.SlackRelayPost`. Unlike Slack, a failed post is
+    retried with backoff (`reply_relay.BACKOFF`): the host is the person's only way to
+    hear the reply. The host treats `(turn, seq)` as its idempotency key, so a retry
+    that reached it twice is one reply.
+
+    `text` holds what the agent said only until it is delivered or given up on, then it
+    is emptied; a person deleting the conversation's words empties it too.
+    """
+
+    app = models.ForeignKey(AppCredential, on_delete=models.CASCADE, related_name="reply_deliveries")
+    turn = models.ForeignKey("harness.Turn", on_delete=models.CASCADE, related_name="host_replies")
+    seq = models.PositiveIntegerField()
+    ended = models.BooleanField(default=False)
+    text = models.TextField(blank=True, default="")
+    #: The turn's end, when it did not finish well (`failed`, `cancelled`, `lost`, `missed`).
+    error = models.CharField(max_length=32, blank=True, default="")
+    attempts = models.PositiveSmallIntegerField(default=0)
+    next_attempt_at = models.DateTimeField(default=timezone.now, db_index=True)
+    delivered_at = models.DateTimeField(null=True, blank=True)
+    abandoned_at = models.DateTimeField(null=True, blank=True)
+    #: The last attempt's answer (`HTTP 503`, `ConnectionError: …`); never a credential.
+    last_status = models.CharField(max_length=200, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "host_reply_deliveries"
+        ordering = ["created_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["turn", "seq"], name="host_reply_once_per_seq"),
+            models.UniqueConstraint(fields=["turn"], condition=Q(ended=True),
+                                    name="host_reply_one_end_per_turn"),
+        ]

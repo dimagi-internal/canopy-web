@@ -39,6 +39,7 @@ _STATUS = {
     "bad_key": 422,
     "bad_jwks_url": 422,
     "bad_host_url": 422,
+    "bad_reply_mode": 422,
     "already_shown": 409,
     "unknown_agent": 422,
 }
@@ -116,6 +117,11 @@ class HostSiteOut(Schema):
     #: How many contact tokens the site may mint a minute; null = the deployment's
     #: default. Only a canopy superuser sets it.
     contact_token_issuer_limit: int | None = None
+    #: Where canopy POSTs the agent's replies in this site's contacts' conversations
+    #: (reply push, for a site that relays them over its own channel); null = none.
+    reply_webhook_url: str | None = None
+    #: `final`: one post when a turn ends; `stream`: each piece of prose as it lands.
+    reply_mode: str = "final"
     created_at: str
     last_used_at: str | None
     revoked: bool
@@ -154,6 +160,11 @@ class UpdateIn(Schema):
     #: minute, for a relay site that carries many people's conversations; 0 puts it
     #: back to the deployment's default.
     contact_token_issuer_limit: int | None = Field(None, ge=0, le=100_000)
+    #: Where canopy POSTs the agent's replies to this site's contacts ("" to stop). It
+    #: receives their conversations, so changing it needs a person at a browser who just
+    #: confirmed with their passkey (403 `step_up_required` otherwise).
+    reply_webhook_url: str | None = None
+    reply_mode: Literal["final", "stream"] | None = None
 
 
 def _iso(value) -> str | None:
@@ -201,6 +212,8 @@ def _out(app: AppCredential) -> HostSiteOut:
         shows_on_canopy_pages=app.show_on_canopy_pages,
         asserts_verified_email=app.asserts_verified_email,
         contact_token_issuer_limit=app.contact_token_issuer_limit,
+        reply_webhook_url=app.reply_webhook_url or None,
+        reply_mode=app.reply_mode,
         created_at=app.created_at.isoformat(),
         last_used_at=app.last_used_at.isoformat() if app.last_used_at else None,
         revoked=app.revoked_at is not None,
@@ -246,6 +259,12 @@ def _changes_signer(app: AppCredential, payload: UpdateIn) -> bool:
              and tuple(str(k).strip() for k in payload.public_keys) != keys)
             or (payload.jwks_url is not None and payload.jwks_url.strip() != jwks)
             or (payload.host_issuer is not None and payload.host_issuer.strip() != issuer))
+
+
+def _changes_reply_url(app: AppCredential, payload: UpdateIn) -> bool:
+    """Whether this PATCH changes where canopy sends the site's contacts' conversations."""
+    return (payload.reply_webhook_url is not None
+            and payload.reply_webhook_url.strip() != (app.reply_webhook_url or "").strip())
 
 
 def _app_or_404(request: HttpRequest, slug: str, app_id: int) -> AppCredential:
@@ -304,11 +323,11 @@ def register_host_site(request: HttpRequest, slug: str, payload: ConnectIn) -> S
 def update_host_site(request: HttpRequest, slug: str, app_id: int,
                          payload: UpdateIn) -> HostSiteOut:
     """Change what a host site may do. A change to what it may sign — its
-    public keys, key URL or issuer — needs a person at a browser who just
-    confirmed with their passkey (403 `step_up_required` otherwise); a token is
-    refused it."""
+    public keys, key URL or issuer — or to where its contacts' replies are sent
+    (`reply_webhook_url`) needs a person at a browser who just confirmed with their
+    passkey (403 `step_up_required` otherwise); a token is refused it."""
     app = _app_or_404(request, slug, app_id)
-    if _changes_signer(app, payload):
+    if _changes_signer(app, payload) or _changes_reply_url(app, payload):
         stepup.require_recent_step_up(request)
     if payload.asserts_verified_email is not None and not request.user.is_superuser:
         # The email-keyed person a trusted site's contacts join is canopy-wide, so
@@ -324,6 +343,7 @@ def update_host_site(request: HttpRequest, slug: str, app_id: int,
             agents=payload.agents, public_keys=payload.public_keys,
             jwks_url=payload.jwks_url, host_issuer=payload.host_issuer,
             host_mcp_resource=payload.host_mcp_resource, default_agent=payload.default_agent,
+            reply_webhook_url=payload.reply_webhook_url, reply_mode=payload.reply_mode,
         )
         if payload.show_on_canopy_pages is not None:
             embed_apps.set_show_on_canopy_pages(
@@ -355,7 +375,8 @@ def update_host_site(request: HttpRequest, slug: str, app_id: int,
                  f"agents={[l.agent.slug for l in app.allowed_agents.all()]} "
                  f"default_agent={embed_apps.default_agent_slug(app)!r} "
                  f"trusted_email={app.asserts_verified_email} "
-                 f"token_budget={app.contact_token_issuer_limit}")
+                 f"token_budget={app.contact_token_issuer_limit} "
+                 f"reply_push={app.reply_webhook_url or ''}:{app.reply_mode}")
     return _out(app)
 
 

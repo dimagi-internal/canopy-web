@@ -750,6 +750,7 @@ WORDS = {  # holds what was said: emptied (or dropped) by `content_deletion`
     "harness.Turn", "harness.TurnEvent", "harness.TurnTranscript", "harness.FailureInvestigation",
     "admission.AdmissionNotice",
     "slack.SlackMenuPost", "slack.SlackChoicePost", "slack.SlackTurnPost",
+    "tokens.HostReplyDelivery",  # an undelivered reply's text (host_grants/reply_relay.forget_session)
 }
 IDS_ONLY = {  # ids, switches and timestamps; nothing anyone said
     "canopy_sessions.SessionParticipant", "canopy_sessions.JoinRequest", "canopy_sessions.SessionReviewAsk",

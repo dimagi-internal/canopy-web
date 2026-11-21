@@ -9,6 +9,9 @@
         "APP_NAME": "connect-labs",                       # your host-site name
         "WORKSPACE": "connect",     # the canopy workspace (tenant) the site is registered in
         "AGENT_SLUG": "ace",        # the default agent; also names the tenant when WORKSPACE is unset
+        # A relay host's reply push (canopy_sdk.host.replies): the URL registered as the
+        # host site's reply_webhook_url, which verify_reply requires as `aud`.
+        "REPLY_URL": "https://labs.connect.dimagi.com/canopy/replies/",
         # The grant. All four present turns it on; any missing turns it off.
         "CLIENT_ID": "https://labs.connect.dimagi.com/canopy/oauth/client.json",
         "ISSUER": "https://labs.connect.dimagi.com",
@@ -170,6 +173,7 @@ def get_host_config() -> HostConfig:
         probe=_probe_or_none(cfg),
         runner_requirements=tuple(cfg.get("RUNNER_REQUIREMENTS") or ()),
         workspace=str(cfg.get("WORKSPACE") or ""),
+        reply_url=str(cfg.get("REPLY_URL") or ""),
     )
 
 

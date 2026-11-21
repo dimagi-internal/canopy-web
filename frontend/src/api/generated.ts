@@ -11077,9 +11077,9 @@ export interface paths {
         /**
          * Change what a host site may do
          * @description Change what a host site may do. A change to what it may sign — its
-         *     public keys, key URL or issuer — needs a person at a browser who just
-         *     confirmed with their passkey (403 `step_up_required` otherwise); a token is
-         *     refused it.
+         *     public keys, key URL or issuer — or to where its contacts' replies are sent
+         *     (`reply_webhook_url`) needs a person at a browser who just confirmed with their
+         *     passkey (403 `step_up_required` otherwise); a token is refused it.
          */
         readonly patch: operations["update_host_site"];
         readonly trace?: never;
@@ -40818,6 +40818,13 @@ export interface components {
             readonly asserts_verified_email: boolean;
             /** Contact Token Issuer Limit */
             readonly contact_token_issuer_limit?: number | null;
+            /** Reply Webhook Url */
+            readonly reply_webhook_url?: string | null;
+            /**
+             * Reply Mode
+             * @default final
+             */
+            readonly reply_mode: string;
             /** Created At */
             readonly created_at: string;
             /** Last Used At */
@@ -40923,6 +40930,10 @@ export interface components {
             readonly asserts_verified_email?: boolean | null;
             /** Contact Token Issuer Limit */
             readonly contact_token_issuer_limit?: number | null;
+            /** Reply Webhook Url */
+            readonly reply_webhook_url?: string | null;
+            /** Reply Mode */
+            readonly reply_mode?: ("final" | "stream") | null;
         };
         /**
          * ConnectionCheckOut

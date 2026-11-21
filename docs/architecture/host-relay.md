@@ -25,6 +25,17 @@ A send may carry `context`: what the host knows about this moment (the person's 
 - It is kept on the one turn it rode with (`origin_ref["host_context"] = {site, format, body}`), and the envelope carries it as `host_context: {site, format, body, attested: true}` on that turn only (`caller_context._host_context`); the next turn does not inherit it. The canopy plugin prints it fenced and labelled as the site's, data and not instructions.
 - It is content: retention's turn scrub drops it with the prompt (`retention.services._scrub_turns`), and a person deleting a session's words drops it with the rest of `origin_ref` (`canopy_sessions.content_deletion`).
 
+## Reply push
+
+A host site with a `reply_webhook_url` (`AppCredential.reply_webhook_url`, set by the workspace owner on the host-site PATCH behind a passkey step-up, and checked by `outbound.check_url` when set and again at every send) never polls: canopy POSTs the agent's replies in its contacts' conversations there (`apps/host_grants/reply_relay.py`).
+
+- **Which turns.** A turn on a session whose contact the site vouched for (`Contact.app`), held on that site (`metadata["embed_app"]`), while the site is live and has a URL. A sensitive conversation's words are never pushed, as Slack never mirrors them.
+- **What.** `Content-Type: application/jwt`, a JWS with `typ: canopy-reply+jwt`, signed with canopy's OAuth client key (the key in canopy's client metadata, which a host already trusts for `Canopy-Execution`): `{iss: client_id, aud: reply_webhook_url, sub: the contact's external_id, site, session, turn, seq, text, ended, error?, iat, exp: +300s, jti}` (`canopy_sdk.host.replies.sign_reply`). `reply_mode` `final` (the default) is one post when the turn ends, with all its assistant prose; `stream` is a post per assistant row as it lands (`turn_events_appended`), then an `ended` post with no text. A turn that did not finish well carries `error` (its status) on its `ended` post.
+- **Exactly once per `(turn, seq)`.** A `HostReplyDelivery` row is inserted before the first attempt under a unique `(turn, seq)` and one `ended` row per turn, so a re-delivered signal stops there; each attempt signs afresh, and the host dedupes on `(turn, seq)`. The `ended` post is queued after the turn's close commits (`session_turn_finished` → `transaction.on_commit`).
+- **Retries.** The first attempt runs on a background thread; a failure (a non-2xx answer, a timeout, a refused URL) is retried by the off-request clock (`host_grants.reply_deliver`, `reply_relay.deliver_due`) at `reply_relay.BACKOFF`, then given up on. Never a redirect.
+- **What it keeps.** The row holds the text only until it is delivered or given up on; a person deleting the conversation's words empties it (`reply_relay.forget_session`, on `session_content_deleted`).
+- **The host's half** is `canopy_sdk.host.replies.verify_reply(token, *, config)`, which checks canopy's key from its client metadata, `aud` = `HostConfig.reply_url`, `site` = the host's name, the lifetime and the `jti`.
+
 ## Limits
 
 Three budgets bound what one site, one person and one agent can spend. Each is off or generous for a site that never relays.
@@ -42,6 +53,7 @@ Three budgets bound what one site, one person and one agent can spend. Each is o
 | The arrival: channel claim, always a contact, the site's budget | `apps/contacts/contact_api.py::contact_token` |
 | A send: the relay source, the send budget, the attested context | `apps/contacts/contact_api.py::send`, `_spend_send`, `_attested_context` |
 | The context on the envelope | `apps/harness/caller_context.py::_host_context` |
+| Reply push: which turns, what is posted, retries | `apps/host_grants/reply_relay.py`; its receivers and clock job in `apps/host_grants/apps.py` |
 | The channel on a turn | `apps/harness/initiator.py::channel`, `apps/tokens/middleware.py` (`request.relay_channel`) |
 | The budgets | `apps/embedding/rate_limit.py`, `apps/admission/evaluate.py` |
-| The host's client; the context's wire | `sdk/python/src/canopy_sdk/host/relay.py`, `sdk/python/src/canopy_sdk/attested_context.py` |
+| The host's client; the context's and the reply's wire | `sdk/python/src/canopy_sdk/host/relay.py`, `sdk/python/src/canopy_sdk/attested_context.py`, `sdk/python/src/canopy_sdk/host/replies.py` |
