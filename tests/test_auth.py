@@ -834,3 +834,20 @@ def test_the_jit_merge_never_connects_onto_an_agent_login(db):
 
     sociallogin.connect.assert_not_called()
     assert login.pk
+
+
+def test_site_signed_routes_are_public():
+    """Every `/api/sites/*` route canopy-web serves with `auth=None` verifies the site's own
+    signature itself, so the login middleware must let it through -- otherwise production
+    (REQUIRE_AUTH) answers 401 before the route can check the signature, while tests (auth
+    off) pass. `resources-updated` was missing from the list."""
+    from apps.common.middleware import _is_public
+    from apps.host_grants.api import sites_router
+
+    paths = {"/api/sites" + p for p in sites_router.path_operations}
+    assert "/api/sites/resources-updated" in paths
+    for path in sorted(paths):
+        for op in sites_router.path_operations[path[len("/api/sites") :]].operations:
+            if op.auth_callbacks:
+                continue
+            assert _is_public(path), f"{path} is auth=None but not in PUBLIC_PATH_PREFIXES"

@@ -47,6 +47,7 @@ PUBLIC_PATH_PREFIXES = (
     # unrevoked app that has valid frame origins, and carries no data).
     "/embed/",
     "/api/auth/contact-token",   # auth=None — self-enforces by verifying a signed assertion
+    "/api/sites/resources-updated",  # auth=None — self-enforces: a JWS signed by the site's own registered key, naming only that site's resource URIs (apps/host_grants/resources_updated.py)
     "/api/sites/agents",         # auth=None — self-enforces: a request signed by the site's own registered key (apps/host_grants/api.py)
     "/api/sites/sign-offs",      # auth=None — self-enforces: a request signed by the site's own registered key (apps/host_grants/sign_offs_api.py); the approver's /api/sign-offs/ stays behind login
     "/api/sites/contacts",       # auth=None — self-enforces: a request signed by the site's own registered key, writing only that site's own people (apps/host_grants/contact_records_api.py); also /erase
