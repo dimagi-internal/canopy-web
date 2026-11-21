@@ -148,7 +148,6 @@ class BrainCapability(models.Model):
     audience = models.JSONField(default=list, blank=True)
     operator = models.ForeignKey("agents.Agent", null=True, blank=True, on_delete=models.SET_NULL,
                                  related_name="+")
-    schedule = models.CharField(max_length=64, blank=True, default="")
     #: What a run of it starts with: one plugin command, `/<plugin>:<skill> [args]`, run by `operator`.
     entry = models.CharField(max_length=300, blank=True, default="")
     #: The canopy admin who registered it: whom its runs answer to (`runs.start`).
@@ -319,11 +318,45 @@ class BrainRun(models.Model):
     state = models.CharField(max_length=8, choices=STATE_CHOICES, default=OPEN)
     created_at = models.DateTimeField(auto_now_add=True)
     finished_at = models.DateTimeField(null=True, blank=True)
+    #: The target it ran for (`BrainTarget`), when one started it: its schedule's fire or its Run now.
+    target = models.ForeignKey("BrainTarget", null=True, blank=True, on_delete=models.SET_NULL, related_name="runs")
+    #: The schedule slot it answers (null for a Run now): one run per target and slot, however many firers report it.
+    slot = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         #: One open run per feature and subject: two workers starting the same run race on this, not on a read.
         constraints = [models.UniqueConstraint(fields=["capability", "subject_type", "subject"],
-                                               condition=models.Q(state="open"), name="brain_one_open_run")]
+                                               condition=models.Q(state="open"), name="brain_one_open_run"),
+                       models.UniqueConstraint(fields=["target", "slot"], condition=models.Q(slot__isnull=False),
+                                               name="brain_one_run_per_slot")]
+
+
+class BrainTarget(models.Model):
+    """Where a learner runs: a workspace (its subtree) or a workspace project (the sessions `core`-tied to it). A learner
+    with no target never runs. Each target has its own runs, what they read (`reading.learned`) and findings, and is
+    started by its own `schedule`: a normal canopy schedule on the learner's operator agent (`harness.AgentSchedule`),
+    whose fire starts a brain run instead of a plain turn (`targets.announce`, registered in `harness.schedule_hooks`).
+    Deleting the schedule deletes the target. Added and removed on the target workspace's brain page by its owners and
+    admins (or an ancestor's), `targets.add` / `targets.remove`."""
+
+    capability = models.ForeignKey(BrainCapability, on_delete=models.CASCADE, related_name="targets")
+    #: The workspace it covers (with its subtree); for a project target, the project's own workspace.
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE, related_name="+")
+    #: A workspace project; null for a workspace target.
+    project = models.ForeignKey("agents.AgentProject", null=True, blank=True, on_delete=models.CASCADE,
+                                related_name="+")
+    schedule = models.OneToOneField("harness.AgentSchedule", on_delete=models.CASCADE, related_name="brain_target")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+                                   related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["capability", "workspace"], condition=models.Q(project__isnull=True),
+                                    name="brain_one_workspace_target"),
+            models.UniqueConstraint(fields=["capability", "project"], condition=models.Q(project__isnull=False),
+                                    name="brain_one_project_target"),
+        ]
 
 
 class BrainRunRead(models.Model):
@@ -381,22 +414,6 @@ class DisclosureDay(models.Model):
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["person", "capability_slug", "day"], name="brain_disclosure_one")]
-
-
-class BrainCursor(models.Model):
-    """When a feature last started a run for one subject (one project), so the scheduler (`schedule.py`)
-    starts the next one only when it is due. What is new is not a position: it is every eligible source no
-    clean run of the feature read for that subject (`reading.candidates`). `last_source` is no longer read."""
-
-    capability = models.ForeignKey(BrainCapability, on_delete=models.CASCADE, related_name="cursors")
-    subject_type = models.CharField(max_length=16)
-    subject = models.CharField(max_length=64)
-    last_source = models.BigIntegerField(default=0)
-    last_run_at = models.DateTimeField(null=True, blank=True)
-
-    class Meta:
-        constraints = [models.UniqueConstraint(fields=["capability", "subject_type", "subject"],
-                                               name="brain_cursor_one")]
 
 
 class WorkspaceLearningReads(models.Model):

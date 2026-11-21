@@ -79,7 +79,6 @@ class CapabilityOut(StrictModel):
     audience: list[str]
     operator: str = Field("", description="The agent that runs it, by slug.")
     entry: str = Field("", description="The plugin command a run starts with.")
-    schedule: str
     enabled: bool
     scope: str = Field("full", description="How much of a session it reads: full, conversation, userinput or opening.")
 
@@ -97,7 +96,6 @@ class CapabilityIn(StrictModel):
     audience: list[str] | None = Field(None, description="At most its class's audience; omitted means all of it.")
     operator: str = Field("", description="An agent's slug, or empty.")
     entry: str = Field("", description="One plugin command, `/<plugin>:<skill> [args]`.")
-    schedule: str = ""
     enabled: bool = False
     scope: Literal["full", "conversation", "userinput", "opening"] = "full"
 
@@ -113,7 +111,6 @@ class CapabilityPatch(StrictModel):
     audience: list[str] | None = Field(None, description="May only narrow what the class allows.")
     operator: str | None = None
     entry: str | None = None
-    schedule: str | None = None
     enabled: bool | None = None
     scope: Literal["full", "conversation", "userinput", "opening"] | None = Field(
         None, description="May only narrow: full, conversation, userinput, opening.")
@@ -323,12 +320,12 @@ class BrainLearnerState(StrictModel):
     purpose_class: str
     enabled: bool
     scope: str
-    schedule: str
     operator: str
     entry: str = Field("", description="The plugin command a run starts with.")
     accountable: str = Field(description="The canopy admin its runs act for, or empty: nobody active.")
-    runnable: bool = Field(description="Whether a run of it can be started here at all: a project or system learner, "
-                           "never the built-in project readers (they never run) or a per-person learner.")
+    runnable: bool = Field(description="Whether it can be aimed at a target and run at all: a project or system "
+                           "learner, never the built-in project readers or a per-person learner.")
+    targets: int = Field(0, description="How many targets it has here and below: with none it does not run.")
     configurable: bool = Field(False, description="Whether you may enable or configure it here: you manage this "
                                "workspace's learning and its operator, if any, lives in this workspace or below.")
 
@@ -365,7 +362,6 @@ class LearnerConfigIn(StrictModel):
     enabled: bool | None = None
     operator: str | None = Field(None, description="An agent's slug in this workspace or below, or empty for none.")
     entry: str | None = Field(None, description="One plugin command, `/<plugin>:<skill> [args]`.")
-    schedule: Literal["", "hourly", "daily", "weekly"] | None = None
     scope: Literal["full", "conversation", "userinput", "opening"] | None = Field(
         None, description="May only narrow: full, conversation, userinput, opening.")
 
@@ -386,6 +382,29 @@ class BrainCascadeCounts(StrictModel):
     outputs_stale_recently: int
 
 
+class BrainTargetRun(StrictModel):
+    id: int
+    state: str
+    created_at: dt.datetime
+
+
+class BrainTargetOut(StrictModel):
+    id: int
+    learner: str
+    workspace: str = Field(description="The workspace it covers, with the ones below it; a project target's own.")
+    project: str = Field("", description="A workspace project's handle, or empty for a workspace target.")
+    label: str
+    schedule_id: int = Field(description="Its schedule: a normal canopy schedule on the operator agent.")
+    agent: str = Field(description="The operator agent whose schedules list it.")
+    cron: str
+    timezone: str
+    enabled: bool = Field(description="Whether its schedule is on.")
+    created_by: str = Field("", description="Who aimed the learner here.")
+    created_at: dt.datetime
+    last_run: BrainTargetRun | None = None
+    can_manage: bool = Field(False, description="Whether you may run it now or take it away.")
+
+
 class BrainStateOut(StrictModel):
     learning_reads: LearningReadsOut | None = Field(None, description="\"Learning reads\" of the pinned workspace; "
                                                     "null when the read is not pinned.")
@@ -399,6 +418,7 @@ class BrainStateOut(StrictModel):
     sources: list[BrainSourceCounts]
     links: list[BrainLinkGroup] = Field(description="Stored links of sessions you read, by project and tier.")
     learners: list[BrainLearnerState]
+    targets: list[BrainTargetOut] = Field(default_factory=list, description="Where learners run, here and below.")
     runs: BrainRunCounts
     cascade: list[BrainCascadeCounts]
 
@@ -450,7 +470,11 @@ class BrainRunPageOut(StrictModel):
     done: bool
 
 
-class RunNowIn(StrictModel):
+class BrainTargetIn(StrictModel):
     model_config = ConfigDict(extra="forbid")
 
-    project: str = Field("", description="For a project learner: the workspace project's handle. Ignored otherwise.")
+    learner: str
+    workspace: str = Field("", description="This workspace or one below it; empty for the pinned workspace.")
+    project: str = Field("", description="A workspace project's handle there, for a project target.")
+    cron: str = Field("", description="Its schedule, 5-field cron; empty for daily at 06:00.")
+    timezone: str = Field("", description="An IANA time zone; empty for UTC.")

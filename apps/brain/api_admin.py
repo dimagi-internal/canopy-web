@@ -22,19 +22,16 @@ from apps.canopy_sessions import access
 from apps.canopy_sessions.models import Session
 from apps.common import redact
 
-from . import api_manage, cascade, outputs, readers, reading, registry, reporting, runs, schedule
-from .api_state import the_person
-from .models import PROJECT, SYSTEM, BrainCapability, OutputLineage, SourceLink
+from . import cascade, outputs, registry, reporting, targets
+from .models import BrainCapability, OutputLineage, SourceLink
 from .schemas import (
     BrainOutputOut,
     CapabilityIn,
     CapabilityOut,
     CapabilityPatch,
-    BrainRunState,
     ProjectSessionOut,
     ReportingLineIn,
     ReportingLineOut,
-    RunNowIn,
 )
 
 router = Router(auth=session_auth, tags=["brain"])
@@ -44,7 +41,7 @@ def _cap_out(c: BrainCapability) -> dict:
     return {"slug": c.slug, "name": c.name, "description": c.description, "purpose_class": c.purpose_class,
             "subject_type": c.subject_type, "purposes": c.purposes, "source_kinds": c.source_kinds,
             "output_kinds": c.output_kinds, "audience": c.audience,
-            "operator": c.operator.slug if c.operator_id else "", "entry": c.entry, "schedule": c.schedule,
+            "operator": c.operator.slug if c.operator_id else "", "entry": c.entry,
             "enabled": c.enabled, "scope": c.scope}
 
 
@@ -99,64 +96,15 @@ def patch_capability(request: HttpRequest, slug: str, payload: CapabilityPatch) 
     changes = payload.model_dump(exclude_unset=True)
     if "operator" in changes:
         changes["operator"] = _operator(changes["operator"] or "")
+        why = targets.operator_refusal(cap, changes["operator"])
+        if why:
+            raise ProblemError(422, "Invalid request", type_=TYPE_VALIDATION, detail=why)
     try:
         cap = registry.update(cap, by=request.user, **changes)
     except registry.RefusedError as e:
         raise ProblemError(422, "Invalid request", type_=TYPE_VALIDATION, detail=str(e)) from e
+    targets.follow(cap)
     return _cap_out(cap)
-
-
-@router.post("/brain/capabilities/{slug}/runs/", response={200: BrainRunState, **refusals(403, 404, 422)},
-             summary="Run a learner now for a workspace (its owners and admins, or a canopy admin)")
-@gate("brain.manage", kind="turn")  # an owner or admin here or above, or a canopy admin; a person only, never an agent
-def run_brain_capability(request: HttpRequest, slug: str, payload: RunNowIn) -> dict:
-    """Starts one run of the learner now for the workspace the request is pinned to (`/api/w/<ws>/…`), reading only
-    eligible sessions of that workspace and the ones below it; what it finds is that workspace's, seen by its owners
-    and admins and its ancestors'. A `system` learner runs once over that subtree; a `project` learner for the project
-    named by `project` (a handle of an active workspace project in that subtree). An owner or admin of the workspace
-    (an ancestor's is one) or a canopy admin, as a person only, never through an agent or MCP; the run answers to them.
-    Refused, with the reason, when learning reads are off in every workspace it would read, the learner is disabled,
-    built in or has no operator or entry, its operator lives outside this workspace and the ones above it, or a run
-    of it for that subject and workspace is still open. Then on `GET /api/w/<ws>/brain/state/runs`."""
-    user = the_person(request)
-    ws = getattr(request, "workspace_slug", None)
-    if not ws:
-        raise ProblemError(422, "Invalid request", type_=TYPE_VALIDATION,
-                           detail="name the workspace to run it for: call it under /api/w/<workspace>/")
-    if not api_manage.may_manage(user, ws):
-        raise ProblemError(403, "Only this workspace's owners and admins (or an ancestor's), or a canopy admin, may "
-                           "start a run here", type_=TYPE_FORBIDDEN)
-    cap = BrainCapability.objects.filter(slug=slug).select_related("operator").first()
-    if cap is None:
-        raise ProblemError(404, "No such learner", type_=TYPE_NOT_FOUND)
-    if cap.slug == readers.PROJECT_READERS:
-        raise ProblemError(422, "Invalid request", type_=TYPE_VALIDATION,
-                           detail="the project readers are built in and never run")
-    where = api_manage.run_place_refusal(cap, ws)
-    if where:
-        raise ProblemError(422, "Invalid request", type_=TYPE_VALIDATION, detail=where)
-    subject = None
-    if cap.purpose_class == PROJECT:
-        if cap.operator_id is None:
-            raise ProblemError(422, "Invalid request", type_=TYPE_VALIDATION, detail=f"{cap.slug} has no operator agent")
-        subject = (schedule.projects_of(cap).filter(workspace_id__in=reading.subtree(ws),
-                                                    handle=payload.project.strip().lower()).first())
-        if subject is None:
-            raise ProblemError(422, "Invalid request", type_=TYPE_VALIDATION,
-                               detail=f"name an active workspace project of {ws} or a workspace below it")
-    elif cap.purpose_class != SYSTEM:
-        raise ProblemError(422, "Invalid request", type_=TYPE_VALIDATION,
-                           detail=f"{cap.slug} learns about one person; its runs are not started here")
-    why = runs.refusal(cap, subject, scope=ws, accountable=user)
-    if why:
-        raise ProblemError(422, "Invalid request", type_=TYPE_VALIDATION, detail=why)
-    try:
-        run = runs.start(cap, subject=subject, scope=ws, accountable=user)
-    except runs.StartRefusedError as e:
-        raise ProblemError(422, "Invalid request", type_=TYPE_VALIDATION, detail=str(e)) from e
-    return {"id": run.pk, "learner": cap.slug, "purpose": run.purpose, "subject_type": run.subject_type,
-            "subject": subject.handle if subject is not None else "system", "scope": run.scope, "state": run.state,
-            "created_at": run.created_at, "finished_at": None, "reads": 0, "sessions": [], "hidden": 0}
 
 
 # ---- who manages whom -----------------------------------------------------------------------------

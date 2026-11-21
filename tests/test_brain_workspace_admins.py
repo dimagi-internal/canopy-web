@@ -12,12 +12,19 @@ from django.test import Client
 
 from apps.agents.models import Agent
 from apps.brain import eligibility, learning_reads, outputs, registry, sources, state
-from apps.brain.models import BrainCapability, BrainOutput, BrainRun, LearningConsent, WorkspaceLearningReads
+from apps.brain.models import (
+    BrainCapability,
+    BrainOutput,
+    BrainRun,
+    BrainTarget,
+    LearningConsent,
+    WorkspaceLearningReads,
+)
 from apps.canopy_sessions.models import Message, Session, SessionParticipant
 from apps.events.models import SettingChange
 from apps.mcp import api_tools
 from apps.workspaces.models import Workspace, WorkspaceMembership as M
-from tests.fixtures.brain_world import member, reads, user
+from tests.fixtures.brain_world import aim, member, reads, user
 from tests.token_helpers import bearer_headers, pat_token
 
 pytestmark = pytest.mark.django_db
@@ -56,6 +63,7 @@ def w():
     root.is_superuser = True
     root.save()
     member(root, connect)
+    member(root, dimagi)                                       # answers for system-learning, whose operator is there
     people["root"] = root
     login = user("cee_login")
     member(login, connect, M.ADMIN)                            # an agent's login holding admin: still never a person
@@ -70,6 +78,7 @@ def w():
     source = sources.for_session(s)
     system = BrainCapability.objects.get(slug="system-learning")
     registry.update(system, by=root, operator=ada, entry="/canopy:brain-learn", enabled=True)
+    aim(BrainCapability.objects.get(slug="system-learning"), connect, by=root)
     finding = BrainOutput.objects.create(capability=system, kind="finding", workspace=connect, subject_type="system",
                                          subject="connect", title="connect finding")
     return {**people, "dimagi": dimagi, "connect": connect, "labs": labs, "cee": cee, "lab_agent": lab_agent,
@@ -82,8 +91,9 @@ def _put_reads(u, ws, on, **extra):
                                                          content_type="application/json", **extra)
 
 
-def _run(u, ws="connect", slug="system-learning", **body):
-    return _client(u).post(f"/api/w/{ws}/brain/capabilities/{slug}/runs/", body, content_type="application/json")
+def _run(u, ws="connect", target=None):
+    t = target or BrainTarget.objects.get(workspace_id="connect", capability__slug="system-learning")
+    return _client(u).post(f"/api/w/{ws}/brain/targets/{t.pk}/runs", {}, content_type="application/json")
 
 
 def _configure(u, ws, slug, **body):
@@ -149,11 +159,10 @@ def test_anyone_else_may_not_run_a_learner(w, who):
 
 @pytest.mark.parametrize("who", ALLOWED)
 def test_a_manager_enables_and_configures_a_learner_operated_here(w, who):
-    r = _configure(w[who], "connect", "project-learning", operator="cee", entry="/canopy:brain-learn",
-                   schedule="daily", enabled=True)
+    r = _configure(w[who], "connect", "project-learning", operator="cee", entry="/canopy:brain-learn", enabled=True)
     assert r.status_code == 200, r.content
     cap = BrainCapability.objects.get(slug="project-learning")
-    assert cap.enabled and cap.operator == w["cee"] and cap.entry == "/canopy:brain-learn" and cap.schedule == "daily"
+    assert cap.enabled and cap.operator == w["cee"] and cap.entry == "/canopy:brain-learn"
     assert registry.accountable(cap) == w[who]                          # nobody answered for it: now they do
     assert _configure(w[who], "connect", "project-learning", enabled=False).json()["enabled"] is False
 
@@ -192,12 +201,14 @@ def test_run_now_refuses_an_operator_that_lives_below_or_beside(w):
     r = _run(w["connect_owner"])
     assert r.status_code == 422 and "operator lives outside" in r.json()["detail"]
     BrainCapability.objects.filter(slug="system-learning").update(operator=w["cee"])
-    r = _run(w["dimagi_owner"], ws="dimagi")                              # a child's agent reading its parent
+    top = aim(BrainCapability.objects.get(slug="system-learning"), w["dimagi"], by=w["root"])
+    r = _run(w["dimagi_owner"], ws="dimagi", target=top)                 # a child's agent reading its parent
     assert r.status_code == 422 and "operator lives outside" in r.json()["detail"]
 
 
 def test_the_management_routes_are_not_mcp_tools(w):
-    for name in ("set_learning_reads", "configure_learner", "run_brain_capability", "brain_state"):
+    for name in ("set_learning_reads", "configure_learner", "run_learning_target", "add_learning_target",
+                 "remove_learning_target", "brain_state"):
         assert name in api_tools.EXCLUDED
     r = _put_reads(None, "connect", True, client=Client(), **bearer_headers(pat_token(w["agent_login"])))
     assert r.status_code == 403
@@ -213,7 +224,8 @@ def test_the_project_readers_never_offer_run_now_and_are_never_configured_here(w
     assert learners["system-learning"]["runnable"] is True
     assert learners["coaching"]["runnable"] is False
     assert body["can_manage"] is True
-    r = _run(w["connect_owner"], slug="project-readers")
+    r = _client(w["connect_owner"]).post("/api/w/connect/brain/targets", {"learner": "project-readers"},
+                                         content_type="application/json")
     assert r.status_code == 422 and "built in" in r.json()["detail"]
     assert _configure(w["root"], "connect", "project-readers", enabled=False).status_code == 403
     # A per-person learner is canopy-wide too: never switched on from one workspace.

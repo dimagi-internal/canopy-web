@@ -118,7 +118,7 @@ def test_a_feature_whose_admin_is_gone_is_not_run_until_another_enables_it(w, se
     w["root"].save()
     with pytest.raises(runs.StartRefusedError, match="accountable"):
         runs.start(cap, subject=w["alice"])
-    assert send(client(other), "patch", "/api/brain/capabilities/pace/", {"schedule": ""}).status_code == 200
+    assert send(client(other), "patch", "/api/brain/capabilities/pace/", {"entry": ""}).status_code == 200
     cap.refresh_from_db()
     assert registry.accountable(cap) == other
     with pytest.raises(registry.RefusedError):
@@ -305,10 +305,10 @@ def test_ensure_learners_registers_the_missing_ones_dark_and_leaves_the_rest_alo
     from apps.brain import registry
 
     BrainCapability.objects.filter(slug="coaching").delete()
-    registry.update(registry.ensure_learners()["system-learning"], schedule="daily")
+    registry.update(registry.ensure_learners()["system-learning"], entry="/x:y")
     again = registry.ensure_learners()
     assert set(again) == {s["slug"] for s in registry.LEARNERS} and again["coaching"].enabled is False
-    assert BrainCapability.objects.get(slug="system-learning").schedule == "daily"
+    assert BrainCapability.objects.get(slug="system-learning").entry == "/x:y"
 
 
 @pytest.mark.parametrize("cred, via_mcp, person", [
