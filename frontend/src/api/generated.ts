@@ -15875,15 +15875,13 @@ export interface paths {
         };
         /**
          * What is waiting on you
-         * @description Everything waiting on the caller in scope — chats whose agent needs your
-         *     next message, tasks asking you to decide or parked on you, requests to join a
-         *     workspace you manage — as `now` (something happened in the last few days),
-         *     `quiet` (nothing has for a while) and `hidden` (taken off your list by you;
-         *     each returns when something new happens on it), plus `running` — not
-         *     waiting on you, but yours and being worked right now. Newest first. Branch
-         *     on each row's `state` (asking, your_move, parked, stalled, running,
-         *     running_auto);
-         *     `reason` is display text.
+         * @description Everything waiting on the caller in scope — tasks asking you to decide or
+         *     parked on you, requests to join a workspace you manage, sign-offs — as `now`
+         *     (something happened in the last few days), `quiet` (nothing has for a while)
+         *     and `hidden` (taken off your list by you; each returns when something new
+         *     happens on it). Newest first. Branch on each row's `state` (asking,
+         *     your_move); `reason` is display text. Sessions are not listed here: the
+         *     sessions you started are `/api/me/sessions/` rows with `started_by_you`.
          */
         readonly get: operations["list_attention"];
         readonly put?: never;
@@ -46597,8 +46595,6 @@ export interface components {
             readonly quiet: readonly components["schemas"]["AttentionRowOut"][];
             /** Hidden */
             readonly hidden: readonly components["schemas"]["AttentionRowOut"][];
-            /** Running */
-            readonly running?: readonly components["schemas"]["AttentionRowOut"][];
         };
         /** AttentionRowOut */
         readonly AttentionRowOut: {
@@ -46610,7 +46606,7 @@ export interface components {
              * State
              * @enum {string}
              */
-            readonly state: "asking" | "your_move" | "parked" | "stalled" | "running" | "running_auto";
+            readonly state: "asking" | "your_move";
             /** Reason */
             readonly reason: string;
             /** Title */

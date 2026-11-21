@@ -25,19 +25,17 @@ router = Router(auth=session_auth, tags=["attention"])
 
 
 @router.get("/", response=AttentionOut, summary="What is waiting on you")
-# the caller's own list; each source applies its own gate: tasks by the board filter, chats by the session ACL, access
-# requests by members.manage
+# the caller's own list; each source applies its own gate: tasks by the board filter, access requests by
+# members.manage
 @gate("self")
 def list_attention(request: HttpRequest) -> AttentionOut:
-    """Everything waiting on the caller in scope — chats whose agent needs your
-    next message, tasks asking you to decide or parked on you, requests to join a
-    workspace you manage — as `now` (something happened in the last few days),
-    `quiet` (nothing has for a while) and `hidden` (taken off your list by you;
-    each returns when something new happens on it), plus `running` — not
-    waiting on you, but yours and being worked right now. Newest first. Branch
-    on each row's `state` (asking, your_move, parked, stalled, running,
-    running_auto);
-    `reason` is display text."""
+    """Everything waiting on the caller in scope — tasks asking you to decide or
+    parked on you, requests to join a workspace you manage, sign-offs — as `now`
+    (something happened in the last few days), `quiet` (nothing has for a while)
+    and `hidden` (taken off your list by you; each returns when something new
+    happens on it). Newest first. Branch on each row's `state` (asking,
+    your_move); `reason` is display text. Sessions are not listed here: the
+    sessions you started are `/api/me/sessions/` rows with `started_by_you`."""
     groups = services.attention(request)
     roots = wsvc.tree_roots({i.workspace for v in groups.values() for i in v})
     return AttentionOut(**{
