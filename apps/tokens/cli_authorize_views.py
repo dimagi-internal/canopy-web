@@ -28,17 +28,16 @@ import secrets
 from urllib.parse import urlencode, urlparse
 
 from django.contrib.auth import get_user_model
-from django.core.cache import cache
-
 from django.contrib.auth.decorators import login_required
+from django.core.cache import cache
 from django.http import (
     HttpRequest,
     HttpResponse,
     HttpResponseBadRequest,
     HttpResponseForbidden,
     HttpResponseRedirect,
+    JsonResponse,
 )
-from django.http import JsonResponse
 from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods, require_POST
