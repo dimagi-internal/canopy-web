@@ -85,6 +85,12 @@ def _title(provider: str) -> str:
     return getattr(providers.CLASSES.get(provider), "title", provider)
 
 
+#: The one provider header a screen may ask for: save past the org's duplicate rules ("Create anyway"),
+#: on a single record's create or update only (`_duplicates_header`).
+DUPLICATE_RULE_HEADER = ("Sforce-Duplicate-Rule-Header", "allowSave=true")
+_DUPLICATES_ON = frozenset({("POST", "sobjects/{type}"), ("POST", "sobjects/{type}/{id}"),
+                            ("PATCH", "sobjects/{type}/{id}")})
+
 #: Salesforce's own count of the org's API use (`api-usage=18/15000`), passed to the page as `limits`.
 LIMIT_INFO_HEADER = "Sforce-Limit-Info"
 _LIMIT_INFO = re.compile(r"[A-Za-z0-9_\-=/,; ]{1,200}")
@@ -115,6 +121,8 @@ class _Planned:
     query: dict
     body: object
     composite: calls.Composite | None = None
+    #: Headers sent beside the token: only ever `DUPLICATE_RULE_HEADER`, when asked for and allowed.
+    headers: tuple[tuple[str, str], ...] = ()
 
     @property
     def parts(self) -> tuple[calls.Match, ...]:
@@ -149,7 +157,7 @@ def call(request, provider: str, payload) -> dict:
         sent = _Sent()
         with _in_flight(user.pk):
             try:
-                return _exchange(conn, provider, matched, query, plan.body, sent)
+                return _exchange(conn, provider, matched, query, plan.body, sent, plan.headers)
             finally:
                 if sent.sent:
                     _mark_used(conn)
@@ -285,8 +293,9 @@ def _allowed(provider: str, payload) -> _Planned:
         query = calls.check_query(payload.query, provider)
         if payload.body is not None and matched.rule.method in ("GET", "DELETE"):
             raise calls.NotAllowed(f"A {matched.rule.method} call can't carry a body.")
+        headers = _duplicates_header(provider, matched, getattr(payload, "allow_duplicates", False))
         if not calls.is_composite(matched):
-            return _Planned(matched, query, payload.body)
+            return _Planned(matched, query, payload.body, headers=headers)
         composite = calls.expand(provider, matched, query, payload.body)
     except calls.NotSupported as exc:
         raise services.ConnectionError("provider_not_supported", str(exc)) from None
@@ -295,6 +304,18 @@ def _allowed(provider: str, payload) -> _Planned:
     kind = "write" if composite.writes else "read"
     return _Planned(replace(matched, rule=replace(matched.rule, kind=kind)), composite.query, composite.body,
                     composite)
+
+
+def _duplicates_header(provider: str, matched: calls.Match, asked: bool) -> tuple[tuple[str, str], ...]:
+    """`allow_duplicates` as the one header it stands for, or a refusal: only Salesforce, and only one
+    record's create or update (`_DUPLICATES_ON`). The header is canopy's own constant; nothing the page
+    sends becomes a header."""
+    if not asked:
+        return ()
+    if provider != "salesforce" or (matched.rule.method, matched.rule.pattern) not in _DUPLICATES_ON:
+        raise calls.NotAllowed("Saving past duplicate rules works only when creating or updating one Salesforce "
+                               "record (POST or PATCH sobjects/<type>).")
+    return (DUPLICATE_RULE_HEADER,)
 
 
 def _check_declared(surface: declarations.Surface, provider: str, payload, plan: _Planned) -> None:
@@ -447,17 +468,18 @@ def _token(conn: Connection) -> server_tokens.Access:
                                                     "moment.") from None
 
 
-def _exchange(conn: Connection, provider: str, matched: calls.Match, query: dict, body, sent: _Sent) -> dict:
+def _exchange(conn: Connection, provider: str, matched: calls.Match, query: dict, body, sent: _Sent,
+              extra: tuple[tuple[str, str], ...] = ()) -> dict:
     """Ask, and on a 401 once more: with whatever newer token is stored, or after a forced refresh if
     this minute's is unspent (`server_tokens.forget`). A 401 means the provider refused the call, so
     it did not land, whatever the method. Nothing else is ever asked twice."""
     deadline = _monotonic() + TOTAL_SECONDS
     got = _token(conn)
-    status, raw = _ask(provider, matched, query, body, got, deadline, sent)
+    status, raw = _ask(provider, matched, query, body, got, deadline, sent, extra)
     if status == 401:
         if server_tokens.forget(conn, got.digest):
             got = _token(conn)
-            status, raw = _ask(provider, matched, query, body, got, deadline, sent)
+            status, raw = _ask(provider, matched, query, body, got, deadline, sent, extra)
         if status == 401:
             what = f"{_title(provider)} ended this connection's session."
             ended = services.ConnectionError("session_ended", what)
@@ -467,7 +489,7 @@ def _exchange(conn: Connection, provider: str, matched: calls.Match, query: dict
 
 
 def _ask(provider: str, matched: calls.Match, query: dict, body, got: server_tokens.Access, deadline: float,
-         sent: _Sent) -> tuple[int, bytes]:
+         sent: _Sent, extra: tuple[tuple[str, str], ...] = ()) -> tuple[int, bytes]:
     """One request: `(status, what came back, without the token)`."""
     try:
         url = calls.build_url(provider, got.instance_url, matched.path, query, method=matched.rule.method)
@@ -478,7 +500,8 @@ def _ask(provider: str, matched: calls.Match, query: dict, body, got: server_tok
     too_large, no_answer = False, False
     status, raw = 0, b""
     # Identity: a decoder can sit on bytes across many socket reads, and the deadline is checked per read.
-    headers = {"Authorization": f"Bearer {got.token}", "Accept": "application/json", "Accept-Encoding": "identity"}
+    headers = {**dict(extra), "Authorization": f"Bearer {got.token}", "Accept": "application/json",
+               "Accept-Encoding": "identity"}
     try:
         resp = requests.request(matched.rule.method, url, allow_redirects=False, stream=True,
                                 timeout=(CONNECT_SECONDS, READ_SECONDS), headers=headers, **kwargs)
@@ -625,7 +648,8 @@ def _audit(conn: Connection, user, surface: declarations.Surface, plan: _Planned
     line for the call, saying how many it held."""
     subject = replace(services.Subject.of(conn), workspace=conn.app.workspace)
     if plan.composite is None:
-        _audit_subject(subject, conn.provider, user, surface, plan.matched, operation_id, as_, sent)
+        extra = {"allow_duplicates": True} if plan.headers else {}
+        _audit_subject(subject, conn.provider, user, surface, plan.matched, operation_id, as_, sent, **extra)
         return
     total = len(plan.parts)
     results = _part_results(plan.composite, sent)

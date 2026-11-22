@@ -22159,6 +22159,12 @@ export interface components {
              * @description The click a write belongs to.
              */
             readonly operation_id?: string | null;
+            /**
+             * Allow Duplicates
+             * @description Salesforce only, on a `POST` or `PATCH` of `sobjects/<type>` or `sobjects/<type>/<id>`: save even though the org's duplicate rules warned ("Create anyway"). Refused on any other call.
+             * @default false
+             */
+            readonly allow_duplicates: boolean;
         };
         /** ViewSurfaceIn */
         readonly ViewSurfaceIn: {
