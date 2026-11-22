@@ -14401,6 +14401,29 @@ def _adopt_one(runner_id: str, d: pathlib.Path, summary: dict) -> None:
         return
     info = _read_json(attempt / "host.json") or {}
     exited = (attempt / "exit.json").exists()
+    if state.get("executor") == "acp" and _wire_scan(attempt)["prompt_id"] is None:
+        # An ACP adapter the last daemon started but never sent `session/prompt`: the
+        # relay logs every stdin line BEFORE it forwards it (`wire_write(b"i", ...)`), so
+        # no prompt in the log proves the agent never got the message. That is a turn
+        # cut off during its setup, not a failed attempt: stop the adapter and report it
+        # WITHOUT a session, so canopy-web runs it again (`finish_turn`'s sessionless
+        # requeue). Reporting the session the adapter had opened made a dropped message
+        # terminal. 2026-11-22, turn c1eac474 (ace chat on cloud-ec2-live, investigation
+        # 40): "runner error while adopting the turn: the adapter was never prompted".
+        if not exited:
+            try:
+                _stop_adopted_cli(RelayProc.attach(attempt))
+            except Exception as exc:  # noqa: BLE001 — still reported
+                _log(f"adopt: could not stop the unprompted adapter of {turn_id[:8]}: {exc}")
+        note = ("[runner] the runner restarted before this turn's agent was given its "
+                "message; nothing reached it, so canopy-web may run it again")
+        fstatus, _ = _post_finish(turn_id, {"status": "failed", "result_note": note})
+        _lifecycle(turn_id, "lost", reason="restarted before the prompt", agent=state.get("slug"),
+                   http=fstatus)
+        _unstage_connections(turn_id)
+        _adopted_cleanup(turn_id, state)
+        summary["reported"].append(f"{turn_id[:8]} (never prompted)")
+        return
     if not exited and not _is_relay(info.get("host_pid"), attempt):
         proc = RelayProc.attach(attempt)
         proc.poll()
