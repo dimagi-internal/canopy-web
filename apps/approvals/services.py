@@ -124,7 +124,8 @@ def decide(request_id: int, user, decision: str, *, comment: str = "", via: str 
         if not k.may_approve(user, p, described):
             raise ApprovalError(f"You can't approve this: {k.label.lower()} needs {k.needs}.", 403)
         if decision == "approve" and k.step_up and not stepped_up:
-            raise ApprovalError(f"{k.label} needs your passkey: open this request in canopy and approve it there.", 403)
+            raise ApprovalError(f"{k.label} needs your passkey: approve it on its page in canopy, "
+                                f"{cards.page_url(req)}", 403)
         comment = (comment or "").strip()
         if decision == "decline":
             _close(req, ApprovalRequest.DECLINED, user, via=via, comment=comment, event=ApprovalEvent.DECLINED)

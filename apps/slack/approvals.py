@@ -4,15 +4,17 @@ The DM carries everything needed to decide — what approving will do (rendered 
 the typed params), the requester's own words kept apart — so the click needs nothing else open. The
 decision is taken only from the DM canopy sent to that person for that request, by the person Slack
 signs the click as; it goes through `approvals.services.decide`, the same path as the web page, and
-`settle` then rewrites the message to say who decided what.
+`settle` then rewrites the message to say who decided what. A kind whose approval needs a passkey
+(`step_up` on the card) has no Approve button: its place is a link to the request's page, the one
+place a passkey can be given; Decline needs none and stays.
 """
 from __future__ import annotations
 
 import logging
 
-from django.conf import settings
 from django.http import HttpResponse
 
+from apps.approvals import cards
 from apps.approvals import services as approval_services
 from apps.approvals.models import ApprovalDelivery, ApprovalRequest
 
@@ -21,17 +23,13 @@ from .models import SlackInstallation, SlackUserLink
 
 logger = logging.getLogger(__name__)
 
-APPROVE, DECLINE = "approval_approve", "approval_decline"
+APPROVE, DECLINE, OPEN = "approval_approve", "approval_decline", "approval_open"
 ACTIONS = (APPROVE, DECLINE)
 _TEXT_MAX = 2800
 
 
 def _clip(text: str, n: int = _TEXT_MAX) -> str:
     return text if len(text) <= n else text[: n - 1].rstrip() + "…"
-
-
-def _abs(path: str) -> str:
-    return f"{settings.CANOPY_PUBLIC_BASE_URL.rstrip('/')}{path}"
 
 
 def blocks_for(card: dict, *, settled: bool = False) -> tuple[str, list[dict]]:
@@ -53,13 +51,20 @@ def blocks_for(card: dict, *, settled: bool = False) -> tuple[str, list[dict]]:
         f"*If you decline:* {card['if_declined']}  ·  needs {card['needs']}")}]})
     if settled:
         out.append({"type": "section", "text": {"type": "mrkdwn", "text": f":white_check_mark: {card['outcome']}"}})
+    elif card["step_up"]:
+        out.append({"type": "actions", "block_id": "approval_decision", "elements": [
+            {"type": "button", "action_id": OPEN, "style": "primary", "url": card["page_url"],
+             "text": {"type": "plain_text", "text": cards.STEP_UP_APPROVE}},
+            {"type": "button", "action_id": DECLINE, "style": "danger", "value": str(card["id"]),
+             "text": {"type": "plain_text", "text": "Decline"}},
+        ]})
     else:
         out.append({"type": "actions", "block_id": "approval_decision", "elements": [
             {"type": "button", "action_id": APPROVE, "style": "primary", "value": str(card["id"]),
              "text": {"type": "plain_text", "text": "Approve"}},
             {"type": "button", "action_id": DECLINE, "style": "danger", "value": str(card["id"]),
              "text": {"type": "plain_text", "text": "Decline"}},
-            {"type": "button", "action_id": "approval_open", "url": _abs(card["url"]),
+            {"type": "button", "action_id": OPEN, "url": card["page_url"],
              "text": {"type": "plain_text", "text": "Open the whole request"}},
         ]})
     fallback = f"Approve? {card['title']}" if not settled else f"{card['title']}: {card['outcome']}"
