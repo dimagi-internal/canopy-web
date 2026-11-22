@@ -43,7 +43,7 @@ from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
 from .credentials import delegations
-from .models import Agent
+from .models import Agent, AgentAdmin
 
 GITHUB_API = delegations.GITHUB_API
 HTTP_TIMEOUT = delegations.HTTP_TIMEOUT
@@ -132,6 +132,23 @@ def creating_owner(request, home):
         f"its turn, or else its owner — and neither may create agents in '{home.slug}'. Create it "
         f"from a turn a member who may create agents there asked for, or have a person create it.",
         status=403)
+
+
+def creating_agent(request):
+    """The agent whose own login (or its turn's login) makes this request, or None: a person,
+    a turn's caller token and an agent acting AS a person all sign in as a person."""
+    user = getattr(request, "user", None)
+    return _agent_of_login(user) if getattr(user, "is_authenticated", False) else None
+
+
+def creator_administers(created, creator) -> None:
+    """The agent that created `created` administers it, beside the person who owns it: an
+    `AgentAdmin` grant to its login, kept when the agent's ownership is transferred (the
+    grant names no owner). Nothing for a creator with no login, or for `created` itself."""
+    login = getattr(creator, "user", None)
+    if login is None or creator.pk == created.pk or created.owner_id == login.pk:
+        return
+    AgentAdmin.objects.get_or_create(agent=created, user=login, defaults={"granted_by": login})
 
 
 def _agent_of_login(user):

@@ -24,6 +24,12 @@ Anything it cannot place is not a person (`refusal` names why).
 by an agent acting AS them under an act-as-you permission they approved with their passkey
 (`act_as`): live, `write`, and naming no other turn. A route adopts it by choice; `refusal`
 alone still refuses every act-as token.
+
+`person_act_as_or_admin_agent` adds one more principal, for publishing and rolling back
+ANOTHER agent's stored definition only (`apps/agent_definitions`): an agent's own login
+(its PAT or OAuth sign-in, or the login canopy-web issued for one of its turns) when that
+agent administers the target agent and is not the target itself (`admin_agent`). An agent
+never publishes its own definition, whatever role its login holds.
 """
 from __future__ import annotations
 
@@ -135,3 +141,79 @@ def person_or_act_as(request):
     if Agent.objects.filter(user_id=user.pk).exists():
         return "agent_login"
     return user, fresh
+
+
+#: Why `admin_agent` refuses an agent's own login: the target is itself, or it does not
+#: administer the target.
+OWN_DEFINITION, AGENT_NOT_ADMIN = "own_definition", "agent_not_admin"
+
+#: What an agent's own login signs in with: a PAT (a stored one, or the login canopy-web
+#: issued for one of its turns, `TurnAgentToken`) or an OAuth sign-in. Never a caller token
+#: or an act-as token (a turn speaking for, or as, a person), and never a browser session.
+_AGENT_LOGIN_KINDS = frozenset({kinds.PAT, kinds.OAUTH})
+
+
+def _names_a_turn_of(named: str, acting: Agent) -> bool:
+    try:
+        tid = uuid.UUID(named)
+    except ValueError:
+        return False
+    return Turn.objects.filter(pk=tid, agent_id=acting.pk).exists()
+
+
+def admin_agent(request, target: Agent):
+    """The agent whose OWN login made `request`, when that agent administers `target` and
+    is not `target`; else why not (a str).
+
+    Refused whatever the agent's role: a runner, a contact, anonymous, an act-as token (judged
+    by `person_or_act_as` alone), a caller token or any credential that is not the agent's own
+    login, `X-Canopy-On-Behalf-Of` (an agent saying it acts for a person is not the agent
+    acting as itself), a request naming a turn (`X-Canopy-Turn-Id`) that is not one of the
+    agent's own, the target itself (`OWN_DEFINITION`, even when its login is a workspace
+    owner and so its own admin), and an agent that does not administer the target
+    (`AGENT_NOT_ADMIN`, asked through `Agent.is_admin`, so a turn's role cap applies)."""
+    if getattr(request, "runner_token", None) is not None:
+        return "runner"
+    if getattr(request, "contact", None) is not None:
+        return "contact"
+    user = getattr(request, "user", None)
+    if user is None or not getattr(user, "is_authenticated", False):
+        return "anonymous"
+    if act_as_grant(request) is not None:
+        return "act_as"
+    cred = getattr(request, "auth_credential", None) or {}
+    kind = kinds.kind_of(cred)
+    if kind is None or kind.name not in _AGENT_LOGIN_KINDS or cred.get("turn_id"):
+        return "turn" if kind is None or kind.speaks_for_a_turn or cred.get("turn_id") else "not_an_agent"
+    meta = getattr(request, "META", None) or {}
+    if (meta.get(turn_asker.HEADER) or "").strip():
+        return "on_behalf"
+    acting = Agent.objects.filter(user_id=user.pk).first()
+    if acting is None:
+        return "not_an_agent"
+    named = (meta.get(TURN_HEADER) or "").strip()
+    if named and not _names_a_turn_of(named, acting):
+        return "turn"
+    if acting.pk == target.pk:
+        return OWN_DEFINITION
+    if not target.is_admin(user):
+        return AGENT_NOT_ADMIN
+    return acting
+
+
+def person_act_as_or_admin_agent(request, target: Agent):
+    """Who may publish or roll back `target`'s stored definition on this request:
+    `(person, None, None)` for a person acting as themselves, `(person, grant, None)` for an
+    agent acting AS that person under an act-as-you permission (`person_or_act_as`), or
+    `(agent_login, None, agent)` for ANOTHER agent's own login that administers `target`
+    (`admin_agent`); else why not (a str). The route still asks that the person administers
+    `target` (`Agent.is_admin`), as it does today."""
+    got = person_or_act_as(request)
+    if not isinstance(got, str):
+        return got[0], got[1], None
+    if act_as_grant(request) is not None:
+        return got
+    acting = admin_agent(request, target)
+    if isinstance(acting, str):
+        return got if acting == "not_an_agent" else acting
+    return request.user, None, acting

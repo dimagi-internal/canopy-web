@@ -12,13 +12,16 @@ and credentials, so:
   editable set, or a secret-shaped string;
 * the files canopy writes itself (`definition_store.generated_files`) are rewritten on
   every revision and never taken from an upload;
-* a draft goes live only by a PERSON who administers the agent: `publish`, `rollback`
-  and `convert` are refused to any agent login or turn token (the routes ask
-  `harness.acting_person.person_or_act_as`), and an agent's own draft files an approval
-  request (`agent.definition.publish`) its owner and admins decide. The person's act may
-  be done by an agent acting AS them under an act-as-you permission they approved with
-  their passkey; the revision then names that agent and permission (`acting_agent`,
-  `act_as_grant`);
+* a draft goes live only by a PERSON who administers the agent, or by ANOTHER agent that
+  administers it: `publish` and `rollback` are refused to the agent's own login, to every
+  turn token and to an agent that is not its admin (the routes ask
+  `harness.acting_person.person_act_as_or_admin_agent`); `convert`, `export` and `detach`
+  are a person's only (`person_or_act_as`). A draft no admin agent can publish (one an
+  agent wrote of itself, or one a non-admin agent wrote) files an approval request
+  (`agent.definition.publish`) its owner and admins decide. The person's act may be done by
+  an agent acting AS them under an act-as-you permission they approved with their passkey;
+  the revision then names that agent and permission (`acting_agent`, `act_as_grant`). An
+  admin agent's publish names that agent (`published_by_agent`);
 * revisions are append-only: nothing here deletes or edits a published tree;
 * once an agent's definition moved to GitHub (`export`, `detach`), its canopy repository
   is a read-only archive: every further write is 409 `exported`.
@@ -107,8 +110,12 @@ def _full_tree(agent: Agent, number: int, editable: dict[str, tuple[bytes, bool]
 
 
 def _author(agent: Agent, by, by_agent: bool) -> bytes:
+    """The commit's author: the person, or for an agent's write the agent whose login `by`
+    is (another agent administering this one), else this agent."""
     if by_agent or not getattr(by, "pk", None):
-        return git.agent_author(agent.slug)
+        writer = Agent.objects.filter(user_id=getattr(by, "pk", None)).only("slug").first() \
+            if getattr(by, "pk", None) else None
+        return git.agent_author((writer or agent).slug)
     return git.person_author(by)
 
 
@@ -151,10 +158,14 @@ def revision(agent: Agent, number: int) -> AgentDefinitionRevision | None:
     return AgentDefinitionRevision.objects.filter(agent=agent, number=number).first()
 
 
-def _publish_now(agent: Agent, rev: AgentDefinitionRevision, by, act_as=None) -> AgentDefinitionRevision:
+def _publish_now(agent: Agent, rev: AgentDefinitionRevision, by, act_as=None,
+                 admin_agent: Agent | None = None, *, by_approval: bool = False) -> AgentDefinitionRevision:
     """Make `rev` live: `refs/heads/main` and `refs/tags/r<N>` name its commit, and the
-    draft ref goes. `act_as`: the act-as-you permission an agent did it under, as `by`
-    (recorded on the revision). The caller holds the agent's lock."""
+    draft ref goes. `act_as`: the act-as-you permission an agent did it under, as `by`;
+    `admin_agent`: the agent whose own login `by` is, publishing as itself (both recorded
+    on the revision). An approval the draft still waits on is closed as superseded, unless
+    that approval is what is publishing it (`by_approval`). The caller holds the agent's
+    lock."""
     previous = agent.live_revision
     if previous is not None and previous.pk != rev.pk:
         previous.status = SUPERSEDED
@@ -164,8 +175,12 @@ def _publish_now(agent: Agent, rev: AgentDefinitionRevision, by, act_as=None) ->
     rev.published_at = timezone.now()
     rev.act_as_grant = act_as
     rev.acting_agent = act_as.agent if act_as is not None else None
+    rev.published_by_agent = admin_agent
     rev.save(update_fields=["status", "published_by", "published_at", "tree", "root_sha256", "commit",
-                            "act_as_grant", "acting_agent"])
+                            "act_as_grant", "acting_agent", "published_by_agent"])
+    if rev.approval_id and not by_approval:
+        who = f"{admin_agent.slug} (agent)" if admin_agent is not None else getattr(by, "email", "") or "canopy"
+        approvals.supersede(rev.approval_id, by, why=f"Published directly by {who}; no decision is needed.")
     git.set_ref(agent.pk, git.MAIN, rev.commit)
     git.set_ref(agent.pk, git.tag_ref(rev.number), rev.commit)
     git.delete_ref(agent.pk, git.DRAFT)
@@ -188,7 +203,8 @@ def _after_publish(agent_pk: int) -> None:
 
 def _new_revision(agent: Agent, *, editable: dict[str, tuple[bytes, bool]], message: str, status: str,
                   parent: AgentDefinitionRevision | None, by, by_agent: bool = False,
-                  turn=None, parent_commit: str = "", act_as=None) -> AgentDefinitionRevision:
+                  turn=None, parent_commit: str = "", act_as=None,
+                  admin_agent: Agent | None = None) -> AgentDefinitionRevision:
     """A new revision, committed on `parent`'s commit (or `parent_commit`, for a first
     revision with history behind it): live at once when `status` is published, else the
     agent's draft (`refs/heads/draft`)."""
@@ -202,7 +218,7 @@ def _new_revision(agent: Agent, *, editable: dict[str, tuple[bytes, bool]], mess
         message=message, author_user=by if getattr(by, "pk", None) else None,
         author_agent_turn=turn, by_agent=by_agent, status=DRAFT)
     if status == PUBLISHED:
-        _publish_now(agent, rev, by, act_as)
+        _publish_now(agent, rev, by, act_as, admin_agent)
     else:
         git.set_ref(agent.pk, git.DRAFT, commit)
     return rev
@@ -358,22 +374,24 @@ def _apply(base: AgentDefinitionRevision, changes: list[dict]) -> dict[str, tupl
 
 
 def _withdraw(rev: AgentDefinitionRevision, by) -> None:
-    """Close the approval a draft asked for, if whoever is acting may — called while the
-    draft is still a draft, so the kind can still say who may withdraw it. One left open
-    still cannot publish: the kind checks the draft and its root first."""
+    """Close the approval a draft asked for — called while the draft is still a draft, so
+    the kind can still say who may withdraw it. Withdrawn when whoever is acting may;
+    otherwise (an admin agent replacing or rolling past another agent's draft) closed as
+    superseded, since the route already let them replace the draft it names."""
     if not rev.approval_id:
         return
     try:
         approvals.cancel(rev.approval_id, by)
     except approvals.ApprovalError:
-        pass
+        approvals.supersede(rev.approval_id, by, why=f"Revision {rev.number} was replaced or discarded.")
 
 
 def create_draft(agent: Agent, *, base: int, changes: list[dict], message: str, by, by_agent: bool,
-                 turn=None) -> AgentDefinitionRevision:
+                 turn=None, asks_approval: bool | None = None) -> AgentDefinitionRevision:
     """Create the agent's one draft, or replace it: `changes` applied to the LIVE revision
-    `base`. A base that is not live is `stale_base` (409). An agent's draft (`by_agent`)
-    also files an approval request to the agent's owner and admins."""
+    `base`. A base that is not live is `stale_base` (409). A draft that `asks_approval`
+    (default: an agent's draft, `by_agent`) files an approval request to the agent's owner
+    and admins; an admin agent that may publish the draft itself asks for none."""
     if not changes:
         raise Refused("a draft needs at least one change", 422, code="empty")
     with transaction.atomic():
@@ -393,7 +411,7 @@ def create_draft(agent: Agent, *, base: int, changes: list[dict], message: str, 
         if rev.root_sha256 == live_rev.root_sha256:
             # The transaction is undone, the draft ref with it.
             raise Refused("these changes leave the definition exactly as it is live", 422, code="no_change")
-        if by_agent:
+        if by_agent if asks_approval is None else asks_approval:
             from . import publish_kind  # noqa: PLC0415 — publish_kind imports this module
 
             rev.approval = publish_kind.request(agent, rev, by=by, reason=message)
@@ -401,8 +419,11 @@ def create_draft(agent: Agent, *, base: int, changes: list[dict], message: str, 
     return rev
 
 
-def publish(agent: Agent, number: int, *, by, expect_root: str = "", act_as=None) -> AgentDefinitionRevision:
-    """Draft `number` goes live; the old live revision is superseded."""
+def publish(agent: Agent, number: int, *, by, expect_root: str = "", act_as=None,
+            admin_agent: Agent | None = None, by_approval: bool = False) -> AgentDefinitionRevision:
+    """Draft `number` goes live; the old live revision is superseded. `admin_agent`: the
+    agent whose own login `by` is, publishing as an admin of `agent`. `by_approval`: the
+    draft's own approval request is publishing it, and closes itself."""
     with transaction.atomic():
         agent = _locked(agent)
         _refuse_exported(agent)
@@ -430,7 +451,7 @@ def publish(agent: Agent, number: int, *, by, expect_root: str = "", act_as=None
                                  author=drafted.author if drafted is not None else _author(agent, by, False),
                                  message=rev.message or f"Revision {rev.number}")
         rev.tree, rev.root_sha256 = tree, root
-        return _publish_now(agent, rev, by, act_as)
+        return _publish_now(agent, rev, by, act_as, admin_agent, by_approval=by_approval)
 
 
 def discard(agent: Agent, number: int, *, by) -> AgentDefinitionRevision:
@@ -454,8 +475,10 @@ def _discard(rev: AgentDefinitionRevision, by) -> None:
     git.delete_ref(rev.agent_id, git.DRAFT)
 
 
-def rollback(agent: Agent, number: int, *, by, message: str = "", act_as=None) -> AgentDefinitionRevision:
-    """A NEW revision whose files are revision `number`'s, published. History is kept."""
+def rollback(agent: Agent, number: int, *, by, message: str = "", act_as=None,
+             admin_agent: Agent | None = None) -> AgentDefinitionRevision:
+    """A NEW revision whose files are revision `number`'s, published. History is kept.
+    `admin_agent`: the agent whose own login `by` is, rolling back as an admin of `agent`."""
     with transaction.atomic():
         agent = _locked(agent)
         _refuse_exported(agent)
@@ -469,7 +492,8 @@ def rollback(agent: Agent, number: int, *, by, message: str = "", act_as=None) -
             _discard(pending, by)
         return _new_revision(agent, editable=_editable_only(store.files_of(old), agent.slug),
                              message=message or f"Roll back to revision {number}", status=PUBLISHED,
-                             parent=agent.live_revision, by=by, act_as=act_as)
+                             parent=agent.live_revision, by=by, act_as=act_as,
+                             by_agent=admin_agent is not None, admin_agent=admin_agent)
 
 
 # --- moving to GitHub ---------------------------------------------------------

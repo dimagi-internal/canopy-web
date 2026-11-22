@@ -144,7 +144,11 @@ class DefinitionRevisionSummaryOut(StrictModel):
     size: int
     created_at: dt.datetime
     published_at: dt.datetime | None = None
+    #: The person who published it (their email), or "<slug> (agent)" when another agent that
+    #: administers this one published it as itself (`published_by_agent`).
     published_by: str | None = None
+    #: The admin agent that published this revision as itself, or null.
+    published_by_agent: str | None = None
     #: The approval request an agent's own draft filed, while it waits.
     approval_id: int | None = None
     #: When an agent created or published this revision AS its person (`published_by`, or
