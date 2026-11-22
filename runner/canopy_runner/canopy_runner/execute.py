@@ -1208,9 +1208,8 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
     else:
         # The same guard as an agent turn's create (execute_turn): a stored agent, or an
         # agent whose repo this emdash lacks, cannot be created here, and the sidecar would
-        # only say `project "<slug>" not found in the emdash sidebar`. 2026-11-22,
-        # investigation 41 (turn 94573465): a labsdata-nozdr chat on jj-mbp-cdp failed that
-        # way four times, with nothing saying the ACP adapter was what was missing.
+        # only say `project "<slug>" not found in the emdash sidebar`, which hides what is
+        # actually missing (for a stored agent, the ACP adapter).
         missing_project = _stored_on_emdash(turn) or _project_missing(cfg, target)
         if missing_project:
             logger.error("chat create skipped turn=%s agent=%s: %s", turn_id, target,

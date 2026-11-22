@@ -994,8 +994,8 @@ def test_a_stored_agent_on_an_emdash_box_without_the_adapter_is_left_to_say_why(
 
 
 def test_a_stored_agent_without_the_adapter_starts_installing_it(cfg, monkeypatch):
-    """Investigation 41 (2026-11-22): an emdash box never installed the adapter, so every
-    stored-agent turn on it fell through to emdash and failed. The decline now installs it."""
+    """Without the adapter a stored agent cannot run on an emdash box at all, so declining
+    one starts the install."""
     monkeypatch.setattr(desktop, "_adapter_missing", lambda: True)
     kicked = []
     monkeypatch.setattr(desktop, "_kick_adapter", lambda force=False: kicked.append(force))

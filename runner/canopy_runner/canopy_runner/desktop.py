@@ -181,11 +181,8 @@ def _kick_adapter(force: bool = False) -> None:
     """Install the ACP adapter in the background (an npm install can take a minute; the
     heartbeat and the claim loop must not wait on it).
 
-    2026-11-22, investigation 41 (turn 94573465): jj-mbp-cdp, an emdash box, had never
-    installed the adapter, because only a switch TO claude-cli installed it. Its first
-    stored-agent chat (labsdata-nozdr) was declined by the headless path, fell through to
-    emdash, and failed four times with `project "labsdata-nozdr" not found in the emdash
-    sidebar`."""
+    Every runtime needs it, emdash included: a stored agent has no emdash project, so its
+    new threads run headless on any box, and without the adapter they cannot run at all."""
     global _adapter_kicked
     if _adapter_kicked and not force:
         return
@@ -1228,7 +1225,7 @@ def maybe_execute(cfg, client, runner_id: str, turn: dict, thread_key: str) -> s
     elif (_current == CLAUDE_CLI or headless_stored) and _adapter_missing():
         logger.error("claude-cli runtime: the ACP adapter is not installed on this runner — turn %s "
                      "runs on emdash instead", turn.get("id"))
-        _kick_adapter()  # so the next try can run headless (investigation 41)
+        _kick_adapter()  # so the next try can run headless
         return None
     elif claude_cli() is None:
         # A new desktop session needs the CLI (seed + mod install). Without it the

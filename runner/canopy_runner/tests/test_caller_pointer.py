@@ -180,9 +180,8 @@ def test_an_agent_turn_gets_the_pointer_as_well_as_the_flag(monkeypatch, _isolat
 
 def test_a_stored_agents_chat_on_emdash_fails_saying_why_without_touching_the_sidebar(
         monkeypatch, _isolated):
-    """Investigation 41 (2026-11-22, turn 94573465): a stored agent's chat that the headless
-    path declined reached the sidecar, which failed with `project "labsdata-nozdr" not found
-    in the emdash sidebar`. It now fails before any UI work, naming what is missing."""
+    """A stored agent's chat that the headless path declined fails before any UI work,
+    naming what is missing, not the emdash sidebar."""
     created = []
     monkeypatch.setattr(cdp_control, "create_task", lambda *a, **k: created.append(a) or {})
     client = _ChatClient({"reuse": False})
