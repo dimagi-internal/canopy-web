@@ -109,8 +109,9 @@ class AppInstallation(models.Model):
 class AppVersion(models.Model):
     DRAFT, PUBLISHED, SUPERSEDED, DISCARDED = "draft", "published", "superseded", "discarded"
     STATUSES = [(s, s) for s in (DRAFT, PUBLISHED, SUPERSEDED, DISCARDED)]
-    #: Why the version exists: a customization, a template update, a rollback, the install.
-    ORIGINS = [(s, s) for s in ("install", "edit", "upgrade", "rollback")]
+    #: Why the version exists: a customization, a template update, a rollback, the install, or a
+    #: new version of the workspace's own template published whole (`services.release`).
+    ORIGINS = [(s, s) for s in ("install", "edit", "upgrade", "rollback", "release")]
 
     installation = models.ForeignKey(AppInstallation, on_delete=models.CASCADE, related_name="versions")
     number = models.PositiveIntegerField()
@@ -132,6 +133,11 @@ class AppVersion(models.Model):
     #: it, test it and run its checks — never publish, discard or roll back. The
     #: draft closing ends it, so no grant outlives the work it was given for.
     helpers = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True, related_name="+")
+    #: What going live with this version changed about who can see and do what, in plain words
+    #: (`template_diff.changes` of the version it replaced against this one). Empty: nothing.
+    reach_changes = models.JSONField(default=list, blank=True)
+    #: The right it went live under: `admin`, `maintainer:content` or `maintainer:permissions`.
+    published_under = models.CharField(max_length=24, blank=True, default="")
 
     class Meta:
         ordering = ["-number"]
@@ -151,11 +157,21 @@ class AppRoleGrant(models.Model):
     """An app role given to one workspace member by name, beside the roles the
     manifest derives from workspace capabilities (`access.roles_for`). How a
     viewer becomes an interviewer, or the head of HR becomes the app's maintainer,
-    without becoming a workspace editor or admin."""
+    without becoming a workspace editor or admin.
+
+    For the `maintainer` role, `level` is how far the admin trusted them
+    (`access.py`): `content` publishes versions that change nothing about who can
+    see or do what; `permissions` may also publish ones that do (connections,
+    browser, roles, readers, public surfaces) — the admin pre-approved that for
+    this one app. Every other role ignores it."""
+
+    CONTENT, PERMISSIONS = "content", "permissions"
+    LEVELS = [(CONTENT, "Content"), (PERMISSIONS, "Content and permissions")]
 
     installation = models.ForeignKey(AppInstallation, on_delete=models.CASCADE, related_name="grants")
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
     role = models.CharField(max_length=40)
+    level = models.CharField(max_length=12, choices=LEVELS, default=CONTENT)
     granted_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
                                    related_name="+")
     granted_at = models.DateTimeField(auto_now_add=True)

@@ -3906,7 +3906,18 @@ export interface paths {
         /** Every version of an app, newest first */
         readonly get: operations["list_workspace_app_versions"];
         readonly put?: never;
-        readonly post?: never;
+        /**
+         * Publish a new version of your workspace's own app from its whole manifest (a repo's build)
+         * @description `manifest` is the app's whole manifest, pages included, in the shape installing
+         *     your own app takes; it is validated the same way (connections and `browser` too) and
+         *     goes live over the workspace's changes as a new version, so every earlier version
+         *     can be restored. Only for an app whose template this workspace owns. For its
+         *     maintainers and admins. A version that changes who can see or do what (403 names
+         *     each change) needs a workspace admin, or a maintainer at the `permissions` level;
+         *     409 while a draft is open, a check fails or the version string is taken; 422 for
+         *     a manifest that does not validate.
+         */
+        readonly post: operations["publish_workspace_app_version"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4067,7 +4078,8 @@ export interface paths {
         /**
          * Publish the draft: it becomes the live app
          * @description Refused while a change is set aside or a check fails. A change to what the
-         *     public sees or who can do what needs a workspace admin.
+         *     public sees or who can do what needs a workspace admin, or a maintainer an admin
+         *     allowed to change this app's permissions.
          */
         readonly post: operations["publish_workspace_app_draft"];
         readonly delete?: never;
@@ -4085,9 +4097,58 @@ export interface paths {
         };
         readonly get?: never;
         readonly put?: never;
-        /** Make an earlier version live again (as a new version) */
+        /**
+         * Make an earlier version live again (as a new version)
+         * @description Going back is judged like going forward: a version that would change who can see
+         *     or do what needs a workspace admin, or a maintainer allowed to change permissions.
+         */
         readonly post: operations["rollback_workspace_app"];
         readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-apps/{workspace}/{key}/maintainers": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Who may publish new versions of this app, and at which level
+         * @description `content`: versions that change nothing about who can see or do what.
+         *     `permissions`: those too (connections, browser, roles, readers, public pages).
+         */
+        readonly get: operations["list_workspace_app_maintainers"];
+        readonly put?: never;
+        /**
+         * Let a person or an agent publish new versions of this app, or change their level
+         * @description Name a workspace member by `email`, or an agent by `agent` (its slug; its login must
+         *     already be a member here). `level` is `content` (versions that leave who can see or do
+         *     what unchanged) or `permissions` (any version: you approve widening this app ahead of
+         *     time). Naming someone who already maintains it changes their level.
+         */
+        readonly post: operations["set_workspace_app_maintainer"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-apps/{workspace}/{key}/maintainers/{grant_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /** Stop someone publishing new versions of this app */
+        readonly delete: operations["remove_workspace_app_maintainer"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -28236,6 +28297,28 @@ export interface components {
             readonly published_by?: string | null;
             /** Published At */
             readonly published_at?: string | null;
+            /**
+             * Reach Changes
+             * @default []
+             */
+            readonly reach_changes: readonly string[];
+            /**
+             * Published Under
+             * @default
+             */
+            readonly published_under: string;
+        };
+        /** ReleaseIn */
+        readonly ReleaseIn: {
+            /** Manifest */
+            readonly manifest: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Note
+             * @default
+             */
+            readonly note: string;
         };
         /** DraftOut */
         readonly DraftOut: {
@@ -28337,6 +28420,45 @@ export interface components {
         readonly RollbackIn: {
             /** Number */
             readonly number: number;
+        };
+        /** MaintainerOut */
+        readonly MaintainerOut: {
+            /** Id */
+            readonly id: number;
+            /** Email */
+            readonly email: string;
+            /** Agent */
+            readonly agent?: string | null;
+            /** Name */
+            readonly name: string;
+            /** Level */
+            readonly level: string;
+            /** Granted By */
+            readonly granted_by?: string | null;
+            /**
+             * Granted At
+             * Format: date-time
+             */
+            readonly granted_at: string;
+        };
+        /** MaintainerIn */
+        readonly MaintainerIn: {
+            /**
+             * Email
+             * @default
+             */
+            readonly email: string;
+            /**
+             * Agent
+             * @default
+             */
+            readonly agent: string;
+            /**
+             * Level
+             * @default content
+             * @enum {string}
+             */
+            readonly level: "content" | "permissions";
         };
         /** ActionIn */
         readonly ActionIn: {
@@ -59424,6 +59546,33 @@ export interface operations {
             };
         };
     };
+    readonly publish_workspace_app_version: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ReleaseIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["VersionOut"];
+                };
+            };
+        };
+    };
     readonly get_workspace_app_draft: {
         readonly parameters: {
             readonly query?: never;
@@ -59718,6 +59867,78 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["InstallationOut"];
                 };
+            };
+        };
+    };
+    readonly list_workspace_app_maintainers: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["MaintainerOut"][];
+                };
+            };
+        };
+    };
+    readonly set_workspace_app_maintainer: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["MaintainerIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MaintainerOut"];
+                };
+            };
+        };
+    };
+    readonly remove_workspace_app_maintainer: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly key: string;
+                readonly grant_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
