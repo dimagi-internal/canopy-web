@@ -259,7 +259,7 @@ def context_shown(run: BrainRun) -> dict | None:
     it was kept."""
     if not run.context:
         return None
-    return {**run.context, "source_ids_due": [], "open_findings": [], "dismissed_findings": []}
+    return {**run.context, "source_ids_due": [], "triage": [], "open_findings": [], "dismissed_findings": []}
 
 
 def run_page(user, slugs, *, before: int = 0, limit: int = 25) -> dict:
@@ -272,9 +272,12 @@ def run_page(user, slugs, *, before: int = 0, limit: int = 25) -> dict:
     page = list(qs[:limit + 1])
     rows = page[:limit]
     reads: dict[int, list] = {}
-    for run_id, session_id in (BrainRunRead.objects.filter(run__in=[r.pk for r in rows])
-                               .values_list("run_id", "source__session_id")):
+    verdicts: dict[tuple, tuple] = {}
+    for run_id, session_id, score, why in (BrainRunRead.objects.filter(run__in=[r.pk for r in rows])
+                                           .values_list("run_id", "source__session_id", "triage_score",
+                                                        "triage_reason")):
         reads.setdefault(run_id, []).append(session_id)
+        verdicts[(run_id, session_id)] = (score, why)
     every = {s for ids in reads.values() for s in ids if s}
     seen = {s.pk: s for s in _readable_sessions(user, slugs).filter(pk__in=every).only("pk", "title", "workspace_id")}
     projects = _projects(user, slugs, {r.subject for r in rows if r.subject_type == "project"})
@@ -288,6 +291,8 @@ def run_page(user, slugs, *, before: int = 0, limit: int = 25) -> dict:
         out.append({"id": r.pk, "learner": r.capability.slug, "purpose": r.purpose, "subject_type": r.subject_type,
                     "subject": subject, "scope": r.scope, "state": r.state, "created_at": r.created_at, "finished_at": r.finished_at,
                     "reads": len(got), "sessions": [{"session_id": s.pk, "workspace": s.workspace_id,
-                                                     "title": redact.redact_text(s.title or "")[0]} for s in shown],
+                                                     "title": redact.redact_text(s.title or "")[0],
+                                                     "triage_score": verdicts[(r.pk, s.pk)][0],
+                                                     "triage_reason": verdicts[(r.pk, s.pk)][1]} for s in shown],
                     "hidden": len(got) - len(shown), "context": context_shown(r)})
     return {"runs": out, "next_before": rows[-1].pk if rows else 0, "done": len(page) <= limit}

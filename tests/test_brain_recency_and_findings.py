@@ -14,7 +14,7 @@ from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.brain import context, emit, findings, reading, runs, sources, targets
-from apps.brain.models import BrainOutput, BrainRunRead, LearningConsent, OutputLineage
+from apps.brain.models import BrainOutput, BrainRunRead, BrainTriage, LearningConsent, OutputLineage
 from apps.canopy_sessions.models import Message, Session
 from apps.events.models import Event
 from tests.fixtures.brain_world import aim, brain_world, member, user
@@ -125,6 +125,7 @@ def test_counting_what_is_due_costs_the_same_however_many_sessions(w):
     for i in range(3):
         _chat(w["ws"], w["alice"], f"s{i}")
     run = _start(w)
+    BrainTriage.objects.all().delete()          # starting it triaged these: count both asks cold (`triage` caches)
     with CaptureQueriesContext(connection) as few:
         context.due(run)
     for i in range(12):

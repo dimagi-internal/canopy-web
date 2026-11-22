@@ -284,8 +284,8 @@ follows the operator's turn mode and rails. What makes it a learning run:
   shipped (`_isolated_forget_turn`), so no later turn reads it off the disk. A laptop runner does not report it and
   takes none.
 
-- **`brain_read`** serves the run's next eligible sources once each, most recently active first (`reading.activity`, the
-  session list's last-activity rule), only those active within its target's window (`budget.lookback_days`, on the
+- **`brain_read`** serves the run's next eligible sources once each, best first by triage (below; ties most recently
+  active first by `reading.activity`, the session list's last-activity rule), only those active within its target's window (`budget.lookback_days`, on the
   target: 14 days for a workspace, 30 for a project unless set; an older session is never read and no run walks back
   through a backlog), leaving out what a clean run of the same feature already read for the same subject. A session
   that grew by `reading.REREAD_ROWS` rows past where its last clean read stopped (`BrainRunRead.through`) is due again
@@ -295,6 +295,8 @@ follows the operator's turn mode and rails. What makes it a learning run:
   calls (`next_index`, passed back as `index`), never splitting a row. The directives of the people in a source travel with it, and the sources removed since the feature learned
   from them are named once (`revoked`, from `RevocationNotice`). Every source served is recorded (`BrainRunRead`, a
   `brain.read` event).
+- **Triage** (`triage` module docstring) orders what is due, never filters it: a deterministic, cached, counts-only
+  verdict per due session; `brain_read` serves best first and reads any due one by `source`.
 - **`brain_emit`** writes one output of a declared kind, about the run's own subject, citing sources, and a `key`
   naming what it is: a repeat folds into the open finding with that key (below). Every cited
   source must be one this run read and must still be eligible now, or nothing is written. The lineage

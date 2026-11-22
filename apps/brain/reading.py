@@ -1,9 +1,11 @@
 """What a brain run reads (`brain_read`): the sources `eligible_sources` allows, scrubbed, once each.
 
-A run walks its feature's eligible sources most recently active first (`activity`: the session's last activity, the
-rule its list shows), a few at a time, leaving out what it already read and what a clean run of the same feature read
-for the same subject (unless a removal asked for it to be derived again, or the session grew by `REREAD_ROWS` rows
-since: then it is due again and served from where that read stopped). A target's run reads only sessions active in its
+A run walks its feature's eligible sources best first (`triage`: a cheap, explainable verdict on each, counts of
+friction and of what is new; ties, and anything past what it triaged, most recently active first by `activity`: the
+session's last activity, the rule its list shows), a few at a time, or any one due source it names (`source`),
+leaving out what it already read and what a clean run of the same feature read for the same subject (unless a removal
+asked for it to be derived again, or the session grew by `REREAD_ROWS` rows since: then it is due again and served
+from where that read stopped). A target's run reads only sessions active in its
 window (`budget.lookback_days`): an older one is never read, and nothing walks back through a backlog.
 Each source comes through the core read (`transcript_read.read`) in the feature's `scope` (the whole session unless
 narrowed: every row, tool calls and results included), secrets scrubbed by `common.redact`, never a sensitive or a
@@ -29,7 +31,7 @@ from apps.canopy_sessions.models import Message
 from apps.common import redact
 from apps.workspaces import services as wsvc
 
-from . import budget, learning_reads, readers
+from . import budget, learning_reads, readers, triage
 from .eligibility import eligible_sources
 from .models import (
     BrainRun,
@@ -56,6 +58,10 @@ REREAD_ROWS = 50
 
 class NotReadingError(RuntimeError):
     """This run may read nothing now: "Learning reads" is off wherever it reads, its feature is disabled or it is not open."""
+
+
+class NotDueError(LookupError):
+    """The source asked for by id is not one this run may read now (`candidates`)."""
 
 
 def activity():
@@ -120,6 +126,31 @@ def candidates(run: BrainRun, after: int = 0):
     return qs.filter(due).order_by(F("_active").desc(), "-pk")
 
 
+def verdicts(run: BrainRun, due=None) -> list:
+    """The triage verdicts of this run's due sessions, best first (`triage.judge`, in the run's view); none for a
+    judge, which reads a few opening lines of each, newest first. `due`: `candidates(run)` when already built."""
+    view = view_of(run)
+    if run.purpose == JUDGE or view == transcript_read.OPENING:
+        return []
+    return triage.judge(due if due is not None else candidates(run), view)
+
+
+def ordered(run: BrainRun, limit: int) -> list:
+    """The first `limit` sources due, best first (`verdicts`; past what it triaged, most recently active
+    first), each with its verdict as `_triage` (None when untriaged). Every source is one of `candidates`."""
+    due = candidates(run)
+    found = verdicts(run, due)
+    picked = [v.source for v in found[:limit]]
+    rows = {s.pk: s for s in due.filter(pk__in=picked).select_related("session")} if picked else {}
+    out = [rows[pk] for pk in picked if pk in rows]
+    if len(out) < limit:
+        out += list(due.exclude(pk__in={v.source for v in found}).select_related("session")[:limit - len(out)])
+    by = {v.source: v for v in found}
+    for s in out:
+        s._triage = by.get(s.pk)
+    return out
+
+
 def resume_after(source) -> int | None:
     """Where a served candidate's read starts: after the row its last clean read reached, for a session due again for
     growing; None (from the start) for one never read or asked to be derived again."""
@@ -178,9 +209,9 @@ def _directives(source: BrainSource, cls: str) -> list[str]:
 
 
 def read_next(run: BrainRun, *, after: int = 0, limit: int = MAX_SOURCES, turn_id: str = "",
-              index: int | None = None) -> dict:
-    """Serve the next sources due (most recently active first) and record them, with how far each was read
-    (`BrainRunRead.through`). `next_after` is what to pass back; `done` says nothing is left. A source larger than a whole call is served in parts: its last part's `next_index` (and the
+              index: int | None = None, source: int | None = None) -> dict:
+    """Serve the next sources due (best first: `ordered`), or the one due source named by `source` (`NotDueError`
+    when it is not due), and record them, with how far each was read (`BrainRunRead.through`). `next_after` is what to pass back; `done` says nothing is left. A source larger than a whole call is served in parts: its last part's `next_index` (and the
     response's) is what to pass as `index`, with `next_after`, to read on in it. The caller carries the position:
     reading a source twice discloses nothing new."""
     if (learning_reads.run_refusal(run.capability, run.subject, run.scope) or not run.capability.enabled
@@ -188,19 +219,27 @@ def read_next(run: BrainRun, *, after: int = 0, limit: int = MAX_SOURCES, turn_i
         raise NotReadingError("this run may not read")
     limit = max(1, min(int(limit), MAX_SOURCES))
     left = budget.run_left(run)
+    wanted = source
     if index is not None:
         limit = 1                                       # the rest of a source already served (and counted)
     elif left["sources"] <= 0:
         return _stopped(run, after, left)
     else:
-        limit = min(limit, left["sources"])
+        limit = 1 if wanted is not None else min(limit, left["sources"])
     view = view_of(run)
     if index is not None:
         # The rest of the source the last call left part-way: the one right past `after`, read by this run already.
         page = list(eligible_for(run).filter(pk=after + 1, pk__in=BrainRunRead.objects.filter(run_id=run.pk)
                                              .values("source_id")).select_related("session")[:1])
+    elif wanted is not None:
+        # Any due session, by id: triage orders what is due, it never decides what may be read.
+        due = candidates(run)
+        page = list(due.filter(pk=wanted).select_related("session")[:1])
+        if not page:
+            raise NotDueError(f"source {wanted} is not due for this run")
+        page[0]._triage = next((v for v in verdicts(run, due) if v.source == wanted), None)
     else:
-        page = list(candidates(run).select_related("session")[:limit])
+        page = ordered(run, limit)
     served, used, next_index = [], 0, None
     with transaction.atomic():
         for i, source in enumerate(page):
@@ -213,7 +252,10 @@ def read_next(run: BrainRun, *, after: int = 0, limit: int = MAX_SOURCES, turn_i
             used += got.chars
             through = got.next_after if got.truncated else (got.messages[-1]["index"] if got.messages
                                                                     else start if start is not None else -1)
-            row, _ = BrainRunRead.objects.get_or_create(run=run, source=source)
+            verdict = getattr(source, "_triage", None)
+            row, _ = BrainRunRead.objects.get_or_create(
+                run=run, source=source, defaults=({"triage_score": verdict.score, "triage_reason": verdict.reason}
+                                                  if verdict is not None else {}))
             if through is not None and (row.through is None or through > row.through):
                 BrainRunRead.objects.filter(pk=row.pk).update(through=through)
             readers.record_read(reader=None, capability=run.capability.slug, purpose=run.purpose,
@@ -223,6 +265,8 @@ def read_next(run: BrainRun, *, after: int = 0, limit: int = MAX_SOURCES, turn_i
                            "started_at": source.session.created_at, "messages": got.messages,
                            "truncated": got.truncated, "next_index": got.next_after,
                            "read_before": start if index is None else None,
+                           "triage": ({"score": verdict.score, "reason": verdict.reason} if verdict is not None
+                                      else None),
                            "directives": _directives(source, run.capability.purpose_class)})
             if got.truncated:                           # larger than a call: the rest of it comes next call
                 next_index = got.next_after

@@ -436,6 +436,9 @@ function Runs({ ws, state }: { ws: string; state: BrainState }): JSX.Element {
                     <Fragment key={s.session_id}>
                       {i > 0 && ', '}
                       <Link className="underline" to={sessionHref(s.workspace, s.session_id)}>{s.title || 'untitled'}</Link>
+                      {s.triage_score != null && (
+                        <span className="text-muted-foreground tabular-nums" title={s.triage_reason}> ({s.triage_score})</span>
+                      )}
                     </Fragment>
                   ))}
                   {r.hidden > 0 && <span className="text-muted-foreground"> (+{r.hidden} you do not read)</span>}

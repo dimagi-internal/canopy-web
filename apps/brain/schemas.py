@@ -188,6 +188,11 @@ class BrainReadMessage(StrictModel):
     tool: dict | None = Field(None, description="On a tool call or its result: the tool's name.")
 
 
+class BrainReadTriage(StrictModel):
+    score: int
+    reason: str
+
+
 class BrainReadSource(StrictModel):
     source: int
     kind: str
@@ -200,6 +205,7 @@ class BrainReadSource(StrictModel):
     read_before: int | None = Field(None, description="Set when this session was learned from before and has grown "
                                     "since: only the rows after this one are served (what is new).")
     directives: list[str] = Field(description="Words the people in this source asked every reader to be shown.")
+    triage: BrainReadTriage | None = Field(None, description="Why it was served when it was: its triage verdict.")
 
 
 class BrainRunBudgetLeft(StrictModel):
@@ -578,6 +584,8 @@ class BrainRunSession(StrictModel):
     session_id: uuid.UUID
     workspace: str
     title: str
+    triage_score: int | None = Field(None, description="The triage score it was read under (none: read before triage).")
+    triage_reason: str = ""
 
 
 class BrainRunContextTarget(StrictModel):
@@ -610,6 +618,12 @@ class BrainRunContextDismissed(StrictModel):
     dismissed_at: str = Field("", description="ISO time it was dismissed.")
 
 
+class BrainRunContextTriage(StrictModel):
+    source: int
+    score: int
+    reason: str = Field("", description="What made the score, in counts: never a word of the session.")
+
+
 class BrainRunContext(StrictModel):
     """What a learning run's turn is told about itself (`brain.context`): in its first prompt and as `brain_run` in
     its caller envelope. Ids and names, never a word of a session. `version` changes only when a field's meaning does."""
@@ -629,7 +643,10 @@ class BrainRunContext(StrictModel):
     target: BrainRunContextTarget | None = None
     accountable: BrainRunContextPerson | None = None
     sessions_due: int
-    source_ids_due: list[int] = Field(default_factory=list)
+    source_ids_due: list[int] = Field(default_factory=list, description="Best first (`triage`).")
+    triage: list[BrainRunContextTriage] = Field(
+        default_factory=list, description="The first due sessions' triage verdicts, best first: what `brain_read` "
+        "serves next. It orders, never filters: every due session can be read (`brain_read` `source`).")
     lookback_days: int | None = Field(None, description="Only sessions active in this many days are due (none: no "
                                       "window).")
     open_findings_total: int = 0
