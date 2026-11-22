@@ -19931,8 +19931,10 @@ export interface paths {
          * Write what this run learned
          * @description For a turn in a learning run: one output of a kind its feature declares, about the run's own subject,
          *     citing the sources it came from. Every cited source must be one this run read and must still be open to
-         *     it; otherwise nothing is written (422). The words are scrubbed. The same output twice is one, and one whose
-         *     `key` matches an open finding of this learner and subject, or that names one by `same_as`, folds into it
+         *     it; otherwise nothing is written (422). Every piece of `body.evidence` ({source, index, quote}) must quote a
+         *     message this run read, or the whole output is refused (422) naming the piece and why: fix it and emit again. The
+         *     words are scrubbed. The same output twice is one, and one whose `key` matches an open finding of this learner and
+         *     subject (or one dismissed lately, which stays dismissed), or that names one by `same_as`, folds into it
          *     (`folded`). Past the run's budget of outputs a new one is refused (422).
          */
         readonly post: operations["brain_emit"];
@@ -20221,6 +20223,28 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/brain/scorecard": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * How each learner target's findings land, over the last eight weeks (counts)
+         * @description Per learner target here and below: the findings its runs made each week by where each stands now, the share
+         *     taken up (precision: accepted and done over those decided), how many are open and how many faded, and how many came
+         *     back after they were done. Only findings you may read are counted (the Findings tab's rule).
+         */
+        readonly get: operations["brain_scorecard"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/brain/learning-reads": {
         readonly parameters: {
             readonly query?: never;
@@ -20373,10 +20397,11 @@ export interface paths {
         /**
          * Change a target's budget (its owners and admins)
          * @description How much one run of this target may read (sessions) and write (outputs), and how many runs, outputs and tokens
-         *     it may spend in a UTC day, how far back its runs read (`lookback_days`: only sessions active that recently) and how
-         *     long an open finding nobody re-sees stays fresh (`fade_days`). A run stops cleanly at a cap: nothing more is read or
-         *     written, and a fire past a daily cap starts nothing and says why. Fields left out keep their value; `clear_tokens`
-         *     removes the token cap.
+         *     it may spend in a UTC day, how far back its runs read (`lookback_days`: only sessions active that recently), how
+         *     long an open finding nobody re-sees stays fresh (`fade_days`, and by its type, `fade_days_by_type`) and how long a
+         *     dismissed finding takes its repeats in and stays dismissed (`dismiss_cooldown_days`). A run stops cleanly at a cap:
+         *     nothing more is read or written, and a fire past a daily cap starts nothing and says why. Fields left out keep their
+         *     value; `clear_tokens` removes the token cap.
          */
         readonly patch: operations["set_target_budget"];
         readonly trace?: never;
@@ -52808,6 +52833,17 @@ export interface components {
              * @default false
              */
             readonly folded: boolean;
+            /**
+             * Status
+             * @description Where the output stands: `dismissed` when this repeat folded into a finding the people dismissed lately (it stays dismissed: do not raise it again unless something changed).
+             * @default
+             */
+            readonly status: string;
+            /**
+             * Recurs Of
+             * @description A new output that repeats a finding already `done`: that one's id (it came back after it was acted on).
+             */
+            readonly recurs_of?: number | null;
         };
         /** BrainEmitIn */
         readonly BrainEmitIn: {
@@ -53085,6 +53121,40 @@ export interface components {
              * @description For a `duplicate`: the output it was merged into.
              */
             readonly merged_into?: number | null;
+            /**
+             * Recurs Of
+             * @description The `done` finding this one repeats: it came back after it was acted on.
+             */
+            readonly recurs_of?: number | null;
+            /**
+             * Came Back
+             * @description It repeats a finding already done (`recurs_of`).
+             * @default false
+             */
+            readonly came_back: boolean;
+            /**
+             * Sessions Seen
+             * @description Distinct sessions across everything it cites, every repeat included (those you do not read counted too).
+             * @default 0
+             */
+            readonly sessions_seen: number;
+            /**
+             * People Seen
+             * @description Distinct people in those sessions: a count only.
+             * @default 0
+             */
+            readonly people_seen: number;
+            /**
+             * Breadth
+             * @description For a system finding: `single session` (seen in one) or `pattern` (two or more).
+             * @default
+             */
+            readonly breadth: string;
+            /**
+             * Sightings
+             * @description When it was seen, oldest first (ISO times).
+             */
+            readonly sightings?: readonly string[];
             /**
              * May Set Status
              * @description Whether you may change its status.
@@ -53560,10 +53630,30 @@ export interface components {
             readonly lookback_days?: number | null;
             /**
              * Fade Days
-             * @description An open finding no run re-saw in this many days is faded.
+             * @description An open finding of no known type no run re-saw in this many days is faded.
              * @default 21
              */
             readonly fade_days: number;
+            /**
+             * Fade Days By Type
+             * @description This target's own fade windows by finding type, over the defaults.
+             */
+            readonly fade_days_by_type?: {
+                readonly [key: string]: number;
+            };
+            /**
+             * Fade Windows
+             * @description The fade window of each finding type here (its body's `type`, else its `signal`): the defaults with this target's own.
+             */
+            readonly fade_windows?: {
+                readonly [key: string]: number;
+            };
+            /**
+             * Dismiss Cooldown Days
+             * @description A repeat of a finding dismissed this recently folds into it and stays dismissed; after it, a repeat is a new finding.
+             * @default 60
+             */
+            readonly dismiss_cooldown_days: number;
             readonly today: components["schemas"]["BrainBudgetToday"];
         };
         /** BrainTargetOut */
@@ -53803,9 +53893,39 @@ export interface components {
              * @description The open findings this learner holds for the subject and workspace, most recently seen first and capped: reuse one's key (or name it by `same_as`) when a finding is the same problem.
              */
             readonly open_findings?: readonly components["schemas"]["BrainRunContextFinding"][];
+            /**
+             * Dismissed Findings Total
+             * @default 0
+             */
+            readonly dismissed_findings_total: number;
+            /**
+             * Dismissed Findings
+             * @description The findings dismissed lately (within the cooldown), most recently dismissed first and capped: do not raise one again unless something changed; a repeat of its key folds into it and stays dismissed.
+             */
+            readonly dismissed_findings?: readonly components["schemas"]["BrainRunContextDismissed"][];
             readonly budget: components["schemas"]["BrainRunBudgetLeft"];
             /** How */
             readonly how: string;
+        };
+        /** BrainRunContextDismissed */
+        readonly BrainRunContextDismissed: {
+            /** Id */
+            readonly id: number;
+            /** Kind */
+            readonly kind: string;
+            /** Key */
+            readonly key: string;
+            /**
+             * Title
+             * @default
+             */
+            readonly title: string;
+            /**
+             * Dismissed At
+             * @description ISO time it was dismissed.
+             * @default
+             */
+            readonly dismissed_at: string;
         };
         /** BrainRunContextFinding */
         readonly BrainRunContextFinding: {
@@ -53930,6 +54050,110 @@ export interface components {
             /** @description What the run was told when it started, without the ids of the sessions due (their count stays). */
             readonly context?: components["schemas"]["BrainRunContext"] | null;
         };
+        /** BrainScoreWeek */
+        readonly BrainScoreWeek: {
+            /**
+             * Week
+             * Format: date
+             * @description The week's Monday (UTC).
+             */
+            readonly week: string;
+            /**
+             * Open
+             * @default 0
+             */
+            readonly open: number;
+            /**
+             * Accepted
+             * @default 0
+             */
+            readonly accepted: number;
+            /**
+             * Done
+             * @default 0
+             */
+            readonly done: number;
+            /**
+             * Dismissed
+             * @default 0
+             */
+            readonly dismissed: number;
+        };
+        /** BrainScorecardOut */
+        readonly BrainScorecardOut: {
+            /**
+             * Weeks
+             * @description The Mondays the scorecard covers, oldest first.
+             */
+            readonly weeks: readonly string[];
+            /** Targets */
+            readonly targets: readonly components["schemas"]["BrainTargetScore"][];
+        };
+        /** BrainTargetScore */
+        readonly BrainTargetScore: {
+            /** Target */
+            readonly target: number;
+            /** Learner */
+            readonly learner: string;
+            /** Label */
+            readonly label: string;
+            /** Workspace */
+            readonly workspace: string;
+            /**
+             * Project
+             * @default
+             */
+            readonly project: string;
+            /**
+             * Weeks
+             * @description The findings made each week, by where each stands now.
+             */
+            readonly weeks: readonly components["schemas"]["BrainScoreWeek"][];
+            /**
+             * Open
+             * @description Made in these weeks and still open.
+             * @default 0
+             */
+            readonly open: number;
+            /**
+             * Accepted
+             * @default 0
+             */
+            readonly accepted: number;
+            /**
+             * Done
+             * @default 0
+             */
+            readonly done: number;
+            /**
+             * Dismissed
+             * @default 0
+             */
+            readonly dismissed: number;
+            /**
+             * Precision
+             * @description (accepted + done) / (accepted + done + dismissed) over these weeks; null while none was decided.
+             */
+            readonly precision?: number | null;
+            /**
+             * Open Now
+             * @description Open or accepted now and fresh.
+             * @default 0
+             */
+            readonly open_now: number;
+            /**
+             * Faded Now
+             * @description Open or accepted now but faded: no run re-saw it within its type's window.
+             * @default 0
+             */
+            readonly faded_now: number;
+            /**
+             * Came Back
+             * @description Made in these weeks as a repeat of a finding already done.
+             * @default 0
+             */
+            readonly came_back: number;
+        };
         /** LearningReadsIn */
         readonly LearningReadsIn: {
             /**
@@ -54014,9 +54238,21 @@ export interface components {
             readonly lookback_days?: number | null;
             /**
              * Fade Days
-             * @description Fade an open finding no run re-saw in this many days.
+             * @description Fade an open finding of no known type no run re-saw in this many days.
              */
             readonly fade_days?: number | null;
+            /**
+             * Fade Days By Type
+             * @description Fade windows by finding type (`friction`, `design`, ...), in days from 1 to 365; it replaces this target's own map whole, `{}` clears it (the defaults stay).
+             */
+            readonly fade_days_by_type?: {
+                readonly [key: string]: number;
+            } | null;
+            /**
+             * Dismiss Cooldown Days
+             * @description How long a dismissed finding takes its repeats in and stays dismissed.
+             */
+            readonly dismiss_cooldown_days?: number | null;
         };
         /** BrainWhyOut */
         readonly BrainWhyOut: {
@@ -81437,6 +81673,44 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["BrainRunPageOut"];
+                };
+            };
+            /** @description Forbidden */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Content */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    readonly brain_scorecard: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BrainScorecardOut"];
                 };
             };
             /** @description Forbidden */

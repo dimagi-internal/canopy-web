@@ -244,6 +244,7 @@ def _outputs_out(user, rows, *, as_person: bool, acting=None) -> list[dict]:
     cited, named, by_source = _cited(user, rows)
     memo: dict = {}
     fades: dict = {}
+    reach = findings.breadth(rows)
 
     def may_set(o) -> bool:
         if acting is not None:
@@ -256,6 +257,10 @@ def _outputs_out(user, rows, *, as_person: bool, acting=None) -> list[dict]:
              "status_by": getattr(o.status_by, "email", "") or "", "key": o.key, "seen": o.seen,
              "last_seen_at": o.last_seen_at, "created_at": o.created_at,
              "faded": findings.faded(o, findings.fade_days_of(o, fades)), "merged_into": o.merged_into_id,
+             "recurs_of": o.recurs_of_id, "came_back": o.recurs_of_id is not None,
+             "sessions_seen": reach[o.pk]["sessions"], "people_seen": reach[o.pk]["people"],
+             "breadth": findings.breadth_label(o, reach[o.pk]["sessions"]),
+             "sightings": findings.sighting_times(o),
              "may_set_status": may_set(o),
              "sessions": [named[s] for s in cited.get(str(o.pk), []) if s in named],
              "hidden_sessions": sum(1 for s in cited.get(str(o.pk), []) if s not in named),

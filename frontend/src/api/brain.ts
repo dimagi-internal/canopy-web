@@ -12,6 +12,8 @@ export type BrainStoredLink = components['schemas']['BrainStoredLink']
 export type BrainRunPage = components['schemas']['BrainRunPageOut']
 export type BrainRun = components['schemas']['BrainRunState']
 export type BrainOutput = components['schemas']['BrainOutputOut']
+export type BrainScorecard = components['schemas']['BrainScorecardOut']
+export type BrainTargetScore = components['schemas']['BrainTargetScore']
 
 const pin = (ws: string) => ({ [WORKSPACE_HEADER]: ws })
 
@@ -30,6 +32,11 @@ export async function getBrainLinks(ws: string, before = 0): Promise<BrainLinkPa
 export async function getBrainRuns(ws: string, before = 0): Promise<BrainRunPage> {
   const res = await apiV2.GET('/api/brain/state/runs', { params: { query: { before, limit: 25 } }, headers: pin(ws) })
   return unwrap(res, 'Failed to load runs') as BrainRunPage
+}
+
+/** How each learner target's findings land at `ws`, over the last eight weeks (counts of findings you may read). */
+export async function getBrainScorecard(ws: string): Promise<BrainScorecard> {
+  return unwrap(await apiV2.GET('/api/brain/scorecard', { headers: pin(ws) }), 'Failed to load the scorecard') as BrainScorecard
 }
 
 /** What learning produced at `ws` that you may see. */

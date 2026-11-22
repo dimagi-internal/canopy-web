@@ -161,6 +161,15 @@ class BrainOutputOut(StrictModel):
     faded: bool = Field(False, description="Open or accepted, but no run re-saw it within its target's fade window: "
                         "listed below the fresh ones and not shown to runs; setting it open or accepted keeps it.")
     merged_into: int | None = Field(None, description="For a `duplicate`: the output it was merged into.")
+    recurs_of: int | None = Field(None, description="The `done` finding this one repeats: it came back after it was "
+                                  "acted on.")
+    came_back: bool = Field(False, description="It repeats a finding already done (`recurs_of`).")
+    sessions_seen: int = Field(0, description="Distinct sessions across everything it cites, every repeat included "
+                               "(those you do not read counted too).")
+    people_seen: int = Field(0, description="Distinct people in those sessions: a count only.")
+    breadth: str = Field("", description="For a system finding: `single session` (seen in one) or `pattern` (two or "
+                         "more).")
+    sightings: list[str] = Field(default_factory=list, description="When it was seen, oldest first (ISO times).")
     may_set_status: bool = Field(False, description="Whether you may change its status.")
     created_at: dt.datetime
     sessions: list[BrainOutputSession] = Field(default_factory=list,
@@ -239,6 +248,11 @@ class BrainEmitOut(StrictModel):
     id: int
     state: str
     folded: bool = Field(False, description="It was a repeat, folded into an existing output (`id`).")
+    status: str = Field("", description="Where the output stands: `dismissed` when this repeat folded into a finding "
+                        "the people dismissed lately (it stays dismissed: do not raise it again unless something "
+                        "changed).")
+    recurs_of: int | None = Field(None, description="A new output that repeats a finding already `done`: that one's "
+                                  "id (it came back after it was acted on).")
 
 
 class DisclosureDayOut(StrictModel):
@@ -438,7 +452,14 @@ class BrainTargetBudget(StrictModel):
     max_outputs_per_day: int
     max_tokens_per_day: int | None = None
     lookback_days: int | None = Field(None, description="Its runs read only sessions active in this many days.")
-    fade_days: int = Field(21, description="An open finding no run re-saw in this many days is faded.")
+    fade_days: int = Field(21, description="An open finding of no known type no run re-saw in this many days is "
+                           "faded.")
+    fade_days_by_type: dict[str, int] = Field(default_factory=dict, description="This target's own fade windows by "
+                                              "finding type, over the defaults.")
+    fade_windows: dict[str, int] = Field(default_factory=dict, description="The fade window of each finding type here "
+                                         "(its body's `type`, else its `signal`): the defaults with this target's own.")
+    dismiss_cooldown_days: int = Field(60, description="A repeat of a finding dismissed this recently folds into it and "
+                                       "stays dismissed; after it, a repeat is a new finding.")
     today: BrainBudgetToday
 
 
@@ -453,8 +474,13 @@ class BrainTargetBudgetIn(StrictModel):
                                            "`clear_tokens` to remove the cap.")
     clear_tokens: bool = False
     lookback_days: int | None = Field(None, ge=1, le=365, description="Read only sessions active in this many days.")
-    fade_days: int | None = Field(None, ge=1, le=365, description="Fade an open finding no run re-saw in this many "
-                                  "days.")
+    fade_days: int | None = Field(None, ge=1, le=365, description="Fade an open finding of no known type no run "
+                                  "re-saw in this many days.")
+    fade_days_by_type: dict[str, int] | None = Field(None, description="Fade windows by finding type (`friction`, "
+                                                     "`design`, ...), in days from 1 to 365; it replaces this target's "
+                                                     "own map whole, `{}` clears it (the defaults stay).")
+    dismiss_cooldown_days: int | None = Field(None, ge=1, le=365, description="How long a dismissed finding takes its "
+                                              "repeats in and stays dismissed.")
 
 
 class BrainOutputMergeIn(StrictModel):
@@ -576,6 +602,14 @@ class BrainRunContextFinding(StrictModel):
     last_seen_at: str = Field("", description="ISO time a run last saw it.")
 
 
+class BrainRunContextDismissed(StrictModel):
+    id: int
+    kind: str
+    key: str
+    title: str = ""
+    dismissed_at: str = Field("", description="ISO time it was dismissed.")
+
+
 class BrainRunContext(StrictModel):
     """What a learning run's turn is told about itself (`brain.context`): in its first prompt and as `brain_run` in
     its caller envelope. Ids and names, never a word of a session. `version` changes only when a field's meaning does."""
@@ -602,6 +636,11 @@ class BrainRunContext(StrictModel):
     open_findings: list[BrainRunContextFinding] = Field(
         default_factory=list, description="The open findings this learner holds for the subject and workspace, most "
         "recently seen first and capped: reuse one's key (or name it by `same_as`) when a finding is the same problem.")
+    dismissed_findings_total: int = 0
+    dismissed_findings: list[BrainRunContextDismissed] = Field(
+        default_factory=list, description="The findings dismissed lately (within the cooldown), most recently dismissed "
+        "first and capped: do not raise one again unless something changed; a repeat of its key folds into it and "
+        "stays dismissed.")
     budget: BrainRunBudgetLeft
     how: str
 
@@ -659,3 +698,34 @@ class ConsentPersonOut(StrictModel):
     name: str
     classes: list[str]
     workspaces: list[str]
+
+
+class BrainScoreWeek(StrictModel):
+    week: dt.date = Field(description="The week's Monday (UTC).")
+    open: int = 0
+    accepted: int = 0
+    done: int = 0
+    dismissed: int = 0
+
+
+class BrainTargetScore(StrictModel):
+    target: int
+    learner: str
+    label: str
+    workspace: str
+    project: str = ""
+    weeks: list[BrainScoreWeek] = Field(description="The findings made each week, by where each stands now.")
+    open: int = Field(0, description="Made in these weeks and still open.")
+    accepted: int = 0
+    done: int = 0
+    dismissed: int = 0
+    precision: float | None = Field(None, description="(accepted + done) / (accepted + done + dismissed) over these "
+                                    "weeks; null while none was decided.")
+    open_now: int = Field(0, description="Open or accepted now and fresh.")
+    faded_now: int = Field(0, description="Open or accepted now but faded: no run re-saw it within its type's window.")
+    came_back: int = Field(0, description="Made in these weeks as a repeat of a finding already done.")
+
+
+class BrainScorecardOut(StrictModel):
+    weeks: list[dt.date] = Field(description="The Mondays the scorecard covers, oldest first.")
+    targets: list[BrainTargetScore]

@@ -107,7 +107,7 @@ def test_a_repeat_with_the_same_key_folds_into_the_open_finding(w):
     assert OutputLineage.objects.filter(output_id=str(out.pk), source__in=second.reads.values("source")).exists()
 
 
-def test_a_dismissed_finding_takes_no_repeat(w):
+def test_a_dismissed_finding_takes_a_repeat_in_and_stays_dismissed(w):
     from apps.brain import runs
 
     first = _start(w)
@@ -116,7 +116,7 @@ def test_a_dismissed_finding_takes_no_repeat(w):
     runs.finish(first, ok=True)
     _chat(w["ws"], w["alice"], "again")
     again = _finding(w, _start(w))
-    assert again.folded is False and again.pk != out.pk
+    assert again.folded is True and again.pk == out.pk and again.status == "dismissed" and again.seen == 2
 
 
 def test_the_owner_sets_a_finding_s_status_and_a_member_cannot(w):

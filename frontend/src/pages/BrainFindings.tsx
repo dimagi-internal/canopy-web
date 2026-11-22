@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState, type JSX, type ReactNode } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, type JSX, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { Button, StatusBadge } from 'canopy-ui/ui'
 import type { StatusTone } from 'canopy-ui/lib'
@@ -6,11 +6,14 @@ import type { StatusTone } from 'canopy-ui/lib'
 import { listBrainOutputs, setOutputStatus, type BrainOutput, type BrainOutputStatus } from '@/api/brain'
 import { relativeAge } from '@/lib/relativeAge'
 import { scopedPath } from '@/lib/scopedLinks'
+import { LineageStrip, Sightings } from './BrainFindingViz'
 
 // The Findings tab of the brain page: what learning found, written for the person who has to act on it. A finding
 // reads top to bottom as what it is (chips), where the fix belongs, the fix, the quoted evidence (each quote linked to
 // its session when the viewer reads that session, `source_sessions` from the server), then how sure it is and what it
-// did not check, then the status buttons. A body's fields are free-form per learner: the known ones (`brain-learn`'s
+// did not check, then the status buttons. Under the chips, what it reaches (`LineageStrip`: sessions and people across
+// every repeat, opening the evidence) and when it was seen (`Sightings`). A finding that repeats one already done says
+// it came back; a dismissed one seen again since says so. A body's fields are free-form per learner: the known ones (`brain-learn`'s
 // system finding) are drawn on purpose and anything else falls through to a plain "label: value" list.
 
 const sessionHref = (workspace: string, id: string) => scopedPath(workspace, `/sessions/${id}`)
@@ -191,6 +194,14 @@ function FindingCard({ o, busy, onMove }: { o: BrainOutput; busy: boolean; onMov
   const where = [str(fb.repo), str(fb.agent), str(fb.skill)].filter((v, i, all) => v && v !== all[i - 1])
   const bySource = new Map<number, Session>((o.source_sessions ?? []).map((s) => [s.source, s]))
   const evidence = Array.isArray(body.evidence) ? body.evidence : []
+  const [allQuotes, setAllQuotes] = useState(false)
+  const evidenceRef = useRef<HTMLDivElement>(null)
+  const showEvidence = () => {
+    setAllQuotes(true)
+    evidenceRef.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })
+  }
+  const seenSinceDismissed = status === 'dismissed' && !!o.status_at && !!o.last_seen_at &&
+    Date.parse(o.last_seen_at) > Date.parse(o.status_at)
   const rest = Object.entries(body).filter(([k, v]) => !KNOWN.has(k) && v !== null && v !== '' &&
     !(Array.isArray(v) && v.length === 0))
   return (
@@ -203,11 +214,19 @@ function FindingCard({ o, busy, onMove }: { o: BrainOutput; busy: boolean; onMov
         {str(body.signal) && <StatusBadge tone="neutral">{plain(str(body.signal))}</StatusBadge>}
         {o.kind !== 'finding' && <StatusBadge tone="neutral">{plain(o.kind)}</StatusBadge>}
         {isFaded(o) && <StatusBadge tone="neutral">Faded</StatusBadge>}
+        {o.came_back && <StatusBadge tone="warning">Came back after done</StatusBadge>}
+        {seenSinceDismissed && <StatusBadge tone="neutral">Seen again since dismissed</StatusBadge>}
         <span className="text-xs text-muted-foreground">
           {(o.seen ?? 1) > 1 ? `seen ${o.seen} times` : 'seen once'} · last seen{' '}
           {relativeAge(lastSeen(o), undefined, { seconds: false })}
         </span>
       </div>
+      {((o.sessions_seen ?? 0) > 0 || (o.sightings ?? []).length > 0) && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+          <LineageStrip o={o} onEvidence={evidence.length > 0 ? showEvidence : undefined} />
+          <Sightings times={o.sightings ?? []} />
+        </div>
+      )}
       {where.length > 0 && (
         <p className="text-foreground">
           <span className="text-muted-foreground">Fix belongs in: </span>
@@ -216,7 +235,11 @@ function FindingCard({ o, busy, onMove }: { o: BrainOutput; busy: boolean; onMov
       )}
       {str(body.what_happened) && <Field label="What happened">{str(body.what_happened)}</Field>}
       {str(body.suggested_fix) && <Field label="Suggested fix">{str(body.suggested_fix)}</Field>}
-      {evidence.length > 0 && <Evidence items={evidence} bySource={bySource} />}
+      {evidence.length > 0 && (
+        <div ref={evidenceRef}>
+          <Evidence items={evidence} bySource={bySource} open={allQuotes} setOpen={setAllQuotes} />
+        </div>
+      )}
       {str(body.success_measure) && <Field label="How to tell it is fixed">{str(body.success_measure)}</Field>}
       {rest.length > 0 && (
         <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-0.5 text-xs">
@@ -261,8 +284,9 @@ function Field({ label, children }: { label: string; children: ReactNode }): JSX
 }
 
 /** Quoted lines, each with the session it is from: a link where the viewer reads that session, else said plainly. */
-function Evidence({ items, bySource }: { items: unknown[]; bySource: Map<number, Session> }): JSX.Element {
-  const [open, setOpen] = useState(false)
+function Evidence({ items, bySource, open, setOpen }: {
+  items: unknown[]; bySource: Map<number, Session>; open: boolean; setOpen: (v: boolean) => void
+}): JSX.Element {
   const list = open ? items : items.slice(0, QUOTES_SHOWN)
   return (
     <div className="space-y-1">

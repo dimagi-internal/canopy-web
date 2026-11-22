@@ -7,8 +7,14 @@ now: a source cited but never read, or one whose people withdrew since, is refus
 (`write_lineage`): all of it was in the run's context, so a later removal of any of them reaches the output.
 An output that names a `key` already held by an open finding of the same learner, subject and workspace is a repeat
 and folds into it (`findings`); so is one that names that finding outright (`same_as`, its id), which must be an open
-finding of the run's own learner, subject and workspace or the emit is refused. A new output spends the run's budget (`budget.run_left`); at the cap it is refused. The words
-are scrubbed like every learning read, keys as well as values. Emitting the same thing twice is one output."""
+finding of the run's own learner, subject and workspace or the emit is refused. A repeat of one dismissed within its
+target's cooldown folds in too and stays dismissed; a repeat of a `done` one is a new output naming it (`recurs_of`).
+A new output spends the run's budget (`budget.run_left`); at the cap it is refused. The words
+are scrubbed like every learning read, keys as well as values. Emitting the same thing twice is one output.
+
+Every piece of evidence (`body.evidence`, `{source, index, quote}`) must be a quote of a row this run read
+(`grounding.check`): one that is not is refused whole, naming the item and why, so the run fixes it and emits again.
+The sources evidence names are cited with the ones in `source_ids`."""
 from __future__ import annotations
 
 import hashlib
@@ -20,7 +26,7 @@ from django.utils import timezone
 from apps.agents.models import AgentProject
 from apps.common import redact
 
-from . import associate, budget, findings, learning_reads
+from . import associate, budget, findings, grounding, learning_reads
 from .eligibility import eligible
 from .models import BrainOutput, BrainRun, BrainRunRead, BrainSource, OutputLineage, SourceLink
 
@@ -49,7 +55,14 @@ def emit(run: BrainRun, *, kind: str, title: str, body: dict, source_ids, turn_i
         return _emit_link(run, body=body, source_ids=source_ids)
     if not isinstance(body, dict) or len(json.dumps(body, default=str)) > MAX_BODY_CHARS:
         raise EmitRefusedError(f"body must be an object of at most {MAX_BODY_CHARS} characters")
-    ids = sorted({int(i) for i in source_ids})
+    ids = {int(i) for i in source_ids}
+    if "evidence" in body:
+        try:
+            evidence, named = grounding.check(run, body["evidence"])
+        except grounding.GroundingError as e:
+            raise EmitRefusedError(f"{e}. Nothing was written: fix that piece of evidence and emit again") from e
+        body, ids = {**body, "evidence": evidence}, ids | named
+    ids = sorted(ids)
     if not ids or len(ids) > MAX_SOURCES:
         raise EmitRefusedError(f"cite between 1 and {MAX_SOURCES} sources")
     read = set(BrainRunRead.objects.filter(run=run, source_id__in=ids).values_list("source_id", flat=True))
@@ -81,8 +94,8 @@ def emit(run: BrainRun, *, kind: str, title: str, body: dict, source_ids, turn_i
         if same_as is not None:
             repeat = findings.match_id(run, int(same_as), kind=kind, workspace=workspace)
             if repeat is None:
-                raise EmitRefusedError(f"output {same_as} is not an open {kind} of this learner here: emit it as "
-                                       "new (or with its key) instead")
+                raise EmitRefusedError(f"output {same_as} is not an open (or recently dismissed) {kind} of this "
+                                       "learner here: emit it as new (or with its key) instead")
         else:
             repeat = findings.match(run, kind=kind, key=clean_key, workspace=workspace)
         if repeat is not None:                   # a repeat costs no output of the budget
@@ -93,10 +106,12 @@ def emit(run: BrainRun, *, kind: str, title: str, body: dict, source_ids, turn_i
         if left <= 0:
             raise EmitRefusedError("this run's budget of outputs is spent (its target's per run or per day): "
                                    "emit nothing more and end the run")
+        now = timezone.now()
         out = BrainOutput.objects.create(
             capability=cap, kind=kind, workspace_id=workspace, subject_type=run.subject_type,
             subject=run.subject, title=clean_title, body=scrubbed, turn_id=turn_id, run=run,
-            fingerprint=fingerprint, key=clean_key, last_seen_at=timezone.now())
+            fingerprint=fingerprint, key=clean_key, last_seen_at=now, sightings=findings.sighted([], run, now),
+            recurs_of=findings.came_back_of(run, kind=kind, key=clean_key, workspace=workspace))
         write_lineage(run, out, cited=ids)
     out.folded = False
     return out

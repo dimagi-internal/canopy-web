@@ -1,4 +1,4 @@
-"""`GET /api/brain/state`, `/state/links`, `/state/runs`: the brain as it stands, for the `/brain` page.
+"""`GET /api/brain/state`, `/state/links`, `/state/runs`, `/scorecard`: the brain as it stands, for the `/brain` page.
 
 The person as themselves, or an admin agent's own login in its own turn pinned to a workspace it and the person
 its turn answers to manage (`actor.of`, the management rule: never an OAuth, delegated, act-as or caller token, a
@@ -16,8 +16,8 @@ from apps.api.errors import TYPE_FORBIDDEN, ProblemError, refusals
 from apps.api.route_gates import gate
 
 from . import actor as actor_mod
-from . import scope, state
-from .schemas import BrainLinkPageOut, BrainRunPageOut, BrainStateOut
+from . import person, scope, scorecard, state
+from .schemas import BrainLinkPageOut, BrainRunPageOut, BrainScorecardOut, BrainStateOut
 
 router = Router(auth=session_auth, tags=["brain"])
 
@@ -61,3 +61,17 @@ def brain_state_runs(request: HttpRequest, before: int = 0, limit: int = 25) -> 
     count. A canopy admin sees every run. Pass `next_before` as `before` for more."""
     user, _pin = _viewer(request)
     return state.run_page(user, scope.of_request(request), before=before, limit=limit)
+
+
+@router.get("/brain/scorecard", response={200: BrainScorecardOut, **refusals(403, 422)},
+            summary="How each learner target's findings land, over the last eight weeks (counts)")
+@gate("self")  # counts over the findings you may read (outputs.visible_to), never wider
+def brain_scorecard(request: HttpRequest) -> dict:
+    """Per learner target here and below: the findings its runs made each week by where each stands now, the share
+    taken up (precision: accepted and done over those decided), how many are open and how many faded, and how many came
+    back after they were done. Only findings you may read are counted (the Findings tab's rule)."""
+    actor = actor_mod.of(request)
+    user, pin = _viewer(request)
+    acting = actor if actor.is_agent else None
+    return scorecard.scorecard(user, pin, scope.of_request(request), as_person=acting is None and person.is_person(
+        request), acting=acting)

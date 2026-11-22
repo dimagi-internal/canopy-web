@@ -153,10 +153,18 @@ def test_a_session_that_grew_well_past_its_read_is_read_again_from_there(w):
 
 # ---- the run is told the open findings, and folds a repeat ----------------------------------------------------------
 
+def _quote(src, index=0):
+    """A grounded piece of evidence: the words of row `index` of source `src`."""
+    from apps.brain.models import BrainSource
+
+    text = Message.objects.get(session=BrainSource.objects.get(pk=src).session, turn_index=index).plaintext
+    return {"source": src, "index": index, "quote": text}
+
+
 def _found(w, run, key="zsh:glob", title="zsh globs break", **kw):
     page = reading.read_next(run, limit=5)
     src = page["sources"][0]["source"] if page["sources"] else BrainRunRead.objects.filter(run=run).first().source_id
-    return emit.emit(run, kind="finding", title=title, body={"what": title, "evidence": [title]},
+    return emit.emit(run, kind="finding", title=title, body={"what": title, "evidence": [_quote(src)]},
                      source_ids=[src], key=key, **kw)
 
 
@@ -187,9 +195,12 @@ def test_an_emit_can_name_the_finding_it_repeats(w):
     assert same.folded is True and same.pk == out.pk
     with pytest.raises(emit.EmitRefusedError):
         _found(w, run, key="x", title="other", same_as=out.pk + 999)
-    findings.set_status(out, "dismissed", by=w["owner"])
+    findings.set_status(out, "dismissed", by=w["owner"])          # lately dismissed: it takes the repeat, dismissed
+    kept = _found(w, run, key="x", title="other again", same_as=out.pk)
+    assert kept.folded is True and kept.pk == out.pk and kept.status == "dismissed"
+    findings.set_status(out, "done", by=w["owner"])                # done: a repeat is news, never a fold
     with pytest.raises(emit.EmitRefusedError):
-        _found(w, run, key="x", title="other again", same_as=out.pk)
+        _found(w, run, key="x", title="other once more", same_as=out.pk)
 
 
 # ---- merge ---------------------------------------------------------------------------------------------------------
@@ -199,10 +210,12 @@ def test_merge_folds_a_duplicate_into_a_finding(w):
     _chat(w["ws"], w["bob"], "two")
     run = _start(w)
     page = reading.read_next(run, limit=1)
-    a = emit.emit(run, kind="finding", title="hands work back", body={"evidence": ["x"]},
+    x = _quote(page["sources"][0]["source"])
+    a = emit.emit(run, kind="finding", title="hands work back", body={"evidence": [x]},
                   source_ids=[page["sources"][0]["source"]], key="handback:a")
     page = reading.read_next(run, limit=1)
-    b = emit.emit(run, kind="finding", title="asks before acting", body={"evidence": ["y"]},
+    y = _quote(page["sources"][0]["source"])
+    b = emit.emit(run, kind="finding", title="asks before acting", body={"evidence": [y]},
                   source_ids=[page["sources"][0]["source"]], key="handback:b")
     url = f"/api/w/acme/brain/outputs/{a.pk}/merge"
     assert _c(w["alice"]).post(url, data={"duplicate": b.pk}, content_type=J).status_code == 404
@@ -210,7 +223,7 @@ def test_merge_folds_a_duplicate_into_a_finding(w):
     r = _c(w["owner"]).post(url, data={"duplicate": b.pk}, content_type=J)
     assert r.status_code == 200, r.content
     got = r.json()
-    assert got["seen"] == 2 and got["body"]["evidence"] == ["x", "y"] and got["body"]["merged_from"][0]["id"] == b.pk
+    assert got["seen"] == 2 and got["body"]["evidence"] == [x, y] and got["body"]["merged_from"][0]["id"] == b.pk
     b.refresh_from_db()
     assert b.status == findings.DUPLICATE and b.merged_into_id == a.pk
     cited = set(OutputLineage.objects.filter(output_id=str(a.pk), cited=True).values_list("source_id", flat=True))

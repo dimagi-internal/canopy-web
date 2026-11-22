@@ -8,6 +8,7 @@ import {
   configureLearner,
   getBrainLinks,
   getBrainRuns,
+  getBrainScorecard,
   getBrainState,
   removeTarget,
   runTargetNow,
@@ -17,6 +18,7 @@ import {
   type BrainFlag,
   type BrainWhy,
   type BrainRun,
+  type BrainScorecard,
   type BrainState,
   type BrainStoredLink,
   type BrainTarget,
@@ -27,6 +29,7 @@ import { Td, Th, Tr } from '@/components/DataTable'
 import { relativeAge } from '@/lib/relativeAge'
 import { scopedPath } from '@/lib/scopedLinks'
 import { Findings } from './BrainFindings'
+import { ScoreLegend, WeekBars } from './BrainFindingViz'
 import { HealthViews } from './health/HealthViews'
 
 // THE BRAIN of one workspace (/w/:workspace/brain): canopy learning in it and the workspaces below it, as the
@@ -254,6 +257,7 @@ function NowTab({ ws, state, runsKey, onStarted, onChanged }: {
       </Section>
 
       <Targets ws={ws} state={state} reads={readsOn} onStarted={onStarted} onChanged={onChanged} />
+      {(state.targets ?? []).length > 0 && <Scorecard ws={ws} />}
 
       <Runs key={runsKey} ws={ws} state={state} />
       <WhyNotRead ws={ws} state={state} />
@@ -604,6 +608,60 @@ function Targets({ ws, state, reads, onStarted, onChanged }: {
   )
 }
 
+const pct = (p: number | null | undefined) => (p == null ? '—' : `${Math.round(p * 100)}%`)
+
+/** How each target's findings land: made per week by where each stands now, the share taken up, open and faded now,
+ *  and how many came back after they were done. Counts of findings the viewer may read, from the server. */
+function Scorecard({ ws }: { ws: string }): JSX.Element {
+  const [card, setCard] = useState<BrainScorecard | null>(null)
+  const [error, setError] = useState('')
+  useEffect(() => {
+    getBrainScorecard(ws).then(setCard, (e: unknown) => setError(e instanceof Error ? e.message : 'Could not load'))
+  }, [ws])
+  return (
+    <Section
+      title="Learner scorecard"
+      note={<>The last eight weeks of each target&apos;s findings that you may see. Precision is the share of the decided
+        ones that were taken up: (accepted + done) ÷ (accepted + done + dismissed). Came back: a finding seen again
+        after it was done.</>}
+    >
+      {error ? <p className="text-xs text-destructive">{error}</p> : !card ? <Empty>Loading…</Empty> : (
+        <>
+          <Table>
+            <thead>
+              <Tr head="label">
+                <Th>Target</Th>
+                <Th>Weekly findings</Th>
+                <Th align="right">Precision</Th>
+                <Th align="right">Open</Th>
+                <Th align="right">Faded</Th>
+                <Th align="right">Came back</Th>
+              </Tr>
+            </thead>
+            <tbody>
+              {card.targets.map((t) => (
+                <Tr key={t.target} rule="bottom-last">
+                  <Td>{t.learner} <span className="text-muted-foreground">{t.label}</span></Td>
+                  <Td><WeekBars score={t} /></Td>
+                  <Td numeric align="right">
+                    <span title={`${(t.accepted ?? 0) + (t.done ?? 0)} taken up of ${(t.accepted ?? 0) + (t.done ?? 0) + (t.dismissed ?? 0)} decided`}>
+                      {pct(t.precision)}
+                    </span>
+                  </Td>
+                  <Td numeric align="right">{t.open_now ?? 0}</Td>
+                  <Td numeric align="right">{t.faded_now ?? 0}</Td>
+                  <Td numeric align="right">{t.came_back ?? 0}</Td>
+                </Tr>
+              ))}
+            </tbody>
+          </Table>
+          <ScoreLegend />
+        </>
+      )}
+    </Section>
+  )
+}
+
 type TargetBudget = NonNullable<BrainTarget['budget']>
 
 /** A target's budget and what it spent today (UTC), in one line. */
@@ -611,7 +669,25 @@ function budgetLine(b: TargetBudget): string {
   const tokens = b.max_tokens_per_day == null ? `${b.today.tokens} tokens` : `${b.today.tokens}/${b.max_tokens_per_day} tokens`
   const window = b.lookback_days ? ` from the last ${b.lookback_days} days` : ''
   return `≤${b.max_sources_per_run} sessions${window}, ≤${b.max_outputs_per_run} outputs a run · today ${b.today.runs}/${b.max_runs_per_day} runs, ` +
-    `${b.today.outputs}/${b.max_outputs_per_day} outputs, ${tokens} · findings fade after ${b.fade_days ?? 21} days unseen`
+    `${b.today.outputs}/${b.max_outputs_per_day} outputs, ${tokens} · findings fade after ${b.fade_days ?? 21} days unseen ` +
+    `(by type: ${windowsLine(b.fade_windows ?? {})}) · a dismissed one stays dismissed ${b.dismiss_cooldown_days ?? 60} days`
+}
+
+/** `{friction: 21, design: 90}` as "friction 21, design 90", shortest first. */
+function windowsLine(w: Record<string, number>): string {
+  const parts = Object.entries(w).sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0])).map(([k, d]) => `${k} ${d}`)
+  return parts.length ? parts.join(', ') : 'none'
+}
+
+/** "design=120, friction=14" → {design: 120, friction: 14}; null when a part is not word=number. */
+function parseWindows(text: string): Record<string, number> | null {
+  const out: Record<string, number> = {}
+  for (const part of text.split(',').map((p) => p.trim()).filter(Boolean)) {
+    const m = /^([a-z0-9_]+)\s*[=:]\s*(\d+)$/i.exec(part)
+    if (!m) return null
+    out[m[1].toLowerCase()] = Number(m[2])
+  }
+  return out
 }
 
 /** Change one target's budget. A run stops cleanly at a cap; a daily cap stops the next fire. */
@@ -624,13 +700,17 @@ function BudgetForm({ target, busy, onSave }: {
     max_runs_per_day: String(b.max_runs_per_day), max_outputs_per_day: String(b.max_outputs_per_day),
     max_tokens_per_day: b.max_tokens_per_day == null ? '' : String(b.max_tokens_per_day),
     lookback_days: String(b.lookback_days ?? ''), fade_days: String(b.fade_days ?? 21),
+    dismiss_cooldown_days: String(b.dismiss_cooldown_days ?? 60),
   })
+  const [byType, setByType] = useState(Object.entries(b.fade_days_by_type ?? {}).map(([k, d]) => `${k}=${d}`).join(', '))
+  const windows = parseWindows(byType)
   const field = 'w-20 rounded-md border border-input bg-background px-1.5 py-0.5 text-xs text-foreground'
   const labels: [keyof typeof v, string][] = [
     ['max_sources_per_run', 'sessions a run'], ['max_outputs_per_run', 'outputs a run'],
     ['max_runs_per_day', 'runs a day'], ['max_outputs_per_day', 'outputs a day'],
     ['max_tokens_per_day', 'tokens a day (empty: no cap)'],
     ['lookback_days', 'days back a run reads'], ['fade_days', 'days before an unseen finding fades'],
+    ['dismiss_cooldown_days', 'days a dismissed finding stays dismissed'],
   ]
   return (
     <form
@@ -645,6 +725,8 @@ function BudgetForm({ target, busy, onSave }: {
           ...(tokens ? { max_tokens_per_day: Number(tokens) } : {}), clear_tokens: !tokens,
           ...(v.lookback_days.trim() ? { lookback_days: Number(v.lookback_days) } : {}),
           ...(v.fade_days.trim() ? { fade_days: Number(v.fade_days) } : {}),
+          ...(v.dismiss_cooldown_days.trim() ? { dismiss_cooldown_days: Number(v.dismiss_cooldown_days) } : {}),
+          ...(windows ? { fade_days_by_type: windows } : {}),
         })
       }}
     >
@@ -656,7 +738,15 @@ function BudgetForm({ target, busy, onSave }: {
           <span className="text-muted-foreground">{label}</span>
         </label>
       ))}
-      <Button size="sm" variant="outline" type="submit" disabled={busy}>Save budget</Button>
+      <label className="flex items-center gap-1">
+        <input aria-label="fade days by finding type" value={byType} placeholder="design=120, friction=14"
+               className="w-48 rounded-md border border-input bg-background px-1.5 py-0.5 text-xs text-foreground placeholder:text-placeholder"
+               onChange={(e) => setByType(e.target.value)} />
+        <span className={windows ? 'text-muted-foreground' : 'text-destructive'}>
+          {windows ? 'fade days by type, over the defaults' : 'write type=days, comma separated'}
+        </span>
+      </label>
+      <Button size="sm" variant="outline" type="submit" disabled={busy || !windows}>Save budget</Button>
     </form>
   )
 }
