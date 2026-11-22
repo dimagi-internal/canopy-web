@@ -266,6 +266,10 @@ def test_it_reaches_only_people_who_could_approve_by_push_and_slack_then_email_i
     assert people <= {"alice@dimagi.com", "ada.admin@dimagi.com", "fixture-owner@dimagi.com"}
     mine = {d.channel for d in sent if d.user == world["alice"]}
     assert mine == {"push", "slack"}                                                  # not also emailed
+    # The push is marked a decision, so the phone keeps it up with a "Review & decide" button
+    # instead of showing it like an alert (frontend/public/sw-push.js).
+    assert all(c.kwargs["kind"] == "decision" and c.kwargs["title"].startswith("Approve?")
+               for c in pushes.call_args_list)
     assert any("alice@dimagi.com" in m.to for m in mailoutbox) is False
     emailed = {d.user.email for d in sent if d.channel == "email"}
     assert "ada.admin@dimagi.com" in emailed                                            # no push, no Slack: email

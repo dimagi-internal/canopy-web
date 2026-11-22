@@ -94,7 +94,7 @@ def _send_one(sub: PushSubscription, payload: dict, *, ttl: int = DEFAULT_TTL,
 
 
 def send_to_user(user, title: str, body: str, url: str, count: int | None = None, *,
-                 ttl: int = DEFAULT_TTL, urgency: str = "normal") -> int:
+                 ttl: int = DEFAULT_TTL, urgency: str = "normal", kind: str | None = None) -> int:
     """Push to every browser this user has registered. Returns sends that stuck.
 
     A "stuck" send is one the push service ACCEPTED, not one the device showed:
@@ -109,6 +109,11 @@ def send_to_user(user, title: str, body: str, url: str, count: int | None = None
     `push` listener can set the app-icon badge from a push that arrives while
     the app is closed — SupervisorPage.setBadge only runs on mount, so without
     this the badge goes stale until the app is next opened.
+
+    `kind` (optional) tells the service worker what sort of notification this
+    is: `"decision"` is a request waiting on this person's yes or no, which
+    `sw-push.js` keeps on screen with a "Review & decide" button instead of
+    letting it fade like an alert.
     """
     if not settings.VAPID_PRIVATE_KEY:
         return 0  # push not configured — stay silent rather than raise
@@ -117,6 +122,8 @@ def send_to_user(user, title: str, body: str, url: str, count: int | None = None
     payload = {"title": title, "body": body, "url": url}
     if count is not None:
         payload["count"] = count
+    if kind is not None:
+        payload["kind"] = kind
     sent = 0
     for sub in list(user.push_subscriptions.all()):
         try:
