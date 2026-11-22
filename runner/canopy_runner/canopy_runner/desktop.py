@@ -166,10 +166,30 @@ def observe(me: dict | None) -> None:
             except Exception:  # noqa: BLE001 — a turn will say so if the mod is missing
                 logger.warning("could not register the canopy-desktop mod", exc_info=True)
         if engine == CLAUDE_CLI:
-            # An npm install can take a minute; the heartbeat must not wait on it.
-            from . import headless
-            threading.Thread(target=headless.ensure_adapter, daemon=True,
-                             name="claude-cli-adapter").start()
+            _kick_adapter(force=True)
+    if engine == EMDASH:
+        # An emdash box needs the adapter too: a stored agent's new thread runs
+        # headless here (maybe_execute). Installed once, on the first heartbeat.
+        _kick_adapter()
+
+
+#: Has this process started an adapter install? (once per process on an emdash box)
+_adapter_kicked = False
+
+
+def _kick_adapter(force: bool = False) -> None:
+    """Install the ACP adapter in the background (an npm install can take a minute; the
+    heartbeat and the claim loop must not wait on it).
+
+    Every runtime needs it, emdash included: a stored agent has no emdash project, so its
+    new threads run headless on any box, and without the adapter they cannot run at all."""
+    global _adapter_kicked
+    if _adapter_kicked and not force:
+        return
+    _adapter_kicked = True
+    from . import headless
+    threading.Thread(target=headless.ensure_adapter, daemon=True,
+                     name="claude-cli-adapter").start()
 
 
 def in_flight() -> list[str]:
@@ -1205,6 +1225,7 @@ def maybe_execute(cfg, client, runner_id: str, turn: dict, thread_key: str) -> s
     elif (_current == CLAUDE_CLI or headless_stored) and _adapter_missing():
         logger.error("claude-cli runtime: the ACP adapter is not installed on this runner — turn %s "
                      "runs on emdash instead", turn.get("id"))
+        _kick_adapter()  # so the next try can run headless
         return None
     elif claude_cli() is None:
         # A new desktop session needs the CLI (seed + mod install). Without it the

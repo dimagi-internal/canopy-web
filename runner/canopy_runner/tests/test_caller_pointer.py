@@ -176,3 +176,16 @@ def test_an_agent_turn_gets_the_pointer_as_well_as_the_flag(monkeypatch, _isolat
     execute.execute_turn(_cfg(), FakeClient({"reuse": False}), "r1", turn)
     assert " --caller " in seen["prompt"]
     assert seen["pointer"]["turn_id"] == TID
+
+
+def test_a_stored_agents_chat_on_emdash_fails_saying_why_without_touching_the_sidebar(
+        monkeypatch, _isolated):
+    """A stored agent's chat that the headless path declined fails before any UI work,
+    naming what is missing, not the emdash sidebar."""
+    created = []
+    monkeypatch.setattr(cdp_control, "create_task", lambda *a, **k: created.append(a) or {})
+    client = _ChatClient({"reuse": False})
+    turn = _chat_turn(agent_slug="labsdata-nozdr", definition={"source": "stored"})
+    assert execute.execute_chat_turn(_CFG, client, "r1", turn).startswith("failed:")
+    assert created == []
+    assert "stored agent" in client.failed and "ACP adapter" in client.failed

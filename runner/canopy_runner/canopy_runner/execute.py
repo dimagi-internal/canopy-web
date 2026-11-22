@@ -1206,6 +1206,16 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
         logger.info("chat turn=%s reused emdash task=%s (agent=%s) %s", turn_id, task, target,
                     whois.brief(turn))
     else:
+        # The same guard as an agent turn's create (execute_turn): a stored agent, or an
+        # agent whose repo this emdash lacks, cannot be created here, and the sidecar would
+        # only say `project "<slug>" not found in the emdash sidebar`, which hides what is
+        # actually missing (for a stored agent, the ACP adapter).
+        missing_project = _stored_on_emdash(turn) or _project_missing(cfg, target)
+        if missing_project:
+            logger.error("chat create skipped turn=%s agent=%s: %s", turn_id, target,
+                         missing_project)
+            client.fail_turn(turn_id, f"chat create failed: {missing_project}"[:300])
+            return f"failed:{turn_id}"
         if _already_created(client, turn_id):
             return f"failed:{turn_id}"
         name = _task_name(target, turn)
