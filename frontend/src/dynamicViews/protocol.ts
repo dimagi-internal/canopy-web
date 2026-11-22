@@ -107,9 +107,18 @@ export type BrowserOp =
   | { op: 'request'; capability: string; args?: Record<string, unknown> }
   | { op: 'open'; url: string }
 
+/**
+ * A workspace app's BUNDLE page (apps/workspace_apps/bundles.py): the frame is one of the app's own
+ * HTML files, running canopy's bundle client instead of compiling `code`. `pages` lets it open
+ * another page of the app by its entry file (`canopy.open("kanban/kanban.html")`).
+ */
+export interface BundleInfo {
+  pages: { slug: string; entry: string }[]
+}
+
 /** Page → frame. */
 export type HostMessage =
-  | { channel: typeof CHANNEL; type: 'render'; code: string; data: Record<string, unknown>; scope: ViewScope; theme: 'light' | 'dark'; app?: AppContext; browser?: BrowserInfo }
+  | { channel: typeof CHANNEL; type: 'render'; code: string; data: Record<string, unknown>; scope: ViewScope; theme: 'light' | 'dark'; app?: AppContext; browser?: BrowserInfo; bundle?: BundleInfo }
   // A declared adapter event on the tab in front of the person, or `context` when that tab changed.
   | { channel: typeof CHANNEL; type: 'browser-event'; event: string; data: unknown }
   | { channel: typeof CHANNEL; type: 'data'; data: Record<string, unknown> }
@@ -144,7 +153,8 @@ export type FrameMessage =
   | { channel: typeof CHANNEL; type: 'task-action'; id: number; request: unknown }
   | { channel: typeof CHANNEL; type: 'navigate'; path: string }
   | { channel: typeof CHANNEL; type: 'app'; id: number; request: AppOp }
-  | { channel: typeof CHANNEL; type: 'go'; page: string; params: Record<string, string> }
+  // `newTab` (a bundle page's `canopy.open(…, {newTab: true})`) opens the page in a tab, from a click only.
+  | { channel: typeof CHANNEL; type: 'go'; page: string; params: Record<string, string>; newTab?: boolean }
   // `canopy.browser` in the extension's panel: the tab's context, an adapter capability, opening a tab.
   | { channel: typeof CHANNEL; type: 'browser'; id: number; request: BrowserOp }
   // canopy's panel (pagePanel.ts): what the view shows, the actions it offers the agent,

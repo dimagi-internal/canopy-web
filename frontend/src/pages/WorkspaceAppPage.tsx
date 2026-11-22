@@ -62,6 +62,11 @@ export default function WorkspaceAppPage() {
     const qs = new URLSearchParams({ ...p, ...(draft ? { draft: String(draft) } : {}) }).toString()
     navigate(scoped(`/apps/${app.key}/${slug}${qs ? `?${qs}` : ''}`))
   }
+  // A full URL for a page of this app (a bundle page opening one in a new tab).
+  const pageHref = (slug: string, p: Record<string, string>) => {
+    const qs = new URLSearchParams({ ...p, ...(draft ? { draft: String(draft) } : {}) }).toString()
+    return `${import.meta.env.BASE_URL.replace(/\/$/, '')}${scoped(`/apps/${app.key}/${slug}${qs ? `?${qs}` : ''}`)}`
+  }
   const tabHref = (slug: string) => scoped(`/apps/${app.key}/${slug}${draft ? `?draft=${draft}` : ''}`)
 
   return (
@@ -130,6 +135,8 @@ export default function WorkspaceAppPage() {
           connections={app.connections as unknown as DeclaredConnection[] | undefined}
           viewer={{ email: user?.email ?? '', name: (user as { display_name?: string } | null)?.display_name ?? '' }}
           onGo={go}
+          pageHref={pageHref}
+          pages={app.pages}
         />
       ) : (
         <div className="rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground">

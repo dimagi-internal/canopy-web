@@ -115,6 +115,10 @@ class PageOut(Schema):
     fills: dict[str, list[dict[str, Any]]] = {}
     forked: bool = False
     origin: str = "template"
+    #: "jsx" (`code`), or "bundle": the app's own files, drawn from `bundle_url` (its `entry`).
+    kind: str = "jsx"
+    entry: str = ""
+    bundle_url: str = ""
 
 
 class DraftInfoOut(Schema):
@@ -153,9 +157,30 @@ class PublicAppOut(Schema):
     settings: dict[str, Any]
 
 
+class BundleFileIn(Schema):
+    """One file of a bundle page's file set: its path in the bundle and exactly one of its bytes
+    (base64), its text, or the sha256 of bytes already sent to `upload_workspace_app_bundle_blobs`."""
+    path: str
+    content_base64: str | None = None
+    text: str | None = None
+    sha256: str | None = None
+
+
 class InstallIn(Schema):
     template: str = ""
     manifest: dict[str, Any] | None = None
+    #: The files of the manifest's bundle pages (`"kind": "bundle"`), with your own `manifest` only.
+    files: list[BundleFileIn] | None = None
+
+
+class BundleBlobsIn(Schema):
+    files: list[BundleFileIn]
+
+
+class BundleBlobOut(Schema):
+    path: str
+    sha256: str
+    size: int
 
 
 class InstallationPatch(Schema):
@@ -277,6 +302,8 @@ class ReleaseIn(Schema):
     #: The app's whole manifest, pages included — the shape installing your own app takes.
     manifest: dict[str, Any]
     note: str = ""
+    #: Its bundle pages' files, as installing takes them; none keeps the live version's files.
+    files: list[BundleFileIn] | None = None
 
 
 class MaintainerIn(Schema):

@@ -3845,8 +3845,35 @@ export interface paths {
          * Install an app
          * @description `template` installs one from the store (`list_app_store`); `manifest`
          *     installs one you wrote. Either way it starts enabled and NOT public.
+         *
+         *     `files` carries a manifest's bundle pages (`"kind": "bundle"`, `"entry": "<file>.html"`): a list
+         *     of `{path, content_base64 | text | sha256}`, at most 10 MB in all. Files over one request's size
+         *     go first to `upload_workspace_app_bundle_blobs` and are named here by `sha256`.
          */
         readonly post: operations["install_workspace_app"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-app-bundles/{workspace}/blobs": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Upload files for an app's bundle pages, to name by hash when releasing a version
+         * @description Each `{path, content_base64 | text}` is stored by its sha256 and answered `{path, sha256, size}`.
+         *     Send a bundle too large for one request in batches here, then the whole list by `sha256` with the
+         *     version (`install_workspace_app` `files`). It grants nothing: a file no version names is removed
+         *     after a day.
+         */
+        readonly post: operations["upload_workspace_app_bundle_blobs"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -28296,6 +28323,36 @@ export interface components {
              * @default template
              */
             readonly origin: string;
+            /**
+             * Kind
+             * @default jsx
+             */
+            readonly kind: string;
+            /**
+             * Entry
+             * @default
+             */
+            readonly entry: string;
+            /**
+             * Bundle Url
+             * @default
+             */
+            readonly bundle_url: string;
+        };
+        /**
+         * BundleFileIn
+         * @description One file of a bundle page's file set: its path in the bundle and exactly one of its bytes
+         *     (base64), its text, or the sha256 of bytes already sent to `upload_workspace_app_bundle_blobs`.
+         */
+        readonly BundleFileIn: {
+            /** Path */
+            readonly path: string;
+            /** Content Base64 */
+            readonly content_base64?: string | null;
+            /** Text */
+            readonly text?: string | null;
+            /** Sha256 */
+            readonly sha256?: string | null;
         };
         /** InstallIn */
         readonly InstallIn: {
@@ -28308,6 +28365,22 @@ export interface components {
             readonly manifest?: {
                 readonly [key: string]: unknown;
             } | null;
+            /** Files */
+            readonly files?: readonly components["schemas"]["BundleFileIn"][] | null;
+        };
+        /** BundleBlobOut */
+        readonly BundleBlobOut: {
+            /** Path */
+            readonly path: string;
+            /** Sha256 */
+            readonly sha256: string;
+            /** Size */
+            readonly size: number;
+        };
+        /** BundleBlobsIn */
+        readonly BundleBlobsIn: {
+            /** Files */
+            readonly files: readonly components["schemas"]["BundleFileIn"][];
         };
         /** InstallationPatch */
         readonly InstallationPatch: {
@@ -28374,6 +28447,8 @@ export interface components {
              * @default
              */
             readonly note: string;
+            /** Files */
+            readonly files?: readonly components["schemas"]["BundleFileIn"][] | null;
         };
         /** DraftOut */
         readonly DraftOut: {
@@ -59545,6 +59620,32 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["InstallationOut"];
+                };
+            };
+        };
+    };
+    readonly upload_workspace_app_bundle_blobs: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["BundleBlobsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["BundleBlobOut"][];
                 };
             };
         };

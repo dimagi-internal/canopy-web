@@ -34,6 +34,7 @@ import {
   type AppContext,
   type AppOp,
   type BrowserInfo,
+  type BundleInfo,
   type FrameMessage,
   type HostMessage,
   type ReadRequest,
@@ -51,7 +52,15 @@ export interface FrameView {
   task_actions?: readonly string[]
   /** Drawn from unsaved edits: there is no revision to call as. */
   preview?: boolean
+  /** A workspace app's bundle page: the frame loads `src` (one of the app's own HTML files, served
+   *  sandboxed by apps/workspace_apps/bundles.py) instead of compiling `code`. */
+  bundle?: BundleInfo & { src: string }
 }
+
+/** A bundle page keeps its own `<form>` submit handlers: the submit event needs `allow-forms`, and the
+ *  bundle's CSP (`form-action 'none'`) keeps anything from being submitted. Never `allow-same-origin`. */
+const BUNDLE_SANDBOX = 'allow-scripts allow-forms'
+
 
 /** What the frame is told about a task: its progress, not the request it was sent. */
 function statusOf(t: AgentTask): AgentTaskStatus {
@@ -99,6 +108,8 @@ interface Props {
     load: () => Promise<Record<string, unknown>>
     call: (op: AppOp) => Promise<unknown>
     go: (page: string, params: Record<string, string>) => void
+    /** The canopy URL of another page of the app, for `go` with `newTab` (a bundle page's `canopy.open`). */
+    href?: (page: string, params: Record<string, string>) => string
     /** May the page use canopy.read (the dynamic-view catalog)? Never on the public page. */
     canopyReads: boolean
     /** May the page use connections? Only a signed-in member's page. */
@@ -225,9 +236,10 @@ export function DynamicViewFrame({ view, scope, onError, app, pagePanel = false,
 
   const draw = useCallback(async () => {
     const data = await load()
-    post({ channel: CHANNEL, type: 'render', code: view.code, data, scope, theme: theme(), app: app?.context, browser: browser?.info })
+    const bundle = view.bundle ? { pages: view.bundle.pages } : undefined
+    post({ channel: CHANNEL, type: 'render', code: view.code, data, scope, theme: theme(), app: app?.context, browser: browser?.info, bundle })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [post, load, view.code, ctxKey, scope.view.version, app?.context, browser])
+  }, [post, load, view.code, view.bundle, ctxKey, scope.view.version, app?.context, browser])
 
   // The tab's declared events (and changes of tab) reach the frame while it is drawn.
   useEffect(() => {
@@ -263,9 +275,15 @@ export function DynamicViewFrame({ view, scope, onError, app, pagePanel = false,
           }
           return
         }
-        case 'go':
-          if (app && typeof msg.page === 'string') app.go(msg.page, msg.params ?? {})
+        case 'go': {
+          if (!app || typeof msg.page !== 'string') return
+          const params = msg.params ?? {}
+          // A new tab only from a click on this page (read now, before anything else); else this tab.
+          if (msg.newTab && app.href && pageClickedFrame(frame.current)) {
+            window.open(app.href(msg.page, params), '_blank', 'noopener,noreferrer')
+          } else app.go(msg.page, params)
           return
+        }
         case 'browser': {
           const id = msg.id
           const req = (msg.request ?? {}) as { op?: unknown; capability?: unknown; args?: unknown; url?: unknown }
@@ -488,12 +506,13 @@ export function DynamicViewFrame({ view, scope, onError, app, pagePanel = false,
     )}
     <iframe
       ref={frame}
-      title="Dynamic view"
-      src={apiUrl(`/dynamic-views/frame/?theme=${theme()}`)}
-      sandbox="allow-scripts"
+      title={view.bundle ? scope.view.title : 'Dynamic view'}
+      src={view.bundle ? apiUrl(view.bundle.src) : apiUrl(`/dynamic-views/frame/?theme=${theme()}`)}
+      sandbox={view.bundle ? BUNDLE_SANDBOX : 'allow-scripts'}
       referrerPolicy="no-referrer"
       className="block w-full border-0"
-      style={{ height }}
+      // A bundle page is an existing UI that often lays itself out to the window: give it one.
+      style={view.bundle ? { height, minHeight: 'calc(100vh - 12rem)' } : { height }}
       onLoad={() => {
         loads.current += 1
         // The first load is the frame; any later one means the view's code

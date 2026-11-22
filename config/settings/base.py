@@ -154,6 +154,7 @@ MIDDLEWARE = [
     # The dynamic-view frame (apps/dynamic_views/frame.py): same reason — it runs
     # generated code, so it is answered before sessions and can never set a cookie.
     "apps.dynamic_views.frame.DynamicViewFrameMiddleware",
+    "apps.workspace_apps.bundles.BundleMiddleware",  # bundle pages' files: sessionless, like the frame
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "config.static_middleware.CanopyWhiteNoiseMiddleware",  # WhiteNoise, minus `/` (see module)

@@ -274,3 +274,25 @@ class AppScheduledEmail(models.Model):
 
     class Meta:
         indexes = [models.Index(fields=["status", "send_at"])]
+
+
+class AppBundleBlob(models.Model):
+    """One file's bytes in a bundle page's file set (`bundles.py`), stored once by content.
+    Shared by every bundle that holds the same bytes, and by no workspace: a blob is reached
+    only through a bundle that names it, so knowing it means knowing its content already."""
+
+    sha256 = models.CharField(max_length=64, unique=True)
+    size = models.PositiveIntegerField()
+    data = models.BinaryField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class AppBundle(models.Model):
+    """The files of a template version's bundle pages: {path: sha256}. `digest` is the hash of
+    that mapping, so a bundle never changes and its URL (`/app-bundles/<digest>/…`) is cached for
+    good. Written by `bundles.build`, never by hand; the manifest carries only its id and paths."""
+
+    digest = models.CharField(max_length=64, unique=True)
+    files = models.JSONField(default=dict)
+    size = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)

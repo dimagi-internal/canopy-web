@@ -19,6 +19,7 @@ import { CanopyWordmark } from '@/brand/CanopyWordmark'
 import type { BrowserHost } from '@/dynamicViews/DynamicViewFrame'
 import type { DeclaredConnection } from '@/dynamicViews/connectionCalls'
 import { AppFrame } from '@/workspaceApps/AppFrame'
+import { scopedPath } from '@/lib/scopedLinks'
 import { BrowserGate, ExtensionLink, allowedOrigins, visibleContext, type Context } from './extensionBridge'
 
 /** Where the sign-in tab lands: a page that says to come back here. */
@@ -283,6 +284,12 @@ function PanelApp({ entry, apps, link, context, listeners, me }: PanelAppProps) 
             setParams(p)
           }
         }}
+        // A bundle page opening another in a new tab gets the full canopy page, in a browser tab.
+        pageHref={(slug, p) => {
+          const qs = new URLSearchParams(p).toString()
+          return `${window.location.origin}${import.meta.env.BASE_URL.replace(/\/$/, '')}${scopedPath(entry.workspace, `/apps/${app.key}/${slug}${qs ? `?${qs}` : ''}`)}`
+        }}
+        pages={app.pages}
         browser={host}
       />
     </div>

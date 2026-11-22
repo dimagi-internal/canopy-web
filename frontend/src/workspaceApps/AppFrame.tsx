@@ -5,8 +5,10 @@
  * `app` prop (query/act/history/upload/go, the app's fields and settings, the
  * workspace's slot fills), each call answered here through the app's routes —
  * as the viewer, as an anonymous visitor, or as a visitor previewed on a draft's
- * test copy — where the server applies the app's rules. Design:
- * docs/architecture/workspace-apps.md.
+ * test copy — where the server applies the app's rules. A bundle page
+ * (`kind: "bundle"`) is the same frame loading one of the app's own HTML files
+ * instead of compiling code; its page params ride in the file's query string too,
+ * for code that reads `location.search`. Design: docs/architecture/workspace-apps.md.
  */
 import { useMemo, useState } from 'react'
 import { callApp, type AppPage, type CollectionSource } from '@/api/workspaceApps'
@@ -34,6 +36,10 @@ interface Props {
   connections?: readonly DeclaredConnection[]
   viewer: { email: string; name: string }
   onGo: (page: string, params: Record<string, string>) => void
+  /** The canopy URL of a page of the app, so a bundle page can open one in a new tab. */
+  pageHref?: (page: string, params: Record<string, string>) => string
+  /** The app's pages, so a bundle page can open another by its entry file. */
+  pages?: readonly AppPage[]
   /** Drawn in the browser extension's panel (member surface only): what `canopy.browser` reaches. */
   browser?: BrowserHost
 }
@@ -42,7 +48,7 @@ function isCollection(s: Record<string, unknown>): s is CollectionSource {
   return typeof s.collection === 'string'
 }
 
-export function AppFrame({ workspace, app, page, roles, params, surface, draft, link, dataModel, settings, connections, viewer, onGo, browser }: Props) {
+export function AppFrame({ workspace, app, page, roles, params, surface, draft, link, dataModel, settings, connections, viewer, onGo, pageHref, pages, browser }: Props) {
   const [error, setError] = useState<string | null>(null)
   const paramsKey = JSON.stringify(params)
   const rolesKey = roles.join(',')
@@ -63,6 +69,7 @@ export function AppFrame({ workspace, app, page, roles, params, surface, draft, 
       context,
       call,
       go: onGo,
+      href: pageHref,
       canopyReads: surface === 'member',
       canConnect: surface === 'member',
       connections: surface === 'member' ? connections : undefined,
@@ -94,7 +101,14 @@ export function AppFrame({ workspace, app, page, roles, params, surface, draft, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [workspace.slug, page.slug, viewer.email],
   )
-  const view = useMemo(() => ({ code: page.code, sources: [] }), [page.code])
+  const bundlePages = (pages ?? [page]).filter((p) => p.kind === 'bundle').map((p) => ({ slug: p.slug, entry: p.entry }))
+  const bundleKey = JSON.stringify(bundlePages)
+  const view = useMemo(() => {
+    if (page.kind !== 'bundle' || !page.bundle_url) return { code: page.code, sources: [] }
+    const qs = new URLSearchParams(params).toString()
+    return { code: '', sources: [], bundle: { src: `${page.bundle_url}${qs ? `?${qs}` : ''}`, pages: bundlePages } }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page.code, page.kind, page.bundle_url, paramsKey, bundleKey])
 
   return (
     <>
