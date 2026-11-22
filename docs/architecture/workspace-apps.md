@@ -45,6 +45,54 @@ side panel shows beside which tabs, and what each may ask of the tab's adapter
 Do not let a workspace declare what acts beyond the caller: overlay `add_action` refuses
 `then` and link actions (`overlay.py`, `add_action` branch); only a template declares them.
 
+## Bundle pages (`apps/workspace_apps/bundles.py`)
+
+A member page may be an existing web UI instead of JSX: `{"slug": "kanban", "kind": "bundle",
+"entry": "kanban/kanban.html"}`, drawn from static files (HTML, JS, CSS, JSON, images, fonts)
+uploaded with the version. The module docstring holds the rules; the ones to keep:
+
+- **Upload is a plain list, `[{path, content_base64 | text | sha256}]`**, given as `files` with the
+  manifest (`install_workspace_app`). Every route that releases a template version passes it through
+  `bundles.attach`, which drops any `bundle` the author wrote and stores the server's own index
+  (`{id, size, files}`); `manifest.py::_bundle_page` checks each `entry` is one of those files. A
+  bundle over one request body goes first to `upload_workspace_app_bundle_blobs` in batches and is then
+  named by `sha256`; a blob no bundle names is swept after a day (`bundles.sweep_unused_blobs`, on the
+  retention tick). Limits are `bundles.MAX_*` and the type table `bundles.TYPES`.
+- **Template-only.** A bundle page has no code, slots or sources; overlay `fork_page` and `fill_slot`
+  refuse one and `add_page` cannot make one (`overlay.py::_not_bundle`). `set_page` (title, menu) works.
+- **Content-addressed and immutable.** `AppBundleBlob` holds bytes once by sha256; `AppBundle` is the
+  {path: sha256} mapping, its id the hash of it. Files are served at `/app-bundles/<id>/<path>` with a
+  year's `immutable` caching (HTML excepted: each carries a fresh nonce).
+- **The same sandbox, one step wider.** `bundles.BundleMiddleware` answers before sessions, like the
+  dynamic-view frame, so no cookie is read or set; every file carries `bundles.csp`: `sandbox
+  allow-scripts allow-forms` (opaque origin; `allow-forms` only so a form's submit event fires, while
+  `form-action 'none'` keeps anything from being submitted), scripts only from the bundle's own path
+  and canopy's client (no inline script but canopy's nonce'd config, no `eval`), `connect-src` only the
+  bundle's own files (it may fetch its JSON or templates; data still goes only through `canopy.*`),
+  images, fonts and media from the bundle or `data:`/`blob:`, no workers, frames or plugins, and the
+  same `frame-ancestors` as the frame (canopy's origins plus the browser extension's), so a bundle page
+  also renders in `/ext/panel/`. The host frames it with the same two flags
+  (`DynamicViewFrame.tsx::BUNDLE_SANDBOX`), never `allow-same-origin`.
+- **canopy's client is injected into every HTML file**, first in `<head>`: `bundle_client.js`, a classic
+  script, so `window.canopy` exists before the page's own scripts run. It speaks the dynamic-view
+  protocol (`frontend/src/dynamicViews/protocol.ts`), so the canopy page answers a bundle page exactly
+  as it answers a JSX one: `canopy.app` (query, act, bulk, link, history, upload, tasks),
+  `canopy.connection`, `canopy.browser`, `canopy.page`, `canopy.read`, `canopy.navigate`. Because its
+  code runs before canopy has spoken, it adds `canopy.ready` (a promise of `{app, scope, browser}`).
+- **Moving between pages** is `canopy.open(page, params, {newTab})`, by slug or by a bundle path
+  (`"kanban/kanban.html?id=5"` opens the page whose `entry` that is, with `id` as a param); a click on a
+  link to another file of the bundle does the same, any other link leaves through `canopy.navigate`.
+  It is a full canopy page each time; the frame never navigates itself (a frame that loads a second
+  document is no longer answered, as for any view). Page params also ride in the file's query string,
+  for code that reads `location.search`. A new tab needs a click on the page.
+- **What a bundle cannot do**, so a port plans its shim: no `localStorage`, `sessionStorage`,
+  IndexedDB or cookies (an opaque origin has none: keep state in a collection through `app.act`); no
+  network but its own files (outside calls go through `canopy.connection`); no remote scripts, fonts
+  or images (vendor them, or turn a fetched image into a `blob:` URL); no `alert`/`confirm`/`prompt`
+  (no `allow-modals`: they return without asking); no popups (`window.open` is routed to
+  `canopy.open`/`canopy.navigate`); no workers; no inline `<script>` or `on*=` attributes; and no
+  assignment to `location` (use `canopy.open`).
+
 ## Acting on one project's tasks (`apps/workspace_apps/tasks.py`)
 
 An app may declare `tasks` (`manifest.py::_validate_tasks`): the app role that reads, and named
@@ -112,7 +160,8 @@ A template update is taken as a draft (`upgrade=true`), then the same steps.
 - **Access**: every route declares `@gate`.
 - **Pages**: the dynamic-view sandbox (`apps/dynamic_views/frame.py`: opaque origin,
   `connect-src 'none'`, no `allow-forms`), compiler, kit and protocol. An app page gets an
-  `app` prop; a plain view still refuses writes.
+  `app` prop; a plain view still refuses writes. A bundle page is the same protocol from
+  its own files (§ Bundle pages).
 - **Seeing a page as an agent**: an agent QAs an app page it builds by opening
   `/w/<ws>/apps/<key>/<page>` in a headless browser that sends `Authorization: Bearer
   <its own PAT>` on every request (Playwright `extraHTTPHeaders`, gstack `browse` headers);

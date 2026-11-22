@@ -14,7 +14,10 @@ An app declares what it is, and can do nothing it did not declare:
   ``effects`` the platform performs (an email). A ``public`` action is a form an
   anonymous visitor submits; it only creates and is rate-limited per address.
 * ``pages`` — dynamic-view code drawn in the sandbox, for an ``audience``, with
-  named ``slots`` a workspace may fill without forking the page.
+  named ``slots`` a workspace may fill without forking the page. A member page may
+  instead be ``"kind": "bundle"`` with an ``entry`` HTML file of the app's ``bundle``:
+  static files uploaded with the version (`bundles.py`), whose index (``id``, ``size``,
+  ``files``) canopy writes, never the author. A bundle page has no code, slots or sources.
 * ``settings`` — the knobs a workspace sets without code (careers intro, email
   wording). ``fixtures`` seed a draft's test copy; ``scenarios`` are the
   plain-language checks a version must pass before it is published.
@@ -66,7 +69,7 @@ from apps.dynamic_views import catalog as dv_catalog
 from apps.dynamic_views import services as dv_services
 from apps.workspaces import permissions as perms
 
-from . import browser, scope
+from . import browser, bundles, scope
 
 IDENT = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
 SLUG = re.compile(r"^[a-z][a-z0-9-]{0,38}[a-z0-9]$|^[a-z]$")
@@ -737,7 +740,11 @@ def _validate_source(where: str, raw, audience: str, collections: dict) -> dict:
     return dv_catalog.validate_sources([raw])[0]
 
 
-def _validate_pages(raw, roles: set[str], collections: dict, links: dict | None = None) -> list:
+PAGE_KINDS = ("jsx", "bundle")
+
+
+def _validate_pages(raw, roles: set[str], collections: dict, links: dict | None = None,
+                    bundle: dict | None = None) -> list:
     if not isinstance(raw, list) or not raw:
         _fail("pages", "must be a non-empty list")
     if len(raw) > MAX_PAGES:
@@ -764,6 +771,14 @@ def _validate_pages(raw, roles: set[str], collections: dict, links: dict | None 
                 _fail(f"{where}.role", "a link page's role is 'link'")
         elif role not in roles or role == "link" or (audience == "member") == (role == "public"):
             _fail(f"{where}.role", "a member page names a role of this app; a public page's role is 'public'")
+        kind = spec.get("kind", "jsx")
+        if kind not in PAGE_KINDS:
+            _fail(f"{where}.kind", "must be 'jsx' (the default) or 'bundle'")
+        if kind == "bundle":
+            out.append(_bundle_page(where, spec, slug, audience, role, bundle))
+            continue
+        if spec.get("entry"):
+            _fail(f"{where}.entry", "only a bundle page (\"kind\": \"bundle\") has an entry")
         code = check_page_code(f"{where}.code", spec.get("code") or "")
         sources_raw = spec.get("sources") or []
         if audience == "link" and sources_raw:
@@ -787,6 +802,27 @@ def _validate_pages(raw, roles: set[str], collections: dict, links: dict | None 
                     "slots": list(slots), "fills": norm_fills, "origin": spec.get("origin", "template"),
                     "forked": bool(spec.get("forked", False))})
     return out
+
+
+def _bundle_page(where: str, spec: dict, slug: str, audience: str, role: str, bundle: dict | None) -> dict:
+    """A page drawn from the app's uploaded files (`bundles.py`): its entry HTML, nothing else."""
+    if audience != "member":
+        _fail(f"{where}.audience", "a bundle page is a member page")
+    if bundle is None:
+        _fail(f"{where}.entry", "a bundle page needs the app's files: send them as `files` with the version")
+    entry = spec.get("entry")
+    bundles.check_path(f"{where}.entry", entry)
+    if bundles.ext(entry) not in bundles.HTML:
+        _fail(f"{where}.entry", "must be an .html file")
+    if entry not in bundle["files"]:
+        _fail(f"{where}.entry", f"'{entry}' is not one of the bundle's files")
+    for k in ("code", "slots", "fills", "sources"):
+        if spec.get(k):
+            _fail(f"{where}.{k}", "a bundle page is its files: it has no code, slots or sources "
+                                  "(it reads through app.query)")
+    return {"slug": slug, "title": str(spec.get("title") or slug)[:120], "audience": audience, "role": role,
+            "nav": bool(spec.get("nav", True)), "kind": "bundle", "entry": entry, "code": "", "sources": [],
+            "slots": [], "fills": {}, "origin": spec.get("origin", "template"), "forked": False}
 
 
 def _validate_settings(raw) -> dict:
@@ -1039,7 +1075,8 @@ def validate(raw) -> dict:
         for a in link["actions"]:
             if a not in actions or actions[a]["role"] != "link" or actions[a].get("link") != lname:
                 _fail(f"links.{lname}.actions", f"'{a}' must be an action of role 'link' naming this link")
-    pages = _validate_pages(raw.get("pages"), names, collections, links)
+    bundle = bundles.validate_index(raw.get("bundle"))
+    pages = _validate_pages(raw.get("pages"), names, collections, links, bundle)
     for lname, link in links.items():
         if not any(p["slug"] == link["page"] and p["audience"] == "link" for p in pages):
             _fail(f"links.{lname}.page", f"'{link['page']}' must be a page with audience 'link'")
@@ -1061,6 +1098,8 @@ def validate(raw) -> dict:
     }
     if tasks is not None:  # only when declared, so an app without it keeps its exact shape
         out["tasks"] = tasks
+    if bundle is not None:  # likewise
+        out["bundle"] = bundle
     browser_entries = browser.validate(raw.get("browser"), pages)
     if browser_entries is not None:  # likewise: only when declared
         out["browser"] = browser_entries

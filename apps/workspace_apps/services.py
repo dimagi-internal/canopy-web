@@ -25,6 +25,7 @@ from django.utils import timezone
 
 from apps.canopy_sessions import attachment_storage
 
+from . import bundles
 from . import manifest as mf
 from . import overlay as ov
 from . import template_diff
@@ -238,15 +239,19 @@ def store_screenshot(workspace_id: str, key: str, file: str) -> tuple[bytes, str
 
 
 @transaction.atomic
-def install(*, workspace_id: str, user, template: str = "", manifest: dict | None = None) -> AppInstallation:
+def install(*, workspace_id: str, user, template: str = "", manifest: dict | None = None,
+            files: list | None = None) -> AppInstallation:
     """Install a store template, or a manifest the workspace wrote (which becomes
-    its own unlisted template, so it has versions and upgrades like any other)."""
+    its own unlisted template, so it has versions and upgrades like any other).
+    `files` are its bundle pages' files (`bundles.attach`)."""
     if bool(template) == bool(manifest):
         raise ValueError("install a template from the store (`template`) or your own (`manifest`), not both")
+    if files and not manifest:
+        raise ValueError("`files` come with your own `manifest`; a store template brings its own")
     sync_bundled()
     who = user if getattr(user, "is_authenticated", False) else None
     if manifest:
-        m = mf.validate(manifest)
+        m = mf.validate(bundles.attach(manifest, files))
         tkey = f"{workspace_id}/{m['key']}"
         if AppTemplate.objects.filter(key=tkey).exists():
             raise ValueError(f"'{m['key']}' already exists in this workspace's templates")

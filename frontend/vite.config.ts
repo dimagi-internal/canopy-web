@@ -284,6 +284,8 @@ export default defineConfig({
       '/auth': API_ORIGIN,
       '/admin': API_ORIGIN,
       '/static': API_ORIGIN,
+      // A workspace app's bundle pages: the sandboxed frame loads these files (apps/workspace_apps/bundles.py).
+      '/app-bundles': API_ORIGIN,
     },
   },
 })

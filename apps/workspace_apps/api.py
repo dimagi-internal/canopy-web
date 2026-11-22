@@ -38,12 +38,14 @@ from apps.embedding.audit import client_ip
 from apps.workspaces import permissions as perms
 from apps.workspaces.models import Workspace
 
-from . import access, guide, services
+from . import access, bundles, guide, services
 from . import tasks as app_tasks
 from .models import LIVE, AppInstallation, AppRoleGrant, AppVersion
 from .schemas import (
     ActionIn,
     BulkActionIn,
+    BundleBlobOut,
+    BundleBlobsIn,
     DraftIn,
     DraftInfoOut,
     DraftOut,
@@ -193,6 +195,12 @@ def _summary(inst: AppInstallation) -> dict:
                 installed_at=inst.installed_at, updated_at=inst.updated_at)
 
 
+def _page_out(m: dict, p: dict) -> PageOut:
+    if p.get("kind") == "bundle":
+        return PageOut(**p, bundle_url=bundles.url(m["bundle"]["id"], p["entry"]))
+    return PageOut(**p)
+
+
 def _out(request: HttpRequest, inst: AppInstallation, space: str = LIVE) -> InstallationOut:
     m = services.manifest_for(inst, space)
     roles = _roles(request, inst, space, m)
@@ -205,7 +213,7 @@ def _out(request: HttpRequest, inst: AppInstallation, space: str = LIVE) -> Inst
                              space=space)
     return InstallationOut(**_summary(inst), my_roles=sorted(roles), may_maintain=maintain,
                            may_manage=access.may_manage(request.user, inst.workspace_id),
-                           pages=[PageOut(**p) for p in pages], data_model=_schema(m), settings=_settings(m),
+                           pages=[_page_out(m, p) for p in pages], data_model=_schema(m), settings=_settings(m),
                            draft=draft, connections=m.get("connections") or [],
                            manifest=m if maintain else None)
 
@@ -280,17 +288,41 @@ def list_workspace_apps(request: HttpRequest, workspace: str) -> list[Installati
 @gate("integrations", setting=True)
 def install_workspace_app(request: HttpRequest, workspace: str, payload: InstallIn) -> Status:
     """`template` installs one from the store (`list_app_store`); `manifest`
-    installs one you wrote. Either way it starts enabled and NOT public."""
+    installs one you wrote. Either way it starts enabled and NOT public.
+
+    `files` carries a manifest's bundle pages (`"kind": "bundle"`, `"entry": "<file>.html"`): a list
+    of `{path, content_base64 | text | sha256}`, at most 10 MB in all. Files over one request's size
+    go first to `upload_workspace_app_bundle_blobs` and are named here by `sha256`."""
     _member_or_404(request, workspace)
     _require_manage(request, workspace)
+    files = [f.model_dump(exclude_none=True) for f in payload.files] if payload.files else None
     try:
         inst = services.install(workspace_id=workspace, user=request.user, template=payload.template,
-                                manifest=payload.manifest)
+                                manifest=payload.manifest, files=files)
     except LookupError as exc:
         raise HttpError(404, str(exc)) from exc
     except ValueError as exc:
         raise HttpError(422, str(exc)) from exc
     return Status(201, _out(request, inst))
+
+
+@router.post("/workspace-app-bundles/{workspace}/blobs", response={201: list[BundleBlobOut]},
+             summary="Upload files for an app's bundle pages, to name by hash when releasing a version")
+@gate("member", kind="content", viewer_write="an app's maintainer may be a viewer granted the role by name")
+def upload_workspace_app_bundle_blobs(request: HttpRequest, workspace: str, payload: BundleBlobsIn) -> Status:
+    """Each `{path, content_base64 | text}` is stored by its sha256 and answered `{path, sha256, size}`.
+    Send a bundle too large for one request in batches here, then the whole list by `sha256` with the
+    version (`install_workspace_app` `files`). It grants nothing: a file no version names is removed
+    after a day."""
+    _member_or_404(request, workspace)
+    if not (access.may_manage(request.user, workspace)
+            or any(access.may_maintain(request.user, i) for i in AppInstallation.objects.filter(workspace_id=workspace))):
+        raise HttpError(403, "uploading an app's files needs the workspace's integrations permission or an app's maintainer role")
+    try:
+        out = bundles.store_blobs([f.model_dump(exclude_none=True) for f in payload.files])
+    except ValueError as exc:
+        raise HttpError(422, str(exc)) from exc
+    return Status(201, [BundleBlobOut(**b) for b in out])
 
 
 @router.get("/workspace-apps/{workspace}/{key}", response=InstallationOut,

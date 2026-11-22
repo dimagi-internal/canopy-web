@@ -90,6 +90,16 @@ or "context" (the tab changed), returning an unsubscribe, and canopy.browser.ope
 URL from a click. A refusal rejects with e.code (no_adapter, not_ready, unknown_capability,
 adapter_error, timeout, bad_request). The template declares it; a workspace change cannot.
 
+BUNDLE PAGES: a page with "kind": "bundle" is the template's own static files (an existing web UI:
+its "entry" HTML plus JS, CSS, images, fonts, uploaded as `files` with the version, never as a
+change). You cannot fork it, fill it or add one; you can retitle it or take it off the menu
+(set_page). Its code uses the same calls through window.canopy, which canopy injects ahead of the
+page's own scripts: await canopy.ready (-> {app, scope, browser}), then canopy.app.query / act / bulk /
+link / history / upload / tasks, canopy.connection.request, canopy.browser, canopy.page, and
+canopy.open(page, params, {newTab}) to open another page of the app by slug or by its entry path
+("kanban/kanban.html?id=5"). It has no storage, no network but its own files, no eval, no
+alert/confirm/prompt and no popups (docs/architecture/workspace-apps.md § Bundle pages).
+
 WHAT THE TEMPLATE DECLARES (read it in the manifest; a workspace change cannot add these):
   an action's `when` (it applies only to a record in that state — offer the button only then),
   `actor_field` (only the person the record names may run it: an approver approves), `params` (values

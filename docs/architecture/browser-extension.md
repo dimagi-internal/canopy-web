@@ -40,7 +40,9 @@ connections ([`vault-connections.md`](vault-connections.md) § Calls from screen
   `frame-ancestors` listing exactly the allowed extension origins; with none configured it is a
   404. Every other page keeps `DENY`. The dynamic-view frame adds the same origins to its own
   `frame-ancestors` (checked against every ancestor) and nothing else: still `sandbox
-  allow-scripts`, never `allow-same-origin`, `connect-src 'none'`. The service worker leaves
+  allow-scripts`, never `allow-same-origin`, `connect-src 'none'`. A bundle page's files carry the
+  same `frame-ancestors` (`apps/workspace_apps/bundles.py::csp`), so it draws in the panel too, with
+  `canopy.browser` from canopy's injected client. The service worker leaves
   `/ext/` to the network so these headers are never replaced by a cached shell.
 - **The list shows only what the panel could draw.** `list_browser_apps` reads each organisation
   once (`wsvc.each_organisation`), plus a guest's own apps (`wsvc.guest_scopes`), and keeps an
