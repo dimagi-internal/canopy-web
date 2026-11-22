@@ -56,7 +56,7 @@ RUN npm run build
 
 
 # ─── Stage 2: Python runtime ─────────────────────────────────────────
-FROM public.ecr.aws/docker/library/python:3.12-slim
+FROM public.ecr.aws/docker/library/python:3.13-slim
 
 # No Node or Claude Code CLI here: canopy-web makes no model calls of its own
 # (agents run on runners), so there is no in-process `claude -p` backend.

@@ -925,7 +925,7 @@ Resources:
     Condition: IsEphemeral
     Properties:
       Description: !Sub "Backstop: terminate ${Owner}'s ${Capability} instances older than ${MaxInstanceLifetimeSeconds}s."
-      Runtime: python3.12
+      Runtime: python3.13
       Handler: index.handler
       Timeout: 60
       MemorySize: 128

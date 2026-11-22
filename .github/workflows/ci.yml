@@ -82,7 +82,7 @@ jobs:
           enable-cache: true
 
       - name: Set up Python
-        run: uv python install 3.12
+        run: uv python install 3.13
 
       - name: Sync dependencies
         run: uv sync --extra dev
@@ -204,7 +204,7 @@ jobs:
           enable-cache: true
 
       - name: Set up Python
-        run: uv python install 3.12
+        run: uv python install 3.13
 
       # NOT for the packages, which each resolve their own env. runner/ec2 has
       # no pyproject.toml, so `uv run` there walks UP and runs in the ROOT
@@ -356,7 +356,7 @@ jobs:
           enable-cache: true
 
       - name: Set up Python
-        run: uv python install 3.12
+        run: uv python install 3.13
 
       - name: Sync dependencies
         run: uv sync --extra dev
@@ -473,7 +473,7 @@ jobs:
           enable-cache: true
 
       - name: Set up Python
-        run: uv python install 3.12
+        run: uv python install 3.13
 
       - name: Sync dependencies
         run: uv sync --extra dev
@@ -840,7 +840,7 @@ jobs:
           enable-cache: true
 
       - name: Set up Python
-        run: uv python install 3.12
+        run: uv python install 3.13
 
       - name: Sync dependencies
         run: uv sync --extra dev

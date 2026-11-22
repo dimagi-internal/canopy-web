@@ -2,6 +2,12 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.36.1 — 2026-11-22
+
+- The on-demand capability's backstop Lambda (`ondemand-capability.cfn.yaml`) runs on the
+  `python3.13` runtime, matching the rest of canopy. Its inline handler is stdlib only; a
+  stack picks the new runtime up on its next update.
+
 ## 0.36.0 — 2026-11-22
 
 **Stored agents are git repositories canopy hosts.**

@@ -9,7 +9,7 @@ command-line tool prints, so Meeting assistant reads either.
 Apple Silicon only. Install it as a tool, with its Mac extras:
 
 ```bash
-uv tool install --python 3.12 "canopy-listen[mac] @ git+https://github.com/dimagi-internal/canopy-web#subdirectory=packages/canopy_listen"
+uv tool install --python 3.13 "canopy-listen[mac] @ git+https://github.com/dimagi-internal/canopy-web#subdirectory=packages/canopy_listen"
 canopy-listen models download     # the configured models, once
 ```
 
