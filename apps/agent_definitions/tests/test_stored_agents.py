@@ -81,6 +81,19 @@ def test_create_gate(w, agent):
     assert _create(_browser(w["editor"]), slug="stored").status_code == 422
 
 
+def test_an_agents_login_creates_for_a_person_never_itself(w, agent):
+    r = _create(pat_client(w["bot"]), slug="other")
+    assert r.status_code == 201, r.content
+    assert Agent.objects.get(slug="other").owner == w["owner"]
+    # Its turn's asker, when it names a live turn of its own that a person asked for.
+    turn = Turn.objects.create(agent=agent, origin="api", prompt="make one", idempotency_key="t-own",
+                               status=Turn.RUNNING, initiator_kind="user", initiator_user=w["editor"],
+                               initiator_assurance="session")
+    r = _create(pat_client(w["bot"], HTTP_X_CANOPY_PARENT_TURN=str(turn.pk)), slug="third")
+    assert r.status_code == 201, r.content
+    assert Agent.objects.get(slug="third").owner == w["editor"]
+
+
 # --- reading ----------------------------------------------------------------
 
 

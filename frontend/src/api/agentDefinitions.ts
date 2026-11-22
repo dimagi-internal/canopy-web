@@ -87,7 +87,7 @@ export interface NewStoredAgent {
 }
 
 export async function createStoredAgent(body: NewStoredAgent): Promise<StoredAgentOut> {
-  const res = await apiV2.POST('/api/agents/stored', { body })
+  const res = await apiV2.POST('/api/agents/stored', { body: { drop_refused: false, message: '', ...body } })
   if (!res.response.ok || !res.data) fail(res, 'Could not create the agent.')
   return res.data as unknown as StoredAgentOut
 }

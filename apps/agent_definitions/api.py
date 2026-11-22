@@ -32,7 +32,7 @@ from ninja.errors import HttpError
 
 from apps.agents import access
 from apps.agents import definition_store as store
-from apps.agents.creation import RESERVED_SLUGS, creating_owner
+from apps.agents.creation import RESERVED_SLUGS, NoOwnerError, creating_owner
 from apps.agents.gates import agent_for_admin, agent_for_edit, agent_for_read
 from apps.agents.holding import runner_may_hold_agent
 from apps.agents.models import Agent, AgentDefinitionRevision
@@ -201,14 +201,25 @@ def _revision_or_404(agent: Agent, number: int) -> AgentDefinitionRevision:
 # ---- creating a stored agent, and converting one ----------------------------
 
 
-@router.post("/stored", response={201: StoredAgentOut, **refusals(409, 422)},
+@router.post("/stored", response={201: StoredAgentOut, **refusals(409, 413, 422)},
              summary="Create an agent whose definition canopy stores (no GitHub repository)")
 @gate("agent.work", setting=True)  # editor in the target workspace, the same gate as registering an agent
 def create_stored_agent(request: HttpRequest, payload: StoredAgentIn) -> Status:
     """Stamps the agent from the canopy agent factory (the same scaffold `/canopy:create-agent`
     writes) and stores it as revision 1, published. No repository and no GitHub token: its
-    runners materialize the definition from canopy. The creator owns it (from inside an agent's
-    turn, the person who asked for that turn). 409 when the slug is taken."""
+    runners materialize the definition from canopy. The creator owns it. An agent's own login
+    creates it for a person, never for itself: the person who asked for the turn it works in
+    (known from its turn login, or the `X-Canopy-Parent-Turn` it sends), else the agent's
+    owner; 403 `no_owner` when neither may create agents in the workspace. 409 `exists` when
+    the slug is taken.
+
+    With `files`, revision 1 is the scaffold with those files laid over it, held to the file
+    policy, and the files canopy writes itself rewritten: one the policy refuses refuses the
+    create (422 `policy` with `problems`), or with `drop_refused` is left out and listed in
+    `dropped`. With `bundle_b64` (a `git bundle` of a branch) the source's history is kept, as
+    `convert` keeps it: under `refs/heads/imported`, every blob scanned for secrets first (422
+    `secret`), revision 1 a commit on its tip. Files and history together are held to one
+    request's size (413 `too_large`)."""
     workspace = payload.workspace.strip()
     if not wsvc.is_member(request.user, workspace):
         raise ProblemError(404, f"workspace '{workspace}' not found", type_=TYPE_NOT_FOUND)
@@ -223,16 +234,32 @@ def create_stored_agent(request: HttpRequest, payload: StoredAgentIn) -> Status:
                            detail=f"'{slug}' is reserved; pick another")
     if Agent.objects.filter(slug=slug).exists():
         raise ProblemError(409, f"The slug '{slug}' is taken", type_=TYPE_CONFLICT,
-                           detail="Agent slugs are unique across canopy. Pick another name.")
+                           detail="Agent slugs are unique across canopy. Pick another name.",
+                           members={"error": "exists"})
+    files: dict[str, tuple[bytes, bool]] = {}
+    for f in payload.files:
+        if f.path in files:
+            raise ProblemError(422, f"{f.path} is listed twice", type_=TYPE_VALIDATION)
+        if (f.content is None) == (f.content_b64 is None):
+            raise ProblemError(422, f"{f.path}: send content or content_b64 (exactly one)", type_=TYPE_VALIDATION)
+        data = f.content.encode("utf-8") if f.content is not None else _decode(f.content_b64, f.path)
+        files[f.path] = (data, f.executable)
+    bundle = _decode(payload.bundle_b64, "bundle_b64") if payload.bundle_b64 else None
     home = wsvc.Workspace.objects.get(slug=workspace)
     got = acting_person.person_or_act_as(request)
     grant = None if isinstance(got, str) else got[1]
     _note_acting(request, grant)
     try:
-        agent = services.create_stored_agent(
+        owner = creating_owner(request, home)
+    except NoOwnerError as exc:
+        raise ProblemError(403, "No person can own this agent", type_=TYPE_FORBIDDEN, detail=str(exc),
+                           members={"error": "no_owner"}) from None
+    try:
+        agent, dropped = services.create_stored_agent(
             slug=slug, name=payload.name.strip(), mandate=payload.mandate.strip(),
             stakeholders=payload.stakeholders.strip(), workspace=home,
-            owner=creating_owner(request, home), by=request.user, act_as=grant)
+            owner=owner, by=request.user, act_as=grant, files=files, bundle=bundle,
+            message=payload.message.strip(), drop_refused=payload.drop_refused)
     except services.Refused as exc:
         raise _problem(exc) from None
     rev = agent.live_revision
@@ -241,7 +268,8 @@ def create_stored_agent(request: HttpRequest, payload: StoredAgentIn) -> Status:
                       workspace=home, summary=f"{_who(request, grant)} created stored agent {agent.slug}")
     return Status(201, StoredAgentOut(slug=agent.slug, name=agent.name, workspace=agent.workspace_id,
                                       revision=rev.number, root_sha256=rev.root_sha256,
-                                      owner=getattr(agent.owner, "email", "") or "", acted_by=_acted_by(grant)))
+                                      owner=getattr(agent.owner, "email", "") or "", acted_by=_acted_by(grant),
+                                      dropped=dropped))
 
 
 def _decode(b64: str, path: str) -> bytes:
