@@ -691,6 +691,27 @@ def scope_for(inst: AppInstallation, m: dict, space: str, user, roles: set[str])
     return Scope(inst, m, space, user, roles) if getattr(user, "is_authenticated", False) else None
 
 
+def _own(qs, spec: dict, user):
+    """A personal collection's records, narrowed to the caller's own (`manifest._validate_personal`):
+    `user` None is the app itself (scenarios, retention), which is not narrowed; anyone else sees only
+    what they wrote, whatever their roles."""
+    if not spec.get("personal") or user is None:
+        return qs
+    if not getattr(user, "is_authenticated", False):
+        return qs.none()
+    return qs.filter(created_by=user)
+
+
+#: What a json field's history says instead of its value, by how it changed.
+_JSON_MARK = {"create": "set", "update": "updated", "delete": "removed"}
+
+
+def _masked(changes: dict, fields: dict, op: str) -> dict:
+    """An event's changes, with each json field's value replaced by a word: a store saved on every
+    keystroke would otherwise copy itself into the log each time."""
+    return {k: (_JSON_MARK[op] if fields.get(k, {}).get("type") == "json" else v) for k, v in changes.items()}
+
+
 def _row(rec: AppRecord, fields: list[str] | None = None) -> dict:
     data = rec.data if fields is None else {k: rec.data[k] for k in fields if k in rec.data}
     return {"id": rec.pk, "created_at": rec.created_at.isoformat(), "updated_at": rec.updated_at.isoformat(), **data}
@@ -732,7 +753,7 @@ def query(inst: AppInstallation, *, roles: set[str], collection: str, where: dic
     else:
         projection = readable(spec, roles)
     fields = spec["fields"]
-    qs = AppRecord.objects.filter(installation=inst, space=space, collection=collection)
+    qs = _own(AppRecord.objects.filter(installation=inst, space=space, collection=collection), spec, user)
     sc = None if public else scope_for(inst, m, space, user, roles)
     ids = sc.allowed(collection) if sc else None
     if ids is not None:
@@ -743,6 +764,8 @@ def query(inst: AppInstallation, *, roles: set[str], collection: str, where: dic
             continue
         if k not in fields:
             raise ValueError(f"'{k}' is not a field of '{collection}'")
+        if fields[k]["type"] == "json":
+            raise ValueError(f"'{k}' is a json field: it can't be matched on")
         if k not in projection and not (public and k in spec["public"]["where"]):
             raise ValueError(f"'{k}' is not a field you may read on '{collection}'")
         if isinstance(v, list):
@@ -756,7 +779,7 @@ def query(inst: AppInstallation, *, roles: set[str], collection: str, where: dic
     name = order.lstrip("-")
     if name in ("created_at", "updated_at"):
         qs = qs.order_by(order, "-id")
-    elif name in fields and name in projection:
+    elif name in fields and name in projection and fields[name]["type"] != "json":
         qs = qs.order_by((f"-data__{name}" if desc else f"data__{name}"), "-id")
     else:
         raise ValueError(f"cannot order by '{order}'")
@@ -770,7 +793,7 @@ def history(inst: AppInstallation, *, roles: set[str], record_id: int, space: st
     if rec is None:
         raise Refused(f"record {record_id} not found", status=404)
     spec = m["collections"].get(rec.collection)
-    if spec is None or not may_read(spec, roles):
+    if spec is None or not may_read(spec, roles) or not _own(AppRecord.objects.filter(pk=rec.pk), spec, user).exists():
         raise Refused(f"record {record_id} not found", status=404)
     sc = scope_for(inst, m, space, user, roles)
     if sc and not sc.sees(rec.collection, rec.pk):
@@ -851,6 +874,16 @@ def _coerce(name: str, spec: dict, value, inst: AppInstallation, space: str):
         if f is None or f.claimed:
             raise ValueError(f"{name}: upload the file first")
         return fid
+    if t == "json":
+        if isinstance(value, (dict, list, str, int, float, bool)):
+            try:
+                size = len(json.dumps(value, separators=(",", ":"), allow_nan=False).encode())
+            except (TypeError, ValueError):
+                raise ValueError(f"{name} must be plain JSON") from None
+            if size > spec["max_kb"] * 1024:
+                raise ValueError(f"{name} is larger than {spec['max_kb']} KB")
+            return value
+        raise ValueError(f"{name} must be plain JSON")
     raise ValueError(f"{name}: unknown type")  # pragma: no cover — the manifest validator forbids it
 
 
@@ -906,8 +939,8 @@ def render_text(text: str, rec: AppRecord, m: dict, inst: AppInstallation, *, pa
         if path[0] == "param" and len(path) == 2:
             return str((params or {}).get(path[1], "") or "")
         if len(path) == 1:
-            if fields.get(path[0], {}).get("read"):
-                return ""  # a restricted field is never mailed
+            if fields.get(path[0], {}).get("read") or fields.get(path[0], {}).get("type") == "json":
+                return ""  # a restricted field is never mailed, nor a json one
             return str(rec.data.get(path[0], "") or "")
         f = fields.get(path[0])
         if f and f["type"] == "ref" and rec.data.get(path[0]):
@@ -1138,8 +1171,20 @@ def act(inst: AppInstallation, *, roles: set[str], action: str, record_id: int |
         values[spec["link_ref"]] = link["record"]
     if link is not None and spec["op"] != "create":
         record_id = link["record"]
+    coll_spec = m["collections"][spec["collection"]]
+    op = spec["op"]
+    if op == "create" and coll_spec.get("key") and authed and values.get(coll_spec["key"]):
+        # One record per (person, key): a create of a key they already have updates it instead.
+        mine = list(AppRecord.objects.select_for_update()
+                    .filter(installation=inst, space=space, collection=spec["collection"], created_by=user,
+                            **{f"data__{coll_spec['key']}": values[coll_spec["key"]]})
+                    .order_by("-updated_at", "-id"))
+        if mine:
+            op, record_id = "update", mine[0].pk
+            for extra in mine[1:]:  # two tabs created it at once: the newest stays
+                extra.delete()
 
-    if spec["op"] == "create":
+    if op == "create":
         for k, f in fields.items():
             if values.get(k) is None and "default" in f:
                 values[k] = f["default"]
@@ -1151,8 +1196,9 @@ def act(inst: AppInstallation, *, roles: set[str], action: str, record_id: int |
                                        created_by=user if authed else None, created_by_label=label)
         changes = data
     else:
-        rec = (AppRecord.objects.select_for_update()
-               .filter(installation=inst, space=space, collection=spec["collection"], pk=record_id or 0).first())
+        rec = _own(AppRecord.objects.select_for_update()
+                   .filter(installation=inst, space=space, collection=spec["collection"], pk=record_id or 0),
+                   coll_spec, user).first()
         if rec is None or (sc and not sc.sees(rec.collection, rec.pk)):
             raise Refused(f"no {spec['collection']} {record_id}", status=404)
         if spec.get("when") and not _matches(rec.data, spec["when"]):
@@ -1161,7 +1207,7 @@ def act(inst: AppInstallation, *, roles: set[str], action: str, record_id: int |
                 and not _actor_named(rec, spec["actor_field"], user, label):
             raise Refused(f"only the person named as {fields[spec['actor_field']].get('label', spec['actor_field'])} "
                           f"may {spec['label'].lower()}")
-        if spec["op"] == "delete":
+        if op == "delete":
             changes = rec.data
         else:
             changes = {}
@@ -1177,13 +1223,13 @@ def act(inst: AppInstallation, *, roles: set[str], action: str, record_id: int |
     file_ids = [v for k, v in values.items() if k in fields and fields[k]["type"] == "file" and v]
     if file_ids:
         AppFile.objects.filter(installation=inst, space=space, pk__in=file_ids).update(claimed=True)
-    effects = [] if spec["op"] == "delete" else _effects(inst, m, spec, rec, space, pvals)
+    effects = [] if op == "delete" else _effects(inst, m, spec, rec, space, pvals)
     AppRecordEvent.objects.create(
-        installation=inst, space=space, record=None if spec["op"] == "delete" else rec, record_ref=rec.pk,
-        collection=spec["collection"], action=action, op=spec["op"], changes=changes, effects=effects,
-        actor=user if authed else None, actor_label=label, client_ip=client_ip,
+        installation=inst, space=space, record=None if op == "delete" else rec, record_ref=rec.pk,
+        collection=spec["collection"], action=action, op=op, changes=_masked(changes, fields, op),
+        effects=effects, actor=user if authed else None, actor_label=label, client_ip=client_ip,
     )
-    if spec["op"] == "delete":
+    if op == "delete":
         rec.delete()
         return {"id": record_id}
     _then(inst, m, action, spec, rec, pvals, user, label, space)
@@ -1519,7 +1565,9 @@ def subject_export(inst: AppInstallation, *, email: str) -> dict:
         q = Q()
         for k in efields:
             q |= Q(**{f"data__{k}": email})
-        if not efields:
+        if spec.get("personal"):  # a person's own store is theirs by who wrote it
+            q |= Q(created_by__email__iexact=email)
+        elif not efields:
             continue
         for rec in AppRecord.objects.filter(installation=inst, space=LIVE, collection=cname).filter(q):
             ids.add(rec.pk)
@@ -1593,7 +1641,8 @@ def readable_file(inst: AppInstallation, *, roles: set[str], file_id: int, space
         for fname, fs in c["fields"].items():
             if fs["type"] != "file":
                 continue
-            qs = AppRecord.objects.filter(installation=inst, space=space, collection=cname, **{f"data__{fname}": file_id})
+            qs = _own(AppRecord.objects.filter(installation=inst, space=space, collection=cname,
+                                               **{f"data__{fname}": file_id}), c, user)
             if ids is not None:
                 qs = qs.filter(pk__in=ids)
             if qs.exists():
