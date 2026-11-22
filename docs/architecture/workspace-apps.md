@@ -126,6 +126,33 @@ uploaded with the version. The module docstring holds the rules; the ones to kee
   `canopy.open`/`canopy.navigate`); no workers; no inline `<script>` or `on*=` attributes; and no
   assignment to `location` (use `canopy.open`).
 
+## Personal collections (a per-person store)
+
+A collection marked `"personal": true` holds each person's own records: settings, layouts and
+caches a page keeps as it goes, the way a browser extension keeps its own storage. Rules
+(`manifest.py::_validate_personal`, `services.py::_own`):
+
+- **Its writer's alone.** Every member read and write — query, history, update, delete, a file it
+  holds, an agent acting for the person — is narrowed in the database to `created_by` the caller. No
+  role reads past it: not an admin, not the collection's `read` role, not `read_also`. Only the app
+  itself (scenarios, retention) and a subject export (by the writer's address) see all of them.
+- **Nothing reaches it another way.** It has no public projection and no `scope`; no ref field points
+  at it, no link opens it, no `then` step writes it; its actions are a member's own, with no email and
+  no `then`. Fixtures in a draft's test copy are written by nobody, so nobody sees them there.
+- **One record per key.** It may name a `key` (a required text field): a `create` whose key the writer
+  already has updates that record (`services.act`), and if two tabs created it at once, the next write
+  keeps the newest and removes the others.
+- **A `json` field** holds any JSON value up to `max_kb` serialized (default `DEFAULT_JSON_KB`, at most
+  `MAX_JSON_KB`, in `manifest.py`); any collection may have one. It is never matched (`where` anywhere),
+  ordered, public, `set` by an action or mailed, and its history records only that it was set, updated
+  or removed (`services.py::_masked`), so saving a store often does not copy it into the log.
+- **Saves need no click.** An app action is the viewer's own write, unlike a connection write; a page
+  saves its store without a gesture.
+- Turning `personal` off in a template update is a finding for an admin (`template_diff.changes`).
+
+A page loads its store once (`app.query("person_store", {limit: 2000})`) and saves a key with
+`app.act("store_put", {input: {key, value}})`; deleting is a `delete` action on the record's id.
+
 ## Acting on one project's tasks (`apps/workspace_apps/tasks.py`)
 
 An app may declare `tasks` (`manifest.py::_validate_tasks`): the app role that reads, and named
