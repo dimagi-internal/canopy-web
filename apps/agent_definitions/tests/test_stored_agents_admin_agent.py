@@ -311,7 +311,7 @@ def test_the_migration_makes_each_creating_agent_an_admin_once(w, agent, ace, no
     AgentAdmin.objects.filter(agent__slug="guide").delete()
     # An agent's own login as its revision 1's author makes it no admin of itself.
     AgentDefinitionRevision.objects.filter(agent=agent, number=1).update(author_user=w["bot"])
-    migration = importlib.import_module("apps.agents.migrations.0142_creator_agent_admins")
+    migration = importlib.import_module("apps.agents.migrations.0143_creator_agent_admins")
     migration.creators_administer(django_apps, None)
     migration.creators_administer(django_apps, None)
     assert list(AgentAdmin.objects.filter(agent__slug="guide").values_list("user_id", flat=True)) == [ace.user.pk]

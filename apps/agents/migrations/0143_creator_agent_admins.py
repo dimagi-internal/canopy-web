@@ -20,7 +20,7 @@ def creators_administer(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("agents", "0141_definition_published_by_agent"),
+        ("agents", "0142_definition_published_by_agent"),
     ]
 
     operations = [

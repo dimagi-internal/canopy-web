@@ -7,7 +7,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('agents', '0140_definition_revision_acted_by'),
+        ('agents', '0141_agent_browser_sign_in'),
     ]
 
     operations = [
