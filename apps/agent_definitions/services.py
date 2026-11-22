@@ -224,19 +224,58 @@ def factory_files(agent: Agent, *, mandate: str, stakeholders: str = "", author)
             if policy.editable(path)}
 
 
+def _without_refused(files: dict[str, tuple[bytes, bool]], slug: str
+                     ) -> tuple[dict[str, tuple[bytes, bool]], list[str]]:
+    """`files` less each one the file policy refuses, and the paths left out. A refusal
+    of the tree as a whole (a cap) still refuses: dropping files one by one cannot be
+    the answer to it."""
+    problems = policy.check_tree(
+        [{"path": p, "content": data, "executable": ex} for p, (data, ex) in files.items()], slug=slug)
+    if any(not p.path for p in problems):
+        raise _policy_refusal([p for p in problems if not p.path])
+    refused = sorted({p.path for p in problems})
+    return {p: f for p, f in files.items() if p not in refused}, refused
+
+
 def create_stored_agent(*, slug: str, name: str, mandate: str, stakeholders: str, workspace, owner,
-                        by, act_as=None) -> Agent:
-    """A new agent whose definition is the factory's scaffold, as revision 1, published.
+                        by, act_as=None, files: dict[str, tuple[bytes, bool]] | None = None,
+                        bundle: bytes | None = None, message: str = "",
+                        drop_refused: bool = False) -> tuple[Agent, list[str]]:
+    """A new agent whose definition is the factory's scaffold, as revision 1, published;
+    returns it and the paths of `files` it left out.
+
+    `files` are laid over the scaffold (one of theirs replaces the scaffold's at that
+    path). Generated paths among them are ignored — canopy writes those itself. A file the
+    policy refuses refuses the whole create (422 `policy`), or with `drop_refused` is left
+    out (the scaffold's file at that path stays) and named. `bundle` (a `git bundle` of a
+    branch) keeps that history as `convert` does: every blob secret-scanned, kept under
+    `refs/heads/imported`, and revision 1 a commit on its tip. Files and history together are held to one request (413).
     `act_as`: the act-as-you permission an agent created it under, as `by`."""
+    files = files or {}
+    size = sum(len(d) for d, _ in files.values()) + len(bundle or b"")
+    if size > MAX_CONVERT_BYTES:
+        raise Refused(f"the definition is {size // 1024} KB, more than the {MAX_CONVERT_BYTES // 1024} KB one "
+                      "request carries" + (" — its history is too large to import: send its files only"
+                                            if bundle else ""), 413, code="too_large")
+    history = _read_history(bundle)
+    dropped: list[str] = []
     with transaction.atomic():
         agent = Agent.objects.create(slug=slug, name=name, description=mandate[:2000], workspace=workspace,
                                      owner=owner, source=Agent.STORED, repo_url="", repo_ref="")
-        files = factory_files(agent, mandate=mandate, stakeholders=stakeholders, author=owner or by)
+        scaffold = factory_files(agent, mandate=mandate, stakeholders=stakeholders, author=owner or by)
+        editable = {**scaffold, **_editable_only(files, slug)}
+        if drop_refused:
+            # A refused file that would have replaced one of the scaffold's leaves the scaffold's.
+            editable, dropped = _without_refused(editable, slug)
+            editable.update({p: scaffold[p] for p in dropped if p in scaffold})
         agent = _locked(agent)
-        _new_revision(agent, editable=files, message="Created from the canopy agent factory",
-                      status=PUBLISHED, parent=None, by=by, act_as=act_as)
+        _new_revision(agent, editable=editable,
+                      message=message or ("Created from the canopy agent factory and its files" if files
+                                          else "Created from the canopy agent factory"),
+                      status=PUBLISHED, parent=None, by=by, parent_commit=_import_history(agent, history),
+                      act_as=act_as)
         agent.refresh_from_db()
-    return agent
+    return agent, dropped
 
 
 def _read_history(bundle: bytes | None):

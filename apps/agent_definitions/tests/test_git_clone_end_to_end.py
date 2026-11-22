@@ -42,7 +42,7 @@ def world(live_server, settings, tmp_path):
     owner = User.objects.create_user("olive", "olive@dimagi.com", "pw")
     ws = Workspace.objects.create(slug="trails", display_name="Trails", created_by=owner)
     WorkspaceMembership.objects.create(workspace=ws, user=owner, role=WorkspaceMembership.OWNER)
-    agent = services.create_stored_agent(slug=SLUG, name="Trailhead", mandate="Keeps the trails.",
+    agent, _ = services.create_stored_agent(slug=SLUG, name="Trailhead", mandate="Keeps the trails.",
                                          stakeholders="", workspace=ws, owner=owner, by=owner)
     home = tmp_path / "home"
     home.mkdir()

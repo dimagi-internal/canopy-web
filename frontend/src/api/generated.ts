@@ -5598,7 +5598,15 @@ export interface paths {
          * @description Stamps the agent from the canopy agent factory (the same scaffold `/canopy:create-agent`
          *     writes) and stores it as revision 1, published. No repository and no GitHub token: its
          *     runners materialize the definition from canopy. The creator owns it (from inside an agent's
-         *     turn, the person who asked for that turn). 409 when the slug is taken.
+         *     turn, the person who asked for that turn). 409 `exists` when the slug is taken.
+         *
+         *     With `files`, revision 1 is the scaffold with those files laid over it, held to the file
+         *     policy, and the files canopy writes itself rewritten: one the policy refuses refuses the
+         *     create (422 `policy` with `problems`), or with `drop_refused` is left out and listed in
+         *     `dropped`. With `bundle_b64` (a `git bundle` of a branch) the source's history is kept, as
+         *     `convert` keeps it: under `refs/heads/imported`, every blob scanned for secrets first (422
+         *     `secret`), revision 1 a commit on its tip. Files and history together are held to one
+         *     request's size (413 `too_large`).
          */
         readonly post: operations["create_stored_agent"];
         readonly delete?: never;
@@ -30966,6 +30974,22 @@ export interface components {
              */
             readonly owner: string;
             readonly acted_by?: components["schemas"]["DefinitionActedByOut"] | null;
+            /** Dropped */
+            readonly dropped?: readonly string[];
+        };
+        /** DefinitionNewFileIn */
+        readonly DefinitionNewFileIn: {
+            /** Path */
+            readonly path: string;
+            /** Content */
+            readonly content?: string | null;
+            /** Content B64 */
+            readonly content_b64?: string | null;
+            /**
+             * Executable
+             * @default false
+             */
+            readonly executable: boolean;
         };
         /** StoredAgentIn */
         readonly StoredAgentIn: {
@@ -30982,6 +31006,20 @@ export interface components {
             readonly stakeholders: string;
             /** Workspace */
             readonly workspace: string;
+            /** Files */
+            readonly files?: readonly components["schemas"]["DefinitionNewFileIn"][];
+            /** Bundle B64 */
+            readonly bundle_b64?: string | null;
+            /**
+             * Drop Refused
+             * @default false
+             */
+            readonly drop_refused: boolean;
+            /**
+             * Message
+             * @default
+             */
+            readonly message: string;
         };
         /** DefinitionAuthorOut */
         readonly DefinitionAuthorOut: {
@@ -62641,6 +62679,15 @@ export interface operations {
             };
             /** @description Conflict */
             readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Content Too Large */
+            readonly 413: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
