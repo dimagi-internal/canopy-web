@@ -48,6 +48,10 @@ import zipfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+# The bundled CPython's minor version ("3.13"), read from versions.json so the
+# site-packages path and the cross-install target follow a bump there.
+PY_MINOR = ".".join(json.loads((HERE / "versions.json").read_text(encoding="utf-8"))
+                    ["python"]["version"].split(".")[:2])
 REPO = HERE.parent.parent
 PLATFORMS = ("macos-arm64", "macos-x86_64", "windows-x86_64")
 # The four in-repo packages the runner is built from, in dependency order (as
@@ -199,7 +203,7 @@ def host_can_run(plat: str) -> bool:
 def python_paths(out: Path, plat: str) -> tuple[Path, Path]:
     if plat.startswith("windows"):
         return out / "python" / "python.exe", out / "python" / "Lib" / "site-packages"
-    return out / "python" / "bin" / "python3", out / "python" / "lib" / "python3.12" / "site-packages"
+    return out / "python" / "bin" / "python3", out / "python" / "lib" / f"python{PY_MINOR}" / "site-packages"
 
 
 def install_python(out: Path, plat: str, versions: dict, cache: Path) -> None:
@@ -213,7 +217,7 @@ def install_python(out: Path, plat: str, versions: dict, cache: Path) -> None:
         raise SystemExit(f"{py} missing after extracting {archive.name}")
     # Trimmed: the stdlib's own test suite and the GUI demos are never imported by
     # the runner and are a large share of an install_only tree.
-    lib = out / "python" / ("Lib" if plat.startswith("windows") else "lib/python3.12")
+    lib = out / "python" / ("Lib" if plat.startswith("windows") else f"lib/python{PY_MINOR}")
     for junk in ("test", "idlelib", "turtledemo", "tkinter/test", "lib2to3/tests"):
         shutil.rmtree(lib / junk, ignore_errors=True)
 
@@ -242,7 +246,7 @@ def install_packages(out: Path, plat: str, wheels: dict[str, Path], native: bool
         log(f"cross-installing the runner for {plat} (uv pip --target)")
         target = {"macos-arm64": "aarch64-apple-darwin", "macos-x86_64": "x86_64-apple-darwin",
                   "windows-x86_64": "x86_64-pc-windows-msvc"}[plat]
-        run(["uv", "pip", "install", "--target", site, "--python-platform", target, "--python-version", "3.12",
+        run(["uv", "pip", "install", "--target", site, "--python-platform", target, "--python-version", PY_MINOR,
              "--find-links", find_links, *reqs])
 
 

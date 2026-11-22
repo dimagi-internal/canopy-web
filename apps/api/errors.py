@@ -69,14 +69,33 @@ def refusals(*statuses: int) -> dict[int, type[Problem]]:
     return dict.fromkeys(statuses, Problem)
 
 
+# The RFC 9110 reason phrases for the statuses whose stdlib phrase changed in
+# Python 3.13 (3.12 says "Unprocessable Entity", "Request Entity Too Large", …).
+# Pinned so a problem's title and the OpenAPI document (and so `generated.ts`)
+# read the same whichever interpreter builds them.
+_RFC9110_PHRASES = {
+    413: "Content Too Large",
+    414: "URI Too Long",
+    416: "Range Not Satisfiable",
+    422: "Unprocessable Content",
+}
+
+
+def reason_phrase(status: int) -> str | None:
+    """The status's RFC 9110 reason phrase, the same on every Python; None if unknown."""
+    if status in _RFC9110_PHRASES:
+        return _RFC9110_PHRASES[status]
+    try:
+        return HTTPStatus(status).phrase
+    except ValueError:
+        return None
+
+
 def status_title(status: int) -> str:
     """The stable ``title`` for a problem of ``type: about:blank`` — RFC 7807
     §4.2 says it SHOULD be the status's reason phrase, the same for every
     occurrence. The per-occurrence message belongs in ``detail``."""
-    try:
-        return HTTPStatus(status).phrase
-    except ValueError:
-        return "Error"
+    return reason_phrase(status) or "Error"
 
 
 def problem_response(

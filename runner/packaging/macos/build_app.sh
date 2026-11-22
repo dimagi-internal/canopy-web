@@ -65,7 +65,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$WORK/CanopyRunner" "$APP/Contents/MacOS/CanopyRunner"
 cp "$BRAND/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 cp "$BRAND"/menubar-mark*.png "$APP/Contents/Resources/"
-# ditto keeps the payload's symlinks (python3 -> python3.12, node's bin/npm) as links.
+# ditto keeps the payload's symlinks (python3 -> python3.13, node's bin/npm) as links.
 ditto "$PAYLOAD" "$APP/Contents/Resources/runtime"
 install -m 755 "$WORK/canopy-device-key" "$APP/Contents/Resources/runtime/bin/canopy-device-key"
 
