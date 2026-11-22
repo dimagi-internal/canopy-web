@@ -244,6 +244,12 @@ def test_the_system_findings_list_opens_to_the_admin_agent(w):
     assert r.json() == []
 
 
+def test_a_system_learner_narrowed_to_canopy_admins_is_not_listed_to_the_admin_agent(w):
+    BrainCapability.objects.filter(pk=w["system"].pk).update(audience=["canopy_admins"])
+    r = Client().get("/api/w/connect/brain/outputs/", **bearer_headers(_login(w)))
+    assert r.status_code == 200 and r.json() == []
+
+
 # ---- a project's own people --------------------------------------------------------------------------------------
 
 @pytest.fixture()

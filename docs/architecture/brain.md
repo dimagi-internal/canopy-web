@@ -211,7 +211,11 @@ operator's workspace. The built-in
 
 ## Who sees what it produced (`apps/brain/outputs.py`)
 
-Outputs (`BrainOutput`) are read by their class's audience (`outputs.visible_to`, `GET /api/brain/outputs/`):
+Outputs (`BrainOutput`) are read by their learner's audience (`outputs.visible_to`, `GET /api/brain/outputs/`): each leg
+below opens only for a learner whose `audience` names it (`person`, `coaches`, `manager`; `project_readers`;
+`canopy_admins` for the superusers' leg and `agent_admins` for the owners' and admins', as the person and as an admin
+agent), so narrowing a learner's audience closes those legs and a learner with none is read by no one. A person's own
+`memory` outputs are always theirs. The legs:
 `individual` by the person, their coaches (the same rule as reading their sessions, and only outputs made in the
 workspaces they coach, `access.coach_scope`) and their manager; `memory` by
 the person; `project` by the project's readers; `system` by canopy admins and the owners and admins of the output's workspace
