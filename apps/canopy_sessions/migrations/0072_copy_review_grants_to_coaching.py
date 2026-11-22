@@ -28,5 +28,5 @@ def copy(apps, schema_editor):
 
 
 class Migration(migrations.Migration):
-    dependencies = [("canopy_sessions", "0071_coaching_opt_in_and_roles"), ("agents", "__latest__")]
+    dependencies = [("canopy_sessions", "0071_coaching_opt_in_and_roles"), ("agents", "0135_task_recurrence_and_comments")]
     operations = [migrations.RunPython(copy, migrations.RunPython.noop)]
