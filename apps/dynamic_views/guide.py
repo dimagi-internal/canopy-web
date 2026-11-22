@@ -20,6 +20,10 @@ PROPS
     canopy.refresh()                     re-read every declared source (props.data updates)
     canopy.navigate(path)                open a canopy page: "/tasks/CON-12", "/projects/<handle>"
                                          (relative to the workspace) or "/w/<ws>/..."
+    canopy.open(url) -> Promise          an https address in a new tab, from a click (no confirm step)
+    canopy.clipboard.write(text) -> Promise   copy text, from a click
+    canopy.download(name, mime, data) -> Promise<{name}>  save a file (text, ArrayBuffer, Uint8Array
+                                         or Blob, up to 25 MB), from a click
     canopy.runAgentTask({agent, name, input, output_schema, instructions?, timeout_s?, routing?,
                          onStatus?}) -> Promise<result>
                                          give an agent a task the view DECLARES (AGENT TASKS below)

@@ -13,7 +13,12 @@
  * scripts run before canopy has spoken), `canopy.app` once it has, `canopy.open(page, params,
  * {newTab})` to open another page of the app (by slug, or by a bundle path such as
  * "kanban/kanban.html?id=5"), and links: a click on a link to another file of the bundle opens
- * that page, any other link leaves through `canopy.navigate`.
+ * that page, an https link opens in a new tab, any other leaves through `canopy.navigate`.
+ *
+ * What the canopy page does for it outside the frame (each checked there, frontend/src/dynamicViews/
+ * frameOut.ts): `canopy.open(httpsUrl)` a new tab, `canopy.page.setParams(params)` the page's own URL
+ * without a reload, `canopy.clipboard.write(text)`, `canopy.download(name, mime, data)`. Every
+ * pointerdown and keydown is reported (`gesture`), so a drag's drop can still open a write lease.
  */
 (function () {
   'use strict'
@@ -57,6 +62,9 @@
     return e
   }
 
+  var ABSOLUTE = /^[a-z][a-z0-9+.-]*:/i
+  function openUrl(u) { return ask(function (id) { return { type: 'open-url', id: id, url: String(u) } }) }
+
   function strings(params) {
     var out = {}
     Object.keys(params || {}).forEach(function (k) {
@@ -99,11 +107,24 @@
     navigate: function (path) {
       if (typeof path === 'string' && path) toHost({ type: 'navigate', path: path })
     },
-    /** Open another page of this app as a full canopy page. `{newTab: true}` opens a tab (from a click). */
+    /** Open another page of this app as a full canopy page (`{newTab: true}`: a tab, from a click), or an
+     *  https address in a new tab (from a click; resolves once opened, rejects with the reason). */
     open: function (target, params, options) {
       var to = resolvePage(target, params)
+      if (!to && ABSOLUTE.test(String(target || ''))) return openUrl(target)
       if (!to) throw new Error('this app has no page "' + target + '"')
       toHost({ type: 'go', page: to.page, params: to.params, newTab: !!(options && options.newTab) })
+      return Promise.resolve(null)
+    },
+    /** `canopy.open(url)` for an https address, by a name that says so. */
+    openExternal: function (u) { return openUrl(u) },
+    /** Copy text to the viewer's clipboard, from a click. */
+    clipboard: {
+      write: function (text) { return ask(function (id) { return { type: 'clipboard', id: id, text: String(text == null ? '' : text) } }) },
+    },
+    /** Save a file (text, an ArrayBuffer, a Uint8Array or a Blob), from a click. Resolves {name}. */
+    download: function (name, mime, data) {
+      return ask(function (id) { return { type: 'download', id: id, name: name, mime: mime, data: data } })
     },
     runAgentTask: function (request) {
       request = request || {}
@@ -123,9 +144,19 @@
     connection: {
       request: function (req) { return ask(function (id) { return { type: 'connection-call', id: id, request: req } }) },
       begin: function () { return ask(function (id) { return { type: 'connection-begin', id: id } }) },
+      /** Feature checks (frontend/src/dynamicViews/connectionCalls.ts::CONNECTION_CAPABILITIES). */
+      capabilities: ['allow_duplicates', 'gesture_leases'],
     },
     page: {
       setState: function (state) { toHost({ type: 'page-state', state: state }) },
+      /** Replace this page's URL parameters in canopy's address bar, with no reload; `canopy.app.params` follows.
+       *  (The frame's own `location.search` keeps the params it was opened with.) */
+      setParams: function (params) {
+        return ask(function (id) { return { type: 'page-params', id: id, params: strings(params) } }).then(function (written) {
+          if (canopy.app) canopy.app.params = written
+          return written
+        })
+      },
       registerAction: function (name, run, options) {
         if (typeof run !== 'function') throw new Error('registerAction(name, run, options): run must be a function')
         pageActions[name] = run
@@ -158,7 +189,7 @@
         })
       },
       openFile: function (id) { call({ op: 'open_file', id: id }) },
-      go: function (page, params) { canopy.open(page, params) },
+      go: function (page, params, options) { canopy.open(page, params, options) },
       field: function (collection, name) { return ((model[collection] || {}).fields || {})[name] },
       tasks: {
         declared: model._tasks || null,
@@ -247,6 +278,7 @@
     ev.preventDefault()
     var to = resolvePage(href)
     if (to) toHost({ type: 'go', page: to.page, params: to.params, newTab: a.target === '_blank' })
+    else if (/^https:/i.test(a.href) && !(new URL(a.href).origin === location.origin && new URL(a.href).pathname.indexOf(ROOT) === 0)) openUrl(a.href).catch(reportError)
     else if (/^(https?:|mailto:)/i.test(a.href) && new URL(a.href, location.href).pathname.indexOf(ROOT) !== 0) canopy.navigate(a.href)
     else reportError(new Error('this app has no page at "' + href + '"'))
   })
@@ -255,9 +287,22 @@
   window.open = function (target) {
     var to = target ? resolvePage(String(target)) : null
     if (to) toHost({ type: 'go', page: to.page, params: to.params, newTab: true })
+    else if (target && /^https:/i.test(String(target))) openUrl(target).catch(reportError)
     else if (target) canopy.navigate(String(target))
     return null
   }
+
+  // A pointerdown or keydown: the canopy page believes it only if it sees a live click on this frame,
+  // and then lets a drop (or a write after an awaited dialog) open a lease. At most one every 250 ms.
+  var lastGesture = 0
+  function gesture() {
+    var t = Date.now()
+    if (t - lastGesture < 250) return
+    lastGesture = t
+    toHost({ type: 'gesture' })
+  }
+  document.addEventListener('pointerdown', gesture, { capture: true, passive: true })
+  document.addEventListener('keydown', gesture, { capture: true, passive: true })
 
   window.addEventListener('error', function (ev) { reportError(ev.error || ev.message) })
   window.addEventListener('unhandledrejection', function (ev) { reportError(ev.reason) })

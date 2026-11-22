@@ -18,6 +18,7 @@ const EXCEPTIONS: Record<string, string> = {
   'src/components/work/CommandPalette.tsx': 'a combobox that owns its keys and focus, no title or close button',
   'src/embed/PageGrantConfirm.tsx': 'an act-as-you consent that only its own buttons answer',
   'src/pages/StoryboardPage.tsx': 'a full-screen media lightbox',
+  'src/pages/WorkspaceAppPage.tsx': "a full-bleed app page: the page itself at the viewport, not an overlay on one",
 }
 
 const raw = import.meta.glob('./**/*.tsx', { query: '?raw', import: 'default', eager: true }) as Record<string, string>

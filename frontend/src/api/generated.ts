@@ -28344,6 +28344,11 @@ export interface components {
              * @default
              */
             readonly bundle_url: string;
+            /**
+             * Layout
+             * @default page
+             */
+            readonly layout: string;
         };
         /**
          * BundleFileIn

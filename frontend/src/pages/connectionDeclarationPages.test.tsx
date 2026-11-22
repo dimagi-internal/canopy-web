@@ -56,6 +56,23 @@ describe('an app page', () => {
     expect(screen.queryByText(/This screen can use/)).toBeNull()
   })
 
+  it('a full-bleed page is the frame alone, over the whole viewport', async () => {
+    m.getInstalledApp.mockResolvedValue(app({ pages: [{ slug: 'home', title: 'Home', audience: 'member', nav: true, layout: 'full' }] }))
+    open('/w/apps/crm')
+    const box = await screen.findByTestId('app-full-bleed')
+    expect(box.className).toContain('fixed inset-0')
+    expect(within(box).getByTestId('frame')).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: 'CRM' })).toBeNull()
+  })
+
+  it("a draft's test copy of a full-bleed page keeps its header and banner", async () => {
+    m.getInstalledApp.mockResolvedValue(app({ draft: { number: 2 }, pages: [{ slug: 'home', title: 'Home', audience: 'member', nav: true, layout: 'full' }] }))
+    open('/w/apps/crm?draft=2')
+    await screen.findByTestId('frame')
+    expect(screen.queryByTestId('app-full-bleed')).toBeNull()
+    expect(screen.getByText('TEST COPY')).toBeTruthy()
+  })
+
   it('offers Canopy AI beside its tabs on a phone, and hides the floating bubble there', async () => {
     m.getInstalledApp.mockResolvedValue(app())
     const view = open('/w/apps/crm')

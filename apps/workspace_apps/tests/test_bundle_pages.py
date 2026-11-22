@@ -109,6 +109,32 @@ def test_a_bad_bundle_page_is_refused_naming_why(world, change, why):
     assert r.status_code == 422 and why in r.json()["detail"], r.content
 
 
+def test_a_member_page_may_be_drawn_full_bleed(world):
+    m = copy.deepcopy(APP)
+    m["pages"][1]["layout"] = "full"
+    m["pages"][2]["layout"] = "full"
+    r = _install(world, m)
+    assert r.status_code == 201, r.content
+    out = r.json()
+    assert _page(out, "kanban")["layout"] == "full" and _page(out, "notes")["layout"] == "full"
+    assert _page(out, "sidepanel")["layout"] == "page"
+    stored = AppInstallation.objects.get(key="sales").manifest["pages"]
+    assert "layout" not in next(p for p in stored if p["slug"] == "sidepanel"), "the default is never stored"
+
+
+@pytest.mark.parametrize("page, why", [
+    ({"slug": "careers", "title": "Careers", "audience": "public", "role": "public",
+      "code": "function View(){return <Card>c</Card>}", "layout": "full"}, "only a member page"),
+    ({"slug": "wide", "title": "Wide", "code": "function View(){return <Card>c</Card>}", "layout": "wide"},
+     "must be 'page'"),
+])
+def test_full_bleed_is_for_member_pages_only(world, page, why):
+    m = copy.deepcopy(APP)
+    m["pages"].append(page)
+    r = _install(world, m)
+    assert r.status_code == 422 and why in r.json()["detail"], r.content
+
+
 def test_a_jsx_page_has_no_entry(world):
     m = copy.deepcopy(APP)
     m["pages"][2]["entry"] = "kanban/kanban.html"

@@ -66,7 +66,10 @@ canopy.connection.request({provider: "salesforce", method, path, query?, body?})
 Promise<{status, body, text?}> (status is Salesforce's own; refusals reject with a sentence to show).
 Reads run any time. A write must start from a click on the page: call it first thing in the onClick
 handler (the click only counts for about 5 seconds, so a write after several seconds of awaits is
-refused with "This needs a click."). One click opens up to 10 minutes and 500 writes within what the
+refused with "This needs a click."). A pointerdown or key press on the page in the last minute also
+opens one window, once: so a drag-and-drop's drop, or a write after an awaited dialog, still writes.
+Pass allowDuplicates: true on a create or update of one record (POST/PATCH sobjects/...) to save past
+Salesforce's duplicate rules ("Create anyway"). One click opens up to 10 minutes and 500 writes within what the
 manifest declared; the window closes 120 seconds after the last write. To read and dedup before the
 first write, call canopy.connection.begin() first thing in the onClick: it opens the window and resolves
 {expires_at, hard_limit_at, writes}. Calls wait their turn, at most 8 at once from a page; one that waits
@@ -100,6 +103,15 @@ link / history / upload / tasks, canopy.connection.request, canopy.browser, cano
 canopy.open(page, params, {newTab}) to open another page of the app by slug or by its entry path
 ("kanban/kanban.html?id=5"). It has no storage, no network but its own files, no eval, no
 alert/confirm/prompt and no popups (docs/architecture/workspace-apps.md § Bundle pages).
+
+OUTSIDE THE FRAME (JSX and bundle pages alike; each checked by canopy, each a Promise that rejects with
+the reason): canopy.open("https://…") opens an https address in a new tab, from a click (an https
+<a href> in a bundle page does the same); app.go(page, params, {newTab: true}) opens another page of
+the app in a tab, from a click; canopy.page.setParams({board: "7"}) rewrites this page's URL
+parameters in canopy's address bar with no reload (app.params follows; "draft" is canopy's own);
+canopy.clipboard.write(text) copies, from a click; canopy.download(name, mime, data) saves a file
+(text, ArrayBuffer, Uint8Array or Blob, up to 25 MB), from a click. A member page may declare
+"layout": "full" to be drawn at the whole viewport with no canopy header, its frame scrolling itself.
 
 WHAT THE TEMPLATE DECLARES (read it in the manifest; a workspace change cannot add these):
   an action's `when` (it applies only to a record in that state — offer the button only then),

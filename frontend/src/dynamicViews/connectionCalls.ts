@@ -11,6 +11,9 @@
  *   arrives (it is transient, so before any await). A click inside the frame
  *   activates this page too; script cannot set it. The frame's message has no click
  *   field at all, and anything in it claiming one is ignored. No such API: fail closed.
+ * - A drag's drop, or a write after an awaited dialog, comes after the click's activation has
+ *   ended: a gesture the page believed on this frame in the last minute (`gestures.ts`) opens a
+ *   lease in its place, once.
  * - One click opens one lease ("operation"): up to 10 minutes and 500 writes within what
  *   the screen declared. It ends 120 seconds after its last write, or when it is used up
  *   or the screen changes. A write with neither a live lease nor a click is refused here,
@@ -239,6 +242,8 @@ const surfaceKey = (s: Surface) => (s.kind === 'view' ? `view:${s.id}:${s.versio
 export interface CallOptions {
   /** A click on this screen, judged by the PAGE (`pageClickedFrame`). Read at message receipt; absent means no click. */
   isActive?: () => boolean | undefined
+  /** No live click: a gesture the page believed lately (`gestures.ts`), spent if it says yes. One lease per gesture. */
+  recentGesture?: () => boolean
   now?: () => number
   /** The page's line unless a test brings its own. */
   queue?: CallQueue
@@ -251,6 +256,7 @@ export class ConnectionCalls {
   private client: ConnectionClient
   private context: () => CallContext
   private isActive: () => boolean | undefined
+  private recentGesture: () => boolean
   private now: () => number
   readonly queue: CallQueue
 
@@ -258,6 +264,7 @@ export class ConnectionCalls {
     this.client = client
     this.context = context
     this.isActive = opts.isActive ?? (() => false)
+    this.recentGesture = opts.recentGesture ?? (() => false)
     this.now = opts.now ?? Date.now
     this.queue = opts.queue ?? pageQueue
   }
@@ -283,7 +290,7 @@ export class ConnectionCalls {
     try {
       const clicked = this.isActive() === true // before anything else: it is transient
       const surface = this.usableSurface()
-      if (!clicked) throw new Error(NEEDS_CLICK)
+      if (!clicked && !this.recentGesture()) throw new Error(NEEDS_CLICK)
       const key = surfaceKey(surface)
       const opening = this.opening?.key === key ? this.opening.promise : this.open(surface, key)
       return opening.then((l) => l.window)
@@ -340,7 +347,7 @@ export class ConnectionCalls {
       ...(r.query != null ? { query: r.query as CallBody['query'] } : {}),
       ...(r.body !== undefined ? { body: r.body } : {}),
       ...(agent ? { agent } : {}),
-      ...(r.allowDuplicates === true ? { allow_duplicates: true } : {}),
+      ...(r.allowDuplicates === true || r.allow_duplicates === true ? { allow_duplicates: true } : {}),
     }
     if (isRead) return this.send(provider, base)
 
@@ -348,7 +355,7 @@ export class ConnectionCalls {
     if (this.liveLease(key, writes)) return this.send(provider, base, key, writes)
     let opening = this.opening?.key === key ? this.opening.promise : null
     if (!opening) {
-      if (!clicked) throw new Error(NEEDS_CLICK)
+      if (!clicked && !this.recentGesture()) throw new Error(NEEDS_CLICK)
       opening = this.open(surface, key)
     }
     return opening.then(() => this.send(provider, base, key, writes))

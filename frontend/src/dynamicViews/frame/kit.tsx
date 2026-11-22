@@ -377,7 +377,8 @@ export interface AppApi {
   history: (record: number) => Promise<Record<string, unknown>[]>
   upload: (collection: string, field: string, file: File) => Promise<{ id: number; name: string }>
   openFile: (id: number) => void
-  go: (page: string, params?: Record<string, unknown>) => void
+  /** Open another page of the app; `{newTab: true}` opens it in a new tab (from a click). */
+  go: (page: string, params?: Record<string, unknown>, options?: { newTab?: boolean }) => void
   refresh: () => void
   field: (collection: string, name: string) => FieldSpec | undefined
   fieldLabel: (collection: string, name: string) => string

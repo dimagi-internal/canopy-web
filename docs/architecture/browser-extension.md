@@ -30,7 +30,10 @@ connections ([`vault-connections.md`](vault-connections.md) § Calls from screen
   only for a declared capability, and only while the extension's last `context` says the tab
   in front matches the page's patterns; an event reaches the page only if declared, from its
   adapter, about that tab. `canopy.browser.open` needs a click on the page
-  (`connectionCalls.ts::pageClickedFrame`) and an https URL.
+  (`connectionCalls.ts::pageClickedFrame`) and an https URL; so does `canopy.open(url)` in the panel,
+  which goes through the same gate. A `layout: "full"` page fills the panel below the picker, unpadded
+  (`ExtPanelPage.tsx`); `canopy.page.setParams` there changes only `app.params`, as the panel has no
+  address bar.
 - **Origins on both hops.** The panel posts only to an allowed `chrome-extension://<id>` that is
   its parent (`location.ancestorOrigins`, else the first well-formed message's origin) and
   accepts a message only with `event.source === window.parent` from that origin. Every request
