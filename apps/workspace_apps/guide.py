@@ -20,7 +20,8 @@ FIRST: if there is no open draft, start one (POST …/draft, tool `start_workspa
 OPERATIONS (the workspace's own things are named x_… — fields, collections, actions, roles — and
 pages x-…, so a template update can never collide with them)
   {"op":"add_field","collection":"application","key":"x_visa","field":{"type":"bool","label":"Needs visa sponsorship"}}
-      types: text, longtext, email, url, number, bool, enum (options), date, ref (collection), file (accept, max_mb)
+      types: text, longtext, email, url, number, bool, enum (options), date, ref (collection), file (accept, max_mb),
+      json (max_kb: any JSON value, never matched, ordered, public or mailed)
       Added fields appear on the app's forms and record pages automatically when the action that
       writes them takes them as input (see set_action add_input).
   {"op":"set_action","action":"apply","add_input":["x_visa"]}    let a form collect your own field

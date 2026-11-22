@@ -54,6 +54,13 @@ is never named here: it is the value of a text setting (``project_setting``) a
 workspace admin binds. TEMPLATE-ONLY, like ``then``: no overlay op may carry it
 (`overlay.compose`), and rebinding its setting is a risky change (`overlay.is_risky`).
 
+A collection may be ``personal``: each record is its writer's alone (`services._own`; no role
+reads past it) — a per-person store of settings and caches. It may name a ``key`` (a required text
+field): a ``create`` with a key the writer already has updates that record instead. Nothing points at
+a personal collection, no link opens one, and its actions are members' own (no email, no ``then``).
+A ``json`` field holds any JSON value up to ``max_kb`` serialized; it is never matched, ordered,
+public, ``set`` or mailed, and its history records that it changed, never its value.
+
 ``browser`` says which member pages the browser extension's side panel shows, on
 which tab URLs, and what each may ask of the tab's adapter (`browser.py`).
 
@@ -83,7 +90,7 @@ RESERVED_SLUGS = ("customize",)
 _DEFINES_FILL = re.compile(r"\bfunction\s+Fill\s*\(|\b(?:const|let|var)\s+Fill\s*=")
 
 BUILTIN_ROLES = ("member", "public", "link")
-FIELD_TYPES = ("text", "longtext", "email", "url", "number", "bool", "enum", "date", "ref", "file")
+FIELD_TYPES = ("text", "longtext", "email", "url", "number", "bool", "enum", "date", "ref", "file", "json")
 SETTING_TYPES = ("text", "longtext", "bool", "color", "email", "number")
 OPS = ("create", "update", "delete")
 AUDIENCES = ("member", "public", "link")
@@ -101,6 +108,8 @@ MAX_PAGES = 30
 MAX_THEN = 5
 MAX_LINK_DAYS = 60
 MAX_FILE_MB = 10
+#: A `json` field's size cap, serialized: the default and the most a manifest may give.
+DEFAULT_JSON_KB, MAX_JSON_KB = 64, 256
 DEFAULT_PUBLIC_PER_HOUR = 10
 
 
@@ -219,6 +228,11 @@ def _validate_field(where: str, spec, collections: set[str], roles: set[str] | N
         if not isinstance(mb, (int, float)) or not 0 < mb <= MAX_FILE_MB:
             _fail(f"{where}.max_mb", f"must be at most {MAX_FILE_MB}")
         out["max_mb"] = mb
+    if ftype == "json":
+        kb = spec.get("max_kb", DEFAULT_JSON_KB)
+        if not isinstance(kb, int) or isinstance(kb, bool) or not 1 <= kb <= MAX_JSON_KB:
+            _fail(f"{where}.max_kb", f"must be an integer from 1 to {MAX_JSON_KB}")
+        out["max_kb"] = kb
     if "default" in spec:
         out["default"] = spec["default"]
     return out
@@ -233,6 +247,8 @@ def _validate_where(where: str, raw, fields: dict, *, lists: bool = False) -> di
     for k, v in raw.items():
         if k not in fields:
             _fail(f"{where}.{k}", "is not a field of the collection")
+        if fields[k]["type"] == "json":
+            _fail(f"{where}.{k}", "a json field is never matched on")
         vals = v if (lists and isinstance(v, list)) else [v]
         if not vals or any(not isinstance(x, (str, int, float, bool)) or x is None for x in vals):
             _fail(f"{where}.{k}", "must be a string, number or boolean" + (" (or a list of them)" if lists else ""))
@@ -274,6 +290,21 @@ def _validate_collections(raw, roles: set[str]) -> dict:
             entry["read_also"] = list(also)
         if entry["title_field"] not in fields:
             _fail(f"{where}.title_field", "must be a field")
+        personal = spec.get("personal", False)
+        if not isinstance(personal, bool):
+            _fail(f"{where}.personal", "must be true or false")
+        if personal:
+            entry["personal"] = True
+            if spec.get("public") is not None or spec.get("scope") is not None:
+                _fail(f"{where}.personal", "a personal collection is its writers' alone: no public projection "
+                                           "and no scope")
+        pkey = spec.get("key")
+        if pkey is not None:
+            if not personal:
+                _fail(f"{where}.key", "only a personal collection has a key (one record per person and key)")
+            if pkey not in fields or fields[pkey]["type"] != "text" or not fields[pkey]["required"]:
+                _fail(f"{where}.key", "must name a required text field of the collection")
+            entry["key"] = pkey
         public = spec.get("public")
         if public is not None:
             if not isinstance(public, dict):
@@ -285,6 +316,8 @@ def _validate_collections(raw, roles: set[str]) -> dict:
                 _fail(f"{where}.public.fields", "a file is never public")
             if any(fields[f].get("read") for f in pfields):
                 _fail(f"{where}.public.fields", "a field only one role may read is never public")
+            if any(fields[f]["type"] == "json" for f in pfields):
+                _fail(f"{where}.public.fields", "a json field is never public")
             entry["public"] = {"where": _validate_where(f"{where}.public.where", public.get("where"), fields),
                                "fields": list(pfields)}
             if public.get("feed") is not None:
@@ -510,6 +543,8 @@ def _validate_actions(raw, roles: set[str], collections: dict, settings: dict, l
                 _fail(f"{where}.set.{k}", "is not a field of the collection")
             if k in inputs:
                 _fail(f"{where}.set.{k}", "is also an input: a set field is the action's, not the caller's")
+            if fields[k]["type"] == "json":
+                _fail(f"{where}.set.{k}", "a json field is only ever the caller's input")
             if isinstance(v, str) and v.startswith("$") and v not in SET_TOKENS:
                 if not (v.startswith("$param.") and v.split(".", 1)[1] in params):
                     _fail(f"{where}.set.{k}", f"tokens are {', '.join(SET_TOKENS)} or $param.<name>")
@@ -1068,6 +1103,34 @@ def _validate_connections(raw) -> list:
         _fail("connections", str(exc))
 
 
+def _validate_personal(collections: dict, actions: dict, links: dict) -> None:
+    """A personal collection's records are their writers' alone (`services._own`), so nothing may reach
+    them another way: no record of another collection points at one, no link opens one, and its actions
+    are a member's own writes, never a visitor's or a link holder's, with no email and no `then` (both act
+    beyond the caller). A `then` step elsewhere never writes into one."""
+    personal = {c for c, spec in collections.items() if spec.get("personal")}
+    if not personal:
+        return
+    for cname, spec in collections.items():
+        for fname, f in spec["fields"].items():
+            if f["type"] == "ref" and f["collection"] in personal:
+                _fail(f"collections.{cname}.fields.{fname}", f"nothing may point at the personal collection "
+                                                             f"'{f['collection']}'")
+    for lname, link in links.items():
+        if link["collection"] in personal:
+            _fail(f"links.{lname}.collection", "a personal collection's records are never opened by a link")
+    for aname, a in actions.items():
+        where = f"actions.{aname}"
+        if any(step["collection"] in personal for step in a["then"]) and a["collection"] not in personal:
+            _fail(f"{where}.then", "a then step never writes a personal collection")
+        if a["collection"] not in personal:
+            continue
+        if a["role"] in ("public", "link"):
+            _fail(f"{where}.role", "a personal collection is written only by its members, as themselves")
+        if a["effects"] or a["then"]:
+            _fail(where, "an action on a personal collection sends no email and has no then steps")
+
+
 def validate(raw) -> dict:
     """A normalised copy of `raw`, or ValueError naming what is wrong."""
     if not isinstance(raw, dict):
@@ -1097,6 +1160,7 @@ def validate(raw) -> dict:
         if not any(p["slug"] == link["page"] and p["audience"] == "link" for p in pages):
             _fail(f"links.{lname}.page", f"'{link['page']}' must be a page with audience 'link'")
     tasks = _validate_tasks(raw.get("tasks"), names, settings)
+    _validate_personal(collections, actions, links)
     for cname, c in collections.items():
         feed = (c.get("public") or {}).get("feed")
         if feed and not any(p["slug"] == feed["page"] and p["audience"] == "public" for p in pages):

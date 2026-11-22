@@ -6,7 +6,8 @@ workspace's changes, so it is judged here, by comparing the two versions on
 the surfaces where a mistake exposes data or hands out power:
 
 * roles — added, removed, or held by a different workspace capability;
-* reading — a collection's `read`/`read_also`, a field's `read`, a `scope`;
+* reading — a collection's `read`/`read_also`, a field's `read`, a `scope`, a collection
+  that stops being `personal`;
 * the public — public and private-link pages, public projections, public and
   link actions (what a visitor can submit), private links;
 * acting — an action's role;
@@ -66,6 +67,8 @@ def changes(old: dict, new: dict) -> list[str]:
             out.append(f"changes who reads {label}: {_readers(a)} → {_readers(b)}")
         if a.get("scope") != b.get("scope"):
             scoped.append(label)
+        if a.get("personal") and not b.get("personal"):
+            out.append(f"opens {label} to everyone who reads it: each person's records were their own")
         fo, fn = a.get("fields") or {}, b.get("fields") or {}
         for f in sorted(set(fo) & set(fn)):
             if fo[f].get("read") != fn[f].get("read"):
