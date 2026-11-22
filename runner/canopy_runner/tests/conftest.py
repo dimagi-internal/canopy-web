@@ -21,6 +21,15 @@ def _isolate_host_pin(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_adapter_install(monkeypatch):
+    """An emdash heartbeat starts a background ACP adapter install (desktop._kick_adapter,
+    investigation 41). A test that drives the main loop must never run a real npm install;
+    the tests of that install reset the flag themselves."""
+    from canopy_runner import desktop
+    monkeypatch.setattr(desktop, "_adapter_kicked", True)
+
+
+@pytest.fixture(autouse=True)
 def _no_real_device_key_enrollment(monkeypatch, request):
     """main() enrolls this machine's device key in the background by running the real
     `canopy vault device --enroll` (Canopy Vault). A test that drives main()
