@@ -1352,8 +1352,9 @@ def _plugins_check(now: float | None = None, home: pathlib.Path | None = None) -
         if not sha or not loc or not (pathlib.Path(loc) / ".git").exists():
             continue
         if _is_stored_clone(pathlib.Path(loc)):
-            # A stored agent's revisions are each ONE orphan commit, so the installed sha
-            # is never an ancestor of a newer one: behind means "not HEAD".
+            # A stored agent's clone is reset to the live revision, and one materialized
+            # from an archive holds a single orphan commit, so ancestry says nothing:
+            # behind means "not HEAD".
             head = git(loc, "rev-parse", "HEAD")
             if head is None or head.returncode != 0 or head.stdout.strip() == sha:
                 continue
@@ -7131,9 +7132,10 @@ def _fetch_clone(clone: pathlib.Path, env: dict | None = None, *, pull: bool = F
     check amber once the clone is older than CLONE_STALE_SECONDS."""
     key = str(clone)
     if _is_stored_clone(clone):
-        # A stored agent's clone (origin `canopy://…`): git has nothing to fetch. Its
-        # "pull" is `canopy agent sync` (`_sync_stored_clone`, which may raise
-        # StoredAgentError); its "fetch" is a no-op — the sync already moved origin/main.
+        # A stored agent's clone (canopy's origin): git is never run against it, since it
+        # holds no credential for canopy. Its "pull" is `canopy agent sync`
+        # (`_sync_stored_clone`, which may raise StoredAgentError); its "fetch" is a
+        # no-op — the sync already moved origin/main.
         return _sync_stored_clone(clone.name, clone) if pull else True
     cmd = ["git", "-C", key, *(["pull", "--ff-only", "--quiet"] if pull else ["fetch", "--quiet", "origin"])]
     error = ""
@@ -8177,23 +8179,33 @@ def agents_unprepared() -> list[str] | None:
 
 
 # ── stored agents ────────────────────────────────────────────────────────────
-# A STORED agent's definition is a file tree kept in canopy-web, not a GitHub repo
+# A STORED agent's definition is a git repository canopy-web hosts, not a GitHub repo
 # (canopy-web docs/architecture/runners.md § A stored agent on a runner). The claim says so
 # (`turn["definition"]["source"] == "stored"`), and `canopy agent prepare --runner`
-# materializes its live revision into AGENT_ROOT/<slug> as a git repo whose HEAD is
-# `refs/remotes/origin/main` and whose origin is `canopy://<workspace>/<slug>`. So
-# everything downstream of "a clone" — worktrees, `_link_clone_state`, the plugin
-# install, `agents_unprepared` — is unchanged. What differs is here:
+# brings its live revision into AGENT_ROOT/<slug> as a git repo whose HEAD is
+# `refs/remotes/origin/main` and whose origin is canopy's: the repository's URL,
+# `<canopy base>/git/<workspace>/<slug>.git`, which the CLI fetches with the box's own
+# token in a header, or `canopy://<workspace>/<slug>` from a CLI that materialized it
+# from an archive. So everything downstream of "a clone" — worktrees,
+# `_link_clone_state`, the plugin install, `agents_unprepared` — is unchanged. What
+# differs is here:
 #
 #   * no GitHub identity and no CANOPY_AGENT_REPO for its turns (`_github_turn_env`);
 #   * `canopy agent sync --runner --slug <slug>` in place of `git pull`
-#     (`_fetch_clone`), and never a borrowed token for it (`_clone_refresh_env`);
-#   * a turn never runs WITHOUT the materialized clone, or past a canopy CLI too old to
-#     sync one: either fails the turn saying why (`StoredAgentError`), because the
-#     alternative is running stale code, or none of the agent at all, without a word.
+#     (`_fetch_clone`): a plain `git fetch` of canopy's URL has no credential, and the
+#     box never hands its token to git itself; never a borrowed GitHub token for it
+#     (`_clone_refresh_env`);
+#   * a turn never runs WITHOUT the clone, or past a canopy CLI too old to sync one:
+#     either fails the turn saying why (`StoredAgentError`), because the alternative is
+#     running stale code, or none of the agent at all, without a word;
+#   * an agent whose definition moved to GitHub (the claim says `source: "repo"`) while
+#     this box holds its canopy clone is cloned again from GitHub (`_retire_stored_clone`).
 
-#: A stored agent's clone names this as its origin. git never fetches it.
+#: A clone from an archive names this as its origin. git never fetches it.
 STORED_ORIGIN_PREFIX = "canopy://"
+#: canopy's addresses this box knows: a clone whose origin is `<one of them>/git/…` is
+#: a stored agent's.
+CANOPY_PUBLIC_HOSTS = ("https://canopy.dimagi.com", "https://labs.connect.dimagi.com/canopy")
 STORED_SYNC_TIMEOUT = int(os.environ.get("STORED_SYNC_TIMEOUT", "300"))
 #: Agents a claimed turn said are stored (`_is_stored_agent`), by slug.
 _STORED_AGENTS: set[str] = set()
@@ -8218,18 +8230,47 @@ def _turn_says_stored(turn: dict | None) -> bool | None:
     return d.get("source") == "stored"
 
 
+def _is_canopy_origin(url: str) -> bool:
+    """Is `url` a stored agent's origin: `canopy://…`, or canopy's git URL
+    (`<base>/git/<workspace>/<slug>.git`, for this box's base or canopy's public one)?"""
+    url = (url or "").strip()
+    if url.startswith(STORED_ORIGIN_PREFIX):
+        return True
+    if not url.rstrip("/").endswith(".git"):
+        return False
+    bases = {b.rstrip("/") for b in (BASE_URL, os.environ.get("CANOPY_BASE_URL", ""), *CANOPY_PUBLIC_HOSTS) if b}
+    return any(url.startswith(f"{base}/git/") for base in bases)
+
+
 def _is_stored_clone(clone: pathlib.Path) -> bool:
-    """Whether `clone` is a materialized stored agent: its origin is `canopy://…`."""
+    """Whether `clone` is a stored agent's: its origin is canopy's (`_is_canopy_origin`)."""
     if not (pathlib.Path(clone) / ".git").exists():
         return False
     url = _git_out("-C", str(clone), "config", "--get", "remote.origin.url", timeout=10)
-    return bool(url) and url.strip().startswith(STORED_ORIGIN_PREFIX)
+    return bool(url) and _is_canopy_origin(url)
+
+
+def _retire_stored_clone(slug: str, clone: pathlib.Path) -> bool:
+    """Move a stored agent's clone out of AGENT_ROOT, for an agent that is a repo agent
+    now (its definition was exported to GitHub): the next step clones it from GitHub.
+    Kept under WORK_DIR/retired-clones rather than deleted — its ignored files (`.env`,
+    state) are the agent's. True when it moved."""
+    dest = pathlib.Path(WORK_DIR) / "retired-clones" / f"{slug}-{int(time.time())}"
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(clone), str(dest))
+    except OSError as exc:
+        _log(f"warn: agent {slug}: its definition moved to GitHub, and its canopy clone could not be "
+             f"moved aside ({exc}); its turns run the last revision synced from canopy")
+        return False
+    _log(f"agent {slug}: its definition moved to GitHub — its canopy clone is at {dest}; cloning it again")
+    return True
 
 
 def _is_stored_agent(slug: str, turn: dict | None = None) -> bool:
     """Is `slug` a stored agent? The turn's claim says so when it carries `definition`
     (and is remembered, for the box's own refreshes); else what a claim said before;
-    else the clone itself (a `canopy://` origin)."""
+    else the clone itself (canopy's origin)."""
     if not slug:
         return False
     said = _turn_says_stored(turn)
@@ -8394,14 +8435,23 @@ def _ensure_agent_clone(slug: str, env: dict | None = None, *, stored: bool = Fa
     bootstrap here is slower; running as nobody is wrong. It also stamps
     `_BOOTSTRAPPED_AT`, which discharges that pending refresh.
 
-    A STORED agent (`stored`) has no repo to clone: `canopy agent prepare` materializes
-    it. A clone of it that is still a GitHub checkout (an agent converted to stored since
-    this box cloned it) is prepared again, which materializes over it."""
+    A STORED agent (`stored`) has no GitHub repo to clone: `canopy agent prepare` clones
+    it from canopy. A clone of it that is still a GitHub checkout (an agent converted to
+    stored since this box cloned it) is prepared again, which replaces it. The reverse —
+    a repo agent whose clone here is still canopy's (exported to GitHub since) — is moved
+    aside and cloned again from GitHub."""
     if not slug or _safe_session_dirname(slug) != slug:
         return
     if stored:
         _ensure_stored_clone(slug, env)
         return
+    clone = pathlib.Path(AGENT_ROOT) / slug
+    if _is_stored_clone(clone):
+        with _LAZY_BOOTSTRAP_LOCK:
+            if _is_stored_clone(clone):
+                _STORED_AGENTS.discard(slug)
+                if _retire_stored_clone(slug, clone):
+                    _LAZY_BOOTSTRAP_TRIED.pop(slug, None)
     github = bool((env or {}).get("GH_TOKEN"))
 
     def stale() -> bool:

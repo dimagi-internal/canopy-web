@@ -148,3 +148,18 @@ def test_the_shared_vector_the_cli_pins():
     entries = [ad.manifest_entry("CLAUDE.md", b"# helper\n"),
                ad.manifest_entry("bin/helper-email", b"#!/bin/sh\n", True)]
     assert ad.manifest_root(entries) == "b90fd0b7d22806c3d6402f4996bb0b1bcd2a1978b40769aefca00be68b1b97d4"
+
+
+def test_git_url_and_its_recognition():
+    url = ad.git_url("https://canopy.dimagi.com/", "connect", "connect-helper")
+    assert url == "https://canopy.dimagi.com/git/connect/connect-helper.git"
+    assert ad.is_git_url(url, "https://canopy.dimagi.com")
+    assert ad.is_git_url(url + "/", "https://canopy.dimagi.com/")
+    for other in ("https://github.com/dimagi-internal/connect-helper.git",
+                  "https://canopy.dimagi.com/git/connect/connect-helper",
+                  "https://canopy.dimagi.com/git/connect-helper.git",
+                  "https://canopy.dimagi.com/git/a/b/c.git",
+                  "https://elsewhere.example/git/connect/connect-helper.git",
+                  "canopy://connect/connect-helper", ""):
+        assert not ad.is_git_url(other, "https://canopy.dimagi.com"), other
+    assert not ad.is_git_url(url, "")
