@@ -119,6 +119,8 @@ class PageOut(Schema):
     kind: str = "jsx"
     entry: str = ""
     bundle_url: str = ""
+    #: "page" (inside canopy's header), or "full": the whole viewport, no canopy chrome.
+    layout: str = "page"
 
 
 class DraftInfoOut(Schema):

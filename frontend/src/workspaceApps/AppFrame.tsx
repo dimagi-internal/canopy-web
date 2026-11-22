@@ -10,7 +10,7 @@
  * instead of compiling code; its page params ride in the file's query string too,
  * for code that reads `location.search`. Design: docs/architecture/workspace-apps.md.
  */
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { callApp, type AppPage, type CollectionSource } from '@/api/workspaceApps'
 import { getDynamicViewGuide, type DynamicViewSource } from '@/api/dynamicViews'
 import { DynamicViewFrame, readSources, type BrowserHost } from '@/dynamicViews/DynamicViewFrame'
@@ -36,6 +36,10 @@ interface Props {
   connections?: readonly DeclaredConnection[]
   viewer: { email: string; name: string }
   onGo: (page: string, params: Record<string, string>) => void
+  /** `canopy.page.setParams`: write the page's params into the host's own URL, with no reload and no new frame. */
+  onParams?: (params: Record<string, string>) => void
+  /** A full-bleed page (`layout: "full"`): the frame fills the box its host gives it. */
+  fill?: boolean
   /** The canopy URL of a page of the app, so a bundle page can open one in a new tab. */
   pageHref?: (page: string, params: Record<string, string>) => string
   /** The app's pages, so a bundle page can open another by its entry file. */
@@ -48,8 +52,11 @@ function isCollection(s: Record<string, unknown>): s is CollectionSource {
   return typeof s.collection === 'string'
 }
 
-export function AppFrame({ workspace, app, page, roles, params, surface, draft, link, dataModel, settings, connections, viewer, onGo, pageHref, pages, browser }: Props) {
+export function AppFrame({ workspace, app, page, roles, params, surface, draft, link, dataModel, settings, connections, viewer, onGo, onParams, fill, pageHref, pages, browser }: Props) {
   const [error, setError] = useState<string | null>(null)
+  // Read through a ref, so a new function from the host each render keeps the frame's `app` the same.
+  const paramsTo = useRef(onParams)
+  paramsTo.current = onParams
   const paramsKey = JSON.stringify(params)
   const rolesKey = roles.join(',')
   const modelKey = JSON.stringify([dataModel, settings, page.fills])
@@ -69,6 +76,7 @@ export function AppFrame({ workspace, app, page, roles, params, surface, draft, 
       context,
       call,
       go: onGo,
+      setParams: onParams ? (p: Record<string, string>) => paramsTo.current?.(p) : undefined,
       href: pageHref,
       canopyReads: surface === 'member',
       canConnect: surface === 'member',
@@ -94,7 +102,7 @@ export function AppFrame({ workspace, app, page, roles, params, surface, draft, 
       },
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [context, page, workspace.slug, surface, draft, link?.token, connections])
+  }, [context, page, workspace.slug, surface, draft, link?.token, connections, !!onParams])
 
   const scope: ViewScope = useMemo(
     () => ({ workspace, project: null, view: { id: 0, slug: page.slug, title: page.title, version: 0 }, viewer }),
@@ -112,11 +120,11 @@ export function AppFrame({ workspace, app, page, roles, params, surface, draft, 
 
   return (
     <>
-      {error && <div className="mb-3 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
+      {error && <div className={`${fill ? 'absolute inset-x-0 top-0 z-10 m-2' : 'mb-3'} rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive`}>{error}</div>}
       {/* A live member page is the page canopy's panel is on: it may describe itself to the agent bound
           to this app and offer it actions (its `page_*` tools), as a view does on its own page. */}
       <DynamicViewFrame view={view} scope={scope} onError={setError} app={hosted} pagePanel={surface === 'member' && !draft}
-        browser={surface === 'member' && !draft ? browser : undefined} />
+        browser={surface === 'member' && !draft ? browser : undefined} fill={fill} />
     </>
   )
 }

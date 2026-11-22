@@ -7,6 +7,10 @@
  * `canopy.browser` relayed through the gate in `extensionBridge.ts`.
  * Design: docs/architecture/browser-extension.md.
  *
+ * A page with `layout: "full"` fills the panel below the picker (shown only when several apps match),
+ * with no padding, its frame scrolling itself. The panel has no address bar: `canopy.page.setParams`
+ * only updates the page's own `app.params`.
+ *
  * Signed out it cannot send the person to Google (a framed sign-in is refused), so it
  * asks the extension to open the sign-in in a tab and checks again when the panel gets
  * focus, the tab changes, or the person presses the button.
@@ -188,9 +192,9 @@ function SignedInPanel({ link, context, listeners, me }: SignedInProps) {
     )
   }
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="flex h-screen flex-col bg-background text-foreground">
       {apps.length > 1 && (
-        <div className="border-b border-border p-2">
+        <div className="shrink-0 border-b border-border p-2">
           <label className="sr-only" htmlFor="ext-app-picker">App</label>
           <select id="ext-app-picker" className="w-full rounded-md border border-border bg-card px-2 py-1 text-sm"
             value={appId(current)} onChange={(e) => setChosen(e.target.value)}>
@@ -264,9 +268,12 @@ function PanelApp({ entry, apps, link, context, listeners, me }: PanelAppProps) 
   if (!app) return <p className="p-4 text-sm text-muted-foreground">Loading…</p>
   const page = app.pages.find((p) => p.slug === pageSlug && p.audience === 'member')
   if (!page) return <p className="p-4 text-sm text-muted-foreground">This page is not available to you.</p>
+  const full = page.layout === 'full'
   return (
-    <div className="p-2">
+    <div className={full ? 'relative min-h-0 flex-1 overflow-hidden' : 'min-h-0 flex-1 overflow-auto p-2'}>
       <AppFrame
+        fill={full}
+        onParams={() => undefined}
         key={`${page.slug}?${JSON.stringify(params)}`}
         workspace={{ slug: entry.workspace, name: entry.workspace_name }}
         app={{ key: app.key, name: app.name }}

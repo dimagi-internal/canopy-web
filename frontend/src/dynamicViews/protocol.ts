@@ -155,6 +155,17 @@ export type FrameMessage =
   | { channel: typeof CHANNEL; type: 'app'; id: number; request: AppOp }
   // `newTab` (a bundle page's `canopy.open(…, {newTab: true})`) opens the page in a tab, from a click only.
   | { channel: typeof CHANNEL; type: 'go'; page: string; params: Record<string, string>; newTab?: boolean }
+  // A pointerdown or keydown in the frame. No claim: the page believes it only if it sees a live click on
+  // this frame as it arrives, and then lets a drop or a post-dialog write open a lease (gestures.ts).
+  | { channel: typeof CHANNEL; type: 'gesture' }
+  // `canopy.open(url)`: an https address in a new tab, from a click. Answered by a `read-result`.
+  | { channel: typeof CHANNEL; type: 'open-url'; id: number; url: string }
+  // `canopy.page.setParams`: replace this page's URL parameters, no reload. Answered by a `read-result`.
+  | { channel: typeof CHANNEL; type: 'page-params'; id: number; params: Record<string, unknown> }
+  // `canopy.clipboard.write(text)`, from a click. Answered by a `read-result`.
+  | { channel: typeof CHANNEL; type: 'clipboard'; id: number; text: string }
+  // `canopy.download(name, mime, data)`: save a file, from a click (or a gesture in the last minute).
+  | { channel: typeof CHANNEL; type: 'download'; id: number; name: string; mime: string; data: unknown }
   // `canopy.browser` in the extension's panel: the tab's context, an adapter capability, opening a tab.
   | { channel: typeof CHANNEL; type: 'browser'; id: number; request: BrowserOp }
   // canopy's panel (pagePanel.ts): what the view shows, the actions it offers the agent,

@@ -77,6 +77,14 @@ function ask(msg: (id: number) => FrameMessage): Promise<unknown> {
   })
 }
 
+/** Values to strings, nulls dropped: page params as the URL holds them. */
+function strings(params: Record<string, unknown> = {}): Record<string, string> {
+  return Object.fromEntries(Object.entries(params ?? {}).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)]))
+}
+
+/** The app page drawn now, for `canopy.open(page)` and `canopy.page.setParams` (null on a plain view). */
+let currentApp: AppApi | null = null
+
 const canopy = {
   /** The tab beside the extension's panel (`browserApi`); null outside the panel. */
   browser: null as ReturnType<typeof browserApi> | null,
@@ -88,6 +96,26 @@ const canopy = {
   },
   navigate(path: string) {
     if (typeof path === 'string' && path) toHost({ channel: CHANNEL, type: 'navigate', path })
+  },
+  /** An https address in a new tab (from a click), or, on an app page, another page of the app by slug
+   * (`{newTab: true}` for a tab). Resolves once canopy opened it; rejects with the reason. */
+  open(target: string, params: Record<string, unknown> = {}, options: { newTab?: boolean } = {}): Promise<unknown> {
+    if (/^[a-z][a-z0-9+.-]*:/i.test(String(target ?? ''))) {
+      return ask((id) => ({ channel: CHANNEL, type: 'open-url', id, url: String(target) }))
+    }
+    if (!currentApp) return Promise.reject(new Error('canopy.open(page) works on a workspace app\'s page; give an https address otherwise'))
+    currentApp.go(target, params, options)
+    return Promise.resolve(null)
+  },
+  /** Copy text to the viewer's clipboard, from a click. */
+  clipboard: {
+    write(text: string): Promise<unknown> {
+      return ask((id) => ({ channel: CHANNEL, type: 'clipboard', id, text: String(text ?? '') }))
+    },
+  },
+  /** Save a file (text, an ArrayBuffer, a Uint8Array or a Blob), from a click. Resolves {name}. */
+  download(name: string, mime: string, data: unknown): Promise<unknown> {
+    return ask((id) => ({ channel: CHANNEL, type: 'download', id, name, mime, data }))
   },
   /** Give an agent a task the view declares; resolves with its result (see the guide). */
   runAgentTask(request: Record<string, unknown> & { onStatus?: (task: AgentTaskStatus) => void }): Promise<unknown> {
@@ -161,6 +189,15 @@ const canopy = {
       pageActions.delete(name)
       toHost({ channel: CHANNEL, type: 'page-action-unregister', name })
     },
+    /** Replace this app page's URL parameters (the address bar, a reload, a copied link), with no reload and
+     * no new frame. `app.params` follows. Resolves the params as written. */
+    setParams(params: Record<string, unknown>): Promise<unknown> {
+      const p = strings(params)
+      return ask((id) => ({ channel: CHANNEL, type: 'page-params', id, params: p })).then((written) => {
+        if (currentApp) currentApp.params = written as Record<string, string>
+        return written
+      })
+    },
     /** Open the panel with this question, from a click on the view. */
     ask(text: string) {
       if (typeof text === 'string' && text.trim()) toHost({ channel: CHANNEL, type: 'page-ask', text })
@@ -227,9 +264,8 @@ function appApi(ctx: AppContext): AppApi {
       return call({ op: 'upload', collection, field: name, name: file.name, type: file.type, bytes }) as Promise<{ id: number; name: string }>
     },
     openFile: (id) => void call({ op: 'open_file', id }),
-    go(page, params = {}) {
-      const p = Object.fromEntries(Object.entries(params).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)]))
-      toHost({ channel: CHANNEL, type: 'go', page, params: p })
+    go(page, params = {}, options = {}) {
+      toHost({ channel: CHANNEL, type: 'go', page, params: strings(params), ...(options?.newTab ? { newTab: true } : {}) })
     },
     refresh: canopy.refresh,
     field,
@@ -295,7 +331,9 @@ function App() {
         canopy.browser = msg.browser ? browserApi(msg.browser) : null
         try {
           const View = compile(msg.code)
-          setState({ kind: 'ready', View, data: msg.data ?? {}, scope: msg.scope, code: msg.code, api: msg.app ? appApi(msg.app) : null })
+          const api = msg.app ? appApi(msg.app) : null
+          currentApp = api
+          setState({ kind: 'ready', View, data: msg.data ?? {}, scope: msg.scope, code: msg.code, api })
         } catch (e) {
           const message = e instanceof Error ? e.message : String(e)
           toHost({ channel: CHANNEL, type: 'error', message })
@@ -356,6 +394,18 @@ document.addEventListener('click', (ev) => {
   ev.preventDefault()
   canopy.navigate(href)
 })
+
+// A pointerdown or keydown: the page believes it only if it sees a live click on this frame (gestures.ts),
+// so a drag's drop can still write. At most one message every quarter second.
+let lastGesture = 0
+const gesture = () => {
+  const t = Date.now()
+  if (t - lastGesture < 250) return
+  lastGesture = t
+  toHost({ channel: CHANNEL, type: 'gesture' })
+}
+document.addEventListener('pointerdown', gesture, { capture: true, passive: true })
+document.addEventListener('keydown', gesture, { capture: true, passive: true })
 
 const root = document.getElementById('dv-root')
 if (window.self === window.top || !root) {

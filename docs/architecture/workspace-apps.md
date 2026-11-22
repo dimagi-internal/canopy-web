@@ -117,14 +117,47 @@ uploaded with the version. The module docstring holds the rules; the ones to kee
   link to another file of the bundle does the same, any other link leaves through `canopy.navigate`.
   It is a full canopy page each time; the frame never navigates itself (a frame that loads a second
   document is no longer answered, as for any view). Page params also ride in the file's query string,
-  for code that reads `location.search`. A new tab needs a click on the page.
+  for code that reads `location.search`. A new tab needs a click on the page. An https link (or
+  `window.open` of one) opens in a new tab (§ What a page can do outside its frame).
 - **What a bundle cannot do**, so a port plans its shim: no `localStorage`, `sessionStorage`,
   IndexedDB or cookies (an opaque origin has none: keep state in a collection through `app.act`); no
   network but its own files (outside calls go through `canopy.connection`); no remote scripts, fonts
   or images (vendor them, or turn a fetched image into a `blob:` URL); no `alert`/`confirm`/`prompt`
-  (no `allow-modals`: they return without asking); no popups (`window.open` is routed to
-  `canopy.open`/`canopy.navigate`); no workers; no inline `<script>` or `on*=` attributes; and no
+  (no `allow-modals`: they return without asking); no popups, downloads or clipboard of its own
+  (`window.open` is routed to `canopy.open`; the rest are the calls in § What a page can do outside its
+  frame); no workers; no inline `<script>` or `on*=` attributes; and no
   assignment to `location` (use `canopy.open`).
+
+## What a page can do outside its frame (`frontend/src/dynamicViews/frameOut.ts`)
+
+A page (JSX or bundle) never gets `allow-popups`, `allow-downloads`, clipboard access or
+`allow-same-origin`: popups escaping the sandbox would open anything, with an opener, from no click. Each
+of these is instead a message the canopy page checks and carries out (`DynamicViewFrame.tsx`), the same
+for a JSX page's `canopy` prop and a bundle's `window.canopy`:
+
+| Call | What canopy checks |
+|---|---|
+| `canopy.open(url)` → Promise | `frameOut.ts::externalUrl` (https, no credentials); a live click on the frame; opened `noopener,noreferrer` (in the extension's panel, through `canopy.browser`'s gate) |
+| `canopy.open(page, params, {newTab})`, `app.go(page, params, {newTab})` | the page is the app's; a new tab only from a live click, else this tab |
+| `canopy.page.setParams(params)` → Promise | `frameOut.ts::cleanParams` (≤ `MAX_PARAMS`, never `draft`); the host rewrites its own address (`WorkspaceAppPage.tsx`, `history.replaceState` keeping the router's state), so nothing reloads and the frame stays; `app.params` follows. The panel has no address bar |
+| `canopy.clipboard.write(text)` → Promise | a live click (or a believed gesture, below); ≤ `MAX_CLIPBOARD_CHARS` |
+| `canopy.download(name, mime, data)` → Promise | `frameOut.ts::checkDownload`: a plain file name, a type that never renders as a document (HTML, SVG, XML and script are saved as bytes, since the blob has canopy's origin), ≤ `MAX_DOWNLOAD_BYTES`; a click or a believed gesture |
+
+**Gestures** (`frontend/src/dynamicViews/gestures.ts`). A click's activation lasts seconds and a drag's
+`drop` is not one, so a kanban drop or a write after an awaited dialog would be refused. The frame
+reports every pointerdown and keydown (`gesture`, no claim in it); the page believes one only when it
+sees a live click on that same frame as it arrives, and remembers it for `GESTURE_WINDOW_MS`. A
+connection write with neither a live lease nor a live click may open ONE lease on it
+(`ConnectionCalls`' `recentGesture`, spent), and a download or copy may use it. That grants nothing one
+click did not already (`canopy.connection.begin()` from a click holds a lease for ten minutes); the
+server's lease, write budget and audit are unchanged.
+
+**Full-bleed pages.** A member page may declare `"layout": "full"` (`manifest.py::_layout`, the default
+`page` is never stored). On canopy (`WorkspaceAppPage.tsx`) the frame alone is fixed to the whole
+viewport above the shell, with no header, tabs or connection note; canopy's dialogs and its AI bubble
+stay above it. The frame scrolls itself and ignores its content height (`DynamicViewFrame`'s `fill`), so
+`position: fixed` inside it is the viewport's. In the extension's panel it fills the panel below the
+picker, unpadded. A draft's test copy and a switched-off app keep the normal page.
 
 ## Acting on one project's tasks (`apps/workspace_apps/tasks.py`)
 

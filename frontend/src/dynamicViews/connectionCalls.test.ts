@@ -11,7 +11,7 @@ const VIEW = { kind: 'view' as const, id: 7, version: 3 }
 const READ = { provider: 'salesforce', method: 'GET', path: 'query', query: { q: 'SELECT Id FROM Lead' } }
 const WRITE = { provider: 'salesforce', method: 'PATCH', path: 'sobjects/Lead/00Q1', body: { Status: 'Open' } }
 
-function setup(opts: { active?: boolean | undefined; ctx?: Partial<CallContext>; now?: () => number } = {}) {
+function setup(opts: { active?: boolean | undefined; ctx?: Partial<CallContext>; now?: () => number; gesture?: () => boolean } = {}) {
   const state = { active: opts.active, now: 1_000_000 }
   const client: ConnectionClient = {
     request: vi.fn(async () => ({ status: 200, body: { ok: true } })),
@@ -19,7 +19,7 @@ function setup(opts: { active?: boolean | undefined; ctx?: Partial<CallContext>;
   }
   const ctx: CallContext = { surface: VIEW, declared: DECLARED, canConnect: true, ...opts.ctx }
   const queue = new CallQueue()
-  const calls = new ConnectionCalls(client, () => ctx, { isActive: () => state.active, now: opts.now ?? (() => state.now), queue })
+  const calls = new ConnectionCalls(client, () => ctx, { isActive: () => state.active, recentGesture: opts.gesture, now: opts.now ?? (() => state.now), queue })
   return { calls, client, state, ctx, queue }
 }
 
@@ -66,6 +66,17 @@ describe('ConnectionCalls', () => {
     const body = (ok.client.request as ReturnType<typeof vi.fn>).mock.calls[0][1]
     expect(body.operation_id).toBe('op1')
     expect(body).not.toHaveProperty('click')
+  })
+
+  it('a drop after the click: a believed gesture opens one lease, once', async () => {
+    let left = 1
+    const { calls, client } = setup({ active: false, gesture: () => left-- > 0 })
+    await calls.handle(WRITE)
+    expect(client.openOperation).toHaveBeenCalledTimes(1)
+    await calls.handle(WRITE) // the lease it opened carries on
+    expect(client.request).toHaveBeenCalledTimes(2)
+    calls.closeAll()
+    await expect(calls.handle(WRITE)).rejects.toThrow('This needs a click.')
   })
 
   it('absent userActivation fails closed', async () => {

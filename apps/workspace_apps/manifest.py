@@ -18,6 +18,8 @@ An app declares what it is, and can do nothing it did not declare:
   instead be ``"kind": "bundle"`` with an ``entry`` HTML file of the app's ``bundle``:
   static files uploaded with the version (`bundles.py`), whose index (``id``, ``size``,
   ``files``) canopy writes, never the author. A bundle page has no code, slots or sources.
+  A member page may say ``"layout": "full"``: drawn at the whole viewport with no canopy header
+  (the frame scrolls itself, so its ``position: fixed`` is the viewport's).
 * ``settings`` — the knobs a workspace sets without code (careers intro, email
   wording). ``fixtures`` seed a draft's test copy; ``scenarios`` are the
   plain-language checks a version must pass before it is published.
@@ -741,6 +743,19 @@ def _validate_source(where: str, raw, audience: str, collections: dict) -> dict:
 
 
 PAGE_KINDS = ("jsx", "bundle")
+#: How canopy frames a member page: inside its header (the default), or "full": the frame at the whole
+#: viewport, no canopy chrome, the frame its own scroll container (`_layout`).
+PAGE_LAYOUTS = ("page", "full")
+
+
+def _layout(where: str, spec: dict, audience: str) -> dict:
+    """`{"layout": "full"}` for a full-bleed member page, else nothing (the default is never stored)."""
+    layout = spec.get("layout", "page")
+    if layout not in PAGE_LAYOUTS:
+        _fail(f"{where}.layout", "must be 'page' (the default) or 'full'")
+    if layout == "full" and audience != "member":
+        _fail(f"{where}.layout", "only a member page can be drawn full-bleed")
+    return {"layout": "full"} if layout == "full" else {}
 
 
 def _validate_pages(raw, roles: set[str], collections: dict, links: dict | None = None,
@@ -800,7 +815,7 @@ def _validate_pages(raw, roles: set[str], collections: dict, links: dict | None 
         out.append({"slug": slug, "title": str(spec.get("title") or slug)[:120], "audience": audience,
                     "role": role, "nav": bool(spec.get("nav", True)), "code": code, "sources": sources,
                     "slots": list(slots), "fills": norm_fills, "origin": spec.get("origin", "template"),
-                    "forked": bool(spec.get("forked", False))})
+                    "forked": bool(spec.get("forked", False)), **_layout(where, spec, audience)})
     return out
 
 
@@ -822,7 +837,8 @@ def _bundle_page(where: str, spec: dict, slug: str, audience: str, role: str, bu
                                   "(it reads through app.query)")
     return {"slug": slug, "title": str(spec.get("title") or slug)[:120], "audience": audience, "role": role,
             "nav": bool(spec.get("nav", True)), "kind": "bundle", "entry": entry, "code": "", "sources": [],
-            "slots": [], "fills": {}, "origin": spec.get("origin", "template"), "forked": False}
+            "slots": [], "fills": {}, "origin": spec.get("origin", "template"), "forked": False,
+            **_layout(where, spec, audience)}
 
 
 def _validate_settings(raw) -> dict:
