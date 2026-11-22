@@ -29,11 +29,11 @@ function rev(number: number, status: string, extra: Record<string, unknown> = {}
     created_at: '2026-11-21T00:00:00Z', published_at: null, published_by: null, approval_id: null, ...extra }
 }
 
-function setup(canPublish: boolean) {
+function setup(canPublish: boolean, revisions?: ReturnType<typeof rev>[]) {
   m.getDefinition.mockResolvedValue({ source: 'stored', live: rev(2, 'published'), draft: rev(3, 'draft'),
     policy: { max_files: 200, max_file_bytes: 1, max_tree_bytes: 1, editable: [], generated: [] },
     can_draft: true, can_publish: canPublish })
-  m.listRevisions.mockResolvedValue([rev(3, 'draft'), rev(2, 'published'), rev(1, 'superseded')])
+  m.listRevisions.mockResolvedValue(revisions ?? [rev(3, 'draft'), rev(2, 'published'), rev(1, 'superseded')])
   m.getRevision.mockResolvedValue({ ...rev(3, 'draft'), tree: { 'persona.md': { sha256: SHA, size: 3, executable: false } } })
   m.getRevisionDiff.mockResolvedValue({ revision: 3, against: 2, files: [
     { path: 'persona.md', status: 'modified', diff: '-old\n+new\n', truncated: false }] })
@@ -68,6 +68,14 @@ describe('AgentDefinitionSection', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     fireEvent.click(screen.getByRole('button', { name: 'Roll back to this' }))
     await waitFor(() => expect(m.rollbackTo).toHaveBeenCalledWith('scout', 1))
+  })
+
+  it('names the agent that published a revision as its person', async () => {
+    setup(true, [rev(2, 'published', {
+      published_by: 'olive@dimagi.com',
+      acted_by: { agent: 'ace', person: 'olive@dimagi.com', act_as_grant: 'g1' } }), rev(1, 'superseded')])
+    await waitFor(() => expect(screen.getByTestId('definition-acted-by').textContent)
+      .toBe('ace as olive@dimagi.com'))
   })
 
   it('offers no Publish or Roll back to someone who may only draft', async () => {
